@@ -251,6 +251,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../getting-started/" class="md-nav__link">
         
   
@@ -514,10 +541,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#why-the-gateway-runs-each-apps-own-server" class="md-nav__link">
+  <a href="#how-the-apps-are-served" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Why the gateway runs each app's own server
+        How the apps are served
       
     </span>
   </a>
@@ -648,6 +675,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../shipped-workflows/" class="md-nav__link">
         
   
@@ -675,6 +729,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../deep-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deep Research Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../deployment/" class="md-nav__link">
         
   
@@ -683,6 +764,33 @@
     
   
     Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apple-local-gateway-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apple Silicon Local Setup
   
 
     
@@ -783,33 +891,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../tray/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Desktop Tray
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../security/" class="md-nav__link">
         
   
@@ -872,6 +953,33 @@
     
   
     FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
   
 
     
@@ -1033,10 +1141,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#why-the-gateway-runs-each-apps-own-server" class="md-nav__link">
+  <a href="#how-the-apps-are-served" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Why the gateway runs each app's own server
+        How the apps are served
       
     </span>
   </a>
@@ -1168,7 +1276,7 @@ desktop app, the <strong>Assistant</strong> (see <a href="#the-assistant-a-deskt
    through npm (with its cache in <code>&lt;data dir&gt;/apps/npm-cache/</code>); Code needs
    none and is unpacked directly.</li>
 <li><strong>The terminal app, too.</strong> When the app also runs in a terminal and a
-   ready-made download exists for this computer (Code today, see
+   ready-made download exists for this computer (Code, see
    <a href="#terminal-versions">Terminal versions</a>), the same Install installs it
    right after the browser app: ONE job whose <code>parts</code> are the two rows the
    card shows (<code>install</code> then <code>install-tui</code>, each <code>waiting</code>, <code>running</code>,
@@ -1201,7 +1309,7 @@ in its <code>details</code> field (<code>&lt;data dir&gt;/apps/jobs/&lt;job&gt;.
   seconds). After more than 3 crashes in a minute it stops trying and shows
   "crash_loop" with the app's log.</li>
 <li>Each app writes its output to <code>&lt;data dir&gt;/logs/apps/&lt;app&gt;.log</code>.</li>
-<li>Apps listen on <code>127.0.0.1</code> only. Ports: the app's usual port when it is
+<li>Apps listen on <code>127.0.0.1</code> (the <code>apps.host</code> setting changes this). Ports: the app's usual port when it is
   free, else the first free port in 3100-3199. The usual ports are the
   framework's stack port map (<code>scripts/start-local.sh</code>): Observer 3001,
   Continuum 3002, Code 3003, Entity 3004, Flow 3005.</li>
@@ -1210,8 +1318,8 @@ in its <code>details</code> field (<code>&lt;data dir&gt;/apps/jobs/&lt;job&gt;.
 <p>An app can also run without the gateway having started it: the framework's
 development stack (<code>scripts/start-local.sh</code>), <code>npx @abstractframework/observer</code>,
 a global npm install, a service. The gateway finds such an app by asking the
-usual ports on this machine (3001-3005, then 3000 and 3007, which older
-launch scripts used) for their start page and reading its title
+usual ports on this machine (3001-3005, then 3000 and 3007) for their start
+page and reading its title
 ("AbstractObserver", "AbstractContinuum", "AbstractCode", "AbstractEntity",
 "AbstractFlow"). None of the apps has an address that says who it is without
 a gateway sign-in, and the start page is plain HTML, so this costs one short
@@ -1255,11 +1363,10 @@ creation form. The path is bound to the one-time code when the link is made
 with a single <code>/</code>, and a second leading slash (<code>//host</code>), a full address, a
 backslash, a space or a control character is refused with 400
 <code>invalid_app_path</code> before any link is made. Without <code>path</code> the browser lands
-on the app's start page, as before.</p>
+on the app's start page.</p>
 <h3 id="an-app-with-nothing-in-it-yet">An app with nothing in it yet<a class="headerlink" href="#an-app-with-nothing-in-it-yet" title="Permanent link">&para;</a></h3>
 <p>Each app row carries <code>content_summary</code>: a small fact about what the app holds
-on this gateway, or <code>null</code> for apps that report nothing. Today only Entity
-has one, <code>{"entities_count": n}</code>: the number of entries
+on this gateway, or <code>null</code> for apps that report nothing. Entity reports <code>{"entities_count": n}</code>: the number of entries
 <code>GET /api/gateway/entities</code> lists (counted from the same entity registry,
 without reading any entity), <code>null</code> when it cannot be known, including for an
 Entity started outside the gateway whose page names another gateway. When the
@@ -1268,7 +1375,7 @@ entity</strong> and opens the app on <code>/#new</code> through the handover abo
 entity or more, or an unknown count, it reads <strong>Open</strong>. The guide's Apps step
 shows the same card.</p>
 <h2 id="terminal-versions">Terminal versions<a class="headerlink" href="#terminal-versions" title="Permanent link">&para;</a></h2>
-<p>Some apps also run in a terminal. Today that is <strong>Code</strong> (<code>abstractcode</code>, a
+<p>Some apps also run in a terminal: <strong>Code</strong> (<code>abstractcode</code>, a
 Rust terminal app from the abstractcode repository); Flow Editor, Observer,
 Continuum and Entity are browser apps only. The gateway's own console also
 has a terminal twin, <code>abstractgateway-console</code>, which the console's Done step
@@ -1349,9 +1456,9 @@ it prints the command and the <code>abstractcode login</code> line instead.</p>
 the code in its body is its only credential, it answers only loopback socket
 peers without proxy headers, and a browser handover code does not work there
 (nor the reverse).</p>
-<h2 id="why-the-gateway-runs-each-apps-own-server">Why the gateway runs each app's own server<a class="headerlink" href="#why-the-gateway-runs-each-apps-own-server" title="Permanent link">&para;</a></h2>
-<p>The gateway could in principle serve the apps' built files itself. It does
-not, because each app's server does real work:</p>
+<h2 id="how-the-apps-are-served">How the apps are served<a class="headerlink" href="#how-the-apps-are-served" title="Permanent link">&para;</a></h2>
+<p>Each app runs its own small server, started by the gateway, rather than being
+served as static files by the gateway. The app's server does real work:</p>
 <ul>
 <li>it holds the sign-in (<code>/api/connection/gateway</code>, HttpOnly session cookies,
   CSRF) and forwards <code>/api/*</code> to the gateway on the same origin, which is how
@@ -1362,75 +1469,26 @@ not, because each app's server does real work:</p>
 <li>Observer reveals local folders, Flow keeps its connection file, and
   Continuum proxies the agora hub.</li>
 </ul>
-<p>Serving the files alone would break sign-in and live updates in every app.</p>
+<p>This is why each app has its own port. The gateway gives each server its
+port, bind address and gateway URL: Continuum as launch flags (<code>--port</code>,
+<code>--host</code>, <code>--gateway-url</code>), which win over its saved settings file; the
+other four apps in the environment (<code>PORT</code>, <code>HOST</code>, <code>&lt;APP&gt;_GATEWAY_URL</code>).</p>
 <h2 id="settings">Settings<a class="headerlink" href="#settings" title="Permanent link">&para;</a></h2>
-<p>Settings, changed from the Apps page (<em>Advanced: apps settings</em>), the TUI
-(Runtimes → <em>Runtime knobs</em> → <em>Edit apps settings</em>) or the terminal
-(<code>abstractgateway apps config get|set NAME VALUE</code>). A saved value applies at the
-next app start or download. See
+<p>Five settings control the apps: <code>apps.node</code> (<em>Node.js for apps</em>),
+<code>apps.ports</code> (<em>Ports for apps</em>), <code>apps.host</code> (<em>Where apps listen</em>),
+<code>apps.npm_registry</code> (<em>npm registry</em>) and <code>apps.pypi_url</code> (<em>Node.js download
+index</em>). Change them from the Apps page (<em>Advanced: apps settings</em>), the
+terminal console (Runtimes → <em>Runtime knobs</em> → <em>Edit apps settings</em>) or the
+CLI:</p>
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>apps<span class="w"> </span>config<span class="w"> </span>get<span class="w"> </span><span class="o">[</span>NAME<span class="o">]</span><span class="w"> </span><span class="o">[</span>--json<span class="o">]</span>
+abstractgateway<span class="w"> </span>apps<span class="w"> </span>config<span class="w"> </span><span class="nb">set</span><span class="w"> </span>ports<span class="w"> </span><span class="m">3100</span>-3199<span class="w">     </span><span class="c1"># "" clears back to the default</span>
+</code></pre></div>
+<p>A saved value applies at the next app start or download. Values, defaults and
+the environment-variable fallbacks are listed in
 <a href="../configuration/#browser-apps-settings-apps">configuration.md</a>.</p>
-<table>
-<thead>
-<tr>
-<th>Setting (console label)</th>
-<th>Default</th>
-<th>Effect</th>
-<th>CLI</th>
-<th>Legacy env (fallback)</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>apps.node</code> (<em>Node.js for apps</em>)</td>
-<td><code>auto</code></td>
-<td><code>auto</code>: Node.js on the machine, else the gateway's own. <code>managed</code>: always the gateway's own. <code>system</code>: never install Node.js. A path: use that <code>node</code>.</td>
-<td><code>apps config set node auto</code></td>
-<td><code>ABSTRACTGATEWAY_APPS_NODE</code></td>
-</tr>
-<tr>
-<td><code>apps.ports</code> (<em>Ports for apps</em>)</td>
-<td>(empty)</td>
-<td>A port or range, e.g. <code>3100-3199</code>. When set, apps only use ports in it.</td>
-<td><code>apps config set ports 3100-3199</code></td>
-<td><code>ABSTRACTGATEWAY_APPS_PORTS</code></td>
-</tr>
-<tr>
-<td><code>apps.host</code> (<em>Where apps listen</em>)</td>
-<td><code>127.0.0.1</code></td>
-<td>Where the apps listen. Other values expose them to the network: use your own access control.</td>
-<td><code>apps config set host 0.0.0.0</code></td>
-<td><code>ABSTRACTGATEWAY_APPS_HOST</code></td>
-</tr>
-<tr>
-<td><code>apps.npm_registry</code> (<em>npm registry</em>)</td>
-<td><code>https://registry.npmjs.org</code></td>
-<td>npm registry (mirror) for app downloads and their dependencies.</td>
-<td><code>apps config set npm_registry URL</code></td>
-<td><code>ABSTRACTGATEWAY_APPS_NPM_REGISTRY</code></td>
-</tr>
-<tr>
-<td><code>apps.pypi_url</code> (<em>Node.js download index</em>)</td>
-<td><code>https://pypi.org/pypi</code></td>
-<td>Where the Node.js build is looked up.</td>
-<td><code>apps config set pypi_url URL</code></td>
-<td><code>ABSTRACTGATEWAY_APPS_PYPI_URL</code></td>
-</tr>
-</tbody>
-</table>
-<p>Console: Apps → <em>Advanced: apps settings</em> (one field per setting, with where its
-value comes from). TUI: Runtimes → <em>Runtime knobs</em> → <em>Edit apps settings</em>. CLI:
-<code>abstractgateway apps config get [NAME] [--json]</code> / <code>set NAME VALUE</code> (<code>""</code>
-clears), on the data dir directly. All three validate the same way and show the
-gateway's sentence on a refusal.</p>
-<p>The legacy environment variables are only a fallback: a saved value always wins
-(stored &gt; env &gt; default). A value that comes from the environment the gateway
-was started with is reported as <code>source: env</code> ("From the environment" on the
-page); an env value a saved one shadows is reported as <code>env_shadowed</code>.</p>
-<p>Installing Node.js or an app runs software on the gateway host, so it follows
-the host's <strong>allow engine install</strong> setting: on by default when the gateway
-listens on this machine only (loopback), off otherwise. Install, update,
-start and stop need an admin. Any signed-in user can list the apps and open a
-running one (as themselves).</p>
+<p>Install, update, start and stop need an admin, and installs follow
+<a href="#who-may-install">Who may install</a>. Any signed-in user can list the apps and
+open a running one (as themselves).</p>
 <h2 id="without-internet">Without internet<a class="headerlink" href="#without-internet" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Apps already installed keep working offline.</li>
@@ -1483,9 +1541,9 @@ Python environment as the gateway; a gateway-only install may not.</p>
 <li><strong>Install</strong> installs <code>abstractassistant</code> into the gateway's own Python as a
   job (<code>uv pip install --python &lt;gateway python&gt; abstractassistant</code>, or pip
   when there is no uv), with every <code>abstract*</code> package the gateway runs
-  pinned to its current version by a constraints file, so installing the
-  Assistant never changes the gateway. The same rule as the other installs
-  decides who may install (see <a href="#who-may-install">Who may install</a>).</li>
+  pinned to its current version (<code>name==version</code> requirements in the same
+  command), so installing the Assistant never changes the gateway. The same
+  rule as the other installs decides who may install (see <a href="#who-may-install">Who may install</a>).</li>
 <li><strong>Open</strong> starts it on the gateway's computer: <code>open -a AbstractAssistant.app</code>
   when the app exists, otherwise its command, as a separate process with none
   of the gateway's tokens, secrets or keys in its environment. A running
@@ -1493,7 +1551,7 @@ Python environment as the gateway; a gateway-only install may not.</p>
   it was started from its command, the card says its icon is in the menu
   bar). The Assistant keeps its own connection settings (its Settings window,
   Connection): the gateway passes it no address and no token, and it has no
-  one-time sign-in handover yet.</li>
+  one-time sign-in handover.</li>
 <li><strong>From another computer</strong> the card says "The Assistant runs on the gateway's
   computer: open it there." with no button: it is a desktop app for that
   computer's screen.</li>
@@ -1524,7 +1582,7 @@ Python environment as the gateway; a gateway-only install may not.</p>
 <tr>
 <td><code>POST /apps/{id}/install</code> <code>{"version"?, "launch"?, "with_terminal"?}</code></td>
 <td>admin</td>
-<td>ONE job: Node.js if needed, download, check, dependencies, then the terminal app when the row's <code>install_parts</code> has <code>"tui"</code> (<code>with_terminal: false</code> skips it); the job's <code>parts</code> are its child rows. Starts nothing unless <code>launch: true</code>. For <code>assistant</code>: installs <code>abstractassistant</code> into the gateway's Python (constraints keep every <code>abstract*</code> package as it is).</td>
+<td>ONE job: Node.js if needed, download, check, dependencies, then the terminal app when the row's <code>install_parts</code> has <code>"tui"</code> (<code>with_terminal: false</code> skips it); the job's <code>parts</code> are its child rows. Starts nothing unless <code>launch: true</code>. For <code>assistant</code>: installs <code>abstractassistant</code> into the gateway's Python (every <code>abstract*</code> package is pinned to its current version in the same command).</td>
 </tr>
 <tr>
 <td><code>POST /apps/{id}/update</code> <code>{"version"?}</code></td>

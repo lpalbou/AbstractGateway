@@ -16,7 +16,7 @@
         <link rel="prev" href="../engines/">
       
       
-        <link rel="next" href="../shipped-workflows/">
+        <link rel="next" href="../tray/">
       
       
         
@@ -232,6 +232,33 @@
     
   
     Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
   
 
     
@@ -497,10 +524,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#real-examples" class="md-nav__link">
+  <a href="#examples" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Real examples
+        Examples
       
     </span>
   </a>
@@ -549,6 +576,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../shipped-workflows/" class="md-nav__link">
         
   
@@ -576,6 +630,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../deep-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deep Research Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../deployment/" class="md-nav__link">
         
   
@@ -584,6 +665,33 @@
     
   
     Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apple-local-gateway-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apple Silicon Local Setup
   
 
     
@@ -684,33 +792,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../tray/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Desktop Tray
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../security/" class="md-nav__link">
         
   
@@ -773,6 +854,33 @@
     
   
     FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
   
 
     
@@ -863,10 +971,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#real-examples" class="md-nav__link">
+  <a href="#examples" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Real examples
+        Examples
       
     </span>
   </a>
@@ -973,7 +1081,6 @@ files that later read as installed.</p>
 </tr>
 </tbody>
 </table>
-<p>The request bodies are unchanged from before this contract (the cancel body is optional).</p>
 <h3 id="the-event-stream">The event stream<a class="headerlink" href="#the-event-stream" title="Permanent link">&para;</a></h3>
 <p><code>GET /models/downloads/stream</code> sends <code>event: downloads</code> with
 <code>data: {"jobs": [...]}</code> (the same list as <code>GET /models/downloads</code>) each time
@@ -1000,7 +1107,7 @@ final state). Polling keeps working; the stream is optional.</p>
 </tr>
 <tr>
 <td><code>status</code></td>
-<td>the coarse lifecycle older pollers read: <code>running</code> (queued included), <code>completed</code>, <code>failed</code>, <code>cancelled</code>; <code>host_status</code> keeps AbstractCore's own word</td>
+<td>the coarse lifecycle for simple pollers: <code>running</code> (queued included), <code>completed</code>, <code>failed</code>, <code>cancelled</code>; <code>host_status</code> keeps AbstractCore's own word</td>
 </tr>
 <tr>
 <td><code>state</code></td>
@@ -1095,18 +1202,15 @@ all are.</p>
   <code>transitions</code>.</li>
 <li><code>verifying</code>: checking what arrived (Ollama's sha256, every Hugging Face file whole).</li>
 <li><code>installing</code>: moving into the library (Ollama "writing manifest", LM Studio "Finalizing download...").</li>
-<li><code>done</code>, <code>failed</code>, <code>cancelled</code>: finished. <code>cancelled</code> ONLY follows a cancel request
+<li><code>done</code>, <code>failed</code>, <code>cancelled</code>: finished. <code>cancelled</code> only follows a cancel request
   (<code>cancelled_by</code> says whose); a download that stops on its own -- a dropped
   connection, a Hub error, a full disk, the Gateway restarting (the job then
   reads <code>failed</code> from its saved snapshot, and the transfer stops with it) -- is
   <code>failed</code>, with <code>ended_reason</code>.</li>
 </ul>
 <p><code>verifying</code> and <code>installing</code> never count as stalls.</p>
-<h3 id="real-examples">Real examples<a class="headerlink" href="#real-examples" title="Permanent link">&para;</a></h3>
-<p>Captured on a hermetic Gateway (port 18822, scratch caches) with the real
-recommended artifact ids; the voice and image files came from a local stand-in
-for huggingface.co and LM Studio from a stand-in <code>lms</code> that prints exactly what
-the real one prints. Key fields only.</p>
+<h3 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h3>
+<p>One job per state, key fields only (sizes are illustrative).</p>
 <p><code>queued</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"job_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"dl_2b0e98639928"</span><span class="p">,</span><span class="w"> </span><span class="nt">"provider"</span><span class="p">:</span><span class="w"> </span><span class="s2">"ollama"</span><span class="p">,</span><span class="w"> </span><span class="nt">"artifact"</span><span class="p">:</span><span class="w"> </span><span class="s2">"all-minilm"</span><span class="p">,</span><span class="w"> </span><span class="nt">"status"</span><span class="p">:</span><span class="w"> </span><span class="s2">"running"</span><span class="p">,</span><span class="w"> </span><span class="nt">"state"</span><span class="p">:</span><span class="w"> </span><span class="s2">"queued"</span><span class="p">,</span><span class="w"> </span><span class="nt">"bytes_done"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"bytes_total"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"size_unknown"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w"> </span><span class="nt">"percent"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"bytes_per_second"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"eta_s"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"updated_at"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-09-24T03:28:38.435Z"</span><span class="p">,</span><span class="w"> </span><span class="nt">"current_file"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"queued (detached)"</span><span class="p">,</span><span class="w"> </span><span class="nt">"error"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"stalled_for_s"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">}</span>
 </code></pre></div>
@@ -1188,8 +1292,8 @@ from zero on the next download; files that were complete are kept.</p>
   answers 404, while its children (AbstractCore jobs, persisted) can still be
   read with <code>GET /models/download/{dl_id}</code> or <code>GET /jobs</code>.</li>
 <li><code>lms get</code> is LM Studio's own CLI. Its progress bar and its cancel question
-  are what this relies on; if a future <code>lms</code> prints neither, the job falls
-  back to bytes on disk and a plain stop of the CLI.</li>
+  are what the job reads; when <code>lms</code> prints neither, the job falls back to
+  bytes on disk and a plain stop of the CLI.</li>
 </ul>
 
 

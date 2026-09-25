@@ -13,10 +13,10 @@
         <link rel="canonical" href="https://www.lpalbou.info/AbstractGateway/shipped-workflows/">
       
       
-        <link rel="prev" href="../model-downloads/">
+        <link rel="prev" href="../tray/">
       
       
-        <link rel="next" href="../deployment/">
+        <link rel="next" href="../deep-research/">
       
       
         
@@ -251,6 +251,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../getting-started/" class="md-nav__link">
         
   
@@ -410,6 +437,33 @@
       
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
     
   
   
@@ -542,6 +596,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../deep-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deep Research Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../deployment/" class="md-nav__link">
         
   
@@ -550,6 +631,33 @@
     
   
     Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apple-local-gateway-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apple Silicon Local Setup
   
 
     
@@ -650,33 +758,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../tray/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Desktop Tray
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../security/" class="md-nav__link">
         
   
@@ -739,6 +820,33 @@
     
   
     FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
   
 
     
@@ -984,10 +1092,6 @@ default agent, install the replacement bundle first, then remove the old file.</
   (<a href="../configuration/">configuration.md</a>).</li>
 <li>Shipped bundle versions are immutable pins; newer versions install alongside
   them through the normal bundle upload or workflow catalog routes.</li>
-<li>Changing the shipped set is a deliberate act in two places: the force-include
-  pins in <code>pyproject.toml</code> and the matching <code>!flows/bundles/&lt;name&gt;</code> negation in
-  <code>.gitignore</code>. <code>tests/test_gateway_shipped_default_workflows.py</code> fails if a
-  pinned artifact is untracked or does not load.</li>
 <li>The editable sources for the shipped workflows are VisualFlow JSON files in
   the AbstractFlow repository (<code>abstractflow/examples/flows/</code>), packed with
   <code>abstractflow bundle pack</code>.</li>

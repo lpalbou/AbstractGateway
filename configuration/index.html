@@ -251,6 +251,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../getting-started/" class="md-nav__link">
         
   
@@ -859,6 +886,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../shipped-workflows/" class="md-nav__link">
         
   
@@ -886,6 +940,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../deep-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deep Research Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../deployment/" class="md-nav__link">
         
   
@@ -894,6 +975,33 @@
     
   
     Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apple-local-gateway-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apple Silicon Local Setup
   
 
     
@@ -994,33 +1102,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../tray/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Desktop Tray
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../security/" class="md-nav__link">
         
   
@@ -1083,6 +1164,33 @@
     
   
     FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
   
 
     
@@ -1541,7 +1649,19 @@
 
 
 <h1 id="abstractgateway-configuration">AbstractGateway — Configuration<a class="headerlink" href="#abstractgateway-configuration" title="Permanent link">&para;</a></h1>
-<p>AbstractGateway is configured primarily via <strong>environment variables</strong> (plus a few CLI flags).</p>
+<p>AbstractGateway is configured in three places:</p>
+<ul>
+<li><strong>Runtime settings</strong>, stored in the data dir and changed from the web
+  console, the terminal console, the tray or the CLI (<code>abstractgateway
+  network</code>, <code>abstractgateway apps config</code>, <code>abstractgateway config
+  get|set|unset</code>): network exposure, reverse proxy, browser apps, engine
+  installs, backlog folder, exec runner, process manager, stop kill switch.</li>
+<li><strong>AbstractCore configuration</strong> for capability defaults, provider keys and
+  other values AbstractCore owns (see <a href="#two-entry-points-one-store">Two entry points, one store</a>).</li>
+<li><strong>Launch flags and environment variables</strong> for deployment choices such as
+  the data dir, auth mode, stores and limits.</li>
+</ul>
+<p>This page is the reference for all three.</p>
 <h2 id="install-extras-recommended">Install extras (recommended)<a class="headerlink" href="#install-extras-recommended" title="Permanent link">&para;</a></h2>
 <p>The base install (<code>pip install abstractgateway</code>) is the remote-light server
 profile: HTTP/SSE, durable stores, <code>AbstractRuntime</code>,
@@ -1562,10 +1682,11 @@ sentence-transformer embeddings on the Gateway host.</p>
 - <code>abstractgateway[tray]</code>: the desktop menu bar / system tray icon shown by <code>abstractgateway serve</code> (pystray + Pillow; see <a href="../tray/">tray.md</a>)
 - <code>abstractgateway[docs]</code>: MkDocs site tooling
 - <code>abstractgateway[dev]</code>: local dev/test deps</p>
-<p>Default dependency floors:
-- <code>AbstractRuntime&gt;=0.4.26</code>
-- <code>abstractagent&gt;=0.3.12</code>
-- <code>AbstractMemory[lancedb]&gt;=0.2.6</code></p>
+<p>Default dependency floors (see <code>pyproject.toml</code>):
+- <code>AbstractRuntime&gt;=0.4.35</code>
+- <code>abstractcore&gt;=2.15.2</code>
+- <code>abstractagent&gt;=0.3.13</code>
+- <code>AbstractMemory[lancedb]&gt;=0.3.0</code></p>
 <p>Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.</p>
 <h2 id="configuration-helper">Configuration helper<a class="headerlink" href="#configuration-helper" title="Permanent link">&para;</a></h2>
@@ -1610,7 +1731,8 @@ token hash in <code>auth/users.json</code>, and can write the raw bootstrap toke
   unavailable, Gateway fails clearly instead of starting with an empty default
   registry. Setting this replaces the shipped registry with your own directory.
   Evidence: <code>src/abstractgateway/config.py</code></li>
-<li><code>ABSTRACTGATEWAY_WORKFLOW_SOURCE</code>: <code>bundle</code> (default) or <code>visualflow</code><br />
+<li><code>ABSTRACTGATEWAY_WORKFLOW_SOURCE</code>: <code>bundle</code> (the default and only
+  supported source)<br />
   Evidence: <code>src/abstractgateway/service.py</code> (<code>create_default_gateway_service</code>)</li>
 </ul>
 <h3 id="authentication-and-user-routing">Authentication and user routing<a class="headerlink" href="#authentication-and-user-routing" title="Permanent link">&para;</a></h3>
@@ -1629,8 +1751,9 @@ state refuses to start. When any auth setting is present, <code>serve</code> kee
   exists and writes the first-login token to
   <code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/auth/bootstrap-admin-token</code> (mode <code>0600</code>). The
   token is printed on a loopback bind and hidden on other binds;
-  <code>serve --print-token</code> / <code>--no-print-token</code> override that (the older
-  <code>ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1</code> still acts as <code>--print-token</code>). Until
+  <code>serve --print-token</code> / <code>--no-print-token</code> override that
+  (<code>ABSTRACTGATEWAY_BOOTSTRAP_PRINT_TOKEN=1</code> is accepted as an alias of
+  <code>--print-token</code>). Until
   the first-run guide is completed, a one-time sign-in link
   (<code>/console#claim=...</code>, 10 minutes, single use, loopback only) is printed
   instead</li>
@@ -1638,17 +1761,16 @@ state refuses to start. When any auth setting is present, <code>serve</code> kee
   browser session; accepted only from a loopback peer without proxy headers.
   The response carries <code>claimed: true</code>, <code>first_run</code> (the guide state) and
   <code>claim: {created_by}</code>, which says who minted the link: <code>serve</code> (first run),
-  <code>cli</code> (<code>claim-url</code> / <code>abstractgateway claim</code>), <code>tray</code> (tray sign-in), or
-  <code>null</code> for a link minted before the field existed.
+  <code>cli</code> (<code>claim-url</code> / <code>abstractgateway claim</code>) or <code>tray</code> (tray sign-in).
   <code>GET /api/gateway/host/first-run</code> / <code>POST</code> (admin) read and record the
   first-run guide state</li>
 </ul>
-<p>Legacy server/operator mode uses a Gateway bearer token:</p>
+<p>Server/operator token mode uses a shared Gateway bearer token:</p>
 <ul>
 <li><code>ABSTRACTGATEWAY_AUTH_TOKEN</code>: single Gateway admin token</li>
 <li><code>ABSTRACTGATEWAY_AUTH_TOKENS</code>: comma-separated Gateway admin tokens</li>
 </ul>
-<p>That legacy bearer token maps to <code>local-admin</code> and is not accepted by browser
+<p>That shared bearer token maps to <code>local-admin</code> and is not accepted by browser
 sign-in flows such as <code>/console</code> or AbstractFlow. User-auth mode resolves
 Gateway user bearer tokens to principals and routes each principal to a separate
 service/data plane:</p>
@@ -1701,6 +1823,7 @@ id or CSRF token. Session-authenticated writes carry
 AbstractCode, AbstractAssistant, and AbstractObserver should authenticate as the
 current user/session in hosted mode. They should not share one app-server
 Gateway token for all users.</p>
+<p><a id="network-exposure-localhost--local-network--internet"></a></p>
 <h2 id="network-exposure-localhost-local-network-internet">Network exposure (localhost / local network / internet)<a class="headerlink" href="#network-exposure-localhost-local-network-internet" title="Permanent link">&para;</a></h2>
 <p>One setting decides who can reach the gateway. The console, the console TUI
 (Connection screen), the tray and <code>abstractgateway network</code> all edit the same
@@ -1741,26 +1864,26 @@ runtime-config key (<code>network</code>); there is no environment variable for 
   <code>effective.overridden_by_cli: true</code>. A restart replays the same command
   line, so it cannot apply the setting: the status says so
   (<code>restart.applies: false</code> + <code>restart.reason</code>) and the restart route refuses.</li>
-<li><strong>The login service lets the setting apply</strong> (2026-09-24). The LaunchAgent,
+<li><strong>The login service lets the setting apply.</strong> The LaunchAgent,
   systemd unit, XDG entry and Windows Run entry written by
   <code>abstractgateway service install|enable</code> start plain <code>serve</code>: no <code>--host</code>, no
   <code>--port</code>. Install/enable first <strong>seed</strong> the setting through the same change
   door as <code>network set</code> (same auth refusals; a refusal registers nothing):
-  nothing stored yet → <code>localhost</code> on the chosen port (the bind every earlier
-  registration had); a stored mode/port → kept. <code>service install|enable --host H
+  nothing stored yet → <code>localhost</code> on the chosen port; a stored mode/port →
+  kept. <code>service install|enable --host H
   --port P</code> are written <strong>into the setting</strong> (<code>127.0.0.1</code> → <code>localhost</code>,
   <code>0.0.0.0</code> → <code>lan</code>, or the stored <code>internet</code>; a specific address is refused),
   never onto the command line. <code>--pin-command-line</code> is the technical escape
-  hatch: <code>serve --host H --port P</code> on the command line as before, the setting
+  hatch: <code>serve --host H --port P</code> on the command line, the setting
   untouched and overridden (<code>overridden_by_cli</code>, <code>service status</code> names it).</li>
-<li><strong>Registrations from before 2026-09-24 carry <code>--host/--port</code>.</strong> <code>service
+<li><strong>A registration that pins <code>--host/--port</code> reads "needs repair".</strong> <code>service
   status</code> (and the tray's <em>Start at login — needs repair</em>) says
   "pinned to 127.0.0.1:N by the login item — run <code>abstractgateway service enable</code>
   again to let the Network setting apply". <code>service enable</code> (or the tray click)
   rewrites the registration in place, keeping a stored mode. The gateway
-  running at that moment still has the old command line, which a restart
-  replays: <code>abstractgateway service install</code> restarts it from the new
-  registration now, or log out and back in.</li>
+  running at that moment keeps its command line until it restarts:
+  <code>abstractgateway service install</code> restarts it from the new registration, or
+  log out and back in.</li>
 <li><strong>Auth is checked before anything is stored.</strong> <code>lan</code>/<code>internet</code> are refused
   (HTTP 409, nothing written, <code>refused_reason</code> + <code>fix</code>) when the gateway was
   started with authentication switched off (<code>ABSTRACTGATEWAY_SECURITY=0</code> /
@@ -2238,7 +2361,7 @@ the running job instead of starting a second copy of the provider's tool; the
 returned job's <code>joined</code> counter says so.</p>
 <p><strong>Jobs run in AbstractCore's host job registry.</strong> Downloads, deletes and
 engine installs are jobs of one kind (<code>host_job_v1</code>), readable at
-<code>GET /api/gateway/jobs/{id}</code> as well as through the older
+<code>GET /api/gateway/jobs/{id}</code> as well as through
 <code>GET /api/gateway/models/download/{job}</code> (which keeps its <code>{ok, job}</code> envelope
 and reports a queued job as <code>running</code>). AbstractCore keeps a snapshot of each
 job on disk, so jobs started by <code>abstractcore models download</code> on the same
@@ -2257,7 +2380,7 @@ engines …</code>): the host's hardware, the local inference engines, a model c
 with a "fits this machine" verdict per download, the models already installed,
 and the jobs that download, delete or install. The gateway does not detect
 engines or size models itself; it serves AbstractCore's answers
-(AbstractCore 2.14.0 or newer), so both entry points always agree.</p>
+so both entry points always agree.</p>
 <table>
 <thead>
 <tr>
@@ -2347,10 +2470,10 @@ variable for it. A dry run ("show the command") is always allowed, and every
 install is admin-only and recorded in the audit log.</p>
 <h3 id="browser-apps-settings-apps">Browser apps settings (<code>apps.*</code>)<a class="headerlink" href="#browser-apps-settings-apps" title="Permanent link">&para;</a></h3>
 <p>The browser apps (Apps page: Flow, Code, Observer, Continuum, Entity) read five
-runtime-config settings. They replace the <code>ABSTRACTGATEWAY_APPS_*</code> environment
-variables, which remain the labeled fallback rung (precedence <strong>stored &gt; env &gt;
-default</strong>, the runtime-config rule: a saved value always wins; an env value it
-shadows is reported as <code>env_shadowed</code>).</p>
+runtime settings. Precedence is <strong>stored &gt; env &gt; default</strong>: a saved value
+always wins; the <code>ABSTRACTGATEWAY_APPS_*</code> environment variable named in the
+table is the fallback, and an env value that a saved one shadows is reported
+as <code>env_shadowed</code>.</p>
 <table>
 <thead>
 <tr>
@@ -2358,6 +2481,7 @@ shadows is reported as <code>env_shadowed</code>).</p>
 <th>Label</th>
 <th>Default</th>
 <th>Value</th>
+<th>Environment fallback</th>
 </tr>
 </thead>
 <tbody>
@@ -2366,30 +2490,35 @@ shadows is reported as <code>env_shadowed</code>).</p>
 <td>Node.js for apps</td>
 <td><code>auto</code></td>
 <td><code>auto</code> (Node.js 18+ on this computer, else the gateway's own) · <code>managed</code> · <code>system</code> · an absolute path to <code>node</code></td>
+<td><code>ABSTRACTGATEWAY_APPS_NODE</code></td>
 </tr>
 <tr>
 <td><code>apps.ports</code></td>
 <td>Ports for apps</td>
 <td>(empty)</td>
 <td>a port or <code>low-high</code>; empty = each app's usual port, else the next free one in 3100-3199</td>
+<td><code>ABSTRACTGATEWAY_APPS_PORTS</code></td>
 </tr>
 <tr>
 <td><code>apps.host</code></td>
 <td>Where apps listen</td>
 <td><code>127.0.0.1</code></td>
 <td>an IP or host name; <code>0.0.0.0</code> opens the apps to every network this computer is on</td>
+<td><code>ABSTRACTGATEWAY_APPS_HOST</code></td>
 </tr>
 <tr>
 <td><code>apps.npm_registry</code></td>
 <td>npm registry</td>
 <td><code>https://registry.npmjs.org</code></td>
 <td>an http(s) URL (a mirror)</td>
+<td><code>ABSTRACTGATEWAY_APPS_NPM_REGISTRY</code></td>
 </tr>
 <tr>
 <td><code>apps.pypi_url</code></td>
 <td>Node.js download index</td>
 <td><code>https://pypi.org/pypi</code></td>
 <td>an http(s) URL (a mirror)</td>
+<td><code>ABSTRACTGATEWAY_APPS_PYPI_URL</code></td>
 </tr>
 </tbody>
 </table>
@@ -2482,8 +2611,9 @@ triage and process routes, the exec runner at each poll, the skills shelf):</p>
 <li>the launch flag of the running gateway: <code>abstractgateway serve --backlog-root PATH</code>
    and <code>--exec-runner on|off</code> (for that run only; source <code>flag</code>);</li>
 <li>the saved setting (source <code>stored</code>);</li>
-<li>a legacy environment value, for gateways set up before these settings
-   existed (source <code>env</code>; reported, never needed; saving a value replaces it);</li>
+<li>an environment value (<code>ABSTRACTGATEWAY_TRIAGE_REPO_ROOT</code>,
+   <code>ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER</code>; source <code>env</code>;
+   supported for compatibility, never needed; a saved value wins);</li>
 <li>the default (source <code>default</code>).</li>
 </ol>
 <p><code>GET /api/gateway/admin/runtime-config</code> serves each as <code>{value, source, key,
@@ -2598,8 +2728,8 @@ loopback reads as a non-admin read-only principal — see
 <p>See <a href="../api/#host-state-and-model-residency">api.md</a> for payload shapes and
 the <code>model_residency_row_v1</code> field list.</p>
 <h3 id="host-control-pause-desktop-tray-restart-update">Host control: pause, desktop tray, restart, update<a class="headerlink" href="#host-control-pause-desktop-tray-restart-update" title="Permanent link">&para;</a></h3>
-<p>The process's own controls (system tray + console, 2026-09-05). Reads are
-user-level; every write is admin-only.</p>
+<p>The process's own controls, used by the desktop tray and the console. Reads
+are user-level; every write is admin-only.</p>
 <table>
 <thead>
 <tr>
@@ -2649,9 +2779,8 @@ user-level; every write is admin-only.</p>
 <p>The tray icon has <strong>no setting</strong>: while the gateway serves a desktop that can
 hold it, it is there. It is absent only for reasons that are facts about the
 machine — no display, no <code>tray</code> extra, <code>serve --reload</code>, a runner-only process
-— and <code>GET /host/tray</code> names which. (The retired <code>desktop_tray</code> knob now
-refuses with that explanation rather than accepting a write that does
-nothing.) <code>GET /api/health</code> carries <code>"paused": true</code> while paused (status
+— and <code>GET /host/tray</code> names which. There is no <code>desktop_tray</code> setting; a
+write to that key is refused with this explanation. <code>GET /api/health</code> carries <code>"paused": true</code> while paused (status
 stays <code>healthy</code>). Full description: <a href="../tray/">tray.md</a>.</p>
 <h3 id="runtime-scoped-core-capability-defaults">Runtime-scoped Core capability defaults<a class="headerlink" href="#runtime-scoped-core-capability-defaults" title="Permanent link">&para;</a></h3>
 <p>In hosted user-auth mode, <code>GET /api/gateway/config/capability-defaults</code> returns
@@ -2671,9 +2800,8 @@ remote-provider defaults for their own runtime without mutating the operator's
 global AbstractCore config or other users. The route schema, normalization,
 task-specific generated-media suffixes, and file format come from AbstractCore
 capability-default contracts. Capability defaults live only in the AbstractCore
-config file; a <code>config/capability_defaults.json</code> overlay from an older Gateway is
-ignored, and its defaults are recreated with <code>abstractgateway-config set-default
-...</code>. Provider API keys and raw secrets are
+config file; a <code>config/capability_defaults.json</code> file in the data dir is not
+read (recreate such defaults with <code>abstractgateway-config set-default ...</code>). Provider API keys and raw secrets are
 not returned by these routes. Use Gateway provider connections when a route
 default needs an API key or custom base URL.</p>
 <p>Gateway model discovery delegates to AbstractRuntime's AbstractCore discovery
@@ -2701,7 +2829,7 @@ abstractgateway-config<span class="w"> </span>defaults<span class="w"> </span>--
 </code></pre></div>
 <h4 id="modality-rows-and-task-rows">Modality rows and task rows<a class="headerlink" href="#modality-rows-and-task-rows" title="Permanent link">&para;</a></h4>
 <p><code>output.image</code>, <code>output.video</code> and <code>output.scene3d</code> are the <strong>parent</strong> rows of
-their <code>output.&lt;modality&gt;.&lt;task&gt;</code> siblings, not legacy duplicates of them. The
+their <code>output.&lt;modality&gt;.&lt;task&gt;</code> siblings, not duplicates of them. The
 parent answers every task of that modality that has no row of its own, so
 setting it alone is the simple path (one image model for generate, edit and
 upscale) and is what a fresh install seeds. A task row overrides it for that
@@ -2841,14 +2969,14 @@ no matches until assertions are written.</p>
 - <code>ABSTRACTGATEWAY_RUN_SCAN_LIMIT</code> (default <code>200</code>)</p>
 <p>Evidence: <code>src/abstractgateway/config.py</code>, <code>src/abstractgateway/runner.py</code>.</p>
 <h3 id="stop-and-the-kill-switch">Stop and the kill switch<a class="headerlink" href="#stop-and-the-kill-switch" title="Permanent link">&para;</a></h3>
-<p>A <code>cancel</code> command (the Stop button) cancels the run tree AND stops the model
-call that is executing now: the runtime hands the call a cancel event and the
+<p>A <code>cancel</code> command (the Stop button) cancels the run tree and also stops the
+model call that is executing: the runtime hands the call a cancel event and the
 provider stops within one token (MLX) or one stream chunk (any streaming
 provider). The stopped call is recorded as an <code>llm_call</code> step with status
 <code>cancelled</code> and <code>cancelled_by: command</code>.</p>
 <p>If a model call of the cancelled tree is still executing after the kill-switch
 deadline (a provider lane that cannot observe the event, e.g. a non-streaming
-HTTP request), the gateway kills THAT INFERENCE in process — never the gateway
+HTTP request), the gateway kills that inference in process, never the gateway
 process: other runs, sessions and the HTTP API keep working. The runtime
 injects an <code>EffectKilled</code> exception into the one thread executing the call (it
 unwinds within one token of a Python-level decode loop); the step is recorded
@@ -2982,8 +3110,8 @@ does not implicitly install them.</p>
     <code>http://host.docker.internal:1234/v1</code>, or another <code>/v1</code> endpoint.</li>
 <li><code>LMSTUDIO_BASE_URL</code> / <code>OLLAMA_BASE_URL</code>: named local endpoint providers for
   LM Studio and Ollama model discovery/routing from inside the Gateway container.</li>
-<li><code>ABSTRACTGATEWAY_VISION_BACKEND</code> / <code>ABSTRACTGATEWAY_VISION_BASE_URL</code> / <code>ABSTRACTGATEWAY_VISION_API_KEY</code> / <code>ABSTRACTGATEWAY_VISION_MODEL_ID</code>: Gateway-scoped image backend settings. Legacy <code>ABSTRACTVISION_*</code> names are still accepted by the lower package.</li>
-<li><code>ABSTRACTGATEWAY_VOICE_TTS_ENGINE</code> / <code>ABSTRACTGATEWAY_VOICE_STT_ENGINE</code>: Gateway-scoped voice engine settings. Legacy <code>ABSTRACTVOICE_*</code> names are still accepted by the lower package.</li>
+<li><code>ABSTRACTGATEWAY_VISION_BACKEND</code> / <code>ABSTRACTGATEWAY_VISION_BASE_URL</code> / <code>ABSTRACTGATEWAY_VISION_API_KEY</code> / <code>ABSTRACTGATEWAY_VISION_MODEL_ID</code>: Gateway-scoped image backend settings. The <code>ABSTRACTVISION_*</code> names are also accepted by the lower package.</li>
+<li><code>ABSTRACTGATEWAY_VOICE_TTS_ENGINE</code> / <code>ABSTRACTGATEWAY_VOICE_STT_ENGINE</code>: Gateway-scoped voice engine settings. The <code>ABSTRACTVOICE_*</code> names are also accepted by the lower package.</li>
 <li><code>ABSTRACTGATEWAY_VOICE_TTS_MODEL</code> / <code>ABSTRACTGATEWAY_VOICE_STT_MODEL</code>: Gateway-scoped TTS/STT model defaults.</li>
 <li><code>ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL</code> / <code>ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY</code>: remote voice endpoint used by AbstractVoice.</li>
 <li><code>GET /api/gateway/discovery/capabilities</code>: reports installed packages plus AbstractCore capability plugins for <code>voice</code>, <code>audio</code>, <code>vision</code>, and <code>music</code>; also returns <code>capabilities.contracts.version=1</code> with thin-client feature gates for AbstractFlow, AbstractAssistant, AbstractCode, shared run input/history endpoints, artifact search/import/export, direct voice/audio/image/video/music endpoints, workflow-backed image/video generation, and provider/session prompt-cache controls</li>

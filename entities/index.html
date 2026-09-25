@@ -16,7 +16,7 @@
         <link rel="prev" href="../architecture/">
       
       
-        <link rel="next" href="../tray/">
+        <link rel="next" href="../security/">
       
       
         
@@ -251,6 +251,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../getting-started/" class="md-nav__link">
         
   
@@ -413,6 +440,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../shipped-workflows/" class="md-nav__link">
         
   
@@ -440,6 +494,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../deep-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deep Research Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../deployment/" class="md-nav__link">
         
   
@@ -448,6 +529,33 @@
     
   
     Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apple-local-gateway-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apple Silicon Local Setup
   
 
     
@@ -728,33 +836,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../tray/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Desktop Tray
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../security/" class="md-nav__link">
         
   
@@ -817,6 +898,33 @@
     
   
     FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
   
 
     
@@ -1011,8 +1119,7 @@
 <h1 id="summoned-entities">Summoned entities<a class="headerlink" href="#summoned-entities" title="Permanent link">&para;</a></h1>
 <p>The gateway owns the lifecycle of <strong>summoned entities</strong> — persistent
 identities (like "Castor") that live across sessions, users, and workplaces;
-each summon is a re-adoption of the same self (earlier experiments called
-them <em>incarnations</em>). An entity is not a chatbot configuration: it is a home
+each summon is a re-adoption of the same self. An entity is not a chatbot configuration: it is a home
 directory holding everything the entity is and has lived, plus the lifecycle
 surface to create, inspect, verify, and summon it.</p>
 <p>This page uses human words first, API names in parentheses.</p>
@@ -1032,12 +1139,11 @@ surface to create, inspect, verify, and summon it.</p>
 <p>Next to those live the <strong>attested seed</strong> (<code>spark.yaml</code>, stored byte-verbatim
 at creation — the spark is engrammed once and kept for life) and the
 gateway's <code>manifest.json</code> (an internal record: the engraved owner key —
-<code>entity:&lt;name&gt;</code> on new homes; legacy homes keep their birth-era
-<code>entity:&lt;name&gt;@&lt;home-id&gt;</code> engraving for life because journals are
-append-only — plus creation time, the spark hash, and reserved fields for
+<code>entity:&lt;name&gt;</code>, or <code>entity:&lt;name&gt;@&lt;home-id&gt;</code> on homes created with that
+form, kept for life because journals are append-only — plus creation time, the spark hash, and reserved fields for
 the future key/signature work).</p>
-<p><strong>The entity's ID — the handle — is <code>&lt;name&gt;@&lt;gateway ip&gt;</code></strong> (operator
-ruling 2026-07-15), e.g. <code>castor@192.168.1.146</code>: the name at its home
+<p><strong>The entity's ID — the handle — is <code>&lt;name&gt;@&lt;gateway ip&gt;</code></strong>, e.g.
+<code>castor@192.168.1.146</code>: the name at its home
 gateway's current LAN address (or the operator-declared
 <code>ABSTRACTGATEWAY_DECLARED_ADDRESS</code>). That is what every operator surface
 shows as "Entity ID". The manifest string above is a birth marker, never
@@ -1203,10 +1309,9 @@ render-when-present: the field exists only for homes that have an inbox —
 an entity never handed a task shows no field, not a zero. The file schema
 is the cross-package contract for the runtime's day-open reader (the R-C
 loop half): event lines <code>{"event": "added"|"status", "task_id", …}</code> — see
-<code>abstractgateway/entity_tasks.py</code> for the authoritative shapes. Whether an
-operator-left task auto-opens the work phase or the entity elects the
-shift is the operator's ruling (plan D1); the inbox records facts either
-way.</p>
+<code>abstractgateway/entity_tasks.py</code> for the authoritative shapes. The inbox
+records facts; whether a task opens the work phase is decided by the entity's
+loop.</p>
 <h2 id="drive-ratios-cognition-health">Drive ratios (cognition health)<a class="headerlink" href="#drive-ratios-cognition-health" title="Permanent link">&para;</a></h2>
 <p><code>GET /entities/{name}/cognition</code> carries a <code>drives</code> block — memory's
 <code>cognition_health()</code> fold over the home's full ladder: questions
@@ -1294,7 +1399,7 @@ interleave without ever colliding with the journal.</p>
 (<code>{"redacted": "diary"}</code>). These HTTP endpoints serve the OPERATOR audience,
 so the serving end resolves that marker into the entry's <strong>gist</strong> — the
 entity's one-sentence summary, or the first ~120 characters when no explicit
-gist exists (the 2026-07-08 operator-audience ruling; <code>_operator_diary_display</code>).
+gist exists (<code>_operator_diary_display</code>).
 So the operator sees the diary's topology (the entity wrote <em>something</em>, it
 connects to <em>something</em>) <strong>and a gist of what it was about</strong> — never the full
 verbatim prose, which stays in the book and is fetched one entry at a time
@@ -1312,9 +1417,8 @@ the verbatim is the lossless original). Three shapes:</p>
 <li><strong>Born-digest records</strong> (interests, dreams): born as words — their
   digest is their complete text, never a compression. Served as-is with
   <code>born_digest: true</code> ("the words you see are all the words there are").</li>
-<li><strong>Diary projections</strong>: served to the <strong>operator</strong> from the book (the
-  2026-07-08 ruling — "the operator sees everything"; the prior 403
-  refusals were removed). The read is marker-first: a <code>diary_read</code> host
+<li><strong>Diary projections</strong>: served to the <strong>operator</strong> from the book. The read
+  is marker-first: a <code>diary_read</code> host
   marker (entry id, kind, visibility) lands in the entity's replay stream
   before the words return, so the disclosure is recorded in the entity's
   biography. Private entries are included. Born-digest diary kinds
@@ -1322,13 +1426,11 @@ the verbatim is the lossless original). Three shapes:</p>
 </ul>
 <h3 id="the-operator-diary-door-reads-are-visible-events">The operator diary door (reads are visible events)<a class="headerlink" href="#the-operator-diary-door-reads-are-visible-events" title="Permanent link">&para;</a></h3>
 <p><code>GET /api/gateway/entities/{name}/diary/{entry_id}?reason=...</code> serves a
-book entry — private included — to the <strong>operator</strong> channel. This is the
-maintainer's debugging ruling made honest rather than covert: the book
-already lives unencrypted on the operator's machine; this door makes the
-read <em>recorded</em> instead of silent. <code>reason</code> is <strong>optional</strong> (defaults to
-"operator review" — identity + act + timestamp is the audit value; a
-mandatory free-text field was friction, removed per the 2026-07-08 21:39
-ruling), and every disclosure lands a <code>diary_read</code> host marker (entry id +
+book entry — private included — to the <strong>operator</strong> channel. The book
+already lives unencrypted on the operator's machine; this door makes each
+read <em>recorded</em> rather than silent. <code>reason</code> is <strong>optional</strong> (default
+"operator review"; the identity, the act and the timestamp are the audit
+record), and every disclosure lands a <code>diary_read</code> host marker (entry id +
 reason) in the entity's replay stream before the words return — the
 entity's biography shows who read it and why. Failed lookups disclose
 nothing and are not marked. Both full-content doors (this one and the
@@ -1342,10 +1444,6 @@ book), not the operator's HTTP surface.</p>
 <li>A refused prelude aborts the summon.</li>
 <li>Actor strings are made true at the door; everything downstream trusts them.</li>
 </ul>
-<p>Design history: <code>a2a/threads/0004-gateway-entity-lifecycle/</code> (the charter,
-both halves) and <code>a2a/threads/0003-named-persistent-identity/</code> in the
-framework monorepo; reference implementation
-<code>abstractruntime/tests/test_readoption_experiment.py</code>.</p>
 
 
 

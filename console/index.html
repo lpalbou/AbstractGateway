@@ -251,6 +251,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../getting-started/" class="md-nav__link">
         
   
@@ -538,6 +565,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../shipped-workflows/" class="md-nav__link">
         
   
@@ -565,6 +619,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../deep-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deep Research Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../deployment/" class="md-nav__link">
         
   
@@ -573,6 +654,33 @@
     
   
     Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apple-local-gateway-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apple Silicon Local Setup
   
 
     
@@ -673,33 +781,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../tray/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Desktop Tray
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../security/" class="md-nav__link">
         
   
@@ -762,6 +843,33 @@
     
   
     FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
   
 
     
@@ -933,42 +1041,81 @@ see <a href="../configuration/">configuration.md</a>. For the endpoints themselv
 <a href="../api/">api.md</a>.</p>
 <h2 id="web-console-console">Web console (<code>/console</code>)<a class="headerlink" href="#web-console-console" title="Permanent link">&para;</a></h2>
 <p>Start the gateway and open <code>http://&lt;host&gt;:&lt;port&gt;/console</code>:</p>
-<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>serve<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8081</span>
-<span class="c1"># then open http://127.0.0.1:8081/console</span>
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>serve
+<span class="c1"># then open http://127.0.0.1:8080/console</span>
 </code></pre></div>
-<p>The console uses the current origin, so it never asks for a gateway URL. With
-user auth enabled, the first-login token is written to
-<code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/auth/bootstrap-admin-token</code>. The console covers:</p>
-<ul>
-<li><strong>Users &amp; runtimes:</strong> user records, token rotation, retained runtime
-  reservations, the runtime inventory with sessions, data and caches.</li>
-<li><strong>Providers:</strong> provider connections (OpenAI, Anthropic, OpenRouter, Portkey,
-  LM Studio, Ollama, custom OpenAI-compatible endpoints) with write-only keys.</li>
-<li><strong>Multimodal capabilities:</strong> capability route defaults, the text reasoning
-  effort, and the MTP (speculative decoding) default.</li>
-<li><strong>Workflows:</strong> every registered workflow with versions and entrypoints,
-  import/export/delete, and versions that are not served (with the reason).</li>
-<li><strong>Sandbox:</strong> quick chat and media generation against the configured defaults.</li>
-<li><strong>Resources:</strong> memory/GPU meters, resident models (warm up, lock, unload),
-  and session prompt caches.</li>
-<li><strong>Entities:</strong> summoned-entity roster and management (see
-  <a href="../entities/">entities.md</a>).</li>
-<li><strong>Models:</strong> browse models that fit this machine, download them, and delete
-  the ones you no longer need (details below).</li>
-<li><strong>Engines:</strong> the local engines on the gateway host (Ollama, LM Studio, MLX,
-  llama.cpp, vLLM, Hugging Face): installed or not, running or not, and a
-  one-click install (details below).</li>
-<li><strong>Apps:</strong> the browser apps (Flow Editor, Code, Observer, Continuum, Entity):
-  install, open, and Code's terminal version (details below).</li>
-</ul>
+<p>On a first run, <code>serve</code> prints a one-time link that signs you in
+(<a href="../first-run/">first-run.md</a>); <code>abstractgateway claim --open</code> prints a new
+one. The console uses the current origin, so it never asks for a gateway URL.
+You can also sign in with a user id and token (the admin's first token is in
+<code>&lt;data dir&gt;/auth/bootstrap-admin-token</code>).</p>
+<p>The sidebar lists these tabs:</p>
+<table>
+<thead>
+<tr>
+<th>Tab</th>
+<th>What it covers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Users &amp; Entities</strong></td>
+<td>user records, token rotation, retained runtime reservations, and the summoned-entity roster (<a href="../entities/">entities.md</a>)</td>
+</tr>
+<tr>
+<td><strong>Runtimes</strong></td>
+<td>execution planes: runs (cancel, steer), sessions, data and caches</td>
+</tr>
+<tr>
+<td><strong>Workflows</strong></td>
+<td>every registered workflow with versions and entrypoints, import, export, delete, and versions that are not served (with the reason)</td>
+</tr>
+<tr>
+<td><strong>Providers</strong></td>
+<td>provider connections (OpenAI, Anthropic, OpenRouter, Portkey, LM Studio, Ollama, custom OpenAI-compatible endpoints) with write-only keys</td>
+</tr>
+<tr>
+<td><strong>Multimodal</strong></td>
+<td>capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route</td>
+</tr>
+<tr>
+<td><strong>Sandbox</strong></td>
+<td>quick chat and media generation against the configured defaults</td>
+</tr>
+<tr>
+<td><strong>Resources</strong></td>
+<td>memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the <strong>Gateway</strong> card (pause, update, restart, desktop icon)</td>
+</tr>
+<tr>
+<td><strong>Models</strong></td>
+<td>browse models that fit this machine, download them, delete installed ones (below)</td>
+</tr>
+<tr>
+<td><strong>Engines</strong></td>
+<td>the local engines on the gateway host: installed or not, running or not, install, start, stop (below)</td>
+</tr>
+<tr>
+<td><strong>Apps</strong></td>
+<td>the browser apps, Code's terminal app and the desktop Assistant (below), plus <em>Advanced: apps settings</em> and <em>Advanced: backlog settings (Continuum)</em></td>
+</tr>
+<tr>
+<td><strong>Network</strong></td>
+<td>who can reach the gateway (localhost only, local network, internet), its addresses, and <em>Advanced: reverse proxy</em> (<a href="../configuration/#network-exposure-localhost--local-network--internet">configuration.md</a>)</td>
+</tr>
+</tbody>
+</table>
+<p>The <strong>Technical details</strong> switch at the bottom of the sidebar shows commands,
+route ids and other technical information throughout the console. The top bar
+holds the docs assistant (answers grounded on this gateway's documentation),
+the appearance settings, the <strong>Setup</strong> button that reopens the first-run guide
+(admins), and the sign-out control.</p>
 <h3 id="models-and-engines-tabs">Models and Engines tabs<a class="headerlink" href="#models-and-engines-tabs" title="Permanent link">&para;</a></h3>
 <p>Everything these two tabs show and do happens <strong>on the gateway host</strong>: the
 machine that runs <code>abstractgateway serve</code>, not the computer your browser runs
 on. The catalog data, the presence checks and the fit verdicts come from
 AbstractCore (<code>GET /api/gateway/models/catalog</code>, contract <code>model_catalog_v1</code>);
 downloads are the gateway's own jobs (see <a href="../model-downloads/">Model downloads</a>).</p>
-<p><strong>Models</strong> (tab id <code>catalog</code>; the older <strong>Resources</strong> tab keeps id <code>models</code>)
-shows the catalog as <strong>one card per model</strong>:</p>
+<p><strong>Models</strong> (tab id <code>catalog</code>) shows the catalog as <strong>one card per model</strong>:</p>
 <ul>
 <li>The card header: the model's name, organisation, parameter count and
   licence, its capabilities (Text, Thinking, Tools, Vision, Audio, Embedding,
@@ -989,8 +1136,8 @@ shows the catalog as <strong>one card per model</strong>:</p>
   setup guide), then <strong>Use as default</strong> once a text model is downloaded (it
   sets the default text model, like the Multimodal tab).</li>
 <li>Many models have 8-bit builds next to the 4-bit ones when upstream publishes
-  them (MLX <code>-8bit</code> repositories, Ollama <code>-q8_0</code> tags, GGUF <code>Q8_0</code> files, LM
-  Studio <code>@8bit</code>). Every build the catalog knows is listed; nothing is cut off.</li>
+  them (MLX <code>-8bit</code> repositories, Ollama <code>-q8_0</code> tags, GGUF <code>Q8_0</code> files).
+  Every build the catalog knows is listed; nothing is cut off.</li>
 </ul>
 <p>The filter bar above the cards:</p>
 <ul>
@@ -998,11 +1145,7 @@ shows the catalog as <strong>one card per model</strong>:</p>
   must match). <strong>Escape</strong> clears it.</li>
 <li><strong>Quantization</strong>: All, 4-bit, 8-bit, Other (every other class: 16-bit, full
   precision, 2/3/5/6-bit and builds whose reference names no quantization).
-  The classes come from AbstractCore's <code>quant_class</code> field. A gateway whose
-  AbstractCore is older than that field shows the notice "This gateway's
-  catalog does not report quant_class yet", and the quantization filter stays
-  off until AbstractCore is updated on the gateway host; every build is still
-  listed.</li>
+  The classes come from AbstractCore's <code>quant_class</code> field.</li>
 <li><strong>Catalog / Hugging Face</strong>: the switch left of the search box. In
   <strong>Hugging Face</strong> mode, type a name and press <strong>Enter</strong> (or <strong>Search</strong>): the
   gateway searches the Hugging Face Hub (answers are cached for 24 hours) and
@@ -1040,13 +1183,19 @@ filters over. An engine card's <strong>Browse models</strong> opens the tab filt
 engine's builds.</p>
 <p><strong>Engines</strong> (tab id <code>engines</code>):</p>
 <ul>
-<li>One row per engine: supported on this host, installed, version, running,
-  reachable, base URL and model count.</li>
-<li><strong>Install</strong> opens a confirmation that shows the exact command it will run
-  and the host it runs on, with a <strong>Preview (dry run)</strong> button that asks the
-  gateway what it would run without running it.
-  <strong>Open download page</strong> links to the vendor page (LM Studio is installed from
-  its download page).</li>
+<li>One card per engine with a status pill (Ready, Running, Installing, Needs
+  your approval, Needs Apple tools, Not installed, Not for this computer),
+  its version, base URL and model count, and one primary action for its
+  state: <strong>Install</strong>, <strong>Start</strong>, <strong>Stop</strong>, <strong>Continue with administrator
+  password</strong>, <strong>Install tools</strong> or <strong>Try again</strong>.</li>
+<li><strong>Install</strong> opens a confirmation that shows what will run and the host it
+  runs on, with a <strong>Preview (dry run)</strong> button. Ollama and LM Studio offer
+  "Install" (just for you, no password) and, when that plan needs an
+  administrator, "Install for all users (administrator)". What each install
+  does, engine by engine: <a href="../engines/">engines.md</a>.</li>
+<li>An install shows its progress on the card, one plain sentence first and the
+  full log behind <strong>Show details</strong>. <strong>Open download page</strong> links to the
+  vendor page.</li>
 </ul>
 <p>Keys (when the tab is visible and you are not typing in a field): <code>/</code> search,
 <code>f</code> fits-only on/off, <code>r</code> refresh; on a focused row <code>w</code> download, <code>d</code> delete,
@@ -1067,10 +1216,9 @@ engine's builds.</p>
   the equivalent command, for example
   <code>abstractgateway models download ollama qwen3:8b</code>.</li>
 </ul>
-<p>If the gateway's AbstractCore is older than 2.14.0, both tabs show a card saying
-so, with the version installed and the upgrade command
-(<code>pip install -U "abstractcore&gt;=2.14.0"</code>); the rest of the console works as
-before.</p>
+<p>If AbstractCore on the gateway host is missing or too old for these routes,
+both tabs show a card with the installed version and the upgrade command; the
+rest of the console keeps working.</p>
 <h3 id="apps-tab">Apps tab<a class="headerlink" href="#apps-tab" title="Permanent link">&para;</a></h3>
 <p>The Apps tab and the setup guide's Apps step show the same cards (the apps
 themselves are described in <a href="../apps/">apps.md</a>). What a plain user sees on
@@ -1152,7 +1300,7 @@ buttons disabled with the reason on hover.</p>
 </code></pre></div>
 <p>Connect it to a running gateway. Pass the token through the environment rather
 than on the command line:</p>
-<div class="highlight"><pre><span></span><code><span class="nv">ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="o">=</span>...<span class="w"> </span>abstractgateway-console<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8081
+<div class="highlight"><pre><span></span><code><span class="nv">ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="o">=</span>...<span class="w"> </span>abstractgateway-console<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8080
 abstractgateway-console<span class="w"> </span>--help
 </code></pre></div>
 <p>It opens as a guided wizard on first run and as free tabs afterwards, with eight
@@ -1188,9 +1336,9 @@ crate version is independent of the Python package version; see
 <h2 id="model-residency-from-a-shell">Model residency from a shell<a class="headerlink" href="#model-residency-from-a-shell" title="Permanent link">&para;</a></h2>
 <p>The same model routes the consoles drive are available from the Python CLI
 against a running gateway:</p>
-<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>models<span class="w"> </span>loaded<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8081
-abstractgateway<span class="w"> </span>models<span class="w"> </span>load<span class="w">   </span>--url<span class="w"> </span>http://127.0.0.1:8081<span class="w"> </span>--provider<span class="w"> </span>ollama<span class="w"> </span>--model<span class="w"> </span>qwen3:4b
-abstractgateway<span class="w"> </span>models<span class="w"> </span>unload<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8081<span class="w"> </span>--provider<span class="w"> </span>ollama<span class="w"> </span>--model<span class="w"> </span>qwen3:4b
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>models<span class="w"> </span>loaded<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8080
+abstractgateway<span class="w"> </span>models<span class="w"> </span>load<span class="w">   </span>--url<span class="w"> </span>http://127.0.0.1:8080<span class="w"> </span>--provider<span class="w"> </span>ollama<span class="w"> </span>--model<span class="w"> </span>qwen3:4b
+abstractgateway<span class="w"> </span>models<span class="w"> </span>unload<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8080<span class="w"> </span>--provider<span class="w"> </span>ollama<span class="w"> </span>--model<span class="w"> </span>qwen3:4b
 </code></pre></div>
 <p>The token comes from <code>--token</code> or <code>ABSTRACTGATEWAY_AUTH_TOKEN</code>, and the URL from
 <code>--url</code> or <code>ABSTRACTGATEWAY_URL</code>. The command prints the gateway's JSON answer

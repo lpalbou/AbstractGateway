@@ -13,6 +13,10 @@
         <link rel="canonical" href="https://www.lpalbou.info/AbstractGateway/deep-research/">
       
       
+        <link rel="prev" href="../shipped-workflows/">
+      
+      
+        <link rel="next" href="../deployment/">
       
       
         
@@ -23,7 +27,7 @@
     
     
       
-        <title>deep-research Shipped Workflow - AbstractGateway</title>
+        <title>Deep Research Workflow - AbstractGateway</title>
       
     
     
@@ -100,7 +104,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              deep-research Shipped Workflow
+              Deep Research Workflow
             
           </span>
         </div>
@@ -228,6 +232,33 @@
     
   
     Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
   
 
     
@@ -409,6 +440,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../shipped-workflows/" class="md-nav__link">
         
   
@@ -433,6 +491,113 @@
       
   
   
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deep Research Workflow
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deep Research Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Contract
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tool-and-export-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool And Export Policy
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related docs
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
   
   
     <li class="md-nav__item">
@@ -444,6 +609,33 @@
     
   
     Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apple-local-gateway-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apple Silicon Local Setup
   
 
     
@@ -544,33 +736,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../tray/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Desktop Tray
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../security/" class="md-nav__link">
         
   
@@ -645,6 +810,33 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -694,10 +886,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#validation" class="md-nav__link">
+  <a href="#related-docs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Validation
+        Related docs
       
     </span>
   </a>
@@ -727,10 +919,8 @@
 <h1 id="deep-research-shipped-workflow"><code>deep-research</code> Shipped Workflow<a class="headerlink" href="#deep-research-shipped-workflow" title="Permanent link">&para;</a></h1>
 <p>Gateway packages <code>deep-research@0.1.7.flow</code> as a supported shipped bundle. It
 is available from the normal bundle registry alongside <code>basic-agent</code> when the
-packaged bundle directory is used. (Formerly <code>dp-research</code> — the <code>dp-*</code> names
-were retired by operator ruling 2026-07-16; version lineage continues from
-<code>dp-research@0.1.5</code>, and old <code>dp-research@0.1.x</code> artifacts live under
-<code>flows/bundles/archive/</code> for completed-run history only, no longer served.)</p>
+packaged bundle directory is used. It replaces the <code>dp-research</code> bundle id,
+which is no longer shipped.</p>
 <h2 id="contract">Contract<a class="headerlink" href="#contract" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Bundle id: <code>deep-research</code></li>
@@ -766,14 +956,11 @@ tools. Export uses deterministic Runtime nodes: <code>write_file</code>, <code>w
 prefix (<code>reports/deep-*-research</code>) to avoid overwrites. The final manifest is
 built after file writes and includes actual Markdown/PDF/DOCX paths, byte
 counts, PDF/DOCX hashes, and content types.</p>
-<h2 id="validation">Validation<a class="headerlink" href="#validation" title="Permanent link">&para;</a></h2>
-<p>From the monorepo root:</p>
-<div class="highlight"><pre><span></span><code><span class="nv">PYTHONPATH</span><span class="o">=</span>abstractgateway/src:abstractruntime/src:abstractcore<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>pytest<span class="w"> </span>-q<span class="w"> </span>abstractgateway/tests/test_deep_research_bundle_contract.py
-</code></pre></div>
-<p>That test opens the bundle, checks the public input/output contract, verifies
-the review-gated loop wiring, verifies agent tool allowlists, and loads the
-bundle through <code>WorkflowBundleGatewayHost</code> with an isolated registry.</p>
+<h2 id="related-docs">Related docs<a class="headerlink" href="#related-docs" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../shipped-workflows/">shipped-workflows.md</a>: every bundle a fresh install serves</li>
+<li><a href="../api/">api.md</a>: starting runs and streaming their ledger</li>
+</ul>
 
 
 

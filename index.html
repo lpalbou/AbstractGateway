@@ -14,7 +14,7 @@
       
       
       
-        <link rel="next" href="getting-started/">
+        <link rel="next" href="first-run/">
       
       
         
@@ -293,10 +293,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#docs-map" class="md-nav__link">
+  <a href="#core-docs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Docs map
+        Core docs
       
     </span>
   </a>
@@ -304,10 +304,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#api-docs-generated" class="md-nav__link">
+  <a href="#topic-guides" class="md-nav__link">
     <span class="md-ellipsis">
       
-        API docs (generated)
+        Topic guides
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-reference-generated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API reference (generated)
       
     </span>
   </a>
@@ -329,6 +340,33 @@
   
 </nav>
       
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -502,6 +540,33 @@
   
   
     <li class="md-nav__item">
+      <a href="tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="shipped-workflows/" class="md-nav__link">
         
   
@@ -529,6 +594,33 @@
   
   
     <li class="md-nav__item">
+      <a href="deep-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deep Research Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="deployment/" class="md-nav__link">
         
   
@@ -537,6 +629,33 @@
     
   
     Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="apple-local-gateway-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apple Silicon Local Setup
   
 
     
@@ -637,33 +756,6 @@
   
   
     <li class="md-nav__item">
-      <a href="tray/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Desktop Tray
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="security/" class="md-nav__link">
         
   
@@ -738,6 +830,33 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -776,10 +895,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#docs-map" class="md-nav__link">
+  <a href="#core-docs" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Docs map
+        Core docs
       
     </span>
   </a>
@@ -787,10 +906,21 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#api-docs-generated" class="md-nav__link">
+  <a href="#topic-guides" class="md-nav__link">
     <span class="md-ellipsis">
       
-        API docs (generated)
+        Topic guides
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#api-reference-generated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        API reference (generated)
       
     </span>
   </a>
@@ -829,52 +959,141 @@
 
 
 <h1 id="abstractgateway-docs">AbstractGateway docs<a class="headerlink" href="#abstractgateway-docs" title="Permanent link">&para;</a></h1>
-<p>Start here if you’re new to the project.</p>
+<p>AbstractGateway is the durable run gateway and control plane of
+AbstractFramework: it starts and replays AbstractRuntime runs over HTTP/SSE,
+and lets you manage users, providers, models, local engines, browser apps and
+network access from a web console, a terminal console, the CLI or a desktop
+tray icon.</p>
+<p>New here? Start with <a href="first-run/">first-run.md</a> on your own machine, or
+<a href="getting-started/">getting-started.md</a> for an explicit setup.</p>
 <h2 id="abstractframework-ecosystem">AbstractFramework ecosystem<a class="headerlink" href="#abstractframework-ecosystem" title="Permanent link">&para;</a></h2>
-<p>AbstractGateway is one component in the larger AbstractFramework ecosystem:</p>
 <ul>
-<li><strong>AbstractRuntime</strong> (required): durable runs + stores</li>
-<li><strong>AbstractRuntime + transitive capability packages</strong> (required by the default server install): Runtime owns the LLM/tool/media integration boundary; Gateway uses its discovery/run facades for prompt-cache controls, generated and edited image/video plus voice/audio/music capabilities, and KG-backed bundle execution</li>
-<li>Higher-level UIs (optional): AbstractFlow / AbstractObserver / AbstractCode / thin clients</li>
+<li><strong>AbstractRuntime</strong> (required): durable runs, workflow registry, stores.</li>
+<li><strong>AbstractCore</strong>, <strong>AbstractAgent</strong>, <strong>AbstractMemory</strong> (installed with the
+  gateway): providers, tools and media capabilities through Runtime's
+  facades, agent nodes, and KG memory.</li>
+<li>Apps that use the gateway (optional): AbstractFlow, AbstractCode,
+  AbstractObserver, AbstractContinuum, AbstractEntity, AbstractAssistant.</li>
 </ul>
 <p>Related repos:
-- AbstractFramework: https://github.com/lpalbou/AbstractFramework
-- AbstractCore: https://github.com/lpalbou/abstractcore
-- AbstractRuntime: https://github.com/lpalbou/abstractruntime</p>
-<h2 id="docs-map">Docs map<a class="headerlink" href="#docs-map" title="Permanent link">&para;</a></h2>
+<a href="https://github.com/lpalbou/AbstractFramework">AbstractFramework</a> ·
+<a href="https://github.com/lpalbou/abstractcore">AbstractCore</a> ·
+<a href="https://github.com/lpalbou/abstractruntime">AbstractRuntime</a></p>
+<h2 id="core-docs">Core docs<a class="headerlink" href="#core-docs" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Page</th>
+<th>Read it for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="first-run/">first-run.md</a></td>
+<td>the zero-configuration start on your own machine: one-time sign-in link, first-run guide, start at login</td>
+</tr>
+<tr>
+<td><a href="getting-started/">getting-started.md</a></td>
+<td>explicit setup: bundles, starting and scheduling runs, split API/runner, file vs SQLite stores</td>
+</tr>
+<tr>
+<td><a href="architecture/">architecture.md</a></td>
+<td>components, diagrams, the replay-first durable contract, deployment shapes</td>
+</tr>
+<tr>
+<td><a href="api/">api.md</a></td>
+<td>the client contract with curl examples, discovery, media, models, host state; map of every route family</td>
+</tr>
+<tr>
+<td><a href="configuration/">configuration.md</a></td>
+<td>every setting: runtime settings, network exposure, apps, backlog, capability defaults, environment variables, CLI flags</td>
+</tr>
+<tr>
+<td><a href="faq/">faq.md</a></td>
+<td>recurring questions and limits</td>
+</tr>
+<tr>
+<td><a href="troubleshooting/">troubleshooting.md</a></td>
+<td>symptoms, causes and fixes: sign-in, network modes, runs, installs, downloads, tray, login service</td>
+</tr>
+</tbody>
+</table>
+<h2 id="topic-guides">Topic guides<a class="headerlink" href="#topic-guides" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Page</th>
+<th>Read it for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="console/">console.md</a></td>
+<td>the web console at <code>/console</code> (every tab) and the <code>abstractgateway-console</code> terminal app</td>
+</tr>
+<tr>
+<td><a href="apps/">apps.md</a></td>
+<td>installing, starting and opening the browser apps (Flow, Code, Observer, Continuum, Entity), Code's terminal app and the desktop Assistant</td>
+</tr>
+<tr>
+<td><a href="engines/">engines.md</a></td>
+<td>installing local engines (Ollama, LM Studio, MLX, llama.cpp, vLLM, Hugging Face): what each Install does, when a password or the Apple tools are needed</td>
+</tr>
+<tr>
+<td><a href="model-downloads/">model-downloads.md</a></td>
+<td>download jobs: progress, stalls, cancel, end reasons, parent jobs, the event stream</td>
+</tr>
+<tr>
+<td><a href="tray/">tray.md</a></td>
+<td>the desktop tray icon: apps, models, pause, start at login, network, restart and update</td>
+</tr>
+<tr>
+<td><a href="security/">security.md</a></td>
+<td>user accounts, sessions, origins, network exposure, workspace scope, limits, audit log</td>
+</tr>
+<tr>
+<td><a href="deployment/">deployment.md</a></td>
+<td>Docker images, Compose, provider variables, single machine without Docker</td>
+</tr>
+<tr>
+<td><a href="shipped-workflows/">shipped-workflows.md</a></td>
+<td>the workflows a fresh install serves (coding agent, deep research, co-scientist, …) and managing the registry</td>
+</tr>
+<tr>
+<td><a href="deep-research/">deep-research.md</a></td>
+<td>the shipped <code>deep-research</code> workflow contract</td>
+</tr>
+<tr>
+<td><a href="entities/">entities.md</a></td>
+<td>summoned entities: homes, lifecycle, summoning, replay</td>
+</tr>
+<tr>
+<td><a href="apple-local-gateway-flow/">apple-local-gateway-flow.md</a></td>
+<td>an Apple Silicon local Gateway + Flow setup with local engines</td>
+</tr>
+<tr>
+<td><a href="maintenance/">maintenance.md</a></td>
+<td>operator tooling: reports, triage, backlog, exec runner, process manager, bridges (high trust)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="api-reference-generated">API reference (generated)<a class="headerlink" href="#api-reference-generated" title="Permanent link">&para;</a></h2>
+<p>Published docs site: https://www.lpalbou.info/AbstractGateway/</p>
+<p>When the server is running (<code>abstractgateway serve</code>):</p>
 <ul>
-<li>First run on your own machine (no configuration, one-time sign-in link, start at login): <a href="first-run/">first-run.md</a></li>
-<li>Quickstart + stores (file/SQLite): <a href="getting-started/">getting-started.md</a></li>
-<li>FAQ / troubleshooting: <a href="faq/">faq.md</a></li>
-<li>Architecture (durable contract + components): <a href="architecture/">architecture.md</a></li>
-<li>Configuration (env vars + install extras): <a href="configuration/">configuration.md</a></li>
-<li>Consoles: the web console at <code>/console</code> and the <code>abstractgateway-console</code> terminal app: <a href="console/">console.md</a></li>
-<li>Desktop tray icon: <a href="tray/">tray.md</a></li>
-<li>Browser apps (install, start and open Flow, Code, Observer, Continuum, Entity from the gateway; Node.js installed for you): <a href="apps/">apps.md</a></li>
-<li>Local engines (install Ollama, LM Studio, MLX, llama.cpp without a terminal; when the Apple tools or an administrator password are needed): <a href="engines/">engines.md</a></li>
-<li>Model downloads (progress, stalls, cancel, "Use recommended defaults" as one job, the event stream): <a href="model-downloads/">model-downloads.md</a></li>
-<li>Summoned entities: <a href="entities/">entities.md</a></li>
-<li>Apple Silicon local Gateway + Flow quickstart: <a href="apple-local-gateway-flow/">apple-local-gateway-flow.md</a></li>
-<li>Deployment (Docker/GHCR/Compose): <a href="deployment/">deployment.md</a></li>
-<li>API overview (client contract + OpenAPI, including host state/model residency, direct image/video, STT, and music generation): <a href="api/">api.md</a></li>
-<li>Shipped workflows served out of the box (coder, deep research, co-scientist): <a href="shipped-workflows/">shipped-workflows.md</a></li>
-<li>Shipped <code>deep-research</code> workflow bundle: <a href="deep-research/">deep-research.md</a></li>
-<li>Security guide (auth/origin/limits/audit log): <a href="security/">security.md</a></li>
-<li>Operator tooling (triage/backlog/process manager): <a href="maintenance/">maintenance.md</a></li>
+<li>Health: <code>GET /api/health</code></li>
+<li>OpenAPI JSON: <code>GET /openapi.json</code></li>
+<li>Interactive Swagger UI: <code>GET /docs</code></li>
 </ul>
-<h2 id="api-docs-generated">API docs (generated)<a class="headerlink" href="#api-docs-generated" title="Permanent link">&para;</a></h2>
-<p>Published static docs site: https://www.lpalbou.info/AbstractGateway/</p>
-<p>When the HTTP server is running (<code>abstractgateway serve</code>):
-- Health: <code>GET /api/health</code>
-- OpenAPI JSON: <code>GET /openapi.json</code>
-- Interactive Swagger UI: <code>GET /docs</code></p>
 <h2 id="project-docs">Project docs<a class="headerlink" href="#project-docs" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Package README: <a href="../README.md">../README.md</a></li>
-<li>Changelog: <a href="../CHANGELOG.md">../CHANGELOG.md</a> (compat: <code>CHANGELOD.md</code>)</li>
+<li>Changelog: <a href="../CHANGELOG.md">../CHANGELOG.md</a></li>
 <li>Contributing: <a href="../CONTRIBUTING.md">../CONTRIBUTING.md</a></li>
+<li>Code of conduct: <a href="../CODE_OF_CONDUCT.md">../CODE_OF_CONDUCT.md</a></li>
 <li>Security policy (vulnerability reporting): <a href="../SECURITY.md">../SECURITY.md</a></li>
-<li>Acknowledgments: <a href="../ACKNOWLEDGMENTS.md">../ACKNOWLEDGMENTS.md</a> (compat: <code>ACKNOWLEDMENTS.md</code>)</li>
+<li>Acknowledgments: <a href="../ACKNOWLEDGMENTS.md">../ACKNOWLEDGMENTS.md</a></li>
+<li>License: <a href="../LICENSE">../LICENSE</a></li>
 </ul>
 
 

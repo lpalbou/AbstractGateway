@@ -13,7 +13,7 @@
         <link rel="canonical" href="https://www.lpalbou.info/AbstractGateway/security/">
       
       
-        <link rel="prev" href="../tray/">
+        <link rel="prev" href="../entities/">
       
       
         <link rel="next" href="../maintenance/">
@@ -251,6 +251,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../getting-started/" class="md-nav__link">
         
   
@@ -413,6 +440,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../shipped-workflows/" class="md-nav__link">
         
   
@@ -440,6 +494,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../deep-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deep Research Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../deployment/" class="md-nav__link">
         
   
@@ -448,6 +529,33 @@
     
   
     Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apple-local-gateway-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apple Silicon Local Setup
   
 
     
@@ -529,33 +637,6 @@
     
   
     Summoned Entities
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../tray/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Desktop Tray
   
 
     
@@ -752,10 +833,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#important-limitation-still-true-in-all-modes" class="md-nav__link">
+  <a href="#important-limitation-all-modes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Important limitation (still true in all modes)
+        Important limitation (all modes)
       
     </span>
   </a>
@@ -945,6 +1026,33 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -1089,10 +1197,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#important-limitation-still-true-in-all-modes" class="md-nav__link">
+  <a href="#important-limitation-all-modes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Important limitation (still true in all modes)
+        Important limitation (all modes)
       
     </span>
   </a>
@@ -1248,11 +1356,20 @@
 - <code>/api/triage/action/*</code> uses signed action tokens and is not under <code>/api/gateway</code> (see <code>src/abstractgateway/routes/triage.py</code>).
 - Vulnerability reporting policy: see <a href="../SECURITY.md">../SECURITY.md</a>.</p>
 <h2 id="default-behavior">Default behavior<a class="headerlink" href="#default-behavior" title="Permanent link">&para;</a></h2>
-<p>By default, <code>abstractgateway serve</code> refuses to start if write endpoints are
-protected and neither a legacy server/operator token nor Gateway user auth is
-configured.
-Evidence: startup self-check in <code>src/abstractgateway/cli.py</code> (<code>load_gateway_auth_policy_from_env</code>).</p>
-<p>Recommended browser-console/browser-app setup:</p>
+<p>Security is on by default for <code>/api/gateway/*</code>:</p>
+<ul>
+<li>A plain <code>abstractgateway serve</code> with no auth posture in its environment binds
+  <code>127.0.0.1</code> (or the stored network mode), turns <strong>user accounts</strong> on and
+  creates the admin account <code>default/admin</code>
+  (<a href="../first-run/">first-run.md</a>).</li>
+<li>Choosing <code>lan</code> or <code>internet</code> with the <a href="#network-exposure">network setting</a>
+  keeps user accounts on.</li>
+<li>An explicit non-loopback <code>--host</code> with neither user accounts nor a token
+  refuses to start, and so does a weak shared token on a non-loopback bind.</li>
+</ul>
+<p>Evidence: startup self-checks in <code>src/abstractgateway/cli.py</code>,
+<code>src/abstractgateway/first_run.py</code>.</p>
+<p>Explicit browser-console/browser-app setup:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_USER_AUTH</span><span class="o">=</span><span class="m">1</span>
 <span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_DATA_DIR</span><span class="o">=</span><span class="s2">"</span><span class="nv">$PWD</span><span class="s2">/runtime/gateway"</span>
 abstractgateway<span class="w"> </span>serve<span class="w"> </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span>
@@ -1264,8 +1381,8 @@ cat<span class="w"> </span><span class="s2">"</span><span class="nv">$ABSTRACTGA
 <div class="highlight"><pre><span></span><code>Authorization: Bearer &lt;token&gt;
 </code></pre></div>
 <h3 id="tenant-and-user-isolation">Tenant and user isolation<a class="headerlink" href="#tenant-and-user-isolation" title="Permanent link">&para;</a></h3>
-<p>In local/single-user mode, <code>ABSTRACTGATEWAY_AUTH_TOKEN</code> remains a gateway-level
-control-plane token and maps to the <code>local-admin</code> principal. Treat that token as
+<p>In token mode, <code>ABSTRACTGATEWAY_AUTH_TOKEN</code> is a gateway-level control-plane
+token and maps to the <code>local-admin</code> principal. Treat that token as
 full authority for the Gateway instance.</p>
 <p>Hosted user-auth mode is enabled with <code>ABSTRACTGATEWAY_USER_AUTH=1</code> or
 <code>ABSTRACTGATEWAY_AUTH_MODE=users</code>. In that mode, Gateway bearer tokens resolve
@@ -1280,6 +1397,9 @@ is set for compatibility. Admin principals can manage users through:</p>
 <li><code>GET /api/gateway/admin/users/{user_id}?tenant_id=...</code></li>
 <li><code>PATCH /api/gateway/admin/users/{user_id}?tenant_id=...</code></li>
 <li><code>DELETE /api/gateway/admin/users/{user_id}?tenant_id=...</code></li>
+<li><code>GET /api/gateway/admin/runtime-reservations</code></li>
+<li><code>POST /api/gateway/admin/runtime-reservations/{runtime_id}/transfer</code></li>
+<li><code>POST /api/gateway/admin/runtime-reservations/{runtime_id}/purge</code></li>
 </ul>
 <p>Every user row carries a first-class <code>principal_kind</code> field (<code>"human"</code> or
 <code>"entity"</code>); clients must read it (or the <code>kind</code> filter) instead of
@@ -1295,10 +1415,7 @@ rotation would mint a live entity bearer that by design must not exist, and
 a delete would remove the name-collision guard protecting the entity's
 identity. <code>enabled</code> (the door-side disable), <code>email</code>, and <code>scopes</code> stay
 editable. The guard lives in <code>GatewayUserRegistry</code> itself, so the config CLI
-refuses the same writes.
-- <code>GET /api/gateway/admin/runtime-reservations</code>
-- <code>POST /api/gateway/admin/runtime-reservations/{runtime_id}/transfer</code>
-- <code>POST /api/gateway/admin/runtime-reservations/{runtime_id}/purge</code></p>
+refuses the same writes.</p>
 <p>Gateway stores user token hashes in <code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/auth/users.json</code>
 by default. Generated or rotated bearer tokens are returned once from the admin
 create/update response and are never stored in plaintext.</p>
@@ -1330,8 +1447,8 @@ only accounts with the <code>admin</code> role can hold a browser session:</p>
   <code>reason_code: "user_accounts_off_admin_only"</code> and a message naming the two
   ways out: the gateway operator turns user accounts on, or the person signs
   in with an admin account.</li>
-<li>A session that already exists for a non-admin account (minted by an older
-  gateway, or while user accounts were on) is refused and removed at its next
+<li>A session that already exists for a non-admin account (for example one
+  created while user accounts were on) is refused and removed at its next
   use. Every session path applies the same rule (<code>principal_barred_from_shared_runtime</code>
   in <code>security/sessions.py</code>), including the browser-app sign-in handover.</li>
 <li><code>POST /api/gateway/admin/users</code> answers <code>409</code> (same <code>reason_code</code>) instead of
@@ -1367,8 +1484,8 @@ runtime reservations.</p>
 workspace-root values. Runtime fields such as <code>actor_id</code> and <code>session_id</code>, and
 references such as <code>run_id</code>, <code>artifact_id</code>, and memory <code>owner_id</code>, remain
 correlation and lookup fields; they do not authorize access by themselves.</p>
-<p>Hosted multi-user mode is an incremental surface: the core request path now has
-principal auth and per-principal services. Gateway also applies a central
+<p>In hosted multi-user mode, the request path resolves a principal and routes it
+to its own service. Gateway also applies a central
 route-family authorization table for operator/admin surfaces. Admin-only route
 families include user management, audit, process control, backlog/triage/report
 operations, email bridge routes, model residency mutations
@@ -1415,8 +1532,7 @@ principal.</p>
 and <code>POST /visualflows/{flow_id}/publish</code> — so a shared workflow cannot be
 replaced through one route while another is restricted. The check runs before
 the route looks the bundle up, so a non-admin gets <code>403</code> for a bundle that
-does not exist as well. (Until 2026-09-24 the two deprecation routes skipped
-it.) Since a non-admin account cannot be signed in while user accounts are off
+does not exist as well. Since a non-admin account cannot be signed in while user accounts are off
 (above), this check is the second, independent line of defence. <code>POST /visualflows/{flow_id}/publish</code> accepts a caller-supplied
 <code>bundle_id</code>, <code>bundle_version</code> and <code>overwrite</code>, and installs into the same
 registry as <code>upload</code>; it is gated on the same rule. Non-admin requests against
@@ -1561,7 +1677,7 @@ Runtime execution.</p>
 <p>In this mode, a client can request:
 - <code>workspace_access_mode=all_except_ignored</code> (“full access” unless explicitly blocked)</p>
 <p>Do <strong>not</strong> enable this when serving untrusted browser origins: a compromised thin client can request access to arbitrary server paths.</p>
-<h3 id="important-limitation-still-true-in-all-modes">Important limitation (still true in all modes)<a class="headerlink" href="#important-limitation-still-true-in-all-modes" title="Permanent link">&para;</a></h3>
+<h3 id="important-limitation-all-modes">Important limitation (all modes)<a class="headerlink" href="#important-limitation-all-modes" title="Permanent link">&para;</a></h3>
 <p><code>execute_command</code> is <strong>not</strong> an OS sandbox: even if the runtime sets the default working directory under <code>workspace_root</code>, the command itself can reference absolute paths or <code>cd ..</code>.</p>
 <h2 id="common-security-env-vars">Common security env vars<a class="headerlink" href="#common-security-env-vars" title="Permanent link">&para;</a></h2>
 <p>All are loaded by <code>load_gateway_auth_policy_from_env()</code> (see <code>src/abstractgateway/security/gateway_security.py</code>).</p>

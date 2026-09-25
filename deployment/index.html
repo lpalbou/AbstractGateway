@@ -13,10 +13,10 @@
         <link rel="canonical" href="https://www.lpalbou.info/AbstractGateway/deployment/">
       
       
-        <link rel="prev" href="../shipped-workflows/">
+        <link rel="prev" href="../deep-research/">
       
       
-        <link rel="next" href="../api/">
+        <link rel="next" href="../apple-local-gateway-flow/">
       
       
         
@@ -251,6 +251,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../getting-started/" class="md-nav__link">
         
   
@@ -413,6 +440,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../shipped-workflows/" class="md-nav__link">
         
   
@@ -421,6 +475,33 @@
     
   
     Shipped Workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deep-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deep Research Workflow
   
 
     
@@ -597,6 +678,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../apple-local-gateway-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apple Silicon Local Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../api/" class="md-nav__link">
         
   
@@ -678,33 +786,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../tray/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Desktop Tray
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../security/" class="md-nav__link">
         
   
@@ -767,6 +848,33 @@
     
   
     FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
   
 
     
@@ -916,20 +1024,20 @@ and the Runtime-owned provider/tool stack together.</p>
 <h2 id="published-image">Published image<a class="headerlink" href="#published-image" title="Permanent link">&para;</a></h2>
 <p>Release images are published to GHCR. The default image is the light,
 portable server image:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.4.2
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.4.3
 </code></pre></div>
 <p>NVIDIA hosts can try the experimental full GPU image when local
 vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.4.2-gpu
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.4.3-gpu
 </code></pre></div>
-<p>Legacy aliases <code>ghcr.io/lpalbou/abstractgateway-server:*</code> and
-<code>ghcr.io/lpalbou/abstractgateway-server-nvidia:*</code> are still published for a
-transition period. New deployments should use <code>abstractgateway</code>.</p>
+<p>The image names <code>ghcr.io/lpalbou/abstractgateway-server:*</code> and
+<code>ghcr.io/lpalbou/abstractgateway-server-nvidia:*</code> are published as aliases for
+existing deployments; use <code>abstractgateway</code> for new ones.</p>
 <p>The default image installs the base <code>abstractgateway</code> package, which includes:</p>
 <ul>
 <li><code>AbstractRuntime</code></li>
-<li><code>AbstractMemory[lancedb]&gt;=0.2.6</code></li>
+<li><code>AbstractMemory[lancedb]&gt;=0.3.0</code></li>
 <li><code>abstractagent</code></li>
 <li>FastAPI/Uvicorn</li>
 </ul>
@@ -1015,8 +1123,8 @@ curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authoriz
 </ul>
 <p>Optional:</p>
 <ul>
-<li><code>ABSTRACTGATEWAY_AUTH_TOKEN</code>: legacy shared admin bearer token for
-  compatibility/bootstrap APIs; browser apps should use Gateway user tokens</li>
+<li><code>ABSTRACTGATEWAY_AUTH_TOKEN</code>: a shared admin bearer token for
+  server/operator scripts; browser apps use Gateway user accounts</li>
 </ul>
 <p>Common:</p>
 <ul>
@@ -1042,7 +1150,7 @@ curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authoriz
 <li><code>OPENROUTER_API_KEY</code></li>
 <li><code>PORTKEY_API_KEY</code> / <code>PORTKEY_CONFIG</code></li>
 <li><code>OPENAI_BASE_URL</code> / <code>OPENAI_API_KEY</code> for generic OpenAI-compatible endpoints</li>
-<li><code>OPENAI_COMPATIBLE_BASE_URL</code> / <code>OPENAI_COMPATIBLE_API_KEY</code> as legacy operator aliases; prefer <code>OPENAI_BASE_URL</code> for AbstractCore discovery</li>
+<li><code>OPENAI_COMPATIBLE_BASE_URL</code> / <code>OPENAI_COMPATIBLE_API_KEY</code> (aliases); prefer <code>OPENAI_BASE_URL</code> for AbstractCore discovery</li>
 <li><code>LMSTUDIO_BASE_URL</code></li>
 <li><code>OLLAMA_BASE_URL</code></li>
 <li><code>VLLM_BASE_URL</code></li>
@@ -1050,8 +1158,8 @@ curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authoriz
 <p>Image/voice plugin endpoints:</p>
 <ul>
 <li><code>ABSTRACTVISION_BACKEND</code>: <code>openai</code>, <code>openai-compatible</code>, <code>diffusers</code>, or <code>sdcpp</code></li>
-<li><code>ABSTRACTGATEWAY_VISION_BACKEND</code> / <code>ABSTRACTGATEWAY_VISION_BASE_URL</code> / <code>ABSTRACTGATEWAY_VISION_API_KEY</code> / <code>ABSTRACTGATEWAY_VISION_MODEL_ID</code> (legacy <code>ABSTRACTVISION_*</code> names still work)</li>
-<li><code>ABSTRACTGATEWAY_VOICE_TTS_ENGINE</code> / <code>ABSTRACTGATEWAY_VOICE_STT_ENGINE</code> (<code>openai</code> by default in the server image; legacy <code>ABSTRACTVOICE_*</code> names still work)</li>
+<li><code>ABSTRACTGATEWAY_VISION_BACKEND</code> / <code>ABSTRACTGATEWAY_VISION_BASE_URL</code> / <code>ABSTRACTGATEWAY_VISION_API_KEY</code> / <code>ABSTRACTGATEWAY_VISION_MODEL_ID</code> (the <code>ABSTRACTVISION_*</code> names also work)</li>
+<li><code>ABSTRACTGATEWAY_VOICE_TTS_ENGINE</code> / <code>ABSTRACTGATEWAY_VOICE_STT_ENGINE</code> (<code>openai</code> by default in the server image; the <code>ABSTRACTVOICE_*</code> names also work)</li>
 <li><code>ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL</code> / <code>ABSTRACTGATEWAY_VOICE_REMOTE_API_KEY</code></li>
 <li><code>ABSTRACTGATEWAY_VOICE_TTS_MODEL</code> / <code>ABSTRACTGATEWAY_VOICE_STT_MODEL</code></li>
 </ul>
@@ -1075,8 +1183,8 @@ unit or XDG autostart entry, Windows Run entry) that runs plain <code>serve</cod
 <a href="../configuration/#network-exposure-localhost--local-network--internet">network exposure</a>
 setting decides the bind (seeded to <code>localhost</code>, i.e. <code>127.0.0.1</code>, on install),
 with data in the per-user data folder. See <a href="../first-run/">first-run.md</a>. Containers and
-servers keep the explicit configuration shown on this page: the image sets
-<code>--host 0.0.0.0</code> and needs explicit auth, exactly as before.</p>
+servers use the explicit configuration shown on this page: the image sets
+<code>--host 0.0.0.0</code> with user accounts on.</p>
 <h2 id="cache-and-auth-notes">Cache and auth notes<a class="headerlink" href="#cache-and-auth-notes" title="Permanent link">&para;</a></h2>
 <p>Gateway auth is controlled by <code>ABSTRACTGATEWAY_*</code> variables and protects
 <code>/api/gateway/*</code>. AbstractCore provider/server auth variables control upstream
@@ -1092,7 +1200,7 @@ CachedSession persistence system.</p>
 <h2 id="local-source-image">Local-source image<a class="headerlink" href="#local-source-image" title="Permanent link">&para;</a></h2>
 <p>Before a version is published to PyPI, build from the checkout:</p>
 <div class="highlight"><pre><span></span><code><span class="nv">ABSTRACTGATEWAY_INSTALL_MODE</span><span class="o">=</span><span class="nb">local</span><span class="w"> </span><span class="se">\</span>
-<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.4.2-local<span class="w"> </span><span class="se">\</span>
+<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.4.3-local<span class="w"> </span><span class="se">\</span>
 docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>docker/abstractgateway-server/compose.yml<span class="w"> </span>up<span class="w"> </span>-d<span class="w"> </span>--build
 </code></pre></div>
 <p>Release automation builds the published image from the PyPI package after the

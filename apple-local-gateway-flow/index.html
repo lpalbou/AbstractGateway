@@ -13,6 +13,10 @@
         <link rel="canonical" href="https://www.lpalbou.info/AbstractGateway/apple-local-gateway-flow/">
       
       
+        <link rel="prev" href="../deployment/">
+      
+      
+        <link rel="next" href="../api/">
       
       
         
@@ -23,7 +27,7 @@
     
     
       
-        <title>Apple Silicon local Gateway + Flow quickstart - AbstractGateway</title>
+        <title>Apple Silicon Local Setup - AbstractGateway</title>
       
     
     
@@ -100,7 +104,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Apple Silicon local Gateway + Flow quickstart
+              Apple Silicon Local Setup
             
           </span>
         </div>
@@ -228,6 +232,33 @@
     
   
     Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
   
 
     
@@ -409,6 +440,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../shipped-workflows/" class="md-nav__link">
         
   
@@ -417,6 +475,33 @@
     
   
     Shipped Workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deep-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deep Research Workflow
   
 
     
@@ -452,6 +537,135 @@
   
 
       </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apple Silicon Local Setup
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apple Silicon Local Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-create-an-environment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Create an environment
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-install-gateway-and-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Install Gateway and Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-configure-local-engines" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Configure local engines
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-start-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Start Gateway
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-start-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Start Flow
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -544,33 +758,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../tray/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Desktop Tray
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../security/" class="md-nav__link">
         
   
@@ -633,6 +820,33 @@
     
   
     FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
   
 
     
@@ -816,13 +1030,15 @@ curl<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authoriz
 <span class="w">  </span>http://127.0.0.1:8080/api/gateway/vision/models
 </code></pre></div>
 <p>If these return only <code>gateway_static</code> defaults, stop the Gateway process and
-restart the one from this venv. A common mistake is leaving an older globally
-installed <code>abstractgateway serve --port 8080</code> process running.</p>
+restart the one from this venv. Check that no other <code>abstractgateway serve</code>
+process (for example from a global install) still holds port 8080.</p>
 <h2 id="5-start-flow">5. Start Flow<a class="headerlink" href="#5-start-flow" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code>npx<span class="w"> </span>@abstractframework/flow<span class="w"> </span>--gateway-url<span class="w"> </span>http://127.0.0.1:8080<span class="w"> </span>--port<span class="w"> </span><span class="m">3003</span>
+<div class="highlight"><pre><span></span><code>npx<span class="w"> </span>@abstractframework/flow<span class="w"> </span>--gateway-url<span class="w"> </span>http://127.0.0.1:8080<span class="w"> </span>--port<span class="w"> </span><span class="m">3005</span>
 </code></pre></div>
-<p>Open <code>http://127.0.0.1:3003</code> and sign in as Gateway user <code>admin</code> with
+<p>Open <code>http://127.0.0.1:3005</code> and sign in as Gateway user <code>admin</code> with
 <code>$GATEWAY_ADMIN_TOKEN</code>.</p>
+<p>You can also install and open Flow from the console's <strong>Apps</strong> tab, which
+signs you in for you (<a href="../apps/">apps.md</a>).</p>
 <p>In the editor, media nodes use Gateway catalogs:</p>
 <ul>
 <li>Generate Image: image provider/model</li>

@@ -251,6 +251,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../getting-started/" class="md-nav__link">
         
   
@@ -532,6 +559,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../shipped-workflows/" class="md-nav__link">
         
   
@@ -559,6 +613,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../deep-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deep Research Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../deployment/" class="md-nav__link">
         
   
@@ -567,6 +648,33 @@
     
   
     Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apple-local-gateway-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apple Silicon Local Setup
   
 
     
@@ -667,33 +775,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../tray/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Desktop Tray
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../security/" class="md-nav__link">
         
   
@@ -756,6 +837,33 @@
     
   
     FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
   
 
     
@@ -942,8 +1050,8 @@ renders.</p>
 </tr>
 </tbody>
 </table>
-<p>Windows keeps the vendor commands AbstractCore plans (winget / the vendor
-PowerShell installers / pip); the flow on this page is not yet exercised there.</p>
+<p>On Windows (experimental), installs use the vendor commands AbstractCore
+plans (winget, the vendor PowerShell installers, pip).</p>
 <p>Everything the gateway's own Python receives is installed with the gateway's
 <code>abstract*</code> packages pinned to the versions it runs, so an engine install can
 never change the gateway itself.</p>
@@ -1056,8 +1164,8 @@ percent}], result, error {code, message}, started_at, updated_at,
 finished_at</code>. <code>state</code> is one of <code>queued, downloading, installing, needs_admin,
 needs_tools, done, failed, cancelled</code>. While a step runs quietly, <code>message</code>
 says so at least every 3 seconds (<code>… (still working, 45 s)</code>). The job also
-carries <code>status</code> (<code>host_job_v1</code> words) so older clients polling
-<code>GET /jobs/{id}</code> keep working.</p>
+carries <code>status</code> (<code>host_job_v1</code> words) so clients polling <code>GET /jobs/{id}</code>
+read the same lifecycle as other host jobs.</p>
 <p>Jobs live in the gateway process: a restart forgets them (the log files stay).</p>
 
 

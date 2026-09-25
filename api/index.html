@@ -13,7 +13,7 @@
         <link rel="canonical" href="https://www.lpalbou.info/AbstractGateway/api/">
       
       
-        <link rel="prev" href="../deployment/">
+        <link rel="prev" href="../apple-local-gateway-flow/">
       
       
         <link rel="next" href="../architecture/">
@@ -251,6 +251,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../getting-started/" class="md-nav__link">
         
   
@@ -413,6 +440,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../shipped-workflows/" class="md-nav__link">
         
   
@@ -440,6 +494,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../deep-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deep Research Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../deployment/" class="md-nav__link">
         
   
@@ -448,6 +529,33 @@
     
   
     Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apple-local-gateway-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apple Silicon Local Setup
   
 
     
@@ -525,6 +633,17 @@
       Table of contents
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#route-families" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Route families
+      
+    </span>
+  </a>
+  
+</li>
       
         <li class="md-nav__item">
   <a href="#auth" class="md-nav__link">
@@ -1043,33 +1162,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../tray/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Desktop Tray
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../security/" class="md-nav__link">
         
   
@@ -1144,6 +1236,33 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -1169,6 +1288,17 @@
       Table of contents
     </label>
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#route-families" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Route families
+      
+    </span>
+  </a>
+  
+</li>
       
         <li class="md-nav__item">
   <a href="#auth" class="md-nav__link">
@@ -1648,6 +1778,71 @@
 <p>Context:
 - In the AbstractFramework ecosystem, UIs and automations call this API to operate <strong>AbstractRuntime</strong> runs.
 - Architecture diagram and core concepts: <a href="../architecture/">architecture.md</a></p>
+<h2 id="route-families">Route families<a class="headerlink" href="#route-families" title="Permanent link">&para;</a></h2>
+<p>This page covers the run contract, artifacts, discovery, media, models and
+host state. Other route families are documented next to the feature they
+serve:</p>
+<table>
+<thead>
+<tr>
+<th>Routes</th>
+<th>Purpose</th>
+<th>Reference</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/api/gateway/session/login</code>, <code>/session/logout</code>, <code>/session/claim</code>, <code>/me</code></td>
+<td>browser sessions, one-time sign-in links, the current principal</td>
+<td><a href="../security/">security.md</a>, <a href="../first-run/">first-run.md</a></td>
+</tr>
+<tr>
+<td><code>/api/gateway/admin/users</code>, <code>/admin/runtime-reservations</code></td>
+<td>user accounts and retained runtimes (admin)</td>
+<td><a href="../security/#tenant-and-user-isolation">security.md</a></td>
+</tr>
+<tr>
+<td><code>/api/gateway/admin/runtime-config</code></td>
+<td>runtime settings (admin)</td>
+<td><a href="../configuration/">configuration.md</a></td>
+</tr>
+<tr>
+<td><code>/api/gateway/network</code>, <code>/network/restart</code></td>
+<td>network exposure, addresses, reverse proxy</td>
+<td><a href="../configuration/#api-gateway_network_v1">configuration.md</a></td>
+</tr>
+<tr>
+<td><code>/api/gateway/apps/*</code>, <code>/apps/handover/{code}</code>, <code>/apps/tui-handover</code></td>
+<td>browser apps, terminal apps, the Assistant</td>
+<td><a href="../apps/#http-api">apps.md</a></td>
+</tr>
+<tr>
+<td><code>/api/gateway/engines/*</code></td>
+<td>local engine installs</td>
+<td><a href="../engines/#api-contract-gateway_engines_v2">engines.md</a></td>
+</tr>
+<tr>
+<td><code>/api/gateway/models/download*</code>, <code>/models/downloads*</code></td>
+<td>model download jobs and their event stream</td>
+<td><a href="../model-downloads/">model-downloads.md</a></td>
+</tr>
+<tr>
+<td><code>/api/gateway/host/*</code></td>
+<td>host state, pause, restart, update, tray</td>
+<td><a href="#host-state-and-model-residency">Host state</a>, <a href="#host-control-pause-desktop-tray-restart-update">Host control</a></td>
+</tr>
+<tr>
+<td><code>/api/gateway/backlog/*</code>, <code>/reports/*</code>, <code>/triage/*</code>, <code>/processes</code></td>
+<td>operator tooling</td>
+<td><a href="../maintenance/">maintenance.md</a></td>
+</tr>
+<tr>
+<td><code>/api/gateway/entities/*</code></td>
+<td>summoned entities</td>
+<td><a href="../entities/">entities.md</a></td>
+</tr>
+</tbody>
+</table>
 <h2 id="auth">Auth<a class="headerlink" href="#auth" title="Permanent link">&para;</a></h2>
 <p>By default, <code>/api/gateway/*</code> is protected by <code>GatewaySecurityMiddleware</code> (bearer token + origin allowlist).<br />
 See: <a href="../security/">security.md</a>.</p>
@@ -1658,9 +1853,8 @@ See: <a href="../security/">security.md</a>.</p>
 <h2 id="provider-connections">Provider connections<a class="headerlink" href="#provider-connections" title="Permanent link">&para;</a></h2>
 <p>Gateway-owned provider connections let users create reusable cloud, local, or
 OpenAI-compatible endpoints without putting raw API keys in workflow JSON or
-browser storage. The API route keeps the historical
-<code>provider-endpoint-profiles</code> name; the Console presents them as provider
-connections.</p>
+browser storage. The API route is named <code>provider-endpoint-profiles</code>; the
+console presents them as provider connections.</p>
 <ul>
 <li><code>GET /api/gateway/config/provider-endpoint-profiles</code>: list visible profiles.</li>
 <li><code>POST /api/gateway/config/provider-endpoint-profiles</code>: create a user- or
@@ -1706,8 +1900,8 @@ for data edges such as Break Object and Switch.</p>
 <p>Thin clients do not need to carry conversation transcripts. Passing
 <code>"input_data": {"use_session_history": true}</code> together with a <code>session_id</code>
 makes the gateway seed the run's <code>context.messages</code> from the session's prior
-COMPLETED root runs before the run starts — the run store is the durable
-transcript (agora <code>durable-sessions</code> contract v1, 2026-07-16).</p>
+COMPLETED root runs before the run starts: the run store is the durable
+transcript.</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"bundle_id":"my-bundle","session_id":"sess-1","input_data":{"prompt":"and what did I say before?","use_session_history":true}}'</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/runs/start"</span>
@@ -1737,9 +1931,8 @@ deliberately narrower than what history views display):</p>
 <li>Entity lanes never ride this: their transcript authority is the entity home
   (<code>_visit.history</code> / the chat driver), not the run store.</li>
 </ul>
-<p>Evidence: <code>_seed_session_history</code> in <code>src/abstractgateway/hosts/bundle_host.py</code>;
-read half <code>abstractruntime.session_history.session_chat_messages</code> (&gt;=0.4.30);
-tests <code>tests/test_gateway_session_history_seed.py</code>.</p>
+<p>Evidence: <code>_seed_session_history</code> in <code>src/abstractgateway/hosts/bundle_host.py</code>
+and <code>abstractruntime.session_history.session_chat_messages</code>.</p>
 <h3 id="2b-schedule-a-run-bundle-mode">2b) Schedule a run (bundle mode)<a class="headerlink" href="#2b-schedule-a-run-bundle-mode" title="Permanent link">&para;</a></h3>
 <p><code>POST /api/gateway/runs/schedule</code> starts a <strong>scheduled parent run</strong> that launches the target workflow as child runs over time.</p>
 <p>Example (run 3 times, every hour, starting now):</p>
@@ -1926,7 +2119,7 @@ raw bytes or local paths:</p>
 </code></pre></div>
 <p><code>scope</code> can be <code>all</code>, <code>session</code>, or <code>run</code>. Use <code>session_id</code> with
 <code>scope=session</code> and <code>run_id</code> with <code>scope=run</code>; omit both for <code>scope=all</code>.
-Search responses preserve the legacy row fields and also include
+Search responses carry the row fields and also include
 <code>artifact_envelope_v1</code>, a normalized projection of Runtime-owned descriptors,
 access stats, and Gateway action links.</p>
 <p>Useful query parameters:
@@ -2047,16 +2240,16 @@ See: <a href="../maintenance/">maintenance.md</a>.</p>
 gateway helpers (<code>tools</code>, <code>visualflow</code>, <code>media</code>), memory-store readiness, and
 AbstractCore capability plugin status for <code>voice</code>, <code>audio</code>, <code>vision</code>, and
 <code>music</code>.</p>
-<p>Today the route paths and contract descriptors are the stable part of this
-surface. Catalog routes now also include a stable Gateway-owned envelope:</p>
+<p>The route paths and contract descriptors are the stable part of this surface.
+Catalog routes also include a stable Gateway-owned envelope:</p>
 <ul>
 <li><code>catalog.contract = gateway_catalog_v1</code></li>
 <li><code>catalog.version = 1</code></li>
 <li><code>items = [...]</code></li>
 </ul>
-<p>Legacy lower-layer fields are still preserved for compatibility. New thin
-clients should read <code>catalog</code> plus <code>items</code>; older clients can keep using route-
-specific fields like <code>models</code>, <code>provider_models</code>, <code>profiles</code>, or <code>voices</code>.</p>
+<p>The lower-layer fields stay in the payload for compatibility. Thin clients
+should read <code>catalog</code> plus <code>items</code>; the route-specific fields (<code>models</code>,
+<code>provider_models</code>, <code>profiles</code>, <code>voices</code>) remain available.</p>
 <p>Provider discovery also reports the resolved default provider/model when one is
 configured. The resolver follows request values, flow pins, and the execution-host
 <code>input.text</code> capability route; if no pair exists, the response includes
@@ -2327,7 +2520,7 @@ is configured. Gateway uses explicit Core auth settings for that hop and never
 reuses the Gateway bearer token as a Core/provider secret. Without a configured
 Core server, the voice/model routes return bounded static descriptors from
 Gateway and capability-package environment variables.</p>
-<p>Each route now adds:</p>
+<p>Each route adds:</p>
 <ul>
 <li><code>catalog</code>: Gateway-owned route metadata (<code>contract</code>, <code>version</code>, <code>kind</code>,
   <code>scope</code>, <code>route_source</code>, optional <code>upstream_source</code>, and route filters)</li>
@@ -2442,8 +2635,8 @@ installed and the configured backend can be resolved. A fresh persistent store
 does not need to exist yet; empty-store structured queries return an empty
 result rather than making Flow authoring nodes unavailable.</p>
 <h2 id="models-and-engines">Models and engines<a class="headerlink" href="#models-and-engines" title="Permanent link">&para;</a></h2>
-<p>The gateway serves AbstractCore's models and engines payloads unchanged
-(AbstractCore 2.14.0 or newer), under <code>/api/gateway</code>. The bodies and payloads
+<p>The gateway serves AbstractCore's models and engines payloads unchanged,
+under <code>/api/gateway</code>. The bodies and payloads
 are the same as AbstractCore's own <code>/acore/*</code> routes; <code>abstractcore</code> and
 <code>abstractgateway</code> render them with the same screens.</p>
 <table>
@@ -2591,7 +2784,7 @@ memory tier's MLX build and exactly one text row is the <code>starter</code>.</p
 <code>command</code> (the exact argv), <code>dry_run</code>, <code>started_at</code>, <code>finished_at</code>, <code>error</code>
 (a string or <code>null</code>), <code>joined</code>, <code>result</code> and <code>cli_equivalent</code>, which names the
 <code>abstractgateway</code> command that does the same thing. A dry run finishes before
-the POST returns. On the older <code>/models/download</code> lane the job also carries
+the POST returns. On the <code>/models/download</code> routes the job also carries
 <code>job</code> (the id), <code>events</code>, <code>host_status</code>, reports <code>queued</code> as <code>running</code>, and
 counts <code>joined</code> including the first request.</p>
 <p><strong>Download progress.</strong> A download job also carries <code>state</code>
@@ -2640,7 +2833,7 @@ each source reports: <a href="../model-downloads/">model-downloads.md</a>.</p>
 </tr>
 <tr>
 <td>501 <code>unsupported</code> / <code>abstractcore_too_old</code></td>
-<td>the installed AbstractCore predates 2.14.0; <code>required</code>, <code>installed</code> and <code>missing</code> name what to upgrade</td>
+<td>the installed AbstractCore is too old for these routes; <code>required</code>, <code>installed</code> and <code>missing</code> name what to upgrade</td>
 </tr>
 <tr>
 <td>503 <code>unavailable</code></td>
@@ -2717,7 +2910,7 @@ of these routes, like every other <code>/api/gateway/*</code> path.</p>
   one. Together with the per-row <code>host_id</code>/<code>host_name</code> fields below, this is
   the seam a multi-machine resource pool would aggregate on; one gateway
   binds one runtime host, and the pool design is proposed in
-  <a href="../backlog/proposed/0093_multi_machine_model_resource_pool/">backlog 0093</a>.</li>
+  <a href="https://github.com/lpalbou/abstractgateway/blob/main/docs/backlog/proposed/0093_multi_machine_model_resource_pool.md">backlog 0093</a>.</li>
 </ul>
 <h3 id="get-hostmetricsmemory"><code>GET /host/metrics/memory</code><a class="headerlink" href="#get-hostmetricsmemory" title="Permanent link">&para;</a></h3>
 <p>Returns <code>{"ok": true, "supported": true, ...}</code> plus the snapshot sections:

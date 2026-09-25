@@ -1,0 +1,1871 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Deployable HTTP/SSE gateway for durable AbstractRuntime runs.">
+      
+      
+      
+        <link rel="canonical" href="https://www.lpalbou.info/AbstractGateway/troubleshooting/">
+      
+      
+        <link rel="prev" href="../faq/">
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Troubleshooting - AbstractGateway</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#abstractgateway-troubleshooting" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="AbstractGateway" class="md-header__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AbstractGateway
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Troubleshooting
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="AbstractGateway" class="md-nav__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    AbstractGateway
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../console/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consoles (web + terminal)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Browser & Terminal Apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Engines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-downloads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Downloads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shipped-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shipped Workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deep-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deep Research Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apple-local-gateway-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apple Silicon Local Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../entities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Summoned Entities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../maintenance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operator Tooling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#starting-and-signing-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Starting and signing in
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Starting and signing in">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#serve-says-refusing-to-start-no-sign-in-would-protect-this-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        serve says "Refusing to start: no sign-in would protect this gateway"
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#serve-refuses-a-weak-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        serve refuses a weak token
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-one-time-sign-in-link-does-not-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The one-time sign-in link does not work
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#i-lost-the-admin-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        I lost the admin token
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#401-403-429-or-413-from-apigateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        401, 403, 429 or 413 from /api/gateway/*
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#network-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Network access
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Network access">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-change-of-network-mode-needs-a-restart" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A change of network mode "needs a restart"
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lan-or-internet-is-refused-http-409" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        lan or internet is refused (HTTP 409)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#another-computer-cannot-open-the-console" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Another computer cannot open the console
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workflows-and-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workflows and runs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Workflows and runs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apigatewaybundles-returns-no-bundles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/gateway/bundles returns no bundles
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-run-stays-running-and-nothing-happens" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A run stays RUNNING and nothing happens
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#llm-nodes-but-no-default-providermodel-is-configured" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        "LLM nodes but no default provider/model is configured"
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-run-fails-because-a-models-weights-are-missing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A run fails because a model's weights are missing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#llmtool-execution-requires-abstractcore-integration-visual-agent-nodes-require-abstractagent-or-memory_kg_-nodes-ask-for-abstractmemory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        "LLM/tool execution requires AbstractCore integration", "Visual Agent nodes require AbstractAgent", or memory_kg_* nodes ask for AbstractMemory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#voicetts-or-audiotranscribe-answer-capability-unavailable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        /voice/tts or /audio/transcribe answer "capability unavailable"
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#catalog-routes-return-only-gateway_static-defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Catalog routes return only gateway_static defaults
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#engines-models-and-apps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Engines, models and apps
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Engines, models and apps">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#install-buttons-are-disabled-or-answer-403" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install buttons are disabled or answer 403
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#an-engine-install-stops-in-needs_admin-or-needs_tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An engine install stops in needs_admin or needs_tools
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-download-says-stalled-or-ends-failed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A download says "Stalled" or ends "failed"
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#an-app-does-not-install-or-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An app does not install or start
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-backlog-folder-is-not-available-on-this-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The backlog folder is "not available on this gateway"
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#desktop" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Desktop
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Desktop">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#there-is-no-tray-icon" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        There is no tray icon
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#start-at-login-reads-needs-repair-service-status-broken" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        "Start at login" reads "needs repair" (service status: broken)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related docs
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#starting-and-signing-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Starting and signing in
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Starting and signing in">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#serve-says-refusing-to-start-no-sign-in-would-protect-this-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        serve says "Refusing to start: no sign-in would protect this gateway"
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#serve-refuses-a-weak-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        serve refuses a weak token
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-one-time-sign-in-link-does-not-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The one-time sign-in link does not work
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#i-lost-the-admin-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        I lost the admin token
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#401-403-429-or-413-from-apigateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        401, 403, 429 or 413 from /api/gateway/*
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#network-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Network access
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Network access">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#a-change-of-network-mode-needs-a-restart" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A change of network mode "needs a restart"
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lan-or-internet-is-refused-http-409" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        lan or internet is refused (HTTP 409)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#another-computer-cannot-open-the-console" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Another computer cannot open the console
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workflows-and-runs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workflows and runs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Workflows and runs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#get-apigatewaybundles-returns-no-bundles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GET /api/gateway/bundles returns no bundles
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-run-stays-running-and-nothing-happens" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A run stays RUNNING and nothing happens
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#llm-nodes-but-no-default-providermodel-is-configured" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        "LLM nodes but no default provider/model is configured"
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-run-fails-because-a-models-weights-are-missing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A run fails because a model's weights are missing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#llmtool-execution-requires-abstractcore-integration-visual-agent-nodes-require-abstractagent-or-memory_kg_-nodes-ask-for-abstractmemory" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        "LLM/tool execution requires AbstractCore integration", "Visual Agent nodes require AbstractAgent", or memory_kg_* nodes ask for AbstractMemory
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#voicetts-or-audiotranscribe-answer-capability-unavailable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        /voice/tts or /audio/transcribe answer "capability unavailable"
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#catalog-routes-return-only-gateway_static-defaults" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Catalog routes return only gateway_static defaults
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#engines-models-and-apps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Engines, models and apps
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Engines, models and apps">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#install-buttons-are-disabled-or-answer-403" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Install buttons are disabled or answer 403
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#an-engine-install-stops-in-needs_admin-or-needs_tools" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An engine install stops in needs_admin or needs_tools
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-download-says-stalled-or-ends-failed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A download says "Stalled" or ends "failed"
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#an-app-does-not-install-or-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An app does not install or start
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-backlog-folder-is-not-available-on-this-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The backlog folder is "not available on this gateway"
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#desktop" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Desktop
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Desktop">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#there-is-no-tray-icon" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        There is no tray icon
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#start-at-login-reads-needs-repair-service-status-broken" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        "Start at login" reads "needs repair" (service status: broken)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related docs
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="abstractgateway-troubleshooting">AbstractGateway — Troubleshooting<a class="headerlink" href="#abstractgateway-troubleshooting" title="Permanent link">&para;</a></h1>
+<p>Each entry starts from a symptom you can see, then gives the likely causes,
+how to confirm them, the fix, and where the full explanation lives. For
+conceptual questions, see <a href="../faq/">faq.md</a>.</p>
+<p>Two commands answer most questions:</p>
+<div class="highlight"><pre><span></span><code>abstractgateway-config<span class="w"> </span>status<span class="w">          </span><span class="c1"># data dir, auth mode, login service, running gateway</span>
+curl<span class="w"> </span>-sS<span class="w"> </span>http://127.0.0.1:8080/api/health
+</code></pre></div>
+<h2 id="starting-and-signing-in">Starting and signing in<a class="headerlink" href="#starting-and-signing-in" title="Permanent link">&para;</a></h2>
+<h3 id="serve-says-refusing-to-start-no-sign-in-would-protect-this-gateway"><code>serve</code> says "Refusing to start: no sign-in would protect this gateway"<a class="headerlink" href="#serve-says-refusing-to-start-no-sign-in-would-protect-this-gateway" title="Permanent link">&para;</a></h3>
+<p><strong>Cause.</strong> <code>--host</code> points beyond this computer (for example <code>0.0.0.0</code>) and
+the gateway was started with neither user accounts nor a token.</p>
+<p><strong>Fix.</strong> Choose the exposure with the network setting instead of <code>--host</code>;
+user accounts are turned on for you:</p>
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>network<span class="w"> </span><span class="nb">set</span><span class="w"> </span>lan<span class="w">        </span><span class="c1"># or: internet --acknowledge-internet</span>
+abstractgateway<span class="w"> </span>serve
+</code></pre></div>
+<p>Or keep the gateway on this computer: <code>abstractgateway serve</code> (loopback) or
+<code>--host 127.0.0.1</code>. See
+<a href="../configuration/#network-exposure-localhost--local-network--internet">configuration.md</a>.</p>
+<h3 id="serve-refuses-a-weak-token"><code>serve</code> refuses a weak token<a class="headerlink" href="#serve-refuses-a-weak-token" title="Permanent link">&para;</a></h3>
+<p><strong>Cause.</strong> A shared <code>ABSTRACTGATEWAY_AUTH_TOKEN</code> shorter than 15 characters
+or easy to guess, on a non-loopback bind or with public wildcard origins.</p>
+<p><strong>Fix.</strong> Use a long random token, or use user accounts
+(<code>ABSTRACTGATEWAY_USER_AUTH=1</code>). See <a href="../security/">security.md</a>.</p>
+<h3 id="the-one-time-sign-in-link-does-not-work">The one-time sign-in link does not work<a class="headerlink" href="#the-one-time-sign-in-link-does-not-work" title="Permanent link">&para;</a></h3>
+<p><strong>Checks and fixes.</strong></p>
+<ul>
+<li>A link works <strong>once</strong> and for <strong>10 minutes</strong>. Mint a new one with
+  <code>abstractgateway claim --open</code>.</li>
+<li>It only works from a browser <strong>on the gateway machine</strong> (a loopback
+  connection without proxy headers). From another computer, sign in with a
+  user id and token instead.</li>
+<li><code>abstractgateway claim</code> exits with code <code>2</code> when the running gateway uses a
+  shared token without user accounts: that gateway cannot redeem links. Sign
+  in with the token, or start the gateway with user accounts.</li>
+</ul>
+<p>See <a href="../first-run/#3-get-a-new-sign-in-link">first-run.md</a>.</p>
+<h3 id="i-lost-the-admin-token">I lost the admin token<a class="headerlink" href="#i-lost-the-admin-token" title="Permanent link">&para;</a></h3>
+<p>It is kept in <code>&lt;data dir&gt;/auth/bootstrap-admin-token</code> (mode <code>0600</code>).
+<code>abstractgateway-config status</code> prints the data dir. For a loopback gateway
+you can also sign in with <code>abstractgateway claim --open</code> and rotate tokens
+from the console's <strong>Users &amp; Entities</strong> tab.</p>
+<h3 id="401-403-429-or-413-from-apigateway"><code>401</code>, <code>403</code>, <code>429</code> or <code>413</code> from <code>/api/gateway/*</code><a class="headerlink" href="#401-403-429-or-413-from-apigateway" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>Likely cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>401</code></td>
+<td>missing or invalid <code>Authorization: Bearer &lt;token&gt;</code> or session</td>
+<td>sign in again; check the token file</td>
+</tr>
+<tr>
+<td><code>401</code> with <code>user_accounts_off_admin_only</code></td>
+<td>a non-admin account while user accounts are off</td>
+<td>turn user accounts on, or sign in as an admin (<a href="../security/">security.md</a>)</td>
+</tr>
+<tr>
+<td><code>403</code> (origin not allowed)</td>
+<td>the browser page's origin is not in the allowlist</td>
+<td>add it with <code>abstractgateway network set --allowed-origins https://…</code></td>
+</tr>
+<tr>
+<td><code>403</code> on an admin route</td>
+<td>the signed-in principal is not an admin</td>
+<td>use an admin account</td>
+</tr>
+<tr>
+<td><code>429</code></td>
+<td>repeated failed sign-ins from the same client address (lockout)</td>
+<td>wait for the backoff; check <code>trust_proxy</code> behind a proxy</td>
+</tr>
+<tr>
+<td><code>413</code></td>
+<td>the body exceeds <code>ABSTRACTGATEWAY_MAX_BODY_BYTES</code> (or the attachment / bundle limit)</td>
+<td>send less, or raise the limit (<a href="../security/#limits-abuse-resistance">security.md</a>)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="network-access">Network access<a class="headerlink" href="#network-access" title="Permanent link">&para;</a></h2>
+<h3 id="a-change-of-network-mode-needs-a-restart">A change of network mode "needs a restart"<a class="headerlink" href="#a-change-of-network-mode-needs-a-restart" title="Permanent link">&para;</a></h3>
+<p>A listening socket cannot move. After <code>abstractgateway network set …</code>, the
+status reads <code>restart_required: true</code> until the gateway restarts:
+<code>abstractgateway network restart</code>, the tray's <strong>Restart AbstractGateway…</strong>, or
+stop and start <code>serve</code>.</p>
+<p>If <code>network status</code> says the restart <strong>cannot</strong> apply the setting, the
+running gateway was started with <code>--host/--port</code> (they win over the
+setting), or its login item pins them: run <code>abstractgateway service enable</code>
+once, then restart.</p>
+<h3 id="lan-or-internet-is-refused-http-409"><code>lan</code> or <code>internet</code> is refused (HTTP 409)<a class="headerlink" href="#lan-or-internet-is-refused-http-409" title="Permanent link">&para;</a></h3>
+<p>The <code>reason_code</code> says why:</p>
+<ul>
+<li><code>user_auth_required</code>: the gateway runs without user accounts (a shared
+  token only, or <code>ABSTRACTGATEWAY_USER_AUTH=0</code>).</li>
+<li><code>auth_disabled</code>: it was started with authentication or read protection off
+  (<code>ABSTRACTGATEWAY_SECURITY=0</code>, <code>ABSTRACTGATEWAY_PROTECT_WRITE=0</code>,
+  <code>ABSTRACTGATEWAY_PROTECT_READ=0</code>).</li>
+<li><code>acknowledgement_required</code>: <code>internet</code> needs
+  <code>--acknowledge-internet</code> (or the confirmation in the console or tray).</li>
+</ul>
+<p>Start the gateway without those variables (a plain <code>abstractgateway serve</code>)
+and set the mode again. See <a href="../security/#network-exposure">security.md</a>.</p>
+<h3 id="another-computer-cannot-open-the-console">Another computer cannot open the console<a class="headerlink" href="#another-computer-cannot-open-the-console" title="Permanent link">&para;</a></h3>
+<ul>
+<li>Check <code>abstractgateway network status</code>: the mode must be <code>lan</code> or
+  <code>internet</code>, applied (no restart pending).</li>
+<li>Use an address from <code>abstractgateway network addresses</code>; the machine's
+  firewall must allow the port.</li>
+<li>The console accepts the gateway's own LAN origins discovered at start. An
+  address that appeared later (another Wi-Fi network) needs a restart.</li>
+<li>Behind a reverse proxy or tunnel, add its public origin with
+  <code>abstractgateway network set --allowed-origins https://your.host</code>.</li>
+</ul>
+<h2 id="workflows-and-runs">Workflows and runs<a class="headerlink" href="#workflows-and-runs" title="Permanent link">&para;</a></h2>
+<h3 id="get-apigatewaybundles-returns-no-bundles"><code>GET /api/gateway/bundles</code> returns no bundles<a class="headerlink" href="#get-apigatewaybundles-returns-no-bundles" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>ABSTRACTGATEWAY_FLOWS_DIR</code> points at an empty directory. Unset it to serve
+  the shipped bundles (<a href="../shipped-workflows/">shipped-workflows.md</a>), or
+  upload a bundle with <code>POST /api/gateway/bundles/upload</code>.</li>
+<li>A bundle can be present but not served: the <code>skipped</code> array names it with
+  the reason (for example a <code>min_runtime</code> floor or a compile error).</li>
+</ul>
+<h3 id="a-run-stays-running-and-nothing-happens">A run stays RUNNING and nothing happens<a class="headerlink" href="#a-run-stays-running-and-nothing-happens" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>GET /api/health</code> reports the runner (<code>runner.runners[].status</code>). With
+  <code>serve --no-runner</code>, start <code>abstractgateway runner</code> on the same data dir.</li>
+<li><code>StartRunResponse.runner_warning</code> is set when no runner is ticking the data
+  dir.</li>
+<li>The gateway may be <strong>paused</strong> (<code>"paused": true</code> on <code>/api/health</code>, a banner
+  in the console): resume it from the tray, the console, or
+  <code>POST /api/gateway/host/resume</code>.</li>
+</ul>
+<h3 id="llm-nodes-but-no-default-providermodel-is-configured">"LLM nodes but no default provider/model is configured"<a class="headerlink" href="#llm-nodes-but-no-default-providermodel-is-configured" title="Permanent link">&para;</a></h3>
+<p>Configure the text route, for example:</p>
+<div class="highlight"><pre><span></span><code>abstractgateway-config<span class="w"> </span>set-default<span class="w"> </span>input.text<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--provider<span class="w"> </span>lmstudio<span class="w"> </span>--model<span class="w"> </span>qwen/qwen3.5-9b<span class="w"> </span>--base-url<span class="w"> </span>http://127.0.0.1:1234/v1
+</code></pre></div>
+<p>Or pick a default model in the console (<strong>Multimodal</strong>, or <strong>Use as default</strong>
+on a downloaded model in <strong>Models</strong>). See
+<a href="../configuration/#capability-defaults">configuration.md</a>.</p>
+<h3 id="a-run-fails-because-a-models-weights-are-missing">A run fails because a model's weights are missing<a class="headerlink" href="#a-run-fails-because-a-models-weights-are-missing" title="Permanent link">&para;</a></h3>
+<p>The error names the capability route that selected the model. Download it
+from the console's <strong>Models</strong> tab or with
+<code>abstractgateway models download &lt;provider&gt; &lt;artifact&gt;</code>, or choose another
+default. See <a href="../model-downloads/">model-downloads.md</a>.</p>
+<h3 id="llmtool-execution-requires-abstractcore-integration-visual-agent-nodes-require-abstractagent-or-memory_kg_-nodes-ask-for-abstractmemory">"LLM/tool execution requires AbstractCore integration", "Visual Agent nodes require AbstractAgent", or <code>memory_kg_*</code> nodes ask for AbstractMemory<a class="headerlink" href="#llmtool-execution-requires-abstractcore-integration-visual-agent-nodes-require-abstractagent-or-memory_kg_-nodes-ask-for-abstractmemory" title="Permanent link">&para;</a></h3>
+<p>These packages are part of the base install. Check the environment the
+gateway runs in:</p>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>show<span class="w"> </span>abstractgateway<span class="w"> </span>AbstractRuntime<span class="w"> </span>abstractcore<span class="w"> </span>abstractagent<span class="w"> </span>AbstractMemory
+</code></pre></div>
+<p>For KG memory, keep the default <code>lancedb</code> backend; <code>sqlite</code> works only when
+the installed AbstractMemory exposes <code>SQLiteTripleStore</code>.</p>
+<h3 id="voicetts-or-audiotranscribe-answer-capability-unavailable"><code>/voice/tts</code> or <code>/audio/transcribe</code> answer "capability unavailable"<a class="headerlink" href="#voicetts-or-audiotranscribe-answer-capability-unavailable" title="Permanent link">&para;</a></h3>
+<p>Configure the voice routes (<code>output.voice</code>, <code>input.voice</code>) in the console's
+<strong>Multimodal</strong> tab, or the Gateway-scoped voice variables for a remote
+backend (<code>ABSTRACTGATEWAY_VOICE_TTS_ENGINE</code>,
+<code>ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL</code>, …). Local voice engines need the
+<code>apple</code> or <code>gpu</code> extra. See <a href="../configuration/">configuration.md</a>.</p>
+<h3 id="catalog-routes-return-only-gateway_static-defaults">Catalog routes return only <code>gateway_static</code> defaults<a class="headerlink" href="#catalog-routes-return-only-gateway_static-defaults" title="Permanent link">&para;</a></h3>
+<p>The request reached a gateway without the capability packages you expected,
+often another <code>abstractgateway serve</code> still running from another
+environment on the same port. Stop it and start the one from your current
+environment.</p>
+<h2 id="engines-models-and-apps">Engines, models and apps<a class="headerlink" href="#engines-models-and-apps" title="Permanent link">&para;</a></h2>
+<h3 id="install-buttons-are-disabled-or-answer-403">Install buttons are disabled or answer <code>403</code><a class="headerlink" href="#install-buttons-are-disabled-or-answer-403" title="Permanent link">&para;</a></h3>
+<p>Installs run on the gateway machine, so they follow the
+<a href="../configuration/#allow_engine_install"><code>allow_engine_install</code></a> setting: on
+by default for a loopback gateway and for someone at the gateway machine;
+off by default for a browser on another computer. An admin can turn it on.
+Installs also require an admin account.</p>
+<h3 id="an-engine-install-stops-in-needs_admin-or-needs_tools">An engine install stops in <code>needs_admin</code> or <code>needs_tools</code><a class="headerlink" href="#an-engine-install-stops-in-needs_admin-or-needs_tools" title="Permanent link">&para;</a></h3>
+<p>This is expected when a step needs an administrator password or the Apple
+command-line tools. Use <strong>Continue with administrator password</strong> or
+<strong>Install tools</strong> in the console, or
+<code>abstractgateway engines continue &lt;job-id&gt;</code>. On a headless machine, run the
+command the job shows and press <strong>Re-check</strong>. See <a href="../engines/">engines.md</a>.</p>
+<h3 id="a-download-says-stalled-or-ends-failed">A download says "Stalled" or ends "failed"<a class="headerlink" href="#a-download-says-stalled-or-ends-failed" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>stalled</code>: no bytes for 15 seconds; the job keeps trying and resumes by
+  itself.</li>
+<li><code>failed</code>: <code>ended_reason</code> says what happened (a dropped connection, a Hub
+  error, a full disk, a gateway restart) and what a new download reuses.
+  Start the download again.</li>
+<li>A parent job id (<code>grp_…</code>) answers <code>404</code> after a gateway restart; its
+  children stay readable with <code>GET /api/gateway/jobs</code>.</li>
+</ul>
+<p>See <a href="../model-downloads/">model-downloads.md</a>.</p>
+<h3 id="an-app-does-not-install-or-start">An app does not install or start<a class="headerlink" href="#an-app-does-not-install-or-start" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Reason in the card or API</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>network_unavailable</code></td>
+<td>the npm registry (or PyPI, for Node.js) is unreachable; installed apps keep working offline</td>
+</tr>
+<tr>
+<td><code>no_free_port</code></td>
+<td>free a port in the app's usual range or set <code>apps.ports</code></td>
+</tr>
+<tr>
+<td><code>crash_loop</code></td>
+<td>open <strong>Show log</strong> (Technical details) or <code>abstractgateway apps logs &lt;app&gt;</code></td>
+</tr>
+<tr>
+<td><code>installs_not_allowed</code></td>
+<td>see "Install buttons are disabled" above</td>
+</tr>
+<tr>
+<td><code>app_loopback_only</code></td>
+<td>the app listens on <code>127.0.0.1</code>; open it from the gateway machine</td>
+</tr>
+<tr>
+<td><code>started_outside_gateway</code></td>
+<td>the app was started elsewhere (dev stack, <code>npx</code>); stop it there</td>
+</tr>
+</tbody>
+</table>
+<p>See <a href="../apps/">apps.md</a>.</p>
+<h3 id="the-backlog-folder-is-not-available-on-this-gateway">The backlog folder is "not available on this gateway"<a class="headerlink" href="#the-backlog-folder-is-not-available-on-this-gateway" title="Permanent link">&para;</a></h3>
+<p>The saved backlog folder no longer exists (a deleted or unmounted checkout).
+Choose <strong>Use the gateway's own folder</strong> in Continuum or the console, or run
+<code>abstractgateway config set triage_repo_root /path/to/checkout</code>. See
+<a href="../configuration/#backlog-folder-exec-runner-and-process-manager-continuum">configuration.md</a>.</p>
+<h2 id="desktop">Desktop<a class="headerlink" href="#desktop" title="Permanent link">&para;</a></h2>
+<h3 id="there-is-no-tray-icon">There is no tray icon<a class="headerlink" href="#there-is-no-tray-icon" title="Permanent link">&para;</a></h3>
+<p><code>serve</code> prints <code>Desktop tray: started (pid …)</code> or the reason it did not:</p>
+<table>
+<thead>
+<tr>
+<th>Reason</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>missing_dependency</code></td>
+<td><code>pip install "abstractgateway[tray]"</code> (Linux also needs the GTK/AppIndicator bindings)</td>
+</tr>
+<tr>
+<td><code>headless</code></td>
+<td>no display (SSH, container, service); expected</td>
+</tr>
+<tr>
+<td><code>dev_reload</code></td>
+<td>start without <code>--reload</code></td>
+</tr>
+<tr>
+<td><code>runner_only</code></td>
+<td>the tray belongs to the process that serves the console</td>
+</tr>
+</tbody>
+</table>
+<p>GNOME needs the AppIndicator extension. If the helper started and then
+disappeared, read <code>&lt;data dir&gt;/logs/tray.log</code>; <code>GET /api/gateway/host/tray</code>
+reports its exit code, and <code>POST /api/gateway/host/tray/show</code> (admin) starts
+it again. See <a href="../tray/">tray.md</a>.</p>
+<h3 id="start-at-login-reads-needs-repair-service-status-broken">"Start at login" reads "needs repair" (<code>service status</code>: <code>broken</code>)<a class="headerlink" href="#start-at-login-reads-needs-repair-service-status-broken" title="Permanent link">&para;</a></h3>
+<p>The registration points at a program that no longer exists (a moved or
+reinstalled gateway), is unreadable or disabled, or pins <code>--host/--port</code> so
+the Network setting cannot apply. Run:</p>
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>service<span class="w"> </span><span class="nb">enable</span><span class="w">     </span><span class="c1"># rewrite the registration for this gateway</span>
+abstractgateway<span class="w"> </span>service<span class="w"> </span>status
+</code></pre></div>
+<p><code>other</code> means the login item belongs to another data folder. See
+<a href="../first-run/#4-start-the-gateway-at-login-optional">first-run.md</a>.</p>
+<h2 id="related-docs">Related docs<a class="headerlink" href="#related-docs" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../faq/">faq.md</a>: conceptual questions and limits</li>
+<li><a href="../first-run/">first-run.md</a>, <a href="../getting-started/">getting-started.md</a></li>
+<li><a href="../configuration/">configuration.md</a>, <a href="../security/">security.md</a></li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
