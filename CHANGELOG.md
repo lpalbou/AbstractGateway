@@ -7,11 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-09-25
+
+Requires AbstractCore 2.15.2 and AbstractRuntime 0.4.35 (installed
+automatically). The terminal console is unchanged (`abstractgateway-console`
+0.8.0).
+
 ### Fixed
 
-- The documentation site no longer publishes the backlog: planning notes
-  under `docs/backlog/` stay in the repository and are left out of the site
-  build. The one API page that cited a backlog item links to it on GitHub.
+- **Installing the Assistant works on a new Mac.** Installing the Assistant
+  (and engines) into the gateway's Python failed with "File not found:
+  …/Library/Application" whenever the data folder's path contained a space,
+  as the macOS `Application Support` folder does. The gateway now pins its
+  own packages to their current versions in the install command itself.
 - The web console page no longer carries the source code's maintainer
   comments (design notes, review references, dates); it is about 11% smaller
   (1.25 MB to 1.12 MB). The artifact search box shows `YYYY-MM-DD` as its
@@ -19,9 +27,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - When the Models and Engines tabs cannot load, their card names AbstractCore
   2.15.1 as the version to install (it said 2.14.0, which lacks the cancel
   attribution the gateway uses).
-- Installing the Assistant (and engines) into the gateway's Python works when
-  the data folder's path contains a space, such as the macOS
-  `Application Support` folder.
+- The documentation site no longer publishes the backlog: planning notes
+  under `docs/backlog/` stay in the repository and are left out of the site
+  build. The one API page that cited a backlog item links to it on GitHub.
+
+### Changed
+
+- Dependency floors: `abstractcore>=2.15.2` (also in the `embeddings` extra)
+  and `AbstractRuntime>=0.4.35` (also in the `apple` and `gpu` extras).
+  AbstractCore 2.15.2's default MLX model is a repository that exists on
+  Hugging Face, so a first MLX download no longer fails.
 
 ## [0.4.2] - 2026-09-24
 
