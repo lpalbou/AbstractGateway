@@ -1412,7 +1412,11 @@ def test_gateway_bundle_metadata_endpoints_expose_entrypoint_inputs(tmp_path: Pa
         assert payload.get("bundle_id") == bundle_id
         assert payload.get("flow_id") == flow_id
         assert payload.get("workflow_id") == f"{bundle_id}@0.0.0:{flow_id}"
-        assert payload.get("input_data") == {"prompt": "hi", "max_iterations": 7}
+        inputs = dict(payload.get("input_data") or {})
+        # How the workflow was chosen rides with the inputs (a restored
+        # conversation reads it); the pins are the rest.
+        assert inputs.pop("workflow_selection")["workflow_id"] == f"{bundle_id}@0.0.0:{flow_id}"
+        assert inputs == {"prompt": "hi", "max_iterations": 7}
         ws = payload.get("workspace")
         assert isinstance(ws, dict)
         assert isinstance(ws.get("workspace_root"), str) and ws["workspace_root"].strip()

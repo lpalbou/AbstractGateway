@@ -179,7 +179,9 @@ def test_gateway_default_mode_is_the_inherited_posture(tmp_path, monkeypatch: py
     # And the sanitize lane honors the inherited blacklist posture.
     ws = tmp_path / "workspace"
     ws.mkdir()
-    anywhere = tmp_path / "anywhere"
+    # Outside the gateway data folder (tmp_path here): a data-folder path is
+    # never a workspace, whatever the posture.
+    anywhere = tmp_path.parent / f"{tmp_path.name}-anywhere"
     anywhere.mkdir()
     _lockdown_env(monkeypatch, ws=ws, data_dir=tmp_path)
     from abstractgateway.routes.gateway import _sanitize_run_workspace_policy

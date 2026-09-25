@@ -3974,6 +3974,57 @@ def _is_under_blocked_roots(p: Path, blocked_roots: list[Path]) -> bool:
     return _is_under_allowed_roots(p, blocked_roots)
 
 
+def _own_workspaces_dir(principal: Optional["GatewayPrincipal"]) -> Path:
+    """`<data dir>/workspaces` of the caller's runtime (per user under
+    multi-user auth): where the gateway makes this caller's workspaces."""
+    svc = get_gateway_service()
+    return Path(getattr(svc.config, "data_dir", gateway_data_dir_from_env())).expanduser().resolve() / "workspaces"
+
+
+def _gateway_made_workspace_owner(folder: Path, run_store: Any) -> Optional[str]:
+    """The run id recorded in a gateway-made workspace's marker when that run
+    is in `run_store` (i.e. belongs to the caller), else None."""
+    from ..workspace_browse import read_marker
+
+    marker = read_marker(folder)
+    if not marker or marker.get("owner") != "abstractgateway":
+        return None
+    rid = str(marker.get("run_id") or marker.get("first_run_id") or "").strip()
+    if not rid:
+        return None
+    try:
+        return rid if run_store.load(rid) is not None else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _data_dir_workspace_problem(path: Path, *, principal: Optional["GatewayPrincipal"]) -> Optional[str]:
+    """Why `path` may not be a workspace because it is inside the gateway's
+    data folder (None = not inside it, or it is the caller's own
+    gateway-made workspace folder or a folder inside that)."""
+    try:
+        data_root = gateway_data_dir_from_env().expanduser().resolve()
+        rp = Path(path).resolve()
+    except Exception:  # noqa: BLE001
+        return None
+    if not _is_under_allowed_roots(rp, [data_root]):
+        return None
+    own = _own_workspaces_dir(principal)
+    try:
+        rel = rp.relative_to(own)
+    except ValueError:
+        return f"it is inside the gateway's data folder ({data_root}), which is never a workspace"
+    if not rel.parts:
+        return f"it is the folder that holds every workspace in the gateway's data folder ({own}), not one workspace"
+    folder = own / rel.parts[0]
+    if _gateway_made_workspace_owner(folder, get_gateway_service().host.run_store) is None:
+        return (
+            f"it is inside the gateway's data folder ({data_root}) and is not a workspace the gateway made "
+            "for one of your runs"
+        )
+    return None
+
+
 def _sanitize_run_workspace_policy(
     input_data: Dict[str, Any],
     *,
@@ -4087,6 +4138,15 @@ def _sanitize_run_workspace_policy(
         resolved = _resolve_user_path(raw_wr, base=base)
         if blocked_roots and _is_under_blocked_roots(resolved, blocked_roots):
             _refuse_blocked_workspace("workspace_root", resolved)
+        # The gateway's own data folder (tokens, stores, other users' runs)
+        # is never a workspace, whatever the trust posture — except a
+        # gateway-made workspace folder of this caller, echoed back.
+        data_problem = _data_dir_workspace_problem(resolved, principal=principal)
+        if data_problem:
+            raise HTTPException(
+                status_code=400,
+                detail=f"workspace_root {str(resolved)!r} is refused: {data_problem}. The run was NOT started.",
+            )
         if allow_overrides or blacklist_mode or trust_launch_folder or _is_under_allowed_roots(resolved, allowed_roots):
             input_data["workspace_root"] = str(resolved)
             root_for_rel = resolved
@@ -9015,6 +9075,166 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
         "input_data": filtered2,
         "workspace": workspace_defaults,
     })
+
+
+# ---- Session workspace browse + preview (CONTRACTS §W, amendment A-1) ----
+# User-level, run-scoped: the run must be in the caller's run store (the same
+# ownership as /runs/{run_id}/input_data: another user's run id is a 404).
+# The root is run.vars.workspace_root, re-checked against the caller's
+# CURRENT workspace policy at every call; the gateway data folder is never
+# served except the caller's own gateway-made workspace folder; the deny
+# lists apply to every listed entry and every read (workspace_browse.py).
+
+
+def _load_callers_run_or_404(svc: Any, run_id: str) -> Any:
+    rid = str(run_id or "").strip()
+    if not rid:
+        raise HTTPException(status_code=400, detail="run_id is required")
+    try:
+        run = svc.host.run_store.load(rid)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load run: {e}")
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"Run '{rid}' not found")
+    return run
+
+
+def _browse_workspace_root(svc: Any, principal: GatewayPrincipal, run: Any) -> tuple[Path, list[Path]]:
+    """(workspace root, deny roots) the caller may browse for `run`, or the
+    HTTP refusal naming why not."""
+    from ..runtime_config import (
+        resolve_client_workspace_scope_overrides_enabled,
+        resolve_trust_client_launch_folder,
+        resolve_user_workspace_mode,
+        resolve_user_workspace_paths,
+    )
+
+    vars_obj = getattr(run, "vars", None)
+    raw_root = vars_obj.get("workspace_root") if isinstance(vars_obj, dict) else None
+    if not isinstance(raw_root, str) or not raw_root.strip():
+        raise HTTPException(status_code=409, detail="this run has no workspace folder")
+    root = _resolve_user_path(raw_root, base=_workspace_root())
+    data_dir = gateway_data_dir_from_env()
+    tenant_id = str(getattr(principal, "tenant_id", "") or "") or None
+    user_id = str(getattr(principal, "user_id", "") or "") or None
+    user_allowed, user_blocked = resolve_user_workspace_paths(data_dir, tenant_id=tenant_id, user_id=user_id)
+    blocked_roots = list(_workspace_blocked_roots()) + list(user_blocked)
+    if blocked_roots and _is_under_blocked_roots(root, blocked_roots):
+        raise HTTPException(status_code=403, detail=f"the workspace folder {str(root)!r} is blocked by the gateway's workspace deny list")
+    data_root = data_dir.expanduser().resolve()
+    if _is_under_allowed_roots(root, [data_root]):
+        own = _own_workspaces_dir(principal)
+        try:
+            rel = root.resolve().relative_to(own)
+        except ValueError:
+            rel = None
+        if rel is None or len(rel.parts) != 1 or _gateway_made_workspace_owner(root, svc.host.run_store) is None:
+            raise HTTPException(
+                status_code=403,
+                detail=f"the workspace folder {str(root)!r} is inside the gateway's data folder and is not a workspace "
+                "the gateway made for your runs; it is not served",
+            )
+        return root, blocked_roots
+    allowed = (
+        resolve_client_workspace_scope_overrides_enabled(data_dir, tenant_id=tenant_id, user_id=user_id)
+        or resolve_trust_client_launch_folder(data_dir, tenant_id=tenant_id, user_id=user_id)
+        or resolve_user_workspace_mode(data_dir, tenant_id=tenant_id, user_id=user_id) == "blacklist"
+        or _is_under_allowed_roots(root, [_workspace_root(), *(_workspace_mounts().values()), *user_allowed])
+    )
+    if not allowed:
+        raise HTTPException(
+            status_code=403,
+            detail=f"the workspace folder {str(root)!r} is outside what the gateway's workspace policy allows for your "
+            "account now (an admin changes it in the console settings)",
+        )
+    return root, blocked_roots
+
+
+def _browse_error(exc: Any) -> HTTPException:
+    return HTTPException(status_code=int(exc.status), detail=str(exc.message))
+
+
+@router.get("/runs/{run_id}/workspace")
+async def get_run_workspace(run_id: str, request: Request) -> Dict[str, Any]:
+    """Where this run's files are: the ABSOLUTE folder on the gateway host,
+    what kind of folder it is, the host name, and whether the caller sits at
+    that host (so a client offers "Open folder" only where it can work)."""
+    import socket
+
+    from ..security.same_machine import request_is_from_this_machine
+    from ..workspace_browse import workspace_kind
+
+    principal = _principal_from_request(request)
+    svc = get_gateway_service()
+    run = _load_callers_run_or_404(svc, run_id)
+    root, _blocked = _browse_workspace_root(svc, principal, run)
+    same_machine = bool(request_is_from_this_machine(request))
+    exists = root.is_dir()
+    return {
+        "run_id": str(getattr(run, "run_id", run_id)),
+        "workspace_root": str(root),
+        "kind": workspace_kind(root) if exists else "launch_folder",
+        "session_id": getattr(run, "session_id", None),
+        "exists": exists,
+        "host": {"hostname": socket.gethostname(), "caller_is_this_machine": same_machine},
+        # POST /runs/{run_id}/workspace/open is admin-only and acts on THIS host.
+        "open_supported": bool(exists and same_machine and principal.is_admin()),
+    }
+
+
+@router.get("/runs/{run_id}/workspace/files")
+async def list_run_workspace_files(
+    run_id: str,
+    request: Request,
+    path: str = Query(default="", description="Folder relative to the workspace folder ('' = the folder itself)."),
+    recursive: bool = Query(default=False, description="List every sub-folder too."),
+    limit: Optional[int] = Query(default=None, ge=1, description="Stop after this many entries (reported as truncated). Omit to list everything."),
+) -> Dict[str, Any]:
+    """Entries of one folder of the run's workspace: {path, entries[{name,
+    path, type, size_bytes, mtime}], truncated, limit, recursive, hidden}."""
+    from ..workspace_browse import WorkspacePathError, list_entries
+
+    principal = _principal_from_request(request)
+    svc = get_gateway_service()
+    run = _load_callers_run_or_404(svc, run_id)
+    root, blocked = _browse_workspace_root(svc, principal, run)
+    if not root.is_dir():
+        raise HTTPException(status_code=404, detail=f"the workspace folder {str(root)!r} does not exist")
+    try:
+        return await asyncio.to_thread(
+            list_entries, root, path, recursive=bool(recursive), limit=limit,
+            is_blocked=lambda p: bool(blocked) and _is_under_blocked_roots(p, blocked),
+        )
+    except WorkspacePathError as exc:
+        raise _browse_error(exc) from exc
+
+
+@router.get("/runs/{run_id}/workspace/content")
+async def get_run_workspace_content(
+    run_id: str,
+    request: Request,
+    path: str = Query(..., description="File relative to the workspace folder."),
+) -> StreamingResponse:
+    """The full bytes of one workspace file, streamed, with the artifact
+    content headers (CSP sandbox, nosniff, inline) and Range support."""
+    from ..workspace_browse import WorkspacePathError, open_slice
+
+    principal = _principal_from_request(request)
+    svc = get_gateway_service()
+    run = _load_callers_run_or_404(svc, run_id)
+    root, blocked = _browse_workspace_root(svc, principal, run)
+    try:
+        sl = open_slice(
+            root, path, range_header=request.headers.get("range"),
+            is_blocked=lambda p: bool(blocked) and _is_under_blocked_roots(p, blocked),
+        )
+    except WorkspacePathError as exc:
+        if exc.status == 416:
+            return JSONResponse(status_code=416, content={"detail": exc.message}, headers={"Accept-Ranges": "bytes"})
+        raise _browse_error(exc) from exc
+    return StreamingResponse(
+        sl.iter_bytes(), status_code=206 if sl.partial else 200, media_type=sl.content_type, headers=sl.headers()
+    )
 
 
 @router.post("/runs/{run_id}/workspace/open")
