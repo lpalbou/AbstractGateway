@@ -552,7 +552,13 @@ def _runtime_data_dir(args: argparse.Namespace) -> Path:
     return resolve_data_dir().path
 
 
+_AGENT_PREFIX = "agents.default_workflow."
+
+
 def _setting_row(cfg: Dict[str, Any], key: str) -> Optional[Dict[str, Any]]:
+    if key.startswith(_AGENT_PREFIX):
+        row = ((cfg.get("agents") or {}).get("default_workflow") or {}).get(key[len(_AGENT_PREFIX):])
+        return row if isinstance(row, dict) else None
     if key.startswith("apps."):
         row = (cfg.get("apps") or {}).get(key[len("apps."):])
         return row if isinstance(row, dict) else None
@@ -580,6 +586,12 @@ def _print_setting(key: str, row: Dict[str, Any]) -> None:
         print(f"  {row['label']}: {row.get('help') or ''}".rstrip())
     if row.get("available") is False:
         print(f"  NOT AVAILABLE: {row.get('reason')}")
+    if isinstance(row.get("resolved"), dict):
+        r = row["resolved"]
+        print(f"  runs {r.get('workflow_id')} ({r.get('name')}, {r.get('registry_scope')})")
+    if isinstance(row.get("eligible"), list) and row.get("key", "").startswith(_AGENT_PREFIX):
+        choices = [e.get("value") for e in row["eligible"] if isinstance(e, dict)]
+        print(f"  choices on this gateway: {', '.join(choices) if choices else '(no workflow declares this interface)'}")
     if row.get("source") == "default" and row.get("default_path") and row.get("exists") is False:
         print("  (the gateway creates this folder with a starter overview and template on first use)")
     if row.get("env_shadowed"):
@@ -681,14 +693,18 @@ def _apply_runtime_change(args: argparse.Namespace, change: Dict[str, Any]) -> i
 def _cmd_runtime_get(args: argparse.Namespace) -> None:
     from .runtime_config import BACKLOG_SETTINGS, read_runtime_config
 
-    cfg = read_runtime_config(_runtime_data_dir(args))
+    wants_agents = bool(args.key and str(args.key).startswith(_AGENT_PREFIX))
+    cfg = read_runtime_config(_runtime_data_dir(args), include_agents=wants_agents)
     keys = [args.key] if args.key else [row["key"] for row in BACKLOG_SETTINGS]
     rows: Dict[str, Any] = {}
     for key in keys:
         row = _setting_row(cfg, key)
         if row is None:
             known = sorted(k for k, v in cfg.items() if isinstance(v, dict) and k != "apps")
-            raise SystemExit(f"unknown setting {key!r}; one of {known} or apps.<name>")
+            if key.startswith(_AGENT_PREFIX):
+                ifaces = sorted(((cfg.get("agents") or {}).get("default_workflow") or {}).keys())
+                raise SystemExit(f"unknown agent interface in {key!r}; this gateway knows {ifaces}")
+            raise SystemExit(f"unknown setting {key!r}; one of {known}, apps.<name> or {_AGENT_PREFIX}<interface>")
         rows[key] = row
     if bool(args.json):
         print(json.dumps(rows if not args.key else rows[args.key], indent=2, default=str))

@@ -33,6 +33,60 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# ---- One writer at a time -----------------------------------------------
+# Every write is read-modify-replace of the whole store. Two writers at once
+# (the console and the CLI, or two console tabs) could each read the old
+# file and the second replace would silently drop the first change. The
+# lock: a process-wide RLock (threads of this gateway) + an flock on
+# `runtime_config.json.lock` (other processes: the CLI, a runner process).
+import threading as _threading
+from contextlib import contextmanager as _contextmanager
+import functools as _functools
+
+_STORE_RLOCK = _threading.RLock()
+_STORE_LOCK_DEPTH = _threading.local()
+
+
+@_contextmanager
+def store_lock(data_dir: Path):
+    with _STORE_RLOCK:
+        depth = getattr(_STORE_LOCK_DEPTH, "n", 0)
+        _STORE_LOCK_DEPTH.n = depth + 1
+        fh = None
+        try:
+            if depth == 0:
+                lock_path = _store_path(data_dir).with_suffix(".json.lock")
+                lock_path.parent.mkdir(parents=True, exist_ok=True)
+                fh = open(lock_path, "a+")
+                try:
+                    import fcntl
+
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+                except ImportError:  # pragma: no cover - Windows: the in-process lock still holds
+                    pass
+            yield
+        finally:
+            _STORE_LOCK_DEPTH.n = depth
+            if fh is not None:
+                try:
+                    import fcntl
+
+                    fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+                except ImportError:  # pragma: no cover
+                    pass
+                fh.close()
+
+
+def _locked_store_write(fn):
+    """Run a store writer (first argument: data_dir) under store_lock."""
+
+    @_functools.wraps(fn)
+    def wrapper(data_dir, *args, **kwargs):
+        with store_lock(Path(data_dir)):
+            return fn(data_dir, *args, **kwargs)
+
+    return wrapper
+
 # The env names each knob reads today (the FALLBACK rung). Kept as the
 # single source so the resolver and any future reader agree.
 _ENV_PROCESS_MANAGER = "ABSTRACTGATEWAY_ENABLE_PROCESS_MANAGER"
@@ -719,6 +773,7 @@ def resolve_network_setting(data_dir: Path, *, env: Optional[Any] = None) -> Dic
     return _network_payload(_read_store(data_dir), env=env)
 
 
+@_locked_store_write
 def write_network_setting(
     data_dir: Path,
     *,
@@ -941,6 +996,8 @@ def _user_workspace_policies_payload(stored: Dict[str, Any]) -> Dict[str, Any]:
 
 def _store_path(data_dir: Path) -> Path:
     return Path(data_dir) / "config" / "runtime_config.json"
+
+
 
 
 class RuntimeConfigStoreCorrupt(RuntimeError):
@@ -1384,7 +1441,82 @@ def _redact_backlog_root(entry: Dict[str, Any]) -> Dict[str, Any]:
     return keep
 
 
-def read_runtime_config(data_dir: Path, *, is_admin: bool = True) -> Dict[str, Any]:
+def _agents_payload(data_dir: Path, agent_index: Optional[List[Dict[str, Any]]]) -> Dict[str, Any]:
+    """The `agents` block (default agent workflow per interface). Resolved
+    against the live host's entrypoints when the caller passes them, else
+    against the flows folder on disk (`index_source` says which)."""
+    from .agent_defaults import default_workflows_payload, offline_entrypoint_index
+
+    source = "host"
+    if agent_index is None:
+        source = "flows_dir"
+        try:
+            agent_index = offline_entrypoint_index()
+        except Exception as exc:  # noqa: BLE001 - say it; never an empty-looking success
+            return {"default_workflow": {}, "index_source": source, "error": f"the workflows could not be read: {exc}"}
+    out = default_workflows_payload(agent_index, Path(data_dir))
+    out["index_source"] = source
+    return out
+
+
+def _write_agents_changes(
+    stored: Dict[str, Any],
+    changes: Dict[str, Any],
+    applied: Dict[str, Any],
+    agent_index: Optional[List[Dict[str, Any]]],
+) -> None:
+    """`agents.default_workflow.<interface>` (flat) or
+    {"agents": {"default_workflow": {interface: value}}} (nested). "" or
+    null clears (back to the built-in default). Each value must resolve on
+    this gateway and declare the interface (agent_defaults validates)."""
+    from .agent_defaults import SETTING_KEY, DefaultWorkflowError, offline_entrypoint_index, validate_default_workflow_value
+
+    pairs: List[tuple] = []
+    prefix = SETTING_KEY + "."
+    for k, v in changes.items():
+        if isinstance(k, str) and k.startswith(prefix):
+            pairs.append((k[len(prefix):], v))
+        elif isinstance(k, str) and k.startswith("agents.") and k != "agents":
+            raise RuntimeConfigError(f"unknown setting {k!r}; the agents settings are {SETTING_KEY}.<interface>")
+    if "agents" in changes:
+        block = changes["agents"]
+        if not isinstance(block, dict) or set(block) - {"default_workflow"} or not isinstance(block.get("default_workflow", {}), dict):
+            raise RuntimeConfigError('agents must be {"default_workflow": {"<interface>": "bundle[@version]:flow" | ""}}')
+        pairs.extend((block.get("default_workflow") or {}).items())
+    if not pairs:
+        return
+    agents = dict(stored.get("agents") or {}) if isinstance(stored.get("agents"), dict) else {}
+    mapping = dict(agents.get("default_workflow") or {}) if isinstance(agents.get("default_workflow"), dict) else {}
+    for iface, raw in pairs:
+        iface = str(iface or "").strip()
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            mapping.pop(iface, None)
+            applied[f"{SETTING_KEY}.{iface}"] = None
+            continue
+        if agent_index is None:
+            agent_index = offline_entrypoint_index()
+        try:
+            mapping[iface] = validate_default_workflow_value(iface, raw, index=agent_index)
+        except DefaultWorkflowError as exc:
+            raise RuntimeConfigError(str(exc)) from exc
+        applied[f"{SETTING_KEY}.{iface}"] = mapping[iface]
+    if mapping:
+        agents["default_workflow"] = mapping
+    else:
+        agents.pop("default_workflow", None)
+    if agents:
+        stored["agents"] = agents
+    else:
+        stored.pop("agents", None)
+
+
+def read_runtime_config(
+    data_dir: Path,
+    *,
+    is_admin: bool = True,
+    agent_index: Optional[List[Dict[str, Any]]] = None,
+    include_agents: bool = False,
+) -> Dict[str, Any]:
     """The authoritative runtime-config posture (continuum c1550 ask 1).
     Each knob carries {value, source}; the executor also carries the
     registry so one GET renders the whole Settings pane.
@@ -1426,7 +1558,7 @@ def read_runtime_config(data_dir: Path, *, is_admin: bool = True) -> Dict[str, A
         # An address is PII-adjacent — non-admins see the posture only
         # (same redaction discipline as triage_repo_root).
         operator_email = {"configured": bool(operator_email.get("value")), "source": operator_email["source"]}
-    return {
+    out: Dict[str, Any] = {
         "writable": bool(is_admin),
         "process_manager": _with_setting_meta(
             _resolve(stored, "process_manager", _ENV_PROCESS_MANAGER, False, as_bool=True), "process_manager"
@@ -1455,6 +1587,14 @@ def read_runtime_config(data_dir: Path, *, is_admin: bool = True) -> Dict[str, A
         # env_name, ...}} (registry APPS_SETTINGS); written as "apps.<name>".
         "apps": _apps_settings_payload(stored),
     }
+    if agent_index is not None or include_agents:
+        # Default agent workflow per agent interface (agent_defaults.py):
+        # {default_workflow: {interface: {value, source, available, reason,
+        # resolved, key, default, eligible[]}}, index_source}. Only on
+        # request: the per-knob resolvers below read this function too, and
+        # must not scan workflows to answer "what is the workspace root".
+        out["agents"] = _agents_payload(data_dir, agent_index)
+    return out
 
 
 def _parse_kill_switch_seconds(raw: Any) -> float:
@@ -1534,7 +1674,30 @@ class RuntimeConfigError(ValueError):
     """A rejected config write — the route maps it to an operator-readable 4xx."""
 
 
-def write_runtime_config(data_dir: Path, changes: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
+# Keys write_runtime_config accepts (plus the prefixed families checked in
+# _is_known_write_key). `desktop_tray` is known only to be refused in words.
+_WRITE_KEYS = frozenset({
+    "process_manager", "backlog_exec_runner", "desktop_tray", "triage_repo_root", "workspace_root",
+    "workspace_mounts", "workspace_allowed_paths", "workspace_blocked_paths",
+    "client_workspace_scope_overrides", "trust_client_launch_folder", "workspace_default_mode",
+    "user_workspace_policies", "executor", "operator_email", "stop_kill_switch_s",
+    "allow_engine_install", "apps", "agents",
+})
+
+
+def _is_known_write_key(key: Any) -> bool:
+    k = str(key)
+    return k in _WRITE_KEYS or k.startswith("apps.") or k.startswith("agents.")
+
+
+@_locked_store_write
+def write_runtime_config(
+    data_dir: Path,
+    changes: Dict[str, Any],
+    *,
+    actor: str,
+    agent_index: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
     """Persist a PARTIAL update (only the named knobs change; unnamed knobs
     keep their stored value or fall through to env/default). Validates each
     field BEFORE writing — a rejected value never lands. Returns the fresh
@@ -1555,6 +1718,15 @@ def write_runtime_config(data_dir: Path, changes: Dict[str, Any], *, actor: str)
             "network exposure and the reverse-proxy settings are changed through POST /api/gateway/network "
             "{mode?, port?, acknowledge_internet?, allowed_origins?, trust_proxy?} (or `abstractgateway network set`), "
             "which checks the auth the mode requires and validates every origin"
+        )
+    unknown = sorted(str(k) for k in changes if not _is_known_write_key(k))
+    if unknown:
+        # All or nothing: a request naming a key this gateway does not know
+        # (a typo, a newer client) changes NOTHING, rather than saving the
+        # keys it knows and quietly dropping the rest.
+        raise RuntimeConfigError(
+            f"unknown setting(s) {unknown}; nothing was saved. Known: {sorted(_WRITE_KEYS)} "
+            "plus apps.<name>, agents.default_workflow.<interface>"
         )
     for _switch in ("process_manager", "backlog_exec_runner"):
         if _switch in changes:
@@ -1736,6 +1908,7 @@ def write_runtime_config(data_dir: Path, changes: Dict[str, Any], *, actor: str)
             applied["allow_engine_install"] = stored["allow_engine_install"]
 
     _write_apps_changes(stored, changes, applied)
+    _write_agents_changes(stored, changes, applied, agent_index)
 
     if not applied:
         raise RuntimeConfigError(
@@ -1746,7 +1919,7 @@ def write_runtime_config(data_dir: Path, changes: Dict[str, Any], *, actor: str)
             "workspace_default_mode, user_workspace_policies, executor, operator_email, "
             "stop_kill_switch_s, allow_engine_install, "
             + ", ".join(r["key"] for r in APPS_SETTINGS)
-            + ")"
+            + ", agents.default_workflow.<interface>)"
         )
 
     stored["_last_changed_by"] = str(actor)
@@ -1755,7 +1928,8 @@ def write_runtime_config(data_dir: Path, changes: Dict[str, Any], *, actor: str)
     stored["_last_changed_at"] = datetime.now(timezone.utc).isoformat()
     _write_store(data_dir, stored)
 
-    out = read_runtime_config(data_dir)
+    touched_agents = any(str(k).startswith("agents.default_workflow.") for k in applied)
+    out = read_runtime_config(data_dir, agent_index=agent_index, include_agents=touched_agents)
     out["applied"] = applied
     out["changed_by"] = str(actor)
     return out
@@ -1988,6 +2162,7 @@ def read_user_workspace_policy(
     }
 
 
+@_locked_store_write
 def write_user_workspace_policy(
     data_dir: Path,
     *,

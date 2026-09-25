@@ -16,7 +16,7 @@ pub mod runtimes;
 pub mod users;
 pub mod util;
 pub mod widths;
-mod workflows;
+pub mod workflows;
 
 use std::cell::RefCell;
 use std::rc::Rc;

@@ -290,10 +290,10 @@ class TelegramBridgeConfig:
         bundle_id = str(os.getenv("ABSTRACT_TELEGRAM_BUNDLE_ID", "") or "").strip() or None
 
         # Telegram is a thin client: start a new run per message (like AbstractCode/Web).
-        # Default to the same agent bundle entrypoint (abstractcode.agent.v1) when unset.
+        # Unset = the gateway default workflow for abstractcode.agent.v1
+        # (setting agents.default_workflow), resolved at every message.
         if not flow_id and not bundle_id:
-            bundle_id = "basic-agent"
-            flow_id = "81795ea9"
+            flow_id = "@default"
         # Common convenience: user sets only flow_id to the basic-agent entrypoint id.
         if flow_id == "81795ea9" and not bundle_id:
             bundle_id = "basic-agent"
@@ -440,6 +440,28 @@ class TelegramBridge:
     @property
     def enabled(self) -> bool:
         return bool(self._cfg.enabled)
+
+    def _run_target(self, *, chat_id: int) -> Optional[tuple]:
+        """(flow_id, bundle_id, bundle_version) for the next run. "@default"
+        resolves the gateway default workflow for abstractcode.agent.v1 at
+        every message (a change in the console applies to the next message);
+        when it cannot run, the chat is told why and nothing starts."""
+        if self._cfg.flow_id != "@default":
+            return (self._cfg.flow_id, self._cfg.bundle_id, None)
+        from ..agent_defaults import CODE_AGENT_INTERFACE, Unavailable, host_entrypoint_index, resolve_default_agent_workflow, unavailable_detail
+        from ..users import gateway_data_dir_from_env
+
+        res = resolve_default_agent_workflow(
+            CODE_AGENT_INTERFACE, index=host_entrypoint_index(self._host), data_dir=gateway_data_dir_from_env()
+        )
+        if isinstance(res, Unavailable):
+            import logging
+
+            detail = unavailable_detail(res)
+            logging.getLogger(__name__).error("Telegram bridge: %s", detail)
+            self._send_text(chat_id=int(chat_id), text=f"Sorry — this gateway cannot start its default agent: {res.reason}")
+            return None
+        return (res.flow_id, res.bundle_id, res.bundle_version)
 
     def start(self) -> None:
         if not self._cfg.enabled:
@@ -2433,9 +2455,13 @@ class TelegramBridge:
         input_data["telegram"] = tg_payload
 
         try:
+            target = self._run_target(chat_id=int(chat_id))
+            if target is None:
+                return
             run_id = self._host.start_run(
-                flow_id=self._cfg.flow_id,
-                bundle_id=self._cfg.bundle_id,
+                flow_id=target[0],
+                bundle_id=target[1],
+                **({"bundle_version": target[2]} if target[2] else {}),
                 input_data=input_data,
                 actor_id="gateway",
                 session_id=session_id,
@@ -2817,9 +2843,13 @@ class TelegramBridge:
         input_data["telegram"] = tg_payload
 
         try:
+            target = self._run_target(chat_id=int(chat_id))
+            if target is None:
+                return
             run_id = self._host.start_run(
-                flow_id=self._cfg.flow_id,
-                bundle_id=self._cfg.bundle_id,
+                flow_id=target[0],
+                bundle_id=target[1],
+                **({"bundle_version": target[2]} if target[2] else {}),
                 input_data=input_data,
                 actor_id="gateway",
                 session_id=session_id,

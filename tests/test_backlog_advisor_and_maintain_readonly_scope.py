@@ -39,9 +39,21 @@ class _RunStore:
         return self._runs.get(str(run_id))
 
 
+def _basic_agent_bundle() -> Any:
+    """The shipped default agent as the host lists it (the backlog agents
+    run the gateway default for abstractcode.agent.v1)."""
+    from types import SimpleNamespace
+
+    ep = SimpleNamespace(flow_id="81795ea9", name="basic-agent", interfaces=["abstractcode.agent.v1"])
+    return SimpleNamespace(manifest=SimpleNamespace(bundle_id="basic-agent", bundle_version="0.0.5", default_entrypoint="81795ea9", entrypoints=[ep]))
+
+
 class _Host:
-    def __init__(self) -> None:
-        self.bundles: Dict[str, Any] = {}
+    def __init__(self, *, with_default_agent: bool = True) -> None:
+        self.bundles: Dict[str, Any] = {"basic-agent": {"0.0.5": _basic_agent_bundle()}} if with_default_agent else {}
+        self.latest_bundle_versions: Dict[str, str] = {"basic-agent": "0.0.5"} if with_default_agent else {}
+        self.bundle_sources: Dict[str, Any] = {}
+        self.deprecation_store = None
         self.run_store = _RunStore()
         self.starts: List[Dict[str, Any]] = []
 
@@ -55,8 +67,8 @@ class _Host:
         actor_id: str,
         session_id: Optional[str],
     ) -> str:
-        del flow_id, bundle_id, bundle_version, actor_id, session_id
-        self.starts.append({"input_data": dict(input_data)})
+        del actor_id, session_id
+        self.starts.append({"input_data": dict(input_data), "flow_id": flow_id, "bundle_id": bundle_id, "bundle_version": bundle_version})
         run_id = f"run-{len(self.starts)}"
 
         schema = input_data.get("resp_schema") or {}
@@ -111,6 +123,8 @@ def test_backlog_advisor_readonly_tools_and_allowed_paths(tmp_path: Path, monkey
 
     assert host.starts, "expected advisor to start a run"
     input_data = host.starts[-1]["input_data"]
+    # The gateway default agent workflow (agents.default_workflow), resolved.
+    assert (host.starts[-1]["bundle_id"], host.starts[-1]["bundle_version"], host.starts[-1]["flow_id"]) == ("basic-agent", "0.0.5", "81795ea9")
 
     # Read-only tool allowlist should include repo inspection tools (and exclude writes/exec).
     tools = list(input_data.get("tools") or [])
@@ -188,3 +202,25 @@ def test_backlog_maintain_readonly_tools_and_allowed_paths(tmp_path: Path, monke
     assert input_data.get("workspace_access_mode") == "workspace_or_allowed"
     allowed = list(input_data.get("workspace_allowed_paths") or [])
     assert str(gateway_dir.resolve()) in allowed
+
+
+@pytest.mark.basic
+def test_backlog_advisor_refuses_when_the_default_agent_cannot_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No default agent on the host: 409 naming the setting, never a start of
+    some other workflow."""
+    repo_root = tmp_path / "repo"
+    (repo_root / "docs" / "backlog").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", str(repo_root))
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "gateway_data"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    from abstractcore.config.manager import ConfigurationManager
+    assert ConfigurationManager().set_capability_default("output.text", provider="stub", model="stub-model")
+
+    host = _Host(with_default_agent=False)
+    svc = _Service(config=_Config(data_dir=tmp_path / "gateway_data"), runner=_Runner(), host=host)
+    app = _make_app(monkeypatch=monkeypatch, svc=svc)
+    with TestClient(app) as client:
+        r = client.post("/api/gateway/backlog/advisor", json={"message": "hi", "messages": [{"role": "user", "content": "hi"}]})
+    assert r.status_code == 409
+    assert "agents.default_workflow.abstractcode.agent.v1" in r.json()["detail"]
+    assert host.starts == []

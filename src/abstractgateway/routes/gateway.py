@@ -685,7 +685,11 @@ async def gateway_admin_read_runtime_config(request: Request) -> Dict[str, Any]:
     principal = _principal_from_request(request)
     from ..runtime_config import read_runtime_config
 
-    return read_runtime_config(gateway_data_dir_from_env(), is_admin=principal.is_admin())
+    return read_runtime_config(
+        gateway_data_dir_from_env(),
+        is_admin=principal.is_admin(),
+        agent_index=await _off_the_event_loop(_settings_agent_index, principal),
+    )
 
 
 @router.post("/admin/runtime-config")
@@ -703,7 +707,11 @@ async def gateway_admin_write_runtime_config(request: Request, payload: Dict[str
     request.state.audit_detail = {"setting_change": {"setting": "runtime_config", "actor": actor, "ok": False,
                                                      "keys": sorted(str(k) for k in (payload or {}))}}
     try:
-        out = write_runtime_config(gateway_data_dir_from_env(), dict(payload or {}), actor=actor)
+        # The workflows are indexed only when an agents setting is written
+        # (the response then carries the fresh `agents` block).
+        touches_agents = any(str(k) == "agents" or str(k).startswith("agents.") for k in (payload or {}))
+        agent_index = await _off_the_event_loop(_settings_agent_index, principal) if touches_agents else None
+        out = write_runtime_config(gateway_data_dir_from_env(), dict(payload or {}), actor=actor, agent_index=agent_index)
         request.state.audit_detail["setting_change"].update({"ok": True, "applied": out.get("applied")})
     except RuntimeConfigStoreCorrupt as e:
         # 409: the store is unreadable; refusing to overwrite it (would wipe
@@ -1159,7 +1167,24 @@ async def list_workflow_catalog(
         include_denied=bool(include_denied and principal.is_admin()),
     )
     items = [catalog_record_public_dict(record, principal) for record in records]
-    return {"items": items, "scope": scope0, "tenant_id": tenant0, "count": len(items)}
+    agent_defaults, agent_defaults_unavailable = _agent_default_envelope(svc, principal)
+    agent_marks = _agent_default_marks(agent_defaults, registry_scope=scope0)
+    for item in items:
+        eps_marked = []
+        for ep in item.get("entrypoints") or []:
+            if isinstance(ep, dict):
+                wid = f"{item.get('bundle_id')}@{item.get('bundle_version')}:{ep.get('flow_id')}"
+                ep = {**ep, "is_agent_default": bool(agent_marks.get(wid)), "agent_default_interfaces": list(agent_marks.get(wid) or [])}
+            eps_marked.append(ep)
+        item["entrypoints"] = eps_marked
+    return {
+        "items": items,
+        "scope": scope0,
+        "tenant_id": tenant0,
+        "count": len(items),
+        "default_agent_workflows": agent_defaults,
+        "default_agent_workflows_unavailable": agent_defaults_unavailable,
+    }
 
 
 @router.get("/workflow-catalog/{bundle_id}")
@@ -1998,8 +2023,13 @@ class StartRunRequest(_SpeculationControlRequest):
         default=None,
         description=(
             "Workflow id to start (flow id or 'bundle:flow'). Optional when bundle_id is provided and the bundle has a single entrypoint "
-            "or declares manifest.default_entrypoint."
+            "or declares manifest.default_entrypoint. '@default' starts the gateway default workflow for `interface` "
+            "(setting agents.default_workflow)."
         ),
+    )
+    interface: Optional[str] = Field(
+        default=None,
+        description="Agent interface id; required with flow_id '@default' (e.g. abstractcode.agent.v1). Ignored otherwise.",
     )
     input_data: Dict[str, Any] = Field(default_factory=dict)
     thinking: Optional[Union[bool, str]] = Field(
@@ -2028,6 +2058,10 @@ class StartRunResponse(BaseModel):
     # Additive + optional: older clients ignore it. Legitimate split/multi-
     # worker deployments (live peer heartbeat) stay quiet.
     runner_warning: Optional[str] = None
+    # The workflow this start actually runs, on every start:
+    # {workflow_id, bundle_id, bundle_version, flow_id, registry_scope, name,
+    #  source: "gateway_default" | "client"} (+ interface for a @default start).
+    resolved_workflow: Optional[Dict[str, Any]] = None
 
 
 class PurgeDraftRunsRequest(BaseModel):
@@ -2346,12 +2380,16 @@ class ScheduleRunRequest(_SpeculationControlRequest):
         default=None,
         description="Optional workflow registry scope: private (default when present in caller runtime) or tenant_catalog.",
     )
-    bundle_id: str = Field(..., description="Target bundle id to execute.")
+    bundle_id: Optional[str] = Field(default=None, description="Target bundle id to execute (not used with flow_id '@default').")
     bundle_version: Optional[str] = Field(
         default=None,
         description="Optional bundle version to run. If omitted, defaults to the latest loaded version for the selected bundle_id.",
     )
-    flow_id: str = Field(..., description="Target entry flow id (or namespaced bundle:flow).")
+    flow_id: str = Field(..., description="Target entry flow id (or namespaced bundle:flow), or '@default' for the gateway default workflow of `interface`.")
+    interface: Optional[str] = Field(
+        default=None,
+        description="Agent interface id; required with flow_id '@default' (e.g. abstractcode.agent.v1). Ignored otherwise.",
+    )
     input_data: Dict[str, Any] = Field(default_factory=dict, description="Target flow input payload.")
     thinking: Optional[Union[bool, str]] = Field(
         default=None,
@@ -3744,6 +3782,53 @@ def _maybe_resolve_catalog_start(
     snapshot["allowed_host_workflow_ids"] = [selection.host_workflow_id, selection.host_workflow_id.split(":", 1)[0] + ":*"]
     runtime_ns["workflow_policy"] = sign_workflow_policy(snapshot, secret=_workflow_policy_secret_for_service(svc))
     return selection
+
+
+def _agent_entrypoint_index(svc: Any, principal: Optional[GatewayPrincipal]) -> List[Dict[str, Any]]:
+    """Entrypoints this caller's host serves (private registry + the tenant
+    catalog records the caller may run): the index every default-agent
+    decision resolves against (agent_defaults.py)."""
+    from ..agent_defaults import host_entrypoint_index
+
+    host = _require_bundle_host(svc)
+    return host_entrypoint_index(
+        host,
+        principal=principal,
+        catalog_store=_workflow_catalog_store_for_service(svc),
+        tenant_id=_principal_catalog_tenant(principal, svc) if principal is not None else "default",
+    )
+
+
+def _settings_agent_index(principal: GatewayPrincipal) -> Optional[List[Dict[str, Any]]]:
+    """The index for the settings door. A gateway whose host cannot be built
+    (or serves no bundles) still serves its settings: None makes the
+    settings module read the flows folder instead and say so
+    (`agents.index_source: "flows_dir"`)."""
+    try:
+        return _agent_entrypoint_index(get_gateway_service(), principal)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("default agent workflow: the live host could not be indexed (%s); reading the flows folder", exc)
+        return None
+
+
+def _resolve_default_agent_or_409(svc: Any, principal: GatewayPrincipal, interface: Optional[str]) -> Any:
+    """`flow_id: "@default"` -> the Resolved default for `interface`, or a
+    400 when no interface is named, or a 409 naming the setting and its
+    source. Never a fallback to another workflow."""
+    from ..agent_defaults import Unavailable, resolve_default_agent_workflow, unavailable_detail
+
+    iface = str(interface or "").strip()
+    if not iface:
+        raise HTTPException(
+            status_code=400,
+            detail="flow_id '@default' needs `interface` (the agent interface id, e.g. abstractcode.agent.v1)",
+        )
+    res = resolve_default_agent_workflow(
+        iface, index=_agent_entrypoint_index(svc, principal), data_dir=gateway_data_dir_from_env()
+    )
+    if isinstance(res, Unavailable):
+        raise HTTPException(status_code=409, detail=unavailable_detail(res))
+    return res
 
 
 def _workspace_root() -> Path:
@@ -6969,8 +7054,27 @@ def _installed_bundle_load_state(host: Any, installed: Any, *, reloaded: bool) -
     return True, None
 
 
+def _agent_default_envelope(svc: Any, principal: Optional[GatewayPrincipal]) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """(`default_agent_workflows`, `default_agent_workflows_unavailable`) for
+    the discovery envelopes: what "Gateway default" means for each agent
+    interface on this gateway, readable without admin rights."""
+    from ..agent_defaults import discovery_envelope
+
+    return discovery_envelope(_agent_entrypoint_index(svc, principal), gateway_data_dir_from_env())
+
+
+def _agent_default_marks(defaults: Dict[str, Any], *, registry_scope: str) -> Dict[str, List[str]]:
+    """{workflow_id: [interfaces it is the gateway default for]} in one registry scope."""
+    marks: Dict[str, List[str]] = {}
+    for iface, row in (defaults or {}).items():
+        if str(row.get("registry_scope") or "") == registry_scope:
+            marks.setdefault(str(row.get("workflow_id") or ""), []).append(str(iface))
+    return marks
+
+
 @router.get("/bundles")
 async def list_bundles(
+    request: Request,
     all_versions: bool = Query(default=False, description="If true, return one item per bundle version."),
     include_drafts: bool = Query(default=False, description="If true, include draft bundle versions."),
     include_deprecated: bool = Query(default=False, description="If true, include deprecated entrypoints in discovery."),
@@ -6978,6 +7082,8 @@ async def list_bundles(
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
     dep_store = getattr(host, "deprecation_store", None)
+    agent_defaults, agent_defaults_unavailable = _agent_default_envelope(svc, _principal_from_request(request))
+    agent_marks = _agent_default_marks(agent_defaults, registry_scope="private")
 
     items: list[Dict[str, Any]] = []
     bundles_by_id = getattr(host, "bundles", {}) or {}
@@ -7055,6 +7161,11 @@ async def list_bundles(
                         "description": getattr(ep, "description", "") or "",
                         "interfaces": list(getattr(ep, "interfaces", None) or []),
                         "workflow_id": f"{bid}@{exact_version}:{fid}",
+                        # The gateway default for an agent interface (the
+                        # agents.default_workflow setting) — not the same as
+                        # the envelope's default_bundle_id.
+                        "is_agent_default": bool(agent_marks.get(f"{bid}@{exact_version}:{fid}")),
+                        "agent_default_interfaces": list(agent_marks.get(f"{bid}@{exact_version}:{fid}") or []),
                         "deprecated": bool(deprecated),
                         "deprecated_at": (str(rec.get("deprecated_at") or "").strip() if isinstance(rec, dict) else "") or None,
                         "deprecated_reason": (str(rec.get("reason") or "").strip() if isinstance(rec, dict) else "") or None,
@@ -7108,6 +7219,8 @@ async def list_bundles(
     return {
         "items": items,
         "default_bundle_id": default_bundle_id,
+        "default_agent_workflows": agent_defaults,
+        "default_agent_workflows_unavailable": agent_defaults_unavailable,
         "skipped": skipped_rows,
         "skipped_count": len(skipped_rows),
     }
@@ -7675,6 +7788,52 @@ async def get_workflow_flow(workflow_id: str) -> Dict[str, Any]:
     raise HTTPException(status_code=404, detail=f"Workflow '{wid}' not found")
 
 
+DEFAULT_AGENT_SENTINEL = "@default"
+
+
+def _workflow_selection_before_start(svc: Any, *, agent_default: Any = None, catalog_selection: Any = None) -> Dict[str, Any]:
+    """`input_data.workflow_selection` written at start: how this run's
+    workflow was chosen. A gateway default or a catalog start names its
+    workflow here; a plain client start is `{"source": "client"}` and the
+    host fills in what it resolved (bundle_host._complete_workflow_selection).
+    Always server-written: a client-sent value is replaced."""
+    if agent_default is not None:
+        return {**agent_default.resolved_dict(), "source": "gateway_default", "interface": agent_default.interface}
+    if catalog_selection is not None:
+        bid, ver, fid = catalog_selection.bundle_id, catalog_selection.bundle_version, catalog_selection.flow_id
+        return {
+            "workflow_id": f"{bid}@{ver}:{fid}", "bundle_id": bid, "bundle_version": ver, "flow_id": fid,
+            "registry_scope": str(getattr(catalog_selection, "scope", "") or "tenant_catalog"),
+            "name": _entrypoint_name(svc, str(catalog_selection.host_bundle_id), ver, fid),
+            "source": "client", "interface": None,
+        }
+    return {"source": "client"}
+
+
+def _resolved_workflow_after_start(svc: Any, run_id: str, fallback: Dict[str, Any]) -> Dict[str, Any]:
+    """`resolved_workflow` of a StartRunResponse = the run's own
+    `workflow_selection` as the host stored it (what really runs)."""
+    try:
+        run = svc.host.run_store.load(str(run_id))
+        sel = (getattr(run, "vars", None) or {}).get("workflow_selection")
+        if isinstance(sel, dict) and sel.get("workflow_id"):
+            return dict(sel)
+    except Exception:  # noqa: BLE001 - the start succeeded; report what is known
+        pass
+    return dict(fallback)
+
+
+def _entrypoint_name(svc: Any, bundle_id: str, version: Optional[str], flow_id: str) -> Optional[str]:
+    try:
+        bundle = ((getattr(svc.host, "bundles", None) or {}).get(bundle_id) or {}).get(version or "")
+        for ep in list(getattr(getattr(bundle, "manifest", None), "entrypoints", None) or []):
+            if str(getattr(ep, "flow_id", "") or "") == flow_id:
+                return str(getattr(ep, "name", "") or "") or flow_id
+    except Exception:  # noqa: BLE001
+        return None
+    return None
+
+
 def _runner_inactive_warning(svc: Any) -> Optional[str]:
     """Warning text when runs accepted by this process may never be ticked.
 
@@ -7711,6 +7870,18 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
     bundle_version = (
         str(req.bundle_version).strip() if isinstance(req.bundle_version, str) and str(req.bundle_version).strip() else None
     )
+    registry_scope = req.registry_scope
+    # "@default": the gateway default workflow of an agent interface
+    # (agents.default_workflow), rewritten BEFORE any other resolution.
+    agent_default = None
+    if flow_id == DEFAULT_AGENT_SENTINEL:
+        if bundle_id or bundle_version:
+            raise HTTPException(status_code=400, detail="flow_id '@default' chooses the workflow itself; do not send bundle_id/bundle_version with it")
+        agent_default = await _off_the_event_loop(_resolve_default_agent_or_409, svc, principal, req.interface)
+        bundle_id = agent_default.bundle_id
+        bundle_version = agent_default.bundle_version
+        flow_id = agent_default.flow_id
+        registry_scope = agent_default.registry_scope if agent_default.registry_scope != "private" else None
     if not flow_id and not bundle_id:
         raise HTTPException(status_code=400, detail="flow_id is required (or provide bundle_id to start a bundle entrypoint)")
     bundle_ref_version = _split_bundle_ref(bundle_id or "")[1] if bundle_id else None
@@ -7719,7 +7890,7 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
     if parsed_flow_ref:
         flow_ref_version = _split_bundle_ref(parsed_flow_ref[0])[1]
     requested_bundle_version = bundle_version or bundle_ref_version or flow_ref_version
-    if _is_draft_bundle_version(requested_bundle_version) and not _catalog_scope_requested(req.registry_scope):
+    if _is_draft_bundle_version(requested_bundle_version) and not _catalog_scope_requested(registry_scope):
         lifecycle_purpose = (
             str((req.run_lifecycle or {}).get("purpose") or "").strip()
             if isinstance(req.run_lifecycle, dict)
@@ -7741,12 +7912,13 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
         if isinstance(req.run_lifecycle, dict):
             input_data["_run_lifecycle"] = dict(req.run_lifecycle)
         normalize_run_lifecycle_vars(input_data)
+        input_data.pop("workflow_selection", None)  # server-written only (below)
 
         catalog_selection = await _off_the_event_loop(
             _maybe_resolve_catalog_start,
             svc=svc,
             principal=principal,
-            registry_scope=req.registry_scope,
+            registry_scope=registry_scope,
             bundle_id=bundle_id,
             bundle_version=bundle_version,
             flow_id=flow_id,
@@ -7799,6 +7971,10 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
             store = _artifact_store_or_500(svc)
             _validate_run_start_artifact_refs(store=store, input_data=input_data, session_id=session_id)
 
+        workflow_selection = _workflow_selection_before_start(
+            svc, agent_default=agent_default, catalog_selection=catalog_selection
+        )
+        input_data["workflow_selection"] = dict(workflow_selection)
         run_id = svc.host.start_run(
             flow_id=flow_id,
             bundle_id=bundle_id,
@@ -7835,7 +8011,11 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
         raise HTTPException(status_code=404, detail=msg)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to start run: {e}")
-    return StartRunResponse(run_id=str(run_id), runner_warning=_runner_inactive_warning(svc))
+    return StartRunResponse(
+        run_id=str(run_id),
+        runner_warning=_runner_inactive_warning(svc),
+        resolved_workflow=_resolved_workflow_after_start(svc, str(run_id), workflow_selection),
+    )
 
 
 @router.post("/runs/schedule", response_model=StartRunResponse)
@@ -7856,6 +8036,19 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
 
     bundle_id_ref = str(req.bundle_id or "").strip()
     flow_id_raw = str(req.flow_id or "").strip()
+    schedule_registry_scope = req.registry_scope
+    schedule_bundle_version = req.bundle_version
+    agent_default = None
+    if flow_id_raw == DEFAULT_AGENT_SENTINEL:
+        # Same rewrite as /runs/start: the gateway default for `interface`,
+        # resolved now (the schedule then targets that exact version).
+        if bundle_id_ref or str(req.bundle_version or "").strip():
+            raise HTTPException(status_code=400, detail="flow_id '@default' chooses the workflow itself; do not send bundle_id/bundle_version with it")
+        agent_default = await _off_the_event_loop(_resolve_default_agent_or_409, svc, principal, req.interface)
+        bundle_id_ref = agent_default.bundle_id
+        schedule_bundle_version = agent_default.bundle_version
+        flow_id_raw = agent_default.flow_id
+        schedule_registry_scope = agent_default.registry_scope if agent_default.registry_scope != "private" else None
     if not bundle_id_ref or not flow_id_raw:
         raise HTTPException(status_code=400, detail="bundle_id and flow_id are required")
 
@@ -7865,9 +8058,9 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
         _maybe_resolve_catalog_start,
         svc=svc,
         principal=principal,
-        registry_scope=req.registry_scope,
+        registry_scope=schedule_registry_scope,
         bundle_id=bundle_id_ref,
-        bundle_version=req.bundle_version,
+        bundle_version=schedule_bundle_version,
         flow_id=flow_id_raw,
         input_data=(catalog_input_data := dict(schedule_input_data)),
     )
@@ -7885,7 +8078,7 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
     if not bundle_id_base:
         raise HTTPException(status_code=400, detail="bundle_id is required")
 
-    requested_ver = str(req.bundle_version or "").strip() if isinstance(req.bundle_version, str) and str(req.bundle_version).strip() else ""
+    requested_ver = str(schedule_bundle_version or "").strip() if isinstance(schedule_bundle_version, str) and str(schedule_bundle_version).strip() else ""
     if bundle_id_ver and requested_ver and bundle_id_ver != requested_ver:
         raise HTTPException(status_code=400, detail="bundle_version conflicts with bundle_id (bundle_id already includes '@version')")
 
@@ -8043,6 +8236,17 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
         raise HTTPException(status_code=500, detail=f"Failed to register schedule wrapper workflow: {e}")
 
     input_data = catalog_input_data if catalog_selection is not None and catalog_input_data is not None else dict(schedule_input_data)
+    # How the TARGET was chosen, written into the target's inputs (every
+    # scheduled execution carries it) and on the wrapper run itself.
+    workflow_selection = _workflow_selection_before_start(svc, agent_default=agent_default, catalog_selection=catalog_selection)
+    if not workflow_selection.get("workflow_id"):
+        workflow_selection = {
+            "workflow_id": target_workflow_id, "bundle_id": bundle_id_base, "bundle_version": selected_ver,
+            "flow_id": target_flow_id, "registry_scope": "private",
+            "name": _entrypoint_name(svc, bundle_id_base, selected_ver, target_flow_id),
+            "source": "client", "interface": None,
+        }
+    input_data["workflow_selection"] = dict(workflow_selection)
     # Reasoning lane (2026-08-04): same fold and precedence as /runs/start —
     # the explicit top-level field beats an embedded input_data._runtime value.
     schedule_thinking = _normalize_gateway_thinking(req.thinking)
@@ -8073,6 +8277,7 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
     }
     wrapper_vars: Dict[str, Any] = {
         "vars": input_data,
+        "workflow_selection": dict(workflow_selection),
         **({"session_prefix": session_prefix} if isinstance(session_prefix, str) and session_prefix.strip() else {}),
         "_meta": {"schedule": schedule_meta},
     }
@@ -8109,7 +8314,13 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to start scheduled run: {e}")
 
-    return StartRunResponse(run_id=str(run_id), runner_warning=_runner_inactive_warning(svc))
+    # resolved_workflow names the TARGET the schedule launches (the parent
+    # run itself is the generated scheduled:<uuid> wrapper).
+    return StartRunResponse(
+        run_id=str(run_id),
+        runner_warning=_runner_inactive_warning(svc),
+        resolved_workflow=dict(workflow_selection),
+    )
 
 
 @router.post("/runs/purge_drafts")
@@ -8733,7 +8944,7 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
                     pin_ids = [str(p.get("id")) for p in pins if isinstance(p, dict) and isinstance(p.get("id"), str)]
                     if pin_ids:
                         allowed = set(pin_ids)
-                        filtered = {k: v for k, v in target_vars.items() if isinstance(k, str) and k in allowed}
+                        filtered = {k: v for k, v in target_vars.items() if isinstance(k, str) and (k in allowed or k == "workflow_selection")}
                         return _response({
                             "run_id": str(getattr(run, "run_id", run_id)),
                             "workflow_id": str(workflow_id or ""),
@@ -8777,7 +8988,7 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
             pin_ids = [str(p.get("id")) for p in pins if isinstance(p, dict) and isinstance(p.get("id"), str)]
             if pin_ids:
                 allowed = set(pin_ids)
-                filtered = {k: v for k, v in vars_obj.items() if isinstance(k, str) and k in allowed}
+                filtered = {k: v for k, v in vars_obj.items() if isinstance(k, str) and (k in allowed or k == "workflow_selection")}
                 bid_base, _bid_ver = _split_bundle_ref(str(bundle_id))
                 return _response({
                     "run_id": str(getattr(run, "run_id", run_id)),
@@ -19172,7 +19383,7 @@ class BacklogAdvisorRequest(BaseModel):
     thinking: Optional[str] = Field(default=None, max_length=40, description="Optional reasoning effort (one wire name: thinking).")
     agent: Optional[str] = Field(
         default=None,
-        description="Optional agent bundle id override (default: basic-agent).",
+        description="Optional agent bundle id override (default: the gateway default workflow for abstractcode.agent.v1).",
     )
     include_trace: bool = Field(
         default=False,
@@ -23165,6 +23376,29 @@ def _collect_tool_trace_for_run_tree(*, svc: Any, root_run_id: str, max_runs: in
     return trace[:max_calls]
 
 
+def _backlog_agent_target(svc: Any, *, override_bundle: Optional[str] = None) -> tuple[str, Optional[str], str]:
+    """(bundle_id, bundle_version, flow_id) the backlog agents start. An
+    explicit bundle override keeps its old meaning (that bundle's default
+    entrypoint); otherwise the gateway default for abstractcode.agent.v1
+    (agents.default_workflow) — a 409 naming the setting when it cannot run,
+    never a quiet fallback to basic-agent."""
+    override = str(override_bundle or "").strip()
+    if override:
+        return override, None, ""
+    principal = current_gateway_principal() or local_admin_principal()
+    res = _resolve_default_agent_or_409(svc, principal, "abstractcode.agent.v1")
+    if res.registry_scope != "private":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"the gateway default workflow for abstractcode.agent.v1 is the catalog workflow {res.workflow_id}; "
+                "the backlog agents run workflows of the gateway's own registry. Choose a registry workflow for "
+                "agents.default_workflow.abstractcode.agent.v1, or pass `agent`."
+            ),
+        )
+    return res.bundle_id, res.bundle_version, res.flow_id
+
+
 def _backlog_agent_allowed_paths(*, repo_root: Path, svc: Any) -> list[str]:
     """Return additional allowed workspace roots for backlog advisor/maintainer runs.
 
@@ -23284,15 +23518,16 @@ async def backlog_maintain(req: BacklogMaintainRequest) -> BacklogAssistResponse
         raise HTTPException(status_code=409, detail="Gateway runner is disabled (start the gateway without --no-runner)")
     svc.runner.start()
 
-    # Ensure the basic-agent bundle exists (bundle workflow source required).
+    # The gateway default agent (agents.default_workflow, abstractcode.agent.v1).
     host = _require_bundle_host(svc)
+    agent_bid, agent_ver, agent_fid = _backlog_agent_target(svc)
     allowed_paths = _backlog_agent_allowed_paths(repo_root=repo_root, svc=svc)
     access_mode = "workspace_or_allowed" if allowed_paths else "workspace_only"
     try:
         run_id = host.start_run(
-            flow_id="",
-            bundle_id="basic-agent",
-            bundle_version=None,
+            flow_id=agent_fid,
+            bundle_id=agent_bid,
+            bundle_version=agent_ver,
             input_data={
                 "workspace_root": str(repo_root),
                 "workspace_access_mode": access_mode,
@@ -23405,12 +23640,14 @@ async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
     if allow_web:
         tools.extend(["web_search", "fetch_url"])
 
-    agent_bundle = str(
+    # An explicit `agent` (or the legacy environment override) names a
+    # bundle; otherwise the gateway default agent workflow runs.
+    agent_override = str(
         req.agent
         or os.getenv("ABSTRACTGATEWAY_BACKLOG_ADVISOR_AGENT")
         or os.getenv("ABSTRACT_BACKLOG_ADVISOR_AGENT")
-        or "basic-agent"
-    ).strip() or "basic-agent"
+        or ""
+    ).strip()
 
     svc = get_gateway_service()
     allowed_paths = _backlog_agent_allowed_paths(repo_root=repo_root, svc=svc)
@@ -23440,11 +23677,12 @@ async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
     svc.runner.start()
 
     host = _require_bundle_host(svc)
+    agent_bid, agent_ver, agent_fid = _backlog_agent_target(svc, override_bundle=agent_override)
     try:
         run_id = host.start_run(
-            flow_id="",
-            bundle_id=agent_bundle,
-            bundle_version=None,
+            flow_id=agent_fid,
+            bundle_id=agent_bid,
+            bundle_version=agent_ver,
             input_data={
                 "workspace_root": str(repo_root),
                 "workspace_access_mode": access_mode,

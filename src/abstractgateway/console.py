@@ -1801,6 +1801,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <div id="tab-workflows" class="tab-panel">
 	        <div class="tab-grid tab-grid-wide">
 	          <div class="tab-stack">
+	            <section id="agent-defaults-section" class="session-only">
+	              <div class="section-head">
+	                <div>
+	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">★</span><span>Default agent workflow</span></h2>
+	                  <p class="section-note">What “Gateway default” runs in AbstractCode, the Assistant and other clients, for each agent interface.</p>
+	                </div>
+	              </div>
+	              <div id="agent-defaults-root"></div>
+	            </section>
+
 	            <section id="workflows-section" class="session-only">
 	              <div class="section-head">
 	                <div>
@@ -1863,7 +1873,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <div id="workflow-pane-entrypoints" class="hidden">
 	                <div class="table-scroll">
 	                  <table>
-	                    <thead><tr><th>Entrypoint</th><th>Workflow id</th><th>Interfaces</th><th>Description</th></tr></thead>
+	                    <thead><tr><th>Entrypoint</th><th>Workflow id</th><th>Interfaces</th><th>Description</th><th>Agent default</th></tr></thead>
 	                    <tbody id="workflow-entrypoints-table"></tbody>
 	                  </table>
 	                </div>
@@ -3714,8 +3724,48 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          td.textContent = String(value || "");
 	          tr.appendChild(td);
 	        }
+	        tr.appendChild(agentDefaultCell(row.bundle_id, ep, versions));
 	        et.appendChild(tr);
 	      }
+	    }
+
+	    // The "Agent default" cell of an entrypoint row: which interfaces it
+	    // is the gateway default for (any version of this workflow), and for
+	    // an admin one "Make agent default" button per declared interface it
+	    // is not yet the default for. The value saved has no version, so the
+	    // default follows new published versions of this workflow.
+	    function agentDefaultCell(bundleId, ep, versions) {
+	      const td = document.createElement("td");
+	      const isFor = new Set();
+	      for (const v of versions || []) for (const e of v.entrypoints || []) {
+	        if (e && e.flow_id === ep.flow_id) for (const i of e.agent_default_interfaces || []) isFor.add(i);
+	      }
+	      if (isFor.size) {
+	        const tag = document.createElement("span");
+	        tag.className = "pill ok";
+	        tag.textContent = `default: ${[...isFor].join(", ")}`;
+	        td.appendChild(tag);
+	      }
+	      const admin = !!(state.principal && state.principal.admin);
+	      for (const iface of ep.interfaces || []) {
+	        if (!admin || isFor.has(iface) || ep.deprecated) continue;
+	        const b = document.createElement("button");
+	        b.className = "secondary";
+	        b.textContent = (ep.interfaces || []).length > 1 ? `Make agent default (${iface})` : "Make agent default";
+	        b.title = `Save ${bundleId}:${ep.flow_id} as agents.default_workflow.${iface}`;
+	        b.onclick = async (ev) => {
+	          ev.stopPropagation();
+	          const ok = await agentDefaultsMake(iface, `${bundleId}:${ep.flow_id}`);
+	          $("workflows-message").textContent = ok
+	            ? `${bundleId}:${ep.flow_id} is now the gateway default for ${iface}.`
+	            : String((agentDefStore.saved && agentDefStore.saved.text) || "Not saved.");
+	          $("workflows-message").className = ok ? "message ok" : "message error";
+	          await loadWorkflows();
+	        };
+	        td.appendChild(b);
+	      }
+	      if (!td.childNodes.length) td.textContent = "—";
+	      return td;
 	    }
 
 	    function exportWorkflow(bundleId, bundleVersion) {
@@ -12294,7 +12344,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // Runs tab loader fires from there. Cache sizes load when the Cache
 	    // tab opens (shared ensureDataHomes cache).
 	    $("tab-button-runtimes").onclick = () => { setActiveTab("runtimes"); loadRuntimes(); };
-	    $("tab-button-workflows").onclick = () => { setActiveTab("workflows"); loadWorkflows(); };
+	    $("tab-button-workflows").onclick = () => { setActiveTab("workflows"); loadWorkflows(); mountAgentDefaults("workflows", $("agent-defaults-root")); };
 	    $("workflows-refresh").onclick = () => loadWorkflows();
 	    $("workflow-detail-refresh").onclick = () => loadWorkflows();
 	    $("workflows-search").oninput = () => renderWorkflows();

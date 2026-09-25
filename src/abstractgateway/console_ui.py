@@ -346,6 +346,8 @@ CONSOLE_UI_CSS = r"""
     .ui-net-proxy__saved.tone-err b { color: var(--error); }
     .ui-net-proxy .ui-alert { font-size: var(--font-size-sm); }
     /* ---- Apps settings (apps.* runtime-config keys, mission Z) ---- */
+    .ui-agent-defaults { display: grid; gap: 10px; min-width: 0; }
+    .ui-agent-defaults select { width: 100%; min-width: 0; margin: 0; }
     .ui-apps-settings__rows { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 14px 18px; min-width: 0; }
     .ui-apps-setting { display: grid; align-content: start; gap: 6px; min-width: 0; }
     .ui-apps-setting__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
@@ -2535,6 +2537,117 @@ CONSOLE_UI_JS = r"""
       }, true);
       appsSettingsRender();
       appsSettingsRefresh();
+    }
+
+    // ---- Default agent workflow (agents.default_workflow) ----
+    // GET /api/gateway/admin/runtime-config -> agents{default_workflow:
+    // {interface: {value, source: stored|default, available, reason,
+    // resolved{workflow_id, name, ...}|null, key, default, eligible[]}}}.
+    // One row per agent interface: a select of the entrypoints that declare
+    // it (the gateway lists them; nothing is filtered here), the source pill,
+    // and what it runs now or why it cannot. Save = POST {"agents":
+    // {"default_workflow": {interface: value | ""}}} with the changed rows
+    // only; "" goes back to the built-in default. The gateway validates and
+    // its sentence is shown verbatim on refusal.
+    const agentDefStore = { data: null, error: "", saving: false, saved: null, draft: {}, views: new Map() };
+    function agentDefaultsBody(block, draft) {
+      const body = {};
+      for (const [iface, r] of Object.entries((block && block.default_workflow) || {})) {
+        if (!Object.prototype.hasOwnProperty.call(draft || {}, iface)) continue;
+        const was = r.source === "stored" ? String(r.value || "") : "";
+        const now = String(draft[iface] || "").trim();
+        if (now !== was) body[iface] = now;
+      }
+      return Object.keys(body).length ? { agents: { default_workflow: body } } : null;
+    }
+    function agentDefaultsMarkup() {
+      const st = agentDefStore;
+      if (st.error && !st.data) return `<div class="ui-alert tone-err" role="alert"><strong>Could not read the default agent workflows.</strong><span>${esc(st.error)}</span></div>`;
+      if (!st.data) return `<div class="ui-empty">Reading the default agent workflows...</div>`;
+      const block = st.data.agents || {};
+      if (block.error) return `<div class="ui-alert tone-err" role="alert"><strong>Could not read the default agent workflows.</strong><span>${esc(block.error)}</span></div>`;
+      const rows = Object.entries(block.default_workflow || {});
+      const admin = !!st.data.writable;
+      let out = `<div class="ui-agent-defaults" data-agent-defaults><div class="ui-apps-setting__head"><strong>${esc(block.label || "Default agent workflow")}</strong></div>`
+        + `<p class="ui-net-proxy__text">${esc(block.help || "")}</p><div class="ui-apps-settings__rows">`;
+      for (const [iface, r] of rows) {
+        const stored = r.source === "stored" ? String(r.value || "") : "";
+        const val = Object.prototype.hasOwnProperty.call(st.draft, iface) ? st.draft[iface] : stored;
+        const pill = r.source === "stored" ? uiPill("Saved setting", "info") : r.source === "env" ? uiPill("Environment (legacy)", "warn") : uiPill("Default", "muted");
+        const eligible = Array.isArray(r.eligible) ? r.eligible : [];
+        let options = `<option value="">${esc(r.default ? `Built-in default (${r.default})` : "No default (clients choose)")}</option>`;
+        const values = new Set(eligible.map((e) => String(e.value)));
+        if (stored && !values.has(stored)) options += `<option value="${esc(stored)}" selected>${esc(stored)} (saved, not available)</option>`;
+        for (const e of eligible) {
+          const v = String(e.value);
+          options += `<option value="${esc(v)}"${v === val ? " selected" : ""}>${esc(`${e.name || e.flow_id} — ${v} (now ${e.bundle_version})`)}</option>`;
+        }
+        const now = r.available && r.resolved
+          ? `<p class="ui-net-proxy__text" data-agent-default-now>Runs ${esc(r.resolved.name || r.resolved.flow_id)} <code>${esc(r.resolved.workflow_id)}</code></p>`
+          : `<p class="ui-field-msg tone-warn" data-agent-default-now>Not available: ${esc(r.reason || "")}</p>`;
+        out += `<div class="ui-apps-setting" data-agent-default="${esc(iface)}"><div class="ui-apps-setting__head"><label for="agent-def-${esc(iface)}">${esc(iface)}</label>${pill}</div>`
+          + `<select id="agent-def-${esc(iface)}" data-agent-default-select="${esc(iface)}"${admin && !st.saving ? "" : " disabled"}>${options}</select>`
+          + now
+          + (eligible.length ? "" : `<p class="ui-net-proxy__text">No workflow on this gateway declares this interface.</p>`)
+          + `<span class="ui-advanced ui-sub"><code>abstractgateway config set ${esc(r.key || `agents.default_workflow.${iface}`)} …</code></span></div>`;
+      }
+      out += `</div>`;
+      if (admin) out += `<div class="ui-card__actions"><button type="button" class="ui-btn is-primary" data-agent-defaults-save${st.saving ? ' disabled aria-busy="true"' : ""}>${st.saving ? "Saving..." : "Save default agent workflows"}</button></div>`;
+      if (st.saved) out += `<p class="ui-net-proxy__saved tone-${esc(st.saved.tone)}" role="status" data-agent-defaults-saved><b>${esc(st.saved.head)}</b><span>${esc(st.saved.text)}</span></p>`;
+      else out += `<p class="ui-net-proxy__saved" role="status"><span>${admin ? "Clients that choose \"Gateway default\" run this from their next new turn." : "Only an admin can change these."}</span></p>`;
+      return out + `</div>`;
+    }
+    function agentDefaultsRender() { for (const el of agentDefStore.views.values()) if (el) el.innerHTML = agentDefaultsMarkup(); }
+    async function agentDefaultsRefresh() {
+      try {
+        agentDefStore.data = await api("/api/gateway/admin/runtime-config");
+        agentDefStore.error = "";
+      } catch (err) {
+        agentDefStore.error = String((err && err.message) || err);
+      }
+      agentDefaultsRender();
+    }
+    async function agentDefaultsPost(body, okText) {
+      const st = agentDefStore;
+      st.saving = true;
+      st.saved = null;
+      agentDefaultsRender();
+      try {
+        st.data = await api("/api/gateway/admin/runtime-config", { method: "POST", body: JSON.stringify(body) });
+        st.draft = {};
+        st.saved = { tone: "ok", head: "Saved", text: okText };
+      } catch (err) {
+        const data = (err && err.data) || {};
+        st.saved = { tone: "err", head: "Not saved", text: String((data && data.detail) || (err && err.message) || err) };
+      }
+      st.saving = false;
+      agentDefaultsRender();
+      return st.saved.tone === "ok";
+    }
+    async function agentDefaultsSave() {
+      const st = agentDefStore;
+      if (!st.data || st.saving) return;
+      const body = agentDefaultsBody(st.data.agents, st.draft);
+      if (!body) { st.saved = { tone: "ok", head: "Nothing changed", text: "" }; agentDefaultsRender(); return; }
+      await agentDefaultsPost(body, "Clients that choose \"Gateway default\" run it from their next new turn.");
+    }
+    async function agentDefaultsMake(iface, value) {
+      const body = { agents: { default_workflow: { [iface]: value } } };
+      return agentDefaultsPost(body, `${value} is now the gateway default for ${iface}.`);
+    }
+    function mountAgentDefaults(key, el) {
+      if (!el) return;
+      agentDefStore.views.set(key, el);
+      el.onclick = (event) => {
+        const b = event && event.target && event.target.closest ? event.target.closest("[data-agent-defaults-save]") : null;
+        if (b && !b.disabled) agentDefaultsSave();
+      };
+      el.onchange = (event) => {
+        const i = event && event.target && event.target.matches && event.target.matches("[data-agent-default-select]") ? event.target : null;
+        if (i) agentDefStore.draft[i.dataset.agentDefaultSelect] = i.value;
+      };
+      agentDefaultsRender();
+      agentDefaultsRefresh();
     }
 
     // ---- The kit islands: AfTopBarActions + AfAppearanceDialog ----

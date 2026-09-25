@@ -103,6 +103,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                         &tt,
                                         row,
                                         &d.default_bundle_id,
+                                        &d.agent_defaults,
                                     ));
                                 }
                                 if !d.skipped.is_empty() {
@@ -191,6 +192,7 @@ fn master_table(cx: Scope, t: &TokenSet, d: &WorkflowsData, sel: Signal<usize>) 
     let vw = abstracttui::app::use_viewport(cx).get().w;
     let wide = vw >= 100;
     let default_id = d.default_bundle_id.clone();
+    let agent_defaults = d.agent_defaults.clone();
 
     let mut rows: Vec<Vec<String>> = d
         .rows
@@ -210,6 +212,9 @@ fn master_table(cx: Scope, t: &TokenSet, d: &WorkflowsData, sel: Signal<usize>) 
             let mut status: Vec<&str> = Vec::new();
             if r.bundle_id == default_id {
                 status.push("default");
+            }
+            if !agent_default_marks(&r.bundle_id, &agent_defaults).is_empty() {
+                status.push("★agent");
             }
             if r.deprecated {
                 status.push("deprecated");
@@ -253,7 +258,24 @@ fn master_table(cx: Scope, t: &TokenSet, d: &WorkflowsData, sel: Signal<usize>) 
         .build()
 }
 
-fn detail_block(cx: Scope, t: &TokenSet, row: &WorkflowRow, default_id: &str) -> View {
+/// The gateway default agent workflows (interface, workflow_id) that run
+/// an entrypoint of `bundle_id` (any version).
+pub fn agent_default_marks(bundle_id: &str, agent_defaults: &[(String, String)]) -> Vec<(String, String)> {
+    let prefix = format!("{bundle_id}@");
+    agent_defaults
+        .iter()
+        .filter(|(_, wid)| wid.starts_with(&prefix))
+        .cloned()
+        .collect()
+}
+
+fn detail_block(
+    cx: Scope,
+    t: &TokenSet,
+    row: &WorkflowRow,
+    default_id: &str,
+    agent_defaults: &[(String, String)],
+) -> View {
     let vw = abstracttui::app::use_viewport(cx).get().w;
     let mut children: Vec<View> = Vec::new();
 
@@ -270,6 +292,15 @@ fn detail_block(cx: Scope, t: &TokenSet, row: &WorkflowRow, default_id: &str) ->
         head.push(span("default", t.accent));
     }
     children.push(line(head));
+    // ★ = the gateway default agent workflow for an interface (what a client
+    // choosing "Gateway default" runs) — not the bundle default above.
+    for (iface, wid) in agent_default_marks(&row.bundle_id, agent_defaults) {
+        children.push(line(vec![
+            span("★ agent default ", t.accent),
+            span(format!("for {iface}: "), t.text_muted),
+            span(wid, t.text),
+        ]));
+    }
 
     let mut rows: Vec<Vec<String>> = row
         .versions

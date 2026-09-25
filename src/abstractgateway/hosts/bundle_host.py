@@ -2128,6 +2128,39 @@ class WorkflowBundleGatewayHost:
             return
         ctx["task"] = prompt
 
+    def _complete_workflow_selection(self, vars0: Dict[str, Any], workflow_id: str) -> None:
+        """Fill `workflow_selection` (how this run's workflow was chosen) with
+        what the host resolved, when the caller left the identity open
+        (`{"source": "client"}`): {workflow_id, bundle_id, bundle_version,
+        flow_id, registry_scope, name}. A selection that already names its
+        workflow (a gateway default, a catalog start) is kept as written."""
+        sel = vars0.get("workflow_selection")
+        if not isinstance(sel, dict) or sel.get("workflow_id"):
+            return
+        sel = dict(sel)
+        wid = str(workflow_id or "")
+        prefix, sep, inner = wid.partition(":")
+        bid, ver = _split_bundle_ref(prefix) if sep else ("", None)
+        bundle = ((self.bundles.get(bid) or {}).get(ver or "") if bid else None)
+        name = None
+        if bundle is not None:
+            for ep in list(getattr(getattr(bundle, "manifest", None), "entrypoints", None) or []):
+                if str(getattr(ep, "flow_id", "") or "") == inner:
+                    name = str(getattr(ep, "name", "") or "") or inner
+        meta = ((self.bundle_sources.get(bid) or {}).get(ver or "") if bid and isinstance(self.bundle_sources, dict) else None) or {}
+        sel.update(
+            {
+                "workflow_id": wid,
+                "bundle_id": bid or None,
+                "bundle_version": ver,
+                "flow_id": inner if sep else wid,
+                "registry_scope": (str(meta.get("registry_scope") or "private") if bundle is not None else None),
+                "name": name,
+            }
+        )
+        sel.setdefault("interface", None)
+        vars0["workflow_selection"] = sel
+
     def start_run(
         self,
         *,
@@ -2276,6 +2309,7 @@ class WorkflowBundleGatewayHost:
             raise KeyError(f"Workflow '{workflow_id}' not found")
         sid = str(session_id).strip() if isinstance(session_id, str) and session_id.strip() else None
         vars0 = dict(input_data or {})
+        self._complete_workflow_selection(vars0, workflow_id)
         rt_ns = _ensure_runtime_namespace(vars0)
 
         # Gateway-owned deployment settings are handed to Runtime explicitly as

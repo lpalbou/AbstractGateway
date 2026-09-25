@@ -879,6 +879,10 @@ pub struct WorkflowsData {
     pub rows: Vec<WorkflowRow>,
     pub skipped: Vec<WorkflowSkipRow>,
     pub default_bundle_id: String,
+    /// (interface, workflow_id) of the gateway default agent workflows
+    /// (`default_agent_workflows`) — a different thing from
+    /// `default_bundle_id`.
+    pub agent_defaults: Vec<(String, String)>,
 }
 
 pub fn workflows_from_payload(v: &serde_json::Value) -> WorkflowsData {
@@ -1024,6 +1028,23 @@ pub fn workflows_from_payload(v: &serde_json::Value) -> WorkflowsData {
             .and_then(|x| x.as_str())
             .unwrap_or("")
             .to_string(),
+        agent_defaults: v
+            .get("default_agent_workflows")
+            .and_then(|x| x.as_object())
+            .map(|m| {
+                m.iter()
+                    .map(|(iface, row)| {
+                        (
+                            iface.clone(),
+                            row.get("workflow_id")
+                                .and_then(|x| x.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 
@@ -1345,6 +1366,62 @@ pub struct RuntimeConfigData {
     /// Browser-apps settings (`apps.<name>`, mission Z), enumerated from
     /// the payload's `apps` registry — never a hardcoded list.
     pub apps: Vec<AppsSetting>,
+    /// Default agent workflow per agent interface
+    /// (`agents.default_workflow.<interface>`), in the gateway's order.
+    pub agent_defaults: Vec<AgentDefault>,
+}
+
+/// One `agents.default_workflow.<interface>` row: what "Gateway default"
+/// runs for that interface, or why it cannot.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AgentDefault {
+    pub interface: String,
+    pub key: String,
+    /// The saved/built-in value (`[catalog:]bundle[@ver]:flow`), "" = none.
+    pub value: String,
+    /// stored | default
+    pub source: String,
+    pub available: bool,
+    pub reason: String,
+    /// Exact workflow id it runs now ("" when unavailable).
+    pub workflow_id: String,
+    pub name: String,
+    /// The built-in default value ("" = none).
+    pub builtin: String,
+    /// Values an admin can choose (entrypoints declaring the interface).
+    pub eligible: Vec<String>,
+}
+
+/// Parse `agents.default_workflow` of GET /admin/runtime-config.
+pub fn agent_defaults_from(v: &Value) -> Vec<AgentDefault> {
+    let Some(map) = v
+        .get("agents")
+        .and_then(|a| a.get("default_workflow"))
+        .and_then(Value::as_object)
+    else {
+        return Vec::new();
+    };
+    map.iter()
+        .map(|(iface, row)| {
+            let resolved = row.get("resolved").filter(|r| r.is_object());
+            AgentDefault {
+                interface: iface.clone(),
+                key: s(row, "key").unwrap_or_else(|| format!("agents.default_workflow.{iface}")),
+                value: s(row, "value").unwrap_or_default(),
+                source: s(row, "source").unwrap_or_else(|| "?".into()),
+                available: b(row, "available").unwrap_or(false),
+                reason: s(row, "reason").unwrap_or_default(),
+                workflow_id: resolved.and_then(|r| s(r, "workflow_id")).unwrap_or_default(),
+                name: resolved.and_then(|r| s(r, "name")).unwrap_or_default(),
+                builtin: s(row, "default").unwrap_or_default(),
+                eligible: row
+                    .get("eligible")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(|e| s(e, "value")).collect())
+                    .unwrap_or_default(),
+            }
+        })
+        .collect()
 }
 
 /// One `apps.<name>` runtime-config setting (label/help from the gateway).
@@ -1551,6 +1628,7 @@ impl RuntimeConfigData {
             knobs,
             executors,
             apps,
+            agent_defaults: agent_defaults_from(v),
         }
     }
 }

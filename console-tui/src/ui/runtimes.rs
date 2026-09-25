@@ -490,6 +490,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                         && d.workspace_allowed_paths.is_empty()
                                         && d.workspace_blocked_paths.is_empty()
                                         && d.apps.is_empty()
+                                        && d.agent_defaults.is_empty()
                                 },
                                 "the gateway reported no runtime knobs",
                                 |d| knobs_view(cx, &ctx_knobs, &tt, d),
@@ -1199,6 +1200,21 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
             )]));
         }
     }
+    // Default agent workflow per interface (agents.default_workflow): what
+    // a client choosing "Gateway default" runs, or why it cannot.
+    for a in &d.agent_defaults {
+        let (now, tone) = if a.available {
+            (format!("{} ({})", a.workflow_id, a.name), t.text)
+        } else {
+            (format!("unavailable: {}", a.reason), t.warn)
+        };
+        rows.push(line(vec![
+            span(format!("{:>20}: ", "agent default"), t.text_muted),
+            span(format!("{} → ", a.interface), t.text),
+            span(ellipsize(&now, 72), tone),
+            span(format!("  ({})", a.source), t.text_faint),
+        ]));
+    }
     Element::new()
         .style(LayoutStyle::column())
         .child(if d.writable {
@@ -1206,6 +1222,8 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
             let current = d.clone();
             let ctx3 = ctx.clone();
             let current_apps = d.clone();
+            let ctx4 = ctx.clone();
+            let current_agents = d.clone();
             Element::new()
                 .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
                 .child(
@@ -1219,6 +1237,14 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
                 } else {
                     Button::new("Edit apps settings")
                         .on_click(move || open_apps_settings_form(cx, &ctx3, current_apps.clone()))
+                        .element(cx, t)
+                        .build()
+                })
+                .child(if current_agents.agent_defaults.is_empty() {
+                    Element::new().style(LayoutStyle::default().h(0)).build()
+                } else {
+                    Button::new("Edit default agent workflows")
+                        .on_click(move || open_agent_defaults_form(cx, &ctx4, current_agents.clone()))
                         .element(cx, t)
                         .build()
                 })
@@ -1246,6 +1272,140 @@ pub fn apps_settings_body(current: &[crate::store::AppsSetting], typed: &[(Strin
         }
     }
     Value::Object(body)
+}
+
+/// The body the default-agent form sends: only the interfaces whose text
+/// changed, as {"agents": {"default_workflow": {interface: value}}}; an
+/// emptied field sends "" (= back to the built-in default). `{}` when
+/// nothing changed.
+pub fn agent_defaults_body(current: &[crate::store::AgentDefault], typed: &[(String, String)]) -> Value {
+    let mut changed = serde_json::Map::new();
+    for (iface, text) in typed {
+        let Some(cur) = current.iter().find(|a| &a.interface == iface) else {
+            continue;
+        };
+        let was = if cur.source == "stored" { cur.value.as_str() } else { "" };
+        let now = text.trim();
+        if now != was {
+            changed.insert(iface.clone(), Value::String(now.to_string()));
+        }
+    }
+    if changed.is_empty() {
+        return Value::Object(serde_json::Map::new());
+    }
+    serde_json::json!({ "agents": { "default_workflow": Value::Object(changed) } })
+}
+
+/// Default agent workflow form: one line per agent interface, prefilled
+/// with the SAVED value only (the built-in default is shown, never written
+/// back); the choices on this gateway are listed under each line; the
+/// gateway validates (the workflow must declare the interface) and its
+/// sentence is shown on refusal.
+fn open_agent_defaults_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
+    if !current.writable {
+        ctx.store
+            .notice
+            .set(Some("this needs an admin token".into()));
+        return;
+    }
+    let ctx2 = ctx.clone();
+    let height = 12 + 3 * current.agent_defaults.len() as i32;
+    open_form(ctx, cx, Size::new(110, height), move |mcx, close| {
+        let theme = use_theme(mcx);
+        let t0 = theme.get().tokens;
+        let form_error = mcx.signal(Option::<String>::None);
+        let in_flight = mcx.signal(false);
+        let form_id = crate::worker::next_form_id();
+        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
+        let fields: Vec<(String, Signal<String>)> = current
+            .agent_defaults
+            .iter()
+            .map(|a| {
+                (
+                    a.interface.clone(),
+                    mcx.signal(if a.source == "stored" { a.value.clone() } else { String::new() }),
+                )
+            })
+            .collect();
+        let mut col = Element::new()
+            .focusable()
+            .autofocus()
+            .style(LayoutStyle::column().gap(0))
+            .child(line(vec![span_bold("Default agent workflow", t0.accent)]))
+            .child(line(vec![span(
+                "[catalog:]bundle[@version]:flow — no version = the latest published; empty = the built-in default",
+                t0.text_faint,
+            )]));
+        for (a, (_, sig)) in current.agent_defaults.iter().zip(fields.iter()) {
+            let builtin = if a.builtin.is_empty() { "none".to_string() } else { a.builtin.clone() };
+            col = col
+                .child(field(
+                    &t0,
+                    &a.interface,
+                    TextInput::new()
+                        .value(*sig)
+                        .placeholder(format!("built-in: {builtin} · now: {}", if a.available { a.workflow_id.as_str() } else { "unavailable" }))
+                        .layout(LayoutStyle::default().w(64).h(1))
+                        .element(mcx, &t0)
+                        .build(),
+                ))
+                .child(line(vec![span(
+                    ellipsize(
+                        &if a.eligible.is_empty() {
+                            "no workflow on this gateway declares this interface".to_string()
+                        } else {
+                            format!("choices: {}", a.eligible.join(" · "))
+                        },
+                        106,
+                    ),
+                    t0.text_faint,
+                )]));
+            if !a.available {
+                col = col.child(line(vec![span(ellipsize(&format!("⚠ {}", a.reason), 106), t0.warn)]));
+            }
+        }
+        let ctx_save = ctx2.clone();
+        let close_cancel = close.clone();
+        let agents_now = current.agent_defaults.clone();
+        col.child(super::message_slot(theme, form_error, in_flight))
+            .child(
+                Element::new()
+                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                    .child(
+                        Button::new("Save")
+                            .on_click(move || {
+                                if in_flight.get_untracked() {
+                                    return;
+                                }
+                                let typed: Vec<(String, String)> = fields
+                                    .iter()
+                                    .map(|(n, sig)| (n.clone(), sig.get_untracked()))
+                                    .collect();
+                                let body = agent_defaults_body(&agents_now, &typed);
+                                if body.as_object().map(|m| m.is_empty()).unwrap_or(true) {
+                                    form_error.set(Some("nothing changed".into()));
+                                    return;
+                                }
+                                form_error.set(None);
+                                in_flight.set(true);
+                                ctx_save.send(Cmd::SaveRuntimeConfig {
+                                    body: body.into(),
+                                    form_id: Some(form_id),
+                                });
+                            })
+                            .element(mcx, &t0)
+                            .build(),
+                    )
+                    .child(
+                        Button::new("Cancel (Esc)")
+                            .on_click(move || close_cancel())
+                            .element(mcx, &t0)
+                            .build(),
+                    )
+                    .build(),
+            )
+            .build()
+    });
 }
 
 /// Browser-apps settings form (mission Z): one line per `apps.*` setting,

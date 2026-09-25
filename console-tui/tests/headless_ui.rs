@@ -7110,3 +7110,85 @@ fn apps_settings_body_sends_only_changed_keys_and_clears_with_empty() {
     ];
     assert_eq!(apps_settings_body(&d.apps, &typed), json!({"apps.host": "", "apps.ports": "3200-3299"}));
 }
+
+fn agents_runtime_config() -> Value {
+    json!({
+        "writable": true,
+        "agents": {
+            "label": "Default agent workflow",
+            "index_source": "host",
+            "default_workflow": {
+                "abstractcode.agent.v1": {
+                    "key": "agents.default_workflow.abstractcode.agent.v1", "value": "coder:code", "source": "stored",
+                    "available": true, "reason": null, "default": "basic-agent:ba",
+                    "resolved": {"workflow_id": "coder@1.1.0:code", "name": "Coder", "bundle_id": "coder",
+                                 "bundle_version": "1.1.0", "flow_id": "code", "registry_scope": "private"},
+                    "eligible": [{"value": "basic-agent:ba"}, {"value": "coder:code"}]
+                },
+                "abstractassistant.agent.v1": {
+                    "key": "agents.default_workflow.abstractassistant.agent.v1", "value": null, "source": "default",
+                    "available": false, "resolved": null, "default": null, "eligible": [],
+                    "reason": "no host workflow declares abstractassistant.agent.v1; the Assistant uses its built-in orchestrator"
+                }
+            }
+        }
+    })
+}
+
+#[test]
+fn agent_defaults_parse_render_and_body() {
+    use abstractgateway_console::ui::runtimes::agent_defaults_body;
+
+    let d = abstractgateway_console::store::RuntimeConfigData::from_value(&agents_runtime_config());
+    assert_eq!(d.agent_defaults.len(), 2);
+    let code = d.agent_defaults.iter().find(|a| a.interface == "abstractcode.agent.v1").unwrap();
+    assert!(code.available && code.workflow_id == "coder@1.1.0:code" && code.source == "stored");
+    assert_eq!(code.eligible, vec!["basic-agent:ba".to_string(), "coder:code".to_string()]);
+    let assist = d.agent_defaults.iter().find(|a| a.interface == "abstractassistant.agent.v1").unwrap();
+    assert!(!assist.available && assist.reason.contains("built-in orchestrator"));
+
+    // Body: only changed rows; "" clears; a default-sourced row left empty sends nothing.
+    let same = vec![
+        ("abstractcode.agent.v1".to_string(), "coder:code".to_string()),
+        ("abstractassistant.agent.v1".to_string(), String::new()),
+    ];
+    assert_eq!(agent_defaults_body(&d.agent_defaults, &same), json!({}));
+    let typed = vec![("abstractcode.agent.v1".to_string(), String::new())];
+    assert_eq!(
+        agent_defaults_body(&d.agent_defaults, &typed),
+        json!({"agents": {"default_workflow": {"abstractcode.agent.v1": ""}}})
+    );
+
+    // Render: one knob row per interface with what it runs or why not.
+    let mut h = harness_sized(Size::new(140, 70));
+    h.connect_as_admin();
+    h.goto_screen(4);
+    h.store
+        .runtimes
+        .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
+    h.turns(2);
+    h.ui.rt_knobs_folded.set(false);
+    h.turns(2);
+    h.store.runtime_config.set(Loadable::Ready(d));
+    let s = h.turns(2);
+    assert!(s.contains("abstractcode.agent.v1 → coder@1.1.0:code (Coder)  (stored)"), "code row:\n{s}");
+    assert!(s.contains("abstractassistant.agent.v1 → unavailable: no host workflow"), "assistant row:\n{s}");
+    assert!(s.contains("Edit default agent workflows"), "editor entry point:\n{s}");
+}
+
+#[test]
+fn workflows_payload_carries_agent_default_marks() {
+    use abstractgateway_console::store::workflows_from_payload;
+    use abstractgateway_console::ui::workflows::agent_default_marks;
+
+    let d = workflows_from_payload(&json!({
+        "items": [],
+        "default_bundle_id": null,
+        "default_agent_workflows": {
+            "abstractcode.agent.v1": {"workflow_id": "coder@1.1.0:code", "bundle_id": "coder", "source": "stored"}
+        }
+    }));
+    assert_eq!(d.agent_defaults, vec![("abstractcode.agent.v1".to_string(), "coder@1.1.0:code".to_string())]);
+    assert_eq!(agent_default_marks("coder", &d.agent_defaults).len(), 1);
+    assert!(agent_default_marks("code", &d.agent_defaults).is_empty(), "a prefix of another bundle id must not match");
+}
