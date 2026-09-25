@@ -456,7 +456,10 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
     base_url = _tray_base_url(str(args.host), int(args.port))
     version = installed_version()
     reload = bool(run_kwargs.get("reload"))
-    record_serve_context(base_url=base_url, data_dir=data_dir, version=version, reload=reload, runner_only=False)
+    record_serve_context(
+        base_url=base_url, data_dir=data_dir, version=version, reload=reload, runner_only=False,
+        no_tray=bool(getattr(args, "no_tray", False)),
+    )
 
     if reload:
         host_control.register_server(
@@ -485,18 +488,18 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
     config = uvicorn.Config("abstractgateway.app:app", **kwargs)
     server = uvicorn.Server(config)
     host_control.register_server(server, restartable=True, relaunch_argv=list(argv))
-    if str(os.getenv("FORWARDED_ALLOW_IPS") or "").strip() == "*":
+    if str(os.getenv("FORWARDED_ALLOW_IPS") or "").strip():
         _stderr(
-            "[WARN] This gateway was started with FORWARDED_ALLOW_IPS=* (uvicorn's proxy trust) in its environment: "
-            "any client can rewrite its peer address through X-Forwarded-For, so the desktop tray's loopback-only "
-            "token is no longer bound to this machine. A concrete proxy address there keeps it bound."
+            "[WARN] FORWARDED_ALLOW_IPS is set in this gateway's environment and is ignored: the gateway believes "
+            "X-Forwarded-For only from a proxy on this machine (127.0.0.1, ::1). A reverse proxy's client address "
+            "is used through the network setting `trust_proxy` (`abstractgateway network set --trust-proxy`)."
         )
 
     tray = get_tray_supervisor()
     # NO SETTING TO READ (operator ruling 2026-09-06): while `serve` runs on a
     # desktop that can hold an icon, the icon is there. What is left in
     # `tray_decision` is only what this machine can or cannot do.
-    decision = tray_decision(reload=False, runner_only=False)
+    decision = tray_decision(reload=False, runner_only=False, no_tray=bool(getattr(args, "no_tray", False)))
     if decision.start:
         # Spawn AFTER the listener is bound (a second `serve` on a busy port
         # must never point a tray at the FIRST gateway with the wrong token
@@ -698,6 +701,13 @@ def main(argv: list[str] | None = None) -> None:
         "the token always stays in <data dir>/auth/bootstrap-admin-token)",
     )
     serve.add_argument("--reload", action="store_true", help="Enable auto-reload (dev only)")
+    serve.add_argument(
+        "--no-tray",
+        action="store_true",
+        dest="no_tray",
+        help="Do not show the menu bar / tray icon for this run (a test or scratch gateway next to your usual one). "
+        "Without it the icon is shown whenever this computer can hold one.",
+    )
     serve.add_argument(
         "--no-runner",
         action="store_true",
@@ -1072,10 +1082,19 @@ def main(argv: list[str] | None = None) -> None:
             )
 
         try:
+            from .security.same_machine import TRUSTED_PROXY_PEERS
+
             run_kwargs: dict[str, object] = {
                 "host": str(args.host),
                 "port": int(args.port),
                 "reload": bool(args.reload),
+                # X-Forwarded-For is believed only from a proxy on THIS
+                # machine (the app servers), whatever FORWARDED_ALLOW_IPS
+                # says: request.client is then the browser's address, which
+                # is what "a caller on this machine" is decided on
+                # (security/same_machine.py).
+                "proxy_headers": True,
+                "forwarded_allow_ips": ",".join(TRUSTED_PROXY_PEERS),
             }
             run_kwargs["log_level"] = _uvicorn_log_level(int(console_level))
 

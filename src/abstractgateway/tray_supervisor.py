@@ -168,6 +168,7 @@ def tray_decision(
     *,
     reload: bool = False,
     runner_only: bool = False,
+    no_tray: bool = False,
     platform: str = sys.platform,
     env: Optional[Mapping[str, str]] = None,
     dependencies: Optional[tuple[bool, Optional[str]]] = None,
@@ -181,6 +182,10 @@ def tray_decision(
 
     if runner_only:
         return TrayDecision(False, "runner_only", "the tray belongs to the process that serves the console")
+    if no_tray:
+        # The one launch choice (a test or scratch gateway beside the usual
+        # one): said at start, never a stored setting.
+        return TrayDecision(False, "no_tray_flag", "started with --no-tray")
     if reload:
         return TrayDecision(False, "dev_reload", "`serve --reload` re-imports the app in a child that never runs main(); start without --reload")
     ok, problem = display_available(platform=platform, env=env, probes=probes)
@@ -456,8 +461,10 @@ def get_tray_supervisor() -> TraySupervisor:
 _serve_context: Dict[str, Any] = {}
 
 
-def record_serve_context(*, base_url: str, data_dir: Path, version: str, reload: bool, runner_only: bool) -> None:
-    _serve_context.update({"base_url": str(base_url), "data_dir": Path(data_dir), "version": str(version), "reload": bool(reload), "runner_only": bool(runner_only)})
+def record_serve_context(
+    *, base_url: str, data_dir: Path, version: str, reload: bool, runner_only: bool, no_tray: bool = False
+) -> None:
+    _serve_context.update({"base_url": str(base_url), "data_dir": Path(data_dir), "version": str(version), "reload": bool(reload), "runner_only": bool(runner_only), "no_tray": bool(no_tray)})
 
 
 def serve_context() -> Dict[str, Any]:
@@ -469,7 +476,7 @@ def tray_overview() -> Dict[str, Any]:
     if it were started now. No setting: there is none."""
     ctx = serve_context()
     if ctx:
-        decision = tray_decision(reload=bool(ctx.get("reload")), runner_only=bool(ctx.get("runner_only")))
+        decision = tray_decision(reload=bool(ctx.get("reload")), runner_only=bool(ctx.get("runner_only")), no_tray=bool(ctx.get("no_tray")))
     else:
         decision = TrayDecision(False, "not_serving", "this process was not started by `abstractgateway serve`")
     deps_ok, deps_problem = tray_dependencies_available()
