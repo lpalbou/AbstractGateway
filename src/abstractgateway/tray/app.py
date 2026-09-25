@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
+from ..apps_manager import app_launch_config
 from . import apps as tray_apps, dialogs, menu_model, platform as plat
 from .client import GatewayClient, Result
 from .icons import icon_signature, master_size_for_platform, render_icon
@@ -1034,10 +1035,11 @@ class TrayApp:
                 self._info(f"Couldn't start {name}", f"No free port from {spec[4]}.", style="warning")
                 return
             env = tray_apps.scrubbed_env(os.environ)
-            env.update({"PORT": str(port), "HOST": "127.0.0.1", spec[5]: self.base_url})
+            flags, app_env = app_launch_config(app_id, port=port, host="127.0.0.1", gateway_url=self.base_url, gateway_url_env=spec[5])
+            env.update(app_env)
             log = (self.data_dir / "logs" / "apps" / f"{app_id}-global.log") if self.data_dir else None
             try:
-                proc = tray_apps.spawn_detached(argv, env=env, log_path=log)
+                proc = tray_apps.spawn_detached([*argv, *flags], env=env, log_path=log)
             except OSError as exc:
                 self._info(f"Couldn't start {name}", f"{argv[0]}: {exc}", style="warning")
                 return

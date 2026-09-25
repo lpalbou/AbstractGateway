@@ -67,13 +67,22 @@ mode = (pathlib.Path(__file__).parent / "mode").read_text().strip() if (pathlib.
 if mode == "exit":
     print("boom: refusing to start", flush=True)
     sys.exit(3)
+import json
+def flag(name):
+    return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else None
+PORT = flag("--port") or os.environ["PORT"]
+HOST = flag("--host") or os.environ.get("HOST", "127.0.0.1")
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        body = ("ok " + os.environ.get("ABSTRACTGATEWAY_URL", "") + " token=" + os.environ.get("ABSTRACTGATEWAY_AUTH_TOKEN", "-")).encode()
+        if self.path == "/probe":  # what the gateway passed: argv and the address/URL environment
+            names = [k for k in os.environ if k in ("PORT", "HOST") or k.endswith("_GATEWAY_URL")]
+            body = json.dumps({"argv": sys.argv, "env": {k: os.environ[k] for k in names}}).encode()
+        else:
+            body = ("ok " + os.environ.get("ABSTRACTGATEWAY_URL", "") + " token=" + os.environ.get("ABSTRACTGATEWAY_AUTH_TOKEN", "-")).encode()
         self.send_response(200); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
     def log_message(self, *a): pass
-print("listening", os.environ["PORT"], flush=True)
-http.server.HTTPServer((os.environ.get("HOST", "127.0.0.1"), int(os.environ["PORT"])), H).serve_forever()
+print("listening", PORT, flush=True)
+http.server.HTTPServer((HOST, int(PORT)), H).serve_forever()
 '''
 
 
@@ -551,3 +560,84 @@ def test_handover_code_is_single_use_and_expires(tmp_path: Path, monkeypatch: py
     monkeypatch.setattr(am, "_now", lambda: time.time() + am.HANDOVER_TTL_S + 1)
     assert m.redeem_handover(code2) is None
     assert m.redeem_handover("") is None
+
+
+# -- Continuum takes its address and gateway URL as launch flags -------------
+# Continuum 0.3.1 reads ~/.abstractcontinuum/settings.json, which beats the
+# environment: PORT/HOST/ABSTRACTCONTINUUM_GATEWAY_URL could lose to a user's
+# saved values. Flags beat the file. The other four apps still read the env.
+
+_ADDRESS_ENV = ("PORT", "HOST", "ABSTRACTCONTINUUM_GATEWAY_URL", "ABSTRACTCODE_GATEWAY_URL")
+
+
+def _probe(row: dict) -> dict:
+    import urllib.request
+
+    return json.loads(urllib.request.urlopen(row["url"] + "probe", timeout=5).read().decode())
+
+
+def test_launch_config_flags_for_continuum_env_for_the_other_apps() -> None:
+    kw = dict(port=3002, host="127.0.0.1", gateway_url="http://127.0.0.1:8080")
+    flags, env = am.app_launch_config("continuum", gateway_url_env="ABSTRACTCONTINUUM_GATEWAY_URL", **kw)
+    assert flags == ["--port", "3002", "--host", "127.0.0.1", "--gateway-url", "http://127.0.0.1:8080"] and env == {}
+    for spec in am.APPS:
+        if spec.id == "continuum":
+            continue
+        flags, env = am.app_launch_config(spec.id, gateway_url_env=spec.gateway_url_env, **kw)
+        assert flags == [] and env == {"PORT": "3002", "HOST": "127.0.0.1", spec.gateway_url_env: "http://127.0.0.1:8080"}, spec.id
+
+
+def test_continuum_is_launched_with_flags_and_without_the_address_env(manager: am.AppsManager, monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in _ADDRESS_ENV:
+        monkeypatch.delenv(name, raising=False)
+    _publish(manager, am.APP_BY_ID["continuum"], "0.3.1")
+    job, _ = manager.start_install("continuum", run_inline=True)
+    assert job.state == "succeeded", job.details
+    port = _free_port()
+    monkeypatch.setenv(am.ENV_PORTS, f"{port}-{port}")
+    row = manager.launch("continuum", gateway_url="http://127.0.0.1:18823")
+    assert row["running"] and row["port"] == port
+    probe = _probe(row)
+    assert probe["argv"][0].endswith("bin/cli.js")
+    assert probe["argv"][1:] == ["--port", str(port), "--host", manager.bind_host, "--gateway-url", "http://127.0.0.1:18823"]
+    assert not {"PORT", "HOST", "ABSTRACTCONTINUUM_GATEWAY_URL"} & set(probe["env"]), probe["env"]
+    rec = json.loads(manager.pid_path("continuum").read_text())
+    assert rec["bin_js"] == probe["argv"][0] and rec["cmd"][-1] == "http://127.0.0.1:18823"
+
+
+def test_other_apps_still_get_the_address_env_and_no_flags(manager: am.AppsManager, monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in _ADDRESS_ENV:
+        monkeypatch.delenv(name, raising=False)
+    _publish(manager, am.APP_BY_ID["code"], "1.0.0")
+    job, _ = manager.start_install("code", with_terminal=False, run_inline=True)
+    assert job.state == "succeeded", job.details
+    port = _free_port()
+    monkeypatch.setenv(am.ENV_PORTS, f"{port}-{port}")
+    row = manager.launch("code", gateway_url="http://127.0.0.1:18823")
+    probe = _probe(row)
+    assert len(probe["argv"]) == 1 and probe["argv"][0].endswith("bin/cli.js")
+    assert probe["env"]["PORT"] == str(port) and probe["env"]["HOST"] == manager.bind_host
+    assert probe["env"]["ABSTRACTCODE_GATEWAY_URL"] == "http://127.0.0.1:18823"
+
+
+def test_reap_orphans_matches_the_recorded_bin_js_not_the_last_argv_word(manager: am.AppsManager, tmp_path: Path) -> None:
+    """Continuum's argv ends with the gateway URL: an orphan check on the last
+    argv word would stop any process whose command line names that URL."""
+    import subprocess
+
+    bin_js = tmp_path / "pkg" / "bin" / "cli.js"
+    url = "http://127.0.0.1:18823"
+    stranger = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", url])
+    orphan = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)", str(bin_js), "--gateway-url", url])
+    try:
+        manager.write_pid_file("continuum", pid=stranger.pid, port=1, cmd=["node", str(bin_js), "--gateway-url", url], version="0.3.1", bin_js=str(bin_js))
+        assert manager.reap_orphans() == [] and stranger.poll() is None
+        manager.write_pid_file("continuum", pid=orphan.pid, port=1, cmd=["node", str(bin_js), "--gateway-url", url], version="0.3.1", bin_js=str(bin_js))
+        assert manager.reap_orphans() == [{"app_id": "continuum", "pid": orphan.pid}]
+        assert orphan.wait(timeout=5) is not None
+    finally:
+        for p in (stranger, orphan):
+            if p.poll() is None:
+                p.kill()
+                p.wait()
+

@@ -20,6 +20,13 @@ automatically). The terminal console is unchanged (`abstractgateway-console`
   …/Library/Application" whenever the data folder's path contained a space,
   as the macOS `Application Support` folder does. The gateway now pins its
   own packages to their current versions in the install command itself.
+- Continuum, when the gateway (or the tray, for a global install) starts it,
+  gets its port, bind address and gateway URL as launch flags (`--port`,
+  `--host`, `--gateway-url`) instead of environment variables. Continuum
+  0.3.1's settings file (`~/.abstractcontinuum/settings.json`) takes
+  precedence over the environment, so a saved port, host or gateway URL
+  could otherwise have replaced the ones the gateway chose. The other four
+  apps still receive them in the environment.
 - The web console page no longer carries the source code's maintainer
   comments (design notes, review references, dates); it is about 11% smaller
   (1.25 MB to 1.12 MB). The artifact search box shows `YYYY-MM-DD` as its

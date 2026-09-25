@@ -252,7 +252,10 @@ served as static files by the gateway. The app's server does real work:
 - Observer reveals local folders, Flow keeps its connection file, and
   Continuum proxies the agora hub.
 
-This is why each app has its own port.
+This is why each app has its own port. The gateway gives each server its
+port, bind address and gateway URL: Continuum as launch flags (`--port`,
+`--host`, `--gateway-url`), which win over its saved settings file; the
+other four apps in the environment (`PORT`, `HOST`, `<APP>_GATEWAY_URL`).
 
 ## Settings
 

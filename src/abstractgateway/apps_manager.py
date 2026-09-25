@@ -141,6 +141,21 @@ APPS: Tuple[AppSpec, ...] = (
 )
 APP_BY_ID: Dict[str, AppSpec] = {a.id: a for a in APPS}
 
+# Apps whose server takes its address and gateway URL as launch flags
+# (`--port`, `--host`, `--gateway-url`). Continuum 0.3.1 reads a settings file
+# that beats the environment, so PORT/HOST/<APP>_GATEWAY_URL could lose to a
+# user's saved values; flags beat the file. The other apps still read the
+# environment.
+FLAG_CONFIGURED_APPS = frozenset({"continuum"})
+
+
+def app_launch_config(app_id: str, *, port: int, host: str, gateway_url: str, gateway_url_env: str) -> Tuple[List[str], Dict[str, str]]:
+    """(argv after `bin/cli.js`, environment to set) that give a web app its
+    port, bind host and gateway URL."""
+    if app_id in FLAG_CONFIGURED_APPS:
+        return ["--port", str(port), "--host", str(host), "--gateway-url", str(gateway_url)], {}
+    return [], {"PORT": str(port), "HOST": str(host), gateway_url_env: str(gateway_url)}
+
 
 # ---------------------------------------------------------------------------
 # Errors (every one carries a plain message; routes map status_code)
@@ -916,17 +931,12 @@ class AppProcess:
         env = _scrubbed_child_env(dict(os.environ))
         node_dir = str(Path(a["node"]).parent)
         env["PATH"] = node_dir + os.pathsep + env.get("PATH", "")
-        env.update(
-            {
-                "PORT": str(a["port"]),
-                "HOST": str(a["host"]),
-                "NODE_ENV": "production",
-                "ABSTRACTGATEWAY_URL": a["gateway_url"],
-                self.spec.gateway_url_env: a["gateway_url"],
-            }
+        flags, app_env = app_launch_config(
+            self.spec.id, port=a["port"], host=a["host"], gateway_url=a["gateway_url"], gateway_url_env=self.spec.gateway_url_env
         )
+        env.update({"NODE_ENV": "production", "ABSTRACTGATEWAY_URL": a["gateway_url"], **app_env})
         watch = m.parent_watch_script()
-        cmd = [str(a["node"]), "-r", str(watch), str(a["bin_js"])]
+        cmd = [str(a["node"]), "-r", str(watch), str(a["bin_js"]), *flags]
         kwargs: Dict[str, Any] = dict(
             cwd=str(Path(a["bin_js"]).parent.parent),
             env=env,
@@ -944,7 +954,7 @@ class AppProcess:
         self.started_at = _now()
         self.status = "starting"
         self.last_error = None
-        m.write_pid_file(self.spec.id, pid=self.proc.pid, port=self.port, cmd=cmd, version=self.version)
+        m.write_pid_file(self.spec.id, pid=self.proc.pid, port=self.port, cmd=cmd, version=self.version, bin_js=str(a["bin_js"]))
         threading.Thread(target=self._watch, args=(self.proc,), name=f"app-{self.spec.id}-watch", daemon=True).start()
 
     def _wait_ready(self, timeout_s: float) -> None:
@@ -1742,11 +1752,14 @@ class AppsManager:
         return bool(self.app_state(app_id).get("enabled"))
 
     # -- pid files -------------------------------------------------------------
-    def write_pid_file(self, app_id: str, *, pid: int, port: int, cmd: Sequence[str], version: str) -> None:
+    def write_pid_file(self, app_id: str, *, pid: int, port: int, cmd: Sequence[str], version: str, bin_js: Optional[str] = None) -> None:
         p = self.pid_path(app_id)
         p.parent.mkdir(parents=True, exist_ok=True)
+        rec: Dict[str, Any] = {"pid": int(pid), "port": int(port), "cmd": list(cmd), "version": version, "gateway_pid": os.getpid(), "started_at": _iso(_now())}
+        if bin_js:
+            rec["bin_js"] = str(bin_js)  # what reap_orphans matches: the argv may end with launch flags
         p.write_text(
-            json.dumps({"pid": int(pid), "port": int(port), "cmd": list(cmd), "version": version, "gateway_pid": os.getpid(), "started_at": _iso(_now())}, indent=2) + "\n",
+            json.dumps(rec, indent=2) + "\n",
             encoding="utf-8",
         )
 
@@ -1779,7 +1792,9 @@ class AppsManager:
                 f.unlink(missing_ok=True)
                 continue
             cmdline = _pid_command(pid) if pid > 0 else None
-            bin_js = str((rec.get("cmd") or [""])[-1])
+            # `bin_js` since 0.4.3 (Continuum's argv ends with flags); older
+            # pid files end their `cmd` with the app's bin/cli.js.
+            bin_js = str(rec.get("bin_js") or (rec.get("cmd") or [""])[-1])
             if cmdline and bin_js and bin_js in cmdline:
                 try:
                     os.kill(pid, signal.SIGTERM)
