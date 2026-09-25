@@ -1357,6 +1357,94 @@ console.log(JSON.stringify(results));
     assert locked_evicted["rows"][0]["buttons"] == ["Estimate", "Unlock"]
 
 
+def test_models_table_never_says_no_models_loaded_over_held_accelerator_memory() -> None:
+    """2026-09-25: the console said "No models loaded" while the gateway held
+    92 GB of MLX buffers no listed row owned. On the SHIPPED renderModelsTable:
+    an empty resident view with device.mlx_held_bytes > 0 names the held
+    figure and the two ways out, never "No models loaded"; without it the old
+    wording stays; a row the runtime marks resident_via_other_holders says so."""
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for JavaScript behaviour checking")
+    from test_gateway_console_offline import _node, _slice_function
+
+    source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
+    harness = f"""
+{_slice_function(source, "renderModelsTable")}
+{_slice_function(source, "heldAcceleratorBytes")}
+{_slice_function(source, "heldDetail")}
+{_slice_function(source, "renderModelsResidentCount")}
+{_slice_function(source, "renderModelsShowCachedToggle")}
+{_slice_function(source, "residencyPill")}
+{_slice_function(source, "modelsEmptyRow")}
+{_slice_function(source, "modelRowKey")}
+{_slice_function(source, "modelDisplaySize")}
+{_slice_function(source, "modelCacheBytes")}
+class El {{
+  constructor(tag) {{ this.tag = tag || ""; this.children = []; this.className = ""; this._tc = ""; this.style = {{}}; this.title = ""; this.innerHTML = ""; }}
+  get textContent() {{ return this._tc; }}
+  set textContent(v) {{ this._tc = String(v || ""); if (!this._tc) this.children = []; }}
+  append(...items) {{ this.children.push(...items); }}
+  get classList() {{
+    const self = this;
+    return {{
+      add(name) {{ self.className = (self.className + " " + name).trim(); }},
+      toggle(name, force) {{
+        const parts = String(self.className || "").split(" ").filter(Boolean).filter((p) => p !== name);
+        if (force) parts.push(name);
+        self.className = parts.join(" ");
+      }},
+    }};
+  }}
+}}
+const document = {{ createElement: (tag) => new El(tag), createTextNode: (t) => ({{ tag: "#text", text: t, children: [] }}) }};
+const els = {{}};
+for (const id of ["models-table", "models-loaded-title", "models-show-cached-label", "models-show-cached-text", "models-show-cached"]) els[id] = new El(id);
+function $(id) {{ return els[id] || new El(id); }}
+const ICONS = {{ lock: "<svg/>" }};
+const state = {{ principal: {{ admin: true }}, modelEstimates: new Map(), modelsShowCached: false, modalityUi: null }};
+function modalityChipEl() {{ return new El("chip"); }}
+function _fmtBytes(v) {{ return v + "B"; }}
+function _fmtCtx(v) {{ return v == null ? "" : String(v); }}
+function estimateDetailRow() {{ return new El("est"); }}
+function estimateModelContext() {{}}
+function toggleModelLock() {{}}
+function unloadModel() {{}}
+const pills = (el, out = []) => {{
+  if (el.tag === "span" && String(el.className || "").includes("state-pill")) out.push({{ text: el.textContent, title: el.title }});
+  for (const child of el.children || []) pills(child, out);
+  return out;
+}};
+const empty = () => els["models-table"].children.map((tr) => tr.children.length === 1 && tr.children[0].className === "empty" ? tr.children[0].textContent : null).filter(Boolean);
+const heldMem = {{ device: {{ mlx_held_bytes: 92, mlx_active_bytes: 90, mlx_cache_bytes: 2 }}, held: {{ models: [ {{ models: ["q/27b"], holders: 2 }} ] }} }};
+const results = {{}};
+renderModelsTable({{ models: [], memory: heldMem }});
+results.heldNoRows = empty();
+renderModelsTable({{ models: [ {{ provider: "p", model: "a", resident: false }} ], memory: heldMem }});
+results.heldCachedOnly = empty();
+renderModelsTable({{ models: [] }});
+results.plainNoRows = empty();
+renderModelsTable({{ models: [], memory: {{ device: {{ mlx_held_bytes: 0 }} }} }});
+results.zeroHeld = empty();
+renderModelsTable({{ models: [ {{ provider: "mlx", model: "q/27b", resident: true, state: "provider_loaded", provider_state: "resident_via_other_holders", warnings: ["held by 2 other instance(s)"] }} ] }});
+results.otherHolders = pills(els["models-table"]);
+console.log(JSON.stringify([results]));
+"""
+    out = _node(harness)[0]
+    for key in ("heldNoRows", "heldCachedOnly"):
+        (text,) = out[key]
+        assert "no models loaded" not in text.lower() and "no models resident" not in text.lower(), text
+        assert text.startswith("Gateway still holds 92B of accelerator memory (no model listed)"), text
+        assert "MLX live buffers 90B" in text and "MLX allocator cache 2B" in text and "q/27b × 2 holders" in text
+        assert "Eject the held model, or restart the gateway to free it." in text
+    assert "1 configured / cached row behind the toggle above." in out["heldCachedOnly"][0]
+    assert out["plainNoRows"] == ["No models loaded right now."]
+    assert out["zeroHeld"] == ["No models loaded right now."]
+    (pill,) = out["otherHolders"]
+    assert pill["text"] == "resident via other holders"
+    assert "held by 2 other instance(s)" in pill["title"]
+
+
 def test_models_unload_409_offers_force_and_sends_force_true() -> None:
     """The locked-unload contract, end to end on the SHIPPED unloadModel():
     a 409 whose BODY carries model_locked opens a SECOND deliberate confirm

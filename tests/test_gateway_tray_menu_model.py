@@ -122,6 +122,28 @@ def test_models_leads_with_what_is_in_memory_and_eject_is_a_submenu_action() -> 
     assert [n.label for n in models.children if not n.separator][-2:] == ["Load a Model", "Manage Models in Console…"]
 
 
+def test_models_never_say_no_models_loaded_over_held_gateway_memory() -> None:
+    """2026-09-25: the tray said "No models loaded" while the gateway process
+    held 92 GB of MLX buffers the list could not attribute. With held memory
+    above the noise floor and nothing listed, the header and the Models menu
+    say what is held and the two ways out; below it (or unknown) nothing changes."""
+    held = _snap(models=(), device_held_bytes=92 * GB)
+    nodes = mm.build_menu(_inputs(snap=held))
+    labels = [n.label for n in mm.iter_nodes(nodes) if not n.separator]
+    assert "Ready · gateway still holds 92.0 GB (no model listed); eject or restart" in labels
+    assert not any("no models loaded" in lab.lower() for lab in labels), labels
+    models = [n.label for n in _find(nodes, "Models").children if not n.separator]
+    assert models[0].endswith("gateway holds 92.0 GB")
+    assert "Gateway still holds 92.0 GB (no model listed)" in models
+    assert "Eject the held model in the Console, or restart the gateway to free it" in models
+
+    for quiet in (None, 32 << 20):
+        nodes = mm.build_menu(_inputs(snap=_snap(models=(), device_held_bytes=quiet)))
+        labels = [n.label for n in mm.iter_nodes(nodes) if not n.separator]
+        assert "Ready · no models loaded" in labels and "No models loaded" in labels
+        assert not any("still holds" in lab for lab in labels)
+
+
 def test_ejecting_row_is_disabled_and_says_so() -> None:
     row = _loaded()
     nodes = mm.build_menu(_inputs(models=mm.ModelsView(fetched=True, ejecting=(row.key,))))

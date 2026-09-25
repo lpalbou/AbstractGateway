@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional
 
 from . import platform as plat
 from .client import GatewayClient
+from .menu_model import _held_bytes
 from .sampler import ModelRow, Sampler, Snapshot, fmt_bytes, fmt_pct
 
 APP_NAME = "AbstractGateway"
@@ -464,7 +465,14 @@ class Monitor:
             self.models_note.pack(fill="x")
             return
         if not snap.models:
-            self.models_note.configure(text="No models loaded. Models appear here while they are in memory.")
+            held = _held_bytes(snap)
+            self.models_note.configure(
+                text=(
+                    f"Gateway still holds {fmt_bytes(held)} (no model listed); eject it in the Console, or restart the gateway."
+                    if held
+                    else "No models loaded. Models appear here while they are in memory."
+                )
+            )
             self.models_note.pack(fill="x")
             return
         self.models_note.pack_forget()

@@ -9028,10 +9028,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // host does not know (info chip that SAYS unknown — text carries the
 	      // state, color is never the sole channel).
 	      const pill = document.createElement("span");
-	      if (row.resident === true) { pill.className = "state-pill ok"; pill.textContent = "resident"; }
+	      if (row.resident === true && row.provider_state === "resident_via_other_holders") {
+	        // The runtime's own instance let go, but other provider instances in
+	        // this process still hold the weights: resident, and eject frees all.
+	        pill.className = "state-pill ok"; pill.textContent = "resident via other holders";
+	      }
+	      else if (row.resident === true) { pill.className = "state-pill ok"; pill.textContent = "resident"; }
 	      else if (row.resident === false) { pill.className = "state-pill"; pill.textContent = "configured — not in memory"; }
 	      else { pill.className = "state-pill covered"; pill.textContent = "unknown"; }
 	      if (row.state) pill.title = `runtime state: ${row.state}`;
+	      if (row.provider_state === "resident_via_other_holders" && Array.isArray(row.warnings) && row.warnings.length) {
+	        pill.title = [pill.title, ...row.warnings.map(String)].filter(Boolean).join(" · ");
+	      }
 	      return pill;
 	    }
 	    function renderHostDegraded(data) {
@@ -9342,11 +9350,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        // allocated_bytes = live only). 2026-09-25: a gateway said "No models
 	        // loaded" while holding 92 GB the listing could not attribute.
 	        const held = heldAcceleratorBytes(data);
-	        const heldNote = held > 0
-	          ? ` This gateway process still holds ${_fmtBytes(held)} of accelerator memory (${heldDetail(data)}); nothing in the list owns it. Eject the model(s) shown under "configured / cached", or restart the gateway to free it.`
-	          : "";
-	        if (!rows.length) modelsEmptyRow(body, 8, `No models loaded right now.${heldNote}`);
-	        else modelsEmptyRow(body, 8, `No models resident in memory right now — ${cachedRows.length} configured / cached row${cachedRows.length === 1 ? "" : "s"} behind the toggle above.${heldNote}`);
+	        if (held > 0) {
+	          const behind = rows.length ? ` ${cachedRows.length} configured / cached row${cachedRows.length === 1 ? "" : "s"} behind the toggle above.` : "";
+	          modelsEmptyRow(body, 8, `Gateway still holds ${_fmtBytes(held)} of accelerator memory (no model listed): ${heldDetail(data)}. Eject the held model, or restart the gateway to free it.${behind}`);
+	        } else if (!rows.length) modelsEmptyRow(body, 8, "No models loaded right now.");
+	        else modelsEmptyRow(body, 8, `No models resident in memory right now — ${cachedRows.length} configured / cached row${cachedRows.length === 1 ? "" : "s"} behind the toggle above.`);
 	        return;
 	      }
 	      for (const row of visible) {

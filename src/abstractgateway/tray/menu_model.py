@@ -188,7 +188,11 @@ def state_lines(snap: Snapshot, *, update_phase: str = "idle", update_latest: Op
         if n == 0:
             # Never "no models loaded" over live accelerator memory: the process
             # may hold weights the list cannot attribute (2026-09-25: 92 GB).
-            detail = "Ready · no models loaded" + (f" · still holding {fmt_bytes(held)}" if held else "")
+            detail = (
+                f"Ready · gateway still holds {fmt_bytes(held)} (no model listed); eject or restart"
+                if held
+                else "Ready · no models loaded"
+            )
         else:
             total = f" · {fmt_bytes(snap.models_total_bytes)}" if snap.models_total_bytes else ""
             detail = f"Ready · {n} model{'s' if n != 1 else ''} loaded{total}"
@@ -491,7 +495,7 @@ def models_section(inputs: MenuInputs, *, reachable: bool) -> Node:
         # The process pins accelerator memory nothing in the list owns: say
         # so, with the only two honest ways out (eject what the console lists
         # as held, or restart). Never a silent "No models loaded".
-        items.append(info(f"Memory still held by the gateway: {fmt_bytes(held)} (no model listed)"))
+        items.append(info(f"Gateway still holds {fmt_bytes(held)} (no model listed)"))
         items.append(info("Eject the held model in the Console, or restart the gateway to free it"))
     for key in mv.loading:
         items.append(info(f"Loading {short_model_name(key.split('/', 1)[-1])}…"))
@@ -508,7 +512,7 @@ def models_section(inputs: MenuInputs, *, reachable: bool) -> Node:
         if row.size_source == "estimated":
             sub.append(info("Size estimated from the weights"))
         items.append(Node(label, children=tuple(sub)))
-    if not loaded and not snap.models_error:
+    if not loaded and not snap.models_error and not held:
         items.append(info("No models loaded"))
     items.append(SEP)
     items.append(Node("Load a Model", children=load_submenu(inputs, reachable=reachable), enabled=reachable))
