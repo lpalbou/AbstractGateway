@@ -51,6 +51,18 @@ holds the docs assistant (answers grounded on this gateway's documentation),
 the appearance settings, the **Setup** button that reopens the first-run guide
 (admins), and the sign-out control.
 
+### Memory figures on Resources
+
+The accelerator meter shows the larger of two figures and names it: the
+memory **this gateway process** holds for MLX (live buffers plus MLX's cache,
+"this process only"), or the system-wide figure ("all processes"), which on
+macOS does not see MLX memory. When no model is listed as resident but the
+process still holds memory, the resident-models table says "Gateway still
+holds N GB of accelerator memory (no model listed)" with what holds it, and
+the two ways out: eject the held model, or restart the gateway. A model the
+gateway's own pool released but another part of the process still holds is
+marked **resident via other holders**; ejecting it frees every holder.
+
 ### Models and Engines tabs
 
 Everything these two tabs show and do happens **on the gateway host**: the

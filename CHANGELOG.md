@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-09-25
+
+Requires AbstractCore 2.15.3 and AbstractRuntime 0.4.36 (installed
+automatically). The terminal console is unchanged (`abstractgateway-console`
+0.8.0).
+
+### Fixed
+
+- **Ejecting a model frees its memory.** Ejecting a model from the console or
+  tray now frees its memory from the whole gateway process (weights,
+  prompt/KV caches, MLX cache); the memory figures show what the process
+  really holds, and the Models menu no longer reports "No models loaded"
+  while memory is still held. Gateways started with older versions must be
+  restarted once to reclaim memory already held.
+- The console's accelerator memory meter counts the MLX memory this gateway
+  process holds (live buffers plus MLX's cache) when it is larger than the
+  system-wide figure, which on macOS does not see MLX memory, and says which
+  of the two it shows.
+- With nothing listed in memory but memory still held, the console's Models
+  table, the tray menu and the Activity window say "Gateway still holds N GB
+  (no model listed)" and offer the two ways out: eject the held model, or
+  restart the gateway. A model kept in memory by another part of the gateway
+  shows as **resident via other holders**; ejecting it frees every holder.
+- When the Models and Engines tabs cannot load, their card names AbstractCore
+  2.15.3 as the version to install.
+
 ## [0.4.3] - 2026-09-25
 
 Requires AbstractCore 2.15.2 and AbstractRuntime 0.4.35 (installed

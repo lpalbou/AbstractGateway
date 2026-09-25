@@ -165,6 +165,12 @@ is always known and decides how a model loads, while many installed artifacts
 carry no capability metadata. Capabilities appear where they are known: the
 routes you configured, under **Your defaults**.
 
+When no model is listed but the gateway process still holds more than 256 MB
+of accelerator memory (MLX live buffers plus MLX's cache), the header adds
+`gateway holds N GB` and the menu, the status line and the Activity window say
+"Gateway still holds N GB (no model listed)" instead of "No models loaded":
+eject the held model in the Console, or restart the gateway to free it.
+
 The model lists refresh every 5 minutes and after each load or eject; the
 Activity window and the console's Models tab show the same data live.
 
