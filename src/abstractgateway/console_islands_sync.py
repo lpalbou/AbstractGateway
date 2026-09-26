@@ -38,7 +38,8 @@ BUNDLE_RELPATH = Path("islands") / "dist" / "af-console-islands.js"
 ISLANDS_API_VERSION = "1"
 
 # Every kit file whose change can change the bundle or its CSS.
-_SOURCE_GLOBS = ("src/*.ts", "src/*.tsx", "src/theme.css", "islands/*.tsx", "scripts/build_islands.mjs")
+# src/*.json: the AbstractFramework identity descriptor ships inside the bundle.
+_SOURCE_GLOBS = ("src/*.ts", "src/*.tsx", "src/*.json", "src/theme.css", "islands/*.tsx", "scripts/build_islands.mjs")
 
 
 def locate_kit(repo_root: Optional[Path] = None) -> Optional[Path]:

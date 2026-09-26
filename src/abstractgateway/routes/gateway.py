@@ -14058,6 +14058,43 @@ async def gateway_put_default_grant(request: Request, payload: Dict[str, Any]) -
         raise HTTPException(status_code=400, detail=str(e))
 
 
+def about_payload() -> Dict[str, Any]:
+    """GET /about: {abstractframework: version | null, abstractgateway:
+    version, packages: {name: version}} — every installed AbstractFramework
+    package (distribution names starting with "abstract"), versions only: no
+    paths, no hosts, no secrets."""
+    from importlib import metadata
+
+    packages: Dict[str, str] = {}
+    for dist in metadata.distributions():
+        try:
+            name = str(dist.metadata["Name"] or "").strip()
+        except Exception:  # noqa: BLE001
+            continue
+        key = name.lower().replace("_", "-")
+        if key.startswith("abstract") and dist.version:
+            packages[key] = str(dist.version)
+
+    def _v(name: str) -> Optional[str]:
+        try:
+            return metadata.version(name)
+        except metadata.PackageNotFoundError:
+            return None
+
+    return {
+        "abstractframework": _v("abstractframework"),
+        "abstractgateway": _v("abstractgateway"),
+        "packages": dict(sorted(packages.items())),
+    }
+
+
+@router.get("/about")
+async def gateway_about() -> Dict[str, Any]:
+    """Which AbstractFramework and package versions this gateway runs.
+    Public (no sign-in): About screens of every app read it."""
+    return await asyncio.to_thread(about_payload)
+
+
 @router.get("/skills")
 async def gateway_skills_inventory(request: Request) -> Dict[str, Any]:
     """The skills inventory for launch pickers (operator directive

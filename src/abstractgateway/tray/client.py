@@ -163,6 +163,10 @@ class GatewayClient:
         """Preload one model (the gateway pins it resident). Big models take minutes."""
         return self._request("POST", "/models/load", body={"provider": provider, "model": model, "task": task}, timeout=timeout_s)
 
+    def about(self) -> Result:
+        """GET /about: {abstractframework, abstractgateway, packages}."""
+        return self._request("GET", "/about")
+
     def app_launch(self, app_id: str) -> Result:
         return self._request("POST", f"/apps/{app_id}/launch", body={}, timeout=45.0)
 

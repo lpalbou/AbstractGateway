@@ -1324,14 +1324,33 @@ class TrayApp:
         home = str(Path.home())
         if data.startswith(home):
             data = "~" + data[len(home):]
-        body = (
+        head = (
             "Runs AI workflows on this computer. Works fully offline.\n\n"
             f"Console\t{self.base_url}{self.console_path}\n"
             f"Data folder\t{data}\n"
             f"{py} · {os_name} {os_ver}".strip() + "\n\n"
-            "© Laurent-Philippe Albou · MIT license"
         )
-        self._info(f"{APP_NAME} {self.version}".strip(), body)
+
+        def _show() -> None:  # the /about read happens off the menu thread
+            self._info(f"{APP_NAME} {self.version}".strip(), head + "\n".join(self._identity_lines()))
+
+        self._bg(_show, "tray-about")
+
+    def _identity_lines(self) -> list:
+        """The AbstractFramework identity rows every About shows (abstractcore
+        utils.identity, from the one descriptor) plus this gateway's package
+        versions (GET /about). A missing piece is said, never skipped."""
+        lines: list = []
+        try:
+            from abstractcore.utils.identity import about_lines, app_identity, gateway_version_rows
+        except Exception as exc:  # noqa: BLE001
+            return [f"About details unavailable: the installed AbstractCore has no identity module ({exc})."]
+        lines.extend(about_lines(app_identity("abstractgateway", self.version or None)))
+        r = self.client.about()
+        rows = gateway_version_rows(r.data if r.ok and isinstance(r.data, dict) else None, None if r.ok else r.detail)
+        lines.append("")
+        lines.extend(f"{k}: {v}" for k, v in rows)
+        return lines
 
     # --------------------------------------------------------------- update
 
