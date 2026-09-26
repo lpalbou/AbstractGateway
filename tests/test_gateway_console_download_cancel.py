@@ -27,6 +27,7 @@ import subprocess
 import tempfile
 
 import pytest
+from node_requirement import require_node
 
 from abstractgateway.console import gateway_console_html
 
@@ -133,9 +134,7 @@ console.log("OK");
 
 
 def _run() -> subprocess.CompletedProcess:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for the console download smoke")
+    node = require_node()
     scripts = re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S)
     harness = _HARNESS.replace("__SOURCE__", json.dumps("\n".join(scripts)))
     with tempfile.NamedTemporaryFile("w", suffix=".mjs", encoding="utf-8", delete=False) as f:

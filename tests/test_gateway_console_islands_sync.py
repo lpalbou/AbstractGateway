@@ -23,6 +23,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from node_requirement import require_node
 
 from abstractgateway import console_islands_sync
 from abstractgateway.console import gateway_console_html
@@ -80,9 +81,7 @@ def test_served_console_carries_and_mounts_the_islands() -> None:
 
 
 def test_islands_bundle_defines_the_documented_api() -> None:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required to evaluate the islands bundle")
+    node = require_node()
     probe = (
         "const vm = require('node:vm'); const fs = require('node:fs');"
         "const sb = { console }; sb.globalThis = sb; sb.window = sb; vm.createContext(sb);"

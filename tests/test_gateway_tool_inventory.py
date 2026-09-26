@@ -11,6 +11,7 @@ before the entity exists.
 from __future__ import annotations
 
 import pytest
+from node_requirement import require_node
 from fastapi.testclient import TestClient
 
 pytestmark = pytest.mark.basic
@@ -192,9 +193,7 @@ def test_matrix_conforms_to_uic_compiled_validator() -> None:
     import subprocess
     from pathlib import Path
 
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node required for the uic MatrixPayload conformance fixture")
+    node = require_node()
     validator = (
         Path(__file__).resolve().parents[2]
         / "abstractuic" / "ui-kit" / "dist" / "phase_capability_matrix_core.js"

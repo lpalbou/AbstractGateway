@@ -9,6 +9,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 import pytest
+from node_requirement import require_node
 
 from abstractgateway.console import gateway_console_html
 
@@ -286,9 +287,7 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
 
 
 def test_gateway_console_inline_javascript_parses() -> None:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for JavaScript syntax checking")
+    node = require_node()
 
     scripts = re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S)
     assert scripts
@@ -302,9 +301,7 @@ def test_gateway_console_inline_javascript_parses() -> None:
 
 
 def test_gateway_console_inline_javascript_submits_login_request() -> None:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for JavaScript console smoke checks")
+    node = require_node()
 
     scripts = re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S)
     assert scripts
@@ -1180,9 +1177,7 @@ def test_models_meter_and_residency_primitives_offline() -> None:
     ok -> warn (>=75%) -> crit (>=90%) and renders a null fraction as an
     EMPTY track with honest text; residency is TRI-STATE — null is a
     rendered 'unknown', visually distinct from both yes and no."""
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for JavaScript behaviour checking")
+    node = require_node()
     from test_gateway_console_offline import _node, _slice_function
 
     source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
@@ -1243,9 +1238,7 @@ def test_models_table_defaults_to_resident_rows_with_configured_cached_toggle() 
     cached (N)' toggle, carry no Unload/Lock buttons (Estimate stays), and
     the section title counts RESIDENT rows — a capability-default model with
     nothing in memory must never present as loaded/unloadable."""
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for JavaScript behaviour checking")
+    node = require_node()
     from test_gateway_console_offline import _node, _slice_function
 
     source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
@@ -1363,9 +1356,7 @@ def test_models_table_never_says_no_models_loaded_over_held_accelerator_memory()
     an empty resident view with device.mlx_held_bytes > 0 names the held
     figure and the two ways out, never "No models loaded"; without it the old
     wording stays; a row the runtime marks resident_via_other_holders says so."""
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for JavaScript behaviour checking")
+    node = require_node()
     from test_gateway_console_offline import _node, _slice_function
 
     source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
@@ -1471,9 +1462,7 @@ def test_models_unload_409_offers_force_and_sends_force_true() -> None:
     and only then re-sends with force:true; a 409 WITHOUT the code gets a
     generic conflict message and never offers a force it cannot mean;
     declining the first confirm sends nothing."""
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for JavaScript behaviour checking")
+    node = require_node()
     from test_gateway_console_offline import _node, _slice_function
 
     source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
@@ -1548,9 +1537,7 @@ def test_models_cache_clear_failure_message_survives_the_refresh() -> None:
     and the finally-refresh (real loadHostState, success path) must not wipe
     it — the exact zero-feedback defect: the clear's error went to
     #models-message, which the refresh then unconditionally cleared."""
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for JavaScript behaviour checking")
+    node = require_node()
     from test_gateway_console_offline import _node, _slice_function
 
     source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
@@ -1600,9 +1587,7 @@ def test_models_host_facts_never_fabricate_zeros() -> None:
     totals.models_resident when the server sent it, else counted from the
     enumerated rows themselves (row-derived, never fabricated) — and names
     the non-resident remainder 'configured / cached', never 'loaded'."""
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for JavaScript behaviour checking")
+    node = require_node()
     from test_gateway_console_offline import _node, _slice_function
 
     source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
@@ -1654,9 +1639,7 @@ def test_models_stale_host_snapshot_never_overwrites_a_fresh_one() -> None:
     (the shipped loadHostState's sequence guard): a hung slow-lane fetch
     resolving after a newer snapshot must paint NOTHING — not resurrect an
     unloaded model on screen."""
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for JavaScript behaviour checking")
+    node = require_node()
     from test_gateway_console_offline import _node, _slice_function
 
     source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
@@ -1691,9 +1674,7 @@ def test_models_load_ok_but_lock_fail_reports_the_mixed_outcome() -> None:
     """Warm-up with 'lock in memory': a successful load followed by a failed
     lock is a MIXED outcome — the message must say the model IS resident
     (unlocked) AND why locking failed, never read as total failure."""
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for JavaScript behaviour checking")
+    node = require_node()
     from test_gateway_console_offline import _node, _slice_function
 
     source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
@@ -1746,9 +1727,7 @@ def test_models_accelerator_meter_scopes_itself_and_carries_the_gguf_note() -> N
     ACCELERATOR HEAP line, its scope is named in exactly two phrasings — "all
     processes" / "this process only" — and the GGUF caveat rides the title on
     BOTH variants. RAM stays the primary system meter, rendered first."""
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for JavaScript behaviour checking")
+    node = require_node()
     from test_gateway_console_offline import _node, _slice_function
 
     source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
@@ -1820,9 +1799,7 @@ def test_models_display_size_coalesces_and_names_its_source() -> None:
     est_weights_bytes used to render a BLANK size cell; it now renders the
     estimate — and the tooltip says it is an ESTIMATE, so it can never be read
     as a measurement. cache_bytes rides along as a secondary figure."""
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for JavaScript behaviour checking")
+    node = require_node()
     from test_gateway_console_offline import _node, _slice_function
 
     source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
@@ -1921,9 +1898,7 @@ def test_models_memory_breakdown_pins_the_shared_fixture() -> None:
     separate measurements, NOT summable with the items), then the GGUF NOTE
     when Σ weights exceeds the heap, which is the normal mmapped-GGUF case and
     not an inconsistency."""
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for JavaScript behaviour checking")
+    node = require_node()
     from test_gateway_console_offline import _node, _slice_function
 
     source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
@@ -2089,9 +2064,7 @@ def test_models_process_rss_is_stated_exactly_once() -> None:
     it as well, so a single memory panel carried the same 76 GB twice under two
     different framings, which is exactly the double-counting this wave removes.
     Host id / host name stay: identity is not a duplicate figure."""
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for JavaScript behaviour checking")
+    node = require_node()
     from test_gateway_console_offline import _node, _slice_function
 
     source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
@@ -2156,9 +2129,7 @@ def test_models_breakdown_item_key_falls_back_to_provider_and_model() -> None:
     `model:<provider>:<model>` — no index suffix, no task segment, no leading
     empty segment. Colliding keys are KEPT; a genuine duplicate provider+model
     row is itself worth seeing."""
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for JavaScript behaviour checking")
+    node = require_node()
     from test_gateway_console_offline import _node, _slice_function
 
     source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
@@ -2191,9 +2162,7 @@ def test_models_breakdown_separates_references_from_items() -> None:
     """A reader must never add the reference counters onto the items, so the
     renderer puts a RULE between the two groups and dims the references. The
     GGUF note closes the block on its own line."""
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for JavaScript behaviour checking")
+    node = require_node()
     from test_gateway_console_offline import _node, _slice_function
 
     source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
@@ -2269,9 +2238,7 @@ def test_models_every_resident_row_offers_a_lock_including_swept_ones() -> None:
     PART D2: an `est_weights_bytes` figure renders with the SAME `~` prefix the
     TUIs use, ON SCREEN — a marker that lives only in a tooltip is a marker
     nobody sees. The tooltip still names the source field."""
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for JavaScript behaviour checking")
+    node = require_node()
     from test_gateway_console_offline import _node, _slice_function
 
     source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
@@ -2406,9 +2373,7 @@ def test_models_load_form_selects_ride_the_shared_discovery_cache() -> None:
     setSelectOptions recipe over the SAME cache the capability-defaults tab
     fills (fetchDefaultProviders / fetchDefaultModels) — no second fetch path —
     and the free-text lane opens ONLY when discovery has nothing to offer."""
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for JavaScript behaviour checking")
+    node = require_node()
     from test_gateway_console_offline import _node, _slice_function
 
     source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
@@ -2518,9 +2483,7 @@ def test_models_load_custom_model_lane_never_inherits_the_previous_providers_mod
     provider. Switching provider to one whose catalog is empty therefore armed
     the warm-up row with `newProvider/oldModel` and a click would load a pair
     that never existed. The lane opens EMPTY; console-tui already does this."""
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for JavaScript behaviour checking")
+    node = require_node()
     from test_gateway_console_offline import _node, _slice_function
 
     source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))

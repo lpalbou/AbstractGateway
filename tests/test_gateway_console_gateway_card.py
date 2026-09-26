@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 
 import pytest
+from node_requirement import require_node
 
 pytestmark = pytest.mark.basic
 
@@ -68,9 +69,7 @@ def test_gateway_card_wiring_and_endpoints() -> None:
 
 
 def test_console_javascript_parses() -> None:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is not installed; JS syntax check skipped")
+    node = require_node()
     html = _html()
     blocks = re.findall(r"<script(?![^>]*src=)[^>]*>(.*?)</script>", html, flags=re.S)
     assert blocks

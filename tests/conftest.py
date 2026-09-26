@@ -455,6 +455,16 @@ def _add_hermetic_options(parser) -> None:
     )
 
 
+def _add_js_options(parser) -> None:
+    parser.addoption(
+        "--allow-skip-js",
+        action="store_true",
+        default=False,
+        help="let the console / JavaScript behaviour tests SKIP when `node` is missing; without it a missing "
+        "node FAILS them (tests/node_requirement.py)",
+    )
+
+
 def _validate_hermetic_markers(config, items) -> None:
     allow_network = bool(config.getoption("--allow-network", default=False))
     allow_desktop = bool(config.getoption("--allow-desktop", default=False))
@@ -758,6 +768,9 @@ def _no_real_terminal_app(monkeypatch: pytest.MonkeyPatch, tmp_path_factory) -> 
 
 def pytest_configure(config):
     _register_hermetic_markers(config)
+    import node_requirement
+
+    node_requirement.ALLOW_SKIP_JS = bool(config.getoption("--allow-skip-js", default=False))
 
 
 def pytest_collection_modifyitems(config, items):
@@ -766,6 +779,7 @@ def pytest_collection_modifyitems(config, items):
 
 def pytest_addoption(parser):
     _add_hermetic_options(parser)
+    _add_js_options(parser)
 
 def pytest_terminal_summary(terminalreporter):
     _hermetic_terminal_summary(terminalreporter)

@@ -172,9 +172,11 @@ def test_matrix_payload_validates_against_the_real_kit_validator(tmp_path: Path)
     import subprocess
 
     kit = Path(__file__).resolve().parents[2] / "abstractuic" / "ui-kit" / "dist" / "phase_capability_matrix_core.js"
-    node = shutil.which("node")
-    if node is None or not kit.is_file():
-        pytest.skip("node or the built abstractuic kit is not available in this checkout")
+    from node_requirement import require_node
+
+    node = require_node()
+    if not kit.is_file():
+        pytest.skip("the built abstractuic kit is not available in this checkout")
 
     from abstractgateway.entity_skills import resolve_entity_skills, write_skills_selection
 

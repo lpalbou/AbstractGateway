@@ -22,6 +22,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from node_requirement import require_node
 from fastapi.testclient import TestClient
 
 from abstractgateway import apps_manager as am
@@ -286,9 +287,7 @@ console.log("RESULT " + JSON.stringify(out));
 
 
 def _drive_card() -> dict:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required to drive the console card")
+    node = require_node()
     import re
 
     from abstractgateway.console import gateway_console_html

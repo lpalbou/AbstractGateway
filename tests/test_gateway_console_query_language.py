@@ -23,6 +23,7 @@ import fnmatch
 import random
 
 import pytest
+from node_requirement import require_node
 from test_gateway_runs_list_endpoint import _write_min_bundle
 
 from abstractgateway.routes.gateway import (
@@ -287,9 +288,7 @@ def test_the_web_consoles_javascript_matcher_agrees_with_this_one() -> None:
     import subprocess
     import tempfile
 
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required to cross-check the JS matcher")
+    node = require_node()
 
     from abstractgateway.console import gateway_console_html
 

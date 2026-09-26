@@ -26,6 +26,7 @@ import subprocess
 import tempfile
 
 import pytest
+from node_requirement import require_node
 
 from abstractgateway.console import gateway_console_html
 from abstractgateway.console_catalog import CATALOG_CSS, CATALOG_JS
@@ -190,9 +191,7 @@ console.log(JSON.stringify(out));
 
 
 def _run(fixture: dict, script: str, hash_: str = "", js: str | None = None, hub: dict | None = None) -> dict:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for the catalog view checks")
+    node = require_node()
     source = js if js is not None else CONSOLE_UI_JS + CATALOG_JS
     harness = (
         _HARNESS.replace("__SOURCE__", json.dumps(source))

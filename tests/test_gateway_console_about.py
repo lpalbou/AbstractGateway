@@ -23,6 +23,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+from node_requirement import require_node
 
 from abstractgateway.console import console_about_config, gateway_console_html
 from abstractgateway.console_islands import ISLANDS_JS
@@ -77,8 +78,7 @@ def test_about_failure_is_one_visible_row(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_about_props_on_the_real_islands_bundle_match_the_descriptor(tmp_path: Path) -> None:
-    if not shutil.which("node"):
-        pytest.skip("node is required for JavaScript behaviour checking")
+    require_node()
     from abstractcore.utils.identity import about_fields, app_identity
 
     from test_gateway_console_offline import _slice_function
@@ -136,8 +136,7 @@ def test_identity_descriptor_in_the_bundle_is_the_canonical_one(tmp_path: Path) 
     literal starting `{schema:"abstractframework.identity.v1"`) evaluates to
     exactly the canonical JSON — a descriptor change without a bundle re-sync
     fails here."""
-    if not shutil.which("node"):
-        pytest.skip("node is required for JavaScript behaviour checking")
+    require_node()
     start = ISLANDS_JS.find('{schema:"abstractframework.identity.v1"')
     assert start >= 0, "the islands bundle carries no identity descriptor"
     depth, i, quote = 0, start, None

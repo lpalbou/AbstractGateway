@@ -30,6 +30,7 @@ import subprocess
 import tempfile
 
 import pytest
+from node_requirement import require_node
 
 from abstractgateway.console import gateway_console_html
 
@@ -449,9 +450,7 @@ console.log("OK");
 
 
 def _run(scenario: dict, html: str | None = None) -> subprocess.CompletedProcess:
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for the console wizard smoke")
+    node = require_node()
     html = html if html is not None else gateway_console_html()
     scripts = re.findall(r"<script>(.*?)</script>", html, flags=re.S)
     # Stub elements start with the classes the REAL markup gives them (the

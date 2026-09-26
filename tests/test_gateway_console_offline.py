@@ -33,6 +33,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from node_requirement import require_node
 
 from abstractgateway.console import gateway_console_html
 
@@ -122,9 +123,7 @@ def test_long_running_routes_opt_into_the_slow_budget() -> None:
 
 def test_api_bounds_a_blackholed_request() -> None:
     """A fetch that never settles must still reject — the core of the incident."""
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for JavaScript behaviour checking")
+    node = require_node()
 
     api_src = _slice_function(_console_script(), "api")
     harness = f"""
@@ -302,9 +301,7 @@ def test_a_modality_with_no_discovery_says_so_instead_of_borrowing_text() -> Non
 
 def _node(script: str) -> list:
     """Run `script` under node and return the JSON array it printed last."""
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node is required for JavaScript behaviour checking")
+    node = require_node()
     with tempfile.NamedTemporaryFile("w", suffix=".mjs", encoding="utf-8", delete=False) as f:
         f.write(script)
         path = Path(f.name)
