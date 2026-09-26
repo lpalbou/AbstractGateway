@@ -176,6 +176,7 @@ const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCA
 {_slice_function(source, "uiPill")}
 {_slice_function(source, "skillsShelfSourcePill")}
 {_slice_function(source, "skillsShelfMarkup")}
+{_slice_function(source, "skillsShelfCountText")}
 {_slice_function(source, "seedReportText")}
 const skillsShelfStore = {{ data: null, error: "", saving: false, saved: null, draft: null, views: new Map() }};
 const out = [];

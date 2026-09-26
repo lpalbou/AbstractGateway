@@ -2549,7 +2549,7 @@ CONSOLE_UI_JS = r"""
     // {"default_workflow": {interface: value | ""}}} with the changed rows
     // only; "" goes back to the built-in default. The gateway validates and
     // its sentence is shown verbatim on refusal.
-    const agentDefStore = { data: null, error: "", saving: false, saved: null, draft: {}, views: new Map() };
+    const agentDefStore = { data: null, error: "", saving: false, saved: null, draft: {}, views: new Map(), streamSaving: false, streamSaved: null };
     function agentDefaultsBody(block, draft) {
       const body = {};
       for (const [iface, r] of Object.entries((block && block.default_workflow) || {})) {
@@ -2597,7 +2597,57 @@ CONSOLE_UI_JS = r"""
       else out += `<p class="ui-net-proxy__saved" role="status"><span>${admin ? "Clients that choose \"Gateway default\" run this from their next new turn." : "Only an admin can change these."}</span></p>`;
       return out + `</div>`;
     }
-    function agentDefaultsRender() { for (const el of agentDefStore.views.values()) if (el) el.innerHTML = agentDefaultsMarkup(); }
+    // ---- Stream replies by default (agents.streaming_default) ----
+    // GET /api/gateway/admin/runtime-config -> agents.streaming_default
+    // {key, value: bool, source: stored|default, default, label, help}.
+    // The switch POSTs {"agents": {"streaming_default": true|false}} at once
+    // (the gateway answers with the new read). A gateway whose read lacks the
+    // key says so -- the switch is never silently hidden.
+    function streamingDefaultMarkup(data, st) {
+      const block = (data && data.agents) || {};
+      const r = block.streaming_default;
+      const head = `<div class="ui-apps-setting" data-streaming-default-row><div class="ui-apps-setting__head"><label for="agent-streaming-default">${esc((r && r.label) || "Stream replies by default")}</label>`;
+      if (!r || typeof r !== "object" || typeof r.value !== "boolean") {
+        return head + `${uiPill("Not available", "muted")}</div><p class="ui-field-msg tone-warn" data-streaming-default-missing>Not available on this gateway: its settings read has no agents.streaming_default.</p></div>`;
+      }
+      const admin = !!(data && data.writable);
+      const pill = r.source === "stored" ? uiPill("Saved setting", "info") : uiPill("Default", "muted");
+      const busy = !!(st && st.streamSaving);
+      let out = head + `${pill}</div>`
+        + `<label class="entity-checkbox"><input type="checkbox" id="agent-streaming-default" data-streaming-default${r.value ? " checked" : ""}${admin && !busy ? "" : " disabled"}> ${r.value ? "On" : "Off"} — ${r.value ? "interactive replies stream live" : "replies arrive whole"}</label>`
+        + `<p class="ui-net-proxy__text">${esc(r.help || "")}</p>`
+        + `<span class="ui-advanced ui-sub"><code>abstractgateway config set ${esc(r.key || "agents.streaming_default")} true|false</code></span>`;
+      if (st && st.streamSaved) out += `<p class="ui-net-proxy__saved tone-${esc(st.streamSaved.tone)}" role="status" data-streaming-default-saved><b>${esc(st.streamSaved.head)}</b><span>${esc(st.streamSaved.text)}</span></p>`;
+      else if (!admin) out += `<p class="ui-net-proxy__saved" role="status"><span>Only an admin can change this.</span></p>`;
+      return out + `</div>`;
+    }
+    function streamingDefaultBody(on) { return { agents: { streaming_default: !!on } }; }
+    async function streamingDefaultSave(on) {
+      const st = agentDefStore;
+      if (!st.data || st.streamSaving) return;
+      st.streamSaving = true;
+      st.streamSaved = null;
+      agentDefaultsRender();
+      try {
+        const next = await api("/api/gateway/admin/runtime-config", { method: "POST", body: JSON.stringify(streamingDefaultBody(on)) });
+        // Keep the default-workflow block (and its draft) as it was when the
+        // write answers without it; take the new streaming row either way.
+        const prevAgents = (st.data && st.data.agents) || {};
+        st.data = { ...next, agents: { ...prevAgents, ...((next && next.agents) || {}) } };
+        st.streamSaved = { tone: "ok", head: "Saved", text: on ? "New interactive runs stream their replies unless the client says otherwise." : "New interactive runs send their replies whole unless the client asks to stream." };
+      } catch (err) {
+        const data = (err && err.data) || {};
+        st.streamSaved = { tone: "err", head: "Not saved", text: String((data && data.detail) || (err && err.message) || err) };
+      }
+      st.streamSaving = false;
+      agentDefaultsRender();
+    }
+    function agentDefaultsRender() {
+      // The streaming switch sits right under the default-workflow block,
+      // from the same settings read (it shows even when the workflow rows
+      // cannot be read: the switch is a separate setting).
+      for (const el of agentDefStore.views.values()) if (el) el.innerHTML = agentDefaultsMarkup() + (agentDefStore.data ? streamingDefaultMarkup(agentDefStore.data, agentDefStore) : "");
+    }
     async function agentDefaultsRefresh() {
       try {
         agentDefStore.data = await api("/api/gateway/admin/runtime-config");
@@ -2643,7 +2693,9 @@ CONSOLE_UI_JS = r"""
         if (b && !b.disabled) agentDefaultsSave();
       };
       el.onchange = (event) => {
-        const i = event && event.target && event.target.matches && event.target.matches("[data-agent-default-select]") ? event.target : null;
+        const t = event && event.target && event.target.matches ? event.target : null;
+        if (t && t.matches("[data-streaming-default]")) { streamingDefaultSave(!!t.checked); return; }
+        const i = t && t.matches("[data-agent-default-select]") ? t : null;
         if (i) agentDefStore.draft[i.dataset.agentDefaultSelect] = i.value;
       };
       agentDefaultsRender();
@@ -2656,7 +2708,17 @@ CONSOLE_UI_JS = r"""
     // reason, default_path, bundled_version, warnings?}. Save = POST
     // {"skills.shelf": path | ""} ("" = back to the gateway's own copy);
     // "Refresh the curated shelf" = POST /api/gateway/admin/skills/reseed.
-    const skillsShelfStore = { data: null, error: "", saving: false, saved: null, draft: null, views: new Map() };
+    const skillsShelfStore = { data: null, error: "", saving: false, saved: null, draft: null, views: new Map(), inventory: null };
+    // How many skills the shelf holds, from GET /api/gateway/skills
+    // ({skills: [...], shelf, shelf_source, bundled_version, warnings}).
+    // null = not read yet; {error} = the read failed (said, never a "0").
+    function skillsShelfCountText(inv) {
+      if (!inv) return "Counting the skills on this shelf...";
+      if (inv.error) return `Could not count the skills on this shelf: ${inv.error}`;
+      const n = Array.isArray(inv.skills) ? inv.skills.length : null;
+      if (n === null) return "This gateway did not list its skills.";
+      return `${n} skill${n === 1 ? "" : "s"} on this shelf`;
+    }
     function skillsShelfSourcePill(r) {
       if (r.source === "stored") return uiPill("Saved setting", "info");
       if (r.source === "env") return uiPill("Environment (legacy)", "warn", "Set by the environment this gateway was started with; saving a folder here replaces it");
@@ -2676,8 +2738,10 @@ CONSOLE_UI_JS = r"""
       let out = `<div class="ui-apps-setting" data-skills-shelf><div class="ui-apps-setting__head"><label for="skills-shelf-input">${esc(r.label || "Skills shelf")}</label>${skillsShelfSourcePill(r)}</div>`
         + `<input type="text" id="skills-shelf-input" data-skills-shelf-input autocomplete="off" spellcheck="false" value="${esc(val)}" placeholder="${esc(r.default_path || "")}"${admin && !st.saving ? "" : " disabled"}>`
         + `<p class="ui-net-proxy__text">${esc(r.help || "")}</p>`
-        + (r.available && r.resolved ? `<p class="ui-net-proxy__text" data-skills-shelf-now>Reads <code>${esc(r.resolved)}</code>${r.bundled_version ? ` · curated shelf ${esc(r.bundled_version)}` : ""}</p>` : "")
+        + (r.available && r.resolved ? `<p class="ui-net-proxy__text" data-skills-shelf-now>Reads <code>${esc(r.resolved)}</code></p>` : "")
         + (!r.available ? `<p class="ui-field-msg tone-warn" data-skills-shelf-now>Not available: ${esc(r.reason || "")}</p>` : "")
+        + `<p class="ui-net-proxy__text" data-skills-shelf-bundled>${r.bundled_version ? `Curated shelf shipped with this gateway: version ${esc(r.bundled_version)}` : "The curated shelf version is not reported by this gateway."}</p>`
+        + (r.available ? `<p class="ui-net-proxy__text" data-skills-shelf-count>${esc(skillsShelfCountText(st.inventory))}</p>` : "")
         + (r.warnings || []).map((w) => `<p class="ui-field-msg tone-warn">${esc(w)}</p>`).join("")
         + `<span class="ui-advanced ui-sub"><code>abstractgateway config set skills.shelf …</code></span>`;
       if (admin) {
@@ -2695,6 +2759,15 @@ CONSOLE_UI_JS = r"""
         skillsShelfStore.error = "";
       } catch (err) {
         skillsShelfStore.error = String((err && err.message) || err);
+      }
+      skillsShelfRender();
+      await skillsShelfCount();
+    }
+    async function skillsShelfCount() {
+      try {
+        skillsShelfStore.inventory = await api("/api/gateway/skills");
+      } catch (err) {
+        skillsShelfStore.inventory = { error: String((err && err.message) || err) };
       }
       skillsShelfRender();
     }
@@ -2731,6 +2804,7 @@ CONSOLE_UI_JS = r"""
       }
       st.saving = false;
       skillsShelfRender();
+      if (st.saved && st.saved.tone === "ok") await skillsShelfCount();
     }
     function mountSkillsShelf(key, el) {
       if (!el) return;
