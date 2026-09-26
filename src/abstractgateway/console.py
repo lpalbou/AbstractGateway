@@ -798,6 +798,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .mem-breakdown-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: baseline; }
 	    .mem-breakdown-name { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	    .mem-breakdown-note { color: var(--muted); }
+	    .mem-breakdown-note.tone-warn { color: var(--warning); }
+	    .mem-breakdown-note.tone-err { color: var(--error); }
 	    .mem-breakdown-bytes { color: var(--muted); white-space: nowrap; }
 	    .mem-breakdown-rule { border-top: 1px solid var(--line); margin: 5px 0 2px; }
 	    .mem-breakdown-row.reference .mem-breakdown-name { color: var(--muted); }
@@ -2208,6 +2210,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              </div>
 	              <p id="models-load-hint" class="section-note hidden"></p>
 	              <div id="models-loaded-message" class="message"></div>
+	              <div id="models-ejects" class="mem-breakdown hidden" role="status"></div>
 	              <div class="table-scroll">
 	                <table>
 	                  <thead><tr><th>Modality</th><th>Provider</th><th>Model</th><th>Resident</th><th>Size</th><th>Context</th><th>Flags</th><th>Actions</th></tr></thead>
@@ -8818,6 +8821,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const mem = (snap.memory && typeof snap.memory === "object") ? snap.memory : {};
       const dev = (mem.device && typeof mem.device === "object") ? mem.device : {};
       const num = (v) => (typeof v === "number" && isFinite(v) && v >= 0) ? v : null;
+      // gateway 2026-09-25 (MEM2): what this process pins across EVERY
+      // in-process allocator -- the Metal device counter when torch is
+      // present (MLX / llama.cpp / torch buffers are inside it), else MLX
+      // held + llama.cpp. Older gateways: MLX only.
+      const processHeld = num(dev.process_held_bytes);
+      if (processHeld !== null) return processHeld;
       const held = num(dev.mlx_held_bytes);
       if (held !== null) return held;
       const active = num(dev.allocated_bytes);
@@ -8833,12 +8842,59 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const cache = num(dev.mlx_cache_bytes);
       if (active !== null) parts.push(`MLX live buffers ${_fmtBytes(active)}`);
       if (cache !== null) parts.push(`MLX allocator cache ${_fmtBytes(cache)}`);
-      const held = (mem.held && typeof mem.held === "object") ? mem.held : null;
-      if (held && Array.isArray(held.models) && held.models.length) {
-        const names = held.models.map((m) => (Array.isArray(m.models) && m.models.length ? m.models.join(", ") : String(m.model_path || "?")) + ` × ${m.holders || 0} holder${(m.holders || 0) === 1 ? "" : "s"}`);
-        parts.push(`resident: ${names.join("; ")}`);
-      }
+      const metal = num(dev.metal_process_allocated_bytes);
+      if (metal !== null && metal > 0) parts.push(`Metal allocated by this process ${_fmtBytes(metal)} (device counter; MLX, torch and llama.cpp buffers are inside it)`);
+      const mpsLive = num(dev.torch_mps_allocated_bytes);
+      if (mpsLive !== null && mpsLive > 0) parts.push(`torch live tensors (transformers / embeddings / voice) ${_fmtBytes(mpsLive)}`);
+      const llama = num(dev.llama_cpp_bytes);
+      if (llama !== null && llama > 0) parts.push(`llama.cpp GGUF engines ${_fmtBytes(llama)} (weights + KV allocation, estimated)`);
       return parts.length ? parts.join(", ") : "process-local accelerator allocations";
+    }
+    // WHAT the process holds, by model: `memory.resident.models` (gateway
+    // 2026-09-25+, every in-process backend: MLX, HuggingFace/GGUF,
+    // embeddings), else the MLX-only `memory.held.models` of older cores.
+    // "[backend] model × N holders"; [] when no holder reports anything.
+    function heldResidentNames(data) {
+      const snap = (data && typeof data === "object") ? data : {};
+      const mem = (snap.memory && typeof snap.memory === "object") ? snap.memory : {};
+      const resident = (mem.resident && typeof mem.resident === "object" && Array.isArray(mem.resident.models) && mem.resident.models.length) ? mem.resident : null;
+      const held = resident || ((mem.held && typeof mem.held === "object") ? mem.held : null);
+      if (!held || !Array.isArray(held.models)) return [];
+      return held.models.filter((m) => m && typeof m === "object").map((m) => {
+        const holders = Number(m.holders) || 0;
+        const name = Array.isArray(m.models) && m.models.length ? m.models.join(", ") : String(m.model_path || m.model || "?");
+        return (m.backend ? `[${m.backend}] ` : "") + name + ` × ${holders} holder${holders === 1 ? "" : "s"}` + (m.shared_weights === false && holders > 1 ? " (full copies)" : "");
+      });
+    }
+    // HOW the held figure was measured, in words (core utils/memory
+    // `device.process_held_basis`): "metal_device_counter" |
+    // "cuda_device_counter[+llama_cpp_bytes(estimated)]" |
+    // "sum:<field>+<field>..." — an unknown spelling is shown verbatim, and a
+    // missing basis says so (never a silent blank).
+    function processHeldBasisWords(basis) {
+      const b = typeof basis === "string" ? basis.trim() : "";
+      if (!b) return "basis not reported";
+      if (b === "metal_device_counter") return "metal device counter";
+      if (b.startsWith("cuda_device_counter")) return "cuda device counter" + (b.includes("llama_cpp_bytes") ? " + llama.cpp (estimated)" : "");
+      if (b.startsWith("sum:")) {
+        const words = { mlx_held_bytes: "MLX", "llama_cpp_bytes(estimated)": "llama.cpp (estimated)", llama_cpp_bytes: "llama.cpp", allocated_bytes: "live allocations" };
+        const parts = b.slice(4).split("+").filter(Boolean).map((p) => words[p] || p);
+        return parts.length ? `sum of ${parts.join(" + ")}` : b;
+      }
+      return b;
+    }
+    // The basis of the figure heldAcceleratorBytes() chose — it names the
+    // FIELD actually used, so a fallback is never presented as the
+    // process-wide measurement.
+    function heldBasis(data) {
+      const snap = (data && typeof data === "object") ? data : {};
+      const mem = (snap.memory && typeof snap.memory === "object") ? snap.memory : {};
+      const dev = (mem.device && typeof mem.device === "object") ? mem.device : {};
+      const num = (v) => (typeof v === "number" && isFinite(v) && v >= 0) ? v : null;
+      if (num(dev.process_held_bytes) !== null) return processHeldBasisWords(dev.process_held_basis);
+      if (num(dev.mlx_held_bytes) !== null) return "MLX buffers only (this AbstractCore reports no process-wide figure)";
+      if (num(dev.allocated_bytes) !== null) return "live allocations only (this AbstractCore reports no process-wide figure)";
+      return "not reported";
     }
     function deviceMeterView(dev) {
       const d = (dev && typeof dev === "object") ? dev : {};
@@ -8848,8 +8904,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const wired = num(d.wired_limit_bytes);
       const total = num(d.total_bytes);
       const free = num(d.free_bytes);
-      let procUsed = num(d.mlx_held_bytes);
-      if (procUsed === null) procUsed = num(d.allocated_bytes);
+      let procUsed = num(d.process_held_bytes);
+      let procField = procUsed === null ? "" : `device.process_held_bytes (${processHeldBasisWords(d.process_held_basis)})`;
+      if (procUsed === null) { procUsed = num(d.mlx_held_bytes); if (procUsed !== null) procField = "device.mlx_held_bytes (MLX live + cached buffers)"; }
+      if (procUsed === null) { procUsed = num(d.allocated_bytes); if (procUsed !== null) procField = "device.allocated_bytes (live allocations)"; }
+      if (procUsed !== null && !procField) procField = "device total − free";
       if (procUsed === null && total !== null && free !== null) procUsed = Math.max(0, total - free);
       // The ioreg "In use system memory" counter does NOT see MLX's Metal
       // buffers on this host (measured 2026-09-25: 1.5 GB reported beside
@@ -8867,8 +8926,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const bits = [note];
       bits.push(procWins
         ? (hostUsed === null
-            ? "device.mlx_held_bytes / allocated_bytes — THIS PROCESS ONLY; this host reports no cross-process accelerator figure, so a model resident in another process is not counted here"
-            : `device.mlx_held_bytes / allocated_bytes — THIS PROCESS ONLY (MLX live + cached buffers); the cross-process ioreg counter (${_fmtBytes(hostUsed)}) does not see MLX buffers on this host`)
+            ? `${procField} — THIS PROCESS ONLY; this host reports no cross-process accelerator figure, so a model resident in another process is not counted here`
+            : `${procField} — THIS PROCESS ONLY; the cross-process ioreg counter (${_fmtBytes(hostUsed)}) does not see MLX buffers on this host`)
         : "device.host_in_use_bytes — driver-allocated accelerator memory across every process on this machine, not just this gateway");
       if (ceiling !== null) bits.push(wired !== null ? `ceiling: wired limit ${_fmtBytes(wired)}` : `ceiling: device total ${_fmtBytes(total)}`);
       if (hostUsed !== null && procUsed !== null) bits.push(`this process: ${_fmtBytes(procUsed)}`);
@@ -8998,6 +9057,53 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           }
         : null;
       return { items, references, note };
+    }
+    // EJECTS THE RUNTIME OWES OR FAILED (default switch / failed load):
+    // `residency_diagnostics` of GET /host/state = the runtime's
+    // {pending_ejects: [{provider, model, reason, since}], last_switch_ejects:
+    // [{provider, model, ok, skipped, deferred, reason, error, holders_found}]}.
+    // PURE: lines of {tone, text}. A snapshot without the block says so — the
+    // console never implies "nothing pending" from a field it did not get.
+    function ejectStatusLines(data) {
+      const snap = (data && typeof data === "object") ? data : {};
+      if (!Array.isArray(snap.models)) return [];
+      const diag = snap.residency_diagnostics;
+      if (!diag || typeof diag !== "object") {
+        return [{ tone: "muted", text: "Eject status: this gateway's host snapshot does not report residency diagnostics." }];
+      }
+      const label = (e) => [e && e.provider, e && e.model].filter((v) => v !== undefined && v !== null && String(v) !== "").join("/") || "a model";
+      const out = [];
+      const pending = Array.isArray(diag.pending_ejects) ? diag.pending_ejects.filter((e) => e && typeof e === "object") : [];
+      const pendingKeys = new Set(pending.map(label));
+      for (const e of pending) out.push({ tone: "warn", text: `Will eject ${label(e)} when the in-flight call ends.` });
+      const last = Array.isArray(diag.last_switch_ejects) ? diag.last_switch_ejects.filter((e) => e && typeof e === "object") : [];
+      for (const e of last) {
+        const name = label(e);
+        if (e.deferred === true) {
+          if (!pendingKeys.has(name)) out.push({ tone: "warn", text: `Will eject ${name} when the in-flight call ends.` });
+        } else if (e.ok === false) {
+          out.push({ tone: "err", text: `${name}: eject failed: ${String(e.error || e.reason || "no reason reported")}` });
+        } else if (e.skipped === true) {
+          out.push({ tone: "muted", text: `${name} kept in memory: ${String(e.reason || "still in use")}` });
+        } else {
+          const n = Number(e.holders_found);
+          out.push({ tone: "muted", text: `${name} ejected${Number.isFinite(n) && n > 0 ? ` from ${n} holder${n === 1 ? "" : "s"}` : ""}.` });
+        }
+      }
+      return out;
+    }
+    function renderModelsEjects(data) {
+      const box = $("models-ejects");
+      if (!box) return;
+      box.textContent = "";
+      const lines = ejectStatusLines(data);
+      box.classList.toggle("hidden", !lines.length);
+      for (const l of lines) {
+        const row = document.createElement("div");
+        row.className = l.tone === "err" ? "mem-breakdown-note tone-err" : l.tone === "warn" ? "mem-breakdown-note tone-warn" : "mem-breakdown-note";
+        row.textContent = l.text;
+        box.append(row);
+      }
     }
     function modelsEmptyRow(body, colSpan, text) {
 	      if (!body) return;
@@ -9403,7 +9509,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const held = heldAcceleratorBytes(data);
 	        if (held > 0) {
 	          const behind = rows.length ? ` ${cachedRows.length} configured / cached row${cachedRows.length === 1 ? "" : "s"} behind the toggle above.` : "";
-	          modelsEmptyRow(body, 8, `Gateway still holds ${_fmtBytes(held)} of accelerator memory (no model listed): ${heldDetail(data)}. Eject the held model, or restart the gateway to free it.${behind}`);
+	          const holders = heldResidentNames(data);
+          const what = holders.length ? `held by ${holders.join("; ")}` : "not attributed to any model — no in-process model holder reports it";
+          modelsEmptyRow(body, 8, `Gateway still holds ${_fmtBytes(held)} of accelerator memory (no model listed) · measured by ${heldBasis(data)} · ${what} · ${heldDetail(data)}. Eject the held model, or restart the gateway to free it.${behind}`);
 	        } else if (!rows.length) modelsEmptyRow(body, 8, "No models loaded right now.");
 	        else modelsEmptyRow(body, 8, `No models resident in memory right now — ${cachedRows.length} configured / cached row${cachedRows.length === 1 ? "" : "s"} behind the toggle above.`);
 	        return;
@@ -9802,6 +9910,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      renderHostBreakdown(data);
 	      renderHostFacts(data);
 	      renderModelsTable(data);
+	      renderModelsEjects(data);
 	      renderSessionCaches(data);
 	      // Quiet (poll) repaints skip the datalist rebuild — replacing the
 	      // <option>s every 5s flicks an open suggestion popup shut.

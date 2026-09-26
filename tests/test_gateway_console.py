@@ -1373,6 +1373,9 @@ def test_models_table_never_says_no_models_loaded_over_held_accelerator_memory()
 {_slice_function(source, "renderModelsTable")}
 {_slice_function(source, "heldAcceleratorBytes")}
 {_slice_function(source, "heldDetail")}
+{_slice_function(source, "heldResidentNames")}
+{_slice_function(source, "heldBasis")}
+{_slice_function(source, "processHeldBasisWords")}
 {_slice_function(source, "renderModelsResidentCount")}
 {_slice_function(source, "renderModelsShowCachedToggle")}
 {_slice_function(source, "residencyPill")}
@@ -1426,6 +1429,13 @@ renderModelsTable({{ models: [] }});
 results.plainNoRows = empty();
 renderModelsTable({{ models: [], memory: {{ device: {{ mlx_held_bytes: 0 }} }} }});
 results.zeroHeld = empty();
+// MEM2: the process-wide figure wins, its basis is named, and the resident
+// block (every backend) says WHAT is held.
+const mem2 = {{ device: {{ process_held_bytes: 500, process_held_basis: "metal_device_counter", mlx_held_bytes: 92, metal_process_allocated_bytes: 500, llama_cpp_bytes: 300 }}, resident: {{ models: [ {{ backend: "huggingface", models: ["q/4b.gguf"], holders: 2, shared_weights: false }} ] }}, held: {{ models: [ {{ models: ["stale-mlx"], holders: 1 }} ] }} }};
+renderModelsTable({{ models: [], memory: mem2 }});
+results.mem2 = empty();
+renderModelsTable({{ models: [], memory: {{ device: {{ process_held_bytes: 70, process_held_basis: "sum:mlx_held_bytes+llama_cpp_bytes(estimated)" }}, resident: {{ models: [] }} }} }});
+results.noHolder = empty();
 renderModelsTable({{ models: [ {{ provider: "mlx", model: "q/27b", resident: true, state: "provider_loaded", provider_state: "resident_via_other_holders", warnings: ["held by 2 other instance(s)"] }} ] }});
 results.otherHolders = pills(els["models-table"]);
 console.log(JSON.stringify([results]));
@@ -1435,8 +1445,18 @@ console.log(JSON.stringify([results]));
         (text,) = out[key]
         assert "no models loaded" not in text.lower() and "no models resident" not in text.lower(), text
         assert text.startswith("Gateway still holds 92B of accelerator memory (no model listed)"), text
-        assert "MLX live buffers 90B" in text and "MLX allocator cache 2B" in text and "q/27b × 2 holders" in text
+        assert "MLX live buffers 90B" in text and "MLX allocator cache 2B" in text and "held by q/27b × 2 holders" in text
+        # An older core (no process_held_bytes): the fallback is NAMED as such.
+        assert "measured by MLX buffers only (this AbstractCore reports no process-wide figure)" in text, text
         assert "Eject the held model, or restart the gateway to free it." in text
+    (mem2,) = out["mem2"]
+    assert mem2.startswith("Gateway still holds 500B of accelerator memory (no model listed) · measured by metal device counter · "), mem2
+    assert "held by [huggingface] q/4b.gguf × 2 holders (full copies)" in mem2, mem2
+    assert "stale-mlx" not in mem2  # `resident` (every backend) wins over the MLX-only block
+    assert "Metal allocated by this process 500B" in mem2 and "llama.cpp GGUF engines 300B" in mem2
+    (no_holder,) = out["noHolder"]
+    assert "measured by sum of MLX + llama.cpp (estimated)" in no_holder, no_holder
+    assert "not attributed to any model — no in-process model holder reports it" in no_holder, no_holder
     assert "1 configured / cached row behind the toggle above." in out["heldCachedOnly"][0]
     assert out["plainNoRows"] == ["No models loaded right now."]
     assert out["zeroHeld"] == ["No models loaded right now."]
@@ -2583,3 +2603,102 @@ def test_models_and_engines_tabs_do_not_reuse_existing_ids() -> None:
     # A `#catalog` / `#engines` deep link and a restored landing tab mount too.
     assert 'if (wantedTab === "catalog" || wantedTab === "engines" || wantedTab === "apps" || wantedTab === "network") openCoreTab(wantedTab);' in html
     assert 'if (state.activeTab === "catalog" || state.activeTab === "engines" || state.activeTab === "apps" || state.activeTab === "network") openCoreTab(state.activeTab);' in html
+
+
+def test_held_basis_words_and_meter_name_the_field_actually_used() -> None:
+    """MEM2: the held figure always carries HOW it was measured
+    (`device.process_held_basis` in words), and the meter tooltip names the
+    field it used — a fallback is never presented as the process-wide
+    figure; an unknown basis is shown verbatim, a missing one says so."""
+    from test_gateway_console_offline import _node, _slice_function
+
+    source = "\n".join(re.findall(r"<script>(.*?)</script>", gateway_console_html(), flags=re.S))
+    harness = f"""
+{_slice_function(source, "processHeldBasisWords")}
+{_slice_function(source, "heldBasis")}
+{_slice_function(source, "deviceMeterView")}
+function _fmtBytes(v) {{ return v + "B"; }}
+const words = ["metal_device_counter", "cuda_device_counter", "cuda_device_counter+llama_cpp_bytes(estimated)",
+  "sum:mlx_held_bytes", "sum:mlx_held_bytes+llama_cpp_bytes(estimated)", "sum:allocated_bytes", "something_new", "", null].map(processHeldBasisWords);
+const basis = [
+  heldBasis({{ memory: {{ device: {{ process_held_bytes: 1, process_held_basis: "metal_device_counter", mlx_held_bytes: 9 }} }} }}),
+  heldBasis({{ memory: {{ device: {{ process_held_bytes: 1 }} }} }}),
+  heldBasis({{ memory: {{ device: {{ mlx_held_bytes: 9 }} }} }}),
+  heldBasis({{ memory: {{ device: {{ allocated_bytes: 9 }} }} }}),
+  heldBasis({{}}),
+];
+const meter = deviceMeterView({{ backend: "metal", process_held_bytes: 900, process_held_basis: "metal_device_counter", mlx_held_bytes: 5, host_in_use_bytes: 100, wired_limit_bytes: 1000 }});
+const older = deviceMeterView({{ backend: "metal", mlx_held_bytes: 900, host_in_use_bytes: 100, wired_limit_bytes: 1000 }});
+console.log(JSON.stringify([{{ words, basis, meter: meter.title, used: meter.used, older: older.title }}]));
+"""
+    out = _node(harness)[0]
+    assert out["words"] == [
+        "metal device counter",
+        "cuda device counter",
+        "cuda device counter + llama.cpp (estimated)",
+        "sum of MLX",
+        "sum of MLX + llama.cpp (estimated)",
+        "sum of live allocations",
+        "something_new",
+        "basis not reported",
+        "basis not reported",
+    ]
+    assert out["basis"] == [
+        "metal device counter",
+        "basis not reported",
+        "MLX buffers only (this AbstractCore reports no process-wide figure)",
+        "live allocations only (this AbstractCore reports no process-wide figure)",
+        "not reported",
+    ]
+    assert out["used"] == 900
+    assert "device.process_held_bytes (metal device counter) — THIS PROCESS ONLY" in out["meter"], out["meter"]
+    assert "device.mlx_held_bytes (MLX live + cached buffers) — THIS PROCESS ONLY" in out["older"], out["older"]
+
+
+def test_eject_status_lines_say_pending_failed_and_missing_diagnostics() -> None:
+    """Default-switch / failed-load ejects the runtime reports
+    (`residency_diagnostics` on GET /host/state): pending → "Will eject X when
+    the in-flight call ends", failure → "X: eject failed: <reason>", kept →
+    why; a snapshot WITHOUT the block says so instead of implying nothing is
+    pending; a degraded model list (models null) renders nothing here (the
+    table already says residency is unavailable). The box is wired into
+    renderHostState."""
+    from test_gateway_console_offline import _node, _slice_function
+
+    html = gateway_console_html()
+    assert 'id="models-ejects"' in html
+    source = "\n".join(re.findall(r"<script>(.*?)</script>", html, flags=re.S))
+    assert "renderModelsEjects(data);" in _slice_function(source, "renderHostState")
+    harness = f"""
+{_slice_function(source, "ejectStatusLines")}
+const cases = {{
+  pending: ejectStatusLines({{ models: [], residency_diagnostics: {{
+    pending_ejects: [ {{ provider: "mlx", model: "q/27b", reason: "waiting for the in-flight call", since: 1 }} ],
+    last_switch_ejects: [
+      {{ provider: "mlx", model: "q/27b", deferred: true, reason: "waiting for the in-flight call" }},
+      {{ provider: "mlx", model: "q/9b", ok: false, error: "still resident after the eject: {{'holders': 1}}" }},
+      {{ provider: "huggingface", model: "e/emb", ok: true, skipped: true, reason: "in use by entity runtime castor" }},
+      {{ provider: "mlx", model: "q/4b", ok: true, holders_found: 2 }},
+      {{ provider: "mlx", model: "q/2b", ok: false }},
+    ] }} }}),
+  deferredOnly: ejectStatusLines({{ models: [], residency_diagnostics: {{ pending_ejects: [], last_switch_ejects: [ {{ provider: "mlx", model: "a", deferred: true }} ] }} }}),
+  empty: ejectStatusLines({{ models: [], residency_diagnostics: {{ pending_ejects: [], last_switch_ejects: [] }} }}),
+  missing: ejectStatusLines({{ models: [] }}),
+  degraded: ejectStatusLines({{ models: null }}),
+}};
+console.log(JSON.stringify([cases]));
+"""
+    out = _node(harness)[0]
+    assert out["pending"] == [
+        {"tone": "warn", "text": "Will eject mlx/q/27b when the in-flight call ends."},
+        {"tone": "err", "text": "mlx/q/9b: eject failed: still resident after the eject: {'holders': 1}"},
+        {"tone": "muted", "text": "huggingface/e/emb kept in memory: in use by entity runtime castor"},
+        {"tone": "muted", "text": "mlx/q/4b ejected from 2 holders."},
+        {"tone": "err", "text": "mlx/q/2b: eject failed: no reason reported"},
+    ]
+    assert out["deferredOnly"] == [{"tone": "warn", "text": "Will eject mlx/a when the in-flight call ends."}]
+    assert out["empty"] == []
+    assert out["missing"] == [
+        {"tone": "muted", "text": "Eject status: this gateway's host snapshot does not report residency diagnostics."}
+    ]
+    assert out["degraded"] == []
