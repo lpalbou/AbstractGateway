@@ -23,25 +23,20 @@ A request that carries OTHER proxy headers (Forwarded, X-Forwarded-Host,
 X-Real-IP) but no X-Forwarded-For went through a proxy this rule cannot read,
 so it is never "this machine".
 
-Two fail-safes for requests relayed by an app-server (they carry the
-app-server session header, `x-abstractgateway-session`):
-- from loopback WITHOUT X-Forwarded-For: an older app-server that drops the
-  header would make every LAN browser look local, so it is never "this
-  machine";
-- while the gateway trusts a reverse proxy (network setting `trust_proxy`),
-  an app-server request is never "this machine": only direct requests are
-  decided on the derived peer.
-
-Why a peer equal to one of this host's own addresses is this host: the peer
-is the source address of an ESTABLISHED TCP connection. A remote machine that
-writes this host's address as its source cannot complete the handshake (the
-SYN-ACK goes to this host, not to it), and the kernel does not accept a packet
-that arrives from outside with one of its own addresses as source. So a
-browser on the gateway machine that uses the LAN address
-(`http://192.168.1.175:8080`) is recognised, and nobody else can pass as it.
-
-The interface list comes from `network_exposure.discover_interfaces()` (the
-same discovery the network status uses), cached for a few seconds.
+Requests relayed by an app-server proxy carry its marker header
+`X-AbstractFramework-App-Proxy: <app id>` (the AbstractCode web server and the
+abstractuic app-server send it). Two fail-safes key on that marker (never on
+the session header, which native clients such as the Assistant send
+directly):
+- a marked request from loopback WITHOUT X-Forwarded-For is never "this
+  machine" (a proxy that dropped the header would make every browser local);
+- while the gateway trusts a reverse proxy (the stored network setting
+  `trust_proxy`; the legacy launch environment only when nothing is stored),
+  a marked request is never "this machine".
+A forwarded header (X-Forwarded-For, Forwarded, X-Forwarded-Host, X-Real-IP)
+sent by a peer that is NOT loopback is never "this machine" either: that
+peer is an untrusted proxy (a reverse proxy on this host reaching the
+gateway through its LAN address would otherwise make every visitor local).
 """
 
 from __future__ import annotations
@@ -132,9 +127,9 @@ def effective_peer(request: Any) -> Optional[str]:
     peer = str(getattr(client, "host", "") or "") if client is not None else ""
     headers = request.headers
     xff = str(headers.get("x-forwarded-for") or "").strip()
+    if has_proxy_headers(headers) and not _is_loopback(peer):
+        return None  # forwarded by an untrusted peer: never read as local
     if xff:
-        if not _is_loopback(peer):
-            return peer  # a spoofed header from a non-loopback peer is ignored
         hosts = [h.strip() for h in xff.split(",") if h.strip()]
         for host in reversed(hosts):
             if not _is_loopback(host):
@@ -145,29 +140,26 @@ def effective_peer(request: Any) -> Optional[str]:
     return peer
 
 
-def _session_header() -> str:
-    try:
-        from .sessions import gateway_session_header_name
-
-        return gateway_session_header_name()
-    except Exception:  # noqa: BLE001
-        return "x-abstractgateway-session"
+APP_PROXY_HEADER = "x-abstractframework-app-proxy"
 
 
 def trust_proxy_mode() -> bool:
-    """The gateway trusts a reverse proxy's client address (network setting
-    `trust_proxy`, or its legacy launch environment)."""
+    """The gateway trusts a reverse proxy's client address: the STORED
+    network setting `trust_proxy` first; the legacy launch environment
+    (ABSTRACTGATEWAY_TRUST_PROXY) only when nothing is stored."""
     import os
 
-    raw = str(os.getenv("ABSTRACTGATEWAY_TRUST_PROXY") or os.getenv("ABSTRACTFLOW_GATEWAY_TRUST_PROXY") or "").strip().lower()
-    if raw in {"1", "true", "yes", "on"}:
-        return True
     try:
-        from ..network_exposure import live_reverse_proxy
+        from ..runtime_config import _read_store
+        from ..users import gateway_data_dir_from_env
 
-        return live_reverse_proxy().trust_proxy is True
-    except Exception:  # noqa: BLE001 - unreadable settings: the strict answer below stays safe
-        return False
+        net = _read_store(gateway_data_dir_from_env()).get("network")
+        if isinstance(net, dict) and isinstance(net.get("trust_proxy"), bool):
+            return bool(net["trust_proxy"])
+    except Exception:  # noqa: BLE001 - unreadable store: the legacy rung, then off
+        pass
+    raw = str(os.getenv("ABSTRACTGATEWAY_TRUST_PROXY") or os.getenv("ABSTRACTFLOW_GATEWAY_TRUST_PROXY") or "").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 def request_is_from_this_machine(
@@ -175,8 +167,7 @@ def request_is_from_this_machine(
 ) -> bool:
     """The caller sits at the gateway machine (module docstring)."""
     headers = request.headers
-    via_app_server = bool(headers.get(_session_header()))
-    if via_app_server:
+    if str(headers.get(APP_PROXY_HEADER) or "").strip():
         if not str(headers.get("x-forwarded-for") or "").strip():
             return False
         if trust_proxy_mode() if trust_proxy is None else trust_proxy:

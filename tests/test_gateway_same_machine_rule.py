@@ -15,6 +15,7 @@ from abstractgateway.security import same_machine as sm
 
 OWN = ["127.0.0.1", "::1", "192.168.1.175"]
 SESSION = "x-abstractgateway-session"
+PROXY = "X-AbstractFramework-App-Proxy"
 
 
 class _Req:
@@ -28,18 +29,21 @@ def _local(peer: str, headers: Optional[Dict[str, str]] = None, *, trust_proxy: 
 
 
 def test_lan_browser_through_the_loopback_proxy_is_not_this_machine() -> None:
-    assert not _local("127.0.0.1", {"X-Forwarded-For": "192.168.1.50", SESSION: "s"})
+    assert not _local("127.0.0.1", {"X-Forwarded-For": "192.168.1.50", PROXY: "code"})
     assert not _local("127.0.0.1", {"X-Forwarded-For": "192.168.1.50"})
 
 
 def test_local_browser_through_the_proxy_is_this_machine() -> None:
-    assert _local("127.0.0.1", {"X-Forwarded-For": "127.0.0.1", SESSION: "s"})
-    assert _local("127.0.0.1", {"X-Forwarded-For": "192.168.1.175", SESSION: "s"}), "own LAN address"
+    assert _local("127.0.0.1", {"X-Forwarded-For": "127.0.0.1", PROXY: "code"})
+    assert _local("127.0.0.1", {"X-Forwarded-For": "192.168.1.175", PROXY: "code"}), "own LAN address"
 
 
-def test_spoofed_forwarded_for_from_a_non_loopback_peer_is_ignored() -> None:
+def test_forwarded_headers_from_an_untrusted_peer_are_never_local() -> None:
     assert not _local("192.168.1.50", {"X-Forwarded-For": "127.0.0.1"})
-    assert _local("192.168.1.175", {"X-Forwarded-For": "203.0.113.9"}), "the peer decides, not the header"
+    # A reverse proxy on THIS host reaching the gateway over its LAN address:
+    # the peer is an own address, but the visitor behind it is not local.
+    for h in ("X-Forwarded-For", "Forwarded", "X-Real-IP", "X-Forwarded-Host"):
+        assert not _local("192.168.1.175", {h: "203.0.113.9"}), h
 
 
 def test_direct_requests_use_the_peer() -> None:
@@ -52,15 +56,21 @@ def test_unreadable_proxies_are_never_this_machine() -> None:
         assert not _local("127.0.0.1", {h: "127.0.0.1"}), h
 
 
-def test_app_server_request_without_forwarded_for_is_not_this_machine() -> None:
-    """A-8 (1): an older app-server that drops X-Forwarded-For must not make a
-    LAN browser look local."""
-    assert not _local("127.0.0.1", {SESSION: "s"})
+def test_app_proxy_request_without_forwarded_for_is_not_this_machine() -> None:
+    """A-8 (1), keyed on the app-proxy marker: a proxy that drops
+    X-Forwarded-For must not make a LAN browser look local."""
+    assert not _local("127.0.0.1", {PROXY: "code"})
 
 
-def test_app_server_requests_are_never_local_behind_a_trusted_reverse_proxy() -> None:
+def test_a_native_client_with_a_session_header_stays_local() -> None:
+    """The Assistant on this machine sends the session header directly."""
+    assert _local("127.0.0.1", {SESSION: "s"})
+    assert _local("127.0.0.1", {SESSION: "s"}, trust_proxy=True)
+
+
+def test_app_proxy_requests_are_never_local_behind_a_trusted_reverse_proxy() -> None:
     """A-8 (2): in trust-proxy mode only direct requests use the derived peer."""
-    assert not _local("127.0.0.1", {"X-Forwarded-For": "127.0.0.1", SESSION: "s"}, trust_proxy=True)
+    assert not _local("127.0.0.1", {"X-Forwarded-For": "127.0.0.1", PROXY: "code"}, trust_proxy=True)
     assert _local("127.0.0.1", {"X-Forwarded-For": "127.0.0.1"}, trust_proxy=True), "a direct console request"
 
 
@@ -71,8 +81,13 @@ def test_trust_proxy_mode_reads_the_network_setting(tmp_path, monkeypatch: pytes
     monkeypatch.delenv("ABSTRACTGATEWAY_TRUST_PROXY", raising=False)
     monkeypatch.delenv("ABSTRACTFLOW_GATEWAY_TRUST_PROXY", raising=False)
     assert sm.trust_proxy_mode() is False
+    monkeypatch.setenv("ABSTRACTGATEWAY_TRUST_PROXY", "1")
+    assert sm.trust_proxy_mode() is True, "legacy environment when nothing is stored"
     (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "runtime_config.json").write_text(json.dumps({"network": {"trust_proxy": False}}))
+    assert sm.trust_proxy_mode() is False, "the stored setting wins over the environment"
     (tmp_path / "config" / "runtime_config.json").write_text(json.dumps({"network": {"trust_proxy": True}}))
+    monkeypatch.delenv("ABSTRACTGATEWAY_TRUST_PROXY")
     assert sm.trust_proxy_mode() is True
 
 
