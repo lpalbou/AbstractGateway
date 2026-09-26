@@ -90,7 +90,7 @@ def test_listing_hides_and_counts_and_reports_truncation(tmp_path: Path) -> None
     assert "src" not in [e["name"] for e in b["entries"]] and b["hidden"]["blocked"] == 1
     with pytest.raises(WorkspacePathError) as e:
         list_entries(root, "src", is_blocked=lambda p: str(p).startswith(str(blocked)))
-    assert e.value.status == 403
+    assert e.value.status == 404, "a blocked folder is answered like a missing one"
     with pytest.raises(WorkspacePathError) as e:
         list_entries(root, "notes.md")
     assert e.value.status == 400
@@ -115,7 +115,7 @@ def test_slices_and_ranges(tmp_path: Path) -> None:
     assert e.value.status == 400
     with pytest.raises(WorkspacePathError) as e:
         open_slice(root, "src/a.py", is_blocked=lambda p: True)
-    assert e.value.status == 403
+    assert e.value.status == 404
 
 
 # ------------------------------------------------------------------ routes
@@ -192,7 +192,7 @@ def test_session_workspace_routes_end_to_end(tmp_path: Path, monkeypatch: pytest
         assert ok.status_code == 200, ok.text
         listed = client.get(f"/api/gateway/runs/{rid}/workspace/files", headers=h).json()
         assert "sub" not in [e["name"] for e in listed["entries"]] and listed["hidden"]["blocked"] == 1
-        assert client.get(f"/api/gateway/runs/{rid}/workspace/content?path=sub/x.bin", headers=h).status_code == 403
+        assert client.get(f"/api/gateway/runs/{rid}/workspace/content?path=sub/x.bin", headers=h).status_code == 404
 
         assert client.get("/api/gateway/runs/nope/workspace", headers=h).status_code == 404
 
@@ -220,8 +220,14 @@ def test_data_folder_is_never_a_workspace(tmp_path: Path, monkeypatch: pytest.Mo
             assert r.status_code == 400 and "data folder" in r.json()["detail"], (bad, r.text)
         # Echoing the caller's own gateway-made folder back is accepted.
         again = client.post("/api/gateway/runs/start", headers=h,
-                            json={"bundle_id": "ws-bundle", "flow_id": "root", "input_data": {"workspace_root": str(session_ws)}})
+                            json={"bundle_id": "ws-bundle", "flow_id": "root", "session_id": "chat-1",
+                                  "input_data": {"workspace_root": str(session_ws)}})
         assert again.status_code == 200, again.text
+        # ...but not into another conversation (the folder is derived from the session, not a marker).
+        other = client.post("/api/gateway/runs/start", headers=h,
+                            json={"bundle_id": "ws-bundle", "flow_id": "root", "session_id": "chat-2",
+                                  "input_data": {"workspace_root": str(session_ws)}})
+        assert other.status_code == 400 and "data folder" in other.json()["detail"]
 
         # A run whose stored root points into the data folder is not served.
         from abstractgateway.service import get_gateway_service
@@ -232,6 +238,90 @@ def test_data_folder_is_never_a_workspace(tmp_path: Path, monkeypatch: pytest.Mo
         rs.save(run)
         r = client.get(f"/api/gateway/runs/{first}/workspace/files", headers=h)
         assert r.status_code == 403 and "data folder" in r.json()["detail"]
+
+
+def test_a_launch_folder_that_contains_the_data_folder_never_serves_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review B1: root = the PARENT of the gateway data folder. The data
+    folder is hidden from listings and 404 on read; the run's tools are
+    denied it too."""
+    client, h = _client(tmp_path, monkeypatch)
+    with client:
+        rid = _start(client, h, workspace_root=str(tmp_path))
+        listing = client.get(f"/api/gateway/runs/{rid}/workspace/files", headers=h).json()
+        names = [e["name"] for e in listing["entries"]]
+        assert "runtime" not in names and "bundles" in names and listing["hidden"]["blocked"] >= 1
+        deep = client.get(f"/api/gateway/runs/{rid}/workspace/files?recursive=true", headers=h).json()
+        assert not any(e["path"].startswith("runtime") for e in deep["entries"])
+        for rel in ("runtime/config/runtime_config.json", "runtime/.workflow_policy_secret", "runtime"):
+            r = client.get(f"/api/gateway/runs/{rid}/workspace/content", params={"path": rel}, headers=h)
+            assert r.status_code in (400, 404), (rel, r.status_code)
+        assert client.get(f"/api/gateway/runs/{rid}/workspace/files?path=runtime", headers=h).status_code == 404
+        from abstractgateway.service import get_gateway_service
+
+        vars_ = get_gateway_service().host.run_store.load(rid).vars
+        ignored = str(vars_.get("workspace_ignored_paths") or "").splitlines()
+        assert str((tmp_path / "runtime").resolve()) in ignored, ignored
+
+
+def test_builtin_deny_list_hides_credential_folders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ruling 2026-09-26: ~/.ssh and friends are never served, and runs'
+    tools are denied them by default (an admin may turn the runs part off)."""
+    client, h = _client(tmp_path, monkeypatch)
+    home = Path.home()
+    (home / ".ssh").mkdir(parents=True, exist_ok=True)
+    (home / ".ssh" / "id_ed25519").write_text("PRIVATE")
+    (home / "notes.txt").write_text("ok")
+    with client:
+        rid = _start(client, h, workspace_root=str(home))
+        names = [e["name"] for e in client.get(f"/api/gateway/runs/{rid}/workspace/files", headers=h).json()["entries"]]
+        assert ".ssh" not in names and "notes.txt" in names
+        r = client.get(f"/api/gateway/runs/{rid}/workspace/content?path=.ssh/id_ed25519", headers=h)
+        assert r.status_code == 404
+        from abstractgateway.service import get_gateway_service
+
+        ignored = str(get_gateway_service().host.run_store.load(rid).vars.get("workspace_ignored_paths") or "").splitlines()
+        assert str((home / ".ssh").resolve()) in ignored
+        cfg = client.get("/api/gateway/admin/runtime-config", headers=h).json()["builtin_deny"]
+        assert cfg["enabled"] is True and str((home / ".ssh").resolve()) in cfg["value"]
+        assert client.post("/api/gateway/admin/runtime-config", headers=h, json={"workspace_builtin_deny": False}).status_code == 200
+        rid2 = _start(client, h, workspace_root=str(home))
+        ignored2 = str(get_gateway_service().host.run_store.load(rid2).vars.get("workspace_ignored_paths") or "")
+        assert str((home / ".ssh").resolve()) not in ignored2, "the admin turned the runs part off"
+        # Browse still refuses (for every principal).
+        assert client.get(f"/api/gateway/runs/{rid2}/workspace/content?path=.ssh/id_ed25519", headers=h).status_code == 404
+
+
+def test_a_forged_marker_proves_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review S4/S5: kind comes from the gateway's knowledge; the marker is
+    hidden by identity (a link to it under another name is hidden too)."""
+    client, h = _client(tmp_path, monkeypatch)
+    launch = tmp_path / "project"
+    launch.mkdir()
+    (launch / MARKER).write_text('{"owner": "abstractgateway", "kind": "session_workspace", "first_run_id": "x"}')
+    os.symlink(launch / MARKER, launch / "alias.json")
+    (launch / "a.txt").write_text("a")
+    with client:
+        rid = _start(client, h, workspace_root=str(launch))
+        body = client.get(f"/api/gateway/runs/{rid}/workspace", headers=h).json()
+        assert body["kind"] == "launch_folder"
+        names = [e["name"] for e in client.get(f"/api/gateway/runs/{rid}/workspace/files", headers=h).json()["entries"]]
+        assert names == ["a.txt"]
+        assert client.get(f"/api/gateway/runs/{rid}/workspace/content?path=alias.json", headers=h).status_code == 404
+
+
+def test_the_opened_file_is_verified(tmp_path: Path) -> None:
+    """Review S6: open without following a final link, and check the OPENED
+    file is inside the root."""
+    from abstractgateway.workspace_browse import _open_verified
+
+    root = _tree(tmp_path)
+    fd = _open_verified((root / "notes.md").resolve(), root)
+    os.close(fd)
+    with pytest.raises(WorkspacePathError) as e:
+        _open_verified(root / "escape.txt", root)  # a link as the final component
+    assert e.value.status == 403
+    with pytest.raises(WorkspacePathError):
+        _open_verified((tmp_path / "secret" / "key.txt").resolve(), root)  # a real file outside
 
 
 def test_launch_folder_needs_the_current_policy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

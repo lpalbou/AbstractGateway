@@ -66,6 +66,27 @@ def normalize_rel(raw: Any) -> str:
     return "/".join(parts)
 
 
+def marker_identity(root: Path) -> Optional[Tuple[int, int]]:
+    """(st_dev, st_ino) of the gateway's marker file at `root` (a regular
+    file, not a link), or None. Hidden by IDENTITY, so a link to it under
+    another name is hidden too."""
+    try:
+        st = os.lstat(str(_real(root) / GATEWAY_WORKSPACE_MARKER))
+    except OSError:
+        return None
+    import stat as _stat
+
+    return (st.st_dev, st.st_ino) if _stat.S_ISREG(st.st_mode) else None
+
+
+def _identity(p: Path) -> Optional[Tuple[int, int]]:
+    try:
+        st = os.stat(str(p))
+    except OSError:
+        return None
+    return (st.st_dev, st.st_ino)
+
+
 def confine(root: Path, rel: Any) -> Tuple[Path, str]:
     """(real path, normalized relative path) of `rel` inside `root`; 403 when
     a symlink leads outside, 404 for the gateway marker or a missing path."""
@@ -75,10 +96,11 @@ def confine(root: Path, rel: Any) -> Tuple[Path, str]:
     real = _real(target)
     if not _inside(real, root_real):
         raise WorkspacePathError(403, f"{rel_n!r} leads outside the workspace folder (a link to elsewhere); it is not served")
-    if rel_n and real == root_real / GATEWAY_WORKSPACE_MARKER:
-        raise WorkspacePathError(404, f"{rel_n!r} not found in the workspace folder")
     if not real.exists():
         raise WorkspacePathError(404, f"{rel_n or '.'!r} not found in the workspace folder")
+    marker = marker_identity(root)
+    if rel_n and marker is not None and _identity(real) == marker:
+        raise WorkspacePathError(404, f"{rel_n!r} not found in the workspace folder")
     return real, rel_n
 
 
@@ -102,9 +124,10 @@ def list_entries(
     start, rel_n = confine(root, rel)
     if not start.is_dir():
         raise WorkspacePathError(400, f"{rel_n!r} is a file, not a folder")
-    if is_blocked(start):
-        raise WorkspacePathError(403, f"{rel_n or '.'!r} is inside a folder the gateway's workspace deny list blocks")
+    if rel_n and is_blocked(start):
+        raise WorkspacePathError(404, f"{rel_n!r} not found in the workspace folder")
     root_real = _real(root)
+    marker = marker_identity(root)
     entries: List[Dict[str, Any]] = []
     hidden = {"outside_links": 0, "blocked": 0, "other": 0}
     truncated = False
@@ -119,12 +142,12 @@ def list_entries(
             raise WorkspacePathError(403, f"{folder_rel or '.'!r} cannot be read: {exc.strerror or exc}")
         for e in items:
             child_rel = f"{folder_rel}/{e.name}" if folder_rel else e.name
-            if folder == root_real and e.name == GATEWAY_WORKSPACE_MARKER:
-                continue  # the gateway's own marker: never shown, not counted
             real = _real(Path(e.path))
             if not _inside(real, root_real):
                 hidden["outside_links"] += 1
                 continue
+            if marker is not None and _identity(real) == marker:
+                continue  # the gateway's own marker (by identity): never shown, not counted
             if is_blocked(real):
                 hidden["blocked"] += 1
                 continue
@@ -166,6 +189,7 @@ class FileSlice:
     start: int
     end: int  # inclusive
     partial: bool
+    fd: int = -1  # the file, already opened and verified (open_slice)
 
     @property
     def length(self) -> int:
@@ -193,8 +217,10 @@ class FileSlice:
         return out
 
     def iter_bytes(self) -> Iterator[bytes]:
+        """Reads the descriptor open_slice verified (never re-opens by path,
+        so a component swapped for a link in between is not followed)."""
         remaining = self.length
-        with open(self.path, "rb") as fh:
+        with os.fdopen(self.fd, "rb") as fh:
             fh.seek(self.start)
             while remaining > 0:
                 chunk = fh.read(min(CHUNK_BYTES, remaining))
@@ -243,37 +269,121 @@ def open_slice(
     if not real.is_file():
         raise WorkspacePathError(404, f"{rel_n!r} is not a regular file")
     if is_blocked(real):
-        raise WorkspacePathError(403, f"{rel_n!r} is inside a folder the gateway's workspace deny list blocks")
-    size = int(real.stat().st_size)
-    ctype = mimetypes.guess_type(real.name)[0] or "application/octet-stream"
-    rng = _parse_range(range_header, size) if size > 0 else None
+        # Blocked (a deny list, a credential folder, the gateway's data
+        # folder): answered like a missing file, so its existence is not told.
+        raise WorkspacePathError(404, f"{rel_n!r} not found in the workspace folder")
+    fd = _open_verified(real, root)
+    try:
+        import stat as _stat
+
+        st = os.fstat(fd)
+        if not _stat.S_ISREG(st.st_mode):
+            raise WorkspacePathError(404, f"{rel_n!r} is not a regular file")
+        marker = marker_identity(root)
+        if marker is not None and (st.st_dev, st.st_ino) == marker:
+            raise WorkspacePathError(404, f"{rel_n!r} not found in the workspace folder")
+        size = int(st.st_size)
+        ctype = mimetypes.guess_type(real.name)[0] or "application/octet-stream"
+        rng = _parse_range(range_header, size) if size > 0 else None
+    except BaseException:
+        os.close(fd)
+        raise
     if rng is None:
-        return FileSlice(real, rel_n, ctype, size, 0, size - 1, False)
-    return FileSlice(real, rel_n, ctype, size, rng[0], rng[1], True)
+        return FileSlice(real, rel_n, ctype, size, 0, size - 1, False, fd)
+    return FileSlice(real, rel_n, ctype, size, rng[0], rng[1], True, fd)
 
 
-def workspace_kind(root: Path) -> str:
-    """session | run | launch_folder, from the gateway's marker."""
-    import json
+def _fd_path(fd: int) -> Optional[str]:
+    """The path the kernel reports for an open descriptor (macOS F_GETPATH,
+    Linux /proc/self/fd), or None where neither exists."""
+    import fcntl
 
-    marker = Path(root) / GATEWAY_WORKSPACE_MARKER
+    getpath = getattr(fcntl, "F_GETPATH", None)
+    if getpath is not None:
+        try:
+            raw = fcntl.fcntl(fd, getpath, b"\0" * 1024)
+            return raw.split(b"\0", 1)[0].decode("utf-8", "surrogateescape")
+        except OSError:
+            return None
     try:
-        data = json.loads(marker.read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001 - no/garbled marker: not a gateway-made folder
-        return "launch_folder"
-    kind = str((data or {}).get("kind") or "")
-    if kind == "session_workspace":
-        return "session"
-    if kind == "run_workspace":
-        return "run"
-    return "launch_folder"
-
-
-def read_marker(root: Path) -> Optional[Dict[str, Any]]:
-    import json
-
-    try:
-        data = json.loads((Path(root) / GATEWAY_WORKSPACE_MARKER).read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else None
-    except Exception:  # noqa: BLE001
+        return os.readlink(f"/proc/self/fd/{fd}")
+    except OSError:
         return None
+
+
+def _open_verified(real: Path, root: Path) -> int:
+    """Open `real` without following a final link, then check the OPENED
+    file is still inside `root` (closes the check-then-open race)."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(str(real), flags)
+    except OSError as exc:
+        raise WorkspacePathError(403, f"{real.name!r} changed while it was being opened; it is not served ({exc.strerror or exc})")
+    where = _fd_path(fd)
+    if where is None or not _inside(_real(Path(where)), _real(root)):
+        os.close(fd)
+        raise WorkspacePathError(403, f"{real.name!r} changed while it was being opened; it is not served")
+    return fd
+
+
+# ---- The built-in deny list (operator ruling 2026-09-26) -------------------
+# Credential and configuration folders of the gateway's user account, plus the
+# gateway's data folder: never listed nor served by the workspace routes, and
+# added to every run's tool deny list (an admin may turn that off for runs with
+# the stored setting `workspace_builtin_deny`).
+BUILTIN_DENY_HOME_RELPATHS: Tuple[str, ...] = (
+    ".ssh", ".aws", ".gnupg", ".config/gcloud", ".kube", "Library/Keychains",
+    ".abstractgateway", ".abstractcode", ".abstractassistant", ".abstractcontinuum", ".abstractcore",
+)
+
+
+def builtin_deny_paths(data_root: Path, *, home: Optional[Path] = None) -> List[Path]:
+    base = Path(home) if home is not None else Path.home()
+    out = [Path(os.path.realpath(str(base / rel))) for rel in BUILTIN_DENY_HOME_RELPATHS]
+    out.append(_real(Path(data_root)))
+    return out
+
+
+def deny_check(
+    *,
+    data_root: Path,
+    own_folder: Optional[Path],
+    blocked_roots: List[Path],
+    home: Optional[Path] = None,
+) -> Callable[[Path], bool]:
+    """is_blocked(real path) for browse: the operator's deny lists, always;
+    the built-in list and the whole gateway data folder, except inside the
+    run's own gateway-made folder."""
+    builtin = builtin_deny_paths(data_root, home=home)
+    blocked = [_real(Path(b)) for b in blocked_roots]
+    own = _real(Path(own_folder)) if own_folder is not None else None
+
+    def is_blocked(p: Path) -> bool:
+        rp = _real(Path(p))
+        if any(_inside(rp, b) for b in blocked):
+            return True
+        if own is not None and _inside(rp, own):
+            return False
+        return any(_inside(rp, b) for b in builtin)
+
+    return is_blocked
+
+
+def data_dir_tool_deny(data_root: Path, keep: Optional[Path]) -> List[Path]:
+    """Deny entries (folder prefixes) that cover the gateway data folder
+    EXCEPT `keep` (the run's own gateway-made folder inside it): every
+    sibling along the path from the data folder down to `keep`. Without a
+    `keep` inside it: the data folder itself. A snapshot of what exists now."""
+    root = _real(Path(data_root))
+    if keep is None or not _inside(_real(Path(keep)), root) or _real(Path(keep)) == root:
+        return [root]
+    out: List[Path] = []
+    cur = root
+    for part in _real(Path(keep)).relative_to(root).parts:
+        try:
+            children = sorted(os.scandir(cur), key=lambda e: e.name)
+        except OSError:
+            children = []
+        out.extend(Path(c.path) for c in children if c.name != part)
+        cur = cur / part
+    return out

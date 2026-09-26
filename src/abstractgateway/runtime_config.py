@@ -1573,6 +1573,9 @@ def read_runtime_config(
         "trust_client_launch_folder": _trust_client_launch_folder_payload(stored),
         "workspace_default_mode": _workspace_default_mode_payload(stored),
         "user_workspace_policies": user_workspace_policies,
+        "builtin_deny": _workspace_builtin_deny_payload(stored, data_dir)
+        if is_admin
+        else {k: v for k, v in _workspace_builtin_deny_payload(stored, data_dir).items() if k != "value"},
         "backlog_exec_runner": _with_setting_meta(
             resolve_exec_runner(data_dir, stored=stored, launch=launch), "backlog_exec_runner"
         ),
@@ -1737,7 +1740,7 @@ _WRITE_KEYS = frozenset({
     "workspace_mounts", "workspace_allowed_paths", "workspace_blocked_paths",
     "client_workspace_scope_overrides", "trust_client_launch_folder", "workspace_default_mode",
     "user_workspace_policies", "executor", "operator_email", "stop_kill_switch_s",
-    "allow_engine_install", "apps", "agents", "skills",
+    "allow_engine_install", "apps", "agents", "skills", "workspace_builtin_deny",
 })
 
 
@@ -1954,6 +1957,15 @@ def write_runtime_config(
             stored["stop_kill_switch_s"] = seconds
             applied["stop_kill_switch_s"] = seconds
 
+    if "workspace_builtin_deny" in changes:
+        raw_bd = changes["workspace_builtin_deny"]
+        if raw_bd is None or (isinstance(raw_bd, str) and not raw_bd.strip()):
+            stored.pop("workspace_builtin_deny", None)  # clear = on
+            applied["workspace_builtin_deny"] = None
+        else:
+            stored["workspace_builtin_deny"] = _strict_bool("workspace_builtin_deny", raw_bd)
+            applied["workspace_builtin_deny"] = stored["workspace_builtin_deny"]
+
     if "allow_engine_install" in changes:
         raw_allow = changes["allow_engine_install"]
         if raw_allow is None or (isinstance(raw_allow, str) and not raw_allow.strip()):
@@ -2150,6 +2162,28 @@ def resolve_trust_client_launch_folder(
     if "trust_client_launch_folder" in entry:
         return bool(entry["trust_client_launch_folder"])
     return bool(read_runtime_config(data_dir)["trust_client_launch_folder"]["value"])
+
+
+def _workspace_builtin_deny_payload(stored: Dict[str, Any], data_dir: Path) -> Dict[str, Any]:
+    """`builtin_deny`: the credential/config folders and the gateway data
+    folder that the workspace routes never serve and that runs' tools are
+    denied by default (`enabled`: the runs part; an admin may turn it off)."""
+    from .workspace_browse import builtin_deny_paths
+
+    raw = stored.get("workspace_builtin_deny")
+    enabled = raw if isinstance(raw, bool) else True
+    return {
+        "value": [str(p) for p in builtin_deny_paths(Path(data_dir))],
+        "enabled": bool(enabled),
+        "source": "stored" if isinstance(raw, bool) else "default",
+        "key": "workspace_builtin_deny",
+        "help": "Always hidden from the workspace browser. For runs, a default an admin may turn off.",
+    }
+
+
+def resolve_workspace_builtin_deny_enabled(data_dir: Path) -> bool:
+    raw = _read_store(Path(data_dir)).get("workspace_builtin_deny")
+    return raw if isinstance(raw, bool) else True
 
 
 def resolve_workspace_default_mode(data_dir: Path) -> str:

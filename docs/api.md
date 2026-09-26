@@ -430,7 +430,11 @@ honours `Range` (206; 416 outside the file).
 
 Paths are relative to the folder: absolute paths and `..` are refused (400),
 a link that leads outside is refused (403), the gateway's own marker file is
-never listed nor served. The workspace access policy (allowed and blocked
+never listed nor served. The built-in deny list (credential folders such as
+`~/.ssh`, and the gateway's data folder; see
+[Configuration](configuration.md#workspace-policy-filesystem-scope)) is never
+listed, and reading inside it answers 404, even when the run's folder
+contains it. The workspace access policy (allowed and blocked
 folders, launch-folder trust) is applied again at every call, and nothing
 else in the gateway's data folder is ever served. A run cannot be started
 with a `workspace_root` inside the gateway's data folder either, except the

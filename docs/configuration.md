@@ -1066,7 +1066,29 @@ Client scope overrides (permissive; trusted machines only):
 Discoverability:
 - `GET /api/gateway/workspace/policy` returns `{policy: {...}}` including whether client overrides are enabled (mount names only; no absolute paths).
 
-Evidence: `src/abstractgateway/routes/gateway.py` (`_workspace_root`, `_workspace_mounts`, `_sanitize_run_workspace_policy`, `_client_workspace_scope_overrides_enabled`, `start_run`).
+Built-in deny list. These folders of the gateway's user account are never
+listed nor served by the workspace browser (`GET /runs/{run_id}/workspace/…`),
+for anyone:
+
+`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.kube`,
+`~/Library/Keychains`, `~/.abstractgateway`, `~/.abstractcode`,
+`~/.abstractassistant`, `~/.abstractcontinuum`, `~/.abstractcore`, and the
+gateway's data folder (except a run's own conversation folder inside it).
+
+The same folders are added to every run's tool deny list
+(`workspace_ignored_paths`), so an agent's file tools cannot read them either.
+For runs this is a default an admin may turn off: `abstractgateway config set
+workspace_builtin_deny off` (or `POST /api/gateway/admin/runtime-config
+{"workspace_builtin_deny": false}`); the workspace browser keeps hiding them.
+`GET /api/gateway/admin/runtime-config` reports the list as `builtin_deny
+{value: [paths], enabled, source}`. The file tools honour the deny list; shell
+commands a run is allowed to execute are not confined by it.
+
+A run cannot use a folder inside the gateway's data folder as its
+`workspace_root`, except the conversation folder the gateway made for the same
+user and session (or one of that user's per-run folders).
+
+Evidence: `src/abstractgateway/routes/gateway.py` (`_workspace_root`, `_workspace_mounts`, `_sanitize_run_workspace_policy`, `_apply_builtin_tool_deny`, `_browse_workspace_root`, `start_run`), `src/abstractgateway/workspace_browse.py`.
 
 ### Durability backend
 
