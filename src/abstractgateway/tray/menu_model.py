@@ -437,6 +437,27 @@ def _held_bytes(snap: Snapshot) -> Optional[int]:
     return None
 
 
+def held_lines(snap: Snapshot) -> List[str]:
+    """What the held figure is and what holds it -- shown under "Gateway
+    still holds N (no model listed)": the measurement basis, then the
+    in-process holders ("[backend] model × N holders") or, when none
+    reports anything, that the memory is not attributed to any model."""
+    out: List[str] = []
+    basis = getattr(snap, "device_held_basis", None)
+    out.append(f"Measured by {basis or 'basis not reported'}")
+    held_by = tuple(getattr(snap, "held_by", ()) or ())
+    if held_by:
+        out.append("Held by " + "; ".join(held_by))
+    else:
+        out.append("Not attributed to any model: no in-process model holder reports it")
+    return out
+
+
+def eject_lines(snap: Snapshot) -> List[str]:
+    """The runtime's pending / failed / last ejects, verbatim sentences."""
+    return [text for _tone, text in (getattr(snap, "eject_status", ()) or ())]
+
+
 def _loaded_keys(snap: Snapshot) -> Dict[str, ModelRow]:
     """provider/model → loaded row (a runtime id is not what the list shows)."""
     out: Dict[str, ModelRow] = {}
@@ -496,7 +517,13 @@ def models_section(inputs: MenuInputs, *, reachable: bool) -> Node:
         # so, with the only two honest ways out (eject what the console lists
         # as held, or restart). Never a silent "No models loaded".
         items.append(info(f"Gateway still holds {fmt_bytes(held)} (no model listed)"))
+        for text in held_lines(snap):
+            items.append(info(middle_ellipsis(text, 90)))
         items.append(info("Eject the held model in the Console, or restart the gateway to free it"))
+    elif held:
+        items.append(info(middle_ellipsis(f"Gateway memory measured by {snap.device_held_basis or 'basis not reported'}", 90)))
+    for text in eject_lines(snap):
+        items.append(info(middle_ellipsis(text, 90)))
     for key in mv.loading:
         items.append(info(f"Loading {short_model_name(key.split('/', 1)[-1])}…"))
     for row in loaded:

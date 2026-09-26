@@ -88,6 +88,9 @@ class _FakeClient:
     def host_state(self) -> _Res:
         return self._r("host_state", self._host_state if self._host_state is not None else _Res(False, 0, None, "unreachable"))
 
+    def recent_runs(self, limit: int = 0) -> _Res:
+        return self._r("recent_runs", _Res(False, 0, None, "unreachable"))
+
 
 _LIVE = {
     "ok": True,
@@ -283,3 +286,57 @@ def test_supervisor_reports_a_child_that_fails_readiness(tmp_path: Path, monkeyp
         _time.sleep(0.05)
     assert sup.status()["exit_code"] == 4
     sup.stop()
+
+
+def test_sampler_reads_the_held_basis_holders_and_eject_diagnostics() -> None:
+    """MEM2: the fast lane takes `device.process_held_bytes` + its basis and
+    the resident rows (every backend, over the MLX-only block); the slow lane
+    turns `residency_diagnostics` into eject lines, and says so when the
+    snapshot does not carry the block."""
+    from abstractgateway.tray.sampler import Sampler, eject_status_from_host_state, held_basis_words
+
+    live = dict(_LIVE)
+    live["memory"] = {
+        "supported": True,
+        "ram": {"total_bytes": 100, "available_bytes": 40},
+        "process": {},
+        "device": {"backend": "metal", "process_held_bytes": 900, "process_held_basis": "sum:mlx_held_bytes+llama_cpp_bytes(estimated)", "mlx_held_bytes": 5},
+        "resident": {"models": [{"backend": "mlx", "models": ["q/27b"], "holders": 2}, {"backend": "huggingface", "model_path": "/m/x.gguf", "holders": 1}]},
+        "held": {"models": [{"models": ["stale"], "holders": 1}]},
+    }
+    state = {
+        "models": [],
+        "degraded": [],
+        "residency_diagnostics": {
+            "pending_ejects": [{"provider": "mlx", "model": "q/27b", "reason": "waiting for the in-flight call"}],
+            "last_switch_ejects": [{"provider": "mlx", "model": "q/9b", "ok": False, "error": "boom"}],
+        },
+    }
+    client = _FakeClient(live=live, host_state=state)
+    s = Sampler(client, version="0.4.4")  # type: ignore[arg-type]
+    s._sample_fast()
+    s._sample_slow()
+    snap = s.snapshot()
+    assert snap.device_held_bytes == 900
+    assert snap.device_held_basis == "sum of MLX + llama.cpp (estimated)"
+    assert snap.held_by == ("[mlx] q/27b × 2 holders", "[huggingface] /m/x.gguf × 1 holder")
+    assert snap.eject_status == (
+        ("pending", "Will eject mlx/q/27b when the in-flight call ends."),
+        ("failed", "mlx/q/9b: eject failed: boom"),
+    )
+    assert eject_status_from_host_state({"models": []}) == (
+        ("unreported", "Eject status: this gateway's host snapshot does not report residency diagnostics."),
+    )
+    assert eject_status_from_host_state({"models": None}) == ()
+    assert held_basis_words("metal_device_counter") == "metal device counter"
+    assert held_basis_words("cuda_device_counter+llama_cpp_bytes(estimated)") == "cuda device counter + llama.cpp (estimated)"
+    assert held_basis_words(None) == "basis not reported"
+    assert held_basis_words("new_basis") == "new_basis"
+
+    older = dict(_LIVE)
+    older["memory"] = {"supported": True, "ram": {"total_bytes": 100, "available_bytes": 40}, "process": {}, "device": {"mlx_held_bytes": 7}}
+    s2 = Sampler(_FakeClient(live=older), version="0.4.4")  # type: ignore[arg-type]
+    s2._sample_fast()
+    snap2 = s2.snapshot()
+    assert snap2.device_held_bytes == 7
+    assert snap2.device_held_basis == "MLX buffers only (this AbstractCore reports no process-wide figure)"

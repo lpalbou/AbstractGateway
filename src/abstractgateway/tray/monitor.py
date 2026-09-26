@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional
 
 from . import platform as plat
 from .client import GatewayClient
-from .menu_model import _held_bytes
+from .menu_model import _held_bytes, eject_lines, held_lines
 from .sampler import ModelRow, Sampler, Snapshot, fmt_bytes, fmt_pct
 
 APP_NAME = "AbstractGateway"
@@ -431,7 +431,9 @@ class Monitor:
             self.gpu_graph.draw((), unsupported="GPU activity isn't available on this computer.")
 
         # Models
-        key = tuple((r.key, r.locked, r.size_bytes) for r in snap.models) + (st == "unreachable", snap.models_error)
+        # The note (held memory, its basis and holders, pending / failed
+        # ejects) is part of the key: it changes while the rows do not.
+        key = tuple((r.key, r.locked, r.size_bytes) for r in snap.models) + (st == "unreachable", snap.models_error, models_note_text(snap))
         if key != self._last_models_key:
             self._last_models_key = key
             self._rebuild_models(snap)
@@ -464,15 +466,9 @@ class Monitor:
             self.models_note.configure(text="The model list isn't available right now.")
             self.models_note.pack(fill="x")
             return
+        note = models_note_text(snap)
         if not snap.models:
-            held = _held_bytes(snap)
-            self.models_note.configure(
-                text=(
-                    f"Gateway still holds {fmt_bytes(held)} (no model listed); eject it in the Console, or restart the gateway."
-                    if held
-                    else "No models loaded. Models appear here while they are in memory."
-                )
-            )
+            self.models_note.configure(text=note or "")
             self.models_note.pack(fill="x")
             return
         self.models_note.pack_forget()
@@ -490,6 +486,9 @@ class Monitor:
                 tk.Label(line, text="kept in memory", bg=pal["bg"], fg=pal["muted"], font=("TkDefaultFont", 11)).pack(side="right", padx=(0, 8))
             tk.Label(line, text=row.provider, bg=pal["bg"], fg=pal["muted"], font=("TkDefaultFont", 11)).pack(side="left", padx=(8, 0))
             self._model_rows.append(line)
+        if note:  # pending / failed ejects under the rows
+            self.models_note.configure(text=note)
+            self.models_note.pack(fill="x")
 
     # ---------------------------------------------------------------- run
 
@@ -499,6 +498,22 @@ class Monitor:
         self.root.mainloop()
         self.sampler.stop()
         return 0
+
+
+def models_note_text(snap: Snapshot) -> Optional[str]:
+    """The note under "Loaded models" once the list answered: with nothing
+    listed, what the gateway still holds (basis + holders) or "No models
+    loaded"; then the runtime's pending / failed ejects. None = no note."""
+    lines = []
+    if not snap.models:
+        held = _held_bytes(snap)
+        if held:
+            lines.append(f"Gateway still holds {fmt_bytes(held)} (no model listed); eject it in the Console, or restart the gateway.")
+            lines.extend(held_lines(snap))
+        else:
+            lines.append("No models loaded. Models appear here while they are in memory.")
+    lines.extend(eject_lines(snap))
+    return "\n".join(lines) if lines else None
 
 
 def run_monitor(handshake: Dict[str, Any]) -> int:

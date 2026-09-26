@@ -796,3 +796,42 @@ def test_a_missing_network_route_is_named_not_hidden(tray) -> None:
     tray.client = Old()
     tray._refresh_network()
     assert tray._network.available is False and "newer gateway" in (tray._network.error or "")
+
+
+def test_held_memory_names_its_basis_its_holders_and_pending_ejects() -> None:
+    """MEM2 on the tray: under "Gateway still holds N (no model listed)" the
+    Models menu says HOW the figure was measured and WHAT holds it (or that
+    nothing is attributed); the runtime's pending / failed ejects are listed
+    whether or not models are loaded; the Activity window's note carries the
+    same lines."""
+    from abstractgateway.tray.monitor import models_note_text
+
+    held = _snap(
+        models=(),
+        device_held_bytes=20 * GB,
+        device_held_basis="metal device counter",
+        held_by=("[mlx] q/27b × 2 holders",),
+        eject_status=(("pending", "Will eject mlx/q/27b when the in-flight call ends."), ("failed", "mlx/q/9b: eject failed: still resident")),
+    )
+    models = [n.label for n in _find(mm.build_menu(_inputs(snap=held)), "Models").children if not n.separator]
+    i = models.index("Gateway still holds 20.0 GB (no model listed)")
+    assert models[i + 1 : i + 3] == ["Measured by metal device counter", "Held by [mlx] q/27b × 2 holders"]
+    assert "Will eject mlx/q/27b when the in-flight call ends." in models
+    assert "mlx/q/9b: eject failed: still resident" in models
+    note = models_note_text(held) or ""
+    assert "Measured by metal device counter" in note and "Held by [mlx] q/27b × 2 holders" in note
+    assert "Will eject mlx/q/27b when the in-flight call ends." in note
+
+    nobody = _snap(models=(), device_held_bytes=20 * GB, device_held_basis="sum of MLX + llama.cpp (estimated)")
+    models = [n.label for n in _find(mm.build_menu(_inputs(snap=nobody)), "Models").children if not n.separator]
+    assert "Measured by sum of MLX + llama.cpp (estimated)" in models
+    assert "Not attributed to any model: no in-process model holder reports it" in models
+
+    # Models loaded: the basis still rides the menu, ejects still show.
+    loaded = _snap(models=(_loaded(),), device_held_bytes=20 * GB, device_held_basis="metal device counter",
+                   eject_status=(("pending", "Will eject mlx/old when the in-flight call ends."),))
+    models = [n.label for n in _find(mm.build_menu(_inputs(snap=loaded)), "Models").children if not n.separator]
+    assert "Gateway memory measured by metal device counter" in models
+    assert "Will eject mlx/old when the in-flight call ends." in models
+    assert models_note_text(loaded) == "Will eject mlx/old when the in-flight call ends."
+    assert models_note_text(_snap(models=(_loaded(),))) is None

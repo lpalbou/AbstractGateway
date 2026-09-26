@@ -106,6 +106,17 @@ class Snapshot:
     device_held_bytes: Optional[int] = None
     # macOS physical footprint of the gateway process (includes Metal buffers).
     process_footprint: Optional[int] = None
+    # HOW device_held_bytes was measured, in words (`held_basis_words`), e.g.
+    # "metal device counter" / "sum of MLX + llama.cpp (estimated)". None
+    # when no held figure is known.
+    device_held_basis: Optional[str] = None
+    # WHAT the process holds, "[backend] model × N holders" per resident row
+    # (`memory.resident.models`, else the MLX-only `memory.held.models`).
+    held_by: tuple[str, ...] = ()
+    # Default-switch / failed-load ejects (`residency_diagnostics` of GET
+    # /host/state) as (tone, text): tone is "pending" | "failed" | "kept" |
+    # "done" | "unreported". Empty = nothing to say (or not sampled yet).
+    eject_status: tuple[tuple[str, str], ...] = ()
 
 
 def _num(value: Any) -> Optional[float]:
@@ -119,6 +130,89 @@ def _num(value: Any) -> Optional[float]:
 def _int(value: Any) -> Optional[int]:
     v = _num(value)
     return int(v) if v is not None and v >= 0 else None
+
+
+_SUM_BASIS_WORDS = {
+    "mlx_held_bytes": "MLX",
+    "llama_cpp_bytes(estimated)": "llama.cpp (estimated)",
+    "llama_cpp_bytes": "llama.cpp",
+    "allocated_bytes": "live allocations",
+}
+
+
+def held_basis_words(basis: Any) -> str:
+    """`device.process_held_basis` (abstractcore utils/memory) in words --
+    the same wording as the console's `processHeldBasisWords`. An unknown
+    spelling is returned verbatim; a missing basis says so."""
+    b = basis.strip() if isinstance(basis, str) else ""
+    if not b:
+        return "basis not reported"
+    if b == "metal_device_counter":
+        return "metal device counter"
+    if b.startswith("cuda_device_counter"):
+        return "cuda device counter" + (" + llama.cpp (estimated)" if "llama_cpp_bytes" in b else "")
+    if b.startswith("sum:"):
+        parts = [_SUM_BASIS_WORDS.get(p, p) for p in b[4:].split("+") if p]
+        return f"sum of {' + '.join(parts)}" if parts else b
+    return b
+
+
+def held_by_from_memory(mem: Dict[str, Any]) -> tuple[str, ...]:
+    """"[backend] model × N holders" for every row the process holds:
+    `resident.models` (every in-process backend) when it has rows, else the
+    MLX-only `held.models` of older cores."""
+    resident = mem.get("resident") if isinstance(mem.get("resident"), dict) else None
+    block = resident if resident and isinstance(resident.get("models"), list) and resident.get("models") else None
+    if block is None:
+        block = mem.get("held") if isinstance(mem.get("held"), dict) else None
+    rows = block.get("models") if block and isinstance(block.get("models"), list) else []
+    out: List[str] = []
+    for m in rows:
+        if not isinstance(m, dict):
+            continue
+        holders = _int(m.get("holders")) or 0
+        names = m.get("models")
+        name = ", ".join(str(x) for x in names) if isinstance(names, list) and names else str(m.get("model_path") or m.get("model") or "?")
+        backend = f"[{m.get('backend')}] " if m.get("backend") else ""
+        copies = " (full copies)" if m.get("shared_weights") is False and holders > 1 else ""
+        out.append(f"{backend}{name} × {holders} holder{'' if holders == 1 else 's'}{copies}")
+    return tuple(out)
+
+
+def eject_status_from_host_state(payload: Dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    """(tone, text) lines from `residency_diagnostics` -- the same rules as
+    the console's `ejectStatusLines`: pending → "Will eject X when the
+    in-flight call ends", failure → "X: eject failed: <reason>", kept → why,
+    done → "X ejected". A snapshot without the block says so (never an
+    implied "nothing pending"); a degraded model list says nothing here."""
+    if not isinstance(payload.get("models"), list):
+        return ()
+    diag = payload.get("residency_diagnostics")
+    if not isinstance(diag, dict):
+        return (("unreported", "Eject status: this gateway's host snapshot does not report residency diagnostics."),)
+
+    def label(e: Dict[str, Any]) -> str:
+        parts = [str(e.get(k)) for k in ("provider", "model") if e.get(k) not in (None, "")]
+        return "/".join(parts) or "a model"
+
+    out: List[tuple[str, str]] = []
+    pending = [e for e in (diag.get("pending_ejects") or []) if isinstance(e, dict)]
+    pending_keys = {label(e) for e in pending}
+    for e in pending:
+        out.append(("pending", f"Will eject {label(e)} when the in-flight call ends."))
+    for e in [e for e in (diag.get("last_switch_ejects") or []) if isinstance(e, dict)]:
+        name = label(e)
+        if e.get("deferred") is True:
+            if name not in pending_keys:
+                out.append(("pending", f"Will eject {name} when the in-flight call ends."))
+        elif e.get("ok") is False:
+            out.append(("failed", f"{name}: eject failed: {e.get('error') or e.get('reason') or 'no reason reported'}"))
+        elif e.get("skipped") is True:
+            out.append(("kept", f"{name} kept in memory: {e.get('reason') or 'still in use'}"))
+        else:
+            n = _int(e.get("holders_found"))
+            out.append(("done", f"{name} ejected" + (f" from {n} holder{'' if n == 1 else 's'}" if n else "") + "."))
+    return tuple(out)
 
 
 def model_rows_from_host_state(payload: Dict[str, Any]) -> tuple[List[ModelRow], Optional[int]]:
@@ -259,6 +353,7 @@ class Sampler:
             "models": [],
             "models_total": None,
             "models_error": None,
+            "eject_status": (),
             "runs": [],
             "runs_error": None,
             "caps": {"restart": False, "shutdown": False, "reason": None, "update_job_running": False},
@@ -409,9 +504,14 @@ class Sampler:
         # older gateways report. The tray shows it whenever it is known, and
         # says so LOUDLY when the model list is empty -- "No models loaded"
         # over 92 GB of held MLX memory is the lie this exists to end.
-        held = _int(dev.get("mlx_held_bytes"))
+        held = _int(dev.get("process_held_bytes"))  # MEM2: every in-process allocator (see core utils/memory)
+        basis = held_basis_words(dev.get("process_held_basis")) if held is not None else None
+        if held is None:
+            held = _int(dev.get("mlx_held_bytes"))
+            basis = "MLX buffers only (this AbstractCore reports no process-wide figure)" if held is not None else None
         if held is None:
             held = _int(dev.get("allocated_bytes"))
+            basis = "live allocations only (this AbstractCore reports no process-wide figure)" if held is not None else None
         self._state["mem"] = {
             "supported": supported and (pct is not None or used is not None),
             "reason": None if supported else str(d.get("reason") or "not available"),
@@ -421,6 +521,8 @@ class Sampler:
             "rss": rss,
             "backend": str(dev.get("backend")) if dev.get("backend") else None,
             "held": held,
+            "held_basis": basis,
+            "held_by": held_by_from_memory(d),
             "footprint": _int(proc.get("footprint_bytes")),
         }
         self._mem_hist.append(pct)
@@ -521,6 +623,7 @@ class Sampler:
                 self._state["models"] = rows
                 self._state["models_total"] = total
                 self._state["models_error"] = str(reasons.get("models") or "model list unavailable") if "models" in degraded else None
+                self._state["eject_status"] = eject_status_from_host_state(r.data)
             else:
                 self._state["models_error"] = r.error or "model list unavailable"
         self._sample_runs()
@@ -605,6 +708,9 @@ class Sampler:
                 runs_error=s["runs_error"],
                 device_held_bytes=mem.get("held"),
                 process_footprint=mem.get("footprint"),
+                device_held_basis=mem.get("held_basis"),
+                held_by=tuple(mem.get("held_by") or ()),
+                eject_status=tuple(s.get("eject_status") or ()),
             )
 
     def _notify(self) -> None:
