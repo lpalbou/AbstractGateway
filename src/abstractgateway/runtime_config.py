@@ -1459,6 +1459,48 @@ def _agents_payload(data_dir: Path, agent_index: Optional[List[Dict[str, Any]]])
     return out
 
 
+STREAMING_DEFAULT_KEY = "agents.streaming_default"
+
+
+def _streaming_default_payload(stored: Dict[str, Any]) -> Dict[str, Any]:
+    """`agents.streaming_default`: whether an interactive `POST /runs/start`
+    that says nothing about streaming (`input_data._runtime.stream` absent)
+    streams its replies live. Never applied to scheduled runs, bridges or
+    the entity loop; a flow node's `stream: false` always wins."""
+
+    agents = stored.get("agents") if isinstance(stored.get("agents"), dict) else {}
+    raw = agents.get("streaming_default")
+    return {
+        "key": STREAMING_DEFAULT_KEY,
+        "value": raw if isinstance(raw, bool) else False,
+        "source": "stored" if isinstance(raw, bool) else "default",
+        "default": False,
+        "label": "Stream replies by default",
+        "help": (
+            "Interactive runs that do not ask either way stream the model's reply live "
+            "(input_data._runtime.stream). Scheduled runs, bridges and the entity loop never do."
+        ),
+    }
+
+
+def resolve_streaming_default(data_dir: Path) -> bool:
+    return bool(_streaming_default_payload(_read_store(Path(data_dir)))["value"])
+
+
+def _write_streaming_default(stored: Dict[str, Any], raw: Any, applied: Dict[str, Any]) -> None:
+    agents = dict(stored.get("agents") or {}) if isinstance(stored.get("agents"), dict) else {}
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        agents.pop("streaming_default", None)  # clear = the default (off)
+        applied[STREAMING_DEFAULT_KEY] = None
+    else:
+        agents["streaming_default"] = _strict_bool(STREAMING_DEFAULT_KEY, raw)
+        applied[STREAMING_DEFAULT_KEY] = agents["streaming_default"]
+    if agents:
+        stored["agents"] = agents
+    else:
+        stored.pop("agents", None)
+
+
 def _write_agents_changes(
     stored: Dict[str, Any],
     changes: Dict[str, Any],
@@ -1476,12 +1518,25 @@ def _write_agents_changes(
     for k, v in changes.items():
         if isinstance(k, str) and k.startswith(prefix):
             pairs.append((k[len(prefix):], v))
+        elif k == STREAMING_DEFAULT_KEY:
+            _write_streaming_default(stored, v, applied)
         elif isinstance(k, str) and k.startswith("agents.") and k != "agents":
-            raise RuntimeConfigError(f"unknown setting {k!r}; the agents settings are {SETTING_KEY}.<interface>")
+            raise RuntimeConfigError(
+                f"unknown setting {k!r}; the agents settings are {SETTING_KEY}.<interface> and {STREAMING_DEFAULT_KEY}"
+            )
     if "agents" in changes:
         block = changes["agents"]
-        if not isinstance(block, dict) or set(block) - {"default_workflow"} or not isinstance(block.get("default_workflow", {}), dict):
-            raise RuntimeConfigError('agents must be {"default_workflow": {"<interface>": "bundle[@version]:flow" | ""}}')
+        if (
+            not isinstance(block, dict)
+            or set(block) - {"default_workflow", "streaming_default"}
+            or not isinstance(block.get("default_workflow", {}), dict)
+        ):
+            raise RuntimeConfigError(
+                'agents must be {"default_workflow": {"<interface>": "bundle[@version]:flow" | ""}, '
+                '"streaming_default": true | false | null}'
+            )
+        if "streaming_default" in block:
+            _write_streaming_default(stored, block["streaming_default"], applied)
         pairs.extend((block.get("default_workflow") or {}).items())
     if not pairs:
         return
@@ -1591,13 +1646,15 @@ def read_runtime_config(
         # env_name, ...}} (registry APPS_SETTINGS); written as "apps.<name>".
         "apps": _apps_settings_payload(stored),
     }
+    # agents.streaming_default is a plain switch: always in the posture.
+    out["agents"] = {"streaming_default": _streaming_default_payload(stored)}
     if agent_index is not None or include_agents:
         # Default agent workflow per agent interface (agent_defaults.py):
         # {default_workflow: {interface: {value, source, available, reason,
         # resolved, key, default, eligible[]}}, index_source}. Only on
         # request: the per-knob resolvers below read this function too, and
         # must not scan workflows to answer "what is the workspace root".
-        out["agents"] = _agents_payload(data_dir, agent_index)
+        out["agents"].update(_agents_payload(data_dir, agent_index))
     if include_skills:
         # skills.shelf (skills_shelf.py): {key, value, source: stored|env|
         # seeded|checkout|none, resolved, available, reason, default_path,
@@ -1785,7 +1842,7 @@ def write_runtime_config(
         # keys it knows and quietly dropping the rest.
         raise RuntimeConfigError(
             f"unknown setting(s) {unknown}; nothing was saved. Known: {sorted(_WRITE_KEYS)} "
-            "plus apps.<name>, agents.default_workflow.<interface>, skills.shelf"
+            "plus apps.<name>, agents.default_workflow.<interface>, agents.streaming_default, skills.shelf"
         )
     for _switch in ("process_manager", "backlog_exec_runner"):
         if _switch in changes:
@@ -1988,7 +2045,7 @@ def write_runtime_config(
             "workspace_default_mode, user_workspace_policies, executor, operator_email, "
             "stop_kill_switch_s, allow_engine_install, "
             + ", ".join(r["key"] for r in APPS_SETTINGS)
-            + ", agents.default_workflow.<interface>, skills.shelf)"
+            + ", agents.default_workflow.<interface>, agents.streaming_default, skills.shelf)"
         )
 
     stored["_last_changed_by"] = str(actor)

@@ -212,7 +212,7 @@ def test_validation_and_payload(tmp_path: Path) -> None:
     assert list(out["agents"]["default_workflow"])[:2] == [CODE, ASSIST]
 
     # The per-knob resolvers read the same function: no agents scan there.
-    assert "agents" not in read_runtime_config(data_dir)
+    assert "default_workflow" not in read_runtime_config(data_dir)["agents"]
 
     cleared = write_runtime_config(data_dir, {f"agents.default_workflow.{CODE}": ""}, actor="t", agent_index=idx)
     assert cleared["applied"] == {f"agents.default_workflow.{CODE}": None}

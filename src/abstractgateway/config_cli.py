@@ -562,6 +562,9 @@ def _setting_row(cfg: Dict[str, Any], key: str) -> Optional[Dict[str, Any]]:
     if key.startswith(_AGENT_PREFIX):
         row = ((cfg.get("agents") or {}).get("default_workflow") or {}).get(key[len(_AGENT_PREFIX):])
         return row if isinstance(row, dict) else None
+    if key == "agents.streaming_default":
+        row = (cfg.get("agents") or {}).get("streaming_default")
+        return row if isinstance(row, dict) else None
     if key == "skills.shelf":
         row = (cfg.get("skills") or {}).get("shelf")
         return row if isinstance(row, dict) else None
@@ -714,7 +717,10 @@ def _cmd_runtime_get(args: argparse.Namespace) -> None:
             if key.startswith(_AGENT_PREFIX):
                 ifaces = sorted(((cfg.get("agents") or {}).get("default_workflow") or {}).keys())
                 raise SystemExit(f"unknown agent interface in {key!r}; this gateway knows {ifaces}")
-            raise SystemExit(f"unknown setting {key!r}; one of {known}, apps.<name>, skills.shelf or {_AGENT_PREFIX}<interface>")
+            raise SystemExit(
+                f"unknown setting {key!r}; one of {known}, apps.<name>, skills.shelf, "
+                f"agents.streaming_default or {_AGENT_PREFIX}<interface>"
+            )
         rows[key] = row
     if bool(args.json):
         print(json.dumps(rows if not args.key else rows[args.key], indent=2, default=str))
