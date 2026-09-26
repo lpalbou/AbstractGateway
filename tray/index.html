@@ -1153,7 +1153,11 @@ can see what it is doing and act on it in one click:</p>
   in a small window (needs <code>tkinter</code>; see below).</li>
 <li><strong>Start AbstractGateway at login</strong> — a check item that shows whether this
   gateway WOULD start at your next login, and switches it. See <em>Start at login</em>.</li>
-<li><strong>Check for Updates / Restart / Quit / About / Help.</strong></li>
+<li><strong>Check for Updates / Restart / Quit / About / Help.</strong> About shows the
+  gateway's version, console address and data folder, the AbstractFramework
+  project details (website, source, documentation, where to report an issue
+  or give feedback, contact) and the versions of the framework packages this
+  gateway runs (from <code>GET /api/gateway/about</code>).</li>
 </ul>
 <p>The menu as shipped (macOS, a machine with 151 installed models; <code>[…]</code> is a
 greyed information line, <code>▸</code> a submenu, <code>☐/☑</code> the check item):</p>
@@ -1261,6 +1265,10 @@ reasons:</p>
 <td>not started; the tray belongs to the process that serves the console</td>
 </tr>
 <tr>
+<td><code>serve --no-tray</code> (a test or scratch gateway next to your usual one)</td>
+<td>not started for this run (reason <code>no_tray_flag</code>)</td>
+</tr>
+<tr>
 <td>Otherwise</td>
 <td>started; <code>Desktop tray: started (pid …)</code></td>
 </tr>
@@ -1303,6 +1311,20 @@ fails.</p>
 is always known and decides how a model loads, while many installed artifacts
 carry no capability metadata. Capabilities appear where they are known: the
 routes you configured, under <strong>Your defaults</strong>.</p>
+<p>When no model is listed but the gateway process still holds more than 256 MB
+of accelerator memory (every model library in the gateway: MLX, llama.cpp,
+transformers, embeddings), the header adds <code>gateway holds N GB</code> and the menu,
+the status line and the Activity window say "Gateway still holds N GB (no
+model listed)" instead of "No models loaded", followed by how the figure was
+measured ("Measured by metal device counter", "cuda device counter" or "sum of
+MLX + llama.cpp") and what holds it ("Held by [mlx] qwen/27b × 2 holders", or
+"Not attributed to any model"): eject the held model in the Console, or
+restart the gateway to free it. With models loaded, the menu still says how
+the gateway's memory is measured.</p>
+<p>After a default-model switch, the Models menu and the Activity window also
+list the ejects the gateway still owes or that failed: "Will eject X when the
+in-flight call ends", "X: eject failed: reason", "X kept in memory: reason",
+"X ejected".</p>
 <p>The model lists refresh every 5 minutes and after each load or eject; the
 Activity window and the console's Models tab show the same data live.</p>
 <h2 id="apps">Apps<a class="headerlink" href="#apps" title="Permanent link">&para;</a></h2>
@@ -1333,7 +1355,7 @@ not depend on its apps:</p>
 <tr>
 <td>Assistant</td>
 <td>the same detection as the console's Assistant card (<code>apps_desktop.detect_assistant</code>): <code>AbstractAssistant.app</code> in /Applications or ~/Applications, the <code>abstractassistant</code> command (this Python's scripts folder, or PATH), or the package in this Python (<code>importlib.util.find_spec</code>, without importing it)</td>
-<td><strong>Launch Assistant</strong> when found (also while it runs); <strong>Install Assistant…</strong> when the gateway can install it into its own Python (the console's Install); otherwise <strong>Assistant</strong>, greyed</td>
+<td><strong>Launch Assistant</strong> when found (also while it runs): the gateway opens it (<code>POST /api/gateway/apps/assistant/launch</code>, the console's Open), connected and signed in to this gateway; <strong>Install Assistant…</strong> when the gateway can install it into its own Python (the console's Install); otherwise <strong>Assistant</strong>, greyed</td>
 </tr>
 <tr>
 <td>Code's terminal version (the only app with one today)</td>

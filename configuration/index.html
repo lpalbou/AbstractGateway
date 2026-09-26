@@ -560,6 +560,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#default-agent-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Default agent workflow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stream-replies-by-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stream replies by default
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#skills-shelf" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Skills shelf
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#backlog-folder-exec-runner-and-process-manager-continuum" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1425,6 +1458,39 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#default-agent-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Default agent workflow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stream-replies-by-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stream replies by default
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#skills-shelf" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Skills shelf
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#backlog-folder-exec-runner-and-process-manager-continuum" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1683,9 +1749,9 @@ sentence-transformer embeddings on the Gateway host.</p>
 - <code>abstractgateway[docs]</code>: MkDocs site tooling
 - <code>abstractgateway[dev]</code>: local dev/test deps</p>
 <p>Default dependency floors (see <code>pyproject.toml</code>):
-- <code>AbstractRuntime&gt;=0.4.35</code>
-- <code>abstractcore&gt;=2.15.2</code>
-- <code>abstractagent&gt;=0.3.13</code>
+- <code>AbstractRuntime&gt;=0.5.0</code>
+- <code>abstractcore&gt;=2.16.0</code>
+- <code>abstractagent&gt;=0.3.14</code>
 - <code>AbstractMemory[lancedb]&gt;=0.3.0</code></p>
 <p>Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.</p>
@@ -1951,16 +2017,30 @@ are flagged with a warning. A list with any invalid entry is refused whole
 written), e.g. <code>1 origin is not valid (nothing was saved): https://x.example/: no
 trailing slash: an origin is scheme://host[:port] (write https://x.example)</code>.
 An empty list clears the setting back to the default.</p>
-<p><strong>The environment override.</strong> <code>ABSTRACTGATEWAY_ALLOWED_ORIGINS</code> /
-<code>ABSTRACTGATEWAY_TRUST_PROXY</code> in the environment a gateway was started with
-still decide (a deployment pin, the security carve-out in <code>env_registry.py</code>),
-and every surface says so: the payload carries <code>source: "env"</code> and
-<code>overridden_by_env: true</code> with <code>env_name</code>/<code>env_value</code> and a <code>note</code> ("This
-gateway was started with … in its environment: …"); saving is still allowed
-and answers <code>changed.&lt;field&gt;.applies: "overridden_by_env"</code> ("Saved, but not in
-effect"). The value in the settings applies once the gateway starts without
-the variable. The origins <code>serve</code> itself exports for a network mode are never
-counted as an override.</p>
+<p><strong>The environment variables.</strong> The two settings do not treat the launch
+environment the same way:</p>
+<ul>
+<li><strong>Browser origins.</strong> <code>ABSTRACTGATEWAY_ALLOWED_ORIGINS</code> in the environment a
+  gateway was started with still decides (a deployment pin, the security
+  carve-out in <code>env_registry.py</code>), and every surface says so: the payload
+  carries <code>source: "env"</code> and <code>overridden_by_env: true</code> with
+  <code>env_name</code>/<code>env_value</code> and a <code>note</code> ("This gateway was started with … in its
+  environment: …"); saving is still allowed and answers
+  <code>changed.allowed_origins.applies: "overridden_by_env"</code> ("Saved, but not in
+  effect"). The saved list applies once the gateway starts without the
+  variable. The origins <code>serve</code> itself exports for a network mode are never
+  counted as an override.</li>
+<li><strong>Trust proxy.</strong> The SAVED setting decides; <code>ABSTRACTGATEWAY_TRUST_PROXY</code> is
+  only a fallback used when nothing is saved (<code>source: "env"</code>,
+  <code>overridden_by_env: true</code> then). Once the switch is saved, the variable no
+  longer applies to that data folder: the saved value applies to the
+  next request whatever the environment says (<code>source: "setting"</code>, with a
+  <code>note</code> that the variable is also set and the saved switch wins). The same
+  rule is used for sign-in lockouts and the audit log's client address and for
+  deciding whether a caller sits at the gateway computer. Once saved, change
+  it with the switch (<code>abstractgateway network set --trust-proxy on|off</code>), not
+  with the variable.</li>
+</ul>
 <p>Status payload (<code>GET /api/gateway/network</code>, <code>reverse_proxy</code>):</p>
 <div class="highlight"><pre><span></span><code><span class="nt">"reverse_proxy"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
 <span class="w">  </span><span class="nt">"allowed_origins"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"https://gateway.example.com"</span><span class="p">],</span><span class="w"> </span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"setting"</span><span class="p">,</span><span class="w"> </span><span class="nt">"overridden_by_env"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
@@ -2454,12 +2534,13 @@ controlled by the runtime-config setting <code>allow_engine_install</code>:</p>
 </tr>
 </tbody>
 </table>
-<p>"Someone at the gateway machine" is a request whose socket peer is loopback
-or one of this host's own interface addresses (a browser on the gateway
-machine that uses its LAN address counts), with no proxy header
-(<code>Forwarded</code>, <code>X-Forwarded-For</code>, <code>X-Forwarded-Host</code>, <code>X-Real-IP</code>): see
-<a href="../security/">security.md</a>. The same rule gates app installs (Apps page,
-tray). <code>install_policy</code> reports <code>caller_on_this_machine</code> and, when that rule
+<p>"Someone at the gateway machine" is a caller whose address is loopback or
+one of this host's own interface addresses (a browser on the gateway machine
+that uses its LAN address counts). For a browser app, the address is the
+browser's own, relayed by the app's server on this computer, so a browser on
+another computer never counts: see
+<a href="../security/#callers-on-this-computer">security.md</a>. The same rule gates app
+installs (Apps page, tray). <code>install_policy</code> reports <code>caller_on_this_machine</code> and, when that rule
 decided, <code>source: "default_same_machine"</code>.</p>
 <p>An admin changes it with
 <code>POST /api/gateway/admin/runtime-config {"allow_engine_install": true}</code>
@@ -2566,6 +2647,156 @@ or the next download (the two URLs).</p>
 </table>
 <p>The CLI works on the data dir directly (<code>--data-dir</code>, default: the <code>serve</code>
 resolution), so a headless server needs no browser.</p>
+<h3 id="default-agent-workflow">Default agent workflow<a class="headerlink" href="#default-agent-workflow" title="Permanent link">&para;</a></h3>
+<p><code>agents.default_workflow.&lt;interface&gt;</code> chooses the workflow that answers an
+agent interface when a client picks "Gateway default" (AbstractCode's
+workflow selector, the Assistant, the Telegram bridge, the backlog advisor).
+The value is <code>[private:|catalog:]bundle[@version]:flow</code>: without a version the
+latest published version runs; <code>private:</code> (the default) picks one of the
+gateway's own workflows and <code>catalog:</code> one of the tenant catalog. The flow id
+may itself contain <code>:</code> (the bundle part ends at the first <code>:</code>).</p>
+<table>
+<thead>
+<tr>
+<th>Interface</th>
+<th>When nothing is saved</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>abstractcode.agent.v1</code></td>
+<td>the default entrypoint of the shipped <code>basic-agent</code> workflow (unavailable when it is not on the gateway)</td>
+</tr>
+<tr>
+<td><code>abstractassistant.agent.v1</code></td>
+<td>none: the Assistant runs its built-in orchestrator</td>
+</tr>
+<tr>
+<td>any other interface a workflow declares</td>
+<td>none until an admin saves one</td>
+</tr>
+</tbody>
+</table>
+<p>A saved value is checked when it is saved (it must exist on this gateway and
+declare that interface; 400 with the reason otherwise) and again at every
+run start: a value that no longer works is shown as unavailable with the
+reason, and runs that ask for the default are refused (409) until it is
+changed. It never falls back to another workflow on its own.</p>
+<p><code>GET /api/gateway/admin/runtime-config</code> returns</p>
+<div class="highlight"><pre><span></span><code><span class="nt">"agents"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"default_workflow"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"abstractcode.agent.v1"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nt">"key"</span><span class="p">:</span><span class="w"> </span><span class="s2">"agents.default_workflow.abstractcode.agent.v1"</span><span class="p">,</span><span class="w"> </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="s2">"coding-agent:coder"</span><span class="p">,</span><span class="w"> </span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"stored"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"available"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"reason"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"default"</span><span class="p">:</span><span class="w"> </span><span class="s2">"basic-agent:81795ea9"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"resolved"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"bundle_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"coding-agent"</span><span class="p">,</span><span class="w"> </span><span class="nt">"bundle_version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.2.7"</span><span class="p">,</span><span class="w"> </span><span class="nt">"flow_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"coder"</span><span class="p">,</span>
+<span class="w">               </span><span class="nt">"registry_scope"</span><span class="p">:</span><span class="w"> </span><span class="s2">"private"</span><span class="p">,</span><span class="w"> </span><span class="nt">"workflow_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"coding-agent@0.2.7:coder"</span><span class="p">,</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"coder"</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">"eligible"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="s2">"basic-agent:81795ea9"</span><span class="p">,</span><span class="w"> </span><span class="nt">"workflow_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"basic-agent@0.0.5:81795ea9"</span><span class="p">,</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"basic-agent"</span><span class="p">,</span><span class="w"> </span><span class="nt">"..."</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">}]}},</span>
+<span class="w">  </span><span class="nt">"index_source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"host"</span><span class="p">}</span>
+</code></pre></div>
+<p><code>source</code> is <code>stored</code> or <code>default</code> (there is no launch flag and no environment
+variable for this setting).</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Web console</th>
+<th>Console TUI</th>
+<th>CLI</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Where</td>
+<td>Workflows → <em>Default agent workflow</em> (one row per interface), or <em>Make agent default</em> on an entrypoint</td>
+<td>Runtimes → <em>Runtime knobs</em> → <em>Edit default agent workflows</em>; Workflows marks the default with ★</td>
+<td><code>abstractgateway config get agents.default_workflow.&lt;interface&gt;</code></td>
+</tr>
+<tr>
+<td>Change</td>
+<td>choose in the list, <em>Save default agent workflows</em></td>
+<td>type the value (the choices are listed under the field; empty = the built-in default)</td>
+<td><code>abstractgateway config set agents.default_workflow.&lt;interface&gt; bundle[@version]:flow</code>, <code>config unset …</code></td>
+</tr>
+</tbody>
+</table>
+<p>Writes are admin-only and audit-logged like every other setting. A write that
+names a setting the gateway does not know is refused as a whole (400) and
+saves nothing; two writers at the same time never lose each other's change.</p>
+<h3 id="stream-replies-by-default">Stream replies by default<a class="headerlink" href="#stream-replies-by-default" title="Permanent link">&para;</a></h3>
+<p><code>agents.streaming_default</code> (<code>on</code>/<code>off</code>, default <code>off</code>) decides whether an
+interactive run streams the model's reply live when the app that started it
+does not say (<code>input_data._runtime.stream</code> absent; see
+<a href="../api/#4b-live-replies-token-deltas-on-the-same-stream">API: live replies</a>).
+It applies to <code>POST /runs/start</code> only: scheduled runs, the Telegram and email
+bridges and the entity loop never stream by default. A flow node that turns
+streaming off for its LLM call always wins.</p>
+<p><code>GET /api/gateway/admin/runtime-config</code> returns</p>
+<div class="highlight"><pre><span></span><code><span class="nt">"agents"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"streaming_default"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"key"</span><span class="p">:</span><span class="w"> </span><span class="s2">"agents.streaming_default"</span><span class="p">,</span><span class="w"> </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w"> </span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"default"</span><span class="p">,</span>
+<span class="w">                                 </span><span class="nt">"default"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w"> </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Stream replies by default"</span><span class="p">,</span><span class="w"> </span><span class="nt">"help"</span><span class="p">:</span><span class="w"> </span><span class="s2">"…"</span><span class="p">}}</span>
+</code></pre></div>
+<p><code>source</code> is <code>stored</code> or <code>default</code>. Apps without admin rights read the
+effective default from <code>GET /api/gateway/discovery/capabilities</code>
+(<code>capabilities.streaming.default</code>).</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Web console</th>
+<th>Console TUI</th>
+<th>CLI / API</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Read</td>
+<td>Workflows → <em>Stream replies by default</em></td>
+<td>Runtimes → <em>Runtime knobs</em></td>
+<td><code>abstractgateway config get agents.streaming_default</code></td>
+</tr>
+<tr>
+<td>Change</td>
+<td>the switch</td>
+<td>the switch</td>
+<td><code>abstractgateway config set agents.streaming_default on</code>, <code>config unset agents.streaming_default</code>; <code>POST /api/gateway/admin/runtime-config {"agents": {"streaming_default": true}}</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="skills-shelf">Skills shelf<a class="headerlink" href="#skills-shelf" title="Permanent link">&para;</a></h3>
+<p><code>skills.shelf</code> is the folder the gateway reads skills from (it holds
+<code>skills/&lt;name&gt;/SKILL.md</code> and the trust files <code>validations.yaml</code>,
+<code>advisories.yaml</code>, <code>guidance.yaml</code>). Leave it empty to use the gateway's own
+copy of the curated shelf that ships with AbstractSkill: at each start the
+gateway copies it into <code>&lt;data dir&gt;/skills/registry</code>, adding what is new and
+refreshing what it wrote before, and never overwriting a file you edited
+there. The report of that copy is in the gateway log, and
+<code>POST /api/gateway/admin/skills/reseed</code> (or <em>Refresh the curated shelf</em> in the
+console) runs it again on demand.</p>
+<p>A saved folder that does not exist or holds no <code>skills/</code> folder is shown as
+unavailable with the reason (the gateway does not silently use another
+shelf). <code>GET /skills</code> and the settings say which shelf is in use
+(<code>shelf_source</code>: <code>stored</code>, <code>env</code>, <code>seeded</code>, <code>checkout</code> or <code>none</code>).</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Web console</th>
+<th>Console TUI</th>
+<th>CLI</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Where</td>
+<td>Apps → <em>Skills shelf</em></td>
+<td>Runtimes → <em>Runtime knobs</em> → <em>Edit skills shelf</em></td>
+<td><code>abstractgateway config get skills.shelf</code></td>
+</tr>
+<tr>
+<td>Change</td>
+<td>type the folder, <em>Save skills shelf</em>; <em>Refresh the curated shelf</em></td>
+<td>type the folder (empty = the gateway's own copy)</td>
+<td><code>abstractgateway config set skills.shelf /path/to/registry</code>, <code>config unset skills.shelf</code></td>
+</tr>
+</tbody>
+</table>
 <h3 id="backlog-folder-exec-runner-and-process-manager-continuum">Backlog folder, exec runner and process manager (Continuum)<a class="headerlink" href="#backlog-folder-exec-runner-and-process-manager-continuum" title="Permanent link">&para;</a></h3>
 <p>Continuum's Board, Backlog, Executions and Services pages read three runtime
 settings. A fresh install needs none of them: the gateway keeps its own
@@ -2778,8 +3009,9 @@ are user-level; every write is admin-only.</p>
 </table>
 <p>The tray icon has <strong>no setting</strong>: while the gateway serves a desktop that can
 hold it, it is there. It is absent only for reasons that are facts about the
-machine — no display, no <code>tray</code> extra, <code>serve --reload</code>, a runner-only process
-— and <code>GET /host/tray</code> names which. There is no <code>desktop_tray</code> setting; a
+machine or the launch — no display, no <code>tray</code> extra, <code>serve --reload</code>, a
+runner-only process, or <code>serve --no-tray</code> for this run — and <code>GET /host/tray</code>
+names which. There is no <code>desktop_tray</code> setting; a
 write to that key is refused with this explanation. <code>GET /api/health</code> carries <code>"paused": true</code> while paused (status
 stays <code>healthy</code>). Full description: <a href="../tray/">tray.md</a>.</p>
 <h3 id="runtime-scoped-core-capability-defaults">Runtime-scoped Core capability defaults<a class="headerlink" href="#runtime-scoped-core-capability-defaults" title="Permanent link">&para;</a></h3>
@@ -2927,7 +3159,41 @@ browser timezone when possible, with locale only as a fallback.</p>
 - <code>ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE=1</code> (or <code>ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE=1</code>) enables honoring client-provided <code>workspace_*</code> knobs, including <code>workspace_access_mode=all_except_ignored</code>.</p>
 <p>Discoverability:
 - <code>GET /api/gateway/workspace/policy</code> returns <code>{policy: {...}}</code> including whether client overrides are enabled (mount names only; no absolute paths).</p>
-<p>Evidence: <code>src/abstractgateway/routes/gateway.py</code> (<code>_workspace_root</code>, <code>_workspace_mounts</code>, <code>_sanitize_run_workspace_policy</code>, <code>_client_workspace_scope_overrides_enabled</code>, <code>start_run</code>).</p>
+<p>Built-in deny list. These folders of the gateway's user account are never
+listed nor served by the workspace browser (<code>GET /runs/{run_id}/workspace/…</code>),
+for anyone:</p>
+<p><code>~/.ssh</code>, <code>~/.aws</code>, <code>~/.gnupg</code>, <code>~/.config/gcloud</code>, <code>~/.kube</code>,
+<code>~/Library/Keychains</code>, <code>~/.abstractgateway</code>, <code>~/.abstractcode</code>,
+<code>~/.abstractassistant</code>, <code>~/.abstractcontinuum</code>, <code>~/.abstractcore</code>, and the
+gateway's data folder (except a run's own conversation folder inside it).</p>
+<p>The same folders are denied to every run's file tools: the gateway gives each
+run (and the runs it starts, scheduled runs included) the folders as
+<code>workspace_builtin_deny_prefixes</code>, plus one exception,
+<code>workspace_builtin_allow</code>, for the run's own conversation folder inside the
+data folder. Everything under a denied folder is refused; nothing inside the
+data folder is listed one by one, and these entries are enforced without being
+written into the model's prompt (so the prompt stays the same from turn to
+turn however much the data folder holds). A client cannot send these two
+entries (they are dropped); the operator's own <code>workspace_ignored_paths</code> are
+kept as sent. For runs this is a default an admin may turn off:
+<code>abstractgateway config set workspace_builtin_deny off</code> (or <code>POST
+/api/gateway/admin/runtime-config {"workspace_builtin_deny": false}</code>); the
+workspace browser keeps hiding them.
+<code>GET /api/gateway/admin/runtime-config</code> reports the list as <code>builtin_deny
+{value: [paths], enabled, source}</code>. The file tools honour the deny list; shell
+commands a run is allowed to execute are not confined by it.</p>
+<p>A run cannot use a folder inside the gateway's data folder as its
+<code>workspace_root</code>, except the conversation folder the gateway made for the same
+user and session (or one of that user's per-run folders). This check applies
+at every door that takes a client's inputs: <code>POST /runs/start</code>, <code>POST
+/runs/schedule</code> and entity summons.</p>
+<p>Every run the gateway starts, whatever started it (the HTTP routes, the
+Telegram, email and agora bridges, entity summons, scheduled runs, which
+inherit it from their schedule), works in a folder (its conversation's
+gateway-made folder when it named none) and gets the built-in deny rule above.
+Entity visits (the entity chat and its own-time loop) use the entity's own
+tools, which never leave <code>&lt;entity home&gt;/workspace</code> and the operator's mounts.</p>
+<p>Evidence: <code>src/abstractgateway/routes/gateway.py</code> (<code>_workspace_root</code>, <code>_workspace_mounts</code>, <code>_sanitize_run_workspace_policy</code>, <code>_apply_builtin_tool_deny</code>, <code>_browse_workspace_root</code>, <code>start_run</code>), <code>src/abstractgateway/workspace_browse.py</code>.</p>
 <h3 id="durability-backend">Durability backend<a class="headerlink" href="#durability-backend" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>ABSTRACTGATEWAY_STORE_BACKEND</code>: <code>file</code> (default) or <code>sqlite</code><br />
@@ -3146,7 +3412,9 @@ then the final artifact.</p>
 <h2 id="cli-flags">CLI flags<a class="headerlink" href="#cli-flags" title="Permanent link">&para;</a></h2>
 <p><code>abstractgateway --help</code> shows all subcommands (serve/runner/migrate/triage/…).</p>
 <p>Most-used:
-- <code>abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload]</code>
+- <code>abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray]</code>
+  (<code>--no-tray</code>: no menu bar / tray icon for this run, for a test or scratch
+  gateway next to your usual one)
   (host/port default to the <a href="#network-exposure-localhost--local-network--internet">network exposure</a>
   setting; with none stored, <code>--host</code> defaults to <code>127.0.0.1</code> when no auth is
   configured, else <code>0.0.0.0</code>, and <code>--port</code> to <code>8080</code>. Explicit flags override the setting.)

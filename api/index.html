@@ -703,6 +703,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#the-gateway-default-agent-workflow-flow_id-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The gateway default agent workflow (flow_id: "@default")
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#durable-session-replay-use_session_history" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -763,6 +774,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#skills-shelf" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Skills shelf
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#3-replay-the-ledger-cursor-based" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -795,8 +817,30 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#4b-live-replies-token-deltas-on-the-same-stream" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4b) Live replies: token deltas on the same stream
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-runs-workspace-folder-browse-and-preview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A run's workspace folder (browse and preview)
+      
+    </span>
+  </a>
   
 </li>
       
@@ -1057,6 +1101,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#about-get-apigatewayabout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        About (GET /api/gateway/about)
+      
+    </span>
+  </a>
   
 </li>
       
@@ -1358,6 +1413,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#the-gateway-default-agent-workflow-flow_id-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The gateway default agent workflow (flow_id: "@default")
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#durable-session-replay-use_session_history" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1418,6 +1484,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#skills-shelf" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Skills shelf
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#3-replay-the-ledger-cursor-based" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1450,8 +1527,30 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#4b-live-replies-token-deltas-on-the-same-stream" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4b) Live replies: token deltas on the same stream
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-runs-workspace-folder-browse-and-preview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A run's workspace folder (browse and preview)
+      
+    </span>
+  </a>
   
 </li>
       
@@ -1716,6 +1815,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#about-get-apigatewayabout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        About (GET /api/gateway/about)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#host-control-pause-desktop-tray-restart-update" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1812,9 +1922,24 @@ serve:</p>
 <td><a href="../configuration/#api-gateway_network_v1">configuration.md</a></td>
 </tr>
 <tr>
-<td><code>/api/gateway/apps/*</code>, <code>/apps/handover/{code}</code>, <code>/apps/tui-handover</code></td>
-<td>browser apps, terminal apps, the Assistant</td>
+<td><code>/api/gateway/apps/*</code>, <code>/apps/handover/{code}</code>, <code>/apps/tui-handover</code>, <code>/api/gateway/apps/desktop-handover</code></td>
+<td>browser apps, terminal apps, the Assistant and its sign-in</td>
 <td><a href="../apps/#http-api">apps.md</a></td>
+</tr>
+<tr>
+<td><code>/api/gateway/runs/{run_id}/workspace</code>, <code>/workspace/files</code>, <code>/workspace/content</code></td>
+<td>browse and preview a run's folder (the run's owner)</td>
+<td><a href="#a-runs-workspace-folder-browse-and-preview">below</a></td>
+</tr>
+<tr>
+<td><code>/api/gateway/skills</code>, <code>/admin/skills/reseed</code></td>
+<td>the skills shelf</td>
+<td><a href="#skills-shelf">below</a>, <a href="../configuration/#skills-shelf">configuration.md</a></td>
+</tr>
+<tr>
+<td><code>/api/gateway/about</code></td>
+<td>versions this gateway runs (no sign-in)</td>
+<td><a href="#about-get-apigatewayabout">below</a></td>
 </tr>
 <tr>
 <td><code>/api/gateway/engines/*</code></td>
@@ -1891,7 +2016,51 @@ fixed profile allowlist or the live endpoint model catalog.</p>
 <span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"bundle_id":"my-bundle","flow_id":"ac-echo","input_data":{"prompt":"Hello"}}'</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/runs/start"</span>
 </code></pre></div>
+<p>Every start answers <code>{run_id, runner_warning, resolved_workflow}</code>.
+<code>resolved_workflow</code> names the workflow the run really runs:
+<code>{workflow_id, bundle_id, bundle_version, flow_id, registry_scope, name,
+source: "gateway_default" | "client", interface}</code>. The same object is kept in
+the run's inputs as <code>input_data.workflow_selection</code> (written by the gateway;
+a value sent by the client is replaced), so <code>GET /runs/{run_id}/input_data</code>
+tells a restored conversation how its workflow was chosen.</p>
 <p>Evidence: request/response models live in <code>src/abstractgateway/routes/gateway.py</code> (<code>StartRunRequest</code>, <code>start_run</code>).</p>
+<h4 id="the-gateway-default-agent-workflow-flow_id-default">The gateway default agent workflow (<code>flow_id: "@default"</code>)<a class="headerlink" href="#the-gateway-default-agent-workflow-flow_id-default" title="Permanent link">&para;</a></h4>
+<p>An agent client (AbstractCode, the Assistant, the Telegram bridge) can let
+the gateway choose the workflow for an agent interface:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"flow_id":"@default","interface":"abstractcode.agent.v1","input_data":{"prompt":"Hello"}}'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/runs/start"</span>
+</code></pre></div>
+<ul>
+<li><code>interface</code> is required with <code>@default</code> (400 without it); <code>bundle_id</code> and
+  <code>bundle_version</code> are not accepted with it.</li>
+<li>The default is resolved at every start, so a change applies to the next
+  new turn of any conversation that sends <code>@default</code>.</li>
+<li>When the default cannot run (its workflow is gone, deprecated, or does not
+  declare the interface), the start is refused with 409 and a message naming
+  the setting (<code>agents.default_workflow.&lt;interface&gt;</code>) and where its value
+  comes from. The gateway never quietly runs another workflow instead.</li>
+<li><code>POST /runs/schedule</code> accepts the same <code>flow_id: "@default"</code> + <code>interface</code>
+  (the schedule then targets the version resolved at that moment).</li>
+</ul>
+<p>What the default is for each interface (readable without admin rights):
+<code>GET /bundles</code> and <code>GET /workflow-catalog</code> carry</p>
+<div class="highlight"><pre><span></span><code><span class="nt">"default_agent_workflows"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nt">"abstractcode.agent.v1"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"workflow_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"basic-agent@0.0.5:81795ea9"</span><span class="p">,</span><span class="w"> </span><span class="nt">"bundle_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"basic-agent"</span><span class="p">,</span>
+<span class="w">                            </span><span class="nt">"bundle_version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.0.5"</span><span class="p">,</span><span class="w"> </span><span class="nt">"flow_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"81795ea9"</span><span class="p">,</span><span class="w"> </span><span class="nt">"registry_scope"</span><span class="p">:</span><span class="w"> </span><span class="s2">"private"</span><span class="p">,</span>
+<span class="w">                            </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"basic-agent"</span><span class="p">,</span><span class="w"> </span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"default"</span><span class="p">}</span>
+<span class="p">},</span>
+<span class="nt">"default_agent_workflows_unavailable"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nt">"abstractassistant.agent.v1"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"default"</span><span class="p">,</span><span class="w"> </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
+<span class="w">    </span><span class="nt">"reason"</span><span class="p">:</span><span class="w"> </span><span class="s2">"no host workflow declares abstractassistant.agent.v1; the Assistant uses its built-in orchestrator"</span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>and every entrypoint row carries <code>is_agent_default</code> and
+<code>agent_default_interfaces</code>. These are different from <code>default_bundle_id</code>
+(the bundle a bare <code>flow_id</code> falls back to), from a catalog record's
+<code>is_default</code> (its default version) and from a bundle's <code>default_entrypoint</code>.</p>
+<p>The setting itself is <code>agents.default_workflow.&lt;interface&gt;</code> (see
+<a href="../configuration/#default-agent-workflow">Configuration</a>).</p>
 <p>For VisualFlow bundles, Gateway runs the packed JSON through AbstractRuntime.
 Structured LLM/Agent schemas are Runtime/Core-owned: <code>response</code> remains textual,
 and schema-conformant object values are available through the node <code>data</code> output
@@ -2039,6 +2208,20 @@ overwritten; the selection is then ignored with a labeled verdict.</p>
 <code>ABSTRACTGATEWAY_DOCS_CORPUS</code> env override first (set-but-missing is an honest
 404 naming the checked candidates, never a silent fallback), then the repo
 <code>llms.txt</code> in dev checkouts, then the corpus packaged with the wheel.</p>
+<h3 id="skills-shelf">Skills shelf<a class="headerlink" href="#skills-shelf" title="Permanent link">&para;</a></h3>
+<p><code>GET /api/gateway/skills</code> lists the skills of the gateway's shelf:
+<code>{skills: [...], shelf, shelf_source, bundled_version, warnings}</code>.
+<code>shelf_source</code> says where the shelf comes from: <code>stored</code> (the saved setting
+<code>skills.shelf</code>), <code>env</code> (a legacy launch environment value), <code>seeded</code> (the
+gateway's own copy in <code>&lt;data dir&gt;/skills/registry</code>, kept up to date from the
+curated shelf that ships with AbstractSkill at each start), <code>checkout</code> (a
+framework checkout, used only when the gateway's own copy is missing) or
+<code>none</code>. An empty list always comes with a warning that says why and what to
+do; warnings are plain sentences meant to be shown as they are.</p>
+<p><code>POST /api/gateway/admin/skills/reseed</code> (admin) refreshes the gateway's own
+copy now and answers the seed report (<code>added</code>, <code>updated</code>, <code>unchanged</code>, the
+<code>kept_*</code> lists with what was kept and why, <code>bundled_version</code>,
+<code>previous_version</code>). An edit made in that folder is never overwritten.</p>
 <h3 id="3-replay-the-ledger-cursor-based">3) Replay the ledger (cursor-based)<a class="headerlink" href="#3-replay-the-ledger-cursor-based" title="Permanent link">&para;</a></h3>
 <p>Ledger pages are replayed using <code>after</code> as “number of items already consumed”.</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/runs/&lt;run_id&gt;/ledger?after=0&amp;limit=200"</span>
@@ -2058,7 +2241,114 @@ overwritten; the selection is then ignored with a labeled verdict.</p>
 <p>SSE is an optimization; clients should always be able to reconnect by replaying from the last <code>next_after</code>.</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-N<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/runs/&lt;run_id&gt;/ledger/stream?after=0"</span>
 </code></pre></div>
+<p>Each ledger record arrives as <code>event: step</code> with an <code>id:</code> line (the records
+consumed so far); a reconnect sends <code>Last-Event-ID</code> (or <code>?after=</code>) and
+resumes there. <code>event: done</code> closes the stream once the run is finished and
+everything was sent.</p>
 <p>Evidence: <code>src/abstractgateway/routes/gateway.py</code> (<code>stream_ledger</code>).</p>
+<h3 id="4b-live-replies-token-deltas-on-the-same-stream">4b) Live replies: token deltas on the same stream<a class="headerlink" href="#4b-live-replies-token-deltas-on-the-same-stream" title="Permanent link">&para;</a></h3>
+<p>A run started with <code>input_data._runtime.stream: true</code> also sends the model's
+reply while it is being written, on the same SSE stream:</p>
+<div class="highlight"><pre><span></span><code>event: llm.delta
+data: {"kind":"llm.delta","run_id":"…","root_run_id":"…","parent_run_id":null,"node_id":"llm","call_id":"&lt;step id&gt;","seq":3,"text":" a natural","channel":"content","snapshot":false}
+
+event: llm.delta_end
+data: {"kind":"llm.delta_end","run_id":"…","root_run_id":"…","parent_run_id":null,"node_id":"llm","call_id":"&lt;step id&gt;","seq":24,"reason":"completed","snapshot":false}
+</code></pre></div>
+<ul>
+<li><code>call_id</code> is the step id of the LLM call; the durable <code>llm_call</code> record with
+  the same <code>step_id</code> carries the final answer and replaces the live text.</li>
+<li><code>channel</code> is <code>content</code> (the answer) or <code>reasoning</code> (thinking text, already
+  separated on the server; clients do not parse <code>&lt;think&gt;</code> themselves).</li>
+<li><code>seq</code> counts the events of one call (deltas and end).</li>
+<li>Delta frames have NO <code>id:</code> line: they are not ledger records, and
+  <code>Last-Event-ID</code> never moves because of them.</li>
+<li><strong>Snapshots.</strong> When a client connects (or reconnects) while a call is still
+  being written, it first receives one frame per open call and channel with
+  <code>snapshot: true</code> and the text so far, then the live frames. A client drops
+  its live bubbles on every (re)connect and applies the snapshots.</li>
+<li><strong>Order.</strong> A call's <code>llm.delta_end</code> is sent after its durable record; the
+  last short batch of text can arrive just after the record, so a client
+  ignores deltas of a call whose record it already holds. <code>done</code> comes after
+  every live frame.</li>
+<li><strong>Sub-runs.</strong> A stream of a run also carries the deltas of every run below
+  it (a coding agent's delegated calls); a stream of a child run carries that
+  child's subtree only. <code>run_id</code> names the run that wrote the text,
+  <code>root_run_id</code> its root.</li>
+<li><strong>Endings.</strong> <code>reason</code> is <code>completed</code>, <code>failed</code>, <code>cancelled</code> or
+  <code>unavailable</code>. <code>unavailable</code> comes with a <code>detail</code> saying why that call did
+  not stream (<code>structured_output</code>, <code>remote_core</code>, <code>provider_cannot_stream</code>,
+  <code>usage_unavailable</code>, <code>prompt_cache_unavailable</code>, <code>node_stream_off</code>,
+  <code>sink_error</code>); the answer is complete either way. When a run ends (stopped,
+  failed) while a call is still open, the gateway closes that call with
+  <code>reason: "cancelled"</code> or <code>"failed"</code> and <code>synthetic: true</code>.</li>
+<li>Nothing is capped: a call's text is kept whole until it ends, and a slow
+  client catches up from it.</li>
+<li>Another user's run answers 404, and no delta of it ever reaches anyone
+  else.</li>
+</ul>
+<p>The switch is <code>input_data._runtime.stream</code> (<code>true</code> or <code>false</code>; anything else
+is refused with 400). When a <code>POST /runs/start</code> request does not say, the
+gateway setting <code>agents.streaming_default</code> decides (off unless saved); it is
+never applied to <code>POST /runs/schedule</code>, the bridges or the entity loop. A
+flow node whose LLM call sets <code>stream: false</code> is never streamed (its end says
+<code>detail: "node_stream_off"</code>). <code>GET /api/gateway/discovery/capabilities</code>
+advertises the feature to every client:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">"streaming"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"deltas"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"default"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w"> </span><span class="nt">"run_field"</span><span class="p">:</span><span class="w"> </span><span class="s2">"_runtime.stream"</span><span class="p">,</span>
+<span class="w">              </span><span class="nt">"events"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"llm.delta"</span><span class="p">,</span><span class="w"> </span><span class="s2">"llm.delta_end"</span><span class="p">],</span><span class="w"> </span><span class="nt">"subtree"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w">              </span><span class="nt">"endpoint"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/api/gateway/runs/{run_id}/ledger/stream"</span><span class="p">,</span>
+<span class="w">              </span><span class="nt">"end_reasons"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"completed"</span><span class="p">,</span><span class="w"> </span><span class="s2">"failed"</span><span class="p">,</span><span class="w"> </span><span class="s2">"cancelled"</span><span class="p">,</span><span class="w"> </span><span class="s2">"unavailable"</span><span class="p">]}</span>
+</code></pre></div>
+<p>With <code>serve --no-runner</code> plus <code>abstractgateway runner</code>, the runner writes a
+run's deltas to <code>&lt;data dir&gt;/live/&lt;root run id&gt;.deltas.jsonl</code> (readable by the
+gateway's user only) and the API process reads them from there; the file is
+deleted when the run ends (however it ends: completed, failed, stopped, or
+stopped by the kill switch), and files of finished runs are removed at start.
+Disk use: the file holds every delta of every call of the run and of its
+sub-runs, and grows until the ROOT run ends; nothing is capped, so a long agent
+run that makes many calls (a coding agent working for an hour) can leave a file
+of several megabytes in <code>&lt;data dir&gt;/live</code> while it runs.</p>
+<p>Evidence: <code>src/abstractgateway/live_deltas.py</code>, <code>src/abstractgateway/routes/gateway.py</code>
+(<code>stream_ledger</code>, <code>_apply_run_stream_switch</code>, <code>discovery_capabilities</code>),
+<code>src/abstractgateway/hosts/bundle_host.py</code> (<code>install_live_delta_sink</code>).</p>
+<h2 id="a-runs-workspace-folder-browse-and-preview">A run's workspace folder (browse and preview)<a class="headerlink" href="#a-runs-workspace-folder-browse-and-preview" title="Permanent link">&para;</a></h2>
+<p>A run works in a folder on the gateway computer: the conversation's own
+folder the gateway made (<code>&lt;data dir&gt;/workspaces/session-…</code>), or the folder the
+client was started from. Three routes let the person who started the run see
+it; another user's run id answers 404.</p>
+<p><code>GET /api/gateway/runs/{run_id}/workspace</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"run_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"…"</span><span class="p">,</span><span class="w"> </span><span class="nt">"workspace_root"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/Users/me/Library/Application Support/abstractgateway/workspaces/session-chat-1-3f2a…"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"session"</span><span class="p">,</span><span class="w"> </span><span class="nt">"session_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"chat-1"</span><span class="p">,</span><span class="w"> </span><span class="nt">"exists"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"host"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"hostname"</span><span class="p">:</span><span class="w"> </span><span class="s2">"studio.local"</span><span class="p">,</span><span class="w"> </span><span class="nt">"caller_is_this_machine"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">},</span>
+<span class="w"> </span><span class="nt">"open_supported"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">}</span>
+</code></pre></div>
+<p><code>kind</code> is <code>session</code>, <code>run</code> or <code>launch_folder</code>. <code>open_supported</code> is true only
+for an admin sitting at the gateway computer, the only caller for whom
+<code>POST /runs/{run_id}/workspace/open</code> can open the folder; elsewhere show the
+path and the host name.</p>
+<p><code>GET /api/gateway/runs/{run_id}/workspace/files?path=&lt;folder&gt;&amp;recursive=false&amp;limit=&lt;n&gt;</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"src"</span><span class="p">,</span><span class="w"> </span><span class="nt">"entries"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"a.py"</span><span class="p">,</span><span class="w"> </span><span class="nt">"path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"src/a.py"</span><span class="p">,</span><span class="w"> </span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"file"</span><span class="p">,</span><span class="w"> </span><span class="nt">"size_bytes"</span><span class="p">:</span><span class="w"> </span><span class="mi">11</span><span class="p">,</span><span class="w"> </span><span class="nt">"mtime"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-09-25T10:00:00Z"</span><span class="p">}],</span>
+<span class="w"> </span><span class="nt">"truncated"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w"> </span><span class="nt">"limit"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"recursive"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"hidden"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"outside_links"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">"blocked"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">"other"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">}}</span>
+</code></pre></div>
+<p>Folders come first, then files, by name. <code>limit</code> is optional; when the listing
+stops there, <code>truncated</code> is true. <code>hidden</code> counts what is not shown: links
+that lead outside the folder, and entries the workspace deny list blocks.</p>
+<p><code>GET /api/gateway/runs/{run_id}/workspace/content?path=&lt;file&gt;</code> streams the
+whole file with its content type, <code>Content-Disposition: inline</code>,
+<code>X-Content-Type-Options: nosniff</code> and <code>Content-Security-Policy: sandbox</code>, and
+honours <code>Range</code> (206; 416 outside the file).</p>
+<p>Paths are relative to the folder: absolute paths and <code>..</code> are refused (400),
+a link that leads outside is refused (403), the gateway's own marker file is
+never listed nor served. The built-in deny list (credential folders such as
+<code>~/.ssh</code>, and the gateway's data folder; see
+<a href="../configuration/#workspace-policy-filesystem-scope">Configuration</a>) is never
+listed, and reading inside it answers 404, even when the run's folder
+contains it. The workspace access policy (allowed and blocked
+folders, launch-folder trust) is applied again at every call, and nothing
+else in the gateway's data folder is ever served. A run cannot be started
+with a <code>workspace_root</code> inside the gateway's data folder either, except the
+conversation folder the gateway made for the same user.</p>
 <h2 id="artifacts-and-filesystem-handoff">Artifacts and filesystem handoff<a class="headerlink" href="#artifacts-and-filesystem-handoff" title="Permanent link">&para;</a></h2>
 <p>Gateway artifacts are the cross-package representation for files, media, and
 large payloads. Thin clients should pass artifact refs across runs instead of
@@ -2224,9 +2514,13 @@ See: <a href="../maintenance/">maintenance.md</a>.</p>
 <li>Skills inventory: <code>GET /api/gateway/skills</code> — the abstractskill shelf with
   trust verdicts (roster rows <code>{name, description, trust_level, blocked,
   requires_review, tree_hash, source, has_scripts, reasons}</code>); degradations
-  are labeled <code>warnings</code>, never a fabricated list. Shelf resolution:
-  <code>ABSTRACTGATEWAY_SKILLS_SHELF</code>, else the triage repo's
-  <code>abstractskill/registry</code>.</li>
+  are labeled <code>warnings</code>, never a fabricated list. The shelf is, in order:
+  the saved setting <code>skills.shelf</code>, then the legacy launch environment value
+  (reported as such), then the gateway's own copy in
+  <code>&lt;data dir&gt;/skills/registry</code>, then a framework checkout's shelf (only when
+  that copy is missing), else none; the response names which as
+  <code>shelf_source</code> (<code>stored</code>, <code>env</code>, <code>seeded</code>, <code>checkout</code>, <code>none</code>). See
+  <a href="#skills-shelf">Skills shelf</a>.</li>
 <li>MCP server inventory: <code>GET /api/gateway/mcp/servers</code> — the declared
   registry at <code>&lt;data_dir&gt;/config/mcp_servers.json</code>
   (<code>{"version": 1, "servers": [{"name", "url"?, "description"?,
@@ -2899,6 +3193,19 @@ of these routes, like every other <code>/api/gateway/*</code> path.</p>
 <li><code>totals.model_bytes</code> sums the known <code>size_bytes</code> values and is <code>null</code> when
   no row reports a size; <code>totals.session_cache_bytes</code> behaves the same over
   the cache rows' <code>bytes</code>.</li>
+<li><code>memory.device</code> relays AbstractCore's accelerator figures, including
+  <code>process_held_bytes</code> (what this gateway process holds across its model
+  libraries: MLX, llama.cpp, transformers, embeddings) and
+  <code>process_held_basis</code>, how that figure was measured
+  (<code>metal_device_counter</code>, <code>cuda_device_counter…</code>, or <code>sum:</code> of the libraries'
+  own counts). <code>memory.resident</code> / <code>memory.held</code> name the models that hold it
+  (<code>backend</code>, model, number of holders) when the runtime reports them.</li>
+<li><code>residency_diagnostics</code> is always present (<code>{}</code> when the runtime reports
+  nothing): the dict <code>GET /models/loaded</code> returns as <code>diagnostics</code>, with <code>pending_ejects</code>
+  (models that will be ejected when their in-flight call ends) and
+  <code>last_switch_ejects</code> (what the last default-model switch ejected, kept or
+  failed to eject, with the reason). The consoles and the tray show these as
+  "Will eject X when the in-flight call ends", "X: eject failed: reason".</li>
 <li><code>totals.models</code> counts every known row — configured / cached rows included —
   while <code>totals.models_resident</code> (additive) counts only rows with
   <code>resident: true</code>. Clients that display "N loaded" must read
@@ -3045,6 +3352,13 @@ carries a <code>caches</code> array and <code>clear_all</code> always carries <c
 <code>host_memory_metrics</code>, <code>model_residency_loaded</code>, <code>model_residency_lock</code>,
 <code>model_context_estimate</code>, <code>session_prompt_caches_list</code>) and
 <code>src/abstractgateway/security/authorization.py</code> (route-family policy).</p>
+<h2 id="about-get-apigatewayabout">About (<code>GET /api/gateway/about</code>)<a class="headerlink" href="#about-get-apigatewayabout" title="Permanent link">&para;</a></h2>
+<p>Public (no sign-in): which versions this gateway runs, for About screens.</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"abstractframework"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.4.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"abstractgateway"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.5.0"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"packages"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"abstractcore"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2.16.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"abstractruntime"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.5.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"abstractskill"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.3.0"</span><span class="p">}}</span>
+</code></pre></div>
+<p><code>abstractframework</code> is null when the framework meta-package is not installed
+on the gateway computer. Versions only: no paths, host names or settings.</p>
 <h2 id="host-control-pause-desktop-tray-restart-update">Host control (pause, desktop tray, restart, update)<a class="headerlink" href="#host-control-pause-desktop-tray-restart-update" title="Permanent link">&para;</a></h2>
 <p>The process's own controls — the surface behind the desktop tray icon and
 the console's Gateway card (see <a href="../tray/">tray.md</a>). Reads are available to

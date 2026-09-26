@@ -788,6 +788,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#callers-on-this-computer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Callers on this computer
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Callers on this computer">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#desktop-assistant-sign-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Desktop Assistant sign-in
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#workspace-filesystem-scope-blacklistwhitelist" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -804,6 +832,17 @@
     <span class="md-ellipsis">
       
         Default (safe): everything outside the run workspace is blocked
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#built-in-deny-list" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Built-in deny list
       
     </span>
   </a>
@@ -1152,6 +1191,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#callers-on-this-computer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Callers on this computer
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Callers on this computer">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#desktop-assistant-sign-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Desktop Assistant sign-in
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#workspace-filesystem-scope-blacklistwhitelist" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1168,6 +1235,17 @@
     <span class="md-ellipsis">
       
         Default (safe): everything outside the run workspace is blocked
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#built-in-deny-list" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Built-in deny list
       
     </span>
   </a>
@@ -1502,7 +1580,11 @@ runtime-scoped Core capability-default routes.</p>
 <p>The route table is intentionally conservative around server filesystem access:
 browser-local files should use <code>/api/gateway/attachments/upload</code>; server
 workspace reads/imports/exports require an admin principal until a stronger
-per-user workspace grant model exists.</p>
+per-user workspace grant model exists. The one user-level exception is a run's
+own folder: the person who started a run can list and preview that run's
+workspace (<code>GET /runs/{run_id}/workspace</code>, <code>/files</code>, <code>/content</code>), confined to
+it and with the built-in deny list applied
+(<a href="../api/#a-runs-workspace-folder-browse-and-preview">api.md</a>).</p>
 <p>Capability discovery follows the same policy. Regular users can still discover
 ordinary run, ledger, artifact, upload, provider/model catalog, KG, and
 runtime-scoped defaults surfaces, but admin-only workspace artifact
@@ -1618,14 +1700,8 @@ your network:</p>
     for and refuses a loopback-only app to a browser on another machine.</li>
 <li><strong>engine and app installs for remote admins</strong>: <code>allow_engine_install</code>
     defaults to off on a non-loopback bind for callers on other computers.
-    Someone at the gateway machine itself can still install: the request's
-    socket peer is loopback or one of this host's own addresses, and it
-    carries no proxy header (<code>Forwarded</code>, <code>X-Forwarded-For</code>,
-    <code>X-Forwarded-Host</code>, <code>X-Real-IP</code>). A remote computer cannot use this
-    host's own address as the source of an established TCP connection (the
-    handshake reply never reaches it, and the kernel drops outside packets
-    with a local source address); a reverse proxy on this host would make
-    every visitor look local, which is why a proxied request never counts.</li>
+    Someone at the gateway machine itself can still install (see
+    <a href="#callers-on-this-computer">Callers on this computer</a>).</li>
 <li><strong><code>internet</code></strong>: the same bind plus an explicit acknowledgement. The gateway
   does <strong>not</strong> terminate TLS and does not configure your router or firewall.
   Put a TLS reverse proxy (Caddy, nginx, Traefik) or a tunnel (Cloudflare
@@ -1638,21 +1714,97 @@ your network:</p>
 <p>The mode is applied at the next start and <code>serve --host/--port</code> override it;
 <code>GET /api/gateway/network</code> always says what is configured, what is running,
 and why they differ.</p>
+<h2 id="callers-on-this-computer">Callers on this computer<a class="headerlink" href="#callers-on-this-computer" title="Permanent link">&para;</a></h2>
+<p>Some defaults belong to the person sitting at the gateway computer and not to
+the rest of the network: installing engines and apps
+(<a href="../configuration/#allow_engine_install"><code>allow_engine_install</code></a>), opening a
+run's folder in the file manager (<code>open_supported</code> on
+<code>GET /runs/{run_id}/workspace</code>), and the <code>caller_is_this_machine</code> fact the
+workspace routes report. One rule decides them all
+(<code>src/abstractgateway/security/same_machine.py</code>):</p>
+<ul>
+<li>The caller's address is the socket peer. <code>serve</code> runs uvicorn with
+  <code>forwarded_allow_ips</code> pinned to <code>127.0.0.1</code> and <code>::1</code> (a
+  <code>FORWARDED_ALLOW_IPS</code> value in the environment is ignored with a warning),
+  so <code>X-Forwarded-For</code> is believed only from a peer on this computer.</li>
+<li>The browser apps' servers (the AbstractCode web server and the AbstractUIC
+  app server) run on this computer and relay requests with the browser's real
+  address in <code>X-Forwarded-For</code> (overwritten, never appended) and their marker
+  header <code>X-AbstractFramework-App-Proxy: &lt;app id&gt;</code>. A browser on another
+  computer that opens an app is therefore not local; a browser on this
+  computer is.</li>
+<li>The caller is local when that address is loopback or one of this host's own
+  interface addresses. A remote computer cannot use this host's own address
+  as the source of an established TCP connection.</li>
+</ul>
+<p>Fail-safes:</p>
+<ul>
+<li>A request with the app-proxy marker but no <code>X-Forwarded-For</code> is never local
+  (a proxy that dropped the header would make every browser look local).</li>
+<li>While the gateway trusts a reverse proxy (<code>trust_proxy</code>), a request relayed
+  by an app server is never local: the reverse proxy hides the browser's
+  address. For this rule the saved <code>trust_proxy</code> setting decides first; the
+  <code>ABSTRACTGATEWAY_TRUST_PROXY</code> launch environment counts only when nothing
+  is saved.</li>
+<li>A forwarded header (<code>X-Forwarded-For</code>, <code>Forwarded</code>, <code>X-Forwarded-Host</code>,
+  <code>X-Real-IP</code>) sent by a peer that is not on this computer is never local,
+  and neither is a request that carries a proxy header other than
+  <code>X-Forwarded-For</code> (a proxy this rule cannot read).</li>
+</ul>
+<p>Native clients on this computer (the web console, the terminal console, the
+Assistant, the tray) call the gateway directly, so their loopback peer
+decides.</p>
+<h3 id="desktop-assistant-sign-in">Desktop Assistant sign-in<a class="headerlink" href="#desktop-assistant-sign-in" title="Permanent link">&para;</a></h3>
+<p>The Assistant opened from the console or the tray is signed in through a
+one-time code the gateway writes into a file only your account can read
+(<code>&lt;data dir&gt;/handover/&lt;random&gt;.json</code>, mode 0600) and names on the Assistant's
+command line (<code>--gateway-handover-file</code>); the code itself is never on a command
+line or in the environment. The Assistant trades it at
+<code>POST /api/gateway/apps/desktop-handover</code>, which answers only a direct caller
+on this computer (no proxy header and no app-server session header; 403
+otherwise), once, within two minutes (410 after). The resulting session is a
+remembered session (30 days) of the user who clicked Open. See
+<a href="../apps/">apps.md</a> and
+<a href="../architecture/#desktop-assistant-hand-over">architecture.md</a>.</p>
 <h2 id="workspace-filesystem-scope-blacklistwhitelist">Workspace filesystem scope (blacklist/whitelist)<a class="headerlink" href="#workspace-filesystem-scope-blacklistwhitelist" title="Permanent link">&para;</a></h2>
 <p>AbstractGateway supports “thin clients” (browser UIs, bridges) that can trigger <strong>filesystem-ish tools</strong> (e.g. <code>list_files</code>, <code>read_file</code>, <code>write_file</code>). To avoid a thin client expanding server filesystem access, the gateway enforces a <strong>workspace policy</strong>.</p>
 <p>Key point: the <strong>main configuration</strong> for filesystem allowlisting/denylisting is set when you <strong>launch the gateway</strong> (operator-controlled env vars). Thin clients can only request broader scopes when the gateway is started in a permissive mode.</p>
 <h3 id="default-safe-everything-outside-the-run-workspace-is-blocked">Default (safe): everything outside the run workspace is blocked<a class="headerlink" href="#default-safe-everything-outside-the-run-workspace-is-blocked" title="Permanent link">&para;</a></h3>
 <ul>
-<li>When a run is started via <code>POST /api/gateway/runs/start</code> and <code>workspace_root</code> is missing (or rejected), the gateway creates a <strong>per-run workspace</strong> under:</li>
-<li><code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/workspaces/&lt;uuid&gt;</code></li>
+<li>Every run the gateway starts works in a folder, whatever started it (the
+  HTTP routes, the Telegram, email and agora bridges, entity summons,
+  scheduled runs). A run that names no <code>workspace_root</code> works in its
+  conversation's gateway-made folder, <code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/workspaces/session-…</code>
+  (or a per-run folder when it has no session).</li>
 <li>AbstractRuntime applies workspace scoping to filesystem-ish tool arguments. The default is:</li>
 <li><code>workspace_access_mode=workspace_only</code></li>
 <li>absolute paths must stay under <code>workspace_root</code></li>
+<li>A client <code>workspace_root</code> inside the gateway's data folder is refused (400),
+  except the conversation folder the gateway made for the same user; the same
+  check runs on <code>POST /runs/start</code>, <code>POST /runs/schedule</code> and entity summons.</li>
 </ul>
 <p>This means that by default, <strong>all absolute paths are effectively “blacklisted”</strong> except the run’s <code>workspace_root</code>.</p>
+<h3 id="built-in-deny-list">Built-in deny list<a class="headerlink" href="#built-in-deny-list" title="Permanent link">&para;</a></h3>
+<p>Whatever the workspace policy allows, the gateway's data folder and the
+credential and configuration folders of the gateway's user account (<code>~/.ssh</code>,
+<code>~/.aws</code>, <code>~/.gnupg</code>, <code>~/.config/gcloud</code>, <code>~/.kube</code>, <code>~/Library/Keychains</code>,
+<code>~/.abstractgateway</code>, <code>~/.abstractcode</code>, <code>~/.abstractassistant</code>,
+<code>~/.abstractcontinuum</code>, <code>~/.abstractcore</code>) are:</p>
+<ul>
+<li>never listed or served by the workspace browser, for anyone, even when a
+  run's folder contains them;</li>
+<li>denied to every run's file tools, as whole-folder rules
+  (<code>workspace_builtin_deny_prefixes</code>) with the run's own folder inside the
+  data folder as the one exception (<code>workspace_builtin_allow</code>). Clients cannot
+  send these two entries (they are dropped), and the rules are enforced
+  without being written into the model's prompt. An admin can turn the run
+  side off with the <code>workspace_builtin_deny</code> setting; the browser keeps hiding
+  the folders.</li>
+</ul>
 <p>Evidence:
-- Run default workspace injection: <code>src/abstractgateway/routes/gateway.py</code> (<code>start_run</code>)
+- Every run start: <code>src/abstractgateway/run_workspace_guard.py</code> (called from <code>WorkflowBundleGatewayHost.start_run</code>)
 - Client scope clamping: <code>src/abstractgateway/routes/gateway.py</code> (<code>_sanitize_run_workspace_policy</code>, <code>_client_workspace_scope_overrides_enabled</code>)
+- Browse and preview: <code>src/abstractgateway/workspace_browse.py</code>
 - Runtime tool scoping: <code>abstractruntime/integrations/abstractcore/workspace_scoped_tools.py</code>
 - Tests: <code>tests/test_gateway_workspace_policy_enforcement.py</code></p>
 <h3 id="operator-controlled-allowlist-roots-recommended">Operator-controlled allowlist roots (recommended)<a class="headerlink" href="#operator-controlled-allowlist-roots-recommended" title="Permanent link">&para;</a></h3>
@@ -1678,7 +1830,7 @@ Runtime execution.</p>
 - <code>workspace_access_mode=all_except_ignored</code> (“full access” unless explicitly blocked)</p>
 <p>Do <strong>not</strong> enable this when serving untrusted browser origins: a compromised thin client can request access to arbitrary server paths.</p>
 <h3 id="important-limitation-all-modes">Important limitation (all modes)<a class="headerlink" href="#important-limitation-all-modes" title="Permanent link">&para;</a></h3>
-<p><code>execute_command</code> is <strong>not</strong> an OS sandbox: even if the runtime sets the default working directory under <code>workspace_root</code>, the command itself can reference absolute paths or <code>cd ..</code>.</p>
+<p><code>execute_command</code> is <strong>not</strong> an OS sandbox: even if the runtime sets the default working directory under <code>workspace_root</code>, the command itself can reference absolute paths or <code>cd ..</code>. The built-in deny list does not confine shell commands either.</p>
 <h2 id="common-security-env-vars">Common security env vars<a class="headerlink" href="#common-security-env-vars" title="Permanent link">&para;</a></h2>
 <p>All are loaded by <code>load_gateway_auth_policy_from_env()</code> (see <code>src/abstractgateway/security/gateway_security.py</code>).</p>
 <h3 id="enabledisable">Enable/disable<a class="headerlink" href="#enabledisable" title="Permanent link">&para;</a></h3>
@@ -1743,8 +1895,12 @@ Runtime execution.</p>
   it applies to the next request. Only when your own proxy sits in front of
   every request; otherwise any client chooses the address the gateway sees.
   The ephemeral tray token never honours it (raw socket peer only).</li>
-<li>A gateway started with <code>ABSTRACTGATEWAY_TRUST_PROXY</code> in its environment uses
-  that value instead; the status reports <code>overridden_by_env: true</code>.</li>
+<li>Trust proxy follows one rule everywhere (IP attribution, lockouts, the
+  same-machine rule and the network status): the saved setting first, and the
+  <code>ABSTRACTGATEWAY_TRUST_PROXY</code> environment variable only while nothing is
+  saved. Once the switch has been saved, the variable no longer applies to
+  that data folder; use <code>abstractgateway network set --trust-proxy on|off</code>
+  (see <a href="#callers-on-this-computer">Callers on this computer</a>).</li>
 </ul>
 <h2 id="production-checklist-minimal">Production checklist (minimal)<a class="headerlink" href="#production-checklist-minimal" title="Permanent link">&para;</a></h2>
 <ul>

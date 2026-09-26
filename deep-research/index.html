@@ -917,21 +917,23 @@
 
 
 <h1 id="deep-research-shipped-workflow"><code>deep-research</code> Shipped Workflow<a class="headerlink" href="#deep-research-shipped-workflow" title="Permanent link">&para;</a></h1>
-<p>Gateway packages <code>deep-research@0.1.7.flow</code> as a supported shipped bundle. It
+<p>Gateway packages <code>deep-research@0.1.8.flow</code> as a supported shipped bundle. It
 is available from the normal bundle registry alongside <code>basic-agent</code> when the
 packaged bundle directory is used. It replaces the <code>dp-research</code> bundle id,
 which is no longer shipped.</p>
 <h2 id="contract">Contract<a class="headerlink" href="#contract" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Bundle id: <code>deep-research</code></li>
-<li>Version: <code>0.1.7</code></li>
+<li>Version: <code>0.1.8</code></li>
 <li>Entrypoint flow id: <code>deep-research</code></li>
 <li>Interfaces: <code>abstractcode.agent.v1</code>, <code>abstractresearch.deep.v1</code></li>
 <li>Editable source flows: <code>abstractflow/examples/flows/deep-*.json</code></li>
 </ul>
 <p>The workflow exposes a small product-facing input contract:</p>
 <ul>
-<li><code>request</code>: what should be researched.</li>
+<li><code>request</code>: what should be researched. AbstractCode and other
+  <code>abstractcode.agent.v1</code> hosts send the user's message as <code>prompt</code>; the
+  workflow researches <code>prompt</code> when <code>request</code> is empty.</li>
 <li><code>viewpoint</code>: the angle, thesis, audience stance, or evaluation lens.</li>
 <li><code>effort</code>: <code>quick</code>, <code>standard</code>, or <code>thorough</code>.</li>
 <li><code>provider</code> / <code>model</code>: optional overrides. Leave blank to use Gateway/Core
@@ -943,6 +945,7 @@ source/citation policy, export title, and export prefix. The derived review
 round count is enforced by a root <code>For</code> control node: each round runs
 investigation, persists the latest evidence, runs adversarial review, persists
 reviewer guidance, and feeds that guidance into the next investigation pass.</p>
+<p>The end node's <code>success</code> output is <code>true</code> when the run produced a report.</p>
 <p>Derived <code>deadline_minutes</code> and <code>max_sources</code> are carried into prompts and audit
 objects; they do not preempt an in-flight provider call.</p>
 <h2 id="tool-and-export-policy">Tool And Export Policy<a class="headerlink" href="#tool-and-export-policy" title="Permanent link">&para;</a></h2>

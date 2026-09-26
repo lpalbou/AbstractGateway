@@ -886,6 +886,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#why-does-the-workspace-browser-never-show-ssh-or-the-gateways-data-folder" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why does the workspace browser never show ~/.ssh or the gateway's data folder?
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -997,6 +1008,28 @@
     <span class="md-ellipsis">
       
         How do I run a specific bundle version?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#which-workflow-does-gateway-default-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which workflow does "Gateway default" run?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#can-i-see-the-reply-while-the-model-writes-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can I see the reply while the model writes it?
       
     </span>
   </a>
@@ -1341,6 +1374,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#why-does-the-workspace-browser-never-show-ssh-or-the-gateways-data-folder" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why does the workspace browser never show ~/.ssh or the gateway's data folder?
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1452,6 +1496,28 @@
     <span class="md-ellipsis">
       
         How do I run a specific bundle version?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#which-workflow-does-gateway-default-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Which workflow does "Gateway default" run?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#can-i-see-the-reply-while-the-model-writes-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can I see the reply while the model writes it?
       
     </span>
   </a>
@@ -1715,6 +1781,11 @@ console and the browser apps.</p>
 - or (safer) allow unauthenticated reads on loopback only: <code>ABSTRACTGATEWAY_DEV_READ_NO_AUTH=1</code>
 - or fine-tune: <code>ABSTRACTGATEWAY_PROTECT_READ=0</code>, <code>ABSTRACTGATEWAY_PROTECT_WRITE=0</code></p>
 <p>Evidence: env policy loader in <code>src/abstractgateway/security/gateway_security.py</code>.</p>
+<h3 id="why-does-the-workspace-browser-never-show-ssh-or-the-gateways-data-folder">Why does the workspace browser never show <code>~/.ssh</code> or the gateway's data folder?<a class="headerlink" href="#why-does-the-workspace-browser-never-show-ssh-or-the-gateways-data-folder" title="Permanent link">&para;</a></h3>
+<p>The gateway's data folder and the credential folders of its user account are
+on a built-in deny list: never listed or served, and denied to runs' file
+tools by default, even when a run's folder contains them. See
+<a href="../security/#built-in-deny-list">security.md</a>.</p>
 <h2 id="storage">Storage<a class="headerlink" href="#storage" title="Permanent link">&para;</a></h2>
 <h3 id="where-is-data-stored">Where is data stored?<a class="headerlink" href="#where-is-data-stored" title="Permanent link">&para;</a></h3>
 <p>Everything is rooted at <code>ABSTRACTGATEWAY_DATA_DIR</code>:</p>
@@ -1759,6 +1830,24 @@ The background runner polls the inbox and applies commands asynchronously.</p>
 - pass <code>bundle_id</code> + <code>bundle_version</code>
 - or pass a namespaced <code>flow_id</code> like <code>bundle@version:flow</code> (this also works for selecting “latest” via <code>bundle:flow</code>)</p>
 <p>Evidence: bundle selection in <code>src/abstractgateway/hosts/bundle_host.py</code> (<code>start_run</code>).</p>
+<h3 id="which-workflow-does-gateway-default-run">Which workflow does "Gateway default" run?<a class="headerlink" href="#which-workflow-does-gateway-default-run" title="Permanent link">&para;</a></h3>
+<p>The one saved for the app's agent interface under
+<code>agents.default_workflow.&lt;interface&gt;</code> (for example
+<code>abstractcode.agent.v1</code>); with nothing saved, AbstractCode's interface runs the
+shipped <code>basic-agent</code>, and the Assistant's interface has no gateway default
+(the Assistant uses its built-in orchestrator). Apps start such runs with
+<code>flow_id: "@default"</code> and the interface; the gateway resolves it at every
+start, answers the choice as <code>resolved_workflow</code>, and refuses the start (409)
+rather than run another workflow when the saved one cannot run. Change it in
+the console (Workflows), the terminal console, or with
+<code>abstractgateway config set agents.default_workflow.&lt;interface&gt; bundle[@version]:flow</code>.
+See <a href="../configuration/#default-agent-workflow">configuration.md</a>.</p>
+<h3 id="can-i-see-the-reply-while-the-model-writes-it">Can I see the reply while the model writes it?<a class="headerlink" href="#can-i-see-the-reply-while-the-model-writes-it" title="Permanent link">&para;</a></h3>
+<p>Yes. Start the run with <code>input_data._runtime.stream: true</code> (or turn on
+<code>agents.streaming_default</code> so interactive runs stream when the app does not
+say) and read the run's ledger stream: the text arrives as <code>llm.delta</code>
+frames, and the durable <code>llm_call</code> record still carries the final answer.
+See <a href="../api/#4b-live-replies-token-deltas-on-the-same-stream">api.md</a>.</p>
 <h3 id="where-does-a-bundles-default-model-come-from">Where does a bundle's default model come from?<a class="headerlink" href="#where-does-a-bundles-default-model-come-from" title="Permanent link">&para;</a></h3>
 <p>From the execution-host <code>input.text</code> capability route (the console's
 <strong>Multimodal</strong> tab, <strong>Use as default</strong> in <strong>Models</strong>, or
@@ -1863,7 +1952,8 @@ asserts triples.</p>
 gateway with <code>abstractgateway serve</code> on a desktop session. The icon has no
 on/off setting: while the gateway serves a desktop that can show it, it is
 there. The boot log says <code>Desktop tray: started (pid …)</code> or names the reason
-it is absent (<code>missing_dependency</code>, <code>headless</code>, <code>dev_reload</code>, <code>runner_only</code>);
+it is absent (<code>missing_dependency</code>, <code>headless</code>, <code>dev_reload</code>, <code>runner_only</code>,
+<code>no_tray_flag</code> for <code>serve --no-tray</code>);
 the console's <strong>Resources</strong> tab shows the same. On Linux the GTK/AppIndicator
 bindings are needed; GNOME also needs the AppIndicator extension. Details:
 <a href="../tray/">tray.md</a> and

@@ -404,6 +404,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#stream-replies-by-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stream replies by default
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memory-figures-on-resources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory figures on Resources
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#models-and-engines-tabs" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -921,6 +943,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#stream-replies-by-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stream replies by default
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#memory-figures-on-resources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Memory figures on Resources
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#models-and-engines-tabs" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1068,7 +1112,7 @@ You can also sign in with a user id and token (the admin's first token is in
 </tr>
 <tr>
 <td><strong>Workflows</strong></td>
-<td>every registered workflow with versions and entrypoints, import, export, delete, and versions that are not served (with the reason)</td>
+<td>the default agent workflow for each agent interface (what "Gateway default" runs in the apps), the <strong>Stream replies by default</strong> switch, every registered workflow with versions and entrypoints (<em>Make agent default</em> on an entrypoint), import, export, delete, and versions that are not served (with the reason)</td>
 </tr>
 <tr>
 <td><strong>Providers</strong></td>
@@ -1107,8 +1151,67 @@ You can also sign in with a user id and token (the admin's first token is in
 <p>The <strong>Technical details</strong> switch at the bottom of the sidebar shows commands,
 route ids and other technical information throughout the console. The top bar
 holds the docs assistant (answers grounded on this gateway's documentation),
-the appearance settings, the <strong>Setup</strong> button that reopens the first-run guide
-(admins), and the sign-out control.</p>
+the appearance settings, <strong>About</strong>, the <strong>Setup</strong> button that reopens the
+first-run guide (admins), and the sign-out control.</p>
+<p><strong>About</strong> (the <em>i</em> button) shows AbstractGateway and the version this gateway
+runs, that it is part of AbstractFramework, the author, the copyright and
+licence, the website, source, documentation, issue and feedback links, the
+contact address, then the versions the gateway reports on <code>GET
+/api/gateway/about</code>: AbstractGateway, AbstractFramework (or "not installed on
+the gateway host") and every installed AbstractFramework package. If the
+gateway cannot report them, one line says "Gateway: unavailable (reason)".</p>
+<h3 id="stream-replies-by-default">Stream replies by default<a class="headerlink" href="#stream-replies-by-default" title="Permanent link">&para;</a></h3>
+<p>Under the default agent workflows on the Workflows tab, <strong>Stream replies by
+default</strong> turns <code>agents.streaming_default</code> on or off. When it is on, an
+interactive run whose app does not choose shows the model's reply as it is
+written. Scheduled runs, bridges and the entity loop never stream. The switch
+saves as soon as you change it (admins); the pill says whether the value is
+saved or the default. A gateway that does not have this setting says "Not
+available on this gateway". The same setting is in the terminal console
+(Runtimes → <em>Runtime knobs</em> → <em>Edit stream replies</em>) and in
+<code>abstractgateway config set agents.streaming_default true|false</code>.</p>
+<h3 id="memory-figures-on-resources">Memory figures on Resources<a class="headerlink" href="#memory-figures-on-resources" title="Permanent link">&para;</a></h3>
+<p>The accelerator meter shows the larger of two figures and names it: the
+memory <strong>this gateway process</strong> holds ("this process only"), or the
+system-wide figure ("all processes"), which on macOS does not see MLX memory.
+The process figure covers every model library in the gateway (MLX, llama.cpp
+GGUF engines, transformers and embeddings), and the meter's tooltip says how
+it was measured:</p>
+<table>
+<thead>
+<tr>
+<th>Measured by</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>metal device counter</td>
+<td>the Mac's GPU counter for this process (MLX, torch and llama.cpp memory are all inside it)</td>
+</tr>
+<tr>
+<td>cuda device counter</td>
+<td>what PyTorch has reserved on the NVIDIA GPUs, plus the llama.cpp estimate when a GGUF model is loaded</td>
+</tr>
+<tr>
+<td>sum of MLX + llama.cpp</td>
+<td>MLX's live and cached buffers plus the llama.cpp estimate (weights plus the KV cache estimate), when no device counter is available</td>
+</tr>
+</tbody>
+</table>
+<p>When no model is listed as resident but the process still holds memory, the
+resident-models table says "Gateway still holds N GB of accelerator memory (no
+model listed)", then how it was measured, what holds it (for example <code>[mlx]
+qwen/27b × 2 holders</code>, or "not attributed to any model" when no model library
+reports it), and the two ways out: eject the held model, or restart the
+gateway. A model the gateway's own pool released but another part of the
+process still holds is marked <strong>resident via other holders</strong>; ejecting it
+frees every holder.</p>
+<p>Above the table, the gateway also lists the ejects it still owes or that
+failed after you switched the default model: "Will eject X when the in-flight
+call ends" (the old model is still answering a call), "X: eject failed:
+reason", "X kept in memory: reason" (something else still uses it) and "X
+ejected".</p>
 <h3 id="models-and-engines-tabs">Models and Engines tabs<a class="headerlink" href="#models-and-engines-tabs" title="Permanent link">&para;</a></h3>
 <p>Everything these two tabs show and do happens <strong>on the gateway host</strong>: the
 machine that runs <code>abstractgateway serve</code>, not the computer your browser runs
@@ -1264,6 +1367,13 @@ the terminal version needs the Rust toolchain, or when the browser is on
 another computer, the plain view shows no terminal button (the commands are
 under Technical details, as is "Install terminal app" for a browser app that
 is installed without it).</p>
+<p>Below the cards, the <strong>Skills shelf</strong> block shows the folder the gateway
+reads skills from, where that folder comes from (saved setting, the gateway's
+own copy, the environment, or a framework checkout), the version of the
+curated shelf shipped with this gateway, and how many skills the shelf holds.
+Admins can type another folder and <strong>Save skills shelf</strong>, or <strong>Refresh the
+curated shelf</strong> (new and updated curated skills are copied in; your own edits
+are kept). See <a href="../configuration/#skills-shelf">configuration.md</a>.</p>
 <p>The last card is the <strong>Assistant</strong>, the desktop app: <strong>Install</strong> when it is
 not on the gateway's computer, then <strong>Open</strong> (it starts in the menu bar of the
 gateway's computer, or comes to the front when it already runs). From another
@@ -1309,8 +1419,18 @@ selector and a Test verb per route), Users &amp; Entities, Runtimes (runs with
 cancel and steer, data homes), Workflows, Review &amp; Test (the session's change
 journal), Resources, Models and Engines. Every write is verified with a
 follow-up read and recorded in the journal. Keys: <code>Tab</code> focus, <code>Enter</code>
-activate, <code>1</code>-<code>9</code> and <code>0</code> screens, <code>r</code> refresh, <code>q</code> quit; each screen lists its
-actions in the footer.</p>
+activate, <code>1</code>-<code>9</code> and <code>0</code> screens, <code>r</code> refresh, <code>F1</code> or <code>?</code> About, <code>q</code> quit;
+each screen lists its actions in the footer.</p>
+<p><strong>About</strong> (<code>F1</code>, or <code>?</code> outside a text field) shows this console and its
+version, that it is part of AbstractFramework, the author, the copyright and
+licence, the links and the contact address, then the connected gateway's
+versions from <code>GET /api/gateway/about</code> (or one "Gateway: unavailable (reason)"
+line). <code>abstractgateway-console --about --url &lt;gateway&gt;</code> prints the same
+text without opening the interface.</p>
+<p>The Runtimes screen's <em>Runtime knobs</em> show <strong>stream replies</strong> (on or off, and
+whether it is saved or the default); <em>Edit stream replies</em> changes it
+(admins). A gateway without the setting shows "not available on this
+gateway".</p>
 <h3 id="models-and-engines-in-the-terminal-console">Models and Engines in the terminal console<a class="headerlink" href="#models-and-engines-in-the-terminal-console" title="Permanent link">&para;</a></h3>
 <p>Screens 9 (<strong>Models</strong>) and 0 (<strong>Engines</strong>) are AbstractCore's own screens,
 taken from the <code>abstractcore-console</code> crate rather than rebuilt, so they look

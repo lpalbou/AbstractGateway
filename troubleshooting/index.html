@@ -829,6 +829,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-gateway-does-not-start-this-gateway-needs-abstractruntime" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The gateway does not start: "this gateway needs abstractruntime&gt;=…"
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-one-time-sign-in-link-does-not-work" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -944,6 +955,39 @@
     <span class="md-ellipsis">
       
         A run stays RUNNING and nothing happens
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-run-start-answers-409-naming-agentsdefault_workflowinterface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A run start answers 409 naming agents.default_workflow.&lt;interface&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#replies-arrive-only-at-the-end-no-live-text" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Replies arrive only at the end (no live text)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-skills-list-is-empty" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The skills list is empty
       
     </span>
   </a>
@@ -1099,6 +1143,17 @@
     <span class="md-ellipsis">
       
         There is no tray icon
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-assistant-opened-from-the-console-is-not-signed-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Assistant opened from the console is not signed in
       
     </span>
   </a>
@@ -1201,6 +1256,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-gateway-does-not-start-this-gateway-needs-abstractruntime" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The gateway does not start: "this gateway needs abstractruntime&gt;=…"
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-one-time-sign-in-link-does-not-work" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1316,6 +1382,39 @@
     <span class="md-ellipsis">
       
         A run stays RUNNING and nothing happens
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-run-start-answers-409-naming-agentsdefault_workflowinterface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A run start answers 409 naming agents.default_workflow.&lt;interface&gt;
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#replies-arrive-only-at-the-end-no-live-text" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Replies arrive only at the end (no live text)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-skills-list-is-empty" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The skills list is empty
       
     </span>
   </a>
@@ -1478,6 +1577,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-assistant-opened-from-the-console-is-not-signed-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The Assistant opened from the console is not signed in
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#start-at-login-reads-needs-repair-service-status-broken" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1549,6 +1659,12 @@ abstractgateway<span class="w"> </span>serve
 or easy to guess, on a non-loopback bind or with public wildcard origins.</p>
 <p><strong>Fix.</strong> Use a long random token, or use user accounts
 (<code>ABSTRACTGATEWAY_USER_AUTH=1</code>). See <a href="../security/">security.md</a>.</p>
+<h3 id="the-gateway-does-not-start-this-gateway-needs-abstractruntime">The gateway does not start: "this gateway needs abstractruntime&gt;=…"<a class="headerlink" href="#the-gateway-does-not-start-this-gateway-needs-abstractruntime" title="Permanent link">&para;</a></h3>
+<p>The installed AbstractRuntime lacks live token deltas or the built-in tool
+deny rules the gateway relies on; the message names what is missing. Upgrade
+it in the gateway's Python, then start again:</p>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>-U<span class="w"> </span><span class="s2">"abstractruntime&gt;=0.5.0"</span>
+</code></pre></div>
 <h3 id="the-one-time-sign-in-link-does-not-work">The one-time sign-in link does not work<a class="headerlink" href="#the-one-time-sign-in-link-does-not-work" title="Permanent link">&para;</a></h3>
 <p><strong>Checks and fixes.</strong></p>
 <ul>
@@ -1662,6 +1778,35 @@ and set the mode again. See <a href="../security/#network-exposure">security.md<
   in the console): resume it from the tray, the console, or
   <code>POST /api/gateway/host/resume</code>.</li>
 </ul>
+<h3 id="a-run-start-answers-409-naming-agentsdefault_workflowinterface">A run start answers 409 naming <code>agents.default_workflow.&lt;interface&gt;</code><a class="headerlink" href="#a-run-start-answers-409-naming-agentsdefault_workflowinterface" title="Permanent link">&para;</a></h3>
+<p>The run asked for the gateway default (<code>flow_id: "@default"</code>), and the saved
+default for that interface cannot run: its workflow was removed or
+deprecated, or no longer declares the interface. The message names the
+setting and where its value comes from. Choose another workflow in the
+console (Workflows → <em>Default agent workflow</em>), or run
+<code>abstractgateway config unset agents.default_workflow.&lt;interface&gt;</code> to return
+to the built-in default. A 400 means the request itself is wrong: <code>interface</code>
+is missing, or <code>bundle_id</code>/<code>bundle_version</code> were sent with <code>@default</code>. See
+<a href="../configuration/#default-agent-workflow">configuration.md</a>.</p>
+<h3 id="replies-arrive-only-at-the-end-no-live-text">Replies arrive only at the end (no live text)<a class="headerlink" href="#replies-arrive-only-at-the-end-no-live-text" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The run did not ask for streaming: send <code>input_data._runtime.stream: true</code>,
+  or turn on <code>agents.streaming_default</code> (it applies to interactive
+  <code>POST /runs/start</code> only, never to schedules, bridges or the entity loop).</li>
+<li>The call could not stream: its <code>llm.delta_end</code> says <code>reason: "unavailable"</code>
+  with a <code>detail</code> (for example <code>structured_output</code>, <code>node_stream_off</code>,
+  <code>provider_cannot_stream</code>); the answer is complete either way.</li>
+<li><code>GET /api/gateway/discovery/capabilities</code> must show
+  <code>capabilities.streaming.deltas: true</code>.</li>
+</ul>
+<p>See <a href="../api/#4b-live-replies-token-deltas-on-the-same-stream">api.md</a>.</p>
+<h3 id="the-skills-list-is-empty">The skills list is empty<a class="headerlink" href="#the-skills-list-is-empty" title="Permanent link">&para;</a></h3>
+<p><code>GET /api/gateway/skills</code> says why in <code>warnings</code> and which shelf it read in
+<code>shelf_source</code>. A saved <code>skills.shelf</code> that does not exist or holds no
+<code>skills/</code> folder is reported as unavailable; unset it to use the gateway's own
+copy, or refresh that copy with <em>Refresh the curated shelf</em> (console, Apps) or
+<code>POST /api/gateway/admin/skills/reseed</code>. See
+<a href="../configuration/#skills-shelf">configuration.md</a>.</p>
 <h3 id="llm-nodes-but-no-default-providermodel-is-configured">"LLM nodes but no default provider/model is configured"<a class="headerlink" href="#llm-nodes-but-no-default-providermodel-is-configured" title="Permanent link">&para;</a></h3>
 <p>Configure the text route, for example:</p>
 <div class="highlight"><pre><span></span><code>abstractgateway-config<span class="w"> </span>set-default<span class="w"> </span>input.text<span class="w"> </span><span class="se">\</span>
@@ -1785,12 +1930,24 @@ Choose <strong>Use the gateway's own folder</strong> in Continuum or the console
 <td><code>runner_only</code></td>
 <td>the tray belongs to the process that serves the console</td>
 </tr>
+<tr>
+<td><code>no_tray_flag</code></td>
+<td>the gateway was started with <code>serve --no-tray</code>; start it without the flag</td>
+</tr>
 </tbody>
 </table>
 <p>GNOME needs the AppIndicator extension. If the helper started and then
 disappeared, read <code>&lt;data dir&gt;/logs/tray.log</code>; <code>GET /api/gateway/host/tray</code>
 reports its exit code, and <code>POST /api/gateway/host/tray/show</code> (admin) starts
 it again. See <a href="../tray/">tray.md</a>.</p>
+<h3 id="the-assistant-opened-from-the-console-is-not-signed-in">The Assistant opened from the console is not signed in<a class="headerlink" href="#the-assistant-opened-from-the-console-is-not-signed-in" title="Permanent link">&para;</a></h3>
+<ul>
+<li>It was already running: a running Assistant receives no sign-in code. Quit
+  it and open it again from the console or the tray.</li>
+<li>More than two minutes passed before it started, or the code was already
+  used: open it again from the console.</li>
+</ul>
+<p>See <a href="../apps/">apps.md</a>.</p>
 <h3 id="start-at-login-reads-needs-repair-service-status-broken">"Start at login" reads "needs repair" (<code>service status</code>: <code>broken</code>)<a class="headerlink" href="#start-at-login-reads-needs-repair-service-status-broken" title="Permanent link">&para;</a></h3>
 <p>The registration points at a program that no longer exists (a moved or
 reinstalled gateway), is unreadable or disabled, or pins <code>--host/--port</code> so

@@ -1155,6 +1155,8 @@ migration.</p>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Python <code>&gt;=3.10</code> (see <code>pyproject.toml</code>)</li>
+<li>AbstractRuntime 0.5.0 or later, installed with the gateway; the gateway
+  refuses to start on an older runtime and names the version to install</li>
 <li>Workflows: none needed to start. The gateway serves its shipped bundles
   (<a href="../shipped-workflows/">shipped-workflows.md</a>); you can point it at your
   own <code>.flow</code> bundles or upload them after startup
@@ -1241,6 +1243,13 @@ abstractgateway-config<span class="w"> </span>status
 </code></pre></div>
 <p>Notes:
 - If a bundle has multiple entrypoints and no default, you must pass <code>flow_id</code>.
+- To run the gateway's default agent for an interface instead of naming a
+  bundle, send <code>{"flow_id": "@default", "interface": "abstractcode.agent.v1", ...}</code>
+  (<a href="../configuration/#default-agent-workflow">configuration.md</a>).
+- Add <code>"_runtime": {"stream": true}</code> to <code>input_data</code> to receive the model's
+  reply live on the ledger stream
+  (<a href="../api/#4b-live-replies-token-deltas-on-the-same-stream">api.md</a>).
+- Every start answers <code>resolved_workflow</code>, the workflow the run really runs.
 - See <a href="../api/">api.md</a> for ledger replay/stream and durable commands.</p>
 <h2 id="2b-optional-schedule-a-run-bundle-mode">2b) (Optional) Schedule a run (bundle mode)<a class="headerlink" href="#2b-optional-schedule-a-run-bundle-mode" title="Permanent link">&para;</a></h2>
 <p>To launch a workflow periodically, start a <strong>scheduled parent run</strong>:</p>
@@ -1277,7 +1286,7 @@ require <code>abstractgateway[embeddings]</code>.</p>
 customization.</p>
 <p>On first start, the container creates <code>default/admin</code> and writes the token to
 <code>runtime/auth/bootstrap-admin-token</code>. NVIDIA hosts can try
-<code>ghcr.io/lpalbou/abstractgateway:0.4.3-gpu</code> with the compose overlay in
+<code>ghcr.io/lpalbou/abstractgateway:0.5.0-gpu</code> with the compose overlay in
 <code>docker/abstractgateway-server/compose.nvidia.yml</code>.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.

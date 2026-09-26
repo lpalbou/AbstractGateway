@@ -706,6 +706,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#live-replies-token-deltas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Live replies (token deltas)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workspace-guard-every-run-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workspace guard (every run start)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#desktop-assistant-hand-over" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Desktop Assistant hand-over
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#thin-client-control-plane" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -974,6 +1007,39 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#live-replies-token-deltas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Live replies (token deltas)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#workspace-guard-every-run-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workspace guard (every run start)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#desktop-assistant-hand-over" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Desktop Assistant hand-over
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#thin-client-control-plane" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1069,8 +1135,10 @@ desktop Assistant, scripts) and <strong>AbstractRuntime</strong>:</p>
 <ul>
 <li><strong>AbstractGateway</strong> (this package): HTTP/SSE API, durability glue, security,
   and the operator control plane.</li>
-<li><strong>AbstractRuntime</strong> (required): run model, tick loop, workflow registry and
-  stores.</li>
+<li><strong>AbstractRuntime</strong> (required, 0.5.0 or later): run model, tick loop,
+  workflow registry, stores, live token deltas and the workspace-scoped tools.
+  The gateway checks the installed runtime when it builds its workflow host and
+  refuses to start on an older one, naming the version to install.</li>
 <li><strong>AbstractCore</strong> (required, reached through Runtime facades): providers,
   tools, media capabilities, capability-route defaults, the model catalog,
   engine detection and host jobs (downloads, deletes).</li>
@@ -1082,56 +1150,80 @@ desktop Assistant, scripts) and <strong>AbstractRuntime</strong>:</p>
 <h2 id="system-overview">System overview<a class="headerlink" href="#system-overview" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code>flowchart LR
   subgraph Clients["Clients"]
-    Browser["Browser: /console and browser apps"]
+    Browser["Browser: /console"]
+    AppSrv["Browser app servers on 127.0.0.1&lt;br/&gt;(Flow, Code, Observer, Continuum, Entity)"]
     TUI["Terminal apps: abstractgateway-console, Code"]
+    Asst["Desktop Assistant"]
     Tray["Desktop tray helper (separate process)"]
     CLI["abstractgateway CLI"]
   end
 
   subgraph GW["AbstractGateway process (abstractgateway serve)"]
     Sec["GatewaySecurityMiddleware: auth, origins, limits, audit log"]
+    Same["Same-machine rule: is the caller at this computer?"]
     Routes["FastAPI routes /api/gateway/*"]
     Console["/console (web console)"]
-    Handover["/apps/handover, /apps/tui-handover (one-time sign-in)"]
+    Handover["Sign-in hand-overs: apps, terminal, desktop"]
     Principals["Principal routing: one data plane per user"]
-    Runner["GatewayRunner: command inbox + ticks"]
+    Defaults["Default agent workflow resolver (@default)"]
+    Browse["Workspace browser: /runs/{id}/workspace/*"]
     Host["Workflow host: .flow bundles + workflow catalog"]
-    Settings["Runtime settings: network, apps.*, allow_engine_install, backlog"]
+    Guard["Run workspace guard: a folder and the built-in deny rules for every run"]
+    Hub["Live-delta hub: llm.delta frames per root run"]
+    Runner["GatewayRunner: command inbox + ticks"]
+    Settings["Runtime settings: network, apps.*, agents.*, skills.shelf, workspace, backlog"]
+    Skills["Skills shelf (seeded from AbstractSkill)"]
     AppsMgr["Apps manager: Node.js, npm installs, app processes"]
     Jobs["Engine installs and model download jobs"]
     HostCtl["Host control: pause, restart, update"]
   end
 
   subgraph Lower["Framework packages"]
-    RT["AbstractRuntime: Runtime.tick, stores"]
+    RT["AbstractRuntime: Runtime.tick, stores, workspace-scoped tools"]
     Core["AbstractCore: providers, catalog, host jobs"]
   end
 
   Data[("Data dir: runs, ledgers, commands, artifacts, auth, settings")]
-  Apps["Browser app servers (127.0.0.1:3001-3005)"]
+  WS[("Run workspace folders")]
 
   Browser --&gt;|HTTP| Sec
+  Browser --&gt;|app pages| AppSrv
+  AppSrv --&gt;|"same-origin proxy: X-Forwarded-For + X-AbstractFramework-App-Proxy"| Sec
   TUI --&gt;|HTTP| Sec
+  Asst --&gt;|HTTP, gateway session| Sec
   CLI --&gt;|HTTP or data dir| Sec
   Tray --&gt;|loopback HTTP, ephemeral token| Sec
   Sec --&gt; Routes
   Sec --&gt; Console
+  Routes -.-&gt;|installs, open folder, workspace host| Same
   Routes --&gt; Principals --&gt; Host
+  Routes --&gt; Defaults --&gt; Host
+  Routes --&gt; Browse --&gt; WS
   Routes --&gt; Settings
+  Routes --&gt; Skills
   Routes --&gt; AppsMgr
   Routes --&gt; Jobs
   Routes --&gt; HostCtl
+  Host --&gt; Guard --&gt; RT
   Runner --&gt; Host
   Runner --&gt; RT
-  Host --&gt; RT
+  RT --&gt;|file tools confined to| WS
+  RT --&gt;|live text of LLM calls| Hub
+  Hub --&gt;|"SSE on /runs/{id}/ledger/stream"| Routes
   RT --&gt; Data
   Routes --&gt; Data
   Jobs --&gt; Core
   Host --&gt; Core
-  AppsMgr --&gt;|starts and supervises| Apps
-  Handover --&gt; Apps
-  Apps --&gt;|same-origin proxy to /api/gateway| Sec
+  AppsMgr --&gt;|starts and supervises| AppSrv
+  AppsMgr --&gt;|launches with a hand-over file| Asst
+  Handover --&gt; AppSrv
+  Handover --&gt; Asst
 </code></pre></div>
+<p>Browser apps reach the gateway through their own app server on this computer,
+which relays every call with the browser's address (<code>X-Forwarded-For</code>) and its
+marker header (<code>X-AbstractFramework-App-Proxy</code>), so the gateway can tell a
+browser on this computer from one elsewhere on the network
+(<a href="../security/#callers-on-this-computer">security.md</a>).</p>
 <h2 id="core-components-code-mapped">Core components (code-mapped)<a class="headerlink" href="#core-components-code-mapped" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>HTTP app</strong> (<code>src/abstractgateway/app.py</code>): mounts the routers under <code>/api</code>
@@ -1165,8 +1257,38 @@ desktop Assistant, scripts) and <strong>AbstractRuntime</strong>:</p>
 <li><strong>Runtime settings</strong> (<code>src/abstractgateway/runtime_config.py</code>): one store,
   <code>&lt;data dir&gt;/config/runtime_config.json</code>, for the settings the consoles, the
   tray and the CLI change: network exposure, <code>apps.*</code>, <code>allow_engine_install</code>,
-  the backlog folder, the backlog exec runner, the process manager and the
-  stop kill switch. See <a href="../configuration/">configuration.md</a>.</li>
+  <code>agents.default_workflow.&lt;interface&gt;</code>, <code>agents.streaming_default</code>,
+  <code>skills.shelf</code>, <code>workspace_builtin_deny</code>, the backlog folder, the backlog
+  exec runner, the process manager and the stop kill switch. A write that
+  names an unknown setting is refused whole; writers take a file lock. See
+  <a href="../configuration/">configuration.md</a>.</li>
+<li><strong>Default agent workflows</strong> (<code>src/abstractgateway/agent_defaults.py</code>):
+  resolves <code>flow_id: "@default"</code> plus an agent <code>interface</code> to the workflow
+  saved under <code>agents.default_workflow.&lt;interface&gt;</code> (or the built-in default)
+  at every run start, for the HTTP routes, the Telegram bridge and the backlog
+  advisor alike, and records the choice as <code>resolved_workflow</code>. See
+  <a href="../configuration/#default-agent-workflow">configuration.md</a>.</li>
+<li><strong>Run workspace guard</strong> (<code>src/abstractgateway/run_workspace_guard.py</code>):
+  called from the workflow host's <code>start_run</code> for every run, whatever started
+  it. It gives a run that named no folder its conversation's gateway-made
+  folder, and adds the built-in deny rules (see
+  <a href="#workspace-guard-every-run-start">Workspace guard</a>).</li>
+<li><strong>Workspace browser</strong> (<code>src/abstractgateway/workspace_browse.py</code>): lists
+  and serves the files of a run's workspace folder to the person who started
+  the run, confined to that folder, with the built-in deny list applied at
+  every call. See <a href="../api/#a-runs-workspace-folder-browse-and-preview">api.md</a>.</li>
+<li><strong>Live replies</strong> (<code>src/abstractgateway/live_deltas.py</code>): the sink the
+  gateway registers on every runtime it builds, the in-memory hub keyed by
+  root run, and the file sink and tailer used when API and runner are separate
+  processes (see <a href="#live-replies-token-deltas">Live replies</a>).</li>
+<li><strong>Skills shelf</strong> (<code>src/abstractgateway/skills_shelf.py</code>): resolves the
+  folder skills are read from (<code>skills.shelf</code>, else the gateway's own copy in
+  <code>&lt;data dir&gt;/skills/registry</code>, refreshed from AbstractSkill's curated shelf
+  at each start). See <a href="../configuration/#skills-shelf">configuration.md</a>.</li>
+<li><strong>Same-machine rule</strong> (<code>src/abstractgateway/security/same_machine.py</code>):
+  one answer to "is this caller sitting at the gateway computer?", used for
+  installs, opening folders and the workspace routes' host facts. See
+  <a href="../security/#callers-on-this-computer">security.md</a>.</li>
 <li><strong>Network exposure</strong> (<code>src/abstractgateway/network_exposure.py</code>): resolves the
   bind (<code>localhost</code>, <code>lan</code>, <code>internet</code>) at <code>serve</code> time, checks that the auth
   posture allows it, discovers the addresses, and serves the reverse-proxy
@@ -1181,7 +1303,9 @@ desktop Assistant, scripts) and <strong>AbstractRuntime</strong>:</p>
   <code>routes/apps.py</code>): installs Node.js when needed, installs the browser apps
   from npm, runs them as child processes of the gateway, detects apps started
   elsewhere, installs Code's terminal app, and opens apps signed in through
-  one-time handover codes. See <a href="../apps/">apps.md</a>.</li>
+  one-time handover codes; it starts the desktop Assistant signed in through a
+  private hand-over file (see <a href="#desktop-assistant-hand-over">Desktop hand-over</a>).
+  See <a href="../apps/">apps.md</a>.</li>
 <li><strong>Host control</strong> (<code>src/abstractgateway/host_control.py</code>,
   <code>self_update.py</code>): process-wide pause, graceful restart, and in-place
   update checks.</li>
@@ -1230,6 +1354,97 @@ desktop Assistant, scripts) and <strong>AbstractRuntime</strong>:</p>
 </code></pre></div>
 <p>Evidence: <code>src/abstractgateway/routes/gateway.py</code> (ledger endpoints, SSE,
 commands) and <code>src/abstractgateway/runner.py</code> (command application, ticks).</p>
+<h2 id="live-replies-token-deltas">Live replies (token deltas)<a class="headerlink" href="#live-replies-token-deltas" title="Permanent link">&para;</a></h2>
+<p>A run started with <code>input_data._runtime.stream: true</code> (or, for an interactive
+<code>POST /runs/start</code> that does not say, with the <code>agents.streaming_default</code>
+setting on) also delivers the model's text while it is written. The text is a
+live preview, never a ledger record: the durable <code>llm_call</code> record still
+carries the answer, and it is written before the call's <code>llm.delta_end</code>.</p>
+<div class="highlight"><pre><span></span><code>sequenceDiagram
+  participant C as Client
+  participant G as Gateway API (ledger stream)
+  participant H as Live-delta hub
+  participant RT as AbstractRuntime (LLM call)
+  participant S as Durable stores
+
+  C-&gt;&gt;G: POST /runs/start (input_data._runtime.stream: true)
+  C-&gt;&gt;G: GET /runs/{run_id}/ledger/stream?after=N
+  G-&gt;&gt;H: subscribe to the run and every run below it
+  H--&gt;&gt;G: one snapshot per open call (snapshot: true)
+  G--&gt;&gt;C: event: llm.delta (snapshot)
+  loop while the model writes
+    RT-&gt;&gt;H: llm.delta {call_id, seq, text, channel}
+    H--&gt;&gt;G: frames since the subscriber's cursor
+    G--&gt;&gt;C: event: llm.delta (no id: line)
+  end
+  RT-&gt;&gt;S: llm_call record with the final answer
+  G--&gt;&gt;C: event: step (id: N+1)
+  RT-&gt;&gt;H: llm.delta_end {reason}
+  G--&gt;&gt;C: event: llm.delta_end
+  Note over H: when the run ends with a call still open,&lt;br/&gt;the hub closes it (synthetic: true)
+  G--&gt;&gt;C: event: done
+</code></pre></div>
+<ul>
+<li>The hub is keyed by the root run, so a subscription to a root sees the
+  replies of its sub-runs, and a subscription to a child sees that child's
+  subtree. Another user's run answers 404.</li>
+<li>Each subscriber holds at most one pending entry per call (a cursor into
+  that call's text), so a slow client catches up instead of overflowing a
+  queue; nothing is capped.</li>
+<li>A run that ends while a call is open (stopped, failed, killed by the stop
+  kill switch, or failed by the runner) gets a synthetic <code>llm.delta_end</code> for
+  that call, and its state is freed.</li>
+</ul>
+<p>With API and runner in separate processes, the runner's model calls write
+their events to a private file and the API process reads them from there:</p>
+<div class="highlight"><pre><span></span><code>flowchart LR
+  subgraph RunnerP["abstractgateway runner"]
+    Call["LLM call in AbstractRuntime"] --&gt; Sink["file sink"]
+  end
+  Sink --&gt; File[("data dir/live/ROOT_RUN_ID.deltas.jsonl&lt;br/&gt;(0600, deleted when the root run ends)")]
+  subgraph ApiP["abstractgateway serve --no-runner"]
+    Tail["file tailer"] --&gt; Hub2["Live-delta hub"] --&gt; Stream["GET /runs/{run_id}/ledger/stream"]
+  end
+  File --&gt; Tail
+</code></pre></div>
+<p>The frames, fields and end reasons are in
+<a href="../api/#4b-live-replies-token-deltas-on-the-same-stream">api.md</a>.</p>
+<h2 id="workspace-guard-every-run-start">Workspace guard (every run start)<a class="headerlink" href="#workspace-guard-every-run-start" title="Permanent link">&para;</a></h2>
+<p>Every run the gateway starts works in a folder, and its file tools are kept
+out of the gateway's data folder and the account's credential folders:</p>
+<div class="highlight"><pre><span></span><code>flowchart TB
+  Http["Client doors: POST /runs/start, POST /runs/schedule, entity summons"] --&gt; Policy["Workspace policy check: workspace_root inside the allowed roots and not inside the data folder (except the caller's own conversation folder), else 400"]
+  Policy --&gt; Start["Workflow host start_run"]
+  Internal["Gateway-made starts: Telegram, email and agora bridges, sandbox routes, schedule children"] --&gt; Start
+  Start --&gt; Ensure["No folder named: the conversation's gateway-made folder (or a per-run folder)"]
+  Ensure --&gt; Deny["Built-in deny rules: workspace_builtin_deny_prefixes (data folder + credential folders), workspace_builtin_allow (the run's own folder); client-sent values dropped"]
+  Deny --&gt; Tools["AbstractRuntime file tools enforce the rules; nothing is written into the model's prompt"]
+</code></pre></div>
+<p>The rules are whole-folder prefixes, never a listing of a folder's contents,
+so the model's prompt stays the same from turn to turn. An admin can turn the
+run-side rules off (<code>workspace_builtin_deny</code>); the workspace browser keeps
+hiding those folders. Shell commands a run may execute are not confined by
+these rules. Details: <a href="../configuration/#workspace-policy-filesystem-scope">configuration.md</a>.</p>
+<h2 id="desktop-assistant-hand-over">Desktop Assistant hand-over<a class="headerlink" href="#desktop-assistant-hand-over" title="Permanent link">&para;</a></h2>
+<p>Opening the Assistant from the console or the tray starts it on the gateway
+computer already signed in as the person who clicked, without a code or token
+on its command line or in its environment:</p>
+<div class="highlight"><pre><span></span><code>sequenceDiagram
+  participant U as Admin (console Open, tray Launch Assistant)
+  participant G as Gateway
+  participant F as Hand-over file (0600)
+  participant A as Desktop Assistant
+
+  U-&gt;&gt;G: POST /api/gateway/apps/assistant/launch
+  G-&gt;&gt;F: write {schema, code, base_url, expires_at, user_id}&lt;br/&gt;in the data dir handover folder
+  G-&gt;&gt;A: start with --gateway-url URL --gateway-handover-file FILE
+  A-&gt;&gt;F: read, then delete
+  A-&gt;&gt;G: POST /api/gateway/apps/desktop-handover {code}&lt;br/&gt;(direct loopback call)
+  G--&gt;&gt;A: {base_url, session_id, csrf_token, user_id, expires_at}
+  Note over G,A: single use, two minutes. A relayed call gets 403,&lt;br/&gt;a used or expired code 410
+</code></pre></div>
+<p>An Assistant that is already running is brought to the front and receives no
+code. See <a href="../apps/">apps.md</a>.</p>
 <h2 id="thin-client-control-plane">Thin-client control plane<a class="headerlink" href="#thin-client-control-plane" title="Permanent link">&para;</a></h2>
 <p>Higher-level apps use the gateway instead of importing Runtime or Core:</p>
 <ul>
@@ -1271,7 +1486,8 @@ commands) and <code>src/abstractgateway/runner.py</code> (command application, t
   the browser apps you enabled.</li>
 <li><strong>Split API and runner</strong>: <code>abstractgateway runner</code> (worker) and
   <code>abstractgateway serve --no-runner</code> (API) share one data dir, so you can
-  restart the API without pausing durable execution.</li>
+  restart the API without pausing durable execution. Live replies pass through
+  <code>&lt;data dir&gt;/live/</code> in this shape.</li>
 <li><strong>Container</strong>: the GHCR image runs <code>serve</code> with user auth; see
   <a href="../deployment/">deployment.md</a>.</li>
 </ul>
@@ -1286,6 +1502,12 @@ commands) and <code>src/abstractgateway/runner.py</code> (command application, t
   a network mode, and the <code>allowed_origins</code> setting.</li>
 <li><strong>Abuse resistance</strong>: body size caps, concurrency caps, auth lockouts, audit
   log.</li>
+<li><strong>Callers on this computer</strong>: one rule decides who counts as sitting at the
+  gateway computer (installs, opening folders); a browser that reaches the
+  gateway through an app server counts only when the browser itself is on this
+  computer.</li>
+<li><strong>Workspace guard</strong>: every run works in a folder, and its file tools never
+  reach the gateway's data folder or the account's credential folders.</li>
 </ul>
 <p><code>session_id</code>, <code>run_id</code>, <code>artifact_id</code> and memory owner ids are references,
 not authorization proofs. With user auth on, each principal runs on its own
@@ -1300,6 +1522,13 @@ plus CSRF token. See <a href="../security/">security.md</a>.</p>
 <li>Stores: <code>src/abstractgateway/stores.py</code></li>
 <li>Security: <code>src/abstractgateway/security/</code></li>
 <li>Settings: <code>src/abstractgateway/runtime_config.py</code></li>
+<li>Default agent workflows: <code>src/abstractgateway/agent_defaults.py</code></li>
+<li>Live replies: <code>src/abstractgateway/live_deltas.py</code></li>
+<li>Workspace guard and browser: <code>src/abstractgateway/run_workspace_guard.py</code>,
+  <code>src/abstractgateway/workspace_browse.py</code></li>
+<li>Same-machine rule: <code>src/abstractgateway/security/same_machine.py</code></li>
+<li>Desktop hand-over: <code>src/abstractgateway/apps_desktop.py</code>,
+  <code>src/abstractgateway/apps_manager.py</code>, <code>src/abstractgateway/routes/apps.py</code></li>
 <li>CLI: <code>src/abstractgateway/cli.py</code></li>
 </ul>
 <h2 id="related-docs">Related docs<a class="headerlink" href="#related-docs" title="Permanent link">&para;</a></h2>

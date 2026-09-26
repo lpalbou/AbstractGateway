@@ -997,7 +997,7 @@ you omit <code>flow_id</code>.</p>
 </tr>
 <tr>
 <td><code>deep-research</code></td>
-<td>0.1.7</td>
+<td>0.1.8</td>
 <td><code>deep-research</code>* (<code>abstractcode.agent.v1</code>, <code>abstractresearch.deep.v1</code>)</td>
 <td>Production research with adversarial review, a verified source ledger, and Markdown/PDF/DOCX export. See <a href="../deep-research/">deep-research.md</a>.</td>
 </tr>
@@ -1093,8 +1093,8 @@ default agent, install the replacement bundle first, then remove the old file.</
 <li>Shipped bundle versions are immutable pins; newer versions install alongside
   them through the normal bundle upload or workflow catalog routes.</li>
 <li>The editable sources for the shipped workflows are VisualFlow JSON files in
-  the AbstractFlow repository (<code>abstractflow/examples/flows/</code>), packed with
-  <code>abstractflow bundle pack</code>.</li>
+  the AbstractFlow repository (<code>examples/flows/</code>), packed into <code>.flow</code> bundles
+  with AbstractRuntime's <code>abstractruntime.workflow_bundle.pack_workflow_bundle</code>.</li>
 </ul>
 
 
