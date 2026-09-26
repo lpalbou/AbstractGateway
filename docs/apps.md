@@ -345,9 +345,15 @@ Python environment as the gateway; a gateway-only install may not.
   of the gateway's tokens, secrets or keys in its environment. A running
   Assistant is not started twice: the app is brought to the front (or, when
   it was started from its command, the card says its icon is in the menu
-  bar). The Assistant keeps its own connection settings (its Settings window,
-  Connection): the gateway passes it no address and no token, and it has no
-  one-time sign-in handover.
+  bar). An Assistant opened from here (the console or the menu bar icon) is
+  connected to this gateway and signed in as you automatically: the gateway
+  starts it with `--gateway-url <address> --gateway-handover-file <file>`,
+  where the file (readable by you only, in `<data dir>/handover/`) holds a
+  one-time code valid for two minutes. The Assistant reads and deletes the
+  file, trades the code for a remembered sign-in and keeps it. No code or
+  token is ever on its command line or in its environment. An Assistant that
+  is already running cannot receive a code: if it is not signed in, quit it
+  and open it again from here.
 - **From another computer** the card says "The Assistant runs on the gateway's
   computer: open it there." with no button: it is a desktop app for that
   computer's screen.
@@ -356,7 +362,7 @@ Python environment as the gateway; a gateway-only install may not.
 
 ## HTTP API
 
-All routes are under `/api/gateway/apps` and need a signed-in principal.
+All routes are under `/api/gateway/apps` and need a signed-in principal, except `desktop-handover`.
 
 | Method and path | Who | What |
 |---|---|---|
@@ -364,7 +370,8 @@ All routes are under `/api/gateway/apps` and need a signed-in principal.
 | `POST /apps/runtime/install` | admin | Install Node.js (a job), or `job: null` when one is already usable. |
 | `POST /apps/{id}/install` `{"version"?, "launch"?, "with_terminal"?}` | admin | ONE job: Node.js if needed, download, check, dependencies, then the terminal app when the row's `install_parts` has `"tui"` (`with_terminal: false` skips it); the job's `parts` are its child rows. Starts nothing unless `launch: true`. For `assistant`: installs `abstractassistant` into the gateway's Python (every `abstract*` package is pinned to its current version in the same command). |
 | `POST /apps/{id}/update` `{"version"?}` | admin | A job: install the latest (or given) version; a running app is restarted on it. |
-| `POST /apps/{id}/launch` | admin | Start the app (waits until it answers) and mark it enabled. For `assistant`: open it on the gateway's computer, `{ok, app, already_running, message}`; from another computer 409 `not_on_gateway_machine`, and nothing starts. |
+| `POST /apps/{id}/launch` | admin | Start the app (waits until it answers) and mark it enabled. For `assistant`: open it on the gateway's computer, signed in as the caller, `{ok, app, already_running, signed_in_by_gateway, message}`; from another computer 409 `not_on_gateway_machine`, and nothing starts. |
+| `POST /apps/desktop-handover` `{"code"}` | no sign-in; this computer only | The Assistant trades its one-time code for a remembered sign-in: `{base_url, session_id, csrf_token, user_id, expires_at}`. Answered only for a direct caller on this computer (no proxy headers, no app-server session header): 403 otherwise; 410 for a used or expired code. |
 | `POST /apps/{id}/stop` | admin | Stop the app and mark it disabled. 409 `started_outside_gateway` for an app the gateway did not start. |
 | `POST /apps/{id}/open` `{"remember"?, "path"?}` | any user | A one-time `open_url` (relative to the gateway) that opens the running app signed in, at `path` inside the app when given (e.g. `/#new`). 400 `invalid_app_path` for anything that is not a path inside the app. 409 `desktop_app` for the Assistant (use `/launch`). |
 | `GET /apps/{id}/logs?tail=200` | admin | The end of the app's log. |

@@ -958,6 +958,73 @@ Three ways, same semantics:
 The CLI works on the data dir directly (`--data-dir`, default: the `serve`
 resolution), so a headless server needs no browser.
 
+### Default agent workflow
+
+`agents.default_workflow.<interface>` chooses the workflow that answers an
+agent interface when a client picks "Gateway default" (AbstractCode's
+workflow selector, the Assistant, the Telegram bridge, the backlog advisor).
+The value is `[catalog:]bundle[@version]:flow`: without a version the latest
+published version runs; `catalog:` picks a workflow of the tenant catalog
+instead of the gateway's own workflows.
+
+| Interface | When nothing is saved |
+|---|---|
+| `abstractcode.agent.v1` | the default entrypoint of the shipped `basic-agent` workflow (unavailable when it is not on the gateway) |
+| `abstractassistant.agent.v1` | none: the Assistant runs its built-in orchestrator |
+| any other interface a workflow declares | none until an admin saves one |
+
+A saved value is checked when it is saved (it must exist on this gateway and
+declare that interface; 400 with the reason otherwise) and again at every
+run start: a value that no longer works is shown as unavailable with the
+reason, and runs that ask for the default are refused (409) until it is
+changed. It never falls back to another workflow on its own.
+
+`GET /api/gateway/admin/runtime-config` returns
+
+```json
+"agents": {"default_workflow": {"abstractcode.agent.v1": {
+  "key": "agents.default_workflow.abstractcode.agent.v1", "value": "coding-agent:coder", "source": "stored",
+  "available": true, "reason": null, "default": "basic-agent:81795ea9",
+  "resolved": {"bundle_id": "coding-agent", "bundle_version": "0.2.7", "flow_id": "coder",
+               "registry_scope": "private", "workflow_id": "coding-agent@0.2.7:coder", "name": "coder"},
+  "eligible": [{"value": "basic-agent:81795ea9", "workflow_id": "basic-agent@0.0.5:81795ea9", "name": "basic-agent", "...": "..."}]}},
+  "index_source": "host"}
+```
+
+`source` is `stored` or `default` (there is no launch flag and no environment
+variable for this setting).
+
+| | Web console | Console TUI | CLI |
+|---|---|---|---|
+| Where | Workflows → *Default agent workflow* (one row per interface), or *Make agent default* on an entrypoint | Runtimes → *Runtime knobs* → *Edit default agent workflows*; Workflows marks the default with ★ | `abstractgateway config get agents.default_workflow.<interface>` |
+| Change | choose in the list, *Save default agent workflows* | type the value (the choices are listed under the field; empty = the built-in default) | `abstractgateway config set agents.default_workflow.<interface> bundle[@version]:flow`, `config unset …` |
+
+Writes are admin-only and audit-logged like every other setting. A write that
+names a setting the gateway does not know is refused as a whole (400) and
+saves nothing; two writers at the same time never lose each other's change.
+
+### Skills shelf
+
+`skills.shelf` is the folder the gateway reads skills from (it holds
+`skills/<name>/SKILL.md` and the trust files `validations.yaml`,
+`advisories.yaml`, `guidance.yaml`). Leave it empty to use the gateway's own
+copy of the curated shelf that ships with AbstractSkill: at each start the
+gateway copies it into `<data dir>/skills/registry`, adding what is new and
+refreshing what it wrote before, and never overwriting a file you edited
+there. The report of that copy is in the gateway log, and
+`POST /api/gateway/admin/skills/reseed` (or *Refresh the curated shelf* in the
+console) runs it again on demand.
+
+A saved folder that does not exist or holds no `skills/` folder is shown as
+unavailable with the reason (the gateway does not silently use another
+shelf). `GET /skills` and the settings say which shelf is in use
+(`shelf_source`: `stored`, `env`, `seeded`, `checkout` or `none`).
+
+| | Web console | Console TUI | CLI |
+|---|---|---|---|
+| Where | Apps → *Skills shelf* | Runtimes → *Runtime knobs* → *Edit skills shelf* | `abstractgateway config get skills.shelf` |
+| Change | type the folder, *Save skills shelf*; *Refresh the curated shelf* | type the folder (empty = the gateway's own copy) | `abstractgateway config set skills.shelf /path/to/registry`, `config unset skills.shelf` |
+
 ### Backlog folder, exec runner and process manager (Continuum)
 
 Continuum's Board, Backlog, Executions and Services pages read three runtime
@@ -1481,7 +1548,9 @@ Core catalog proxy settings:
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload]`
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray]`
+  (`--no-tray`: no menu bar / tray icon for this run, for a test or scratch
+  gateway next to your usual one)
   (host/port default to the [network exposure](#network-exposure-localhost--local-network--internet)
   setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is
   configured, else `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.)
@@ -1869,9 +1938,15 @@ Python environment as the gateway; a gateway-only install may not.
   of the gateway's tokens, secrets or keys in its environment. A running
   Assistant is not started twice: the app is brought to the front (or, when
   it was started from its command, the card says its icon is in the menu
-  bar). The Assistant keeps its own connection settings (its Settings window,
-  Connection): the gateway passes it no address and no token, and it has no
-  one-time sign-in handover.
+  bar). An Assistant opened from here (the console or the menu bar icon) is
+  connected to this gateway and signed in as you automatically: the gateway
+  starts it with `--gateway-url <address> --gateway-handover-file <file>`,
+  where the file (readable by you only, in `<data dir>/handover/`) holds a
+  one-time code valid for two minutes. The Assistant reads and deletes the
+  file, trades the code for a remembered sign-in and keeps it. No code or
+  token is ever on its command line or in its environment. An Assistant that
+  is already running cannot receive a code: if it is not signed in, quit it
+  and open it again from here.
 - **From another computer** the card says "The Assistant runs on the gateway's
   computer: open it there." with no button: it is a desktop app for that
   computer's screen.
@@ -1880,7 +1955,7 @@ Python environment as the gateway; a gateway-only install may not.
 
 ## HTTP API
 
-All routes are under `/api/gateway/apps` and need a signed-in principal.
+All routes are under `/api/gateway/apps` and need a signed-in principal, except `desktop-handover`.
 
 | Method and path | Who | What |
 |---|---|---|
@@ -1888,7 +1963,8 @@ All routes are under `/api/gateway/apps` and need a signed-in principal.
 | `POST /apps/runtime/install` | admin | Install Node.js (a job), or `job: null` when one is already usable. |
 | `POST /apps/{id}/install` `{"version"?, "launch"?, "with_terminal"?}` | admin | ONE job: Node.js if needed, download, check, dependencies, then the terminal app when the row's `install_parts` has `"tui"` (`with_terminal: false` skips it); the job's `parts` are its child rows. Starts nothing unless `launch: true`. For `assistant`: installs `abstractassistant` into the gateway's Python (every `abstract*` package is pinned to its current version in the same command). |
 | `POST /apps/{id}/update` `{"version"?}` | admin | A job: install the latest (or given) version; a running app is restarted on it. |
-| `POST /apps/{id}/launch` | admin | Start the app (waits until it answers) and mark it enabled. For `assistant`: open it on the gateway's computer, `{ok, app, already_running, message}`; from another computer 409 `not_on_gateway_machine`, and nothing starts. |
+| `POST /apps/{id}/launch` | admin | Start the app (waits until it answers) and mark it enabled. For `assistant`: open it on the gateway's computer, signed in as the caller, `{ok, app, already_running, signed_in_by_gateway, message}`; from another computer 409 `not_on_gateway_machine`, and nothing starts. |
+| `POST /apps/desktop-handover` `{"code"}` | no sign-in; this computer only | The Assistant trades its one-time code for a remembered sign-in: `{base_url, session_id, csrf_token, user_id, expires_at}`. Answered only for a direct caller on this computer (no proxy headers, no app-server session header): 403 otherwise; 410 for a used or expired code. |
 | `POST /apps/{id}/stop` | admin | Stop the app and mark it disabled. 409 `started_outside_gateway` for an app the gateway did not start. |
 | `POST /apps/{id}/open` `{"remember"?, "path"?}` | any user | A one-time `open_url` (relative to the gateway) that opens the running app signed in, at `path` inside the app when given (e.g. `/#new`). 400 `invalid_app_path` for anything that is not a path inside the app. 409 `desktop_app` for the Assistant (use `/launch`). |
 | `GET /apps/{id}/logs?tail=200` | admin | The end of the app's log. |
@@ -1954,7 +2030,11 @@ can see what it is doing and act on it in one click:
   in a small window (needs `tkinter`; see below).
 - **Start AbstractGateway at login** — a check item that shows whether this
   gateway WOULD start at your next login, and switches it. See *Start at login*.
-- **Check for Updates / Restart / Quit / About / Help.**
+- **Check for Updates / Restart / Quit / About / Help.** About shows the
+  gateway's version, console address and data folder, the AbstractFramework
+  project details (website, source, documentation, where to report an issue
+  or give feedback, contact) and the versions of the framework packages this
+  gateway runs (from `GET /api/gateway/about`).
 
 The menu as shipped (macOS, a machine with 151 installed models; `[…]` is a
 greyed information line, `▸` a submenu, `☐/☑` the check item):
@@ -2102,7 +2182,7 @@ not depend on its apps:
 |---|---|---|
 | Observer, Continuum, Code, Entity, Flow | the gateway (`GET /api/gateway/apps`): its own installs, and apps started outside it (the dev stack, `npx`, a service) found on their usual port | **Open X** when running, whoever started it (a one-time signed-in handover); **Open X** when installed and stopped (starts it, then opens it); **Install X…** when it can be installed (the browser app and, for Code when a ready-made download exists for this computer, its terminal app, as one job; a notification when it is done, then **Open X**); otherwise **X**, greyed |
 | the same, installed globally | the app's command on PATH (`abstractobserver`, `abstractflow-editor`, `abstractcode-web`, `abstractcontinuum`, `abstractentity`) or the package under `npm root -g` | **Open X** — started by the tray with the gateway URL passed in and stopped when the tray exits; sign in inside the app (install it here instead for the one-click sign-in) |
-| Assistant | the same detection as the console's Assistant card (`apps_desktop.detect_assistant`): `AbstractAssistant.app` in /Applications or ~/Applications, the `abstractassistant` command (this Python's scripts folder, or PATH), or the package in this Python (`importlib.util.find_spec`, without importing it) | **Launch Assistant** when found (also while it runs); **Install Assistant…** when the gateway can install it into its own Python (the console's Install); otherwise **Assistant**, greyed |
+| Assistant | the same detection as the console's Assistant card (`apps_desktop.detect_assistant`): `AbstractAssistant.app` in /Applications or ~/Applications, the `abstractassistant` command (this Python's scripts folder, or PATH), or the package in this Python (`importlib.util.find_spec`, without importing it) | **Launch Assistant** when found (also while it runs): the gateway opens it (`POST /api/gateway/apps/assistant/launch`, the console's Open), connected and signed in to this gateway; **Install Assistant…** when the gateway can install it into its own Python (the console's Install); otherwise **Assistant**, greyed |
 | Code's terminal version (the only app with one today) | the gateway's presence check, reported as `interfaces[kind="tui"]` on the app row: its own copy in `<data dir>/apps/bin/`, `abstractcode` on PATH, or `~/.cargo/bin` | **Open Code in Terminal** — a new terminal window on this machine, signed in through a one-time code (`POST /api/gateway/apps/code/launch-tui`, the same route as the console's button). Shown only when the gateway reports it installed; greyed when the gateway would refuse (the console says why) |
 
 When an app cannot be installed from here, ONE line near the bottom says so:
@@ -2703,7 +2783,60 @@ curl -sS -H "$AUTH" -H "Content-Type: application/json" \
   "$BASE_URL/api/gateway/runs/start"
 ```
 
+Every start answers `{run_id, runner_warning, resolved_workflow}`.
+`resolved_workflow` names the workflow the run really runs:
+`{workflow_id, bundle_id, bundle_version, flow_id, registry_scope, name,
+source: "gateway_default" | "client", interface}`. The same object is kept in
+the run's inputs as `input_data.workflow_selection` (written by the gateway;
+a value sent by the client is replaced), so `GET /runs/{run_id}/input_data`
+tells a restored conversation how its workflow was chosen.
+
 Evidence: request/response models live in `src/abstractgateway/routes/gateway.py` (`StartRunRequest`, `start_run`).
+
+#### The gateway default agent workflow (`flow_id: "@default"`)
+
+An agent client (AbstractCode, the Assistant, the Telegram bridge) can let
+the gateway choose the workflow for an agent interface:
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"flow_id":"@default","interface":"abstractcode.agent.v1","input_data":{"prompt":"Hello"}}' \
+  "$BASE_URL/api/gateway/runs/start"
+```
+
+- `interface` is required with `@default` (400 without it); `bundle_id` and
+  `bundle_version` are not accepted with it.
+- The default is resolved at every start, so a change applies to the next
+  new turn of any conversation that sends `@default`.
+- When the default cannot run (its workflow is gone, deprecated, or does not
+  declare the interface), the start is refused with 409 and a message naming
+  the setting (`agents.default_workflow.<interface>`) and where its value
+  comes from. The gateway never quietly runs another workflow instead.
+- `POST /runs/schedule` accepts the same `flow_id: "@default"` + `interface`
+  (the schedule then targets the version resolved at that moment).
+
+What the default is for each interface (readable without admin rights):
+`GET /bundles` and `GET /workflow-catalog` carry
+
+```json
+"default_agent_workflows": {
+  "abstractcode.agent.v1": {"workflow_id": "basic-agent@0.0.5:81795ea9", "bundle_id": "basic-agent",
+                            "bundle_version": "0.0.5", "flow_id": "81795ea9", "registry_scope": "private",
+                            "name": "basic-agent", "source": "default"}
+},
+"default_agent_workflows_unavailable": {
+  "abstractassistant.agent.v1": {"source": "default", "value": null,
+    "reason": "no host workflow declares abstractassistant.agent.v1; the Assistant uses its built-in orchestrator"}
+}
+```
+
+and every entrypoint row carries `is_agent_default` and
+`agent_default_interfaces`. These are different from `default_bundle_id`
+(the bundle a bare `flow_id` falls back to), from a catalog record's
+`is_default` (its default version) and from a bundle's `default_entrypoint`.
+
+The setting itself is `agents.default_workflow.<interface>` (see
+[Configuration](docs/configuration.md#default-agent-workflow)).
 
 For VisualFlow bundles, Gateway runs the packed JSON through AbstractRuntime.
 Structured LLM/Agent schemas are Runtime/Core-owned: `response` remains textual,
@@ -2888,6 +3021,23 @@ Returns `{app, source, chars, text}`. Resolution order: the
 404 naming the checked candidates, never a silent fallback), then the repo
 `llms.txt` in dev checkouts, then the corpus packaged with the wheel.
 
+### Skills shelf
+
+`GET /api/gateway/skills` lists the skills of the gateway's shelf:
+`{skills: [...], shelf, shelf_source, bundled_version, warnings}`.
+`shelf_source` says where the shelf comes from: `stored` (the saved setting
+`skills.shelf`), `env` (a legacy launch environment value), `seeded` (the
+gateway's own copy in `<data dir>/skills/registry`, kept up to date from the
+curated shelf that ships with AbstractSkill at each start), `checkout` (a
+framework checkout, used only when the gateway's own copy is missing) or
+`none`. An empty list always comes with a warning that says why and what to
+do; warnings are plain sentences meant to be shown as they are.
+
+`POST /api/gateway/admin/skills/reseed` (admin) refreshes the gateway's own
+copy now and answers the seed report (`added`, `updated`, `unchanged`, the
+`kept_*` lists with what was kept and why, `bundled_version`,
+`previous_version`). An edit made in that folder is never overwritten.
+
 ### 3) Replay the ledger (cursor-based)
 
 Ledger pages are replayed using `after` as “number of items already consumed”.
@@ -2923,6 +3073,52 @@ curl -N -H "$AUTH" "$BASE_URL/api/gateway/runs/<run_id>/ledger/stream?after=0"
 ```
 
 Evidence: `src/abstractgateway/routes/gateway.py` (`stream_ledger`).
+
+## A run's workspace folder (browse and preview)
+
+A run works in a folder on the gateway computer: the conversation's own
+folder the gateway made (`<data dir>/workspaces/session-…`), or the folder the
+client was started from. Three routes let the person who started the run see
+it; another user's run id answers 404.
+
+`GET /api/gateway/runs/{run_id}/workspace`:
+
+```json
+{"run_id": "…", "workspace_root": "/Users/me/Library/Application Support/abstractgateway/workspaces/session-chat-1-3f2a…",
+ "kind": "session", "session_id": "chat-1", "exists": true,
+ "host": {"hostname": "studio.local", "caller_is_this_machine": true},
+ "open_supported": true}
+```
+
+`kind` is `session`, `run` or `launch_folder`. `open_supported` is true only
+for an admin sitting at the gateway computer, the only caller for whom
+`POST /runs/{run_id}/workspace/open` can open the folder; elsewhere show the
+path and the host name.
+
+`GET /api/gateway/runs/{run_id}/workspace/files?path=<folder>&recursive=false&limit=<n>`:
+
+```json
+{"path": "src", "entries": [{"name": "a.py", "path": "src/a.py", "type": "file", "size_bytes": 11, "mtime": "2026-09-25T10:00:00Z"}],
+ "truncated": false, "limit": null, "recursive": false,
+ "hidden": {"outside_links": 0, "blocked": 0, "other": 0}}
+```
+
+Folders come first, then files, by name. `limit` is optional; when the listing
+stops there, `truncated` is true. `hidden` counts what is not shown: links
+that lead outside the folder, and entries the workspace deny list blocks.
+
+`GET /api/gateway/runs/{run_id}/workspace/content?path=<file>` streams the
+whole file with its content type, `Content-Disposition: inline`,
+`X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox`, and
+honours `Range` (206; 416 outside the file).
+
+Paths are relative to the folder: absolute paths and `..` are refused (400),
+a link that leads outside is refused (403), the gateway's own marker file is
+never listed nor served. The workspace access policy (allowed and blocked
+folders, launch-folder trust) is applied again at every call, and nothing
+else in the gateway's data folder is ever served. A run cannot be started
+with a `workspace_root` inside the gateway's data folder either, except the
+conversation folder the gateway made for the same user.
 
 ## Artifacts and filesystem handoff
 
@@ -3815,6 +4011,18 @@ Evidence: `src/abstractgateway/routes/gateway.py` (`host_state`,
 `model_context_estimate`, `session_prompt_caches_list`) and
 `src/abstractgateway/security/authorization.py` (route-family policy).
 
+## About (`GET /api/gateway/about`)
+
+Public (no sign-in): which versions this gateway runs, for About screens.
+
+```json
+{"abstractframework": "0.3.3", "abstractgateway": "0.4.4",
+ "packages": {"abstractcore": "2.15.3", "abstractruntime": "0.4.36", "abstractskill": "0.3.0"}}
+```
+
+`abstractframework` is null when the framework meta-package is not installed
+on the gateway computer. Versions only: no paths, host names or settings.
+
 ## Host control (pause, desktop tray, restart, update)
 
 The process's own controls — the surface behind the desktop tray icon and
@@ -4038,7 +4246,7 @@ The sidebar lists these tabs:
 |---|---|
 | **Users & Entities** | user records, token rotation, retained runtime reservations, and the summoned-entity roster ([entities.md](docs/entities.md)) |
 | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches |
-| **Workflows** | every registered workflow with versions and entrypoints, import, export, delete, and versions that are not served (with the reason) |
+| **Workflows** | the default agent workflow for each agent interface (what "Gateway default" runs in the apps), every registered workflow with versions and entrypoints (*Make agent default* on an entrypoint), import, export, delete, and versions that are not served (with the reason) |
 | **Providers** | provider connections (OpenAI, Anthropic, OpenRouter, Portkey, LM Studio, Ollama, custom OpenAI-compatible endpoints) with write-only keys |
 | **Multimodal** | capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
 | **Sandbox** | quick chat and media generation against the configured defaults |
@@ -5652,6 +5860,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+Requires AbstractSkill 0.3.0 (installed automatically). The tray's About
+rows use the identity module of the next AbstractCore release.
+
+### Added
+
+- **Default agent workflow.** A gateway setting,
+  `agents.default_workflow.<interface>`, chooses the workflow that answers
+  each agent interface (`abstractcode.agent.v1`,
+  `abstractassistant.agent.v1`, ...) when an app picks "Gateway default".
+  Set it in the console (Workflows > Default agent workflow, or *Make agent
+  default* on an entrypoint), in the terminal console, or with
+  `abstractgateway config set agents.default_workflow.<interface>
+  bundle[@version]:flow`. Runs started with `flow_id: "@default"` and an
+  `interface` use it at every start and are refused, with the reason, when
+  it cannot run; `GET /bundles` and `GET /workflow-catalog` say what it is.
+  The backlog advisor and the Telegram bridge use it too.
+- Every run start answers `resolved_workflow` (the workflow it really runs),
+  also kept in the run as `input_data.workflow_selection`.
+- **Browse a run's files.** `GET /runs/{run_id}/workspace`,
+  `/workspace/files` and `/workspace/content` show the run's folder on the
+  gateway computer (with its full path and the computer's name), list it and
+  preview any file, for the person who started the run.
+- **Skills shelf.** The gateway keeps its own copy of the curated skills
+  that ship with AbstractSkill in `<data dir>/skills/registry`, refreshed at
+  each start without touching your edits; `skills.shelf` points it at
+  another folder (console, terminal console, `abstractgateway config set
+  skills.shelf`). `GET /skills` says which shelf is used and why a list is
+  empty; `POST /admin/skills/reseed` refreshes the copy on demand.
+- **The Assistant opens signed in.** Opening the Assistant from the console
+  or the menu bar icon connects it to this gateway and signs it in, through
+  a one-time code in a private file (`POST /apps/desktop-handover`).
+- `GET /about` (no sign-in): the framework and package versions this
+  gateway runs. The tray's About shows them with the project details.
+- `abstractgateway serve --no-tray`: no menu bar / tray icon for this run.
+
+### Changed
+
+- "A caller on this computer" is decided on the browser's address when an
+  app on this computer relays the request, so a browser on another computer
+  going through an app is no longer treated as local (installs, opening
+  folders, the Assistant).
+- A run cannot use a folder inside the gateway's data folder as its
+  workspace, except the conversation folder the gateway made for it.
+- A settings write that names an unknown setting is refused as a whole and
+  saves nothing.
 
 ## [0.4.4] - 2026-09-25
 

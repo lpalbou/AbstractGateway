@@ -99,7 +99,60 @@ curl -sS -H "$AUTH" -H "Content-Type: application/json" \
   "$BASE_URL/api/gateway/runs/start"
 ```
 
+Every start answers `{run_id, runner_warning, resolved_workflow}`.
+`resolved_workflow` names the workflow the run really runs:
+`{workflow_id, bundle_id, bundle_version, flow_id, registry_scope, name,
+source: "gateway_default" | "client", interface}`. The same object is kept in
+the run's inputs as `input_data.workflow_selection` (written by the gateway;
+a value sent by the client is replaced), so `GET /runs/{run_id}/input_data`
+tells a restored conversation how its workflow was chosen.
+
 Evidence: request/response models live in `src/abstractgateway/routes/gateway.py` (`StartRunRequest`, `start_run`).
+
+#### The gateway default agent workflow (`flow_id: "@default"`)
+
+An agent client (AbstractCode, the Assistant, the Telegram bridge) can let
+the gateway choose the workflow for an agent interface:
+
+```bash
+curl -sS -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"flow_id":"@default","interface":"abstractcode.agent.v1","input_data":{"prompt":"Hello"}}' \
+  "$BASE_URL/api/gateway/runs/start"
+```
+
+- `interface` is required with `@default` (400 without it); `bundle_id` and
+  `bundle_version` are not accepted with it.
+- The default is resolved at every start, so a change applies to the next
+  new turn of any conversation that sends `@default`.
+- When the default cannot run (its workflow is gone, deprecated, or does not
+  declare the interface), the start is refused with 409 and a message naming
+  the setting (`agents.default_workflow.<interface>`) and where its value
+  comes from. The gateway never quietly runs another workflow instead.
+- `POST /runs/schedule` accepts the same `flow_id: "@default"` + `interface`
+  (the schedule then targets the version resolved at that moment).
+
+What the default is for each interface (readable without admin rights):
+`GET /bundles` and `GET /workflow-catalog` carry
+
+```json
+"default_agent_workflows": {
+  "abstractcode.agent.v1": {"workflow_id": "basic-agent@0.0.5:81795ea9", "bundle_id": "basic-agent",
+                            "bundle_version": "0.0.5", "flow_id": "81795ea9", "registry_scope": "private",
+                            "name": "basic-agent", "source": "default"}
+},
+"default_agent_workflows_unavailable": {
+  "abstractassistant.agent.v1": {"source": "default", "value": null,
+    "reason": "no host workflow declares abstractassistant.agent.v1; the Assistant uses its built-in orchestrator"}
+}
+```
+
+and every entrypoint row carries `is_agent_default` and
+`agent_default_interfaces`. These are different from `default_bundle_id`
+(the bundle a bare `flow_id` falls back to), from a catalog record's
+`is_default` (its default version) and from a bundle's `default_entrypoint`.
+
+The setting itself is `agents.default_workflow.<interface>` (see
+[Configuration](configuration.md#default-agent-workflow)).
 
 For VisualFlow bundles, Gateway runs the packed JSON through AbstractRuntime.
 Structured LLM/Agent schemas are Runtime/Core-owned: `response` remains textual,
@@ -284,6 +337,23 @@ Returns `{app, source, chars, text}`. Resolution order: the
 404 naming the checked candidates, never a silent fallback), then the repo
 `llms.txt` in dev checkouts, then the corpus packaged with the wheel.
 
+### Skills shelf
+
+`GET /api/gateway/skills` lists the skills of the gateway's shelf:
+`{skills: [...], shelf, shelf_source, bundled_version, warnings}`.
+`shelf_source` says where the shelf comes from: `stored` (the saved setting
+`skills.shelf`), `env` (a legacy launch environment value), `seeded` (the
+gateway's own copy in `<data dir>/skills/registry`, kept up to date from the
+curated shelf that ships with AbstractSkill at each start), `checkout` (a
+framework checkout, used only when the gateway's own copy is missing) or
+`none`. An empty list always comes with a warning that says why and what to
+do; warnings are plain sentences meant to be shown as they are.
+
+`POST /api/gateway/admin/skills/reseed` (admin) refreshes the gateway's own
+copy now and answers the seed report (`added`, `updated`, `unchanged`, the
+`kept_*` lists with what was kept and why, `bundled_version`,
+`previous_version`). An edit made in that folder is never overwritten.
+
 ### 3) Replay the ledger (cursor-based)
 
 Ledger pages are replayed using `after` as “number of items already consumed”.
@@ -319,6 +389,52 @@ curl -N -H "$AUTH" "$BASE_URL/api/gateway/runs/<run_id>/ledger/stream?after=0"
 ```
 
 Evidence: `src/abstractgateway/routes/gateway.py` (`stream_ledger`).
+
+## A run's workspace folder (browse and preview)
+
+A run works in a folder on the gateway computer: the conversation's own
+folder the gateway made (`<data dir>/workspaces/session-…`), or the folder the
+client was started from. Three routes let the person who started the run see
+it; another user's run id answers 404.
+
+`GET /api/gateway/runs/{run_id}/workspace`:
+
+```json
+{"run_id": "…", "workspace_root": "/Users/me/Library/Application Support/abstractgateway/workspaces/session-chat-1-3f2a…",
+ "kind": "session", "session_id": "chat-1", "exists": true,
+ "host": {"hostname": "studio.local", "caller_is_this_machine": true},
+ "open_supported": true}
+```
+
+`kind` is `session`, `run` or `launch_folder`. `open_supported` is true only
+for an admin sitting at the gateway computer, the only caller for whom
+`POST /runs/{run_id}/workspace/open` can open the folder; elsewhere show the
+path and the host name.
+
+`GET /api/gateway/runs/{run_id}/workspace/files?path=<folder>&recursive=false&limit=<n>`:
+
+```json
+{"path": "src", "entries": [{"name": "a.py", "path": "src/a.py", "type": "file", "size_bytes": 11, "mtime": "2026-09-25T10:00:00Z"}],
+ "truncated": false, "limit": null, "recursive": false,
+ "hidden": {"outside_links": 0, "blocked": 0, "other": 0}}
+```
+
+Folders come first, then files, by name. `limit` is optional; when the listing
+stops there, `truncated` is true. `hidden` counts what is not shown: links
+that lead outside the folder, and entries the workspace deny list blocks.
+
+`GET /api/gateway/runs/{run_id}/workspace/content?path=<file>` streams the
+whole file with its content type, `Content-Disposition: inline`,
+`X-Content-Type-Options: nosniff` and `Content-Security-Policy: sandbox`, and
+honours `Range` (206; 416 outside the file).
+
+Paths are relative to the folder: absolute paths and `..` are refused (400),
+a link that leads outside is refused (403), the gateway's own marker file is
+never listed nor served. The workspace access policy (allowed and blocked
+folders, launch-folder trust) is applied again at every call, and nothing
+else in the gateway's data folder is ever served. A run cannot be started
+with a `workspace_root` inside the gateway's data folder either, except the
+conversation folder the gateway made for the same user.
 
 ## Artifacts and filesystem handoff
 
@@ -1210,6 +1326,18 @@ Evidence: `src/abstractgateway/routes/gateway.py` (`host_state`,
 `host_memory_metrics`, `model_residency_loaded`, `model_residency_lock`,
 `model_context_estimate`, `session_prompt_caches_list`) and
 `src/abstractgateway/security/authorization.py` (route-family policy).
+
+## About (`GET /api/gateway/about`)
+
+Public (no sign-in): which versions this gateway runs, for About screens.
+
+```json
+{"abstractframework": "0.3.3", "abstractgateway": "0.4.4",
+ "packages": {"abstractcore": "2.15.3", "abstractruntime": "0.4.36", "abstractskill": "0.3.0"}}
+```
+
+`abstractframework` is null when the framework meta-package is not installed
+on the gateway computer. Versions only: no paths, host names or settings.
 
 ## Host control (pause, desktop tray, restart, update)
 

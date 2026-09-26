@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Requires AbstractSkill 0.3.0 (installed automatically). The tray's About
+rows use the identity module of the next AbstractCore release.
+
+### Added
+
+- **Default agent workflow.** A gateway setting,
+  `agents.default_workflow.<interface>`, chooses the workflow that answers
+  each agent interface (`abstractcode.agent.v1`,
+  `abstractassistant.agent.v1`, ...) when an app picks "Gateway default".
+  Set it in the console (Workflows > Default agent workflow, or *Make agent
+  default* on an entrypoint), in the terminal console, or with
+  `abstractgateway config set agents.default_workflow.<interface>
+  bundle[@version]:flow`. Runs started with `flow_id: "@default"` and an
+  `interface` use it at every start and are refused, with the reason, when
+  it cannot run; `GET /bundles` and `GET /workflow-catalog` say what it is.
+  The backlog advisor and the Telegram bridge use it too.
+- Every run start answers `resolved_workflow` (the workflow it really runs),
+  also kept in the run as `input_data.workflow_selection`.
+- **Browse a run's files.** `GET /runs/{run_id}/workspace`,
+  `/workspace/files` and `/workspace/content` show the run's folder on the
+  gateway computer (with its full path and the computer's name), list it and
+  preview any file, for the person who started the run.
+- **Skills shelf.** The gateway keeps its own copy of the curated skills
+  that ship with AbstractSkill in `<data dir>/skills/registry`, refreshed at
+  each start without touching your edits; `skills.shelf` points it at
+  another folder (console, terminal console, `abstractgateway config set
+  skills.shelf`). `GET /skills` says which shelf is used and why a list is
+  empty; `POST /admin/skills/reseed` refreshes the copy on demand.
+- **The Assistant opens signed in.** Opening the Assistant from the console
+  or the menu bar icon connects it to this gateway and signs it in, through
+  a one-time code in a private file (`POST /apps/desktop-handover`).
+- `GET /about` (no sign-in): the framework and package versions this
+  gateway runs. The tray's About shows them with the project details.
+- `abstractgateway serve --no-tray`: no menu bar / tray icon for this run.
+
+### Changed
+
+- "A caller on this computer" is decided on the browser's address when an
+  app on this computer relays the request, so a browser on another computer
+  going through an app is no longer treated as local (installs, opening
+  folders, the Assistant).
+- A run cannot use a folder inside the gateway's data folder as its
+  workspace, except the conversation folder the gateway made for it.
+- A settings write that names an unknown setting is refused as a whole and
+  saves nothing.
+
 ## [0.4.4] - 2026-09-25
 
 Requires AbstractCore 2.15.3 and AbstractRuntime 0.4.36 (installed

@@ -709,6 +709,73 @@ Three ways, same semantics:
 The CLI works on the data dir directly (`--data-dir`, default: the `serve`
 resolution), so a headless server needs no browser.
 
+### Default agent workflow
+
+`agents.default_workflow.<interface>` chooses the workflow that answers an
+agent interface when a client picks "Gateway default" (AbstractCode's
+workflow selector, the Assistant, the Telegram bridge, the backlog advisor).
+The value is `[catalog:]bundle[@version]:flow`: without a version the latest
+published version runs; `catalog:` picks a workflow of the tenant catalog
+instead of the gateway's own workflows.
+
+| Interface | When nothing is saved |
+|---|---|
+| `abstractcode.agent.v1` | the default entrypoint of the shipped `basic-agent` workflow (unavailable when it is not on the gateway) |
+| `abstractassistant.agent.v1` | none: the Assistant runs its built-in orchestrator |
+| any other interface a workflow declares | none until an admin saves one |
+
+A saved value is checked when it is saved (it must exist on this gateway and
+declare that interface; 400 with the reason otherwise) and again at every
+run start: a value that no longer works is shown as unavailable with the
+reason, and runs that ask for the default are refused (409) until it is
+changed. It never falls back to another workflow on its own.
+
+`GET /api/gateway/admin/runtime-config` returns
+
+```json
+"agents": {"default_workflow": {"abstractcode.agent.v1": {
+  "key": "agents.default_workflow.abstractcode.agent.v1", "value": "coding-agent:coder", "source": "stored",
+  "available": true, "reason": null, "default": "basic-agent:81795ea9",
+  "resolved": {"bundle_id": "coding-agent", "bundle_version": "0.2.7", "flow_id": "coder",
+               "registry_scope": "private", "workflow_id": "coding-agent@0.2.7:coder", "name": "coder"},
+  "eligible": [{"value": "basic-agent:81795ea9", "workflow_id": "basic-agent@0.0.5:81795ea9", "name": "basic-agent", "...": "..."}]}},
+  "index_source": "host"}
+```
+
+`source` is `stored` or `default` (there is no launch flag and no environment
+variable for this setting).
+
+| | Web console | Console TUI | CLI |
+|---|---|---|---|
+| Where | Workflows → *Default agent workflow* (one row per interface), or *Make agent default* on an entrypoint | Runtimes → *Runtime knobs* → *Edit default agent workflows*; Workflows marks the default with ★ | `abstractgateway config get agents.default_workflow.<interface>` |
+| Change | choose in the list, *Save default agent workflows* | type the value (the choices are listed under the field; empty = the built-in default) | `abstractgateway config set agents.default_workflow.<interface> bundle[@version]:flow`, `config unset …` |
+
+Writes are admin-only and audit-logged like every other setting. A write that
+names a setting the gateway does not know is refused as a whole (400) and
+saves nothing; two writers at the same time never lose each other's change.
+
+### Skills shelf
+
+`skills.shelf` is the folder the gateway reads skills from (it holds
+`skills/<name>/SKILL.md` and the trust files `validations.yaml`,
+`advisories.yaml`, `guidance.yaml`). Leave it empty to use the gateway's own
+copy of the curated shelf that ships with AbstractSkill: at each start the
+gateway copies it into `<data dir>/skills/registry`, adding what is new and
+refreshing what it wrote before, and never overwriting a file you edited
+there. The report of that copy is in the gateway log, and
+`POST /api/gateway/admin/skills/reseed` (or *Refresh the curated shelf* in the
+console) runs it again on demand.
+
+A saved folder that does not exist or holds no `skills/` folder is shown as
+unavailable with the reason (the gateway does not silently use another
+shelf). `GET /skills` and the settings say which shelf is in use
+(`shelf_source`: `stored`, `env`, `seeded`, `checkout` or `none`).
+
+| | Web console | Console TUI | CLI |
+|---|---|---|---|
+| Where | Apps → *Skills shelf* | Runtimes → *Runtime knobs* → *Edit skills shelf* | `abstractgateway config get skills.shelf` |
+| Change | type the folder, *Save skills shelf*; *Refresh the curated shelf* | type the folder (empty = the gateway's own copy) | `abstractgateway config set skills.shelf /path/to/registry`, `config unset skills.shelf` |
+
 ### Backlog folder, exec runner and process manager (Continuum)
 
 Continuum's Board, Backlog, Executions and Services pages read three runtime
@@ -1232,7 +1299,9 @@ Core catalog proxy settings:
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload]`
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray]`
+  (`--no-tray`: no menu bar / tray icon for this run, for a test or scratch
+  gateway next to your usual one)
   (host/port default to the [network exposure](#network-exposure-localhost--local-network--internet)
   setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is
   configured, else `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.)

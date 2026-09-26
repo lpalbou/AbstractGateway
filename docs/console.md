@@ -35,7 +35,7 @@ The sidebar lists these tabs:
 |---|---|
 | **Users & Entities** | user records, token rotation, retained runtime reservations, and the summoned-entity roster ([entities.md](./entities.md)) |
 | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches |
-| **Workflows** | every registered workflow with versions and entrypoints, import, export, delete, and versions that are not served (with the reason) |
+| **Workflows** | the default agent workflow for each agent interface (what "Gateway default" runs in the apps), every registered workflow with versions and entrypoints (*Make agent default* on an entrypoint), import, export, delete, and versions that are not served (with the reason) |
 | **Providers** | provider connections (OpenAI, Anthropic, OpenRouter, Portkey, LM Studio, Ollama, custom OpenAI-compatible endpoints) with write-only keys |
 | **Multimodal** | capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
 | **Sandbox** | quick chat and media generation against the configured defaults |

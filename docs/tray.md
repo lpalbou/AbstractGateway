@@ -38,7 +38,11 @@ can see what it is doing and act on it in one click:
   in a small window (needs `tkinter`; see below).
 - **Start AbstractGateway at login** — a check item that shows whether this
   gateway WOULD start at your next login, and switches it. See *Start at login*.
-- **Check for Updates / Restart / Quit / About / Help.**
+- **Check for Updates / Restart / Quit / About / Help.** About shows the
+  gateway's version, console address and data folder, the AbstractFramework
+  project details (website, source, documentation, where to report an issue
+  or give feedback, contact) and the versions of the framework packages this
+  gateway runs (from `GET /api/gateway/about`).
 
 The menu as shipped (macOS, a machine with 151 installed models; `[…]` is a
 greyed information line, `▸` a submenu, `☐/☑` the check item):
@@ -186,7 +190,7 @@ not depend on its apps:
 |---|---|---|
 | Observer, Continuum, Code, Entity, Flow | the gateway (`GET /api/gateway/apps`): its own installs, and apps started outside it (the dev stack, `npx`, a service) found on their usual port | **Open X** when running, whoever started it (a one-time signed-in handover); **Open X** when installed and stopped (starts it, then opens it); **Install X…** when it can be installed (the browser app and, for Code when a ready-made download exists for this computer, its terminal app, as one job; a notification when it is done, then **Open X**); otherwise **X**, greyed |
 | the same, installed globally | the app's command on PATH (`abstractobserver`, `abstractflow-editor`, `abstractcode-web`, `abstractcontinuum`, `abstractentity`) or the package under `npm root -g` | **Open X** — started by the tray with the gateway URL passed in and stopped when the tray exits; sign in inside the app (install it here instead for the one-click sign-in) |
-| Assistant | the same detection as the console's Assistant card (`apps_desktop.detect_assistant`): `AbstractAssistant.app` in /Applications or ~/Applications, the `abstractassistant` command (this Python's scripts folder, or PATH), or the package in this Python (`importlib.util.find_spec`, without importing it) | **Launch Assistant** when found (also while it runs); **Install Assistant…** when the gateway can install it into its own Python (the console's Install); otherwise **Assistant**, greyed |
+| Assistant | the same detection as the console's Assistant card (`apps_desktop.detect_assistant`): `AbstractAssistant.app` in /Applications or ~/Applications, the `abstractassistant` command (this Python's scripts folder, or PATH), or the package in this Python (`importlib.util.find_spec`, without importing it) | **Launch Assistant** when found (also while it runs): the gateway opens it (`POST /api/gateway/apps/assistant/launch`, the console's Open), connected and signed in to this gateway; **Install Assistant…** when the gateway can install it into its own Python (the console's Install); otherwise **Assistant**, greyed |
 | Code's terminal version (the only app with one today) | the gateway's presence check, reported as `interfaces[kind="tui"]` on the app row: its own copy in `<data dir>/apps/bin/`, `abstractcode` on PATH, or `~/.cargo/bin` | **Open Code in Terminal** — a new terminal window on this machine, signed in through a one-time code (`POST /api/gateway/apps/code/launch-tui`, the same route as the console's button). Shown only when the gateway reports it installed; greyed when the gateway would refuse (the console says why) |
 
 When an app cannot be installed from here, ONE line near the bottom says so:
