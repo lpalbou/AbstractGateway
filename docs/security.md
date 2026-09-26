@@ -181,7 +181,11 @@ runtime-scoped Core capability-default routes.
 The route table is intentionally conservative around server filesystem access:
 browser-local files should use `/api/gateway/attachments/upload`; server
 workspace reads/imports/exports require an admin principal until a stronger
-per-user workspace grant model exists.
+per-user workspace grant model exists. The one user-level exception is a run's
+own folder: the person who started a run can list and preview that run's
+workspace (`GET /runs/{run_id}/workspace`, `/files`, `/content`), confined to
+it and with the built-in deny list applied
+([api.md](./api.md#a-runs-workspace-folder-browse-and-preview)).
 
 Capability discovery follows the same policy. Regular users can still discover
 ordinary run, ledger, artifact, upload, provider/model catalog, KG, and
@@ -312,14 +316,8 @@ your network:
     for and refuses a loopback-only app to a browser on another machine.
   - **engine and app installs for remote admins**: `allow_engine_install`
     defaults to off on a non-loopback bind for callers on other computers.
-    Someone at the gateway machine itself can still install: the request's
-    socket peer is loopback or one of this host's own addresses, and it
-    carries no proxy header (`Forwarded`, `X-Forwarded-For`,
-    `X-Forwarded-Host`, `X-Real-IP`). A remote computer cannot use this
-    host's own address as the source of an established TCP connection (the
-    handshake reply never reaches it, and the kernel drops outside packets
-    with a local source address); a reverse proxy on this host would make
-    every visitor look local, which is why a proxied request never counts.
+    Someone at the gateway machine itself can still install (see
+    [Callers on this computer](#callers-on-this-computer)).
 - **`internet`**: the same bind plus an explicit acknowledgement. The gateway
   does **not** terminate TLS and does not configure your router or firewall.
   Put a TLS reverse proxy (Caddy, nginx, Traefik) or a tunnel (Cloudflare
@@ -333,6 +331,62 @@ The mode is applied at the next start and `serve --host/--port` override it;
 `GET /api/gateway/network` always says what is configured, what is running,
 and why they differ.
 
+## Callers on this computer
+
+Some defaults belong to the person sitting at the gateway computer and not to
+the rest of the network: installing engines and apps
+([`allow_engine_install`](./configuration.md#allow_engine_install)), opening a
+run's folder in the file manager (`open_supported` on
+`GET /runs/{run_id}/workspace`), and the `caller_is_this_machine` fact the
+workspace routes report. One rule decides them all
+(`src/abstractgateway/security/same_machine.py`):
+
+- The caller's address is the socket peer. `serve` runs uvicorn with
+  `forwarded_allow_ips` pinned to `127.0.0.1` and `::1` (a
+  `FORWARDED_ALLOW_IPS` value in the environment is ignored with a warning),
+  so `X-Forwarded-For` is believed only from a peer on this computer.
+- The browser apps' servers (the AbstractCode web server and the AbstractUIC
+  app server) run on this computer and relay requests with the browser's real
+  address in `X-Forwarded-For` (overwritten, never appended) and their marker
+  header `X-AbstractFramework-App-Proxy: <app id>`. A browser on another
+  computer that opens an app is therefore not local; a browser on this
+  computer is.
+- The caller is local when that address is loopback or one of this host's own
+  interface addresses. A remote computer cannot use this host's own address
+  as the source of an established TCP connection.
+
+Fail-safes:
+
+- A request with the app-proxy marker but no `X-Forwarded-For` is never local
+  (a proxy that dropped the header would make every browser look local).
+- While the gateway trusts a reverse proxy (`trust_proxy`), a request relayed
+  by an app server is never local: the reverse proxy hides the browser's
+  address. For this rule the saved `trust_proxy` setting decides first; the
+  `ABSTRACTGATEWAY_TRUST_PROXY` launch environment counts only when nothing
+  is saved.
+- A forwarded header (`X-Forwarded-For`, `Forwarded`, `X-Forwarded-Host`,
+  `X-Real-IP`) sent by a peer that is not on this computer is never local,
+  and neither is a request that carries a proxy header other than
+  `X-Forwarded-For` (a proxy this rule cannot read).
+
+Native clients on this computer (the web console, the terminal console, the
+Assistant, the tray) call the gateway directly, so their loopback peer
+decides.
+
+### Desktop Assistant sign-in
+
+The Assistant opened from the console or the tray is signed in through a
+one-time code the gateway writes into a file only your account can read
+(`<data dir>/handover/<random>.json`, mode 0600) and names on the Assistant's
+command line (`--gateway-handover-file`); the code itself is never on a command
+line or in the environment. The Assistant trades it at
+`POST /api/gateway/apps/desktop-handover`, which answers only a direct caller
+on this computer (no proxy header and no app-server session header; 403
+otherwise), once, within two minutes (410 after). The resulting session is a
+remembered session (30 days) of the user who clicked Open. See
+[apps.md](./apps.md) and
+[architecture.md](./architecture.md#desktop-assistant-hand-over).
+
 ## Workspace filesystem scope (blacklist/whitelist)
 
 AbstractGateway supports “thin clients” (browser UIs, bridges) that can trigger **filesystem-ish tools** (e.g. `list_files`, `read_file`, `write_file`). To avoid a thin client expanding server filesystem access, the gateway enforces a **workspace policy**.
@@ -341,17 +395,42 @@ Key point: the **main configuration** for filesystem allowlisting/denylisting is
 
 ### Default (safe): everything outside the run workspace is blocked
 
-- When a run is started via `POST /api/gateway/runs/start` and `workspace_root` is missing (or rejected), the gateway creates a **per-run workspace** under:
-  - `<ABSTRACTGATEWAY_DATA_DIR>/workspaces/<uuid>`
+- Every run the gateway starts works in a folder, whatever started it (the
+  HTTP routes, the Telegram, email and agora bridges, entity summons,
+  scheduled runs). A run that names no `workspace_root` works in its
+  conversation's gateway-made folder, `<ABSTRACTGATEWAY_DATA_DIR>/workspaces/session-…`
+  (or a per-run folder when it has no session).
 - AbstractRuntime applies workspace scoping to filesystem-ish tool arguments. The default is:
   - `workspace_access_mode=workspace_only`
   - absolute paths must stay under `workspace_root`
+- A client `workspace_root` inside the gateway's data folder is refused (400),
+  except the conversation folder the gateway made for the same user; the same
+  check runs on `POST /runs/start`, `POST /runs/schedule` and entity summons.
 
 This means that by default, **all absolute paths are effectively “blacklisted”** except the run’s `workspace_root`.
 
+### Built-in deny list
+
+Whatever the workspace policy allows, the gateway's data folder and the
+credential and configuration folders of the gateway's user account (`~/.ssh`,
+`~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.kube`, `~/Library/Keychains`,
+`~/.abstractgateway`, `~/.abstractcode`, `~/.abstractassistant`,
+`~/.abstractcontinuum`, `~/.abstractcore`) are:
+
+- never listed or served by the workspace browser, for anyone, even when a
+  run's folder contains them;
+- denied to every run's file tools, as whole-folder rules
+  (`workspace_builtin_deny_prefixes`) with the run's own folder inside the
+  data folder as the one exception (`workspace_builtin_allow`). Clients cannot
+  send these two entries (they are dropped), and the rules are enforced
+  without being written into the model's prompt. An admin can turn the run
+  side off with the `workspace_builtin_deny` setting; the browser keeps hiding
+  the folders.
+
 Evidence:
-- Run default workspace injection: `src/abstractgateway/routes/gateway.py` (`start_run`)
+- Every run start: `src/abstractgateway/run_workspace_guard.py` (called from `WorkflowBundleGatewayHost.start_run`)
 - Client scope clamping: `src/abstractgateway/routes/gateway.py` (`_sanitize_run_workspace_policy`, `_client_workspace_scope_overrides_enabled`)
+- Browse and preview: `src/abstractgateway/workspace_browse.py`
 - Runtime tool scoping: `abstractruntime/integrations/abstractcore/workspace_scoped_tools.py`
 - Tests: `tests/test_gateway_workspace_policy_enforcement.py`
 
@@ -384,7 +463,7 @@ Do **not** enable this when serving untrusted browser origins: a compromised thi
 
 ### Important limitation (all modes)
 
-`execute_command` is **not** an OS sandbox: even if the runtime sets the default working directory under `workspace_root`, the command itself can reference absolute paths or `cd ..`.
+`execute_command` is **not** an OS sandbox: even if the runtime sets the default working directory under `workspace_root`, the command itself can reference absolute paths or `cd ..`. The built-in deny list does not confine shell commands either.
 
 ## Common security env vars
 
@@ -453,7 +532,9 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
   every request; otherwise any client chooses the address the gateway sees.
   The ephemeral tray token never honours it (raw socket peer only).
 - A gateway started with `ABSTRACTGATEWAY_TRUST_PROXY` in its environment uses
-  that value instead; the status reports `overridden_by_env: true`.
+  that value instead for IP attribution and lockouts; the status reports
+  `overridden_by_env: true`. The same-machine rule reads the saved setting
+  first ([Callers on this computer](#callers-on-this-computer)).
 
 ## Production checklist (minimal)
 

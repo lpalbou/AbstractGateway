@@ -111,5 +111,5 @@ default agent, install the replacement bundle first, then remove the old file.
 - Shipped bundle versions are immutable pins; newer versions install alongside
   them through the normal bundle upload or workflow catalog routes.
 - The editable sources for the shipped workflows are VisualFlow JSON files in
-  the AbstractFlow repository (`abstractflow/examples/flows/`), packed with
-  `abstractflow bundle pack`.
+  the AbstractFlow repository (`examples/flows/`), packed into `.flow` bundles
+  with AbstractRuntime's `abstractruntime.workflow_bundle.pack_workflow_bundle`.

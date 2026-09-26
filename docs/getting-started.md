@@ -23,6 +23,8 @@ Related repos:
 ## Prerequisites
 
 - Python `>=3.10` (see `pyproject.toml`)
+- AbstractRuntime 0.4.37 or later, installed with the gateway; the gateway
+  refuses to start on an older runtime and names the version to install
 - Workflows: none needed to start. The gateway serves its shipped bundles
   ([shipped-workflows.md](./shipped-workflows.md)); you can point it at your
   own `.flow` bundles or upload them after startup
@@ -137,6 +139,13 @@ curl -sS -H "Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstr
 
 Notes:
 - If a bundle has multiple entrypoints and no default, you must pass `flow_id`.
+- To run the gateway's default agent for an interface instead of naming a
+  bundle, send `{"flow_id": "@default", "interface": "abstractcode.agent.v1", ...}`
+  ([configuration.md](./configuration.md#default-agent-workflow)).
+- Add `"_runtime": {"stream": true}` to `input_data` to receive the model's
+  reply live on the ledger stream
+  ([api.md](./api.md#4b-live-replies-token-deltas-on-the-same-stream)).
+- Every start answers `resolved_workflow`, the workflow the run really runs.
 - See [api.md](./api.md) for ledger replay/stream and durable commands.
 
 ## 2b) (Optional) Schedule a run (bundle mode)

@@ -260,12 +260,21 @@ model. Details: [docs/api.md](docs/api.md) and [docs/faq.md](docs/faq.md).
   - optional `thinking` sets the run-scoped `_runtime.thinking` default used by
     Flow LLM/Agent nodes and AbstractAgent adapters when Core/provider support
     reasoning controls
+  - `flow_id: "@default"` with an agent `interface` runs the gateway's default
+    agent workflow for that interface; every start answers `resolved_workflow`
+  - `input_data._runtime.stream: true` also sends the model's reply live
+    (`llm.delta` frames on the ledger stream)
 - Clients can **schedule runs** (bundle mode): `POST /api/gateway/runs/schedule`
 - Clients **act** by submitting durable commands: `POST /api/gateway/commands`
   - supported types: `pause|resume|cancel|emit_event|update_schedule|compact_memory`
 - Clients **render** by replaying/streaming the durable ledger:
   - replay: `GET /api/gateway/runs/{run_id}/ledger?after=...`
   - stream (SSE): `GET /api/gateway/runs/{run_id}/ledger/stream?after=...`
+
+A run's owner can browse and preview the run's workspace folder
+(`GET /api/gateway/runs/{run_id}/workspace`, `/files`, `/content`), and
+`GET /api/gateway/about` reports the versions the gateway runs without
+sign-in.
 
 Model residency is available from a shell through
 `abstractgateway models loaded|load|unload` ([docs/console.md](docs/console.md)).
@@ -315,11 +324,25 @@ For details on capability route defaults, store backends, and workflow sources, 
 
 ## Creating a `.flow` bundle (authoring)
 
-Use AbstractFlow to pack a bundle:
+Author the workflow in the AbstractFlow editor and publish it: the editor
+stores the VisualFlow on the gateway (`/api/gateway/visualflows/*`) and
+`POST /api/gateway/visualflows/{flow_id}/publish` packs it into a bundle. From
+Python, AbstractRuntime packs a bundle from VisualFlow JSON files:
 
-```bash
-abstractflow bundle pack /path/to/root.json --out /path/to/bundles/my.flow --flows-dir /path/to/flows
+```python
+from abstractruntime.workflow_bundle import pack_workflow_bundle
+
+pack_workflow_bundle(
+    root_flow_json="/path/to/root.json",
+    out_path="/path/to/bundles/my-bundle@0.1.0.flow",
+    bundle_id="my-bundle",
+    bundle_version="0.1.0",
+    flows_dir="/path/to/flows",
+)
 ```
+
+Upload it with `POST /api/gateway/bundles/upload`, or place it in
+`ABSTRACTGATEWAY_FLOWS_DIR`.
 
 See [docs/getting-started.md](docs/getting-started.md) for running, split API/runner, and file→SQLite migration.
 

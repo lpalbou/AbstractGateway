@@ -38,6 +38,16 @@ or easy to guess, on a non-loopback bind or with public wildcard origins.
 **Fix.** Use a long random token, or use user accounts
 (`ABSTRACTGATEWAY_USER_AUTH=1`). See [security.md](./security.md).
 
+### The gateway does not start: "this gateway needs abstractruntime>=…"
+
+The installed AbstractRuntime lacks live token deltas or the built-in tool
+deny rules the gateway relies on; the message names what is missing. Upgrade
+it in the gateway's Python, then start again:
+
+```bash
+pip install -U "abstractruntime>=0.4.37"
+```
+
 ### The one-time sign-in link does not work
 
 **Checks and fixes.**
@@ -130,6 +140,40 @@ and set the mode again. See [security.md](./security.md#network-exposure).
 - The gateway may be **paused** (`"paused": true` on `/api/health`, a banner
   in the console): resume it from the tray, the console, or
   `POST /api/gateway/host/resume`.
+
+### A run start answers 409 naming `agents.default_workflow.<interface>`
+
+The run asked for the gateway default (`flow_id: "@default"`), and the saved
+default for that interface cannot run: its workflow was removed or
+deprecated, or no longer declares the interface. The message names the
+setting and where its value comes from. Choose another workflow in the
+console (Workflows → *Default agent workflow*), or run
+`abstractgateway config unset agents.default_workflow.<interface>` to return
+to the built-in default. A 400 means the request itself is wrong: `interface`
+is missing, or `bundle_id`/`bundle_version` were sent with `@default`. See
+[configuration.md](./configuration.md#default-agent-workflow).
+
+### Replies arrive only at the end (no live text)
+
+- The run did not ask for streaming: send `input_data._runtime.stream: true`,
+  or turn on `agents.streaming_default` (it applies to interactive
+  `POST /runs/start` only, never to schedules, bridges or the entity loop).
+- The call could not stream: its `llm.delta_end` says `reason: "unavailable"`
+  with a `detail` (for example `structured_output`, `node_stream_off`,
+  `provider_cannot_stream`); the answer is complete either way.
+- `GET /api/gateway/discovery/capabilities` must show
+  `capabilities.streaming.deltas: true`.
+
+See [api.md](./api.md#4b-live-replies-token-deltas-on-the-same-stream).
+
+### The skills list is empty
+
+`GET /api/gateway/skills` says why in `warnings` and which shelf it read in
+`shelf_source`. A saved `skills.shelf` that does not exist or holds no
+`skills/` folder is reported as unavailable; unset it to use the gateway's own
+copy, or refresh that copy with *Refresh the curated shelf* (console, Apps) or
+`POST /api/gateway/admin/skills/reseed`. See
+[configuration.md](./configuration.md#skills-shelf).
 
 ### "LLM nodes but no default provider/model is configured"
 
@@ -240,11 +284,21 @@ Choose **Use the gateway's own folder** in Continuum or the console, or run
 | `headless` | no display (SSH, container, service); expected |
 | `dev_reload` | start without `--reload` |
 | `runner_only` | the tray belongs to the process that serves the console |
+| `no_tray_flag` | the gateway was started with `serve --no-tray`; start it without the flag |
 
 GNOME needs the AppIndicator extension. If the helper started and then
 disappeared, read `<data dir>/logs/tray.log`; `GET /api/gateway/host/tray`
 reports its exit code, and `POST /api/gateway/host/tray/show` (admin) starts
 it again. See [tray.md](./tray.md).
+
+### The Assistant opened from the console is not signed in
+
+- It was already running: a running Assistant receives no sign-in code. Quit
+  it and open it again from the console or the tray.
+- More than two minutes passed before it started, or the code was already
+  used: open it again from the console.
+
+See [apps.md](./apps.md).
 
 ### "Start at login" reads "needs repair" (`service status`: `broken`)
 

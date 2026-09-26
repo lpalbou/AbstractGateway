@@ -654,12 +654,13 @@ controlled by the runtime-config setting `allow_engine_install`:
 | a loopback address (`127.0.0.1`, `::1`, `localhost`), which is what a bare `abstractgateway serve` and `abstractgateway service install` use | on | on |
 | any other address (`0.0.0.0`, a LAN IP, a host name), or started without `abstractgateway serve` | on | off |
 
-"Someone at the gateway machine" is a request whose socket peer is loopback
-or one of this host's own interface addresses (a browser on the gateway
-machine that uses its LAN address counts), with no proxy header
-(`Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-IP`): see
-[security.md](./security.md). The same rule gates app installs (Apps page,
-tray). `install_policy` reports `caller_on_this_machine` and, when that rule
+"Someone at the gateway machine" is a caller whose address is loopback or
+one of this host's own interface addresses (a browser on the gateway machine
+that uses its LAN address counts). For a browser app, the address is the
+browser's own, relayed by the app's server on this computer, so a browser on
+another computer never counts: see
+[security.md](./security.md#callers-on-this-computer). The same rule gates app
+installs (Apps page, tray). `install_policy` reports `caller_on_this_machine` and, when that rule
 decided, `source: "default_same_machine"`.
 
 An admin changes it with
@@ -714,9 +715,10 @@ resolution), so a headless server needs no browser.
 `agents.default_workflow.<interface>` chooses the workflow that answers an
 agent interface when a client picks "Gateway default" (AbstractCode's
 workflow selector, the Assistant, the Telegram bridge, the backlog advisor).
-The value is `[catalog:]bundle[@version]:flow`: without a version the latest
-published version runs; `catalog:` picks a workflow of the tenant catalog
-instead of the gateway's own workflows.
+The value is `[private:|catalog:]bundle[@version]:flow`: without a version the
+latest published version runs; `private:` (the default) picks one of the
+gateway's own workflows and `catalog:` one of the tenant catalog. The flow id
+may itself contain `:` (the bundle part ends at the first `:`).
 
 | Interface | When nothing is saved |
 |---|---|
@@ -917,8 +919,9 @@ are user-level; every write is admin-only.
 
 The tray icon has **no setting**: while the gateway serves a desktop that can
 hold it, it is there. It is absent only for reasons that are facts about the
-machine — no display, no `tray` extra, `serve --reload`, a runner-only process
-— and `GET /host/tray` names which. There is no `desktop_tray` setting; a
+machine or the launch — no display, no `tray` extra, `serve --reload`, a
+runner-only process, or `serve --no-tray` for this run — and `GET /host/tray`
+names which. There is no `desktop_tray` setting; a
 write to that key is refused with this explanation. `GET /api/health` carries `"paused": true` while paused (status
 stays `healthy`). Full description: [tray.md](./tray.md).
 

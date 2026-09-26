@@ -100,6 +100,13 @@ If you must relax it:
 
 Evidence: env policy loader in `src/abstractgateway/security/gateway_security.py`.
 
+### Why does the workspace browser never show `~/.ssh` or the gateway's data folder?
+
+The gateway's data folder and the credential folders of its user account are
+on a built-in deny list: never listed or served, and denied to runs' file
+tools by default, even when a run's folder contains them. See
+[security.md](./security.md#built-in-deny-list).
+
 ## Storage
 
 ### Where is data stored?
@@ -162,6 +169,28 @@ When starting runs in bundle mode you can select versions in two ways:
 - or pass a namespaced `flow_id` like `bundle@version:flow` (this also works for selecting “latest” via `bundle:flow`)
 
 Evidence: bundle selection in `src/abstractgateway/hosts/bundle_host.py` (`start_run`).
+
+### Which workflow does "Gateway default" run?
+
+The one saved for the app's agent interface under
+`agents.default_workflow.<interface>` (for example
+`abstractcode.agent.v1`); with nothing saved, AbstractCode's interface runs the
+shipped `basic-agent`, and the Assistant's interface has no gateway default
+(the Assistant uses its built-in orchestrator). Apps start such runs with
+`flow_id: "@default"` and the interface; the gateway resolves it at every
+start, answers the choice as `resolved_workflow`, and refuses the start (409)
+rather than run another workflow when the saved one cannot run. Change it in
+the console (Workflows), the terminal console, or with
+`abstractgateway config set agents.default_workflow.<interface> bundle[@version]:flow`.
+See [configuration.md](./configuration.md#default-agent-workflow).
+
+### Can I see the reply while the model writes it?
+
+Yes. Start the run with `input_data._runtime.stream: true` (or turn on
+`agents.streaming_default` so interactive runs stream when the app does not
+say) and read the run's ledger stream: the text arrives as `llm.delta`
+frames, and the durable `llm_call` record still carries the final answer.
+See [api.md](./api.md#4b-live-replies-token-deltas-on-the-same-stream).
 
 ### Where does a bundle's default model come from?
 
@@ -298,7 +327,8 @@ Install the extra (`pip install "abstractgateway[tray]"`) and start the
 gateway with `abstractgateway serve` on a desktop session. The icon has no
 on/off setting: while the gateway serves a desktop that can show it, it is
 there. The boot log says `Desktop tray: started (pid …)` or names the reason
-it is absent (`missing_dependency`, `headless`, `dev_reload`, `runner_only`);
+it is absent (`missing_dependency`, `headless`, `dev_reload`, `runner_only`,
+`no_tray_flag` for `serve --no-tray`);
 the console's **Resources** tab shows the same. On Linux the GTK/AppIndicator
 bindings are needed; GNOME also needs the AppIndicator extension. Details:
 [tray.md](./tray.md) and

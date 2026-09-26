@@ -24,7 +24,10 @@ serve:
 | `/api/gateway/admin/users`, `/admin/runtime-reservations` | user accounts and retained runtimes (admin) | [security.md](./security.md#tenant-and-user-isolation) |
 | `/api/gateway/admin/runtime-config` | runtime settings (admin) | [configuration.md](./configuration.md) |
 | `/api/gateway/network`, `/network/restart` | network exposure, addresses, reverse proxy | [configuration.md](./configuration.md#api-gateway_network_v1) |
-| `/api/gateway/apps/*`, `/apps/handover/{code}`, `/apps/tui-handover` | browser apps, terminal apps, the Assistant | [apps.md](./apps.md#http-api) |
+| `/api/gateway/apps/*`, `/apps/handover/{code}`, `/apps/tui-handover`, `/api/gateway/apps/desktop-handover` | browser apps, terminal apps, the Assistant and its sign-in | [apps.md](./apps.md#http-api) |
+| `/api/gateway/runs/{run_id}/workspace`, `/workspace/files`, `/workspace/content` | browse and preview a run's folder (the run's owner) | [below](#a-runs-workspace-folder-browse-and-preview) |
+| `/api/gateway/skills`, `/admin/skills/reseed` | the skills shelf | [below](#skills-shelf), [configuration.md](./configuration.md#skills-shelf) |
+| `/api/gateway/about` | versions this gateway runs (no sign-in) | [below](#about-get-apigatewayabout) |
 | `/api/gateway/engines/*` | local engine installs | [engines.md](./engines.md#api-contract-gateway_engines_v2) |
 | `/api/gateway/models/download*`, `/models/downloads*` | model download jobs and their event stream | [model-downloads.md](./model-downloads.md) |
 | `/api/gateway/host/*` | host state, pause, restart, update, tray | [Host state](#host-state-and-model-residency), [Host control](#host-control-pause-desktop-tray-restart-update) |
@@ -1247,6 +1250,19 @@ One snapshot with `memory`, `gpu`, `models`, and `session_caches` sections:
 - `totals.model_bytes` sums the known `size_bytes` values and is `null` when
   no row reports a size; `totals.session_cache_bytes` behaves the same over
   the cache rows' `bytes`.
+- `memory.device` relays AbstractCore's accelerator figures, including
+  `process_held_bytes` (what this gateway process holds across its model
+  libraries: MLX, llama.cpp, transformers, embeddings) and
+  `process_held_basis`, how that figure was measured
+  (`metal_device_counter`, `cuda_device_counter…`, or `sum:` of the libraries'
+  own counts). `memory.resident` / `memory.held` name the models that hold it
+  (`backend`, model, number of holders) when the runtime reports them.
+- `residency_diagnostics` is always present (`{}` when the runtime reports
+  nothing): the dict `GET /models/loaded` returns as `diagnostics`, with `pending_ejects`
+  (models that will be ejected when their in-flight call ends) and
+  `last_switch_ejects` (what the last default-model switch ejected, kept or
+  failed to eject, with the reason). The consoles and the tray show these as
+  "Will eject X when the in-flight call ends", "X: eject failed: reason".
 - `totals.models` counts every known row — configured / cached rows included —
   while `totals.models_resident` (additive) counts only rows with
   `resident: true`. Clients that display "N loaded" must read

@@ -903,12 +903,13 @@ controlled by the runtime-config setting `allow_engine_install`:
 | a loopback address (`127.0.0.1`, `::1`, `localhost`), which is what a bare `abstractgateway serve` and `abstractgateway service install` use | on | on |
 | any other address (`0.0.0.0`, a LAN IP, a host name), or started without `abstractgateway serve` | on | off |
 
-"Someone at the gateway machine" is a request whose socket peer is loopback
-or one of this host's own interface addresses (a browser on the gateway
-machine that uses its LAN address counts), with no proxy header
-(`Forwarded`, `X-Forwarded-For`, `X-Forwarded-Host`, `X-Real-IP`): see
-[security.md](docs/security.md). The same rule gates app installs (Apps page,
-tray). `install_policy` reports `caller_on_this_machine` and, when that rule
+"Someone at the gateway machine" is a caller whose address is loopback or
+one of this host's own interface addresses (a browser on the gateway machine
+that uses its LAN address counts). For a browser app, the address is the
+browser's own, relayed by the app's server on this computer, so a browser on
+another computer never counts: see
+[security.md](docs/security.md#callers-on-this-computer). The same rule gates app
+installs (Apps page, tray). `install_policy` reports `caller_on_this_machine` and, when that rule
 decided, `source: "default_same_machine"`.
 
 An admin changes it with
@@ -963,9 +964,10 @@ resolution), so a headless server needs no browser.
 `agents.default_workflow.<interface>` chooses the workflow that answers an
 agent interface when a client picks "Gateway default" (AbstractCode's
 workflow selector, the Assistant, the Telegram bridge, the backlog advisor).
-The value is `[catalog:]bundle[@version]:flow`: without a version the latest
-published version runs; `catalog:` picks a workflow of the tenant catalog
-instead of the gateway's own workflows.
+The value is `[private:|catalog:]bundle[@version]:flow`: without a version the
+latest published version runs; `private:` (the default) picks one of the
+gateway's own workflows and `catalog:` one of the tenant catalog. The flow id
+may itself contain `:` (the bundle part ends at the first `:`).
 
 | Interface | When nothing is saved |
 |---|---|
@@ -1166,8 +1168,9 @@ are user-level; every write is admin-only.
 
 The tray icon has **no setting**: while the gateway serves a desktop that can
 hold it, it is there. It is absent only for reasons that are facts about the
-machine — no display, no `tray` extra, `serve --reload`, a runner-only process
-— and `GET /host/tray` names which. There is no `desktop_tray` setting; a
+machine or the launch — no display, no `tray` extra, `serve --reload`, a
+runner-only process, or `serve --no-tray` for this run — and `GET /host/tray`
+names which. There is no `desktop_tray` setting; a
 write to that key is refused with this explanation. `GET /api/health` carries `"paused": true` while paused (status
 stays `healthy`). Full description: [tray.md](docs/tray.md).
 
@@ -1651,6 +1654,560 @@ Most-used:
 - Deployment: [deployment.md](docs/deployment.md)
 - API overview: [api.md](docs/api.md)
 - Operator tooling env vars: [maintenance.md](docs/maintenance.md)
+
+---
+
+## docs/security.md
+
+# AbstractGateway — Security guide
+
+AbstractGateway secures the **gateway API surface** (`/api/gateway/*`) using an ASGI middleware:
+`GatewaySecurityMiddleware` in `src/abstractgateway/security/gateway_security.py`.
+
+Notes:
+- `/api/health` is intentionally not protected.
+- `/api/triage/action/*` uses signed action tokens and is not under `/api/gateway` (see `src/abstractgateway/routes/triage.py`).
+- Vulnerability reporting policy: see [../SECURITY.md](SECURITY.md).
+
+## Default behavior
+
+Security is on by default for `/api/gateway/*`:
+
+- A plain `abstractgateway serve` with no auth posture in its environment binds
+  `127.0.0.1` (or the stored network mode), turns **user accounts** on and
+  creates the admin account `default/admin`
+  ([first-run.md](docs/first-run.md)).
+- Choosing `lan` or `internet` with the [network setting](#network-exposure)
+  keeps user accounts on.
+- An explicit non-loopback `--host` with neither user accounts nor a token
+  refuses to start, and so does a weak shared token on a non-loopback bind.
+
+Evidence: startup self-checks in `src/abstractgateway/cli.py`,
+`src/abstractgateway/first_run.py`.
+
+Explicit browser-console/browser-app setup:
+
+```bash
+export ABSTRACTGATEWAY_USER_AUTH=1
+export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
+abstractgateway serve --host 127.0.0.1 --port 8080
+
+# Use this with Gateway user admin.
+cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token"
+```
+
+API clients can send a Gateway user token:
+
+```text
+Authorization: Bearer <token>
+```
+
+### Tenant and user isolation
+
+In token mode, `ABSTRACTGATEWAY_AUTH_TOKEN` is a gateway-level control-plane
+token and maps to the `local-admin` principal. Treat that token as
+full authority for the Gateway instance.
+
+Hosted user-auth mode is enabled with `ABSTRACTGATEWAY_USER_AUTH=1` or
+`ABSTRACTGATEWAY_AUTH_MODE=users`. In that mode, Gateway bearer tokens resolve
+to concrete principals with `tenant_id`, `user_id`, roles/scopes, and a token
+fingerprint. `GET /api/gateway/me` returns the resolved principal and routing
+mode. The presence of an `auth/users.json` registry file is readiness state; it
+does not silently enable hosted user auth unless `ABSTRACTGATEWAY_USER_AUTH_AUTO=1`
+is set for compatibility. Admin principals can manage users through:
+
+- `GET /api/gateway/admin/users?kind=human|entity|all` (default `all`)
+- `POST /api/gateway/admin/users`
+- `GET /api/gateway/admin/users/{user_id}?tenant_id=...`
+- `PATCH /api/gateway/admin/users/{user_id}?tenant_id=...`
+- `DELETE /api/gateway/admin/users/{user_id}?tenant_id=...`
+- `GET /api/gateway/admin/runtime-reservations`
+- `POST /api/gateway/admin/runtime-reservations/{runtime_id}/transfer`
+- `POST /api/gateway/admin/runtime-reservations/{runtime_id}/purge`
+
+Every user row carries a first-class `principal_kind` field (`"human"` or
+`"entity"`); clients must read it (or the `kind` filter) instead of
+re-deriving kind from the `roles` convention. Census asymmetry is deliberate:
+`GET /api/gateway/entities` is the ENTITY census (homes on disk), while
+`?kind=entity` here is the entity-PRINCIPAL census — homes created before
+principal minting have no user row, so the two lists can legitimately differ
+and neither may be derived from the other.
+
+Entity principals (minted at entity creation) are shaped by the entities
+lane, not the users lane: `PATCH` refuses `token`/`rotate_token`/`roles`/
+`runtime_id` and `DELETE` refuses outright (HTTP 403 naming the lane). A
+rotation would mint a live entity bearer that by design must not exist, and
+a delete would remove the name-collision guard protecting the entity's
+identity. `enabled` (the door-side disable), `email`, and `scopes` stay
+editable. The guard lives in `GatewayUserRegistry` itself, so the config CLI
+refuses the same writes.
+
+Gateway stores user token hashes in `<ABSTRACTGATEWAY_DATA_DIR>/auth/users.json`
+by default. Generated or rotated bearer tokens are returned once from the admin
+create/update response and are never stored in plaintext.
+
+Browser apps should exchange user bearer tokens for Gateway browser sessions
+instead of storing bearer tokens. `POST /api/gateway/session/login` accepts a
+Gateway user id and user token, validates them against the registry, and sets an
+opaque signed session id plus a CSRF token as cookies. The JSON response body
+does not expose those values. Gateway stores session records in
+`<ABSTRACTGATEWAY_DATA_DIR>/auth/sessions.json` by default.
+The session cookie is HTTP-only; the CSRF cookie is readable by the hosting app
+so it can send the CSRF header. Both cookies use path `/` and `SameSite=Lax`.
+Plain HTTP local-dev responses do not set `Secure`; HTTPS responses, including
+requests forwarded with `X-Forwarded-Proto: https`, do set `Secure`.
+Non-remembered sessions omit `Max-Age`; remembered sessions include one.
+Session-authenticated mutating requests must send:
+
+```text
+X-AbstractGateway-Session: <session id>
+X-AbstractGateway-CSRF: <csrf token>
+```
+
+`POST /api/gateway/session/logout` revokes the session. Disabling, deleting, or
+rotating the Gateway user invalidates existing browser sessions for that user.
+
+**Who can sign in depends on whether user accounts are on.** With user
+accounts on, every registry account (admin or not) can sign in, and each one
+works in its own runtime (below). With user accounts off the gateway runs one
+runtime, the operator's, so every signed-in person would share the operator's
+runtime, capability defaults, endpoint profiles and workflows. In that mode
+only accounts with the `admin` role can hold a browser session:
+
+- `POST /api/gateway/session/login` answers `401` for a non-admin account, with
+  `reason_code: "user_accounts_off_admin_only"` and a message naming the two
+  ways out: the gateway operator turns user accounts on, or the person signs
+  in with an admin account.
+- A session that already exists for a non-admin account (for example one
+  created while user accounts were on) is refused and removed at its next
+  use. Every session path applies the same rule (`principal_barred_from_shared_runtime`
+  in `security/sessions.py`), including the browser-app sign-in handover.
+- `POST /api/gateway/admin/users` answers `409` (same `reason_code`) instead of
+  creating a non-admin account that could never sign in, and
+  `PATCH /api/gateway/admin/users/{user_id}` refuses to remove the `admin` role
+  from an admin account in this mode.
+
+Admin accounts sign in in both modes. The rule reads the same setting the
+service routing reads, so the two cannot disagree.
+
+**The last admin account is protected.** `DELETE /api/gateway/admin/users/{user_id}`,
+and a `PATCH` that disables it or removes its `admin` role, answer `409` with
+`reason_code: "last_admin"` when the target is the only enabled admin account
+left (entity principals never count). Create or enable another admin first.
+
+When user auth is active, the Gateway service composition root routes each
+principal to an isolated service/data plane under:
+
+```text
+<ABSTRACTGATEWAY_DATA_DIR>/users/<tenant_id>/<runtime_id>/runtime
+<ABSTRACTGATEWAY_DATA_DIR>/users/<tenant_id>/<runtime_id>/flows
+```
+
+Gateway rejects duplicate `runtime_id` values within the same tenant during
+user creation and update. This keeps the default multi-user invariant at
+`1 user = 1 runtime`. Deleting a user removes the credential but reserves the
+retained runtime id for that principal, so another same-tenant user cannot be
+assigned to retained data by accident. Reusing the same runtime id in a
+different tenant remains valid.
+
+Admins can intentionally resolve retained runtime reservations through
+admin-only lifecycle routes. Transfer assigns a retained runtime to an existing
+same-tenant user and reserves that user's previous runtime id. Purge requires an
+exact `confirm_runtime_id`, deletes the retained runtime root under
+`<ABSTRACTGATEWAY_DATA_DIR>/users/<tenant_id>/<runtime_id>/`, then releases the
+runtime id for reuse. Regular users cannot list, transfer, or purge retained
+runtime reservations.
+
+Clients must not send authoritative `user_id`, `tenant_id`, `runtime_id`, or
+workspace-root values. Runtime fields such as `actor_id` and `session_id`, and
+references such as `run_id`, `artifact_id`, and memory `owner_id`, remain
+correlation and lookup fields; they do not authorize access by themselves.
+
+In hosted multi-user mode, the request path resolves a principal and routes it
+to its own service. Gateway also applies a central
+route-family authorization table for operator/admin surfaces. Admin-only route
+families include user management, audit, process control, backlog/triage/report
+operations, email bridge routes, model residency mutations
+(`POST /models/load|unload|lock|unlock|download`), session-wide prompt-cache
+clearing (`POST /sessions/{session_id}/prompt_cache/clear_all`), server
+workspace file helpers, server-workspace artifact import/export, and global
+prompt-cache/bloc mutation routes. Host and residency reads —
+`GET /models/loaded`, `GET /models/context_estimate`, `GET /host/state`,
+`GET /host/metrics/*`, and `GET /sessions/prompt_cache` — are visibility every
+authenticated client needs and serve any authenticated principal; anonymous
+requests remain rejected. Regular users remain able to use
+their own runtime data plane for run, ledger, artifact upload, discovery, and
+runtime-scoped Core capability-default routes.
+
+The route table is intentionally conservative around server filesystem access:
+browser-local files should use `/api/gateway/attachments/upload`; server
+workspace reads/imports/exports require an admin principal until a stronger
+per-user workspace grant model exists. The one user-level exception is a run's
+own folder: the person who started a run can list and preview that run's
+workspace (`GET /runs/{run_id}/workspace`, `/files`, `/content`), confined to
+it and with the built-in deny list applied
+([api.md](docs/api.md#a-runs-workspace-folder-browse-and-preview)).
+
+Capability discovery follows the same policy. Regular users can still discover
+ordinary run, ledger, artifact, upload, provider/model catalog, KG, and
+runtime-scoped defaults surfaces, but admin-only workspace artifact
+import/export and provider prompt-cache controls are advertised as unavailable
+with machine-readable `admin_required` metadata. Session-level prompt-cache
+keys remain available for users; the private hash includes the current
+principal scope, so two users using the same session id/provider/model tuple do
+not collide in a shared provider control plane.
+
+Hosted provider secrets are supported through Gateway provider connections.
+Connections are stored under the relevant Gateway data plane, expose only
+non-secret metadata and a virtual provider id such as `endpoint:office-vllm`,
+and inject the raw key only into the transient Runtime provider call. Normal
+users can manage user-scoped connections; Gateway-scoped connections require an
+admin principal. The current capability-default cascade uses execution-host
+Core defaults, then the Gateway/root Core config baseline, then the user's
+runtime Core config override under that user's Gateway data plane. A stronger encrypted vault, audit model, and
+bridge/delegated-tool propagation policy remain future hardening work.
+
+### Workflow registry ownership
+
+Writing a workflow registry requires owning it. Under hosted user auth the
+`/api/gateway/bundles` routes resolve to the calling principal's own bundle
+directory, which that user may change freely. The gateway's own directory is
+the shared set every user can see and run, so changing it requires an admin
+principal.
+
+One check covers every route that writes a registry — `POST /bundles/upload`,
+`DELETE /bundles/{bundle_id}`, `POST /bundles/reload`,
+`POST /bundles/{bundle_id}/deprecate`, `POST /bundles/{bundle_id}/undeprecate`
+and `POST /visualflows/{flow_id}/publish` — so a shared workflow cannot be
+replaced through one route while another is restricted. The check runs before
+the route looks the bundle up, so a non-admin gets `403` for a bundle that
+does not exist as well. Since a non-admin account cannot be signed in while user accounts are off
+(above), this check is the second, independent line of defence. `POST /visualflows/{flow_id}/publish` accepts a caller-supplied
+`bundle_id`, `bundle_version` and `overwrite`, and installs into the same
+registry as `upload`; it is gated on the same rule. Non-admin requests against
+the shared registry return `403`. Read routes are unchanged.
+
+`DELETE /bundles/{bundle_id}` returns `409` for the `basic-agent.flow` the
+gateway verifies at startup: removal has no undo and would prevent the next
+start. Install a replacement bundle first, then remove the old file.
+
+### Shared workflow catalog
+
+Do not share workflows by pointing multiple users at another user's private
+bundle directory. Private `/api/gateway/bundles` routes stay scoped to the
+current principal's runtime. Shared/default workflows belong in the Gateway
+workflow catalog:
+
+- catalog versions are immutable by `scope + tenant + bundle_id +
+  bundle_version + sha256`;
+- admins move explicit default pointers instead of overwriting existing
+  versions;
+- catalog ACLs are checked at run start against the authenticated principal's
+  tenant, roles, and user id;
+- catalog runs execute in the requesting user's runtime by default;
+- catalog run policy is Gateway-issued and HMAC-signed before it is handed to
+  Runtime state; client-supplied `_runtime.workflow_policy` values are stripped;
+- private bundle inspection routes reject catalog-internal bundle ids, so
+  catalog flow/schema inspection remains ACL-aware;
+- deprecate/block/tombstone changes block new starts without deleting stored
+  bundle bytes.
+
+Catalog mutation routes are admin-only under
+`/api/gateway/admin/workflow-catalog/*`. User-visible catalog discovery is
+available at `GET /api/gateway/workflow-catalog`.
+
+## Origin allowlist (browser/origin defense)
+
+If the request includes an `Origin` header, the middleware allows it only when
+it matches the allowlist (glob-style patterns, fnmatch). The allowlist is
+`http://localhost:*` and `http://127.0.0.1:*`, the gateway's own LAN origins in
+a network mode, plus the **`allowed_origins` setting** (console: Network →
+*Advanced: reverse proxy*; TUI: Connection screen; CLI:
+`abstractgateway network set --allowed-origins https://gateway.example.com`).
+The setting is read per request: a change applies to the next request, no
+restart. Each origin is validated (`scheme://host[:port]`, no path, no trailing
+slash); `*` and wildcard patterns are accepted only as typed and are flagged.
+See [configuration.md](docs/configuration.md#reverse-proxy-allowed-origins-and-trust-proxy).
+
+A gateway started with `ABSTRACTGATEWAY_ALLOWED_ORIGINS` in its environment
+uses that list instead (a deployment pin): every surface says "This gateway was
+started with ABSTRACTGATEWAY_ALLOWED_ORIGINS in its environment" and reports
+`overridden_by_env: true`; the saved setting applies once it starts without it.
+
+Evidence: `GatewayAuthPolicy.allowed_origins`, `_effective_allowed_origins()` and
+`_origin_allowed()` in `src/abstractgateway/security/gateway_security.py`;
+`live_reverse_proxy()` in `src/abstractgateway/network_exposure.py`.
+
+Important nuance:
+- FastAPI’s CORS middleware in `src/abstractgateway/app.py` is permissive, but **origin enforcement for gateway endpoints is done by this security middleware**.
+- In a network exposure mode from the settings store, `serve` adds the
+  gateway's own discovered LAN origins (IP literals and `<name>.local`). A
+  foreign origin, including a DNS-rebinding name that resolves to your LAN IP,
+  is still refused (403) unless it is in `allowed_origins`.
+
+## Network exposure
+
+The network exposure setting ([configuration.md](docs/configuration.md#network-exposure-localhost--local-network--internet))
+chooses `localhost`, `lan` or `internet`. What changes for someone else on
+your network:
+
+- **`localhost`** (default for a first run): the gateway listens on
+  `127.0.0.1` only. Nobody else can open a connection; every local process of
+  every local user still can, which is why user auth stays on.
+- **`lan`**: the gateway listens on every IPv4 interface. Anyone on the same
+  network (and anyone on a VPN such as Tailscale whose address is listed) can
+  reach the sign-in page and the API. The gate is authentication: `lan` is
+  refused unless user auth will be on at the next start; unauthenticated
+  requests answer 401, failed credentials are locked out per client address
+  with a growing wait, and a browser page from a foreign origin is refused
+  (403). `lan` and `internet` are also refused when the gateway was started
+  with read protection off (`ABSTRACTGATEWAY_PROTECT_READ=0`: unauthenticated
+  reads would be answered as the admin). What `lan` does NOT give you:
+  - **encryption**: it is plain HTTP. Passwords, bearer tokens and the
+    session cookie cross the network in clear; the session cookie is
+    `HttpOnly; SameSite=Lax` but not `Secure` over HTTP. Anyone who can sniff
+    the network (shared Wi-Fi, a compromised router) can capture and replay a
+    session. Use `lan` on networks you trust, or use a TLS proxy / VPN.
+  - **a smaller attack surface**: every admin route is reachable to whoever
+    holds an admin credential. Give each person their own account, keep the
+    admin token off other machines, and prefer non-admin accounts for daily use.
+  - **exposure of the browser apps**: apps started from the Apps page stay
+    bound to `127.0.0.1` (the `apps.host` setting, *Where apps listen*), and the sign-in
+    handover (`/apps/handover/{code}`) only works on the host it was minted
+    for and refuses a loopback-only app to a browser on another machine.
+  - **engine and app installs for remote admins**: `allow_engine_install`
+    defaults to off on a non-loopback bind for callers on other computers.
+    Someone at the gateway machine itself can still install (see
+    [Callers on this computer](#callers-on-this-computer)).
+- **`internet`**: the same bind plus an explicit acknowledgement. The gateway
+  does **not** terminate TLS and does not configure your router or firewall.
+  Put a TLS reverse proxy (Caddy, nginx, Traefik) or a tunnel (Cloudflare
+  Tunnel, Tailscale Funnel, ngrok) in front and expose that; add the public
+  `https://` origin under *Reverse proxy* (`allowed_origins`), turn on *Trust
+  the proxy's client address* (`trust_proxy`) only when your own proxy is in
+  front of every request, and rate-limit at the proxy. Forwarding the raw port
+  means plain HTTP on the internet: do not.
+
+The mode is applied at the next start and `serve --host/--port` override it;
+`GET /api/gateway/network` always says what is configured, what is running,
+and why they differ.
+
+## Callers on this computer
+
+Some defaults belong to the person sitting at the gateway computer and not to
+the rest of the network: installing engines and apps
+([`allow_engine_install`](docs/configuration.md#allow_engine_install)), opening a
+run's folder in the file manager (`open_supported` on
+`GET /runs/{run_id}/workspace`), and the `caller_is_this_machine` fact the
+workspace routes report. One rule decides them all
+(`src/abstractgateway/security/same_machine.py`):
+
+- The caller's address is the socket peer. `serve` runs uvicorn with
+  `forwarded_allow_ips` pinned to `127.0.0.1` and `::1` (a
+  `FORWARDED_ALLOW_IPS` value in the environment is ignored with a warning),
+  so `X-Forwarded-For` is believed only from a peer on this computer.
+- The browser apps' servers (the AbstractCode web server and the AbstractUIC
+  app server) run on this computer and relay requests with the browser's real
+  address in `X-Forwarded-For` (overwritten, never appended) and their marker
+  header `X-AbstractFramework-App-Proxy: <app id>`. A browser on another
+  computer that opens an app is therefore not local; a browser on this
+  computer is.
+- The caller is local when that address is loopback or one of this host's own
+  interface addresses. A remote computer cannot use this host's own address
+  as the source of an established TCP connection.
+
+Fail-safes:
+
+- A request with the app-proxy marker but no `X-Forwarded-For` is never local
+  (a proxy that dropped the header would make every browser look local).
+- While the gateway trusts a reverse proxy (`trust_proxy`), a request relayed
+  by an app server is never local: the reverse proxy hides the browser's
+  address. For this rule the saved `trust_proxy` setting decides first; the
+  `ABSTRACTGATEWAY_TRUST_PROXY` launch environment counts only when nothing
+  is saved.
+- A forwarded header (`X-Forwarded-For`, `Forwarded`, `X-Forwarded-Host`,
+  `X-Real-IP`) sent by a peer that is not on this computer is never local,
+  and neither is a request that carries a proxy header other than
+  `X-Forwarded-For` (a proxy this rule cannot read).
+
+Native clients on this computer (the web console, the terminal console, the
+Assistant, the tray) call the gateway directly, so their loopback peer
+decides.
+
+### Desktop Assistant sign-in
+
+The Assistant opened from the console or the tray is signed in through a
+one-time code the gateway writes into a file only your account can read
+(`<data dir>/handover/<random>.json`, mode 0600) and names on the Assistant's
+command line (`--gateway-handover-file`); the code itself is never on a command
+line or in the environment. The Assistant trades it at
+`POST /api/gateway/apps/desktop-handover`, which answers only a direct caller
+on this computer (no proxy header and no app-server session header; 403
+otherwise), once, within two minutes (410 after). The resulting session is a
+remembered session (30 days) of the user who clicked Open. See
+[apps.md](docs/apps.md) and
+[architecture.md](docs/architecture.md#desktop-assistant-hand-over).
+
+## Workspace filesystem scope (blacklist/whitelist)
+
+AbstractGateway supports “thin clients” (browser UIs, bridges) that can trigger **filesystem-ish tools** (e.g. `list_files`, `read_file`, `write_file`). To avoid a thin client expanding server filesystem access, the gateway enforces a **workspace policy**.
+
+Key point: the **main configuration** for filesystem allowlisting/denylisting is set when you **launch the gateway** (operator-controlled env vars). Thin clients can only request broader scopes when the gateway is started in a permissive mode.
+
+### Default (safe): everything outside the run workspace is blocked
+
+- Every run the gateway starts works in a folder, whatever started it (the
+  HTTP routes, the Telegram, email and agora bridges, entity summons,
+  scheduled runs). A run that names no `workspace_root` works in its
+  conversation's gateway-made folder, `<ABSTRACTGATEWAY_DATA_DIR>/workspaces/session-…`
+  (or a per-run folder when it has no session).
+- AbstractRuntime applies workspace scoping to filesystem-ish tool arguments. The default is:
+  - `workspace_access_mode=workspace_only`
+  - absolute paths must stay under `workspace_root`
+- A client `workspace_root` inside the gateway's data folder is refused (400),
+  except the conversation folder the gateway made for the same user; the same
+  check runs on `POST /runs/start`, `POST /runs/schedule` and entity summons.
+
+This means that by default, **all absolute paths are effectively “blacklisted”** except the run’s `workspace_root`.
+
+### Built-in deny list
+
+Whatever the workspace policy allows, the gateway's data folder and the
+credential and configuration folders of the gateway's user account (`~/.ssh`,
+`~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.kube`, `~/Library/Keychains`,
+`~/.abstractgateway`, `~/.abstractcode`, `~/.abstractassistant`,
+`~/.abstractcontinuum`, `~/.abstractcore`) are:
+
+- never listed or served by the workspace browser, for anyone, even when a
+  run's folder contains them;
+- denied to every run's file tools, as whole-folder rules
+  (`workspace_builtin_deny_prefixes`) with the run's own folder inside the
+  data folder as the one exception (`workspace_builtin_allow`). Clients cannot
+  send these two entries (they are dropped), and the rules are enforced
+  without being written into the model's prompt. An admin can turn the run
+  side off with the `workspace_builtin_deny` setting; the browser keeps hiding
+  the folders.
+
+Evidence:
+- Every run start: `src/abstractgateway/run_workspace_guard.py` (called from `WorkflowBundleGatewayHost.start_run`)
+- Client scope clamping: `src/abstractgateway/routes/gateway.py` (`_sanitize_run_workspace_policy`, `_client_workspace_scope_overrides_enabled`)
+- Browse and preview: `src/abstractgateway/workspace_browse.py`
+- Runtime tool scoping: `abstractruntime/integrations/abstractcore/workspace_scoped_tools.py`
+- Tests: `tests/test_gateway_workspace_policy_enforcement.py`
+
+### Operator-controlled allowlist roots (recommended)
+
+- `ABSTRACTGATEWAY_WORKSPACE_DIR`: base directory used to resolve relative workspace paths and as the default root for `/files/*` helpers.
+- `ABSTRACTGATEWAY_WORKSPACE_MOUNTS`: additional allowed roots (newline-separated `name=/abs/path`).
+
+Thin clients can discover the server policy via:
+- `GET /api/gateway/workspace/policy`
+  Note: it returns **mount names only** (no absolute paths).
+
+Canonical public server paths use `rel/path` for the main workspace root and
+`mount_alias/rel/path` for approved mounts. When two allowed roots share the
+same basename, Gateway emits deterministic digest-suffixed mount aliases so
+the public path string stays stable across discovery, import/export, and
+Runtime execution.
+
+### Permissive mode: allow thin clients to choose scope (trusted machines only)
+
+To honor client-provided workspace knobs (`workspace_root`, `workspace_access_mode`, `workspace_allowed_paths`, `workspace_ignored_paths`) beyond the operator roots, enable one of:
+
+- `ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE=1`
+- `ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE=1`
+
+In this mode, a client can request:
+- `workspace_access_mode=all_except_ignored` (“full access” unless explicitly blocked)
+
+Do **not** enable this when serving untrusted browser origins: a compromised thin client can request access to arbitrary server paths.
+
+### Important limitation (all modes)
+
+`execute_command` is **not** an OS sandbox: even if the runtime sets the default working directory under `workspace_root`, the command itself can reference absolute paths or `cd ..`. The built-in deny list does not confine shell commands either.
+
+## Common security env vars
+
+All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgateway/security/gateway_security.py`).
+
+### Enable/disable
+
+- `ABSTRACTGATEWAY_SECURITY=1|0` (default: enabled)
+
+### Tokens
+
+- `ABSTRACTGATEWAY_AUTH_TOKEN` (single shared secret)
+- `ABSTRACTGATEWAY_AUTH_TOKENS` (comma-separated list)
+- `ABSTRACTGATEWAY_USER_AUTH=1` or `ABSTRACTGATEWAY_AUTH_MODE=users`: enable
+  file-backed user principals and per-principal service routing
+- `ABSTRACTGATEWAY_USER_AUTH_AUTO=1`: compatibility mode that also enables
+  user auth when the registry file exists
+- `ABSTRACTGATEWAY_USERS_FILE`: optional user registry path; defaults to
+  `<ABSTRACTGATEWAY_DATA_DIR>/auth/users.json`
+- `ABSTRACTGATEWAY_SESSIONS_FILE`: optional browser session registry path;
+  defaults to `<ABSTRACTGATEWAY_DATA_DIR>/auth/sessions.json`
+- `ABSTRACTGATEWAY_SESSION_TTL_S`: default browser session lifetime in seconds
+  (default: 8 hours; bounded)
+- `ABSTRACTGATEWAY_REMEMBER_SESSION_TTL_S`: browser session lifetime when an
+  app requests "remember me" (default: 30 days; bounded)
+
+### Protect reads vs writes
+
+- `ABSTRACTGATEWAY_PROTECT_WRITE=1|0` (default: `1`)
+- `ABSTRACTGATEWAY_PROTECT_READ=1|0` (default: `1`)
+- `ABSTRACTGATEWAY_DEV_READ_NO_AUTH=1|0`
+  Dev escape hatch: allow unauthenticated reads **from loopback only**.
+
+### Limits (abuse resistance)
+
+- `ABSTRACTGATEWAY_MAX_BODY_BYTES` (default: `10MB`)
+  Applies to every mutating request. Oversized requests are **rejected** with
+  `413` naming both sizes — bodies are never truncated. The default is sized for
+  authored documents (a VisualFlow save is a whole workflow, not a small API
+  payload), not just for abuse resistance.
+- `ABSTRACTGATEWAY_MAX_ATTACHMENT_BYTES` (default: `25MB`)
+- `ABSTRACTGATEWAY_MAX_BUNDLE_BYTES` (default: `75MB`)
+- `ABSTRACTGATEWAY_MAX_CONCURRENCY` (default: `64`)
+- `ABSTRACTGATEWAY_MAX_SSE` (default: `32`)
+
+### Auth lockout (brute-force safety net)
+
+- `ABSTRACTGATEWAY_LOCKOUT_AFTER` (default: `5`)
+- `ABSTRACTGATEWAY_LOCKOUT_BASE_S` (default: `1.0`)
+- `ABSTRACTGATEWAY_LOCKOUT_MAX_S` (default: `60.0`)
+
+### Audit log (write requests)
+
+- `ABSTRACTGATEWAY_AUDIT_LOG=1|0` (default: enabled for writes)
+- `ABSTRACTGATEWAY_AUDIT_LOG_MAX_BYTES` (default: `50MB`)
+- `ABSTRACTGATEWAY_AUDIT_LOG_ROTATIONS` (default: `10`)
+- `ABSTRACTGATEWAY_AUDIT_LOG_HEADERS` (comma-separated allowlist; default: `x-client-id,x-client-version,x-forwarded-for`)
+
+### Reverse proxies
+
+- The `trust_proxy` setting (console: Network → *Advanced: reverse proxy* →
+  *Trust the proxy's client address*; TUI: Connection screen checkbox; CLI:
+  `abstractgateway network set --trust-proxy on|off`). On: `X-Forwarded-For` is
+  used for IP attribution (audit log) and lockout tracking. Read per request:
+  it applies to the next request. Only when your own proxy sits in front of
+  every request; otherwise any client chooses the address the gateway sees.
+  The ephemeral tray token never honours it (raw socket peer only).
+- A gateway started with `ABSTRACTGATEWAY_TRUST_PROXY` in its environment uses
+  that value instead for IP attribution and lockouts; the status reports
+  `overridden_by_env: true`. The same-machine rule reads the saved setting
+  first ([Callers on this computer](#callers-on-this-computer)).
+
+## Production checklist (minimal)
+
+- Run behind TLS (reverse proxy) and bind `--host 127.0.0.1` (proxy in front) or lock down your network if binding `0.0.0.0`.
+- Use a strong random token and list exact origins in `allowed_origins` (avoid public wildcards).
+- Keep `ABSTRACTGATEWAY_SECURITY=1`.
+
+## Related docs
+
+- Configuration overview: [configuration.md](docs/configuration.md)
+- API overview: [api.md](docs/api.md)
+- FAQ: [faq.md](docs/faq.md)
 
 ---
 
@@ -2183,6 +2740,7 @@ reasons:
 | No display (SSH session, container, Windows service, macOS daemon, CI) | not started (reason `headless`) |
 | `serve --reload` (development) | not started (the app runs in uvicorn's reloader child) |
 | A runner-only process (`abstractgateway runner`) | not started; the tray belongs to the process that serves the console |
+| `serve --no-tray` (a test or scratch gateway next to your usual one) | not started for this run (reason `no_tray_flag`) |
 | Otherwise | started; `Desktop tray: started (pid …)` |
 
 The console's **Resources → Gateway** card reports which of these applies, as
@@ -2785,7 +3343,10 @@ serve:
 | `/api/gateway/admin/users`, `/admin/runtime-reservations` | user accounts and retained runtimes (admin) | [security.md](docs/security.md#tenant-and-user-isolation) |
 | `/api/gateway/admin/runtime-config` | runtime settings (admin) | [configuration.md](docs/configuration.md) |
 | `/api/gateway/network`, `/network/restart` | network exposure, addresses, reverse proxy | [configuration.md](docs/configuration.md#api-gateway_network_v1) |
-| `/api/gateway/apps/*`, `/apps/handover/{code}`, `/apps/tui-handover` | browser apps, terminal apps, the Assistant | [apps.md](docs/apps.md#http-api) |
+| `/api/gateway/apps/*`, `/apps/handover/{code}`, `/apps/tui-handover`, `/api/gateway/apps/desktop-handover` | browser apps, terminal apps, the Assistant and its sign-in | [apps.md](docs/apps.md#http-api) |
+| `/api/gateway/runs/{run_id}/workspace`, `/workspace/files`, `/workspace/content` | browse and preview a run's folder (the run's owner) | [below](#a-runs-workspace-folder-browse-and-preview) |
+| `/api/gateway/skills`, `/admin/skills/reseed` | the skills shelf | [below](#skills-shelf), [configuration.md](docs/configuration.md#skills-shelf) |
+| `/api/gateway/about` | versions this gateway runs (no sign-in) | [below](#about-get-apigatewayabout) |
 | `/api/gateway/engines/*` | local engine installs | [engines.md](docs/engines.md#api-contract-gateway_engines_v2) |
 | `/api/gateway/models/download*`, `/models/downloads*` | model download jobs and their event stream | [model-downloads.md](docs/model-downloads.md) |
 | `/api/gateway/host/*` | host state, pause, restart, update, tray | [Host state](#host-state-and-model-residency), [Host control](#host-control-pause-desktop-tray-restart-update) |
@@ -4008,6 +4569,19 @@ One snapshot with `memory`, `gpu`, `models`, and `session_caches` sections:
 - `totals.model_bytes` sums the known `size_bytes` values and is `null` when
   no row reports a size; `totals.session_cache_bytes` behaves the same over
   the cache rows' `bytes`.
+- `memory.device` relays AbstractCore's accelerator figures, including
+  `process_held_bytes` (what this gateway process holds across its model
+  libraries: MLX, llama.cpp, transformers, embeddings) and
+  `process_held_basis`, how that figure was measured
+  (`metal_device_counter`, `cuda_device_counter…`, or `sum:` of the libraries'
+  own counts). `memory.resident` / `memory.held` name the models that hold it
+  (`backend`, model, number of holders) when the runtime reports them.
+- `residency_diagnostics` is always present (`{}` when the runtime reports
+  nothing): the dict `GET /models/loaded` returns as `diagnostics`, with `pending_ejects`
+  (models that will be ejected when their in-flight call ends) and
+  `last_switch_ejects` (what the last default-model switch ejected, kept or
+  failed to eject, with the reason). The consoles and the tray show these as
+  "Will eject X when the in-flight call ends", "X: eject failed: reason".
 - `totals.models` counts every known row — configured / cached rows included —
   while `totals.models_resident` (additive) counts only rows with
   `resident: true`. Clients that display "N loaded" must read
@@ -4849,8 +5423,8 @@ default agent, install the replacement bundle first, then remove the old file.
 - Shipped bundle versions are immutable pins; newer versions install alongside
   them through the normal bundle upload or workflow catalog routes.
 - The editable sources for the shipped workflows are VisualFlow JSON files in
-  the AbstractFlow repository (`abstractflow/examples/flows/`), packed with
-  `abstractflow bundle pack`.
+  the AbstractFlow repository (`examples/flows/`), packed into `.flow` bundles
+  with AbstractRuntime's `abstractruntime.workflow_bundle.pack_workflow_bundle`.
 
 ---
 
@@ -5356,12 +5930,21 @@ model. Details: [docs/api.md](docs/api.md) and [docs/faq.md](docs/faq.md).
   - optional `thinking` sets the run-scoped `_runtime.thinking` default used by
     Flow LLM/Agent nodes and AbstractAgent adapters when Core/provider support
     reasoning controls
+  - `flow_id: "@default"` with an agent `interface` runs the gateway's default
+    agent workflow for that interface; every start answers `resolved_workflow`
+  - `input_data._runtime.stream: true` also sends the model's reply live
+    (`llm.delta` frames on the ledger stream)
 - Clients can **schedule runs** (bundle mode): `POST /api/gateway/runs/schedule`
 - Clients **act** by submitting durable commands: `POST /api/gateway/commands`
   - supported types: `pause|resume|cancel|emit_event|update_schedule|compact_memory`
 - Clients **render** by replaying/streaming the durable ledger:
   - replay: `GET /api/gateway/runs/{run_id}/ledger?after=...`
   - stream (SSE): `GET /api/gateway/runs/{run_id}/ledger/stream?after=...`
+
+A run's owner can browse and preview the run's workspace folder
+(`GET /api/gateway/runs/{run_id}/workspace`, `/files`, `/content`), and
+`GET /api/gateway/about` reports the versions the gateway runs without
+sign-in.
 
 Model residency is available from a shell through
 `abstractgateway models loaded|load|unload` ([docs/console.md](docs/console.md)).
@@ -5411,11 +5994,25 @@ For details on capability route defaults, store backends, and workflow sources, 
 
 ## Creating a `.flow` bundle (authoring)
 
-Use AbstractFlow to pack a bundle:
+Author the workflow in the AbstractFlow editor and publish it: the editor
+stores the VisualFlow on the gateway (`/api/gateway/visualflows/*`) and
+`POST /api/gateway/visualflows/{flow_id}/publish` packs it into a bundle. From
+Python, AbstractRuntime packs a bundle from VisualFlow JSON files:
 
-```bash
-abstractflow bundle pack /path/to/root.json --out /path/to/bundles/my.flow --flows-dir /path/to/flows
+```python
+from abstractruntime.workflow_bundle import pack_workflow_bundle
+
+pack_workflow_bundle(
+    root_flow_json="/path/to/root.json",
+    out_path="/path/to/bundles/my-bundle@0.1.0.flow",
+    bundle_id="my-bundle",
+    bundle_version="0.1.0",
+    flows_dir="/path/to/flows",
+)
 ```
+
+Upload it with `POST /api/gateway/bundles/upload`, or place it in
+`ABSTRACTGATEWAY_FLOWS_DIR`.
 
 See [docs/getting-started.md](docs/getting-started.md) for running, split API/runner, and file→SQLite migration.
 
@@ -5480,9 +6077,9 @@ Related repos:
 |---|---|
 | [first-run.md](docs/first-run.md) | the zero-configuration start on your own machine: one-time sign-in link, first-run guide, start at login |
 | [getting-started.md](docs/getting-started.md) | explicit setup: bundles, starting and scheduling runs, split API/runner, file vs SQLite stores |
-| [architecture.md](docs/architecture.md) | components, diagrams, the replay-first durable contract, deployment shapes |
-| [api.md](docs/api.md) | the client contract with curl examples, discovery, media, models, host state; map of every route family |
-| [configuration.md](docs/configuration.md) | every setting: runtime settings, network exposure, apps, backlog, capability defaults, environment variables, CLI flags |
+| [architecture.md](docs/architecture.md) | components, diagrams, the replay-first durable contract, live replies, the workspace guard, the desktop hand-over, deployment shapes |
+| [api.md](docs/api.md) | the client contract with curl examples: the gateway default workflow (`@default`), live replies, a run's workspace folder, discovery, media, models, host state, `/about`; map of every route family |
+| [configuration.md](docs/configuration.md) | every setting: runtime settings, network exposure, apps, default agent workflows, stream replies, skills shelf, backlog, workspace policy, capability defaults, environment variables, CLI flags |
 | [faq.md](docs/faq.md) | recurring questions and limits |
 | [troubleshooting.md](docs/troubleshooting.md) | symptoms, causes and fixes: sign-in, network modes, runs, installs, downloads, tray, login service |
 
@@ -5495,7 +6092,7 @@ Related repos:
 | [engines.md](docs/engines.md) | installing local engines (Ollama, LM Studio, MLX, llama.cpp, vLLM, Hugging Face): what each Install does, when a password or the Apple tools are needed |
 | [model-downloads.md](docs/model-downloads.md) | download jobs: progress, stalls, cancel, end reasons, parent jobs, the event stream |
 | [tray.md](docs/tray.md) | the desktop tray icon: apps, models, pause, start at login, network, restart and update |
-| [security.md](docs/security.md) | user accounts, sessions, origins, network exposure, workspace scope, limits, audit log |
+| [security.md](docs/security.md) | user accounts, sessions, origins, network exposure, callers on this computer, the Assistant's sign-in, workspace scope and the built-in deny list, limits, audit log |
 | [deployment.md](docs/deployment.md) | Docker images, Compose, provider variables, single machine without Docker |
 | [shipped-workflows.md](docs/shipped-workflows.md) | the workflows a fresh install serves (coding agent, deep research, co-scientist, …) and managing the registry |
 | [deep-research.md](docs/deep-research.md) | the shipped `deep-research` workflow contract |
@@ -5552,6 +6149,8 @@ Related repos:
 ## Prerequisites
 
 - Python `>=3.10` (see `pyproject.toml`)
+- AbstractRuntime 0.4.37 or later, installed with the gateway; the gateway
+  refuses to start on an older runtime and names the version to install
 - Workflows: none needed to start. The gateway serves its shipped bundles
   ([shipped-workflows.md](docs/shipped-workflows.md)); you can point it at your
   own `.flow` bundles or upload them after startup
@@ -5666,6 +6265,13 @@ curl -sS -H "Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstr
 
 Notes:
 - If a bundle has multiple entrypoints and no default, you must pass `flow_id`.
+- To run the gateway's default agent for an interface instead of naming a
+  bundle, send `{"flow_id": "@default", "interface": "abstractcode.agent.v1", ...}`
+  ([configuration.md](docs/configuration.md#default-agent-workflow)).
+- Add `"_runtime": {"stream": true}` to `input_data` to receive the model's
+  reply live on the ledger stream
+  ([api.md](docs/api.md#4b-live-replies-token-deltas-on-the-same-stream)).
+- Every start answers `resolved_workflow`, the workflow the run really runs.
 - See [api.md](docs/api.md) for ledger replay/stream and durable commands.
 
 ## 2b) (Optional) Schedule a run (bundle mode)
@@ -5837,6 +6443,16 @@ or easy to guess, on a non-loopback bind or with public wildcard origins.
 **Fix.** Use a long random token, or use user accounts
 (`ABSTRACTGATEWAY_USER_AUTH=1`). See [security.md](docs/security.md).
 
+### The gateway does not start: "this gateway needs abstractruntime>=…"
+
+The installed AbstractRuntime lacks live token deltas or the built-in tool
+deny rules the gateway relies on; the message names what is missing. Upgrade
+it in the gateway's Python, then start again:
+
+```bash
+pip install -U "abstractruntime>=0.4.37"
+```
+
 ### The one-time sign-in link does not work
 
 **Checks and fixes.**
@@ -5929,6 +6545,40 @@ and set the mode again. See [security.md](docs/security.md#network-exposure).
 - The gateway may be **paused** (`"paused": true` on `/api/health`, a banner
   in the console): resume it from the tray, the console, or
   `POST /api/gateway/host/resume`.
+
+### A run start answers 409 naming `agents.default_workflow.<interface>`
+
+The run asked for the gateway default (`flow_id: "@default"`), and the saved
+default for that interface cannot run: its workflow was removed or
+deprecated, or no longer declares the interface. The message names the
+setting and where its value comes from. Choose another workflow in the
+console (Workflows → *Default agent workflow*), or run
+`abstractgateway config unset agents.default_workflow.<interface>` to return
+to the built-in default. A 400 means the request itself is wrong: `interface`
+is missing, or `bundle_id`/`bundle_version` were sent with `@default`. See
+[configuration.md](docs/configuration.md#default-agent-workflow).
+
+### Replies arrive only at the end (no live text)
+
+- The run did not ask for streaming: send `input_data._runtime.stream: true`,
+  or turn on `agents.streaming_default` (it applies to interactive
+  `POST /runs/start` only, never to schedules, bridges or the entity loop).
+- The call could not stream: its `llm.delta_end` says `reason: "unavailable"`
+  with a `detail` (for example `structured_output`, `node_stream_off`,
+  `provider_cannot_stream`); the answer is complete either way.
+- `GET /api/gateway/discovery/capabilities` must show
+  `capabilities.streaming.deltas: true`.
+
+See [api.md](docs/api.md#4b-live-replies-token-deltas-on-the-same-stream).
+
+### The skills list is empty
+
+`GET /api/gateway/skills` says why in `warnings` and which shelf it read in
+`shelf_source`. A saved `skills.shelf` that does not exist or holds no
+`skills/` folder is reported as unavailable; unset it to use the gateway's own
+copy, or refresh that copy with *Refresh the curated shelf* (console, Apps) or
+`POST /api/gateway/admin/skills/reseed`. See
+[configuration.md](docs/configuration.md#skills-shelf).
 
 ### "LLM nodes but no default provider/model is configured"
 
@@ -6039,11 +6689,21 @@ Choose **Use the gateway's own folder** in Continuum or the console, or run
 | `headless` | no display (SSH, container, service); expected |
 | `dev_reload` | start without `--reload` |
 | `runner_only` | the tray belongs to the process that serves the console |
+| `no_tray_flag` | the gateway was started with `serve --no-tray`; start it without the flag |
 
 GNOME needs the AppIndicator extension. If the helper started and then
 disappeared, read `<data dir>/logs/tray.log`; `GET /api/gateway/host/tray`
 reports its exit code, and `POST /api/gateway/host/tray/show` (admin) starts
 it again. See [tray.md](docs/tray.md).
+
+### The Assistant opened from the console is not signed in
+
+- It was already running: a running Assistant receives no sign-in code. Quit
+  it and open it again from the console or the tray.
+- More than two minutes passed before it started, or the code was already
+  used: open it again from the console.
+
+See [apps.md](docs/apps.md).
 
 ### "Start at login" reads "needs repair" (`service status`: `broken`)
 
@@ -7429,479 +8089,6 @@ Thank you to everyone who reports issues, improves documentation, and contribute
 
 ---
 
-## docs/security.md
-
-# AbstractGateway — Security guide
-
-AbstractGateway secures the **gateway API surface** (`/api/gateway/*`) using an ASGI middleware:
-`GatewaySecurityMiddleware` in `src/abstractgateway/security/gateway_security.py`.
-
-Notes:
-- `/api/health` is intentionally not protected.
-- `/api/triage/action/*` uses signed action tokens and is not under `/api/gateway` (see `src/abstractgateway/routes/triage.py`).
-- Vulnerability reporting policy: see [../SECURITY.md](SECURITY.md).
-
-## Default behavior
-
-Security is on by default for `/api/gateway/*`:
-
-- A plain `abstractgateway serve` with no auth posture in its environment binds
-  `127.0.0.1` (or the stored network mode), turns **user accounts** on and
-  creates the admin account `default/admin`
-  ([first-run.md](docs/first-run.md)).
-- Choosing `lan` or `internet` with the [network setting](#network-exposure)
-  keeps user accounts on.
-- An explicit non-loopback `--host` with neither user accounts nor a token
-  refuses to start, and so does a weak shared token on a non-loopback bind.
-
-Evidence: startup self-checks in `src/abstractgateway/cli.py`,
-`src/abstractgateway/first_run.py`.
-
-Explicit browser-console/browser-app setup:
-
-```bash
-export ABSTRACTGATEWAY_USER_AUTH=1
-export ABSTRACTGATEWAY_DATA_DIR="$PWD/runtime/gateway"
-abstractgateway serve --host 127.0.0.1 --port 8080
-
-# Use this with Gateway user admin.
-cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token"
-```
-
-API clients can send a Gateway user token:
-
-```text
-Authorization: Bearer <token>
-```
-
-### Tenant and user isolation
-
-In token mode, `ABSTRACTGATEWAY_AUTH_TOKEN` is a gateway-level control-plane
-token and maps to the `local-admin` principal. Treat that token as
-full authority for the Gateway instance.
-
-Hosted user-auth mode is enabled with `ABSTRACTGATEWAY_USER_AUTH=1` or
-`ABSTRACTGATEWAY_AUTH_MODE=users`. In that mode, Gateway bearer tokens resolve
-to concrete principals with `tenant_id`, `user_id`, roles/scopes, and a token
-fingerprint. `GET /api/gateway/me` returns the resolved principal and routing
-mode. The presence of an `auth/users.json` registry file is readiness state; it
-does not silently enable hosted user auth unless `ABSTRACTGATEWAY_USER_AUTH_AUTO=1`
-is set for compatibility. Admin principals can manage users through:
-
-- `GET /api/gateway/admin/users?kind=human|entity|all` (default `all`)
-- `POST /api/gateway/admin/users`
-- `GET /api/gateway/admin/users/{user_id}?tenant_id=...`
-- `PATCH /api/gateway/admin/users/{user_id}?tenant_id=...`
-- `DELETE /api/gateway/admin/users/{user_id}?tenant_id=...`
-- `GET /api/gateway/admin/runtime-reservations`
-- `POST /api/gateway/admin/runtime-reservations/{runtime_id}/transfer`
-- `POST /api/gateway/admin/runtime-reservations/{runtime_id}/purge`
-
-Every user row carries a first-class `principal_kind` field (`"human"` or
-`"entity"`); clients must read it (or the `kind` filter) instead of
-re-deriving kind from the `roles` convention. Census asymmetry is deliberate:
-`GET /api/gateway/entities` is the ENTITY census (homes on disk), while
-`?kind=entity` here is the entity-PRINCIPAL census — homes created before
-principal minting have no user row, so the two lists can legitimately differ
-and neither may be derived from the other.
-
-Entity principals (minted at entity creation) are shaped by the entities
-lane, not the users lane: `PATCH` refuses `token`/`rotate_token`/`roles`/
-`runtime_id` and `DELETE` refuses outright (HTTP 403 naming the lane). A
-rotation would mint a live entity bearer that by design must not exist, and
-a delete would remove the name-collision guard protecting the entity's
-identity. `enabled` (the door-side disable), `email`, and `scopes` stay
-editable. The guard lives in `GatewayUserRegistry` itself, so the config CLI
-refuses the same writes.
-
-Gateway stores user token hashes in `<ABSTRACTGATEWAY_DATA_DIR>/auth/users.json`
-by default. Generated or rotated bearer tokens are returned once from the admin
-create/update response and are never stored in plaintext.
-
-Browser apps should exchange user bearer tokens for Gateway browser sessions
-instead of storing bearer tokens. `POST /api/gateway/session/login` accepts a
-Gateway user id and user token, validates them against the registry, and sets an
-opaque signed session id plus a CSRF token as cookies. The JSON response body
-does not expose those values. Gateway stores session records in
-`<ABSTRACTGATEWAY_DATA_DIR>/auth/sessions.json` by default.
-The session cookie is HTTP-only; the CSRF cookie is readable by the hosting app
-so it can send the CSRF header. Both cookies use path `/` and `SameSite=Lax`.
-Plain HTTP local-dev responses do not set `Secure`; HTTPS responses, including
-requests forwarded with `X-Forwarded-Proto: https`, do set `Secure`.
-Non-remembered sessions omit `Max-Age`; remembered sessions include one.
-Session-authenticated mutating requests must send:
-
-```text
-X-AbstractGateway-Session: <session id>
-X-AbstractGateway-CSRF: <csrf token>
-```
-
-`POST /api/gateway/session/logout` revokes the session. Disabling, deleting, or
-rotating the Gateway user invalidates existing browser sessions for that user.
-
-**Who can sign in depends on whether user accounts are on.** With user
-accounts on, every registry account (admin or not) can sign in, and each one
-works in its own runtime (below). With user accounts off the gateway runs one
-runtime, the operator's, so every signed-in person would share the operator's
-runtime, capability defaults, endpoint profiles and workflows. In that mode
-only accounts with the `admin` role can hold a browser session:
-
-- `POST /api/gateway/session/login` answers `401` for a non-admin account, with
-  `reason_code: "user_accounts_off_admin_only"` and a message naming the two
-  ways out: the gateway operator turns user accounts on, or the person signs
-  in with an admin account.
-- A session that already exists for a non-admin account (for example one
-  created while user accounts were on) is refused and removed at its next
-  use. Every session path applies the same rule (`principal_barred_from_shared_runtime`
-  in `security/sessions.py`), including the browser-app sign-in handover.
-- `POST /api/gateway/admin/users` answers `409` (same `reason_code`) instead of
-  creating a non-admin account that could never sign in, and
-  `PATCH /api/gateway/admin/users/{user_id}` refuses to remove the `admin` role
-  from an admin account in this mode.
-
-Admin accounts sign in in both modes. The rule reads the same setting the
-service routing reads, so the two cannot disagree.
-
-**The last admin account is protected.** `DELETE /api/gateway/admin/users/{user_id}`,
-and a `PATCH` that disables it or removes its `admin` role, answer `409` with
-`reason_code: "last_admin"` when the target is the only enabled admin account
-left (entity principals never count). Create or enable another admin first.
-
-When user auth is active, the Gateway service composition root routes each
-principal to an isolated service/data plane under:
-
-```text
-<ABSTRACTGATEWAY_DATA_DIR>/users/<tenant_id>/<runtime_id>/runtime
-<ABSTRACTGATEWAY_DATA_DIR>/users/<tenant_id>/<runtime_id>/flows
-```
-
-Gateway rejects duplicate `runtime_id` values within the same tenant during
-user creation and update. This keeps the default multi-user invariant at
-`1 user = 1 runtime`. Deleting a user removes the credential but reserves the
-retained runtime id for that principal, so another same-tenant user cannot be
-assigned to retained data by accident. Reusing the same runtime id in a
-different tenant remains valid.
-
-Admins can intentionally resolve retained runtime reservations through
-admin-only lifecycle routes. Transfer assigns a retained runtime to an existing
-same-tenant user and reserves that user's previous runtime id. Purge requires an
-exact `confirm_runtime_id`, deletes the retained runtime root under
-`<ABSTRACTGATEWAY_DATA_DIR>/users/<tenant_id>/<runtime_id>/`, then releases the
-runtime id for reuse. Regular users cannot list, transfer, or purge retained
-runtime reservations.
-
-Clients must not send authoritative `user_id`, `tenant_id`, `runtime_id`, or
-workspace-root values. Runtime fields such as `actor_id` and `session_id`, and
-references such as `run_id`, `artifact_id`, and memory `owner_id`, remain
-correlation and lookup fields; they do not authorize access by themselves.
-
-In hosted multi-user mode, the request path resolves a principal and routes it
-to its own service. Gateway also applies a central
-route-family authorization table for operator/admin surfaces. Admin-only route
-families include user management, audit, process control, backlog/triage/report
-operations, email bridge routes, model residency mutations
-(`POST /models/load|unload|lock|unlock|download`), session-wide prompt-cache
-clearing (`POST /sessions/{session_id}/prompt_cache/clear_all`), server
-workspace file helpers, server-workspace artifact import/export, and global
-prompt-cache/bloc mutation routes. Host and residency reads —
-`GET /models/loaded`, `GET /models/context_estimate`, `GET /host/state`,
-`GET /host/metrics/*`, and `GET /sessions/prompt_cache` — are visibility every
-authenticated client needs and serve any authenticated principal; anonymous
-requests remain rejected. Regular users remain able to use
-their own runtime data plane for run, ledger, artifact upload, discovery, and
-runtime-scoped Core capability-default routes.
-
-The route table is intentionally conservative around server filesystem access:
-browser-local files should use `/api/gateway/attachments/upload`; server
-workspace reads/imports/exports require an admin principal until a stronger
-per-user workspace grant model exists.
-
-Capability discovery follows the same policy. Regular users can still discover
-ordinary run, ledger, artifact, upload, provider/model catalog, KG, and
-runtime-scoped defaults surfaces, but admin-only workspace artifact
-import/export and provider prompt-cache controls are advertised as unavailable
-with machine-readable `admin_required` metadata. Session-level prompt-cache
-keys remain available for users; the private hash includes the current
-principal scope, so two users using the same session id/provider/model tuple do
-not collide in a shared provider control plane.
-
-Hosted provider secrets are supported through Gateway provider connections.
-Connections are stored under the relevant Gateway data plane, expose only
-non-secret metadata and a virtual provider id such as `endpoint:office-vllm`,
-and inject the raw key only into the transient Runtime provider call. Normal
-users can manage user-scoped connections; Gateway-scoped connections require an
-admin principal. The current capability-default cascade uses execution-host
-Core defaults, then the Gateway/root Core config baseline, then the user's
-runtime Core config override under that user's Gateway data plane. A stronger encrypted vault, audit model, and
-bridge/delegated-tool propagation policy remain future hardening work.
-
-### Workflow registry ownership
-
-Writing a workflow registry requires owning it. Under hosted user auth the
-`/api/gateway/bundles` routes resolve to the calling principal's own bundle
-directory, which that user may change freely. The gateway's own directory is
-the shared set every user can see and run, so changing it requires an admin
-principal.
-
-One check covers every route that writes a registry — `POST /bundles/upload`,
-`DELETE /bundles/{bundle_id}`, `POST /bundles/reload`,
-`POST /bundles/{bundle_id}/deprecate`, `POST /bundles/{bundle_id}/undeprecate`
-and `POST /visualflows/{flow_id}/publish` — so a shared workflow cannot be
-replaced through one route while another is restricted. The check runs before
-the route looks the bundle up, so a non-admin gets `403` for a bundle that
-does not exist as well. Since a non-admin account cannot be signed in while user accounts are off
-(above), this check is the second, independent line of defence. `POST /visualflows/{flow_id}/publish` accepts a caller-supplied
-`bundle_id`, `bundle_version` and `overwrite`, and installs into the same
-registry as `upload`; it is gated on the same rule. Non-admin requests against
-the shared registry return `403`. Read routes are unchanged.
-
-`DELETE /bundles/{bundle_id}` returns `409` for the `basic-agent.flow` the
-gateway verifies at startup: removal has no undo and would prevent the next
-start. Install a replacement bundle first, then remove the old file.
-
-### Shared workflow catalog
-
-Do not share workflows by pointing multiple users at another user's private
-bundle directory. Private `/api/gateway/bundles` routes stay scoped to the
-current principal's runtime. Shared/default workflows belong in the Gateway
-workflow catalog:
-
-- catalog versions are immutable by `scope + tenant + bundle_id +
-  bundle_version + sha256`;
-- admins move explicit default pointers instead of overwriting existing
-  versions;
-- catalog ACLs are checked at run start against the authenticated principal's
-  tenant, roles, and user id;
-- catalog runs execute in the requesting user's runtime by default;
-- catalog run policy is Gateway-issued and HMAC-signed before it is handed to
-  Runtime state; client-supplied `_runtime.workflow_policy` values are stripped;
-- private bundle inspection routes reject catalog-internal bundle ids, so
-  catalog flow/schema inspection remains ACL-aware;
-- deprecate/block/tombstone changes block new starts without deleting stored
-  bundle bytes.
-
-Catalog mutation routes are admin-only under
-`/api/gateway/admin/workflow-catalog/*`. User-visible catalog discovery is
-available at `GET /api/gateway/workflow-catalog`.
-
-## Origin allowlist (browser/origin defense)
-
-If the request includes an `Origin` header, the middleware allows it only when
-it matches the allowlist (glob-style patterns, fnmatch). The allowlist is
-`http://localhost:*` and `http://127.0.0.1:*`, the gateway's own LAN origins in
-a network mode, plus the **`allowed_origins` setting** (console: Network →
-*Advanced: reverse proxy*; TUI: Connection screen; CLI:
-`abstractgateway network set --allowed-origins https://gateway.example.com`).
-The setting is read per request: a change applies to the next request, no
-restart. Each origin is validated (`scheme://host[:port]`, no path, no trailing
-slash); `*` and wildcard patterns are accepted only as typed and are flagged.
-See [configuration.md](docs/configuration.md#reverse-proxy-allowed-origins-and-trust-proxy).
-
-A gateway started with `ABSTRACTGATEWAY_ALLOWED_ORIGINS` in its environment
-uses that list instead (a deployment pin): every surface says "This gateway was
-started with ABSTRACTGATEWAY_ALLOWED_ORIGINS in its environment" and reports
-`overridden_by_env: true`; the saved setting applies once it starts without it.
-
-Evidence: `GatewayAuthPolicy.allowed_origins`, `_effective_allowed_origins()` and
-`_origin_allowed()` in `src/abstractgateway/security/gateway_security.py`;
-`live_reverse_proxy()` in `src/abstractgateway/network_exposure.py`.
-
-Important nuance:
-- FastAPI’s CORS middleware in `src/abstractgateway/app.py` is permissive, but **origin enforcement for gateway endpoints is done by this security middleware**.
-- In a network exposure mode from the settings store, `serve` adds the
-  gateway's own discovered LAN origins (IP literals and `<name>.local`). A
-  foreign origin, including a DNS-rebinding name that resolves to your LAN IP,
-  is still refused (403) unless it is in `allowed_origins`.
-
-## Network exposure
-
-The network exposure setting ([configuration.md](docs/configuration.md#network-exposure-localhost--local-network--internet))
-chooses `localhost`, `lan` or `internet`. What changes for someone else on
-your network:
-
-- **`localhost`** (default for a first run): the gateway listens on
-  `127.0.0.1` only. Nobody else can open a connection; every local process of
-  every local user still can, which is why user auth stays on.
-- **`lan`**: the gateway listens on every IPv4 interface. Anyone on the same
-  network (and anyone on a VPN such as Tailscale whose address is listed) can
-  reach the sign-in page and the API. The gate is authentication: `lan` is
-  refused unless user auth will be on at the next start; unauthenticated
-  requests answer 401, failed credentials are locked out per client address
-  with a growing wait, and a browser page from a foreign origin is refused
-  (403). `lan` and `internet` are also refused when the gateway was started
-  with read protection off (`ABSTRACTGATEWAY_PROTECT_READ=0`: unauthenticated
-  reads would be answered as the admin). What `lan` does NOT give you:
-  - **encryption**: it is plain HTTP. Passwords, bearer tokens and the
-    session cookie cross the network in clear; the session cookie is
-    `HttpOnly; SameSite=Lax` but not `Secure` over HTTP. Anyone who can sniff
-    the network (shared Wi-Fi, a compromised router) can capture and replay a
-    session. Use `lan` on networks you trust, or use a TLS proxy / VPN.
-  - **a smaller attack surface**: every admin route is reachable to whoever
-    holds an admin credential. Give each person their own account, keep the
-    admin token off other machines, and prefer non-admin accounts for daily use.
-  - **exposure of the browser apps**: apps started from the Apps page stay
-    bound to `127.0.0.1` (the `apps.host` setting, *Where apps listen*), and the sign-in
-    handover (`/apps/handover/{code}`) only works on the host it was minted
-    for and refuses a loopback-only app to a browser on another machine.
-  - **engine and app installs for remote admins**: `allow_engine_install`
-    defaults to off on a non-loopback bind for callers on other computers.
-    Someone at the gateway machine itself can still install: the request's
-    socket peer is loopback or one of this host's own addresses, and it
-    carries no proxy header (`Forwarded`, `X-Forwarded-For`,
-    `X-Forwarded-Host`, `X-Real-IP`). A remote computer cannot use this
-    host's own address as the source of an established TCP connection (the
-    handshake reply never reaches it, and the kernel drops outside packets
-    with a local source address); a reverse proxy on this host would make
-    every visitor look local, which is why a proxied request never counts.
-- **`internet`**: the same bind plus an explicit acknowledgement. The gateway
-  does **not** terminate TLS and does not configure your router or firewall.
-  Put a TLS reverse proxy (Caddy, nginx, Traefik) or a tunnel (Cloudflare
-  Tunnel, Tailscale Funnel, ngrok) in front and expose that; add the public
-  `https://` origin under *Reverse proxy* (`allowed_origins`), turn on *Trust
-  the proxy's client address* (`trust_proxy`) only when your own proxy is in
-  front of every request, and rate-limit at the proxy. Forwarding the raw port
-  means plain HTTP on the internet: do not.
-
-The mode is applied at the next start and `serve --host/--port` override it;
-`GET /api/gateway/network` always says what is configured, what is running,
-and why they differ.
-
-## Workspace filesystem scope (blacklist/whitelist)
-
-AbstractGateway supports “thin clients” (browser UIs, bridges) that can trigger **filesystem-ish tools** (e.g. `list_files`, `read_file`, `write_file`). To avoid a thin client expanding server filesystem access, the gateway enforces a **workspace policy**.
-
-Key point: the **main configuration** for filesystem allowlisting/denylisting is set when you **launch the gateway** (operator-controlled env vars). Thin clients can only request broader scopes when the gateway is started in a permissive mode.
-
-### Default (safe): everything outside the run workspace is blocked
-
-- When a run is started via `POST /api/gateway/runs/start` and `workspace_root` is missing (or rejected), the gateway creates a **per-run workspace** under:
-  - `<ABSTRACTGATEWAY_DATA_DIR>/workspaces/<uuid>`
-- AbstractRuntime applies workspace scoping to filesystem-ish tool arguments. The default is:
-  - `workspace_access_mode=workspace_only`
-  - absolute paths must stay under `workspace_root`
-
-This means that by default, **all absolute paths are effectively “blacklisted”** except the run’s `workspace_root`.
-
-Evidence:
-- Run default workspace injection: `src/abstractgateway/routes/gateway.py` (`start_run`)
-- Client scope clamping: `src/abstractgateway/routes/gateway.py` (`_sanitize_run_workspace_policy`, `_client_workspace_scope_overrides_enabled`)
-- Runtime tool scoping: `abstractruntime/integrations/abstractcore/workspace_scoped_tools.py`
-- Tests: `tests/test_gateway_workspace_policy_enforcement.py`
-
-### Operator-controlled allowlist roots (recommended)
-
-- `ABSTRACTGATEWAY_WORKSPACE_DIR`: base directory used to resolve relative workspace paths and as the default root for `/files/*` helpers.
-- `ABSTRACTGATEWAY_WORKSPACE_MOUNTS`: additional allowed roots (newline-separated `name=/abs/path`).
-
-Thin clients can discover the server policy via:
-- `GET /api/gateway/workspace/policy`
-  Note: it returns **mount names only** (no absolute paths).
-
-Canonical public server paths use `rel/path` for the main workspace root and
-`mount_alias/rel/path` for approved mounts. When two allowed roots share the
-same basename, Gateway emits deterministic digest-suffixed mount aliases so
-the public path string stays stable across discovery, import/export, and
-Runtime execution.
-
-### Permissive mode: allow thin clients to choose scope (trusted machines only)
-
-To honor client-provided workspace knobs (`workspace_root`, `workspace_access_mode`, `workspace_allowed_paths`, `workspace_ignored_paths`) beyond the operator roots, enable one of:
-
-- `ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE=1`
-- `ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE=1`
-
-In this mode, a client can request:
-- `workspace_access_mode=all_except_ignored` (“full access” unless explicitly blocked)
-
-Do **not** enable this when serving untrusted browser origins: a compromised thin client can request access to arbitrary server paths.
-
-### Important limitation (all modes)
-
-`execute_command` is **not** an OS sandbox: even if the runtime sets the default working directory under `workspace_root`, the command itself can reference absolute paths or `cd ..`.
-
-## Common security env vars
-
-All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgateway/security/gateway_security.py`).
-
-### Enable/disable
-
-- `ABSTRACTGATEWAY_SECURITY=1|0` (default: enabled)
-
-### Tokens
-
-- `ABSTRACTGATEWAY_AUTH_TOKEN` (single shared secret)
-- `ABSTRACTGATEWAY_AUTH_TOKENS` (comma-separated list)
-- `ABSTRACTGATEWAY_USER_AUTH=1` or `ABSTRACTGATEWAY_AUTH_MODE=users`: enable
-  file-backed user principals and per-principal service routing
-- `ABSTRACTGATEWAY_USER_AUTH_AUTO=1`: compatibility mode that also enables
-  user auth when the registry file exists
-- `ABSTRACTGATEWAY_USERS_FILE`: optional user registry path; defaults to
-  `<ABSTRACTGATEWAY_DATA_DIR>/auth/users.json`
-- `ABSTRACTGATEWAY_SESSIONS_FILE`: optional browser session registry path;
-  defaults to `<ABSTRACTGATEWAY_DATA_DIR>/auth/sessions.json`
-- `ABSTRACTGATEWAY_SESSION_TTL_S`: default browser session lifetime in seconds
-  (default: 8 hours; bounded)
-- `ABSTRACTGATEWAY_REMEMBER_SESSION_TTL_S`: browser session lifetime when an
-  app requests "remember me" (default: 30 days; bounded)
-
-### Protect reads vs writes
-
-- `ABSTRACTGATEWAY_PROTECT_WRITE=1|0` (default: `1`)
-- `ABSTRACTGATEWAY_PROTECT_READ=1|0` (default: `1`)
-- `ABSTRACTGATEWAY_DEV_READ_NO_AUTH=1|0`
-  Dev escape hatch: allow unauthenticated reads **from loopback only**.
-
-### Limits (abuse resistance)
-
-- `ABSTRACTGATEWAY_MAX_BODY_BYTES` (default: `10MB`)
-  Applies to every mutating request. Oversized requests are **rejected** with
-  `413` naming both sizes — bodies are never truncated. The default is sized for
-  authored documents (a VisualFlow save is a whole workflow, not a small API
-  payload), not just for abuse resistance.
-- `ABSTRACTGATEWAY_MAX_ATTACHMENT_BYTES` (default: `25MB`)
-- `ABSTRACTGATEWAY_MAX_BUNDLE_BYTES` (default: `75MB`)
-- `ABSTRACTGATEWAY_MAX_CONCURRENCY` (default: `64`)
-- `ABSTRACTGATEWAY_MAX_SSE` (default: `32`)
-
-### Auth lockout (brute-force safety net)
-
-- `ABSTRACTGATEWAY_LOCKOUT_AFTER` (default: `5`)
-- `ABSTRACTGATEWAY_LOCKOUT_BASE_S` (default: `1.0`)
-- `ABSTRACTGATEWAY_LOCKOUT_MAX_S` (default: `60.0`)
-
-### Audit log (write requests)
-
-- `ABSTRACTGATEWAY_AUDIT_LOG=1|0` (default: enabled for writes)
-- `ABSTRACTGATEWAY_AUDIT_LOG_MAX_BYTES` (default: `50MB`)
-- `ABSTRACTGATEWAY_AUDIT_LOG_ROTATIONS` (default: `10`)
-- `ABSTRACTGATEWAY_AUDIT_LOG_HEADERS` (comma-separated allowlist; default: `x-client-id,x-client-version,x-forwarded-for`)
-
-### Reverse proxies
-
-- The `trust_proxy` setting (console: Network → *Advanced: reverse proxy* →
-  *Trust the proxy's client address*; TUI: Connection screen checkbox; CLI:
-  `abstractgateway network set --trust-proxy on|off`). On: `X-Forwarded-For` is
-  used for IP attribution (audit log) and lockout tracking. Read per request:
-  it applies to the next request. Only when your own proxy sits in front of
-  every request; otherwise any client chooses the address the gateway sees.
-  The ephemeral tray token never honours it (raw socket peer only).
-- A gateway started with `ABSTRACTGATEWAY_TRUST_PROXY` in its environment uses
-  that value instead; the status reports `overridden_by_env: true`.
-
-## Production checklist (minimal)
-
-- Run behind TLS (reverse proxy) and bind `--host 127.0.0.1` (proxy in front) or lock down your network if binding `0.0.0.0`.
-- Use a strong random token and list exact origins in `allowed_origins` (avoid public wildcards).
-- Keep `ABSTRACTGATEWAY_SECURITY=1`.
-
-## Related docs
-
-- Configuration overview: [configuration.md](docs/configuration.md)
-- API overview: [api.md](docs/api.md)
-- FAQ: [faq.md](docs/faq.md)
-
----
-
 ## docs/architecture.md
 
 # AbstractGateway — Architecture
@@ -7928,8 +8115,10 @@ desktop Assistant, scripts) and **AbstractRuntime**:
 
 - **AbstractGateway** (this package): HTTP/SSE API, durability glue, security,
   and the operator control plane.
-- **AbstractRuntime** (required): run model, tick loop, workflow registry and
-  stores.
+- **AbstractRuntime** (required, 0.4.37 or later): run model, tick loop,
+  workflow registry, stores, live token deltas and the workspace-scoped tools.
+  The gateway checks the installed runtime when it builds its workflow host and
+  refuses to start on an older one, naming the version to install.
 - **AbstractCore** (required, reached through Runtime facades): providers,
   tools, media capabilities, capability-route defaults, the model catalog,
   engine detection and host jobs (downloads, deletes).
@@ -7943,56 +8132,81 @@ desktop Assistant, scripts) and **AbstractRuntime**:
 ```mermaid
 flowchart LR
   subgraph Clients["Clients"]
-    Browser["Browser: /console and browser apps"]
+    Browser["Browser: /console"]
+    AppSrv["Browser app servers on 127.0.0.1<br/>(Flow, Code, Observer, Continuum, Entity)"]
     TUI["Terminal apps: abstractgateway-console, Code"]
+    Asst["Desktop Assistant"]
     Tray["Desktop tray helper (separate process)"]
     CLI["abstractgateway CLI"]
   end
 
   subgraph GW["AbstractGateway process (abstractgateway serve)"]
     Sec["GatewaySecurityMiddleware: auth, origins, limits, audit log"]
+    Same["Same-machine rule: is the caller at this computer?"]
     Routes["FastAPI routes /api/gateway/*"]
     Console["/console (web console)"]
-    Handover["/apps/handover, /apps/tui-handover (one-time sign-in)"]
+    Handover["Sign-in hand-overs: apps, terminal, desktop"]
     Principals["Principal routing: one data plane per user"]
-    Runner["GatewayRunner: command inbox + ticks"]
+    Defaults["Default agent workflow resolver (@default)"]
+    Browse["Workspace browser: /runs/{id}/workspace/*"]
     Host["Workflow host: .flow bundles + workflow catalog"]
-    Settings["Runtime settings: network, apps.*, allow_engine_install, backlog"]
+    Guard["Run workspace guard: a folder and the built-in deny rules for every run"]
+    Hub["Live-delta hub: llm.delta frames per root run"]
+    Runner["GatewayRunner: command inbox + ticks"]
+    Settings["Runtime settings: network, apps.*, agents.*, skills.shelf, workspace, backlog"]
+    Skills["Skills shelf (seeded from AbstractSkill)"]
     AppsMgr["Apps manager: Node.js, npm installs, app processes"]
     Jobs["Engine installs and model download jobs"]
     HostCtl["Host control: pause, restart, update"]
   end
 
   subgraph Lower["Framework packages"]
-    RT["AbstractRuntime: Runtime.tick, stores"]
+    RT["AbstractRuntime: Runtime.tick, stores, workspace-scoped tools"]
     Core["AbstractCore: providers, catalog, host jobs"]
   end
 
   Data[("Data dir: runs, ledgers, commands, artifacts, auth, settings")]
-  Apps["Browser app servers (127.0.0.1:3001-3005)"]
+  WS[("Run workspace folders")]
 
   Browser -->|HTTP| Sec
+  Browser -->|app pages| AppSrv
+  AppSrv -->|"same-origin proxy: X-Forwarded-For + X-AbstractFramework-App-Proxy"| Sec
   TUI -->|HTTP| Sec
+  Asst -->|HTTP, gateway session| Sec
   CLI -->|HTTP or data dir| Sec
   Tray -->|loopback HTTP, ephemeral token| Sec
   Sec --> Routes
   Sec --> Console
+  Routes -.->|installs, open folder, workspace host| Same
   Routes --> Principals --> Host
+  Routes --> Defaults --> Host
+  Routes --> Browse --> WS
   Routes --> Settings
+  Routes --> Skills
   Routes --> AppsMgr
   Routes --> Jobs
   Routes --> HostCtl
+  Host --> Guard --> RT
   Runner --> Host
   Runner --> RT
-  Host --> RT
+  RT -->|file tools confined to| WS
+  RT -->|live text of LLM calls| Hub
+  Hub -->|"SSE on /runs/{id}/ledger/stream"| Routes
   RT --> Data
   Routes --> Data
   Jobs --> Core
   Host --> Core
-  AppsMgr -->|starts and supervises| Apps
-  Handover --> Apps
-  Apps -->|same-origin proxy to /api/gateway| Sec
+  AppsMgr -->|starts and supervises| AppSrv
+  AppsMgr -->|launches with a hand-over file| Asst
+  Handover --> AppSrv
+  Handover --> Asst
 ```
+
+Browser apps reach the gateway through their own app server on this computer,
+which relays every call with the browser's address (`X-Forwarded-For`) and its
+marker header (`X-AbstractFramework-App-Proxy`), so the gateway can tell a
+browser on this computer from one elsewhere on the network
+([security.md](docs/security.md#callers-on-this-computer)).
 
 ## Core components (code-mapped)
 
@@ -8027,8 +8241,38 @@ flowchart LR
 - **Runtime settings** (`src/abstractgateway/runtime_config.py`): one store,
   `<data dir>/config/runtime_config.json`, for the settings the consoles, the
   tray and the CLI change: network exposure, `apps.*`, `allow_engine_install`,
-  the backlog folder, the backlog exec runner, the process manager and the
-  stop kill switch. See [configuration.md](docs/configuration.md).
+  `agents.default_workflow.<interface>`, `agents.streaming_default`,
+  `skills.shelf`, `workspace_builtin_deny`, the backlog folder, the backlog
+  exec runner, the process manager and the stop kill switch. A write that
+  names an unknown setting is refused whole; writers take a file lock. See
+  [configuration.md](docs/configuration.md).
+- **Default agent workflows** (`src/abstractgateway/agent_defaults.py`):
+  resolves `flow_id: "@default"` plus an agent `interface` to the workflow
+  saved under `agents.default_workflow.<interface>` (or the built-in default)
+  at every run start, for the HTTP routes, the Telegram bridge and the backlog
+  advisor alike, and records the choice as `resolved_workflow`. See
+  [configuration.md](docs/configuration.md#default-agent-workflow).
+- **Run workspace guard** (`src/abstractgateway/run_workspace_guard.py`):
+  called from the workflow host's `start_run` for every run, whatever started
+  it. It gives a run that named no folder its conversation's gateway-made
+  folder, and adds the built-in deny rules (see
+  [Workspace guard](#workspace-guard-every-run-start)).
+- **Workspace browser** (`src/abstractgateway/workspace_browse.py`): lists
+  and serves the files of a run's workspace folder to the person who started
+  the run, confined to that folder, with the built-in deny list applied at
+  every call. See [api.md](docs/api.md#a-runs-workspace-folder-browse-and-preview).
+- **Live replies** (`src/abstractgateway/live_deltas.py`): the sink the
+  gateway registers on every runtime it builds, the in-memory hub keyed by
+  root run, and the file sink and tailer used when API and runner are separate
+  processes (see [Live replies](#live-replies-token-deltas)).
+- **Skills shelf** (`src/abstractgateway/skills_shelf.py`): resolves the
+  folder skills are read from (`skills.shelf`, else the gateway's own copy in
+  `<data dir>/skills/registry`, refreshed from AbstractSkill's curated shelf
+  at each start). See [configuration.md](docs/configuration.md#skills-shelf).
+- **Same-machine rule** (`src/abstractgateway/security/same_machine.py`):
+  one answer to "is this caller sitting at the gateway computer?", used for
+  installs, opening folders and the workspace routes' host facts. See
+  [security.md](docs/security.md#callers-on-this-computer).
 - **Network exposure** (`src/abstractgateway/network_exposure.py`): resolves the
   bind (`localhost`, `lan`, `internet`) at `serve` time, checks that the auth
   posture allows it, discovers the addresses, and serves the reverse-proxy
@@ -8043,7 +8287,9 @@ flowchart LR
   `routes/apps.py`): installs Node.js when needed, installs the browser apps
   from npm, runs them as child processes of the gateway, detects apps started
   elsewhere, installs Code's terminal app, and opens apps signed in through
-  one-time handover codes. See [apps.md](docs/apps.md).
+  one-time handover codes; it starts the desktop Assistant signed in through a
+  private hand-over file (see [Desktop hand-over](#desktop-assistant-hand-over)).
+  See [apps.md](docs/apps.md).
 - **Host control** (`src/abstractgateway/host_control.py`,
   `self_update.py`): process-wide pause, graceful restart, and in-place
   update checks.
@@ -8096,6 +8342,114 @@ sequenceDiagram
 Evidence: `src/abstractgateway/routes/gateway.py` (ledger endpoints, SSE,
 commands) and `src/abstractgateway/runner.py` (command application, ticks).
 
+## Live replies (token deltas)
+
+A run started with `input_data._runtime.stream: true` (or, for an interactive
+`POST /runs/start` that does not say, with the `agents.streaming_default`
+setting on) also delivers the model's text while it is written. The text is a
+live preview, never a ledger record: the durable `llm_call` record still
+carries the answer, and it is written before the call's `llm.delta_end`.
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant G as Gateway API (ledger stream)
+  participant H as Live-delta hub
+  participant RT as AbstractRuntime (LLM call)
+  participant S as Durable stores
+
+  C->>G: POST /runs/start (input_data._runtime.stream: true)
+  C->>G: GET /runs/{run_id}/ledger/stream?after=N
+  G->>H: subscribe to the run and every run below it
+  H-->>G: one snapshot per open call (snapshot: true)
+  G-->>C: event: llm.delta (snapshot)
+  loop while the model writes
+    RT->>H: llm.delta {call_id, seq, text, channel}
+    H-->>G: frames since the subscriber's cursor
+    G-->>C: event: llm.delta (no id: line)
+  end
+  RT->>S: llm_call record with the final answer
+  G-->>C: event: step (id: N+1)
+  RT->>H: llm.delta_end {reason}
+  G-->>C: event: llm.delta_end
+  Note over H: when the run ends with a call still open,<br/>the hub closes it (synthetic: true)
+  G-->>C: event: done
+```
+
+- The hub is keyed by the root run, so a subscription to a root sees the
+  replies of its sub-runs, and a subscription to a child sees that child's
+  subtree. Another user's run answers 404.
+- Each subscriber holds at most one pending entry per call (a cursor into
+  that call's text), so a slow client catches up instead of overflowing a
+  queue; nothing is capped.
+- A run that ends while a call is open (stopped, failed, killed by the stop
+  kill switch, or failed by the runner) gets a synthetic `llm.delta_end` for
+  that call, and its state is freed.
+
+With API and runner in separate processes, the runner's model calls write
+their events to a private file and the API process reads them from there:
+
+```mermaid
+flowchart LR
+  subgraph RunnerP["abstractgateway runner"]
+    Call["LLM call in AbstractRuntime"] --> Sink["file sink"]
+  end
+  Sink --> File[("data dir/live/ROOT_RUN_ID.deltas.jsonl<br/>(0600, deleted when the root run ends)")]
+  subgraph ApiP["abstractgateway serve --no-runner"]
+    Tail["file tailer"] --> Hub2["Live-delta hub"] --> Stream["GET /runs/{run_id}/ledger/stream"]
+  end
+  File --> Tail
+```
+
+The frames, fields and end reasons are in
+[api.md](docs/api.md#4b-live-replies-token-deltas-on-the-same-stream).
+
+## Workspace guard (every run start)
+
+Every run the gateway starts works in a folder, and its file tools are kept
+out of the gateway's data folder and the account's credential folders:
+
+```mermaid
+flowchart TB
+  Http["Client doors: POST /runs/start, POST /runs/schedule, entity summons"] --> Policy["Workspace policy check: workspace_root inside the allowed roots and not inside the data folder (except the caller's own conversation folder), else 400"]
+  Policy --> Start["Workflow host start_run"]
+  Internal["Gateway-made starts: Telegram, email and agora bridges, sandbox routes, schedule children"] --> Start
+  Start --> Ensure["No folder named: the conversation's gateway-made folder (or a per-run folder)"]
+  Ensure --> Deny["Built-in deny rules: workspace_builtin_deny_prefixes (data folder + credential folders), workspace_builtin_allow (the run's own folder); client-sent values dropped"]
+  Deny --> Tools["AbstractRuntime file tools enforce the rules; nothing is written into the model's prompt"]
+```
+
+The rules are whole-folder prefixes, never a listing of a folder's contents,
+so the model's prompt stays the same from turn to turn. An admin can turn the
+run-side rules off (`workspace_builtin_deny`); the workspace browser keeps
+hiding those folders. Shell commands a run may execute are not confined by
+these rules. Details: [configuration.md](docs/configuration.md#workspace-policy-filesystem-scope).
+
+## Desktop Assistant hand-over
+
+Opening the Assistant from the console or the tray starts it on the gateway
+computer already signed in as the person who clicked, without a code or token
+on its command line or in its environment:
+
+```mermaid
+sequenceDiagram
+  participant U as Admin (console Open, tray Launch Assistant)
+  participant G as Gateway
+  participant F as Hand-over file (0600)
+  participant A as Desktop Assistant
+
+  U->>G: POST /api/gateway/apps/assistant/launch
+  G->>F: write {schema, code, base_url, expires_at, user_id}<br/>in the data dir handover folder
+  G->>A: start with --gateway-url URL --gateway-handover-file FILE
+  A->>F: read, then delete
+  A->>G: POST /api/gateway/apps/desktop-handover {code}<br/>(direct loopback call)
+  G-->>A: {base_url, session_id, csrf_token, user_id, expires_at}
+  Note over G,A: single use, two minutes. A relayed call gets 403,<br/>a used or expired code 410
+```
+
+An Assistant that is already running is brought to the front and receives no
+code. See [apps.md](docs/apps.md).
+
 ## Thin-client control plane
 
 Higher-level apps use the gateway instead of importing Runtime or Core:
@@ -8140,7 +8494,8 @@ flowchart TB
   the browser apps you enabled.
 - **Split API and runner**: `abstractgateway runner` (worker) and
   `abstractgateway serve --no-runner` (API) share one data dir, so you can
-  restart the API without pausing durable execution.
+  restart the API without pausing durable execution. Live replies pass through
+  `<data dir>/live/` in this shape.
 - **Container**: the GHCR image runs `serve` with user auth; see
   [deployment.md](docs/deployment.md).
 
@@ -8157,6 +8512,12 @@ Evidence: `src/abstractgateway/cli.py` (flags), `src/abstractgateway/runner.py`
   a network mode, and the `allowed_origins` setting.
 - **Abuse resistance**: body size caps, concurrency caps, auth lockouts, audit
   log.
+- **Callers on this computer**: one rule decides who counts as sitting at the
+  gateway computer (installs, opening folders); a browser that reaches the
+  gateway through an app server counts only when the browser itself is on this
+  computer.
+- **Workspace guard**: every run works in a folder, and its file tools never
+  reach the gateway's data folder or the account's credential folders.
 
 `session_id`, `run_id`, `artifact_id` and memory owner ids are references,
 not authorization proofs. With user auth on, each principal runs on its own
@@ -8172,6 +8533,13 @@ plus CSRF token. See [security.md](docs/security.md).
 - Stores: `src/abstractgateway/stores.py`
 - Security: `src/abstractgateway/security/`
 - Settings: `src/abstractgateway/runtime_config.py`
+- Default agent workflows: `src/abstractgateway/agent_defaults.py`
+- Live replies: `src/abstractgateway/live_deltas.py`
+- Workspace guard and browser: `src/abstractgateway/run_workspace_guard.py`,
+  `src/abstractgateway/workspace_browse.py`
+- Same-machine rule: `src/abstractgateway/security/same_machine.py`
+- Desktop hand-over: `src/abstractgateway/apps_desktop.py`,
+  `src/abstractgateway/apps_manager.py`, `src/abstractgateway/routes/apps.py`
 - CLI: `src/abstractgateway/cli.py`
 
 ## Related docs
@@ -8289,6 +8657,13 @@ If you must relax it:
 
 Evidence: env policy loader in `src/abstractgateway/security/gateway_security.py`.
 
+### Why does the workspace browser never show `~/.ssh` or the gateway's data folder?
+
+The gateway's data folder and the credential folders of its user account are
+on a built-in deny list: never listed or served, and denied to runs' file
+tools by default, even when a run's folder contains them. See
+[security.md](docs/security.md#built-in-deny-list).
+
 ## Storage
 
 ### Where is data stored?
@@ -8351,6 +8726,28 @@ When starting runs in bundle mode you can select versions in two ways:
 - or pass a namespaced `flow_id` like `bundle@version:flow` (this also works for selecting “latest” via `bundle:flow`)
 
 Evidence: bundle selection in `src/abstractgateway/hosts/bundle_host.py` (`start_run`).
+
+### Which workflow does "Gateway default" run?
+
+The one saved for the app's agent interface under
+`agents.default_workflow.<interface>` (for example
+`abstractcode.agent.v1`); with nothing saved, AbstractCode's interface runs the
+shipped `basic-agent`, and the Assistant's interface has no gateway default
+(the Assistant uses its built-in orchestrator). Apps start such runs with
+`flow_id: "@default"` and the interface; the gateway resolves it at every
+start, answers the choice as `resolved_workflow`, and refuses the start (409)
+rather than run another workflow when the saved one cannot run. Change it in
+the console (Workflows), the terminal console, or with
+`abstractgateway config set agents.default_workflow.<interface> bundle[@version]:flow`.
+See [configuration.md](docs/configuration.md#default-agent-workflow).
+
+### Can I see the reply while the model writes it?
+
+Yes. Start the run with `input_data._runtime.stream: true` (or turn on
+`agents.streaming_default` so interactive runs stream when the app does not
+say) and read the run's ledger stream: the text arrives as `llm.delta`
+frames, and the durable `llm_call` record still carries the final answer.
+See [api.md](docs/api.md#4b-live-replies-token-deltas-on-the-same-stream).
 
 ### Where does a bundle's default model come from?
 
@@ -8487,7 +8884,8 @@ Install the extra (`pip install "abstractgateway[tray]"`) and start the
 gateway with `abstractgateway serve` on a desktop session. The icon has no
 on/off setting: while the gateway serves a desktop that can show it, it is
 there. The boot log says `Desktop tray: started (pid …)` or names the reason
-it is absent (`missing_dependency`, `headless`, `dev_reload`, `runner_only`);
+it is absent (`missing_dependency`, `headless`, `dev_reload`, `runner_only`,
+`no_tray_flag` for `serve --no-tray`);
 the console's **Resources** tab shows the same. On Linux the GTK/AppIndicator
 bindings are needed; GNOME also needs the AppIndicator extension. Details:
 [tray.md](docs/tray.md) and
