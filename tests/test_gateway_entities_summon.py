@@ -623,3 +623,50 @@ def test_context_recommendation_is_soft(client: TestClient):
     ), warns5
     # And never the below-recommendation text on an above-ceiling window.
     assert not any("below" in w and "context window" in w for w in warns5), warns5
+
+
+def test_a_summoned_run_is_confined_and_cannot_name_the_data_folder(client: TestClient):
+    """Entity summons take a client's input_data: the /runs/start workspace
+    policy applies (400 for the data folder), and the run gets the host's
+    built-in deny rule, so its tools refuse the data folder."""
+    from pathlib import Path
+
+    from abstractruntime.integrations.abstractcore.workspace_scoped_tools import WorkspaceScope, rewrite_tool_arguments
+    from abstractgateway.service import get_gateway_service
+
+    assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+    assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
+    svc = get_gateway_service()
+    data = Path(svc.host.data_dir).resolve()
+
+    bad = client.post("/api/gateway/entities/Castor/summon", json={
+        "prompt": "hi", "bundle_id": "min", "flow_id": "root",
+        "input_data": {"provider": "mock", "model": "mock-model", "workspace_root": str(data)}})
+    assert bad.status_code == 400 and "data folder" in str(bad.json()["detail"]), bad.text
+
+    ok = client.post("/api/gateway/entities/Castor/summon", json={
+        "prompt": "hi", "bundle_id": "min", "flow_id": "root", "caller_kind": "human",
+        "input_data": {"provider": "mock", "model": "mock-model", "workspace_builtin_allow": ["/"]}})
+    assert ok.status_code == 200, ok.text
+    v = svc.host.run_store.load(ok.json()["run_id"]).vars
+    assert str(data) in v["workspace_builtin_deny_prefixes"]
+    assert v["workspace_builtin_allow"] == [v["workspace_root"]]
+    scope = WorkspaceScope.from_input_data(v)
+    for target in (data / "entities", data / "auth"):
+        with pytest.raises(ValueError):
+            rewrite_tool_arguments(tool_name="list_files", args={"directory_path": str(target)}, scope=scope)
+
+
+def test_an_entity_visit_workspace_never_leaves_the_home(tmp_path):
+    """Entity visits (the entity chat / own-time loop) use the runtime's
+    identity tools, confined structurally to <home>/workspace: the data
+    folder around the home is out of reach."""
+    from abstractruntime.identity.tools import WorkspaceRoot
+
+    home = tmp_path / "data" / "entities" / "castor"
+    home.mkdir(parents=True)
+    (tmp_path / "data" / "run_x.json").write_text("{}")
+    ws = WorkspaceRoot(home)
+    for escape in ("../../run_x.json", "../../../data", str(tmp_path / "data" / "run_x.json")):
+        with pytest.raises(PermissionError):
+            ws._route(escape)

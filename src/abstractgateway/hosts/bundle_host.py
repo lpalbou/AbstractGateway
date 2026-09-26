@@ -2489,6 +2489,22 @@ class WorkflowBundleGatewayHost:
 
         self._normalize_agent_loop_input(vars0)
 
+        # Every run the gateway starts (HTTP routes, bridges, entity summons,
+        # scheduled wrappers whose children inherit it) gets a workspace and
+        # the host's built-in tool deny rule, here and nowhere else
+        # (run_workspace_guard.py). No try/except: a run that cannot be
+        # confined must not start.
+        from ..run_workspace_guard import guard_run_vars
+
+        guard_run_vars(
+            vars0,
+            data_dir=self.data_dir,
+            root_data_dir=self.catalog_root_data_dir or self.data_dir,
+            session_id=sid,
+            tenant_id=str(self.catalog_tenant_id or ""),
+            user_id=str(self.catalog_user_id or ""),
+        )
+
         run_id = str(self.runtime.start(workflow=spec, vars=vars0, actor_id=actor_id, session_id=sid))
 
         # Default session_id to the root run_id for durable session-scoped behavior

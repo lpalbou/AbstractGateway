@@ -4078,51 +4078,13 @@ def _apply_run_stream_switch(input_data: Dict[str, Any], *, interactive: bool) -
         _ensure_input_runtime_namespace(input_data)["stream"] = True
 
 
-# Server-written only: the host's own protection of a run's tool sandbox
-# (abstractruntime workspace_scoped_tools: enforced by the path resolver,
-# never rendered into the system prompt, inherited by child runs).
-_BUILTIN_DENY_KEYS = ("workspace_builtin_deny_prefixes", "workspace_builtin_allow")
-
-
-def _strip_client_builtin_deny(input_data: Dict[str, Any]) -> None:
-    """A client never sets the host's protection (an allow entry of "/" would
-    lift it): whatever it sent under these keys is dropped."""
-    for key in _BUILTIN_DENY_KEYS:
-        input_data.pop(key, None)
-
-
 def _apply_builtin_tool_deny(input_data: Dict[str, Any], *, principal: Optional["GatewayPrincipal"]) -> None:
-    """The built-in deny rule for the run's tools, as PREFIXES: the gateway's
-    data folder and the account's credential/config folders
-    (`workspace_builtin_deny_prefixes`), with ONE exception, the run's own
-    gateway-made workspace folder inside the data folder
-    (`workspace_builtin_allow`). Never an enumeration of a folder's contents:
-    the list is the same for every run of a gateway, whatever the data folder
-    holds, and the runtime enforces it without writing it into the model's
-    prompt (REVIEW/16: enumerating the data folder grew every prompt by ~950
-    tokens a turn and cold-started the prompt cache each turn). A credential
-    folder that CONTAINS the run's workspace is left out (it would deny the
-    workspace itself). The operator's own `workspace_ignored_paths` are not
-    touched. An admin turns the rule off for runs with the stored setting
-    workspace_builtin_deny."""
-    from ..runtime_config import resolve_workspace_builtin_deny_enabled
-    from ..workspace_browse import BUILTIN_DENY_HOME_RELPATHS
+    """The host's built-in tool deny rule (run_workspace_guard.py), applied
+    at the route so the start response already reflects it; the host applies
+    it again to every run it starts (idempotent)."""
+    from ..run_workspace_guard import apply_builtin_tool_deny
 
-    _strip_client_builtin_deny(input_data)
-    data_dir = gateway_data_dir_from_env()
-    if not resolve_workspace_builtin_deny_enabled(data_dir):
-        return
-    raw_root = input_data.get("workspace_root")
-    root = Path(str(raw_root)).expanduser().resolve() if isinstance(raw_root, str) and raw_root.strip() else None
-    home = Path.home()
-    creds: List[Path] = [Path(os.path.realpath(str(home / rel))) for rel in BUILTIN_DENY_HOME_RELPATHS]
-    if root is not None:
-        creds = [c for c in creds if not _is_under_allowed_roots(root, [c])]
-    data_root = Path(os.path.realpath(str(data_dir.expanduser())))
-    prefixes = list(dict.fromkeys([str(data_root)] + [str(c) for c in creds]))
-    input_data["workspace_builtin_deny_prefixes"] = prefixes
-    if root is not None and root != data_root and _is_under_allowed_roots(root, [data_root]):
-        input_data["workspace_builtin_allow"] = [str(root)]
+    apply_builtin_tool_deny(input_data, root_data_dir=gateway_data_dir_from_env())
 
 
 def _sanitize_run_workspace_policy(
@@ -8227,6 +8189,18 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
     # Validated like /runs/start, but the gateway streaming default is never
     # applied to a schedule (nobody watches a scheduled run live).
     _apply_run_stream_switch(schedule_input_data, interactive=False)
+    # The same workspace policy as /runs/start: a client cannot reach a folder
+    # by scheduling a run that it could not start directly (400 otherwise).
+    schedule_session_id = str(req.session_id).strip() if isinstance(req.session_id, str) and str(req.session_id).strip() else None
+    try:
+        schedule_input_data.pop("_gateway_workspace", None)  # server-written only
+        schedule_input_data = _sanitize_run_workspace_policy(
+            schedule_input_data, principal=principal, session_id=schedule_session_id
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to schedule run: {e}")
     catalog_selection = await _off_the_event_loop(
         _maybe_resolve_catalog_start,
         svc=svc,
@@ -8409,9 +8383,13 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
         raise HTTPException(status_code=500, detail=f"Failed to register schedule wrapper workflow: {e}")
 
     input_data = catalog_input_data if catalog_selection is not None and catalog_input_data is not None else dict(schedule_input_data)
-    # The built-in deny list binds every scheduled execution's tool sandbox
-    # too (the target runs get these vars), exactly as on /runs/start.
-    _apply_builtin_tool_deny(input_data, principal=principal)
+    # The built-in deny rule: the WRAPPER run gets the workspace and the rule
+    # at the host (run_workspace_guard), and every scheduled execution
+    # inherits both from it (runtime child inheritance). The target's own
+    # copy must not carry client-sent rule keys that would shadow that.
+    from ..run_workspace_guard import strip_client_builtin_deny
+
+    strip_client_builtin_deny(input_data)
     # How the TARGET was chosen, written into the target's inputs (every
     # scheduled execution carries it) and on the wrapper run itself.
     workflow_selection = _workflow_selection_before_start(svc, agent_default=agent_default, catalog_selection=catalog_selection)
@@ -8457,6 +8435,11 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
         **({"session_prefix": session_prefix} if isinstance(session_prefix, str) and session_prefix.strip() else {}),
         "_meta": {"schedule": schedule_meta},
     }
+    # A sanitized client workspace belongs to the wrapper too, so the host
+    # computes the deny rule's allow entry for the folder the children use.
+    for _ws_key in ("workspace_root", "workspace_access_mode", "workspace_allowed_paths", "workspace_ignored_paths"):
+        if _ws_key in input_data:
+            wrapper_vars[_ws_key] = input_data[_ws_key]
     if catalog_selection is not None and isinstance(input_data.get("_runtime"), dict):
         wrapper_vars["_runtime"] = dict(input_data["_runtime"])
     # Reasoning lane (2026-08-04): lift `thinking` to the WRAPPER root for every

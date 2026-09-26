@@ -3134,6 +3134,16 @@ def _summon_core(
     participants: List[str] = [f"person:{caller_id}", home.entity_id]
 
     input_data: Dict[str, Any] = dict(req.input_data or {})
+    # The client's workspace knobs get the same policy check as /runs/start
+    # (400 when refused); the host then gives the run its workspace and the
+    # built-in tool deny rule (run_workspace_guard.py).
+    from ..security.principal import current_gateway_principal
+    from .gateway import _sanitize_run_workspace_policy
+
+    input_data.pop("_gateway_workspace", None)  # server-written only
+    input_data = _sanitize_run_workspace_policy(
+        input_data, principal=current_gateway_principal(), session_id=getattr(req, "session_id", None)
+    )
     input_data["prompt"] = req.prompt
     caller_system = str(input_data.get("system") or "").strip()
     input_data["system"] = prelude["text"] + (("\n\n" + caller_system) if caller_system else "")

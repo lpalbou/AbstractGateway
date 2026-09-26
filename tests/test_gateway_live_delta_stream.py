@@ -347,18 +347,22 @@ def test_streaming_default_applies_to_interactive_starts_only(gw) -> None:
 
 
 def test_scheduled_runs_carry_the_builtin_tool_deny_list(gw) -> None:
+    """The wrapper run gets a workspace + the deny rule at the host; every
+    scheduled execution inherits both (and a client cannot slip keys in)."""
     client, runtime_dir = gw
     _Ctl.reset(hold=False)
     sched = client.post("/api/gateway/runs/schedule", headers=HEADERS,
-                        json={"bundle_id": "live", "flow_id": "root", "input_data": {"prompt": "d"}, "start_at": "now"})
+                        json={"bundle_id": "live", "flow_id": "root", "start_at": "now",
+                              "input_data": {"prompt": "d", "workspace_builtin_allow": ["/"]}})
     assert sched.status_code == 200, sched.text
     parent = sched.json()["run_id"]
-    target_vars = _run_vars(parent)["vars"]
-    denied = target_vars.get("workspace_builtin_deny_prefixes") or []
-    assert str(runtime_dir.resolve()) in denied, denied
-    assert any(p.endswith("/.ssh") for p in denied), denied
+    wrapper = _run_vars(parent)
+    data = str(runtime_dir.resolve())
+    assert data in wrapper["workspace_builtin_deny_prefixes"]
+    assert any(p.endswith("/.ssh") for p in wrapper["workspace_builtin_deny_prefixes"])
+    assert wrapper["workspace_builtin_allow"] == [wrapper["workspace_root"]]
+    assert "workspace_builtin_allow" not in wrapper["vars"], "the client's allow entry was dropped"
 
-    # ...and the child run the schedule launches gets them as its own vars.
     from abstractgateway.service import get_gateway_service
 
     rs = get_gateway_service().host.run_store
@@ -370,7 +374,42 @@ def test_scheduled_runs_carry_the_builtin_tool_deny_list(gw) -> None:
 
     _wait(lambda: _child() is not None)
     child_vars = rs.load(_child()).vars
-    assert str(runtime_dir.resolve()) in (child_vars.get("workspace_builtin_deny_prefixes") or [])
+    assert data in child_vars["workspace_builtin_deny_prefixes"]
+    assert child_vars["workspace_builtin_allow"] == [child_vars["workspace_root"]] == [wrapper["workspace_root"]]
+
+
+def test_a_client_cannot_reach_the_data_folder_by_scheduling(gw) -> None:
+    """Same workspace policy as /runs/start at /runs/schedule."""
+    client, runtime_dir = gw
+    for bad in (runtime_dir.resolve(), runtime_dir.resolve() / "auth"):
+        r = client.post("/api/gateway/runs/schedule", headers=HEADERS,
+                        json={"bundle_id": "live", "flow_id": "root", "start_at": "now",
+                              "input_data": {"prompt": "d", "workspace_root": str(bad)}})
+        assert r.status_code == 400 and "data folder" in r.json()["detail"], (bad, r.text)
+
+
+def test_every_host_run_start_gets_a_workspace_and_the_deny_rule(gw) -> None:
+    """Bridges (Telegram, email, agora), sandbox routes and entity summons all
+    start runs through host.start_run: a bare bridge-style start is confined."""
+    from abstractruntime.integrations.abstractcore.workspace_scoped_tools import WorkspaceScope, rewrite_tool_arguments
+
+    client, runtime_dir = gw
+    _Ctl.reset(hold=False)
+    from abstractgateway.service import get_gateway_service
+
+    host = get_gateway_service().host
+    data = runtime_dir.resolve()
+    rid = host.start_run(flow_id="root", bundle_id="live", input_data={"prompt": "from a bridge",
+                         "workspace_builtin_allow": ["/"]}, actor_id="gateway", session_id="telegram:42")
+    v = host.run_store.load(rid).vars
+    own = Path(v["workspace_root"])
+    assert own.parent == data / "workspaces" and v["_gateway_workspace"]["kind"] == "session"
+    assert v["workspace_builtin_deny_prefixes"][0] == str(data)
+    assert v["workspace_builtin_allow"] == [str(own)], "the bridge caller's allow entry is replaced"
+    scope = WorkspaceScope.from_input_data(v)
+    (data / "run_secret.json").write_text("{}")
+    with pytest.raises(ValueError):
+        rewrite_tool_arguments(tool_name="read_file", args={"file_path": str(data / "run_secret.json")}, scope=scope)
 
 
 def test_streaming_setting_three_doors_and_discovery(gw, capsys) -> None:

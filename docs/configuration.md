@@ -1120,7 +1120,16 @@ commands a run is allowed to execute are not confined by it.
 
 A run cannot use a folder inside the gateway's data folder as its
 `workspace_root`, except the conversation folder the gateway made for the same
-user and session (or one of that user's per-run folders).
+user and session (or one of that user's per-run folders). This check applies
+at every door that takes a client's inputs: `POST /runs/start`, `POST
+/runs/schedule` and entity summons.
+
+Every run the gateway starts, whatever started it (the HTTP routes, the
+Telegram, email and agora bridges, entity summons, scheduled runs, which
+inherit it from their schedule), works in a folder (its conversation's
+gateway-made folder when it named none) and gets the built-in deny rule above.
+Entity visits (the entity chat and its own-time loop) use the entity's own
+tools, which never leave `<entity home>/workspace` and the operator's mounts.
 
 Evidence: `src/abstractgateway/routes/gateway.py` (`_workspace_root`, `_workspace_mounts`, `_sanitize_run_workspace_policy`, `_apply_builtin_tool_deny`, `_browse_workspace_root`, `start_run`), `src/abstractgateway/workspace_browse.py`.
 

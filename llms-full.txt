@@ -1369,7 +1369,16 @@ commands a run is allowed to execute are not confined by it.
 
 A run cannot use a folder inside the gateway's data folder as its
 `workspace_root`, except the conversation folder the gateway made for the same
-user and session (or one of that user's per-run folders).
+user and session (or one of that user's per-run folders). This check applies
+at every door that takes a client's inputs: `POST /runs/start`, `POST
+/runs/schedule` and entity summons.
+
+Every run the gateway starts, whatever started it (the HTTP routes, the
+Telegram, email and agora bridges, entity summons, scheduled runs, which
+inherit it from their schedule), works in a folder (its conversation's
+gateway-made folder when it named none) and gets the built-in deny rule above.
+Entity visits (the entity chat and its own-time loop) use the entity's own
+tools, which never leave `<entity home>/workspace` and the operator's mounts.
 
 Evidence: `src/abstractgateway/routes/gateway.py` (`_workspace_root`, `_workspace_mounts`, `_sanitize_run_workspace_policy`, `_apply_builtin_tool_deny`, `_browse_workspace_root`, `start_run`), `src/abstractgateway/workspace_browse.py`.
 
@@ -6159,6 +6168,12 @@ identity module of the next AbstractCore release.
   (`workspace_builtin_deny_prefixes`, with the run's own folder as the one
   exception, `workspace_builtin_allow`) that the runtime enforces without
   writing them into the model's prompt. Scheduled runs get them too.
+- Every run start goes through the same workspace rules: `POST
+  /runs/schedule` and entity summons now refuse a `workspace_root` that
+  `POST /runs/start` refuses (the data folder, folders outside the allowed
+  roots), and runs started by the Telegram, email and agora bridges, entity
+  summons and schedules get a workspace and the built-in deny rule like any
+  other run (a run that named no folder works in its conversation's folder).
 - `input_data._runtime.stream` must be `true` or `false`: any other value is
   refused with 400 (on `/runs/start` and `/runs/schedule`).
 - A request relayed by an app on this computer is recognised by the app's

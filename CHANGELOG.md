@@ -97,6 +97,12 @@ identity module of the next AbstractCore release.
   (`workspace_builtin_deny_prefixes`, with the run's own folder as the one
   exception, `workspace_builtin_allow`) that the runtime enforces without
   writing them into the model's prompt. Scheduled runs get them too.
+- Every run start goes through the same workspace rules: `POST
+  /runs/schedule` and entity summons now refuse a `workspace_root` that
+  `POST /runs/start` refuses (the data folder, folders outside the allowed
+  roots), and runs started by the Telegram, email and agora bridges, entity
+  summons and schedules get a workspace and the built-in deny rule like any
+  other run (a run that named no folder works in its conversation's folder).
 - `input_data._runtime.stream` must be `true` or `false`: any other value is
   refused with 400 (on `/runs/start` and `/runs/schedule`).
 - A request relayed by an app on this computer is recognised by the app's
