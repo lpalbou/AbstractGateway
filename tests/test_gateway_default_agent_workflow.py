@@ -129,6 +129,17 @@ def test_builtin_defaults_and_saved_precedence(tmp_path: Path) -> None:
         "no host workflow declares abstractassistant.agent.v1; the Assistant uses its built-in orchestrator"
     )
 
+    # When a host workflow declares the Assistant interface, the reason says a
+    # choice exists (still no automatic default).
+    from abstractgateway.agent_defaults import _row
+
+    with_assist = idx + [dict(_row(bundle_id="orch", bundle_version="1.0.0", ep={"flow_id": "m", "interfaces": [ASSIST]},
+                                   default_entrypoint="m", registry_scope="private", deprecated=False, deprecated_reason=None),
+                              is_latest=True)]
+    a2 = resolve_default_agent_workflow(ASSIST, index=with_assist, stored={})
+    assert isinstance(a2, Unavailable) and a2.reason.startswith("no default is set for abstractassistant.agent.v1 (1 workflow(s)")
+    assert "built-in orchestrator" in a2.reason
+
     # No basic-agent on the host: the code default is unavailable, never guessed.
     no_basic = [r for r in idx if r["bundle_id"] != "basic-agent"]
     gone = resolve_default_agent_workflow(CODE, index=no_basic, stored={})

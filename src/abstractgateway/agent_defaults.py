@@ -490,6 +490,14 @@ def resolve_default_agent_workflow(
         return resolve_ref(index, iface, saved, source="stored")
     value, reason = _builtin_value(index, iface)
     if value is None:
+        declaring = eligible_entrypoints(index, iface)
+        if iface in UNSET_REASONS and declaring:
+            # The contract sentence says no host workflow declares it; on a
+            # gateway where some do, say that none is chosen instead.
+            reason = (
+                f"no default is set for {iface} ({len(declaring)} workflow(s) on this gateway declare it; an admin "
+                f"chooses one with {SETTING_KEY}.{iface}); the Assistant uses its built-in orchestrator"
+            )
         return Unavailable(iface, None, "default", str(reason))
     return resolve_ref(index, iface, value, source="default")
 
