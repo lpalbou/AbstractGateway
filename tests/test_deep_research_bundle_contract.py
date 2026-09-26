@@ -9,7 +9,7 @@ from pypdf import PdfReader
 from abstractruntime.workflow_bundle import open_workflow_bundle
 
 ROOT = Path(__file__).resolve().parents[1]
-BUNDLE = ROOT / "flows" / "bundles" / "deep-research@0.1.7.flow"
+BUNDLE = ROOT / "flows" / "bundles" / "deep-research@0.1.8.flow"
 READ_ONLY_TOOLS = {
     "web_search",
     "fetch_url",
@@ -214,7 +214,7 @@ def test_deep_research_bundle_manifest_and_entrypoint_contract() -> None:
     manifest = bundle.manifest
 
     assert manifest.bundle_id == "deep-research"
-    assert manifest.bundle_version == "0.1.7"
+    assert manifest.bundle_version == "0.1.8"
     assert manifest.default_entrypoint == "deep-research"
     assert [ep.flow_id for ep in manifest.entrypoints] == ["deep-research"]
     assert set(manifest.flows) == {
@@ -244,9 +244,30 @@ def test_deep_research_start_inputs_are_product_facing() -> None:
     start = next(node for node in root["nodes"] if node["id"] == "start")
     outputs = _pin_ids(start, "outputs")
 
-    assert outputs == {"exec-out", "request", "viewpoint", "effort", "provider", "model"}
+    # `prompt` is the abstractcode.agent.v1 boundary pin: agent hosts send the
+    # user's text there, direct callers send `request`.
+    assert outputs == {"exec-out", "request", "viewpoint", "effort", "provider", "model", "prompt"}
     defaults = start["data"]["pinDefaults"]
     assert defaults == {"effort": "standard", "provider": "", "model": ""}
+
+
+def test_deep_research_reads_the_agent_prompt_and_sets_success() -> None:
+    bundle = open_workflow_bundle(BUNDLE)
+    root = _read_flow(bundle, "deep-research")
+    edges = {
+        (str(e.get("source")), str(e.get("sourceHandle")), str(e.get("target")), str(e.get("targetHandle")))
+        for e in root.get("edges") or []
+        if isinstance(e, dict)
+    }
+    # Both request inputs feed resolve_request (request, else prompt) ...
+    assert ("start", "request", "resolve_request", "request") in edges
+    assert ("start", "prompt", "resolve_request", "prompt") in edges
+    # ... and no request consumer reads `request` from the start node directly.
+    assert not [e for e in edges if e[0] == "start" and e[1] == "request" and e[2] != "resolve_request"]
+    # The end node's `success` pin is wired (true when a report was produced).
+    end = next(node for node in root["nodes"] if node["id"] == "end")
+    assert "success" in _pin_ids(end, "inputs")
+    assert ("report_success", "output", "end", "success") in edges
 
 
 def test_deep_research_exports_markdown_pdf_docx_and_audit_files() -> None:
@@ -431,11 +452,11 @@ def test_deep_research_bundle_loads_through_gateway_bundle_host(tmp_path: Path) 
 
     assert getattr(host, "_default_bundle_id", None) == "deep-research"
     assert {
-        "deep-research@0.1.7:deep-plan",
-        "deep-research@0.1.7:deep-investigate",
-        "deep-research@0.1.7:deep-review",
-        "deep-research@0.1.7:deep-render",
-        "deep-research@0.1.7:deep-research",
+        "deep-research@0.1.8:deep-plan",
+        "deep-research@0.1.8:deep-investigate",
+        "deep-research@0.1.8:deep-review",
+        "deep-research@0.1.8:deep-render",
+        "deep-research@0.1.8:deep-research",
     }.issubset(set(host.specs))
 
 
@@ -576,7 +597,7 @@ def test_deep_research_mocked_run_exports_report_files(
         for child in run_store.list_children(parent_run_id=run_id)
         if child.status == RunStatus.COMPLETED
     }
-    assert "deep-research@0.1.7:deep-plan" in child_workflows
-    assert "deep-research@0.1.7:deep-investigate" in child_workflows
-    assert "deep-research@0.1.7:deep-review" in child_workflows
-    assert "deep-research@0.1.7:deep-render" in child_workflows
+    assert "deep-research@0.1.8:deep-plan" in child_workflows
+    assert "deep-research@0.1.8:deep-investigate" in child_workflows
+    assert "deep-research@0.1.8:deep-review" in child_workflows
+    assert "deep-research@0.1.8:deep-render" in child_workflows

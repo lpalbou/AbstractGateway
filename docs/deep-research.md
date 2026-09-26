@@ -1,6 +1,6 @@
 # `deep-research` Shipped Workflow
 
-Gateway packages `deep-research@0.1.7.flow` as a supported shipped bundle. It
+Gateway packages `deep-research@0.1.8.flow` as a supported shipped bundle. It
 is available from the normal bundle registry alongside `basic-agent` when the
 packaged bundle directory is used. It replaces the `dp-research` bundle id,
 which is no longer shipped.
@@ -8,14 +8,16 @@ which is no longer shipped.
 ## Contract
 
 - Bundle id: `deep-research`
-- Version: `0.1.7`
+- Version: `0.1.8`
 - Entrypoint flow id: `deep-research`
 - Interfaces: `abstractcode.agent.v1`, `abstractresearch.deep.v1`
 - Editable source flows: `abstractflow/examples/flows/deep-*.json`
 
 The workflow exposes a small product-facing input contract:
 
-- `request`: what should be researched.
+- `request`: what should be researched. AbstractCode and other
+  `abstractcode.agent.v1` hosts send the user's message as `prompt`; the
+  workflow researches `prompt` when `request` is empty.
 - `viewpoint`: the angle, thesis, audience stance, or evaluation lens.
 - `effort`: `quick`, `standard`, or `thorough`.
 - `provider` / `model`: optional overrides. Leave blank to use Gateway/Core
@@ -27,6 +29,8 @@ source/citation policy, export title, and export prefix. The derived review
 round count is enforced by a root `For` control node: each round runs
 investigation, persists the latest evidence, runs adversarial review, persists
 reviewer guidance, and feeds that guidance into the next investigation pass.
+
+The end node's `success` output is `true` when the run produced a report.
 
 Derived `deadline_minutes` and `max_sources` are carried into prompts and audit
 objects; they do not preempt an in-flight provider call.

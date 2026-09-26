@@ -173,8 +173,8 @@ def test_basic_agent_bundle_is_packaged_as_default_gateway_entrypoint() -> None:
         == "abstractgateway/flows/bundles/abstractassistant-orchestrator@0.0.0.flow"
     )
     assert (
-        wheel_force["flows/bundles/deep-research@0.1.7.flow"]
-        == "abstractgateway/flows/bundles/deep-research@0.1.7.flow"
+        wheel_force["flows/bundles/deep-research@0.1.8.flow"]
+        == "abstractgateway/flows/bundles/deep-research@0.1.8.flow"
     )
     assert (
         wheel_force["flows/bundles/coding-agent@0.2.6.flow"]
@@ -202,8 +202,8 @@ def test_basic_agent_bundle_is_packaged_as_default_gateway_entrypoint() -> None:
         == "flows/bundles/abstractassistant-orchestrator@0.0.0.flow"
     )
     assert (
-        sdist_force["flows/bundles/deep-research@0.1.7.flow"]
-        == "flows/bundles/deep-research@0.1.7.flow"
+        sdist_force["flows/bundles/deep-research@0.1.8.flow"]
+        == "flows/bundles/deep-research@0.1.8.flow"
     )
     assert (
         sdist_force["flows/bundles/coding-agent@0.2.6.flow"]

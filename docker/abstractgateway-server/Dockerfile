@@ -30,7 +30,7 @@ COPY src /tmp/abstractgateway-src/src
 # lists in step (tests/test_gateway_install_profiles.py enforces it).
 COPY flows/bundles/basic-agent.flow \
      flows/bundles/abstractassistant-orchestrator@0.0.0.flow \
-     flows/bundles/deep-research@0.1.7.flow \
+     flows/bundles/deep-research@0.1.8.flow \
      flows/bundles/coding-agent@0.2.6.flow \
      flows/bundles/co-scientist@0.2.0.flow \
      flows/bundles/docs-qa@0.1.0.flow \
