@@ -1155,7 +1155,7 @@ migration.</p>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Python <code>&gt;=3.10</code> (see <code>pyproject.toml</code>)</li>
-<li>AbstractRuntime 0.5.0 or later, installed with the gateway; the gateway
+<li>AbstractRuntime 0.5.1 or later, installed with the gateway; the gateway
   refuses to start on an older runtime and names the version to install</li>
 <li>Workflows: none needed to start. The gateway serves its shipped bundles
   (<a href="../shipped-workflows/">shipped-workflows.md</a>); you can point it at your
@@ -1286,7 +1286,7 @@ require <code>abstractgateway[embeddings]</code>.</p>
 customization.</p>
 <p>On first start, the container creates <code>default/admin</code> and writes the token to
 <code>runtime/auth/bootstrap-admin-token</code>. NVIDIA hosts can try
-<code>ghcr.io/lpalbou/abstractgateway:0.5.0-gpu</code> with the compose overlay in
+<code>ghcr.io/lpalbou/abstractgateway:0.5.1-gpu</code> with the compose overlay in
 <code>docker/abstractgateway-server/compose.nvidia.yml</code>.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
