@@ -2750,7 +2750,7 @@ CONSOLE_UI_JS = r"""
     }
 
     // ---- The kit islands: AfTopBarActions + AfAppearanceDialog ----
-    const islands = { lib: null, topbar: null, appearance: null, appearanceOpen: false, phase: "loading", signingOut: false, identity: "" };
+    const islands = { lib: null, topbar: null, appearance: null, appearanceOpen: false, phase: "loading", signingOut: false, identity: "", about: null };
     function islandsLib() {
       try {
         const w = typeof window !== "undefined" ? window : null;
@@ -2767,11 +2767,31 @@ CONSOLE_UI_JS = r"""
         header_density: header === "large" ? "spacious" : header,
       };
     }
+    // About (kit 0.1.12): the kit's About dialog, owned by the top-bar
+    // cluster. Identity from the kit's vendored descriptor
+    // (`appIdentity("abstractgateway", <served version>)`); extra rows = the
+    // gateway-version rows the server formatted from GET /about
+    // (GATEWAY_ABOUT, templated by console_about_config). A bundle without
+    // appIdentity is a vendoring defect: it is logged, never papered over.
+    function consoleAboutProps(lib, about) {
+      if (!lib || typeof lib.appIdentity !== "function") {
+        console.error("AbstractGateway console: the islands bundle has no appIdentity (kit 0.1.12+ required); About is unavailable.");
+        return null;
+      }
+      const cfg = (about && typeof about === "object") ? about : {};
+      const rows = Array.isArray(cfg.rows) ? cfg.rows.filter((r) => Array.isArray(r) && r.length === 2).map((r) => [String(r[0]), String(r[1])]) : [];
+      return {
+        identity: lib.appIdentity("abstractgateway", String(cfg.version || "version not reported")),
+        extraRows: rows.length ? rows : [["Gateway", "unavailable (the console page carries no gateway version rows)"]],
+        label: "About AbstractGateway",
+      };
+    }
     function topBarIslandProps() {
       const p = state.principal;
       return {
         assistant: p ? { open: !!assistantState.open, onToggle: () => toggleAssistant(), label: "Docs assistant" } : null,
         appearance: { onOpen: openAppearance, label: "Appearance" },
+        about: islands.about,
         extras: [
           // The gateway's primary address (GET /network `copy_hint`: the
           // address other devices use), with a copy button beside it.
@@ -2821,6 +2841,7 @@ CONSOLE_UI_JS = r"""
         return;
       }
       islands.lib = lib;
+      islands.about = consoleAboutProps(lib, typeof GATEWAY_ABOUT !== "undefined" ? GATEWAY_ABOUT : null);
       const host = $("af-topbar-root");
       const legacy = $("topbar-static");
       islands.topbar = lib.mountTopBar(host, topBarIslandProps());

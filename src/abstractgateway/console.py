@@ -163,6 +163,38 @@ def _console_owned_sources() -> Tuple[str, str, str, str]:
     )
 
 
+def console_about_config() -> Dict[str, Any]:
+    """The console's About facts, computed by the SERVING gateway at render
+    time: `version` = the abstractgateway version this process runs (the
+    `abstractgateway` field of GET /about), `rows` = the gateway-version
+    rows of that same payload, formatted ONCE by AbstractCore's
+    `gateway_version_rows` (the Python twin of ui-kit `gatewayVersionRows`,
+    contract A-9 -- the islands bundle does not export the TS helper). A
+    failure is ONE visible "Gateway: unavailable (<reason>)" row, never an
+    empty About."""
+    import abstractgateway
+
+    try:
+        from abstractcore.utils.identity import gateway_version_rows
+    except Exception as exc:  # noqa: BLE001 - an old core must be named, not hidden
+        return {
+            "version": str(getattr(abstractgateway, "__version__", "") or "version not reported"),
+            "rows": [["Gateway", f"unavailable (the installed AbstractCore has no identity module: {exc})"]],
+        }
+    try:
+        from .routes.gateway import about_payload
+
+        payload = about_payload()
+        rows = gateway_version_rows(payload)
+        version = str(payload.get("abstractgateway") or "")
+    except Exception as exc:  # noqa: BLE001 - one visible row, never an empty About
+        rows = gateway_version_rows(None, f"{type(exc).__name__}: {exc}")
+        version = ""
+    if not version:
+        version = str(getattr(abstractgateway, "__version__", "") or "version not reported")
+    return {"version": version, "rows": [[str(k), str(v)] for k, v in rows]}
+
+
 def gateway_console_html() -> str:
     """The served console page. Theme CSS + the theme list are spliced from
     `console_themes.py` — the generated verbatim copy of the abstractuic
@@ -205,6 +237,7 @@ def gateway_console_html() -> str:
         .replace("/*__KIT_THEME_CSS__*/", theme_css)
         .replace("__KIT_THEME_SPECS_JSON__", json.dumps(KIT_THEME_SPECS, ensure_ascii=False))
         .replace("__CORE_CONSOLE_CONFIG_JSON__", _script_json(config))
+        .replace("__GATEWAY_ABOUT_JSON__", _script_json(console_about_config()))
     )
     # Fragment content last, each placeholder exactly once. The layer and the
     # kit islands go first (they are console-owned); `<script`/`</` inside the
@@ -3224,6 +3257,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // console_theme_sync — the console offers exactly the framework's
 	    // themes, never a hand-copied subset (operator catch 2026-07-15).
 	    const THEME_SPECS = __KIT_THEME_SPECS_JSON__;
+	    // The About facts of THIS gateway (console_about_config): the served
+	    // abstractgateway version + the gateway-version rows of GET /about.
+	    const GATEWAY_ABOUT = __GATEWAY_ABOUT_JSON__;
 	    function readJsonSetting(key, fallback) {
 	      try {
 	        const raw = localStorage.getItem(key);
