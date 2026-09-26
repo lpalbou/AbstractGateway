@@ -1372,6 +1372,36 @@ pub struct RuntimeConfigData {
     /// The skills shelf (`skills.shelf`); None when the gateway does not
     /// report it.
     pub skills_shelf: Option<SkillsShelf>,
+    /// `agents.streaming_default`; None when this gateway's read lacks it
+    /// (the knob row then says "not available on this gateway").
+    pub streaming_default: Option<StreamingDefault>,
+}
+
+/// `agents.streaming_default`: whether interactive runs that do not ask
+/// either way stream their replies live.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StreamingDefault {
+    pub key: String,
+    pub value: bool,
+    /// stored | default
+    pub source: String,
+    pub label: String,
+    pub help: String,
+}
+
+/// Parse `agents.streaming_default` ({key, value: bool, source, label,
+/// help}) of GET /admin/runtime-config. A missing block or a non-boolean
+/// value is None — never guessed as "off".
+pub fn streaming_default_from(v: &Value) -> Option<StreamingDefault> {
+    let r = v.get("agents")?.get("streaming_default")?;
+    let value = r.get("value")?.as_bool()?;
+    Some(StreamingDefault {
+        key: s(r, "key").unwrap_or_else(|| "agents.streaming_default".into()),
+        value,
+        source: s(r, "source").unwrap_or_else(|| "?".into()),
+        label: s(r, "label").unwrap_or_else(|| "Stream replies by default".into()),
+        help: s(r, "help").unwrap_or_default(),
+    })
 }
 
 /// `skills.shelf`: where the gateway reads skills from.
@@ -1669,6 +1699,7 @@ impl RuntimeConfigData {
             apps,
             agent_defaults: agent_defaults_from(v),
             skills_shelf: skills_shelf_from(v),
+            streaming_default: streaming_default_from(v),
         }
     }
 }
@@ -2433,6 +2464,8 @@ pub struct Store {
     /// versions the gateway refused to serve.
     pub workflows: Signal<Loadable<WorkflowsData>>,
     pub runtime_config: Signal<Loadable<RuntimeConfigData>>,
+    /// `GET /about` of the connected gateway (About modal).
+    pub about: Signal<Loadable<Value>>,
     /// Network exposure + reachable addresses (Connection screen).
     pub network: Signal<Loadable<NetworkData>>,
     /// Per-provider model lists (route editor + provider browser).
@@ -3166,6 +3199,7 @@ impl Store {
             runtimes: cx.signal(Loadable::default()),
             workflows: cx.signal(Loadable::default()),
             runtime_config: cx.signal(Loadable::default()),
+            about: cx.signal(Loadable::default()),
             network: cx.signal(Loadable::default()),
             models: cx.signal(HashMap::new()),
             discover: cx.signal(Loadable::default()),
@@ -3233,6 +3267,7 @@ impl Store {
             runtimes,
             workflows,
             runtime_config,
+            about,
             network,
             models,
             discover,
@@ -3271,6 +3306,7 @@ impl Store {
         runtimes.set(Loadable::NotAsked);
         workflows.set(Loadable::NotAsked);
         runtime_config.set(Loadable::NotAsked);
+        about.set(Loadable::NotAsked);
         network.set(Loadable::NotAsked);
         models.update(|m| m.clear());
         discover.set(Loadable::NotAsked);

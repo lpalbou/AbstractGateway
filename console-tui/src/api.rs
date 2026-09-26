@@ -404,6 +404,13 @@ impl GatewayClient {
         self.get("/ping", false)
     }
 
+    /// Which AbstractFramework and package versions the gateway runs
+    /// (public `GET /about`: `{abstractframework, abstractgateway,
+    /// packages}`) — the About modal's gateway rows.
+    pub fn about(&self) -> ApiResult<Value> {
+        self.get("/about", false)
+    }
+
     pub fn me(&self) -> ApiResult<Value> {
         self.get("/me", false)
     }

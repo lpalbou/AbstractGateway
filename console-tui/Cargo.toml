@@ -7,7 +7,10 @@ rust-version = "1.87"
 license = "MIT"
 description = "An intuitive terminal wizard to configure AbstractGateway — connection, providers, multimodal capability routes, users & entities, models and local engines — rendered by AbstractTUI."
 repository = "https://github.com/lpalbou/abstractgateway"
-homepage = "https://github.com/lpalbou/abstractgateway/tree/main/console-tui"
+# homepage/documentation mirror the AbstractFramework identity descriptor
+# (assets/abstractframework_identity.json, apps.abstractgateway); a test pins it.
+homepage = "https://abstractframework.ai/gateway"
+documentation = "https://www.lpalbou.info/AbstractGateway/"
 readme = "README.md"
 keywords = ["abstractgateway", "tui", "terminal", "llm", "configuration"]
 categories = ["command-line-utilities"]
@@ -19,6 +22,7 @@ include = [
     "src/**/*.rs",
     "tests/**/*.rs",
     "tests/fixtures/*.json",
+    "assets/abstractframework_identity.json",
     "Cargo.toml",
     "Cargo.lock",
     "README.md",

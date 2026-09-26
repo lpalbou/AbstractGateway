@@ -213,6 +213,8 @@ pub enum Cmd {
     },
     /// The gateway runtime/workspace settings surface.
     LoadRuntimeConfig,
+    /// The gateway's versions (`GET /about`) for the About modal.
+    LoadAbout,
     SaveRuntimeConfig {
         body: Body,
         form_id: Option<u64>,
@@ -1515,6 +1517,10 @@ fn handle(
             let s = *store;
             wake.post(move || s.notice.set(Some(note.clone())));
         }
+
+        Cmd::LoadAbout => load(store, wake, "reading the gateway's versions", store.about, || {
+            require_client(client)?.about()
+        }),
 
         Cmd::LoadRuntimeConfig => load(
             store,

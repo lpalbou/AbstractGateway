@@ -7223,3 +7223,141 @@ fn skills_shelf_parse_render_and_body() {
     assert!(s.contains("skills.shelf: /d/skills/registry (curated 2026.09.25)  (seeded)"), "shelf row:\n{s}");
     assert!(s.contains("Edit skills shelf"), "editor entry point:\n{s}");
 }
+
+// ---------------------------------------------------------------------
+// G2: About modal (F1 / ? / Connection button) and the stream-replies knob.
+// ---------------------------------------------------------------------
+
+#[test]
+fn about_modal_lists_the_identity_and_the_gateway_versions() {
+    let mut h = harness_sized(Size::new(120, 50));
+    h.connect_as_admin();
+    h.goto_screen(1);
+    // F1 = ESC O P (xterm SS3).
+    h.key(b"\x1bOP");
+    let s = h.turns(2);
+    assert!(
+        matches!(h.find_cmd(|c| matches!(c, Cmd::LoadAbout)), Some(Cmd::LoadAbout)),
+        "opening About (connected) reads GET /about"
+    );
+    assert!(s.contains("reading GET /api/gateway/about"), "loading row:\n{s}");
+    h.store.about.set(Loadable::Ready(json!({
+        "abstractgateway": "0.4.4", "abstractframework": "0.3.4",
+        "packages": {"abstractcore": "2.15.3", "abstractgateway": "0.4.4", "abstractruntime": "0.4.35"}
+    })));
+    let s = h.turns(2);
+    for needle in [
+        &format!("AbstractGateway console {}", env!("CARGO_PKG_VERSION")),
+        "Part of AbstractFramework — https://abstractframework.ai",
+        "Author: Laurent-Philippe Albou, PhD (2023-2026)",
+        "© 2023-2026 Laurent-Philippe Albou, PhD. Released under the MIT License.",
+        "Website: https://abstractframework.ai/gateway",
+        "Source: https://github.com/lpalbou/AbstractGateway",
+        "Documentation: https://www.lpalbou.info/AbstractGateway/",
+        "Report an issue: https://github.com/lpalbou/AbstractGateway/issues",
+        "Give feedback: https://github.com/lpalbou/AbstractGateway/issues/new?labels=feedback",
+        "Contact: contact@abstractframework.ai",
+        "Gateway: AbstractGateway 0.4.4",
+        "Gateway framework: AbstractFramework 0.3.4",
+        "Gateway package abstractcore: 2.15.3",
+        "Gateway package abstractruntime: 0.4.35",
+    ] {
+        assert!(s.contains(needle), "missing {needle:?}:\n{s}");
+    }
+    assert!(!s.contains("Gateway package abstractgateway"), "the gateway itself is not a package row");
+    h.press_escape();
+    let s = h.turns(2);
+    assert!(!s.contains("Report an issue:"), "Esc closes About:\n{s}");
+}
+
+#[test]
+fn about_modal_says_why_the_gateway_rows_are_missing() {
+    use abstractgateway_console::api::{ApiError, ApiErrorKind};
+    use abstractgateway_console::ui::about::gateway_rows;
+
+    // Not connected: no read is sent, the row says why.
+    let mut h = harness_sized(Size::new(120, 50));
+    h.goto_screen(0);
+    h.key(b"\x1bOP");
+    let s = h.turns(2);
+    assert!(h.find_cmd(|c| matches!(c, Cmd::LoadAbout)).is_none(), "no read while not connected");
+    assert!(s.contains("Gateway: unavailable (not connected to a gateway"), "not-connected row:\n{s}");
+    assert!(s.contains("AbstractGateway console"), "identity still shown:\n{s}");
+    // A failed read is one visible row.
+    let failed: Loadable<Value> = Loadable::Failed(ApiError::new(ApiErrorKind::Unreachable, "HTTP 404"));
+    let rows = gateway_rows(true, &failed);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].0, "Gateway");
+    assert!(rows[0].1.starts_with("unavailable (") && rows[0].1.contains("HTTP 404"), "{rows:?}");
+}
+
+#[test]
+fn about_is_on_the_connection_screen_and_question_mark() {
+    let mut h = harness_sized(Size::new(120, 50));
+    h.goto_screen(0);
+    let s = h.turns(2);
+    assert!(s.contains("About: F1 (or ?)"), "Connection screen names the About key:\n{s}");
+    h.connect_as_admin();
+    h.goto_screen(3);
+    h.key(b"?");
+    let s = h.turns(2);
+    assert!(s.contains("Contact: contact@abstractframework.ai"), "? opens About:\n{s}");
+}
+
+#[test]
+fn about_flag_text_carries_every_line() {
+    let ok = abstractgateway_console::about_text(Ok(json!({"abstractgateway": "0.4.4"})));
+    assert!(ok.starts_with(&format!("AbstractGateway console {}\n", env!("CARGO_PKG_VERSION"))), "{ok}");
+    assert!(ok.contains("Gateway: AbstractGateway 0.4.4") && ok.contains("Gateway framework: not installed on the gateway host"));
+    let down = abstractgateway_console::about_text(Err("network failure: refused".into()));
+    assert!(down.ends_with("Gateway: unavailable (network failure: refused)"), "{down}");
+    assert!(down.contains("Contact: contact@abstractframework.ai"));
+}
+
+#[test]
+fn streaming_default_knob_reads_edits_and_never_hides() {
+    use abstractgateway_console::store::streaming_default_from;
+    use abstractgateway_console::ui::runtimes::streaming_default_body;
+
+    let on = json!({"writable": true, "agents": {"streaming_default": {
+        "key": "agents.streaming_default", "value": true, "source": "stored", "default": false,
+        "label": "Stream replies by default", "help": "Interactive runs only."}}});
+    let sd = streaming_default_from(&on).expect("parsed");
+    assert!(sd.value && sd.source == "stored");
+    assert_eq!(streaming_default_body(&sd, true), json!({}));
+    assert_eq!(streaming_default_body(&sd, false), json!({"agents": {"streaming_default": false}}));
+    assert!(streaming_default_from(&json!({"agents": {"default_workflow": {}}})).is_none());
+    assert!(streaming_default_from(&json!({"agents": {"streaming_default": {"value": "yes", "source": "stored"}}})).is_none());
+
+    for (payload, want, button) in [
+        (on.clone(), "stream replies: on — interactive replies stream live  (stored)", true),
+        (
+            json!({"writable": true, "agents": {"streaming_default": {"value": false, "source": "default"}}}),
+            "stream replies: off — replies arrive whole  (default)",
+            true,
+        ),
+        (
+            json!({"writable": true, "agents": {"default_workflow": {}}}),
+            "stream replies: not available on this gateway",
+            false,
+        ),
+    ] {
+        // A real read always carries the workspace knobs beside it.
+        let mut payload = payload;
+        payload["workspace_root"] = json!({"value": "/w", "source": "stored"});
+        let d = abstractgateway_console::store::RuntimeConfigData::from_value(&payload);
+        let mut h = harness_sized(Size::new(160, 70));
+        h.connect_as_admin();
+        h.goto_screen(4);
+        h.store
+            .runtimes
+            .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
+        h.turns(2);
+        h.ui.rt_knobs_folded.set(false);
+        h.turns(2);
+        h.store.runtime_config.set(Loadable::Ready(d));
+        let s = h.turns(2);
+        assert!(s.contains(want), "row {want:?}:\n{s}");
+        assert_eq!(s.contains("Edit stream replies"), button, "edit entry point:\n{s}");
+    }
+}

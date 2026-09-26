@@ -492,6 +492,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                         && d.apps.is_empty()
                                         && d.agent_defaults.is_empty()
                                         && d.skills_shelf.is_none()
+                                        && d.streaming_default.is_none()
                                 },
                                 "the gateway reported no runtime knobs",
                                 |d| knobs_view(cx, &ctx_knobs, &tt, d),
@@ -1216,6 +1217,19 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
             span(format!("  ({})", a.source), t.text_faint),
         ]));
     }
+    // Stream replies by default (agents.streaming_default): on/off and its
+    // source; a gateway whose read lacks the key says so (never hidden).
+    match &d.streaming_default {
+        Some(sd) => rows.push(line(vec![
+            span(format!("{:>20}: ", "stream replies"), t.text_muted),
+            span(if sd.value { "on — interactive replies stream live" } else { "off — replies arrive whole" }, t.text),
+            span(format!("  ({})", sd.source), t.text_faint),
+        ])),
+        None => rows.push(line(vec![
+            span(format!("{:>20}: ", "stream replies"), t.text_muted),
+            span("not available on this gateway (its settings read has no agents.streaming_default)", t.warn),
+        ])),
+    }
     // The skills shelf (skills.shelf): which folder, from which source.
     if let Some(sh) = &d.skills_shelf {
         let (now, tone) = if sh.available {
@@ -1244,6 +1258,8 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
             let current_apps = d.clone();
             let ctx4 = ctx.clone();
             let current_agents = d.clone();
+            let ctx6 = ctx.clone();
+            let current_stream = d.clone();
             Element::new()
                 .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
                 .child(
@@ -1273,6 +1289,14 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
                 } else {
                     Button::new("Edit default agent workflows")
                         .on_click(move || open_agent_defaults_form(cx, &ctx4, current_agents.clone()))
+                        .element(cx, t)
+                        .build()
+                })
+                .child(if current_stream.streaming_default.is_none() {
+                    Element::new().style(LayoutStyle::default().h(0)).build()
+                } else {
+                    Button::new("Edit stream replies")
+                        .on_click(move || open_streaming_default_form(cx, &ctx6, current_stream.clone()))
                         .element(cx, t)
                         .build()
                 })
@@ -1322,6 +1346,88 @@ pub fn agent_defaults_body(current: &[crate::store::AgentDefault], typed: &[(Str
         return Value::Object(serde_json::Map::new());
     }
     serde_json::json!({ "agents": { "default_workflow": Value::Object(changed) } })
+}
+
+/// The body the stream-replies form sends: `{"agents": {"streaming_default":
+/// <bool>}}` when the switch changed, `{}` when it did not.
+pub fn streaming_default_body(current: &crate::store::StreamingDefault, on: bool) -> Value {
+    if on == current.value {
+        return Value::Object(serde_json::Map::new());
+    }
+    serde_json::json!({ "agents": { "streaming_default": on } })
+}
+
+/// "Stream replies by default" form: one checkbox (agents.streaming_default).
+fn open_streaming_default_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
+    if !current.writable {
+        ctx.store
+            .notice
+            .set(Some("this needs an admin token".into()));
+        return;
+    }
+    let Some(sd) = current.streaming_default.clone() else { return };
+    let ctx2 = ctx.clone();
+    open_form(ctx, cx, Size::new(100, 12), move |mcx, close| {
+        let theme = use_theme(mcx);
+        let t0 = theme.get().tokens;
+        let form_error = mcx.signal(Option::<String>::None);
+        let in_flight = mcx.signal(false);
+        let form_id = crate::worker::next_form_id();
+        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
+        let on = mcx.signal(sd.value);
+        let ctx_save = ctx2.clone();
+        let close_cancel = close.clone();
+        let sd_now = sd.clone();
+        Element::new()
+            .focusable()
+            .autofocus()
+            .style(LayoutStyle::column().gap(0))
+            .child(line(vec![span_bold(sd.label.clone(), t0.accent)]))
+            .child(line(vec![span(ellipsize(&sd.help, 96), t0.text_faint)]))
+            .child(field(
+                &t0,
+                "stream replies",
+                Checkbox::new("interactive runs that do not ask either way stream their replies live")
+                    .checked(on)
+                    .element(mcx, &t0)
+                    .build(),
+            ))
+            .child(line(vec![span(format!("now: {} ({})", if sd.value { "on" } else { "off" }, sd.source), t0.text_faint)]))
+            .child(super::message_slot(theme, form_error, in_flight))
+            .child(
+                Element::new()
+                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                    .child(
+                        Button::new("Save")
+                            .on_click(move || {
+                                if in_flight.get_untracked() {
+                                    return;
+                                }
+                                let body = streaming_default_body(&sd_now, on.get_untracked());
+                                if body.as_object().map(|m| m.is_empty()).unwrap_or(true) {
+                                    form_error.set(Some("nothing changed".into()));
+                                    return;
+                                }
+                                form_error.set(None);
+                                in_flight.set(true);
+                                ctx_save.send(Cmd::SaveRuntimeConfig {
+                                    body: body.into(),
+                                    form_id: Some(form_id),
+                                });
+                            })
+                            .element(mcx, &t0)
+                            .build(),
+                    )
+                    .child(
+                        Button::new("Cancel (Esc)")
+                            .on_click(move || close_cancel())
+                            .element(mcx, &t0)
+                            .build(),
+                    )
+                    .build(),
+            )
+            .build()
+    });
 }
 
 /// Default agent workflow form: one line per agent interface, prefilled

@@ -123,6 +123,13 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .child(dyn_view(LayoutStyle::column().gap(0), move || {
             status_view(&tt, &store.conn.get(), ui.token_source.get())
         }))
+        // About (F1 / ? anywhere): this console, the framework it is part
+        // of, and the connected gateway's versions. A hint line, not a
+        // button: a focusable here would shift the screen's Tab chain.
+        .child(line(vec![
+            span("About: ", tt.text_muted),
+            span("F1 (or ?) — this console, AbstractFramework, the gateway's versions", tt.text_faint),
+        ]))
         // The acknowledgment line: EVERY probe updates it (number, UTC
         // time, outcome, latency) — a re-probe that lands on the same
         // state is still visibly a new event. This line is why the

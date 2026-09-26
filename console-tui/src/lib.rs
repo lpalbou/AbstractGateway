@@ -15,6 +15,8 @@
 
 pub mod api;
 pub mod health;
+/// The About facts: the vendored AbstractFramework identity descriptor.
+pub mod identity;
 /// The one query language every search box speaks (substring, or glob).
 pub mod query;
 pub mod store;
@@ -48,10 +50,12 @@ OPTIONS:
   --theme ID     abstracttui theme id (also $ABSTRACTTUI_THEME)
   -h, --help     this help
   --version      print the version
+  --about        print About (this console, AbstractFramework, the
+                 gateway's versions from GET /api/gateway/about at --url)
 
 KEYS: Tab focus · Enter activate · Ctrl+N next step · Ctrl+P / Esc back ·
       ] / [ next/back (outside text fields) · 1-9,0 screens (browse) ·
-      r refresh · Ctrl+L repaint · q / Ctrl+C quit
+      r refresh · F1 / ? About · Ctrl+L repaint · q / Ctrl+C quit
 
 SCREENS: 1 Connection · 2 Providers · 3 Routes · 4 Users & Entities ·
          5 Runtimes · 6 Workflows · 7 Review & Test · 8 Resources ·
@@ -64,6 +68,7 @@ struct Args {
     token: String,
     wizard: bool,
     theme: Option<String>,
+    about: bool,
 }
 
 fn parse_args(argv: &[String]) -> Result<Option<Args>, String> {
@@ -71,6 +76,7 @@ fn parse_args(argv: &[String]) -> Result<Option<Args>, String> {
     let mut token = String::new();
     let mut wizard = true;
     let mut theme = None;
+    let mut about = false;
     let mut it = argv.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -86,6 +92,7 @@ fn parse_args(argv: &[String]) -> Result<Option<Args>, String> {
             "--token" => token = it.next().cloned().ok_or("--token needs a value")?,
             "--wizard" => wizard = true,
             "--browse" => wizard = false,
+            "--about" => about = true,
             "--theme" => theme = Some(it.next().cloned().ok_or("--theme needs a value")?),
             other => return Err(format!("unknown argument: {other} (see --help)")),
         }
@@ -95,7 +102,19 @@ fn parse_args(argv: &[String]) -> Result<Option<Args>, String> {
         token,
         wizard,
         theme,
+        about,
     }))
+}
+
+/// The `--about` text: this console's identity (vendored descriptor) and
+/// the gateway rows for `gateway` (the `GET /about` read, or its error —
+/// one visible "unavailable (<reason>)" row, never omitted).
+pub fn about_text(gateway: Result<serde_json::Value, String>) -> String {
+    let rows = match &gateway {
+        Ok(v) => identity::gateway_version_rows(Some(v), None),
+        Err(e) => identity::gateway_version_rows(None, Some(e)),
+    };
+    identity::about_lines(&identity::about_rows(&identity::this_app(), &rows)).join("\n")
 }
 
 /// CLI entry — returns the process exit code.
@@ -108,6 +127,14 @@ pub fn run_cli(argv: &[String]) -> i32 {
             return 2;
         }
     };
+
+    if args.about {
+        // Works without a terminal and without a token (the route is public).
+        let url = ui::normalize_url(if args.url.is_empty() { "http://127.0.0.1:8080" } else { &args.url });
+        let read = api::GatewayClient::new(&url, None).about().map_err(|e| e.to_string());
+        println!("{}", about_text(read));
+        return 0;
+    }
 
     // Headless guard (CI / piped runs): skip cleanly, exit 0.
     if !abstracttui::term::have_tty() {

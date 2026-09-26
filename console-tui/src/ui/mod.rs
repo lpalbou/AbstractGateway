@@ -5,6 +5,8 @@
 //! state (form fields, selections) lives in [`UiState`] created at the
 //! root so screen remounts on tab switches lose nothing.
 
+/// The About modal (F1 / ?).
+pub mod about;
 pub mod connection;
 pub mod entity_manage;
 pub mod models;
@@ -818,6 +820,8 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
     let ctx_next2 = ctx.clone();
     let ctx_back2 = ctx.clone();
     let ctx_refresh = ctx.clone();
+    let ctx_about = ctx.clone();
+    let ctx_about2 = ctx.clone();
 
     let mut root_el = Element::new()
         .style(LayoutStyle::column())
@@ -902,7 +906,11 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         })
         .shortcut(KeyChord::new(Mods::CTRL, Key::Char('l')), |_| {
             abstracttui::app::request_full_redraw();
-        });
+        })
+        // About: F1 anywhere (function keys survive focused text fields),
+        // `?` wherever no text field holds the caret.
+        .shortcut(KeyChord::plain(Key::F(1)), move |_| about::open(&ctx_about, cx))
+        .shortcut(KeyChord::plain(Key::Char('?')), move |_| about::open(&ctx_about2, cx));
     // Digit keys at the root. Wizard: a REFUSAL with a reason, so a
     // swallowed digit never reads as a dead app (F3). Browse: PageHost
     // owns digit jumps (its number_jump surface), but its shortcut rides
