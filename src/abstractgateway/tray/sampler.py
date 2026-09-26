@@ -500,11 +500,11 @@ class Sampler:
         pct = (100.0 * used / total) if (used is not None and total) else _num(ram.get("percent"))
         rss = _int(proc.get("rss_bytes"))
         # What THIS gateway process pins in accelerator memory: MLX live +
-        # freed-but-cached buffers (gateway 2026-09-25+), else the live figure
+        # freed-but-cached buffers (newer gateways), else the live figure
         # older gateways report. The tray shows it whenever it is known, and
         # says so LOUDLY when the model list is empty -- "No models loaded"
         # over 92 GB of held MLX memory is the lie this exists to end.
-        held = _int(dev.get("process_held_bytes"))  # MEM2: every in-process allocator (see core utils/memory)
+        held = _int(dev.get("process_held_bytes"))  # every in-process allocator (see core utils/memory)
         basis = held_basis_words(dev.get("process_held_basis")) if held is not None else None
         if held is None:
             held = _int(dev.get("mlx_held_bytes"))
@@ -529,7 +529,7 @@ class Sampler:
         self._rss_hist.append((100.0 * rss / total) if (rss is not None and total) else None)
 
     def _sample_fast(self) -> None:
-        # Preferred: ONE cached call (gateway 2026-09-05+). Older gateways
+        # Preferred: ONE cached call (/host/metrics/live). Older gateways
         # answer 404 → fall back to the two separate probes for good.
         if self._live_supported is not False:
             live = self._client.live()

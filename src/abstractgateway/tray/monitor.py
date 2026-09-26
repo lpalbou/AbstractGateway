@@ -5,7 +5,7 @@ its main thread on every platform (on macOS both AppKit and Tk insist on the
 main thread; the tray process already gave it to AppKit). Talks to the
 gateway through the same loopback client + sampler the tray uses.
 
-Layout and palette follow the creative review (2026-09-05): 440×600, memory
+Layout and palette: 440×600, memory
 first (the console's rule: RAM is the primary meter), fixed axes, gridlines
 at 25/50/75 %, a dashed 90 % line, the gateway's own footprint as a dashed
 line that is never stacked, and labelled degraded states instead of blanks.

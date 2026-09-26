@@ -277,8 +277,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
        own styles. The console's own sheet follows and may refine layout. -->
   <style id="af-kit-css">/*__AF_KIT_CSS__*/</style>
   <style>
-	    /* DESIGN CHARTER (operator order 2026-07-15 00:31: "make it look like
-	       a true abstract app"): the token values below are the abstractuic
+	    /* DESIGN TOKENS (the console looks like
+	       every AbstractFramework app): the token values below are the abstractuic
 	       ui-kit's :root VERBATIM (theme.css — the palette flow/observer/
 	       continuum share). The console's historical var names (--panel,
 	       --line, --button, ...) become ALIASES onto the charter tokens so
@@ -308,8 +308,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      /* Console aliases (historical names -> charter tokens). DERIVED
 	         (color-mix), never hand-tuned per theme: every alias re-resolves
 	         against whichever kit theme block is active, so all 21 kit themes
-	         style the console without per-theme console CSS (uic card 0023 —
-	         the hand-tuned 6-theme fork the operator caught 2026-07-15). */
+	         style the console without per-theme console CSS (this replaced
+	         a hand-tuned 6-theme fork). */
 	      --bg: var(--bg-primary);
 	      --panel: var(--bg-secondary);
 	      --panel-2: color-mix(in srgb, var(--bg-secondary) 92%, black);
@@ -405,8 +405,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      .shell_brand_name, .shell_nav_label { display: none; }
 	      .tab-button.shell_nav_item { justify-content: center; }
 	    }
-    /* Headings scale with the Appearance font-size control (aesthetics
-       adversary P1-1: hardcoded px never scaled) and cap at weight 650 —
+    /* Headings scale with the Appearance font-size control (hardcoded
+       px never scaled) and cap at weight 650 —
        when everything is 800, nothing leads. */
     h1 { font-size: calc(17px * var(--font-scale)); margin: 0; letter-spacing: -.01em; font-weight: 650; }
     h2 { font-size: calc(15px * var(--font-scale)); margin: 0; letter-spacing: -.01em; font-weight: 600; }
@@ -511,7 +511,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      filter: none;
 	    }
 	    /* The active row must survive a mouse pass: hover is wash-only,
-	       active carries weight + the stronger wash (IA adversary #2). */
+	       active carries weight + the stronger wash. */
 	    .tab-button.shell_nav_item.active {
 	      background: rgba(148, 163, 184, 0.16);
 	      color: var(--text);
@@ -540,7 +540,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      background: color-mix(in srgb, var(--text) 3%, transparent);
 	      color: var(--muted);
 	    }
-	    /* Cards are flat; depth belongs to overlays (aesthetics adversary P1-4:
+	    /* Cards are flat; depth belongs to overlays (
 	       every section wore a modal's 48px shadow — a page of floating slabs). */
 	    section {
 	      border: 1px solid var(--line-soft);
@@ -564,7 +564,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       flex: 0 0 auto;
     }
     .section-note { color: var(--muted); font-size: 12px; max-width: 620px; }
-    /* AUTHORITY LINE (one-store ruling 2026-08-01). A panel that edits a
+    /* AUTHORITY LINE (one store, one owner). A panel that edits a
        store it does not own must say so PERSISTENTLY — not in a toast the
        operator dismissed, and not only after a failure. It sits under the
        panel note, quieter than the note (it is provenance, not
@@ -616,7 +616,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     }
     textarea { min-height: 76px; resize: vertical; }
     input[type="checkbox"], input[type="radio"] { width: auto; min-height: auto; }
-    /* Theme-aware focus ring (aesthetics adversary P0-2: the old ring was
+    /* Theme-aware focus ring (the old ring was
        hardcoded cyan and stayed cyan in every theme). */
     input:focus, select:focus, textarea:focus {
       outline: none;
@@ -643,14 +643,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       gap: 7px;
       transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease, filter 120ms ease;
     }
-    /* Interaction states existed NOWHERE on the page's own buttons (aesthetics
-       adversary P0-2: "every click feels dead") — the ui-kit's measured 120ms
+    /* Interaction states existed NOWHERE on the page's own buttons (so
+       every click felt dead) — the ui-kit's measured 120ms
        polish block, applied. */
     button:hover:not(:disabled) { filter: brightness(1.08); }
     button:active:not(:disabled) { filter: brightness(0.94); }
     @media (prefers-reduced-motion: reduce) { button { transition: none; } }
 	    button.secondary { background: var(--button-2); color: var(--text); }
-    /* Tinted danger, not solid maroon (aesthetics adversary P0-1: a table of
+    /* Tinted danger, not solid maroon (a table of
        filled red pills = alarm fatigue; red weight belongs to confirm-gated
        acts, carried by the inset ring + tint, readable in both themes). */
     button.danger {
@@ -671,7 +671,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     td { border-bottom: 1px solid var(--line-soft); }
     th, td { padding: 9px 10px; text-align: left; vertical-align: top; }
     th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
-    /* Polarity-safe hover wash (aesthetics adversary P0-3: the white literal
+    /* Polarity-safe hover wash (the white literal
        was invisible on the light theme). */
     tbody tr:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
     code { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 2px 6px; }
@@ -690,9 +690,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    body:not(.signed-in) .session-only { display: none !important; }
 	    body.signed-in #login-section { display: none !important; }
-	    /* ONE chip recipe (card 015 wave 3: the kit's measured AA color-mix
+	    /* ONE chip recipe (the kit's measured AA color-mix
 	       derivation, mapped over every pill family — class names and state
-	       words preserved by ruling; families now differ only in their state
+	       words kept as they were; families now differ only in their state
 	       color variables, never in shape/typography). */
 	    .pill, .badge, .state-pill, .entity-chip, .entity-warn-pill, .entity-live-badge {
 	      display: inline-flex; align-items: center; gap: 6px;
@@ -707,7 +707,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .capability-derived td { color: var(--muted); }
 	    .actions { display: flex; gap: 6px; flex-wrap: nowrap; align-items: center; }
     th:last-child, td:last-child { width: 1%; white-space: nowrap; }
-    /* In-table actions are GHOSTS (charter adversary P1-2: filled tertiary
+    /* In-table actions are GHOSTS (filled tertiary
        pills at table density turned every table into a wall of blue —
        continuum's in-table .btn recipe). Standalone secondaries keep the
        filled look. */
@@ -746,7 +746,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .entity-subtab { background: transparent; color: var(--text-secondary); border-radius: var(--radius-md); padding: 6px 12px; font-size: 12px; }
 	    .entity-subtab:hover { background: rgba(148, 163, 184, 0.1); color: var(--text); filter: none; }
 	    .entity-subtab.active { color: var(--text); background: rgba(148, 163, 184, 0.16); font-weight: 600; outline: none; }
-	    /* Runtimes master-detail (operator dm#32, two-adversary consensus):
+	    /* Runtimes master-detail:
 	       the master table is HEIGHT-BOUNDED so the detail pane below it is
 	       always on screen — the load-bearing half of the redesign (an
 	       unbounded list is exactly the fold math that failed on the
@@ -765,7 +765,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .entity-kv-val { color: var(--text); word-break: break-all; }
 	    .entity-btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
 	    .entity-checkbox { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); text-transform: none; letter-spacing: 0; font-weight: 500; margin-bottom: 0; }
-	    /* State truth surface (laurent 12:32: "crystal clear visually,
+	    /* State truth surface ("crystal clear visually,
 	       reflects the REAL state"): pills + a push button whose color, text
 	       AND border all derive from server truth — text always carries the
 	       state word so color is never the sole channel. */
@@ -1000,7 +1000,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    .af-gateway-signin__actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; flex-wrap: wrap; }
 	    /* Sign-in is the page's one non-destructive primary action — it must
-	       not wear the destructive color (aesthetics adversary #11). */
+	       not wear the destructive color. */
 	    .af-gateway-signin__primary { background: color-mix(in srgb, var(--accent) 22%, var(--panel-2)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); color: var(--text); }
 	    .af-gateway-signin__secondary { background: var(--button-2); }
 	    .modal-backdrop {
@@ -1075,7 +1075,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .modal.wsp-modal { width: min(860px, calc(100vw - 48px)); max-width: min(860px, calc(100vw - 48px)); }
 	    .modal.log-modal { width: min(1100px, calc(100vw - 48px)); max-width: min(1100px, calc(100vw - 48px)); }
 	    .list-pager { display: flex; gap: 12px; align-items: center; justify-content: center; margin-top: 8px; }
-	    /* ONE toolbar shape for every list tab (operator 2026-08-19): compact
+	    /* ONE toolbar shape for every list tab: compact
 	       dropdown, then the search bar, then any tab-specific extra. The
 	       `input[type=search]` selector is deliberate — a bare `input` rule
 	       would stretch checkboxes that share the row. */
@@ -1733,7 +1733,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	  </style>
 </head>
 <body>
-	  <!-- FAMILY SHELL (charter refactor 2026-07-15): left sidebar + slim
+	  <!-- FAMILY SHELL: left sidebar + slim
 	       header — the layout vocabulary continuum and observer share
 	       (.shell_* family). Nav button ids are unchanged so the tab wiring
 	       and its tests survive the restyle. -->
@@ -1785,7 +1785,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      </button>
 	    </div>
 	  </header>
-	  <!-- Host pause (tray + console, 2026-09-05): a pause set last week from the
+	  <!-- Host pause (tray + console): a pause set last week from the
 	       menu bar must be visible on EVERY tab, before choosing one. Driven by
 	       GET /host/runner (15s poll while signed in) and by the Gateway card. -->
 	  <div id="paused-banner" class="entity-stop-banner hidden" role="status">
@@ -1921,8 +1921,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <div id="tab-runtimes" class="tab-panel">
 	        <div class="tab-grid tab-grid-wide">
 	          <div class="tab-stack">
-	            <!-- RUNTIMES FIRST (operator order 12:24) + MASTER->TABBED DETAIL
-	                 (operator dm#32, 2026-07-25, two fable5 adversaries reconciled):
+	            <!-- RUNTIMES FIRST + MASTER->TABBED DETAIL:
 	                 a HEIGHT-BOUNDED master table (always on screen, sticky header)
 	                 with row-click selection; ONE detail pane directly below with
 	                 [Runs | Sessions | Caches] subtabs — the old stacked global
@@ -1930,7 +1929,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                 runtime auto-selects on tab open so the operator's run tools
 	                 (filter/inspect/steer/cancel) stay ZERO clicks away, exactly as
 	                 before. Machine-wide Data & Caches lives in a collapsed
-	                 disclosure (both adversaries rejected a "Machine" pseudo-row:
+	                 disclosure (not a "Machine" pseudo-row:
 	                 it lies in five columns and hides a purge surface behind a
 	                 fake runtime identity). -->
 	            <section id="runtimes-section" class="session-only hidden">
@@ -1957,7 +1956,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                </div>
 	                <button id="runtime-detail-refresh" class="secondary icon-only" title="Reload this runtime's view" aria-label="Refresh runtime detail"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
 	              </div>
-	              <!-- Console-TUI mirror (laurent dm#35): TWO tabs — Sessions |
+	              <!-- Console-TUI mirror: TWO tabs — Sessions |
 	                   Data & cache — and NOTHING loads until a runtime is
 	                   chosen. The Sessions tab lists the chosen runtime's runs
 	                   (session ids on every row), exactly like the TUI's
@@ -1975,7 +1974,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                     TWO SEPARATE BLOCKS, two tbodies, deliberately: a stale
 	                     default loadRuns must never paint action buttons under
 	                     another plane's header (a Steer/Cancel there would fire
-	                     commands at the DEFAULT runtime — adversary B's misfire
+	                     commands at the DEFAULT runtime — a misfire
 	                     class, killed structurally). -->
 	                <div id="runtime-runs-default" class="hidden">
 	                  <div class="list-toolbar">
@@ -2200,7 +2199,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              </div>
 	              <div class="entity-overview">
 	                <div class="entity-kv"><span class="entity-kv-key">Version</span><span class="entity-kv-val"><span id="gateway-host-version">…</span> <span id="gateway-host-update-hint" class="muted"></span> <button id="gateway-host-update-check" class="secondary" type="button" title="Ask the update server whether a newer AbstractGateway exists (needs internet)">Check now</button> <button id="gateway-host-update-start" class="secondary hidden" type="button" title="Install the newer version in the background; restart to finish">Update</button></span></div>
-	                <!-- STATUS, NOT A SWITCH (operator ruling 2026-09-06). The
+	                <!-- STATUS, NOT A SWITCH. The
 	                     icon is the gateway's presence on the desktop: while it
 	                     runs, it is there. The only reasons it can be absent are
 	                     facts about this machine, and this line names them. -->
@@ -2274,8 +2273,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	           gateway's api() (CSRF) and apiBase /api/gateway. Not to be
 	           confused with Resources (id models) and Runtimes. -->
 	      <div id="tab-catalog" class="tab-panel">
-	        <!-- One card per model with a sticky filter bar (console_catalog.py,
-	             mission X2); AbstractCore's Models screen below it keeps the
+	        <!-- One card per model with a sticky filter bar (console_catalog.py);
+	             AbstractCore's Models screen below it keeps the
 	             "on this computer" list (models outside the catalog, Delete). -->
 	        <div id="catalog-cards-root"></div>
 	        <section class="mc-installed" aria-labelledby="catalog-installed-title">
@@ -2398,9 +2397,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                </div>
 	              </div>
 	              <div id="entity-subpanel-lifecycle" class="entity-subpanel hidden">
-	                <!-- LIVENESS AXIS (c1559): the STOPPED banner outranks every chip;
+	                <!-- LIVENESS AXIS: the STOPPED banner outranks every chip;
 	                     Stop is a distinct emergency affordance, never a radio position.
-	                     GROUPING (usability adversary P0-3): each hazard domain is its
+	                     GROUPING: each hazard domain is its
 	                     own bordered card — five domains flowing as one flat column
 	                     did not read. -->
 	                <div id="entity-stop-banner" class="entity-stop-banner hidden">
@@ -2735,7 +2734,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      </div>
 	    </div>
 	  </div>
-	  <!-- FIRST-RUN WIZARD (2026-09-23). Opens by itself once per data dir
+	  <!-- FIRST-RUN WIZARD. Opens by itself once per data dir
 	       for an admin (after a #claim= link, or while /host/first-run says
 	       not completed); the topbar Setup button reopens it. The ids below
 	       are a contract: later workstreams mount AbstractCore's Engines /
@@ -2762,7 +2761,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <h3 id="first-run-step-title">Welcome</h3>
 	              <p id="first-run-step-lede"></p>
 	            </header>
-	            <!-- DOM CONTRACT (first-run 2026-09-23; the ids below are what
+	            <!-- DOM CONTRACT (first-run; the ids below are what
 	                 later work embeds into). Local engines render as cards
 	                 (console_ui.py) into #first-run-engines-body; AbstractCore's
 	                 Models screen mounts into #first-run-model-catalog. -->
@@ -2998,8 +2997,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // BROKEN while its fetch runs — every table loader says what is
 	    // happening. One recipe, per-table colspan.
 	    function renderPager(el, opts) {
-	      // EVERY gateway list reaches EVERY item (operator ruling
-	      // 2026-08-19): pages of `pageSize` with honest position text.
+	      // EVERY gateway list reaches EVERY item:
+	      // pages of `pageSize` with honest position text.
 	      // Single-page lists render no chrome.
 	      if (!el) return;
 	      const { offset, pageSize, shown, hasMore, total, onPage } = opts;
@@ -3035,7 +3034,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // SERVER-side and the Cache and Logs tabs filter here, so the same
 	    // typed query has to mean the same thing in three languages.
 	    //
-	    // Operator 2026-08-20: `*.jpg` in a runtime tab's box found nothing —
+	    // `*.jpg` in a runtime tab's box once found nothing —
 	    // every filter was a plain substring, so the `*` matched literally.
 	    //   * no `*` and no `?` -> case-insensitive SUBSTRING (unchanged)
 	    //   * any `*` or `?`    -> case-insensitive GLOB anchored to the WHOLE
@@ -3248,14 +3247,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    const UI_SETTINGS_KEY = "abstractgateway_ui_settings_v1";
 	    const ACTIVE_TAB_KEY = "abstractgateway_active_tab_v1";
-	    // Operator IA (2026-07-13): daily path first — who lives behind this
+	    // Tab order: daily path first — who lives behind this
 	    // door (users & entities), where they run, then setup (providers,
 	    // capability defaults), then validation (sandbox). A stale persisted
 	    // "entities" value folds into "users" below.
 	    const TABS = ["users", "runtimes", "workflows", "providers", "defaults", "sandbox", "models", "catalog", "engines", "apps", "network"];
 	    // The kit's THEME_SPECS (abstractuic theme.ts), generated by
 	    // console_theme_sync — the console offers exactly the framework's
-	    // themes, never a hand-copied subset (operator catch 2026-07-15).
+	    // themes, never a hand-copied subset.
 	    const THEME_SPECS = __KIT_THEME_SPECS_JSON__;
 	    // The About facts of THIS gateway (console_about_config): the served
 	    // abstractgateway version + the gateway-version rows of GET /about.
@@ -4012,8 +4011,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      return { phaseIds, phaseLabels, tools, grantByPhase };
 	    }
 
-	    // ---- Shared provider/model/embedding dropdown data (operator directive
-	    // 2026-07-13): the console consumes the SAME gateway endpoints the
+	    // ---- Shared provider/model/embedding dropdown data ----
+	    // The console consumes the SAME gateway endpoints the
 	    // React kit picker does (/discovery/providers, /discovery/providers/
 	    // {p}/models, /entities/creation-defaults) — the endpoints ARE the
 	    // shared contract; a vanilla-JS console cannot import a React component.
@@ -4148,7 +4147,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const rows = Array.isArray(listed.entities) ? listed.entities : [];
 	        const body = $("entities-table");
 	        body.textContent = "";
-	        // Success clears prior error debris (usability adversary P0-1: a
+	        // Success clears prior error debris (a
 	        // pre-login 401 note sat under 4 healthy rows — data and an error
 	        // claim coexisting is the worst kind of stale pixel).
 	        $("entities-message").textContent = "";
@@ -4169,8 +4168,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          const st = (e.state && typeof e.state === "object") ? (e.state.state || "awake") : (e.state || "awake");
 	          const stWarnings = (e.state && typeof e.state === "object" && Array.isArray(e.state.warnings)) ? e.state.warnings : [];
 	          const nm = e.name || e.slug || "";
-	          // Entity ID = the HANDLE (<name>@<gateway lan ip>, laurent's
-	          // 2026-07-15 ruling); the manifest string is an internal birth
+	          // Entity ID = the HANDLE (<name>@<gateway lan ip>);
+	          // the manifest string is an internal birth
 	          // marker and renders only as a fallback when no address exists.
 	          for (const cell of [nm, e.handle || e.entity_id || "", String(e.created_at || e.born_at || "").slice(0, 16).replace("T", " ")]) {
 	            const td = document.createElement("td");
@@ -4179,9 +4178,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          }
 	          // State cell: id'd so the live poll repaints the managed row from
 	          // the same /cognition read; an unreadable state renders its
-	          // warning instead of faking a clean "awake" (adversary P2-1).
+	          // warning instead of faking a clean "awake".
 	          // Badge classes give the list the color-coded read without
-	          // opening Manage (IA adversary #8): asleep=sleep tone,
+	          // opening Manage: asleep=sleep tone,
 	          // stopped=danger tone (the served liveness axis), awake=neutral.
 	          const stopped = (e.state && typeof e.state === "object" && e.state.liveness === "stopped");
 	          const stTd = document.createElement("td");
@@ -4199,7 +4198,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          }
 	          tr.append(stTd);
 	          const actions = document.createElement("td");
-	          // Talk first (IA adversary #1): talking to an entity is the
+	          // Talk first: talking to an entity is the
 	          // most-used humane action and was four interactions deep.
 	          const talkBtn = document.createElement("button");
 	          talkBtn.className = "secondary";
@@ -4225,8 +4224,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        }
 	      } catch (err) {
 	        // Stale rows under a detached error read as health — replace them
-	        // with ONE labeled failure row (adversary P2-1; the duplicate
-	        // entities-message write doubled the error on screen — P0-1).
+	        // with ONE labeled failure row (a duplicate
+	        // entities-message write once doubled the error on screen).
 	        const body = $("entities-table");
 	        if (body) {
 	          body.textContent = "";
@@ -4267,8 +4266,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        chips.append(chip);
 	      }
 	    }
-	    // ---- Template management: view / edit / create, versioned (operator
-	    // directive 2026-07-13). A template is a JSON spark blueprint; the
+	    // ---- Template management: view / edit / create, versioned.
+	    // A template is a JSON spark blueprint; the
 	    // server lints it + writes a new version per save. The builtin floor
 	    // is view-only (seed a new id from it). tplMode ∈ view|edit|new.
 	    // Lives in its OWN modal (templates-backdrop) with its own select —
@@ -4529,7 +4528,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    function _resetChatUi() {
 	      // Chat state is per-entity: leaving it across manage opens routed
-	      // words to the WRONG entity under the right header (adversary P1-4).
+	      // words to the WRONG entity under the right header.
 	      state.chatId = "";
 	      state.chatEntity = "";
 	      const t = $("entity-chat-transcript"); if (t) t.textContent = "";
@@ -4548,7 +4547,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    async function openEntityManage(name) {
 	      state.manageName = name;
-	      // Generation token (adversary P0): five loaders write into SHARED DOM
+	      // Generation token: five loaders write into SHARED DOM
 	      // nodes. Opening B while A's slower fetch is in flight must not let
 	      // A's late response paint A's grants/baseline under B's header — the
 	      // next save would silently write A's word into B's permanent home.
@@ -4558,7 +4557,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      _resetChatUi();
 	      $("entity-manage-name").textContent = name;
       $("entity-manage-section").classList.remove("hidden");
-      // Drill-in (IA adversary #2): the manage panel replaces the tab's
+      // Drill-in: the manage panel replaces the tab's
       // list/users sections instead of appending below them — the scroll
       // hunt was the complaint the old scrollIntoView bandaged.
       $("entities-list-section").classList.add("hidden");
@@ -4581,8 +4580,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      _scheduleLivePoll(name, token);
 	    }
 	    function _scheduleLivePoll(name, token) {
-	      // Live truth poll (adversary P0-2: zero polling = the incident's
-	      // mechanism — own-time shown OFF while the process was alive). Scoped
+	      // Live truth poll (with no polling, the page showed own-time
+	      // OFF while the process was alive). Scoped
 	      // to an OPEN manage panel: the token bump on close/switch stops the
 	      // chain, so no timer outlives its panel.
 	      if (typeof setTimeout === "undefined") return;
@@ -4604,7 +4603,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        box.textContent = "";
 	        const sleep = card.sleep_stats || {};
 	        const rows = [
-	          // Entity ID = the handle (laurent 2026-07-15: <name>@<gateway
+	          // Entity ID = the handle (<name>@<gateway
 	          // lan ip> — "gateway is their home"); the manifest string
 	          // demotes to an internal birth marker on its own line.
 	          ["Entity ID", card.handle || card.entity_id || (card.manifest && card.manifest.entity_id) || ""],
@@ -4680,8 +4679,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	    }
 	    // ---- Entity voice (entity-personal-voice room; the server half is
-	    // voice.yaml + GET/PUT + the entity TTS lanes — this is the picker
-	    // laurent could not see). Same catalog sources as the capability
+	    // voice.yaml + GET/PUT + the entity TTS lanes — this is the
+	    // picker). Same catalog sources as the capability
 	    // defaults modal (one discovery, two surfaces); the audition plays
 	    // the CURRENT UNSAVED selection through the ENTITY'S OWN TTS route
 	    // (anti-mixing: explicit fields win over the home triple), so what
@@ -4692,7 +4691,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const v = await api(`/api/gateway/entities/${encodeURIComponent(name)}/voice`);
 	        if (manageStale(token)) return;
 	        state._entityVoice = v;
-	        // Inheritance render (laurent dm#68): unset names the RESOLVED
+	        // Inheritance render: unset names the RESOLVED
 	        // triple he would actually speak with, or the honest engine-decides
 	        // note — never a bare "unset" the operator must decode.
 	        let line;
@@ -4833,8 +4832,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        btn.disabled = false;
 	      }
 	    }
-	    // ---- Work order (the work-phase lane's operator write surface;
-	    // laurent seq 155). Presence shifts the loop to phase=work next
+	    // ---- Work order (the work-phase lane's operator write surface).
+	    // Presence shifts the loop to phase=work next
 	    // day-open; the entity declares done/blocked; clearing archives.
 	    async function loadEntityWorkOrder(name, token) {
 	      try {
@@ -4939,7 +4938,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        bits.push(`door's resolved embedder: ${e.resolved_embedder || "(none)"}`);
 	        if (e.match === "mismatch") bits.push("MISMATCH — the home refuses vector opens until re-embedded or the route is restored");
         _entOut("entity-embedding-status", bits.join(" · "));
-        // NO PREFILL (disclosure adversary P0: pre-filling the verification
+        // NO PREFILL (pre-filling the verification
         // field converts the typed ceremony into a click-through — the exact
         // inversion of its purpose). The resolved embedder is DISPLAYED in
         // the status line above; the operator types it knowingly.
@@ -4948,7 +4947,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        _entOut("entity-embedding-status", "embedding status unavailable: " + (err.message || err));
 	      }
 	    }
-	    // ---- ONE live truth painter (laurent 12:32 + adversary P0-1/P0-2/P1-1) ----
+	    // ---- ONE live truth painter ----
 	    // Every state-shaped pixel renders from ONE /cognition read: the phase
 	    // badge, the state buttons' pressed states, the own-time push button,
 	    // the loop line, the Overview cognition line, the Talk availability, and
@@ -5139,7 +5138,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // construction — stopped = the kill switch (state paused, promoted).
       // `frozen` is retired from the serve; nothing here reads it.
       const stopped = cog.liveness === "stopped";
-      // PHASE IS TOTAL WHILE ALIVE (laurent c203: "awake is NOT a state").
+      // PHASE IS TOTAL WHILE ALIVE ("awake" is not a state).
       // The gateway now folds idle to sleep server-side, so phase is always
       // one of the ruled four while alive; sleep_detail carries the honesty
       // nuance (resting default vs dreaming vs bounded). A null phase can
@@ -5263,7 +5262,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (!go) return;
 	      }
 	      if (target === "asleep") {
-	        // Sleep states its side effect too (adversary P2-3): an open visit
+	        // Sleep states its side effect too: an open visit
 	        // is closed (with reflection) by this act.
 	        const go = await confirmAction({
 	          title: `Put ${name} to sleep?`,
@@ -5289,9 +5288,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      } catch (e) { _entOut("entity-state-out", String(e.message || e)); }
 	    }
     async function entityOwntimeToggle() {
-      // ONE CLICK = THE AUTHORIZATION (laurent 2026-07-15: "i click on
-      // 'personal', and the entity is then authorize to tick itself...
-      // SIMPLIFY, do not put excessive guardrails"): /loop/start arms the
+      // ONE CLICK = THE AUTHORIZATION (clicking 'personal'
+      // authorizes the entity to tick itself, no extra guardrails): /loop/start arms the
       // grant itself and wakes an asleep entity — the click IS the grant.
       // The optional hours field still writes a timer first; OFF = stop +
       // revoke. Semantics from the RENDERED server truth; the response
@@ -5512,7 +5510,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      } catch (e) {
 	        // Clear only when the server says the session is already gone (a
 	        // 4xx not-open) — a FAILED close must keep the session marked open
-	        // with the retry affordance (adversary P2-2: a silent clear renders
+	        // with the retry affordance (a silent clear renders
 	        // "Open visit" over a live server session, and the next loop start
 	        // 409s against the invisible visit).
 	        if (e.status && e.status >= 400 && e.status < 500) {
@@ -5559,15 +5557,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (n >= KiB) return (n / KiB).toFixed(1) + " KiB";
 	      return String(n) + " B";
 	    }
-	    // ---- Runtimes: master -> tabbed detail (operator dm#32, 2026-07-25;
-	    // two fable5 adversaries reconciled). The master table is height-
+	    // ---- Runtimes: master -> tabbed detail.
+	    // The master table is height-
 	    // bounded (CSS .table-scroll) and row-click selects; ONE detail pane
 	    // below carries [Runs | Sessions | Caches]. The default runtime
 	    // auto-selects on tab open so the operator's run machinery stays
 	    // zero clicks away. Every detail loader is guarded by a selection
 	    // token (the manageToken precedent): a stale response must never
 	    // render under another runtime's header. ----
-		    // Console-TUI mirror (laurent dm#35): two tabs, and NO selection
+		    // Console-TUI mirror: two tabs, and NO selection
 	    // persistence across page loads — nothing loads until the operator
 	    // clicks a runtime this session.
 	    const RUNTIME_SUBTABS = ["sessions", "artifacts", "caches", "logs"];
@@ -5577,7 +5575,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    async function loadRuntimes() {
 	      const body = $("runtimes-table");
 	      if (!body) return;
-	      // Loading row (usability adversary P0-2: a header-only table reads as
+	      // Loading row (a header-only table reads as
 	      // BROKEN while the size walk runs — say what is happening).
 	      body.textContent = "";
 	      const loadingTr = document.createElement("tr");
@@ -5710,12 +5708,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          tr.append(td);
 	          body.append(tr);
 	        }
-	        // Selection resolve (console-TUI mirror, laurent dm#35): ONLY an
+	        // Selection resolve (console-TUI mirror): ONLY an
 	        // in-session choice survives a list refresh — the page never
 	        // auto-selects, so nothing loads until the operator clicks a
 	        // runtime. `preserve` keeps an unchanged selection's open panel
 	        // intact (a list refresh must not blow away the open tab
-	        // mid-read — adversary A hazard 4).
+	        // mid-read).
 	        const curKey = state.selectedRuntime ? _runtimeKeyOf(state.selectedRuntime) : "";
 	        const pick = curKey ? rows.find((r) => !r.error && _runtimeKeyOf(r) === curKey) || null : null;
 	        if (pick) selectRuntime(pick, { preserve: true });
@@ -5745,8 +5743,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (on) selected = tr;
 	      }
 	      // The bounded table can restore a selection scrolled out of view —
-	      // the operator must SEE which row the detail pane belongs to
-	      // (adversary A hazard 5).
+	      // the operator must SEE which row the detail pane belongs to.
 	      if (selected) { try { selected.scrollIntoView({ block: "nearest" }); } catch {} }
 	    }
 	    function _clearRuntimeSelection() {
@@ -5781,7 +5778,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (typeof r.size_bytes === "number") bits.push(_fmtBytes(r.size_bytes));
 	      if (r.materialized === false) bits.push("not materialized yet");
 	      $("runtime-detail-sub").textContent = bits.join(" · ") + ".";
-	      // TWO blocks, two tbodies (adversary B's misfire class): the default
+	      // TWO blocks, two tbodies: the default
 	      // machinery's table can never render under another plane's header.
 	      const isDefault = r.kind === "default";
 	      $("runtime-runs-default").classList.toggle("hidden", !isDefault);
@@ -5789,7 +5786,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (same && opts.preserve) return; // unchanged selection: highlight only
 	      state.runtimeDetailToken = (state.runtimeDetailToken || 0) + 1;
 	      state.runtimeDrill = null;
-	      // Choosing a runtime ALWAYS lands on Runs (operator 2026-08-19: the
+	      // Choosing a runtime ALWAYS lands on Runs (the
 	      // old restore-last-subtab reopened Logs on every selection). Each
 	      // tab still loads lazily, only when clicked.
 	      openRuntimeSubtab("sessions");
@@ -5803,7 +5800,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	      const r = state.selectedRuntime;
 	      if (!r) return;
-	      // Explicit branches, no catch-all else (design adversary B9: an else
+	      // Explicit branches, no catch-all else (an else
 	      // silently routes any NEW tab to the wrong loader).
 	      if (name === "sessions") {
 	        // The TUI's sessions panel: the chosen runtime's runs, session
@@ -5824,7 +5821,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    async function _runtimeDrillItems(r, token, offset = 0) {
 	      // ONE drill-in payload per (plane, page) feeds the read-only Runs
-	      // table; pages of 100 reach every run (operator ruling 2026-08-19).
+	      // table; pages of 100 reach every run.
 	      const key = `${_runtimeKeyOf(r)}|${offset}`;
 	      if (state.runtimeDrill && state.runtimeDrill.key === key) return state.runtimeDrill;
 	      const q = `/api/gateway/admin/runtimes/${encodeURIComponent(r.kind)}/${encodeURIComponent(r.tenant_id || "default")}/${encodeURIComponent(r.runtime_id)}/runs?limit=100&offset=${encodeURIComponent(offset)}`;
@@ -5905,7 +5902,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    function renderRuntimeConfig(payload) {
 	      // State only: the gateway defaults render nowhere but the modal
-	      // (operator 2026-08-19: the Runtimes tab is the table + the tabbed
+	      // (the Runtimes tab is the table + the tabbed
 	      // panel, nothing else) — this cache feeds the modal and the
 	      // per-row policy badges.
 	      state.runtimeConfig = payload || null;
@@ -6003,7 +6000,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    function _wspApplyKind(kind) {
 	      // ONE modal, two subjects: a USER's policy, or the GATEWAY defaults
-	      // every user inherits (operator order 2026-08-19: the defaults are
+	      // every user inherits (the defaults are
 	      // set in the same modal, not an inline form).
 	      state.wspModalKind = kind;
 	      const gw = kind === "gateway";
@@ -6107,8 +6104,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      try {
 	        if (state.wspModalKind === "gateway") {
 	          // user_workspace_policies is DELIBERATELY absent from this body:
-	          // present-but-empty deletes the whole per-user map server-side
-	          // (design adversary B2); per-user edits ride the single-entry PUT.
+	          // present-but-empty deletes the whole per-user map server-side;
+	          // per-user edits ride the single-entry PUT.
 	          const trustSel = $("wsp-trust").value;
 	          const body = {
 	            workspace_default_mode: _wspSelectedMode() || "whitelist",
@@ -6166,7 +6163,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      return state.dataHomes;
 	    }
 	    function _samePath(a, b) {
-	      // Suffix-tolerant path identity (adversary hazard: the registry
+	      // Suffix-tolerant path identity (the registry
 	      // stores resolve()d paths, the inventory serves unresolved ones —
 	      // macOS /var vs /private/var). Boundary-anchored, both directions;
 	      // a mis-bucket moves a row's SHELF, never its identity or blast
@@ -6195,8 +6192,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // root CONTAINS users/ and entities/ — a prefix rule would swallow
 	      // every other plane's homes).
 	      if (droot && _samePath(root, droot)) return { kind: "default", key: "default" };
-	      // A data_root that is NOT ours = ANOTHER gateway's home (operator
-	      // 2026-08-19: this console shows THIS gateway, never its neighbors —
+	      // A data_root that is NOT ours = ANOTHER gateway's home (this
+	      // console shows THIS gateway, never its neighbors —
 	      // 39 distinct roots live in the machine registry). Only rows with
 	      // NO data_root are genuinely machine-shared (hub cache, blocs…).
 	      if (root && droot && root.startsWith(droot + "/")) return { kind: "default", key: "default" };
@@ -6207,7 +6204,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // ONE row renderer for the Cache tab — the purge flow must never
 	      // fork. `sizing` = the fast no-walk paint: the size cell spins until
 	      // the sized pass replaces the rows. The DESCRIPTION is a visible
-	      // sub-line (operator 2026-08-19: hover-only was not actionable).
+	      // sub-line (hover-only was not actionable).
 	      const tr = document.createElement("tr");
 	      const nameTd = document.createElement("td");
 	      const nameLine = document.createElement("div");
@@ -6244,7 +6241,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      tr.append(pathTd);
 	      const actions = document.createElement("td");
 	      // Every row here IS a cache (the tab filters to safe_to_purge — a
-	      // cache is a cache, operator 2026-08-19): the purge is always offered.
+	      // cache is a cache): the purge is always offered.
 	      const btn = document.createElement("button");
 	      btn.className = "danger";
 	      btn.innerHTML = `<span class="button-icon" aria-hidden="true">×</span><span>Purge…</span>`;
@@ -6287,12 +6284,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            // the gateway process's own home, so its Cache tab ALSO
 	            // lists machine-wide stores (model caches, foreign owners —
 	            // everything outside user/entity planes). The standalone
-	            // machine-wide section died for this (operator 2026-08-19).
+	            // machine-wide section was folded into it.
 	            return a.kind === "default" || a.kind === "machine";
 	          }
 	          return a.kind === want.kind && a.key === want.key;
 	        });
-	        // Path-identity drift belt (adversary B hazard 2): if the default
+	        // Path-identity drift belt: if the default
 	        // plane claims zero rows while gateway-owned non-entity rows
 	        // plainly exist, show them matched-by-owner with the label — an
 	        // empty pane lying about reality is worse than a labeled guess.
@@ -6303,7 +6300,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              .filter(Boolean).join(" · ");
 	          }
 	        }
-	        // A cache is a cache (operator 2026-08-19): this tab lists ONLY
+	        // A cache is a cache: this tab lists ONLY
 	        // disposable stores that EXIST. Durable homes are not caches
 	        // (deliverables → Artifacts tab), logs are not caches (→ Logs
 	        // tab), and stale registrations (path gone) get their own
@@ -6424,7 +6421,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          renderRows(cached.rows, cached.warnings, false);
 	          return;
 	        }
-	        // TWO-PHASE (operator 2026-08-19: a 30s blank "measuring" pane is
+	        // TWO-PHASE (a 30s blank "measuring" pane is
 	        // unacceptable): the row LIST paints instantly from the no-walk
 	        // listing — names, kinds, policies are registry facts — while the
 	        // size walk runs behind it; the sized pass then replaces the rows.
@@ -6472,7 +6469,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	    }
 	    async function loadRuntimeLogs() {
-	      // The Logs tab (operator 2026-08-19: logs are their own category,
+	      // The Logs tab (logs are their own category,
 	      // and readable). Files across this plane's registered log homes,
 	      // newest first; stale log homes get Forget.
 	      const r = state.selectedRuntime;
@@ -6528,7 +6525,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          return logNeedle.matches(f.name);
 	        });
 	        for (const f of files) {
-	          // The ROW is the control (operator 2026-08-19): click = tail.
+	          // The ROW is the control: click = tail.
 	          const tr = document.createElement("tr");
 	          tr.className = "row-selectable";
 	          tr.tabIndex = 0;
@@ -6566,7 +6563,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        ].filter(Boolean).join(" ");
 	      }
 	    }
-	    // Shared modal discipline (design adversary Q5/S7): Escape closes via
+	    // Shared modal discipline: Escape closes via
 	    // addEventListener (never document.onkeydown — confirmAction owns and
 	    // clobbers that), the confirm layer wins when open, backdrop clicks
 	    // within 250ms of opening are ignored (a double-click's second click
@@ -6603,7 +6600,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	    }
 	    async function viewLogFile(home, file) {
-	      // A MODAL, not an inline pane (operator 2026-08-19: the inline
+	      // A MODAL, not an inline pane (the inline
 	      // viewer clogged the page and opened below the fold).
 	      state.currentLog = { home, file };
 	      $("log-modal-title").textContent = file;
@@ -6629,7 +6626,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      _closeModal("log-modal-backdrop");
 	    }
 	    async function loadRuntimeArtifacts() {
-	      // The Artifacts tab (operator 2026-08-19): the DELIVERABLES — images,
+	      // The Artifacts tab: the DELIVERABLES — images,
 	      // video, audio, text your agents produced — never conflated with
 	      // caches. Row click opens the preview MODAL. NOTE: the artifact
 	      // index is the gateway store this session reads (no per-plane
@@ -6637,7 +6634,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const r = state.selectedRuntime;
 	      if (!r) return;
 	      const token = state.runtimeDetailToken;
-	      // Per-call sequence (adversary S2): debounced searches + modality
+	      // Per-call sequence: debounced searches + modality
 	      // changes put several same-token requests in flight — only the
 	      // NEWEST may paint.
 	      const seq = (state.artifactsSeq = (state.artifactsSeq || 0) + 1);
@@ -6722,8 +6719,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	    }
 	    function _artifactRenderKind(a) {
-	      // The STORE's precedence, mirrored (abstractruntime artifacts.py —
-	      // design adversary Q1): render_kind → content_type map → filename
+	      // The STORE's precedence, mirrored (abstractruntime artifacts.py):
+	      // render_kind → content_type map → filename
 	      // extension. NEVER semantic_kind (it carries non-render values like
 	      // "transcript"/"workflow_snapshot").
 	      const rk = String(a.render_kind || "").toLowerCase();
@@ -6812,7 +6809,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const tooBig = typeof a.size_bytes === "number" && a.size_bytes > _ARTIFACT_TEXT_CAP;
 	      try {
 	        if (kind === "image" || kind === "video" || kind === "audio") {
-	          // Blob-loaded (adversary S1): the content route serves no byte
+	          // Blob-loaded: the content route serves no byte
 	          // ranges, so a direct <video src> fails on Safari; a typed Blob
 	          // object-URL plays everywhere and octet-stream retypes honestly.
 	          content.textContent = "Loading preview…";
@@ -6851,7 +6848,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            if (kind === "json" && text.length < 512 * 1024) {
 	              try { shown = JSON.stringify(JSON.parse(text), null, 2); } catch {}
 	            }
-	            // html renders as ESCAPED text only (adversary Q1): agent-
+	            // html renders as ESCAPED text only: agent-
 	            // authored markup must never become live DOM here.
 	            pre.textContent = shown;
 	            content.append(pre);
@@ -6871,7 +6868,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    function _clearArtifactModalContent() {
 	      const content = $("artifact-modal-content");
-	      // Stop playback BEFORE removal (adversary BLOCKER-2: hidden modals
+	      // Stop playback BEFORE removal (hidden modals
 	      // keep playing) and revoke object URLs.
 	      for (const el of content.querySelectorAll("video, audio")) {
 	        try { el.pause(); el.removeAttribute("src"); el.load(); } catch {}
@@ -6988,7 +6985,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	    }
 	    async function inspectRun(runId) {
-	      // A MODAL (operator 2026-08-19: the old inline div rendered below
+	      // A MODAL (the old inline div rendered below
 	      // the table's fold and looked like the button did nothing).
 	      const kv = $("run-modal-kv");
 	      const raw = $("run-modal-raw");
@@ -7061,7 +7058,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     // blackholed upstream (packets dropped, no RST — the shape of a stale
     // remote endpoint on a disconnected laptop) leaves the promise pending
     // FOREVER and whatever "Loading..." label the caller set becomes
-    // permanent. That is the offline console incident (2026-08-02: the
+    // permanent. That is the offline console incident (the
     // operator could configure the gateway offline through the TUI but not
     // the web console, "stuck on loading models"). The console-tui never
     // had this asymmetry — its ureq agents carry timeout_connect(5s) with
@@ -7124,7 +7121,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (!res.ok) {
         // Object details (the B2 refusal contract: {reason_code, message,
         // loop}) must never stringify to [object Object] — the one moment
-        // the operator needs the truth is the refusal (adversary P0-3).
+        // the operator needs the truth is the refusal.
         const detail = data.detail;
         let msg;
         if (detail && typeof detail === "object") msg = detail.message || detail.reason_code || JSON.stringify(detail);
@@ -7180,7 +7177,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         inputEl.classList.add("hidden");
       }
       $("confirm-backdrop").classList.remove("hidden");
-      // Keyboard path (usability adversary P1-3): Escape cancels; Enter
+      // Keyboard path: Escape cancels; Enter
       // confirms ONLY non-danger acts — destructive confirmation stays a
       // deliberate click. Focus lands on Cancel (the safe default). In
       // input mode plain Enter TYPES (multiline guidance); Cmd/Ctrl+Enter
@@ -7773,8 +7770,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // The in-flight PROMISE is cached so two openers share one request.
 	      // A REJECTED promise must never survive that: cached, it re-throws
 	      // forever WITHOUT touching the network, so the select stays stuck
-	      // even after the provider comes back — measured in the offline repro
-	      // (2026-08-02): the retry issued no request at all, and restoring the
+	      // even after the provider comes back — measured in the offline repro:
+	      // the retry issued no request at all, and restoring the
 	      // network did not heal it; only a full page reload did. Evict on
 	      // failure so the next attempt is a REAL retry.
 	      let entry = state.providerModels.get(cacheKey);
@@ -7865,8 +7862,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      setCustomLane("modal-default-model-custom", false);
 	      const catalog = defaultCatalogForRow(row || {});
 	      // The "Loading models..." label above belongs to THIS function, so
-	      // its terminal state does too. openDefaultModal wrapped its own call
-	      // (adversary F8), but the provider-change handler did not — switching
+	      // its terminal state does too. openDefaultModal wrapped its own call,
+	      // but the provider-change handler did not — switching
 	      // provider while offline left the select spinning forever. Degrade at
 	      // the label's owner so every caller inherits an honest end state, then
 	      // RETHROW so a caller that sequences further loads can react.
@@ -8255,8 +8252,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     async function loadEndpointProfiles() {
       const payload = await api("/api/gateway/config/provider-endpoint-profiles");
       renderEndpointProfiles(payload.profiles || []);
-      // Shared connections live in AbstractCore's store since the one-store
-      // ruling — the panel says which file, exactly as the defaults grid does.
+      // Shared connections live in AbstractCore's store (one store,
+      // one owner) — the panel says which file, exactly as the defaults grid does.
       renderStoreAuthority("endpoint-profiles-authority", payload);
       initEndpointProfileFormOptions();
       return payload;
@@ -8530,7 +8527,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      return Boolean(row?.read_only || row?.derived_from || (row?.covered_by && !row?.overrideable));
 	    }
 	    function defaultRowStatus(row) {
-	      // ONE VOCABULARY ACROSS EVERY CONSOLE (2026-08-01). Both TUIs say
+	      // ONE VOCABULARY ACROSS EVERY CONSOLE. Both TUIs say
 	      // "derived <- input.text" / "covered by input.text"; this surface said
 	      // "linked" / "covered", so the same row read differently depending on
 	      // which console an operator opened. The TUI wording names the ROUTE
@@ -8758,7 +8755,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	    }
 	    function trackDownloadJob(job) {
-	      // One feed for every download (console_ui.py, mission L2): N's SSE
+	      // One feed for every download (console_ui.py): the downloads SSE
 	      // stream (/models/downloads/stream) while it is open, polling
 	      // (/models/download/{id}, 1.5 s) whenever it is not. A `grp_…`
 	      // parent job ("Download all") is tracked the same way.
@@ -8850,14 +8847,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     // never a whole-machine scope name of any kind, and never anything a
     // reader could take for total system usage.
     // WHAT THIS PROCESS PINS IN ACCELERATOR MEMORY, from the host snapshot:
-    // device.mlx_held_bytes (MLX live + freed-but-cached buffers; gateway
-    // 2026-09-25+), else device.allocated_bytes (live only). 0 when unknown.
+    // device.mlx_held_bytes (MLX live + freed-but-cached buffers; newer
+    // gateways), else device.allocated_bytes (live only). 0 when unknown.
     function heldAcceleratorBytes(data) {
       const snap = (data && typeof data === "object") ? data : {};
       const mem = (snap.memory && typeof snap.memory === "object") ? snap.memory : {};
       const dev = (mem.device && typeof mem.device === "object") ? mem.device : {};
       const num = (v) => (typeof v === "number" && isFinite(v) && v >= 0) ? v : null;
-      // gateway 2026-09-25 (MEM2): what this process pins across EVERY
+      // process_held_bytes (newer gateways): what this process pins across EVERY
       // in-process allocator -- the Metal device counter when torch is
       // present (MLX / llama.cpp / torch buffers are inside it), else MLX
       // held + llama.cpp. Older gateways: MLX only.
@@ -8886,8 +8883,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (llama !== null && llama > 0) parts.push(`llama.cpp GGUF engines ${_fmtBytes(llama)} (weights + KV allocation, estimated)`);
       return parts.length ? parts.join(", ") : "process-local accelerator allocations";
     }
-    // WHAT the process holds, by model: `memory.resident.models` (gateway
-    // 2026-09-25+, every in-process backend: MLX, HuggingFace/GGUF,
+    // WHAT the process holds, by model: `memory.resident.models` (newer
+    // gateways, every in-process backend: MLX, HuggingFace/GGUF,
     // embeddings), else the MLX-only `memory.held.models` of older cores.
     // "[backend] model × N holders"; [] when no holder reports anything.
     function heldResidentNames(data) {
@@ -8947,7 +8944,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (procUsed !== null && !procField) procField = "device total − free";
       if (procUsed === null && total !== null && free !== null) procUsed = Math.max(0, total - free);
       // The ioreg "In use system memory" counter does NOT see MLX's Metal
-      // buffers on this host (measured 2026-09-25: 1.5 GB reported beside
+      // buffers on this host (measured: 1.5 GB reported beside
       // 20.7 GB of live MLX buffers in one process; 1.1 GB beside 92 GB on the
       // operator's gateway). When this process alone exceeds the cross-process
       // figure, the process figure is the truthful one and the scope says so.
@@ -9540,7 +9537,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        // NEVER say "nothing loaded" over live accelerator memory. The host
 	        // snapshot carries the process's MLX allocator truth
 	        // (device.mlx_held_bytes = live + cached buffers; older gateways:
-	        // allocated_bytes = live only). 2026-09-25: a gateway said "No models
+	        // allocated_bytes = live only). A gateway once said "No models
 	        // loaded" while holding 92 GB the listing could not attribute.
 	        const held = heldAcceleratorBytes(data);
 	        if (held > 0) {
@@ -9989,7 +9986,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	    }
 	    // ---- Gateway card (Resources tab) + paused banner (every tab) ----------
-	    // (host pause / desktop tray / restart / update, 2026-09-05). Reads render
+	    // (host pause / desktop tray / restart / update). Reads render
 	    // for every signed-in user; mutations are admin-gated at render time.
 	    function _gwFmtWhen(iso) { try { const d = new Date(iso); return isNaN(d) ? String(iso || "") : d.toLocaleString(); } catch { return String(iso || ""); } }
 	    function _gwMsg(text, kind) { const msg = $("gateway-host-message"); if (!msg) return; msg.textContent = text || ""; msg.className = kind ? `message ${kind}` : "message"; }
@@ -10191,18 +10188,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       $("users-section").classList.toggle("hidden", !p.admin || Boolean(state.manageName));
       $("runtimes-section").classList.toggle("hidden", !p.admin);
       // Retained runtimes: shown only for admins AND only when reservations
-      // exist (operator 2026-08-19: the Runtimes tab is the table + the
+      // exist (the Runtimes tab is the table + the
       // tabbed panel — recovery UI appears when there is something to
       // recover, never as standing clutter). renderRuntimeReservations
       // handles the has-rows half.
       if (!p.admin) $("runtime-reservations-section").classList.add("hidden");
       // The detail pane shows only for admins WITH a live selection — a
       // background account refresh must not re-hide an open detail, and a
-      // non-admin must never see it (dm#32 redesign: the pane replaced the
+      // non-admin must never see it (the pane replaced the
       // old global runs-section).
       $("runtime-detail-section").classList.toggle("hidden", !p.admin || !state.selectedRuntime);
       // Both Runtimes sections are admin-gated, so for a non-admin the tab
-      // would render EMPTY (IA adversary) — hide the tab itself and fold a
+      // would render EMPTY — hide the tab itself and fold a
       // restored runtimes selection back to the first tab.
       $("tab-button-runtimes").classList.toggle("hidden", !p.admin);
       // Workflows stays visible to everyone — listing and exporting are
@@ -10360,7 +10357,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         tbody.append(tr);
       }
     }
-	    // ONE STORE, SAID OUT LOUD (operator ruling 2026-08-01). Capability
+	    // ONE STORE, SAID OUT LOUD. Capability
 	    // defaults and shared provider connections are AbstractCore's data;
 	    // the Gateway is a second entry point to it, not the owner of a copy.
 	    // A panel that renders an edit form over someone else's file and never
@@ -10470,7 +10467,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const actions = document.createElement("td");
 	        actions.className = "actions";
 	        if (defaultRowReadOnly(row)) {
-	          // Status is not a verb (usability adversary P1-9): a disabled
+	          // Status is not a verb: a disabled
 	          // button dressed as an action duplicated the STATUS pill; a
 	          // covered/linked route gets muted words, not fake affordance.
 	          const note = document.createElement("span");
@@ -11231,7 +11228,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // Test renders only where a REAL generation is cheap and the goal is
 	      // named (voice audition; tiny text smoke). Image/video/music tests
 	      // would be slow, expensive, and ride watchdog-less routes — the
-	      // Sandbox tab is their honest surface (adversarial review 2026-07-17).
+	      // Sandbox tab is their honest surface.
 	      const key = defaultRowKey(row);
 	      return key === "output.voice" || key === "output.text" || key === "input.text";
 	    }
@@ -11351,7 +11348,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      refreshDefaultSpeculationSupport();
 	    }
     // ------------------------------------------------------------------
-    // MODELS & ENGINES (2026-09-23): AbstractCore's own screens, embedded.
+    // MODELS & ENGINES: AbstractCore's own screens, embedded.
     // The Gateway does not re-implement the model browser or the engine
     // installer: the server splices AbstractCore's fragments (html in the
     // #tab-catalog / #tab-engines panels, one shared css/js), and this code
@@ -11445,9 +11442,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (!state.principal) return;
       if (tab === "apps") {
         mountAppCards("tab", $("apps-root"));
-        // The apps.* settings (console_ui.py, mission Z): registry-driven.
+        // The apps.* settings (console_ui.py): registry-driven.
         mountAppsSettings("tab", $("apps-settings-root"));
-        // The backlog folder + exec runner + process manager (mission II).
+        // The backlog folder + exec runner + process manager.
         mountBacklogSettings($("backlog-settings-root"));
         // The skills shelf (skills.shelf, console_ui.py).
         mountSkillsShelf("tab", $("skills-settings-root"));
@@ -11460,13 +11457,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       }
       if (tab === "engines") {
         // Local engines are CARDS (console_ui.py), not AbstractCore's table:
-        // one card per engine, one primary action per state (mission L).
+        // one card per engine, one primary action per state.
         mountEngineCards("tab", $("engines-core-root"));
         return;
       }
       if (tab === "catalog") {
         // The catalog is CARDS, one per model, with a filter bar
-        // (console_catalog.py, mission X2). Its first open reads the
+        // (console_catalog.py). Its first open reads the
         // `#catalog?...` link; later opens keep the filters in use unless
         // the caller names some (the guide, an engine's "Browse models").
         const first = !mcStore.views.has("tab");
@@ -11493,7 +11490,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       return a;
     }
     // ------------------------------------------------------------------
-    // FIRST RUN (2026-09-23). A fresh install reaches this console through a
+    // FIRST RUN. A fresh install reaches this console through a
     // one-time link printed by `abstractgateway serve` / `abstractgateway
     // claim` (`/console#claim=<code>`): the code is redeemed for an ADMIN
     // browser session (POST /session/claim, loopback-only server-side),
@@ -11510,7 +11507,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     // the topbar #open-setup.
     // ------------------------------------------------------------------
 /*__CONSOLE_UI_JS__*/
-    // ---- Backlog settings (mission II): Continuum's backlog folder, the
+    // ---- Backlog settings: Continuum's backlog folder, the
     // backlog exec runner and the process manager, through the one
     // runtime-config door. GET /api/gateway/admin/runtime-config carries
     // {value, source: flag|stored|env|default, label, help, cli, available?,
@@ -11693,7 +11690,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         try {
           const res = await api("/api/gateway/session/claim", { method: "POST", body: JSON.stringify({ code }) });
           firstRun.claimed = true;
-          // Who minted the link (mission S adds `claim.created_by`: "tray",
+          // Who minted the link (`claim.created_by`: "tray",
           // "installer", ...); absent on older gateways -> null.
           firstRun.claimCreatedBy = (res && res.claim && typeof res.claim.created_by === "string") ? res.claim.created_by : null;
           setLoginStatus("Signed in", "ok", firstRun.claimCreatedBy === "tray" ? "token: menu bar link" : "token: first-run link");
@@ -12044,10 +12041,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           ["Status", `<code>abstractgateway-config status</code>`],
         ]) + `</div>`
         // Who can reach the gateway, with its addresses to copy: the same
-        // panel as the Network tab (mission L2).
+        // panel as the Network tab.
         + `<section class="first-run-network" aria-label="Network"><div id="first-run-network" class="ui-net-root"></div></section>`
         // The console's own terminal app, said once, with the real way to
-        // get it (mission Y: crates.io only, so a command, never a button).
+        // get it (crates.io only, so a command, never a button).
         + `<div id="first-run-console-tui"></div>`;
       mountNetworkPanel("first-run", $("first-run-network"));
       mountConsoleTuiNote($("first-run-console-tui"));
@@ -12108,7 +12105,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           $("reservations-message").textContent = String(err.message || err);
           $("reservations-message").className = "message error";
         }
-        // (dm#32 redesign) no trailing loadRuns(): runs load through the
+        // No trailing loadRuns(): runs load through the
         // runtimes tab's selection flow — a non-runtimes tab never pays
         // for them, and the runtimes branch above already covers it.
       }
@@ -12177,8 +12174,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       await refresh();
     }
     function renderIssuedToken(el, who, token) {
-      // Structured one-time token render with a copy affordance (usability
-      // adversary P1-4: flat text forced manual selection of a 40-char token).
+      // Structured one-time token render with a copy affordance (flat
+      // text forced manual selection of a 40-char token).
       el.textContent = "";
       const text = document.createElement("span");
       text.textContent = `Issued token for ${who}: `;
@@ -12284,7 +12281,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    async function testDefault() {
 	      // Single-flight: the button disables while one test runs — repeated
 	      // clicks against a wedged backend would pile stranded children
-	      // (2026-07-17 TTS wedge history; the request carries timeout_s so a
+	      // (TTS backends have wedged before; the request carries timeout_s so a
 	      // wedge fails fast with the watchdog's honest 504 instead of
 	      // hanging this modal).
 	      const row = state.activeDefaultRow;
@@ -12487,7 +12484,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("appearance-font-size").onchange = updateAppearanceFromForm;
 	    $("appearance-header-size").onchange = updateAppearanceFromForm;
 	    $("tab-button-users").onclick = () => { setActiveTab("users"); loadEntities(); };
-	    // (dm#32 redesign) no direct loadRuns() on tab open: loadRuntimes'
+	    // No direct loadRuns() on tab open: loadRuntimes'
 	    // selection restore auto-selects a runtime (default first) and its
 	    // Runs tab loader fires from there. Cache sizes load when the Cache
 	    // tab opens (shared ensureDataHomes cache).

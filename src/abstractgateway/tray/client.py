@@ -98,7 +98,7 @@ class GatewayClient:
         return self._request("GET", "/host/runner", timeout=2.0)
 
     def live(self) -> Result:
-        """GPU + memory + execution state in one call (gateway 2026-09-05+)."""
+        """GPU + memory + execution state in one call (older gateways answer 404)."""
         return self._request("GET", "/host/metrics/live", timeout=2.5)
 
     def gpu(self) -> Result:
@@ -180,7 +180,7 @@ class GatewayClient:
         return self._request("POST", f"/apps/{app_id}/launch-tui", body={}, timeout=30.0)
 
     def app_install(self, app_id: str) -> Result:
-        """Install only (mission LL): the browser app and, where one exists for
+        """Install only: the browser app and, where one exists for
         this computer, its terminal app, as one job; nothing is started."""
         return self._request("POST", f"/apps/{app_id}/install", body={}, timeout=30.0)
 

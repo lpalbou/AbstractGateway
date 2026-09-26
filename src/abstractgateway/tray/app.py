@@ -1,6 +1,6 @@
 """The tray application: icon + menu + actions, on top of pystray.
 
-Threading contract (pystray, verified 2026-09-05): menu callbacks run
+Threading contract (pystray, verified on macOS): menu callbacks run
 synchronously on the GUI thread (macOS: the Cocoa main thread), so a callback
 may show a native dialog but must hand every network call to a worker
 thread. Icon/title updates are thread-safe; `update_menu()` is DESTRUCTIVE
@@ -773,7 +773,7 @@ class TrayApp:
             ) is not True:
                 return
         # No host/port: the registration runs plain `serve` and the Network
-        # setting binds it (2026-09-24). Passing this tray's URL would write
+        # setting binds it. Passing this tray's URL would write
         # 127.0.0.1 INTO the setting and undo a "Local network" choice.
 
         def _do() -> None:
@@ -851,7 +851,7 @@ class TrayApp:
             return
         self._bg(_go, "tray-load")
 
-    # -- network (mission R's /api/gateway/network)
+    # -- network (/api/gateway/network)
 
     def network_set(self, mode: str) -> None:
         words = menu_model.NETWORK_WORDS.get(mode, mode)
@@ -969,8 +969,8 @@ class TrayApp:
         self._bg(_do, "tray-app-launch-tui")
 
     def app_install(self, app_id: str) -> None:
-        """"Install X…": the same install as the console's Install button
-        (mission LL): the browser app AND its terminal app when one exists for
+        """"Install X…": the same install as the console's Install button:
+        the browser app AND its terminal app when one exists for
         this computer (Code), one job; the Assistant into the gateway's Python.
         Nothing opens by itself afterwards: the menu then offers Open."""
         name = _app_name(app_id)
@@ -1215,7 +1215,7 @@ class TrayApp:
         size = fmt_bytes(row.size_bytes) if row.size_bytes is not None else "its memory"
         frees = f"This frees {size} of memory." if row.size_bytes is not None else "This frees the memory it uses."
         snap = self._snap or self.sampler.snapshot()
-        # Eject semantics (mission I): calls running on the model are cancelled
+        # Eject semantics: calls running on the model are cancelled
         # first; the next request that needs it loads it again. Say so when
         # something IS running, because that is when it matters.
         busy = " Work running on it right now is stopped first." if snap.inflight_ticks > 0 else ""

@@ -1,11 +1,11 @@
 """The tray's Apps submenu: which of the six AbstractFramework apps are on this
-machine, and how to open them (2026-09-24).
+machine, and how to open them.
 
 Detection is by PRESENCE only — no app is ever imported (the gateway must not
 depend on its apps; an import would also run their code in the tray):
 
 - the five browser apps (Observer, Flow, Code, Continuum, Entity): the
-  gateway-managed install first (`GET /api/gateway/apps`, mission O: install,
+  gateway-managed install first (`GET /api/gateway/apps`: install,
   launch, one-time signed-in handover), else a GLOBAL install the gateway
   does not manage — the app's own command on PATH (`abstractobserver`,
   `abstractflow-editor`, `abstractcode-web`, `abstractcontinuum`,
@@ -19,10 +19,10 @@ depend on its apps; an import would also run their code in the tray):
   in the working directory, as in the framework checkout) and does not count.
 
 Launching (a global browser app, or the Assistant) is a detached process whose
-environment is scrubbed of tokens, secrets and keys the way mission O scrubs
-the apps it runs.
+environment is scrubbed of tokens, secrets and keys the way the gateway scrubs
+the app servers it runs.
 
-Terminal apps (mission Y): an app row's `interfaces[]` entry of kind "tui"
+Terminal apps: an app row's `interfaces[]` entry of kind "tui"
 (Code today) says whether its terminal version is on this machine — the
 gateway found it by presence (its own copy, PATH, ~/.cargo/bin). When it is,
 the menu offers "Open <app> in Terminal", which goes through the gateway's
@@ -203,8 +203,8 @@ def _assistant_entry_point() -> Optional[str]:
 def detect_assistant(probes: Probes, *, python: str = sys.executable, entry_point: Callable[[], Optional[str]] = _assistant_entry_point) -> Dict[str, Any]:
     """{found_by: [...], launch: argv | None, source, version, running, pid}.
 
-    The ONE detection the console shares (apps_desktop.detect_assistant,
-    mission LL): the tray only maps its own probes onto it. Preference for
+    The ONE detection the console shares (apps_desktop.detect_assistant):
+    the tray only maps its own probes onto it. Preference for
     launching: the .app bundle (what a user installed), then the console
     script, then this Python running the console-script entry point."""
     from ..apps_desktop import DesktopProbes, detect_assistant as _detect
@@ -328,7 +328,7 @@ def build_app_entries(
 
 
 def scrubbed_env(base: Mapping[str, str]) -> Dict[str, str]:
-    """Same rule as mission O's app servers: no gateway/core settings, no
+    """Same rule as the gateway's app servers: no gateway/core settings, no
     token, secret, password or key reaches a launched app."""
     out: Dict[str, str] = {}
     for k, v in base.items():

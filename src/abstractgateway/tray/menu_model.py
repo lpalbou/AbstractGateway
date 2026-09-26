@@ -1,8 +1,8 @@
-"""The tray menu as DATA (2026-09-24): `build_menu(inputs) -> (Node, ...)`.
+"""The tray menu as DATA: `build_menu(inputs) -> (Node, ...)`.
 
 Pure: no pystray, no network, no clock. `app.py` renders the nodes onto
 pystray and maps each node's `action` tuple to a method; the unit tests read
-the nodes; the mission report prints `render_text(...)`. Three things the
+the nodes; `render_text(...)` prints the menu as text. Three things the
 pure model makes checkable that a pystray generator could not:
 
 - **Nothing is silently dropped** (ADR-0026). A long list becomes submenus
@@ -187,7 +187,7 @@ def state_lines(snap: Snapshot, *, update_phase: str = "idle", update_latest: Op
         held = _held_bytes(snap)
         if n == 0:
             # Never "no models loaded" over live accelerator memory: the process
-            # may hold weights the list cannot attribute (2026-09-25: 92 GB).
+            # may hold weights the list cannot attribute (92 GB was measured once).
             detail = (
                 f"Ready · gateway still holds {fmt_bytes(held)} (no model listed); eject or restart"
                 if held
@@ -297,7 +297,7 @@ class NetworkAddress:
 
 @dataclass(frozen=True)
 class NetworkView:
-    """`GET /api/gateway/network` (mission R), as the menu reads it."""
+    """`GET /api/gateway/network`, as the menu reads it."""
 
     available: bool = False  # False: not fetched yet, or the gateway has no such route
     error: Optional[str] = None
@@ -619,7 +619,7 @@ INSTALLS_UNAVAILABLE_LINE = "Installs unavailable now · Console → Apps"
 
 
 def apps_section(inputs: MenuInputs, *, reachable: bool) -> Node:
-    """One short line per app, in stack order (mission HH, 2026-09-24):
+    """One short line per app, in stack order:
     running (the gateway's or started outside it) or installed -> "Open X"
     (starting it first when stopped); installable -> "Install X…"; anything
     else -> the name, greyed, with NO reason. When an install is blocked, ONE
@@ -631,7 +631,7 @@ def apps_section(inputs: MenuInputs, *, reachable: bool) -> Node:
     blocked_other = False
     for a in inputs.apps:
         if a.id == "assistant":
-            # A desktop app (mission LL): launched here, on this machine;
+            # A desktop app: launched here, on this machine;
             # installed through the gateway (into its own Python).
             items.append(SEP)
             if a.status in {"available", "running"}:
@@ -794,7 +794,7 @@ def build_menu(inputs: MenuInputs) -> Tuple[Node, ...]:
     if inputs.pending_label:
         out += [SEP, Node(f"Confirm: {inputs.pending_label}", ("confirm_pending",))]
     out.append(SEP)
-    # ONE door to the console (operator ruling 2026-09-06); it opens SIGNED IN.
+    # ONE door to the console; it opens SIGNED IN.
     out.append(Node("Open Console", ("open_console",), default=True, enabled=reachable or st == "unreachable"))
     if inputs.tk_available:
         out.append(Node("Show Activity Window…", ("show_activity",)))
@@ -823,7 +823,7 @@ def build_menu(inputs: MenuInputs) -> Tuple[Node, ...]:
         Node(
             "Help",
             children=(
-                # NO "(needs internet)" suffixes (operator ruling 2026-09-06).
+                # NO "(needs internet)" suffixes.
                 Node("Documentation", ("open_url", DOCS_URL)),
                 Node("Report a Problem…", ("open_url", ISSUES_URL)),
                 Node("Developer API Reference", ("open_url", inputs.base_url.rstrip("/") + "/docs")),
@@ -835,7 +835,7 @@ def build_menu(inputs: MenuInputs) -> Tuple[Node, ...]:
         )
     )
     out.append(SEP)
-    # NO "Hide the icon" item (operator ruling 2026-09-06).
+    # NO "Hide the icon" item.
     if st == "unreachable":
         out.append(Node(f"Force Quit {APP_NAME}…", ("force_quit",)))
     else:

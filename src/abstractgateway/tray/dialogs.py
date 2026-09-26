@@ -8,7 +8,7 @@
 - Linux: `zenity`, then `kdialog`. When neither exists `confirm()` returns
   None and the caller falls back to a two-step menu confirmation.
 
-Copy rules (creative review 2026-09-05): plain words, ≤ 3 short sentences,
+Copy rules: plain words, ≤ 3 short sentences,
 Cancel is the default for destructive actions, and never the words runtime,
 tick, residency, execution, process, PID, PyPI or RSS.
 """

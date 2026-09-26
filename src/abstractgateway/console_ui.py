@@ -1,7 +1,6 @@
-"""Console UI layer (mission L, 2026-09-24): the premium layout pass.
+"""Console UI layer: the page's layout pass.
 
-The operator's verdict on a fresh install (Safari, 1920 px): "there are
-layout issues everywhere", "we are far from premium" -- a 760 px modal
+What it replaces, as a fresh install rendered in Safari at 1920 px: a 760 px modal
 wizard in a 1920 px window, engine tables that overflow and wrap
 ``http://localhost:11434`` one character per line, a raw ``uv`` log in a
 nested scrolling card, downloads shown as a bare "downloading" pill, and
@@ -29,7 +28,7 @@ page carries verbatim (``console_themes.py`` + ``console_islands.py``).
 from __future__ import annotations
 
 CONSOLE_UI_CSS = r"""
-    /* ================= Console UI layer (mission L) ================= */
+    /* ================= Console UI layer ================= */
     /* ---- Technical details switch: CLI lines, route ids, commands ---- */
     .ui-advanced { display: none !important; }
     body.show-advanced .ui-advanced { display: block !important; }
@@ -82,7 +81,7 @@ CONSOLE_UI_CSS = r"""
     .ui-btn.is-quiet { background: transparent; color: var(--info); padding-inline: 6px; min-height: 30px; }
     .ui-btn:disabled { opacity: .5; }
     .ui-btn.is-danger { background: var(--error); color: #fff; }
-    /* The two-step cancel (mission KK): Keep first, in the Cancel button's own spot. */
+    /* The two-step cancel: Keep first, in the Cancel button's own spot. */
     .ui-dl-confirm { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
     .ui-dl-confirm__q { font-size: var(--font-size-sm); color: var(--text-secondary); }
     a.ui-btn { display: inline-flex; align-items: center; text-decoration: none; }
@@ -123,7 +122,7 @@ CONSOLE_UI_CSS = r"""
     .ui-log { margin: 8px 0 0; max-height: 240px; overflow-y: auto; overflow-x: hidden; white-space: pre-wrap; overflow-wrap: anywhere; font: var(--font-size-xs)/1.5 var(--font-mono); color: var(--text-secondary); background: var(--ui-surface-3); border: 1px solid var(--ui-border-1); border-radius: var(--radius-md); padding: 10px 12px; }
     .ui-cmd { display: flex; align-items: center; gap: 8px; min-width: 0; }
     .ui-cmd code { min-width: 0; }
-    /* ---- App cards (mission GG): icon + name + pill / one line / ONE action
+    /* ---- App cards: icon + name + pill / one line / ONE action
        row at the same level across the grid. `.is-aligned` makes every card
        five subgrid rows (head, blurb, body, actions, tech) so each row's
        tracks are shared: the action rows line up even when one card has a
@@ -307,7 +306,7 @@ CONSOLE_UI_CSS = r"""
     .ui-addr__copy { min-width: 72px; }
     .ui-warn-list { margin: 8px 0 0; padding-left: 20px; display: grid; gap: 6px; color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.5; }
     .ui-net-confirm { border-color: var(--warning-border, var(--ui-border-2)); background: var(--warning-subtle, var(--ui-surface-1)); }
-    /* ---- Network: Advanced reverse proxy (mission Z) ---- */
+    /* ---- Network: Advanced reverse proxy ---- */
     details.ui-net-proxy { border: 1px solid var(--ui-border-1); border-radius: var(--radius-lg); background: var(--bg-card, var(--bg-secondary)); padding: 0; min-width: 0; }
     details.ui-net-proxy > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; width: 100%; padding: 14px 16px; font-size: var(--font-size-md); color: var(--text-primary); }
     details.ui-net-proxy > summary .ui-net-proxy__title { font-weight: 650; }
@@ -345,7 +344,7 @@ CONSOLE_UI_CSS = r"""
     .ui-net-proxy__saved.tone-warn b { color: var(--warning); }
     .ui-net-proxy__saved.tone-err b { color: var(--error); }
     .ui-net-proxy .ui-alert { font-size: var(--font-size-sm); }
-    /* ---- Apps settings (apps.* runtime-config keys, mission Z) ---- */
+    /* ---- Apps settings (apps.* runtime-config keys) ---- */
     .ui-agent-defaults { display: grid; gap: 10px; min-width: 0; }
     .ui-agent-defaults select { width: 100%; min-width: 0; margin: 0; }
     .ui-apps-settings__rows { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 14px 18px; min-width: 0; }
@@ -423,7 +422,7 @@ CONSOLE_UI_CSS = r"""
 """
 
 CONSOLE_UI_JS = r"""
-    // ================= Console UI layer (mission L) =================
+    // ================= Console UI layer =================
     // Layout behavior for console_ui.CONSOLE_UI_CSS: the Advanced switch,
     // responsive tables, ellipsis+copy, progress markup, the engines cards,
     // the kit islands (top bar + appearance). Same scope as the console.
@@ -440,7 +439,7 @@ CONSOLE_UI_JS = r"""
         if (box) box.checked = next;
       }
       // The Apps cards and the Done step's terminal note RENDER their
-      // technical parts only when the switch is on (mission GG): re-render.
+      // technical parts only when the switch is on: re-render.
       try { appRender(); consoleTuiRender(); } catch { /* not initialised yet */ }
     }
     function uiInitAdvanced() {
@@ -472,7 +471,7 @@ CONSOLE_UI_JS = r"""
     function uiPill(label, tone, title) {
       return `<span class="ui-pill tone-${esc(tone || "muted")}"${title ? ` title="${esc(title)}"` : ""}>${esc(label)}</span>`;
     }
-    // ---- <details> that SURVIVE a re-render (mission KK) ----
+    // ---- <details> that SURVIVE a re-render ----
     // A running download re-renders its card every <= 0.5 s. A plain
     // <details> closed itself on each paint, so "Files (8 of 9 done)" snapped
     // shut under the pointer and the "Cancel download" button right below it
@@ -577,8 +576,8 @@ CONSOLE_UI_JS = r"""
       }
     }
 
-    // ---- Downloads: one live feed (mission L2) ----
-    // N's contract (docs/model-downloads.md): GET /models/downloads/stream is
+    // ---- Downloads: one live feed ----
+    // The downloads contract (docs/model-downloads.md): GET /models/downloads/stream is
     // SSE (`event: downloads`, data {jobs:[...]}, on every change, <= 0.5 s),
     // the same dicts as the polling routes; parents (`kind:
     // download_group`, `grp_...`) are listed with their `children`, and each
@@ -743,7 +742,7 @@ CONSOLE_UI_JS = r"""
         dlFeed.polling.delete(jobId);
       }
     }
-    // CANCEL IS TWO STEPS (mission KK). A download card re-renders every
+    // CANCEL IS TWO STEPS. A download card re-renders every
     // <= 0.5 s and its "Cancel download" button sits where "Download" was
     // and right under the file list, so one stray or repeated click stopped
     // a download its owner never meant to stop. The first click only ASKS
@@ -1387,7 +1386,7 @@ CONSOLE_UI_JS = r"""
     // (one-time signed-in link), jobs on /apps/jobs/{id} (state queued|
     // running|succeeded|failed|cancelled, percent, indeterminate,
     // bytes_done/_total, message, steps, parts, error{reason,message,hint},
-    // details, log_tail). A row of kind "desktop" (the Assistant, mission LL)
+    // details, log_tail). A row of kind "desktop" (the Assistant)
     // has no address: `desktop` {location, launch_command, install_command,
     // launch_available, launch_blocked_reason}; Open = POST /apps/{id}/launch.
     const APP_COPY = {
@@ -1400,7 +1399,7 @@ CONSOLE_UI_JS = r"""
       assistant: { mark: "As", blurb: "A menu-bar assistant: chat or talk hands-free." },
     };
     // An app that holds nothing yet on this gateway opens where its first
-    // thing is made (mission JJ). Keyed by app id; `when` reads the row's
+    // thing is made. Keyed by app id; `when` reads the row's
     // content_summary (apps_manager.content_summary): a count of exactly 0,
     // never an unknown (null) one. `path` rides POST /open {path} and the
     // handover lands the browser there, signed in.
@@ -1425,7 +1424,7 @@ CONSOLE_UI_JS = r"""
       return `<div class="ui-alert tone-${esc(n.tone || "info")}"${n.tone === "err" ? ' role="alert"' : ' role="status"'}><strong>${esc(n.text)}</strong>${n.hint ? `<span>${esc(n.hint)}</span>` : ""}${n.cmd ? appCmdLine(n.cmd) : ""}</div>`
         + (n.details ? `<details class="ui-details"><summary>Show details</summary><pre class="ui-log">${esc(n.details)}</pre></details>` : "");
     }
-    // ---- Terminal versions (mission Y): interfaces[] on each app row ----
+    // ---- Terminal versions: interfaces[] on each app row ----
     // {kind: "web"|"tui", installed, version, install_available,
     // install_method: npm|release_binary|cargo, install_blocked_reason,
     // launch_available, launch_blocked_reason, launch_mode: terminal|copy,
@@ -1440,9 +1439,8 @@ CONSOLE_UI_JS = r"""
       return `<div class="ui-cmdline"><code class="ui-ellip" title="${esc(cmd)}">${esc(cmd)}</code>`
         + `<button type="button" class="ui-btn is-quiet" data-app-action="tui-copy" data-cmd="${esc(cmd)}" aria-label="${esc(label || `Copy: ${cmd}`)}">Copy</button></div>`;
     }
-    // Mission GG (operator, 2026-09-24: "it's so complicated"): a card is
-    // icon + name + pill / one line / ONE action row, pinned at the same
-    // level across the grid (`.ui-card-grid.is-aligned`: five subgrid rows).
+    // A card is icon + name + pill / one line / ONE action row, pinned at
+    // the same level across the grid (`.ui-card-grid.is-aligned`: five subgrid rows).
     // The action row holds the primary action for the state and, right next
     // to it, the terminal action. Stop, Show log, Update, versions, commands,
     // the address and the log panel exist only with "Technical details" ON
@@ -1648,7 +1646,7 @@ CONSOLE_UI_JS = r"""
       return Object.assign({}, j, { state, percent: j.indeterminate ? null : j.percent, bytes_total: j.bytes_total || null, bytes_done: j.bytes_total ? j.bytes_done : null });
     }
     function appRowById(id) { return ((appStore.data && appStore.data.apps) || []).find((a) => a && a.id === id) || null; }
-    // One Install, two child rows (mission LL): the job's `parts`, e.g. "Code
+    // One Install, two child rows: the job's `parts`, e.g. "Code
     // in the browser · Installed" / "Code in the terminal · Installing...".
     const APP_PART_WORDS = { waiting: "Waiting", running: "Installing...", done: "Installed", failed: "Did not install", cancelled: "Cancelled", skipped: "Not started" };
     function appPartsMarkup(job) {
@@ -1700,7 +1698,7 @@ CONSOLE_UI_JS = r"""
       if (appJobActive(job)) {
         primary = admin ? b("cancel", "Cancel", "is-ghost", `Stop installing ${name}`) : "";
       } else if (!app.installed) {
-        // Mission LL (operator, 2026-09-24): ONE button, "Install". It
+        // ONE button, "Install". It
         // installs the browser app and, when the app has one for this
         // computer, its terminal app too; it starts nothing.
         const withTui = Array.isArray(app.install_parts) && app.install_parts.includes("tui");
@@ -2040,7 +2038,7 @@ CONSOLE_UI_JS = r"""
     }
     function unmountAppCards(key) { appStore.views.delete(key); }
 
-    // ---- Network: who can reach this gateway (mission L2) ----
+    // ---- Network: who can reach this gateway ----
     // Contract gateway_network_v1 (network_exposure.py, routes/network.py):
     // GET /network -> {schema, writable, configured{mode,label,port,...},
     // effective{mode,label,bind_host,port,overridden_by_cli,...},
@@ -2060,7 +2058,7 @@ CONSOLE_UI_JS = r"""
     };
     const NET_KIND_LABEL = { loopback: "This computer", lan: "Local network", hostname: "Network name", public: "Public address" };
     const netStore = { data: null, error: "", loading: false, views: new Map(), busy: "", confirm: null, refused: null, notice: null, restarting: false, publicLoading: false,
-      // Advanced: reverse proxy (mission Z): the origin being typed, its
+      // Advanced: reverse proxy: the origin being typed, its
       // validation message, which field is saving, the last save's result
       // line, and the disclosure's open state once the user toggled it.
       proxy: { draft: "", error: "", saving: "", saved: null, open: null } };
@@ -2161,7 +2159,7 @@ CONSOLE_UI_JS = r"""
       out += netProxyMarkup(d);
       return out;
     }
-    // ---- Advanced: reverse proxy (mission Z) ----
+    // ---- Advanced: reverse proxy ----
     // gateway_network_v1 `reverse_proxy`: {allowed_origins: {value[],
     // source: setting|env|default, overridden_by_env, env_name?, env_value?,
     // effective[], builtin[], self_origins[], applies: "live", warnings[],
@@ -2171,7 +2169,7 @@ CONSOLE_UI_JS = r"""
     // {applies: live|restart|overridden_by_env}}} | 400 {errors[{value, error}]}.
     // Validation lives in ONE place, the gateway (network_exposure.
     // normalize_origin): the console, the TUI and the CLI show its words
-    // verbatim (operator: identical semantics and messages on every door).
+    // verbatim (identical semantics and messages on every door).
     function netProxySourceText(f) {
       if (!f) return "";
       if (f.overridden_by_env) return uiPill("Set by the environment", "warn", `This gateway was started with ${f.env_name || "an environment value"}: it decides until the gateway starts without it.`);
@@ -2441,7 +2439,7 @@ CONSOLE_UI_JS = r"""
     }
     function unmountNetworkPanel(key) { netStore.views.delete(key); }
 
-    // ---- Apps settings (mission Z): the apps.* runtime-config keys ----
+    // ---- Apps settings: the apps.* runtime-config keys ----
     // GET /api/gateway/admin/runtime-config -> apps{name: {key, label, help,
     // placeholder, default, env_name, value, source: stored|env|default,
     // note?, env_shadowed?, invalid_stored?, invalid_env?}} (registry

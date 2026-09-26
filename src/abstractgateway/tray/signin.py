@@ -1,4 +1,4 @@
-"""Signed-in console links for the tray ("Open Console", 2026-09-24).
+"""Signed-in console links for the tray ("Open Console").
 
 The console's browser session lasts 8 hours; after that a plain
 `/console` URL lands on a token prompt a non-technical user cannot answer.
