@@ -97,6 +97,10 @@ identity module of the next AbstractCore release.
   (`workspace_builtin_deny_prefixes`, with the run's own folder as the one
   exception, `workspace_builtin_allow`) that the runtime enforces without
   writing them into the model's prompt. Scheduled runs get them too.
+- Agents started by the Telegram, email and agora bridges, by entity
+  summons and by schedules can no longer reach files outside their
+  conversation's folder (the gateway's data folder and credential folders
+  stay off limits), exactly like agents started from an app.
 - Every run start goes through the same workspace rules: `POST
   /runs/schedule` and entity summons now refuse a `workspace_root` that
   `POST /runs/start` refuses (the data folder, folders outside the allowed

@@ -4078,15 +4078,6 @@ def _apply_run_stream_switch(input_data: Dict[str, Any], *, interactive: bool) -
         _ensure_input_runtime_namespace(input_data)["stream"] = True
 
 
-def _apply_builtin_tool_deny(input_data: Dict[str, Any], *, principal: Optional["GatewayPrincipal"]) -> None:
-    """The host's built-in tool deny rule (run_workspace_guard.py), applied
-    at the route so the start response already reflects it; the host applies
-    it again to every run it starts (idempotent)."""
-    from ..run_workspace_guard import apply_builtin_tool_deny
-
-    apply_builtin_tool_deny(input_data, root_data_dir=gateway_data_dir_from_env())
-
-
 def _sanitize_run_workspace_policy(
     input_data: Dict[str, Any],
     *,
@@ -8089,7 +8080,8 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
                 "kind": "session" if gateway_workspace_is_session_scoped else "run",
                 "path": str(ws_dir),
             }
-        _apply_builtin_tool_deny(input_data, principal=principal)
+        # The built-in tool deny rule is applied by the host to every run it
+        # starts (run_workspace_guard.py via host.start_run), not here.
 
         # Ensure the session attachment store exists early so clients can list/preview
         # session-scoped artifacts even before any attachments are ingested.
