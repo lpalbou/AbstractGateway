@@ -131,7 +131,7 @@ cargo run < /dev/null   # headless: prints a skip line, exits 0
 Keys: `Tab` focus · `Enter` activate · `Ctrl+N` next step / `Ctrl+P`
 back (always work — `]`/`[` are alternates that text fields swallow) ·
 `Esc` back / close modal · `1-9`, `0` screens (browse; the screen bar is
-also clickable in browse) · `r` refresh · `Ctrl+L` repaint · `q`
+also clickable in browse) · `r` refresh · `F1` / `?` About · `Ctrl+L` repaint · `q`
 (browse) / `Ctrl+C` quit. Per-screen actions sit in the footer, and a
 refused action always SAYS why (toast + footer) instead of doing
 nothing.

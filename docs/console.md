@@ -35,7 +35,7 @@ The sidebar lists these tabs:
 |---|---|
 | **Users & Entities** | user records, token rotation, retained runtime reservations, and the summoned-entity roster ([entities.md](./entities.md)) |
 | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches |
-| **Workflows** | the default agent workflow for each agent interface (what "Gateway default" runs in the apps), every registered workflow with versions and entrypoints (*Make agent default* on an entrypoint), import, export, delete, and versions that are not served (with the reason) |
+| **Workflows** | the default agent workflow for each agent interface (what "Gateway default" runs in the apps), the **Stream replies by default** switch, every registered workflow with versions and entrypoints (*Make agent default* on an entrypoint), import, export, delete, and versions that are not served (with the reason) |
 | **Providers** | provider connections (OpenAI, Anthropic, OpenRouter, Portkey, LM Studio, Ollama, custom OpenAI-compatible endpoints) with write-only keys |
 | **Multimodal** | capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
 | **Sandbox** | quick chat and media generation against the configured defaults |
@@ -48,20 +48,58 @@ The sidebar lists these tabs:
 The **Technical details** switch at the bottom of the sidebar shows commands,
 route ids and other technical information throughout the console. The top bar
 holds the docs assistant (answers grounded on this gateway's documentation),
-the appearance settings, the **Setup** button that reopens the first-run guide
-(admins), and the sign-out control.
+the appearance settings, **About**, the **Setup** button that reopens the
+first-run guide (admins), and the sign-out control.
+
+**About** (the *i* button) shows AbstractGateway and the version this gateway
+runs, that it is part of AbstractFramework, the author, the copyright and
+licence, the website, source, documentation, issue and feedback links, the
+contact address, then the versions the gateway reports on `GET
+/api/gateway/about`: AbstractGateway, AbstractFramework (or "not installed on
+the gateway host") and every installed AbstractFramework package. If the
+gateway cannot report them, one line says "Gateway: unavailable (reason)".
+
+### Stream replies by default
+
+Under the default agent workflows on the Workflows tab, **Stream replies by
+default** turns `agents.streaming_default` on or off. When it is on, an
+interactive run whose app does not choose shows the model's reply as it is
+written. Scheduled runs, bridges and the entity loop never stream. The switch
+saves as soon as you change it (admins); the pill says whether the value is
+saved or the default. A gateway that does not have this setting says "Not
+available on this gateway". The same setting is in the terminal console
+(Runtimes → *Runtime knobs* → *Edit stream replies*) and in
+`abstractgateway config set agents.streaming_default true|false`.
 
 ### Memory figures on Resources
 
 The accelerator meter shows the larger of two figures and names it: the
-memory **this gateway process** holds for MLX (live buffers plus MLX's cache,
-"this process only"), or the system-wide figure ("all processes"), which on
-macOS does not see MLX memory. When no model is listed as resident but the
-process still holds memory, the resident-models table says "Gateway still
-holds N GB of accelerator memory (no model listed)" with what holds it, and
-the two ways out: eject the held model, or restart the gateway. A model the
-gateway's own pool released but another part of the process still holds is
-marked **resident via other holders**; ejecting it frees every holder.
+memory **this gateway process** holds ("this process only"), or the
+system-wide figure ("all processes"), which on macOS does not see MLX memory.
+The process figure covers every model library in the gateway (MLX, llama.cpp
+GGUF engines, transformers and embeddings), and the meter's tooltip says how
+it was measured:
+
+| Measured by | Meaning |
+|---|---|
+| metal device counter | the Mac's GPU counter for this process (MLX, torch and llama.cpp memory are all inside it) |
+| cuda device counter | what PyTorch has reserved on the NVIDIA GPUs, plus the llama.cpp estimate when a GGUF model is loaded |
+| sum of MLX + llama.cpp | MLX's live and cached buffers plus the llama.cpp estimate (weights plus the KV cache estimate), when no device counter is available |
+
+When no model is listed as resident but the process still holds memory, the
+resident-models table says "Gateway still holds N GB of accelerator memory (no
+model listed)", then how it was measured, what holds it (for example `[mlx]
+qwen/27b × 2 holders`, or "not attributed to any model" when no model library
+reports it), and the two ways out: eject the held model, or restart the
+gateway. A model the gateway's own pool released but another part of the
+process still holds is marked **resident via other holders**; ejecting it
+frees every holder.
+
+Above the table, the gateway also lists the ejects it still owes or that
+failed after you switched the default model: "Will eject X when the in-flight
+call ends" (the old model is still answering a call), "X: eject failed:
+reason", "X kept in memory: reason" (something else still uses it) and "X
+ejected".
 
 ### Models and Engines tabs
 
@@ -205,6 +243,14 @@ another computer, the plain view shows no terminal button (the commands are
 under Technical details, as is "Install terminal app" for a browser app that
 is installed without it).
 
+Below the cards, the **Skills shelf** block shows the folder the gateway
+reads skills from, where that folder comes from (saved setting, the gateway's
+own copy, the environment, or a framework checkout), the version of the
+curated shelf shipped with this gateway, and how many skills the shelf holds.
+Admins can type another folder and **Save skills shelf**, or **Refresh the
+curated shelf** (new and updated curated skills are copied in; your own edits
+are kept). See [configuration.md](./configuration.md#skills-shelf).
+
 The last card is the **Assistant**, the desktop app: **Install** when it is
 not on the gateway's computer, then **Open** (it starts in the menu bar of the
 gateway's computer, or comes to the front when it already runs). From another
@@ -260,8 +306,20 @@ selector and a Test verb per route), Users & Entities, Runtimes (runs with
 cancel and steer, data homes), Workflows, Review & Test (the session's change
 journal), Resources, Models and Engines. Every write is verified with a
 follow-up read and recorded in the journal. Keys: `Tab` focus, `Enter`
-activate, `1`-`9` and `0` screens, `r` refresh, `q` quit; each screen lists its
-actions in the footer.
+activate, `1`-`9` and `0` screens, `r` refresh, `F1` or `?` About, `q` quit;
+each screen lists its actions in the footer.
+
+**About** (`F1`, or `?` outside a text field) shows this console and its
+version, that it is part of AbstractFramework, the author, the copyright and
+licence, the links and the contact address, then the connected gateway's
+versions from `GET /api/gateway/about` (or one "Gateway: unavailable (reason)"
+line). `abstractgateway-console --about --url <gateway>` prints the same
+text without opening the interface.
+
+The Runtimes screen's *Runtime knobs* show **stream replies** (on or off, and
+whether it is saved or the default); *Edit stream replies* changes it
+(admins). A gateway without the setting shows "not available on this
+gateway".
 
 ### Models and Engines in the terminal console
 

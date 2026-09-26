@@ -170,10 +170,20 @@ carry no capability metadata. Capabilities appear where they are known: the
 routes you configured, under **Your defaults**.
 
 When no model is listed but the gateway process still holds more than 256 MB
-of accelerator memory (MLX live buffers plus MLX's cache), the header adds
-`gateway holds N GB` and the menu, the status line and the Activity window say
-"Gateway still holds N GB (no model listed)" instead of "No models loaded":
-eject the held model in the Console, or restart the gateway to free it.
+of accelerator memory (every model library in the gateway: MLX, llama.cpp,
+transformers, embeddings), the header adds `gateway holds N GB` and the menu,
+the status line and the Activity window say "Gateway still holds N GB (no
+model listed)" instead of "No models loaded", followed by how the figure was
+measured ("Measured by metal device counter", "cuda device counter" or "sum of
+MLX + llama.cpp") and what holds it ("Held by [mlx] qwen/27b × 2 holders", or
+"Not attributed to any model"): eject the held model in the Console, or
+restart the gateway to free it. With models loaded, the menu still says how
+the gateway's memory is measured.
+
+After a default-model switch, the Models menu and the Activity window also
+list the ejects the gateway still owes or that failed: "Will eject X when the
+in-flight call ends", "X: eject failed: reason", "X kept in memory: reason",
+"X ejected".
 
 The model lists refresh every 5 minutes and after each load or eject; the
 Activity window and the console's Models tab show the same data live.

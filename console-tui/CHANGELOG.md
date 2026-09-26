@@ -1,5 +1,29 @@
 # Changelog — abstractgateway-console
 
+## Unreleased
+
+Needs the AbstractGateway release that carries `agents.streaming_default`
+for the stream-replies knob; against an older gateway the knob row says "not
+available on this gateway" and everything else works as before.
+
+- **About.** `F1` (or `?` outside a text field) opens About: "AbstractGateway
+  console <version>", "Part of AbstractFramework — https://abstractframework.ai",
+  the author, the copyright and licence line, website, source, documentation,
+  report an issue, give feedback and contact, then the connected gateway's
+  versions from `GET /api/gateway/about` (AbstractGateway, AbstractFramework
+  or "not installed on the gateway host", every package). A gateway that
+  cannot answer, or no connection, is one "Gateway: unavailable (reason)"
+  line. The Connection screen names the key. `--about` prints the same text
+  and exits (no terminal or token needed; `--url` picks the gateway).
+- The identity comes from a byte-identical copy of the AbstractFramework
+  descriptor (`assets/abstractframework_identity.json`, checked by the
+  framework's `scripts/check_identity_sync.py`); `homepage` and
+  `documentation` in Cargo.toml follow it.
+- **Stream replies knob.** Runtimes → *Runtime knobs* shows `stream replies:
+  on|off (stored|default)` for `agents.streaming_default`; *Edit stream
+  replies* (admins) saves the checkbox through `POST
+  /api/gateway/admin/runtime-config {"agents": {"streaming_default": …}}`.
+
 ## 0.8.0 (2026-09-24) — Network exposure, reverse proxy and apps settings
 
 Needs AbstractGateway 0.4.1 for the Network panel and the apps settings

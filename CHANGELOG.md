@@ -41,6 +41,25 @@ rows use the identity module of the next AbstractCore release.
 - `GET /about` (no sign-in): the framework and package versions this
   gateway runs. The tray's About shows them with the project details.
 - `abstractgateway serve --no-tray`: no menu bar / tray icon for this run.
+- **About in the console.** The console's top bar has an About button: the
+  gateway's name and version, AbstractFramework, the author, copyright and
+  licence, the project links and contact, and the versions from `GET /about`.
+  The terminal console has the same About (`F1` or `?`, and
+  `abstractgateway-console --about`).
+- **Stream replies by default** in the console (Workflows tab, under the
+  default agent workflows) and in the terminal console (Runtimes → Runtime
+  knobs): the `agents.streaming_default` switch. A gateway without the
+  setting says so.
+- **What holds the memory.** The console's Resources tab, the tray menu and
+  the Activity window count the memory of every model library in the gateway
+  (MLX, llama.cpp, transformers, embeddings), say how the figure was measured
+  (Metal or CUDA device counter, or the sum of MLX and llama.cpp), name the
+  models that hold memory when none is listed as loaded (or say none is
+  attributed), and list the ejects a default-model switch still owes or that
+  failed ("Will eject X when the in-flight call ends", "X: eject failed:
+  reason"). `GET /host/state` carries them as `residency_diagnostics`.
+- The console's Skills shelf block also shows the curated shelf version
+  shipped with the gateway and how many skills the shelf holds.
 
 ### Changed
 
