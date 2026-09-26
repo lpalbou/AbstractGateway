@@ -1003,6 +1003,32 @@ Writes are admin-only and audit-logged like every other setting. A write that
 names a setting the gateway does not know is refused as a whole (400) and
 saves nothing; two writers at the same time never lose each other's change.
 
+### Stream replies by default
+
+`agents.streaming_default` (`on`/`off`, default `off`) decides whether an
+interactive run streams the model's reply live when the app that started it
+does not say (`input_data._runtime.stream` absent; see
+[API: live replies](docs/api.md#4b-live-replies-token-deltas-on-the-same-stream)).
+It applies to `POST /runs/start` only: scheduled runs, the Telegram and email
+bridges and the entity loop never stream by default. A flow node that turns
+streaming off for its LLM call always wins.
+
+`GET /api/gateway/admin/runtime-config` returns
+
+```json
+"agents": {"streaming_default": {"key": "agents.streaming_default", "value": false, "source": "default",
+                                 "default": false, "label": "Stream replies by default", "help": "…"}}
+```
+
+`source` is `stored` or `default`. Apps without admin rights read the
+effective default from `GET /api/gateway/discovery/capabilities`
+(`capabilities.streaming.default`).
+
+| | Web console | Console TUI | CLI / API |
+|---|---|---|---|
+| Read | Workflows → *Stream replies by default* | Runtimes → *Runtime knobs* | `abstractgateway config get agents.streaming_default` |
+| Change | the switch | the switch | `abstractgateway config set agents.streaming_default on`, `config unset agents.streaming_default`; `POST /api/gateway/admin/runtime-config {"agents": {"streaming_default": true}}` |
+
 ### Skills shelf
 
 `skills.shelf` is the folder the gateway reads skills from (it holds
@@ -1324,11 +1350,19 @@ for anyone:
 `~/.abstractassistant`, `~/.abstractcontinuum`, `~/.abstractcore`, and the
 gateway's data folder (except a run's own conversation folder inside it).
 
-The same folders are added to every run's tool deny list
-(`workspace_ignored_paths`), so an agent's file tools cannot read them either.
-For runs this is a default an admin may turn off: `abstractgateway config set
-workspace_builtin_deny off` (or `POST /api/gateway/admin/runtime-config
-{"workspace_builtin_deny": false}`); the workspace browser keeps hiding them.
+The same folders are denied to every run's file tools: the gateway gives each
+run (and the runs it starts, scheduled runs included) the folders as
+`workspace_builtin_deny_prefixes`, plus one exception,
+`workspace_builtin_allow`, for the run's own conversation folder inside the
+data folder. Everything under a denied folder is refused; nothing inside the
+data folder is listed one by one, and these entries are enforced without being
+written into the model's prompt (so the prompt stays the same from turn to
+turn however much the data folder holds). A client cannot send these two
+entries (they are dropped); the operator's own `workspace_ignored_paths` are
+kept as sent. For runs this is a default an admin may turn off:
+`abstractgateway config set workspace_builtin_deny off` (or `POST
+/api/gateway/admin/runtime-config {"workspace_builtin_deny": false}`); the
+workspace browser keeps hiding them.
 `GET /api/gateway/admin/runtime-config` reports the list as `builtin_deny
 {value: [paths], enabled, source}`. The file tools honour the deny list; shell
 commands a run is allowed to execute are not confined by it.
@@ -3106,7 +3140,80 @@ SSE is an optimization; clients should always be able to reconnect by replaying 
 curl -N -H "$AUTH" "$BASE_URL/api/gateway/runs/<run_id>/ledger/stream?after=0"
 ```
 
+Each ledger record arrives as `event: step` with an `id:` line (the records
+consumed so far); a reconnect sends `Last-Event-ID` (or `?after=`) and
+resumes there. `event: done` closes the stream once the run is finished and
+everything was sent.
+
 Evidence: `src/abstractgateway/routes/gateway.py` (`stream_ledger`).
+
+### 4b) Live replies: token deltas on the same stream
+
+A run started with `input_data._runtime.stream: true` also sends the model's
+reply while it is being written, on the same SSE stream:
+
+```text
+event: llm.delta
+data: {"kind":"llm.delta","run_id":"…","root_run_id":"…","parent_run_id":null,"node_id":"llm","call_id":"<step id>","seq":3,"text":" a natural","channel":"content","snapshot":false}
+
+event: llm.delta_end
+data: {"kind":"llm.delta_end","run_id":"…","root_run_id":"…","parent_run_id":null,"node_id":"llm","call_id":"<step id>","seq":24,"reason":"completed","snapshot":false}
+```
+
+- `call_id` is the step id of the LLM call; the durable `llm_call` record with
+  the same `step_id` carries the final answer and replaces the live text.
+- `channel` is `content` (the answer) or `reasoning` (thinking text, already
+  separated on the server; clients do not parse `<think>` themselves).
+- `seq` counts the events of one call (deltas and end).
+- Delta frames have NO `id:` line: they are not ledger records, and
+  `Last-Event-ID` never moves because of them.
+- **Snapshots.** When a client connects (or reconnects) while a call is still
+  being written, it first receives one frame per open call and channel with
+  `snapshot: true` and the text so far, then the live frames. A client drops
+  its live bubbles on every (re)connect and applies the snapshots.
+- **Order.** A call's `llm.delta_end` is sent after its durable record; the
+  last short batch of text can arrive just after the record, so a client
+  ignores deltas of a call whose record it already holds. `done` comes after
+  every live frame.
+- **Sub-runs.** A stream of a run also carries the deltas of every run below
+  it (a coding agent's delegated calls); a stream of a child run carries that
+  child's subtree only. `run_id` names the run that wrote the text,
+  `root_run_id` its root.
+- **Endings.** `reason` is `completed`, `failed`, `cancelled` or
+  `unavailable`. `unavailable` comes with a `detail` saying why that call did
+  not stream (`structured_output`, `remote_core`, `provider_cannot_stream`,
+  `usage_unavailable`, `prompt_cache_unavailable`, `node_stream_off`,
+  `sink_error`); the answer is complete either way. When a run ends (stopped,
+  failed) while a call is still open, the gateway closes that call with
+  `reason: "cancelled"` or `"failed"` and `synthetic: true`.
+- Nothing is capped: a call's text is kept whole until it ends, and a slow
+  client catches up from it.
+- Another user's run answers 404, and no delta of it ever reaches anyone
+  else.
+
+The switch is `input_data._runtime.stream` (`true` or `false`; anything else
+is refused with 400). When a `POST /runs/start` request does not say, the
+gateway setting `agents.streaming_default` decides (off unless saved); it is
+never applied to `POST /runs/schedule`, the bridges or the entity loop. A
+flow node whose LLM call sets `stream: false` is never streamed (its end says
+`detail: "node_stream_off"`). `GET /api/gateway/discovery/capabilities`
+advertises the feature to every client:
+
+```json
+"streaming": {"deltas": true, "default": false, "run_field": "_runtime.stream",
+              "events": ["llm.delta", "llm.delta_end"], "subtree": true,
+              "endpoint": "/api/gateway/runs/{run_id}/ledger/stream",
+              "end_reasons": ["completed", "failed", "cancelled", "unavailable"]}
+```
+
+With `serve --no-runner` plus `abstractgateway runner`, the runner writes a
+run's deltas to `<data dir>/live/<root run id>.deltas.jsonl` (readable by the
+gateway's user only) and the API process reads them from there; the file is
+deleted when the run ends, and files of finished runs are removed at start.
+
+Evidence: `src/abstractgateway/live_deltas.py`, `src/abstractgateway/routes/gateway.py`
+(`stream_ledger`, `_apply_run_stream_switch`, `discovery_capabilities`),
+`src/abstractgateway/hosts/bundle_host.py` (`install_live_delta_sink`).
 
 ## A run's workspace folder (browse and preview)
 
@@ -6010,6 +6117,22 @@ rows use the identity module of the next AbstractCore release.
   reason"). `GET /host/state` carries them as `residency_diagnostics`.
 - The console's Skills shelf block also shows the curated shelf version
   shipped with the gateway and how many skills the shelf holds.
+- **Live replies.** A run started with `input_data._runtime.stream: true`
+  sends the model's reply as it is written, as `event: llm.delta` and
+  `event: llm.delta_end` frames on the run's existing ledger stream (no
+  `id:` line, so reconnects resume the ledger exactly as before). A client
+  that connects mid-reply first gets the text so far (`snapshot: true`); a
+  run's stream also carries its sub-runs' replies; a call that could not
+  stream says why (`reason: "unavailable"` with a `detail`); a run stopped
+  mid-reply closes its open call (`synthetic: true`). No size cap. Works
+  with `serve --no-runner` + `abstractgateway runner` too (through a
+  private file per run in `<data dir>/live`, deleted when the run ends).
+  `GET /discovery/capabilities` advertises it as `streaming`.
+- `agents.streaming_default` (default off): streams interactive
+  `POST /runs/start` runs that do not say; never scheduled runs, bridges or
+  the entity loop. `abstractgateway config get|set|unset
+  agents.streaming_default`, `POST /admin/runtime-config {"agents":
+  {"streaming_default": true}}`.
 
 ### Changed
 
@@ -6024,7 +6147,12 @@ rows use the identity module of the next AbstractCore release.
   `~/.kube`, `~/Library/Keychains`, the `~/.abstract*` app folders) and the
   gateway's data folder are never shown by the workspace browser, and runs'
   file tools are denied them by default (an admin can turn that part off with
-  `workspace_builtin_deny`).
+  `workspace_builtin_deny`). The runs part is sent as whole-folder rules
+  (`workspace_builtin_deny_prefixes`, with the run's own folder as the one
+  exception, `workspace_builtin_allow`) that the runtime enforces without
+  writing them into the model's prompt. Scheduled runs get them too.
+- `input_data._runtime.stream` must be `true` or `false`: any other value is
+  refused with 400 (on `/runs/start` and `/runs/schedule`).
 - A request relayed by an app on this computer is recognised by the app's
   proxy marker, and a forwarded request from another machine is never
   treated as local; the stored reverse-proxy setting wins over the

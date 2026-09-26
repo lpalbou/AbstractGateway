@@ -388,7 +388,80 @@ SSE is an optimization; clients should always be able to reconnect by replaying 
 curl -N -H "$AUTH" "$BASE_URL/api/gateway/runs/<run_id>/ledger/stream?after=0"
 ```
 
+Each ledger record arrives as `event: step` with an `id:` line (the records
+consumed so far); a reconnect sends `Last-Event-ID` (or `?after=`) and
+resumes there. `event: done` closes the stream once the run is finished and
+everything was sent.
+
 Evidence: `src/abstractgateway/routes/gateway.py` (`stream_ledger`).
+
+### 4b) Live replies: token deltas on the same stream
+
+A run started with `input_data._runtime.stream: true` also sends the model's
+reply while it is being written, on the same SSE stream:
+
+```text
+event: llm.delta
+data: {"kind":"llm.delta","run_id":"…","root_run_id":"…","parent_run_id":null,"node_id":"llm","call_id":"<step id>","seq":3,"text":" a natural","channel":"content","snapshot":false}
+
+event: llm.delta_end
+data: {"kind":"llm.delta_end","run_id":"…","root_run_id":"…","parent_run_id":null,"node_id":"llm","call_id":"<step id>","seq":24,"reason":"completed","snapshot":false}
+```
+
+- `call_id` is the step id of the LLM call; the durable `llm_call` record with
+  the same `step_id` carries the final answer and replaces the live text.
+- `channel` is `content` (the answer) or `reasoning` (thinking text, already
+  separated on the server; clients do not parse `<think>` themselves).
+- `seq` counts the events of one call (deltas and end).
+- Delta frames have NO `id:` line: they are not ledger records, and
+  `Last-Event-ID` never moves because of them.
+- **Snapshots.** When a client connects (or reconnects) while a call is still
+  being written, it first receives one frame per open call and channel with
+  `snapshot: true` and the text so far, then the live frames. A client drops
+  its live bubbles on every (re)connect and applies the snapshots.
+- **Order.** A call's `llm.delta_end` is sent after its durable record; the
+  last short batch of text can arrive just after the record, so a client
+  ignores deltas of a call whose record it already holds. `done` comes after
+  every live frame.
+- **Sub-runs.** A stream of a run also carries the deltas of every run below
+  it (a coding agent's delegated calls); a stream of a child run carries that
+  child's subtree only. `run_id` names the run that wrote the text,
+  `root_run_id` its root.
+- **Endings.** `reason` is `completed`, `failed`, `cancelled` or
+  `unavailable`. `unavailable` comes with a `detail` saying why that call did
+  not stream (`structured_output`, `remote_core`, `provider_cannot_stream`,
+  `usage_unavailable`, `prompt_cache_unavailable`, `node_stream_off`,
+  `sink_error`); the answer is complete either way. When a run ends (stopped,
+  failed) while a call is still open, the gateway closes that call with
+  `reason: "cancelled"` or `"failed"` and `synthetic: true`.
+- Nothing is capped: a call's text is kept whole until it ends, and a slow
+  client catches up from it.
+- Another user's run answers 404, and no delta of it ever reaches anyone
+  else.
+
+The switch is `input_data._runtime.stream` (`true` or `false`; anything else
+is refused with 400). When a `POST /runs/start` request does not say, the
+gateway setting `agents.streaming_default` decides (off unless saved); it is
+never applied to `POST /runs/schedule`, the bridges or the entity loop. A
+flow node whose LLM call sets `stream: false` is never streamed (its end says
+`detail: "node_stream_off"`). `GET /api/gateway/discovery/capabilities`
+advertises the feature to every client:
+
+```json
+"streaming": {"deltas": true, "default": false, "run_field": "_runtime.stream",
+              "events": ["llm.delta", "llm.delta_end"], "subtree": true,
+              "endpoint": "/api/gateway/runs/{run_id}/ledger/stream",
+              "end_reasons": ["completed", "failed", "cancelled", "unavailable"]}
+```
+
+With `serve --no-runner` plus `abstractgateway runner`, the runner writes a
+run's deltas to `<data dir>/live/<root run id>.deltas.jsonl` (readable by the
+gateway's user only) and the API process reads them from there; the file is
+deleted when the run ends, and files of finished runs are removed at start.
+
+Evidence: `src/abstractgateway/live_deltas.py`, `src/abstractgateway/routes/gateway.py`
+(`stream_ledger`, `_apply_run_stream_switch`, `discovery_capabilities`),
+`src/abstractgateway/hosts/bundle_host.py` (`install_live_delta_sink`).
 
 ## A run's workspace folder (browse and preview)
 

@@ -60,6 +60,22 @@ rows use the identity module of the next AbstractCore release.
   reason"). `GET /host/state` carries them as `residency_diagnostics`.
 - The console's Skills shelf block also shows the curated shelf version
   shipped with the gateway and how many skills the shelf holds.
+- **Live replies.** A run started with `input_data._runtime.stream: true`
+  sends the model's reply as it is written, as `event: llm.delta` and
+  `event: llm.delta_end` frames on the run's existing ledger stream (no
+  `id:` line, so reconnects resume the ledger exactly as before). A client
+  that connects mid-reply first gets the text so far (`snapshot: true`); a
+  run's stream also carries its sub-runs' replies; a call that could not
+  stream says why (`reason: "unavailable"` with a `detail`); a run stopped
+  mid-reply closes its open call (`synthetic: true`). No size cap. Works
+  with `serve --no-runner` + `abstractgateway runner` too (through a
+  private file per run in `<data dir>/live`, deleted when the run ends).
+  `GET /discovery/capabilities` advertises it as `streaming`.
+- `agents.streaming_default` (default off): streams interactive
+  `POST /runs/start` runs that do not say; never scheduled runs, bridges or
+  the entity loop. `abstractgateway config get|set|unset
+  agents.streaming_default`, `POST /admin/runtime-config {"agents":
+  {"streaming_default": true}}`.
 
 ### Changed
 
@@ -74,7 +90,12 @@ rows use the identity module of the next AbstractCore release.
   `~/.kube`, `~/Library/Keychains`, the `~/.abstract*` app folders) and the
   gateway's data folder are never shown by the workspace browser, and runs'
   file tools are denied them by default (an admin can turn that part off with
-  `workspace_builtin_deny`).
+  `workspace_builtin_deny`). The runs part is sent as whole-folder rules
+  (`workspace_builtin_deny_prefixes`, with the run's own folder as the one
+  exception, `workspace_builtin_allow`) that the runtime enforces without
+  writing them into the model's prompt. Scheduled runs get them too.
+- `input_data._runtime.stream` must be `true` or `false`: any other value is
+  refused with 400 (on `/runs/start` and `/runs/schedule`).
 - A request relayed by an app on this computer is recognised by the app's
   proxy marker, and a forwarded request from another machine is never
   treated as local; the stored reverse-proxy setting wins over the

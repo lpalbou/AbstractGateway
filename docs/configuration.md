@@ -754,6 +754,32 @@ Writes are admin-only and audit-logged like every other setting. A write that
 names a setting the gateway does not know is refused as a whole (400) and
 saves nothing; two writers at the same time never lose each other's change.
 
+### Stream replies by default
+
+`agents.streaming_default` (`on`/`off`, default `off`) decides whether an
+interactive run streams the model's reply live when the app that started it
+does not say (`input_data._runtime.stream` absent; see
+[API: live replies](api.md#4b-live-replies-token-deltas-on-the-same-stream)).
+It applies to `POST /runs/start` only: scheduled runs, the Telegram and email
+bridges and the entity loop never stream by default. A flow node that turns
+streaming off for its LLM call always wins.
+
+`GET /api/gateway/admin/runtime-config` returns
+
+```json
+"agents": {"streaming_default": {"key": "agents.streaming_default", "value": false, "source": "default",
+                                 "default": false, "label": "Stream replies by default", "help": "…"}}
+```
+
+`source` is `stored` or `default`. Apps without admin rights read the
+effective default from `GET /api/gateway/discovery/capabilities`
+(`capabilities.streaming.default`).
+
+| | Web console | Console TUI | CLI / API |
+|---|---|---|---|
+| Read | Workflows → *Stream replies by default* | Runtimes → *Runtime knobs* | `abstractgateway config get agents.streaming_default` |
+| Change | the switch | the switch | `abstractgateway config set agents.streaming_default on`, `config unset agents.streaming_default`; `POST /api/gateway/admin/runtime-config {"agents": {"streaming_default": true}}` |
+
 ### Skills shelf
 
 `skills.shelf` is the folder the gateway reads skills from (it holds
@@ -1075,11 +1101,19 @@ for anyone:
 `~/.abstractassistant`, `~/.abstractcontinuum`, `~/.abstractcore`, and the
 gateway's data folder (except a run's own conversation folder inside it).
 
-The same folders are added to every run's tool deny list
-(`workspace_ignored_paths`), so an agent's file tools cannot read them either.
-For runs this is a default an admin may turn off: `abstractgateway config set
-workspace_builtin_deny off` (or `POST /api/gateway/admin/runtime-config
-{"workspace_builtin_deny": false}`); the workspace browser keeps hiding them.
+The same folders are denied to every run's file tools: the gateway gives each
+run (and the runs it starts, scheduled runs included) the folders as
+`workspace_builtin_deny_prefixes`, plus one exception,
+`workspace_builtin_allow`, for the run's own conversation folder inside the
+data folder. Everything under a denied folder is refused; nothing inside the
+data folder is listed one by one, and these entries are enforced without being
+written into the model's prompt (so the prompt stays the same from turn to
+turn however much the data folder holds). A client cannot send these two
+entries (they are dropped); the operator's own `workspace_ignored_paths` are
+kept as sent. For runs this is a default an admin may turn off:
+`abstractgateway config set workspace_builtin_deny off` (or `POST
+/api/gateway/admin/runtime-config {"workspace_builtin_deny": false}`); the
+workspace browser keeps hiding them.
 `GET /api/gateway/admin/runtime-config` reports the list as `builtin_deny
 {value: [paths], enabled, source}`. The file tools honour the deny list; shell
 commands a run is allowed to execute are not confined by it.
