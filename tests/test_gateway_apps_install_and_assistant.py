@@ -482,7 +482,11 @@ def test_routes_launch_open_and_install(client, monkeypatch: pytest.MonkeyPatch)
     c, m, state, spawned, where = client
     state["files"] = {BUNDLE}
     r = c.post("/api/gateway/apps/assistant/launch", json={})
-    assert r.status_code == 200 and r.json()["app"]["kind"] == "desktop" and spawned[-1]["argv"] == ["open", "-a", BUNDLE]
+    assert r.status_code == 200 and r.json()["app"]["kind"] == "desktop"
+    # Started signed in: the hand-over flags ride after --args (the code is in the file).
+    argv = spawned[-1]["argv"]
+    assert argv[:4] == ["open", "-a", BUNDLE, "--args"] and argv[4] == "--gateway-url" and argv[6] == "--gateway-handover-file"
+    assert r.json()["signed_in_by_gateway"] is True
     where["same"] = False
     n = len(spawned)
     r = c.post("/api/gateway/apps/assistant/launch", json={})

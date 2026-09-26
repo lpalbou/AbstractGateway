@@ -800,8 +800,16 @@ class GatewaySecurityMiddleware:
         return principal, session_id
 
     def _public_auth_path(self, path: str, method: str) -> bool:
-        if method == "POST" and path.rstrip("/") in {"/api/gateway/session/login", "/api/gateway/session/claim"}:
+        p = path.rstrip("/")
+        if method == "POST" and p in {"/api/gateway/session/login", "/api/gateway/session/claim"}:
             # /session/claim enforces its own loopback-peer rule in the route.
+            return True
+        if method == "POST" and p == "/api/gateway/apps/desktop-handover":
+            # The desktop Assistant has no credentials yet: the route itself
+            # answers direct loopback callers only, with a one-time code.
+            return True
+        if method in {"GET", "HEAD"} and p == "/api/gateway/about":
+            # Versions and project links only: no paths, no secrets.
             return True
         return False
 
@@ -1000,7 +1008,7 @@ class GatewaySecurityMiddleware:
             public_auth_path = self._public_auth_path(path, method)
             if is_write and self._policy.protect_write_endpoints and not public_auth_path:
                 auth_required = True
-            if is_read and self._policy.protect_read_endpoints:
+            if is_read and self._policy.protect_read_endpoints and not public_auth_path:
                 # Optional dev escape hatch (loopback-only).
                 if self._policy.dev_allow_unauthenticated_reads_on_loopback and _is_loopback_ip(ip):
                     auth_required = False

@@ -32,12 +32,16 @@ Launching (same machine only: it opens on the gateway computer's screen) is a
 detached process with the scrubbed environment every app gets (no token,
 secret or key): `open -a <bundle>` when the bundle exists (macOS brings a
 running one forward instead of starting a second), else the console script,
-else this Python running its entry point. Nothing about the gateway is passed:
-the Assistant has no one-time sign-in handover, it connects with its OWN saved
-Connection settings (its Settings window), and a `--gateway-url` or
-ABSTRACTGATEWAY_URL for a gateway other than its default would make it drop
-that saved sign-in for the session (abstractassistant controller.py
-`_load_connection_preferences`). A token is never put on a command line.
+else this Python running its entry point. A NEW Assistant started from the
+gateway (console or tray) is signed in by a one-time hand-over:
+`--gateway-url <url> --gateway-handover-file <file>` (after `--args` for
+`open -a`), the file being a 0600 JSON under <data dir>/handover/ holding
+{schema: "abstractgateway.desktop_handover.v1", code, base_url, expires_at}.
+The Assistant reads and deletes it, then trades the code on loopback at
+POST /api/gateway/apps/desktop-handover (single use, two minutes) for a
+remembered gateway session (`assistant_argv_with_handover`,
+apps_manager.mint_desktop_handover). A running Assistant receives no code.
+A token or code is never put on a command line nor in the environment.
 
 Installing = `uv pip install abstractassistant` (or `python -m pip install`)
 into the gateway's own Python, as an apps job, with every `abstract*` package
@@ -301,6 +305,18 @@ def detect_assistant(probes: Optional[DesktopProbes] = None, *, spec: DesktopApp
         "pid": pid,
         "running_argv": running_argv,
     }
+
+
+def assistant_argv_with_handover(argv: Sequence[str], *, gateway_url: str, handover_file: str) -> List[str]:
+    """The Assistant's launch argv plus the hand-over flags (CONTRACTS A-3):
+    `--gateway-url <url> --gateway-handover-file <path>`. For a macOS app
+    bundle (`open -a <bundle>`) they go after `--args`. The code itself is
+    never on the command line nor in the environment: it is in the file."""
+    out = [str(a) for a in argv]
+    flags = ["--gateway-url", str(gateway_url), "--gateway-handover-file", str(handover_file)]
+    if len(out) >= 3 and Path(out[0]).name == "open" and out[1] == "-a":
+        return out + ["--args", *flags]
+    return out + flags
 
 
 def launch_command_text(argv: Optional[Sequence[str]]) -> Optional[str]:

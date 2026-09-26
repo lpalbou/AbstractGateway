@@ -124,6 +124,9 @@ class TuiHandoverRequest(BaseModel):
 
 
 _PROXY_HEADERS = ("forwarded", "x-forwarded-for", "x-forwarded-host", "x-real-ip")
+# A desktop hand-over session is "remembered": the built-in remember lifetime
+# of a console sign-in (30 days). No environment variable is read for it.
+DESKTOP_SESSION_TTL_S = 30 * 24 * 60 * 60
 
 
 def _peer_is_loopback(request: Request) -> bool:
@@ -322,7 +325,10 @@ async def apps_launch(request: Request, app_id: str):
     m = get_apps_manager()
     if is_desktop_app(app_id):
         try:
-            return await asyncio.to_thread(m.launch_desktop, str(app_id).strip().lower(), same_machine=_same_machine(request))
+            return await asyncio.to_thread(
+                m.launch_desktop, str(app_id).strip().lower(), same_machine=_same_machine(request),
+                principal=_principal(request),
+            )
         except AppsError as exc:
             return _error(exc)
     try:
@@ -521,6 +527,77 @@ def apps_handover(request: Request, code: str, remember: str = "1"):
     resp.set_cookie(f"{prefix}_gateway_session", session_value, httponly=True, **common)
     resp.set_cookie(f"{prefix}_gateway_csrf", csrf_token, httponly=False, **common)
     return resp
+
+
+def _durable_session_principal(principal: Any) -> Any:
+    """A static-token operator principal whose token is not one of the
+    gateway's configured tokens (the tray's per-process loopback token) is
+    the same operator: its session is bound to the configured operator token,
+    so it stays valid after the tray or the gateway restarts. Other
+    principals are unchanged."""
+    if getattr(principal, "source", "") != "legacy-token":
+        return principal
+    from dataclasses import replace
+
+    from ..security.gateway_security import load_gateway_auth_policy_from_env
+    from ..security.sessions import legacy_token_fingerprints
+
+    fps = legacy_token_fingerprints(tuple(load_gateway_auth_policy_from_env().tokens or ()))
+    if not fps or str(getattr(principal, "token_fingerprint", "") or "") in fps:
+        return principal
+    return replace(principal, token_fingerprint=fps[0])
+
+
+class DesktopHandoverRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: str
+
+
+@router.post("/desktop-handover")
+def apps_desktop_handover(request: Request, payload: DesktopHandoverRequest):
+    """Trade the desktop Assistant's one-time code for a remembered gateway
+    session of the person who opened it (CONTRACTS A1 / A-3).
+
+    Public (the Assistant has no credentials yet) but answered ONLY for a
+    direct loopback caller: no proxy header and no app-server session header
+    (403 otherwise). The code is single use and lives two minutes (410).
+    200 -> {base_url, session_id, csrf_token, user_id, expires_at}."""
+    from ..security.sessions import GatewaySessionStore, gateway_session_header_name
+
+    headers = {"Cache-Control": "no-store"}
+    relayed = any(request.headers.get(h) for h in _PROXY_HEADERS) or bool(request.headers.get(gateway_session_header_name()))
+    if not _peer_is_loopback(request) or relayed:
+        return JSONResponse(
+            status_code=403,
+            headers=headers,
+            content={"ok": False, "reason": "loopback_only", "message": "Desktop sign-in codes work only for an app on the gateway machine itself."},
+        )
+    m = get_apps_manager()
+    rec = m.redeem_desktop_handover(payload.code)
+    if rec is None:
+        return JSONResponse(
+            status_code=410,
+            headers=headers,
+            content={"ok": False, "reason": "handover_expired", "message": "This sign-in code has expired or was already used.",
+                     "hint": "Quit the Assistant and open it again from the gateway console or its menu bar icon."},
+        )
+    principal, base_url = rec
+    try:
+        principal = _durable_session_principal(principal)
+        session_value, csrf_token, record = GatewaySessionStore().create_session(principal, ttl_s=DESKTOP_SESSION_TTL_S)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse(status_code=403, headers=headers, content={"ok": False, "reason": "session_refused", "message": f"{type(exc).__name__}: {exc}"})
+    return JSONResponse(
+        headers=headers,
+        content={
+            "base_url": base_url,
+            "session_id": session_value,
+            "csrf_token": csrf_token,
+            "user_id": getattr(principal, "user_id", None),
+            "expires_at": getattr(record, "expires_at", None),
+        },
+    )
 
 
 @handover_router.post("/apps/tui-handover", include_in_schema=False)

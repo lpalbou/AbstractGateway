@@ -70,6 +70,7 @@ REGISTRY_FAIL_TTL_S = 60.0
 REGISTRY_TIMEOUT_S = 4.0
 DOWNLOAD_TIMEOUT_S = 60.0
 HANDOVER_TTL_S = 120.0
+DESKTOP_HANDOVER_SCHEMA = "abstractgateway.desktop_handover.v1"
 READY_TIMEOUT_S = 30.0
 STOP_TIMEOUT_S = 5.0
 RESTART_WINDOW_S = 60.0
@@ -1625,6 +1626,7 @@ class AppsManager:
         self._node_cache: Optional[Tuple[float, Dict[str, Any]]] = None
         self._handover: Dict[str, Tuple[float, str, Any, str, str]] = {}  # code -> (expires, app_id, principal, host, path)
         self._tui_handover: Dict[str, Tuple[float, str, Any, str]] = {}  # code -> (expires, app_id, principal, gateway_url)
+        self._desktop_handover: Dict[str, Tuple[float, Any, str, str]] = {}  # code -> (expires, principal, base_url, file)
         self._tui_probe_cache: Dict[Tuple[str, int, int], Tuple[Optional[str]]] = {}
         # How a terminal window is opened (argv from `terminal_argv`); tests
         # replace it so no test ever opens a real window.
@@ -2678,6 +2680,62 @@ class AppsManager:
 
         return self.jobs.start(kind="tui_install", target=f"tui:{tui.id}", app_id=tui.id, title=f"Install {tui.name} for the terminal", work=work, run_inline=run_inline)
 
+    # -- desktop sign-in handover (the Assistant, CONTRACTS A1 / A-3) ------------------
+    def handover_dir(self) -> Path:
+        return self.data_dir / "handover"
+
+    def mint_desktop_handover(self, principal: Any, *, base_url: str) -> Tuple[str, Path]:
+        """A one-time code (2 minutes) for the desktop Assistant, written into
+        a 0600 file this gateway owns: <data dir>/handover/<random>.json =
+        {schema, code, base_url, expires_at}. The Assistant reads the file,
+        deletes it, and trades the code on loopback at
+        POST /api/gateway/apps/desktop-handover. The code is never on argv
+        nor in the environment."""
+        import datetime as _dt
+
+        now = _now()
+        for code, rec in list(self._desktop_handover.items()):
+            if rec[0] < now:
+                self._desktop_handover.pop(code, None)
+                try:
+                    Path(rec[3]).unlink()
+                except OSError:
+                    pass
+        code = secrets.token_urlsafe(32)
+        expires = now + HANDOVER_TTL_S
+        folder = self.handover_dir()
+        folder.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(folder, 0o700)
+        except OSError:
+            pass
+        path = folder / f"{secrets.token_hex(16)}.json"
+        body = {
+            "schema": DESKTOP_HANDOVER_SCHEMA,
+            "code": code,
+            "base_url": str(base_url).rstrip("/"),
+            "expires_at": _dt.datetime.fromtimestamp(expires, tz=_dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+        }
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(body, fh)
+        self._desktop_handover[code] = (expires, principal, str(base_url).rstrip("/"), str(path))
+        return code, path
+
+    def redeem_desktop_handover(self, code: str) -> Optional[Tuple[Any, str]]:
+        """(principal, base_url) for a live code, once; the file is removed
+        if the Assistant did not already."""
+        rec = self._desktop_handover.pop(str(code or ""), None)
+        if rec is None:
+            return None
+        try:
+            Path(rec[3]).unlink()
+        except OSError:
+            pass
+        if rec[0] < _now():
+            return None
+        return rec[1], rec[2]
+
     # -- terminal sign-in handover ------------------------------------------------------
     def mint_tui_handover(self, app_id: str, principal: Any, *, gateway_url: str) -> str:
         """A one-time code (2 minutes) the launcher script trades on loopback
@@ -3097,12 +3155,17 @@ class AppsManager:
 
         return self.jobs.start(kind="app_install", target=f"app:{spec.id}", app_id=spec.id, title=f"Install {spec.name}", work=work, run_inline=run_inline)
 
-    def launch_desktop(self, app_id: str, *, same_machine: bool) -> Dict[str, Any]:
+    def launch_desktop(self, app_id: str, *, same_machine: bool, principal: Any = None, gateway_url: Optional[str] = None) -> Dict[str, Any]:
         """Open the desktop app on the gateway computer's screen (a person at
         that computer only). A running Assistant is not started twice: the
         bundle is brought to the front (`open -a`), a script-started one is
-        left as it is (its icon is in the menu bar)."""
-        from .apps_desktop import DESKTOP_BY_ID, tail_text
+        left as it is (its icon is in the menu bar).
+
+        A NEW Assistant is started signed in: with `principal` it gets
+        `--gateway-url <url> --gateway-handover-file <file>` (a one-time code
+        in a 0600 file, mint_desktop_handover). A running one gets no code
+        (it cannot receive one); the message says how to sign it in."""
+        from .apps_desktop import DESKTOP_BY_ID, assistant_argv_with_handover, tail_text
 
         spec = DESKTOP_BY_ID[str(app_id)]
         if not same_machine:
@@ -3116,22 +3179,43 @@ class AppsManager:
         log = self.app_log_path(spec.id)
         running_argv = [str(a) for a in (pres.get("running_argv") or [])]
         bundle = pres.get("bundle")
+        running_note = (
+            f" If it is not signed in to this gateway, quit the {spec.name} and open it again from here: "
+            "a newly opened one is signed in for you."
+        )
+        handover_file: Optional[Path] = None
+        handover_code: Optional[str] = None
         if pres.get("running"):
             if not (bundle and running_argv and f"{bundle}/Contents/MacOS/" in running_argv[0]):
-                return {"ok": True, "app": self.desktop_row(spec.id), "already_running": True, "message": f"The {spec.name} is already running: its icon is in the menu bar."}
+                return {"ok": True, "app": self.desktop_row(spec.id), "already_running": True, "signed_in_by_gateway": False,
+                        "message": f"The {spec.name} is already running: its icon is in the menu bar." + running_note}
             argv: List[str] = ["open", "-a", str(bundle)]
         else:
             argv = list(pres.get("launch") or [])
+            if principal is not None:
+                url = self.resolve_gateway_url(gateway_url)
+                handover_code, handover_file = self.mint_desktop_handover(principal, base_url=url)
+                argv = assistant_argv_with_handover(argv, gateway_url=url, handover_file=str(handover_file))
         try:
             proc = self.desktop_spawner(argv, env=_scrubbed_child_env(dict(os.environ)), log_path=log)
         except OSError as exc:
+            if handover_code:
+                self.redeem_desktop_handover(handover_code)  # voids the code, removes the file
             raise LaunchFailed(f"The {spec.name} could not start: {argv[0]}: {exc}") from exc
         code = self.desktop_wait(proc)
         if code is not None:
+            if handover_code:
+                self.redeem_desktop_handover(handover_code)
             raise LaunchFailed(f"The {spec.name} did not start (exit code {code}).", hint=f"Its log: {log}", details=tail_text(log) or None)
         self._desktop_cache.pop(spec.id, None)
-        message = f"The {spec.name} is in front." if pres.get("running") else f"The {spec.name} is starting: its icon appears in the menu bar."
-        return {"ok": True, "app": self.desktop_row(spec.id), "already_running": bool(pres.get("running")), "message": message}
+        if pres.get("running"):
+            message = f"The {spec.name} is in front." + running_note
+        elif handover_file is not None:
+            message = f"The {spec.name} is starting, signed in to this gateway: its icon appears in the menu bar."
+        else:
+            message = f"The {spec.name} is starting: its icon appears in the menu bar."
+        return {"ok": True, "app": self.desktop_row(spec.id), "already_running": bool(pres.get("running")),
+                "signed_in_by_gateway": handover_file is not None, "message": message}
 
     # -- views ---------------------------------------------------------------------------
     def _external_row(

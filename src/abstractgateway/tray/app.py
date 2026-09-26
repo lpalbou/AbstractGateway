@@ -1073,36 +1073,25 @@ class TrayApp:
         self._global_procs.clear()
 
     def assistant_launch(self) -> None:
-        argv = self._app_launches.get("assistant")
-        if not argv:
+        """Open the Assistant through the gateway (POST /apps/assistant/launch),
+        the same door as the console: one argv, and a newly started
+        Assistant is signed in to this gateway by a one-time hand-over file
+        (apps_manager.launch_desktop). A running one is brought forward or
+        left alone, never started twice."""
+        if not self._app_launches.get("assistant"):
             self._info("Couldn't launch the Assistant", "AbstractAssistant was not found any more.", style="warning")
             self.poke_extras()
             return
 
         def _do() -> None:
-            # Never a second copy (the console's rule, apps_manager.launch_desktop):
-            # a running app bundle is brought forward by `open -a`; one started
-            # from its command is left alone.
-            nonlocal argv
-            now = tray_apps.detect_assistant(tray_apps.Probes())
-            if now.get("running"):
-                bundle, run = now.get("bundle"), [str(x) for x in (now.get("running_argv") or [])]
-                if not (bundle and run and f"{bundle}/Contents/MacOS/" in run[0]):
-                    self._notify("The Assistant is already running", "Its icon is in the menu bar.")
-                    return
-                argv = ["open", "-a", str(bundle)]
-            log = (self.data_dir / "logs" / "assistant-launch.log") if self.data_dir else None
-            try:
-                proc = tray_apps.spawn_detached(argv, env=tray_apps.scrubbed_env(os.environ), log_path=log)
-            except OSError as exc:
-                self._info("Couldn't launch the Assistant", f"{argv[0]}: {exc}", style="warning")
+            r = self.client.app_launch("assistant")
+            if not r.ok:
+                self._info("Couldn't launch the Assistant", r.detail, style="warning")
                 return
-            time.sleep(2.0)
-            code = proc.poll()
-            if code not in (None, 0):
-                self._info("The Assistant didn't start", f"`{' '.join(argv[:3])}` exited with code {code}. Log: {log or 'none'}", style="warning")
-                return
-            self._notify("Assistant launched", "AbstractAssistant is starting (it lives in your menu bar / tray).")
+            data = r.data if isinstance(r.data, dict) else {}
+            message = str(data.get("message") or "AbstractAssistant is starting (it lives in your menu bar / tray).")
+            title = "The Assistant is already running" if data.get("already_running") else "Assistant launched"
+            self._notify(title, message)
 
         self._bg(_do, "tray-assistant")
 
