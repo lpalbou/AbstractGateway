@@ -6071,6 +6071,10 @@ struct MockTransport {
     calls: Mutex<Vec<String>>,
     /// Successive `job()` answers; empty = the last job, completed.
     polls: Mutex<VecDeque<Value>>,
+    /// While true, `job()` answers the FRONT of `polls` without consuming
+    /// it: the job holds its state until the test releases it, so what a
+    /// test observes never depends on how fast the poll thread runs.
+    hold_polls: Mutex<bool>,
     last_job: Mutex<Option<Value>>,
     cancelled: Mutex<bool>,
     /// When set, `delete_model` refuses with this error.
@@ -6226,6 +6230,11 @@ impl ConsoleTransport for MockTransport {
             let mut j = last;
             j["status"] = json!("cancelled");
             return Ok(j);
+        }
+        if *self.hold_polls.lock().unwrap() {
+            if let Some(front) = self.polls.lock().unwrap().front().cloned() {
+                return Ok(front);
+            }
         }
         if let Some(next) = self.polls.lock().unwrap().pop_front() {
             return Ok(next);
@@ -6449,11 +6458,17 @@ fn download_progress_reaches_the_gateway_toast_lane() {
         .lock()
         .unwrap()
         .extend([fixture("job_running"), fixture("job_running")]);
+    // Deterministic: the job stays at 42% until released (under load the
+    // poll thread used to walk both running answers to "completed" before
+    // a frame showed them).
+    *h.mock.hold_polls.lock().unwrap() = true;
     h.select_artifact("qwen3:8b");
     h.key(b"w");
     let s = h.settle_until("the job at 42%", |s| s.contains("42%"));
     assert!(s.contains("download ollama qwen3:8b"), "{s}");
     assert!(s.contains("c cancels"), "{s}");
+    assert!(h.screens.job_active(), "held at running: the job is still active");
+    *h.mock.hold_polls.lock().unwrap() = false;
     // The outcome lands on the GATEWAY's notice signal (shared lane):
     // the footer mirrors it and the toast effect shows it.
     h.settle_until("the completion notice", |s| {
