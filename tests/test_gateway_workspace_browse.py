@@ -464,3 +464,14 @@ def test_a_client_cannot_send_the_hosts_builtin_entries(tmp_path: Path, monkeypa
         off = _start(client, h, workspace_builtin_allow=["/"], workspace_builtin_deny_prefixes=["/nothing"])
         v_off = get_gateway_service().host.run_store.load(off).vars
         assert "workspace_builtin_allow" not in v_off and "workspace_builtin_deny_prefixes" not in v_off
+
+
+def test_the_data_folder_enumeration_helper_is_gone() -> None:
+    """REVIEW/19 G3: `data_dir_tool_deny` listed the data folder's contents
+    into every run's deny list (REVIEW/16's prompt growth). It must not come
+    back: the built-in rule is whole-folder prefixes only."""
+    import abstractgateway.routes.gateway as gw
+    import abstractgateway.workspace_browse as wb
+
+    assert not hasattr(wb, "data_dir_tool_deny")
+    assert "data_dir_tool_deny" not in Path(gw.__file__).read_text()

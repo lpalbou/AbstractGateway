@@ -367,23 +367,3 @@ def deny_check(
         return any(_inside(rp, b) for b in builtin)
 
     return is_blocked
-
-
-def data_dir_tool_deny(data_root: Path, keep: Optional[Path]) -> List[Path]:
-    """Deny entries (folder prefixes) that cover the gateway data folder
-    EXCEPT `keep` (the run's own gateway-made folder inside it): every
-    sibling along the path from the data folder down to `keep`. Without a
-    `keep` inside it: the data folder itself. A snapshot of what exists now."""
-    root = _real(Path(data_root))
-    if keep is None or not _inside(_real(Path(keep)), root) or _real(Path(keep)) == root:
-        return [root]
-    out: List[Path] = []
-    cur = root
-    for part in _real(Path(keep)).relative_to(root).parts:
-        try:
-            children = sorted(os.scandir(cur), key=lambda e: e.name)
-        except OSError:
-            children = []
-        out.extend(Path(c.path) for c in children if c.name != part)
-        cur = cur / part
-    return out
