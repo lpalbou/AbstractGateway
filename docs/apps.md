@@ -349,7 +349,9 @@ Python environment as the gateway; a gateway-only install may not.
   connected to this gateway and signed in as you automatically: the gateway
   starts it with `--gateway-url <address> --gateway-handover-file <file>`,
   where the file (readable by you only, in `<data dir>/handover/`) holds a
-  one-time code valid for two minutes. The Assistant reads and deletes the
+  one-time code valid for two minutes and the id of the user who clicked
+  Open (`{schema: "abstractgateway.desktop_handover.v1", code, base_url,
+  expires_at, user_id}`). The Assistant reads and deletes the
   file, trades the code for a remembered sign-in and keeps it. No code or
   token is ever on its command line or in its environment. An Assistant that
   is already running cannot receive a code: if it is not signed in, quit it

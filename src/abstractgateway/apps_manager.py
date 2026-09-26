@@ -2687,7 +2687,7 @@ class AppsManager:
     def mint_desktop_handover(self, principal: Any, *, base_url: str) -> Tuple[str, Path]:
         """A one-time code (2 minutes) for the desktop Assistant, written into
         a 0600 file this gateway owns: <data dir>/handover/<random>.json =
-        {schema, code, base_url, expires_at}. The Assistant reads the file,
+        {schema, code, base_url, expires_at, user_id}. The Assistant reads the file,
         deletes it, and trades the code on loopback at
         POST /api/gateway/apps/desktop-handover. The code is never on argv
         nor in the environment."""
@@ -2715,6 +2715,9 @@ class AppsManager:
             "code": code,
             "base_url": str(base_url).rstrip("/"),
             "expires_at": _dt.datetime.fromtimestamp(expires, tz=_dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+            # Who clicked Open: the session the code redeems is this user's
+            # (the gateway has no display names, so no user_name).
+            "user_id": str(getattr(principal, "user_id", "") or ""),
         }
         fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:

@@ -53,7 +53,8 @@ def test_launch_writes_a_private_file_and_passes_it(amgr) -> None:  # noqa: F811
     assert f.parent == m.data_dir / "handover"
     assert stat.S_IMODE(f.stat().st_mode) == 0o600
     body = json.loads(f.read_text())
-    assert set(body) == {"schema", "code", "base_url", "expires_at"} and body["schema"] == SCHEMA
+    assert set(body) == {"schema", "code", "base_url", "expires_at", "user_id"} and body["schema"] == SCHEMA
+    assert body["user_id"] == "admin"
     assert body["base_url"] == "http://127.0.0.1:18852" and body["expires_at"].endswith("Z")
     assert body["code"] not in " ".join(argv) and not any(body["code"] in str(v) for v in spawned[-1]["env"].values())
     assert out["signed_in_by_gateway"] is True and "signed in" in out["message"]
@@ -113,10 +114,12 @@ def test_route_public_loopback_single_use(tmp_path: Path, monkeypatch: pytest.Mo
     url = "/api/gateway/apps/desktop-handover"
     with client:
         code, f = m.mint_desktop_handover(_principal(), base_url="http://127.0.0.1:8080")
+        file_user = json.loads(f.read_text())["user_id"]
         # No Authorization header at all: the route is public.
         r = client.post(url, json={"code": code})
         assert r.status_code == 200, r.text
         body = r.json()
+        assert body["user_id"] == file_user, "the session is for the user named in the file"
         assert set(body) == {"base_url", "session_id", "csrf_token", "user_id", "expires_at"}
         assert body["base_url"] == "http://127.0.0.1:8080" and body["user_id"] == "admin" and body["session_id"]
         # A real gateway session: an authenticated read with it succeeds.
