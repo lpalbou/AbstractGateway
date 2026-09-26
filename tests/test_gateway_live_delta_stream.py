@@ -206,10 +206,11 @@ def _llm_record_index(events: List[Dict[str, Any]]) -> int:
 
 def test_a_streamed_run_delivers_deltas_then_the_durable_record_then_done(gw) -> None:
     client, _ = gw
-    _Ctl.reset(hold=False)
-    released = {"done": False}
-
     run_id = _start(client, prompt="hi", _runtime={"stream": True})
+    assert _Ctl.midway.wait(10), "the stub call never started streaming"
+    # Hold the call until the stream is connected (the test client hands the
+    # body over when the stream ends), then let it finish.
+    threading.Timer(1.0, _Ctl.gate.set).start()
     events = _read_stream(client, f"/api/gateway/runs/{run_id}/ledger/stream?after=0&heartbeat_s=1", headers=HEADERS)
 
     assert _Ctl.calls and _Ctl.calls[0]["has_on_delta"] is True and _Ctl.calls[0]["stream"] is True
@@ -217,8 +218,8 @@ def test_a_streamed_run_delivers_deltas_then_the_durable_record_then_done(gw) ->
     ends = [e for e in events if e.get("event") == "llm.delta_end"]
     assert deltas, events
     assert all("id" not in e for e in deltas + ends), "delta frames never carry an id line"
-    live_text = "".join(e["data"]["text"] for e in deltas if not e["data"]["snapshot"] or True)
-    assert live_text.endswith("fox") and "quick" in live_text
+    live_text = "".join(e["data"]["text"] for e in deltas)
+    assert live_text == "".join(CHUNKS), "snapshot + live deltas = the whole answer, nothing repeated or lost"
     assert len(ends) == 1 and ends[0]["data"]["reason"] == "completed"
     d0 = deltas[0]["data"]
     assert d0["run_id"] == run_id and d0["root_run_id"] == run_id and d0["channel"] == "content"
@@ -353,9 +354,9 @@ def test_scheduled_runs_carry_the_builtin_tool_deny_list(gw) -> None:
     assert sched.status_code == 200, sched.text
     parent = sched.json()["run_id"]
     target_vars = _run_vars(parent)["vars"]
-    ignored = str(target_vars.get("workspace_ignored_paths") or "").splitlines()
-    assert str(runtime_dir.resolve()) in ignored, ignored
-    assert any(p.endswith("/.ssh") for p in ignored), ignored
+    denied = target_vars.get("workspace_builtin_deny_prefixes") or []
+    assert str(runtime_dir.resolve()) in denied, denied
+    assert any(p.endswith("/.ssh") for p in denied), denied
 
     # ...and the child run the schedule launches gets them as its own vars.
     from abstractgateway.service import get_gateway_service
@@ -369,7 +370,7 @@ def test_scheduled_runs_carry_the_builtin_tool_deny_list(gw) -> None:
 
     _wait(lambda: _child() is not None)
     child_vars = rs.load(_child()).vars
-    assert str(runtime_dir.resolve()) in str(child_vars.get("workspace_ignored_paths") or "").splitlines()
+    assert str(runtime_dir.resolve()) in (child_vars.get("workspace_builtin_deny_prefixes") or [])
 
 
 def test_streaming_setting_three_doors_and_discovery(gw, capsys) -> None:

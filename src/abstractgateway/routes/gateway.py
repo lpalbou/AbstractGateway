@@ -4078,33 +4078,51 @@ def _apply_run_stream_switch(input_data: Dict[str, Any], *, interactive: bool) -
         _ensure_input_runtime_namespace(input_data)["stream"] = True
 
 
-def _apply_builtin_tool_deny(input_data: Dict[str, Any], *, principal: Optional["GatewayPrincipal"]) -> None:
-    """Add the built-in deny list to the run's own tool sandbox
-    (`workspace_ignored_paths`): the account's credential/config folders and
-    the gateway's data folder — except the run's own gateway-made folder
-    (its siblings are listed instead). Entries that contain the run's
-    workspace are skipped (they would block the workspace itself). An admin
-    turns this off for runs with the stored setting workspace_builtin_deny."""
-    from ..runtime_config import resolve_workspace_builtin_deny_enabled
-    from ..workspace_browse import BUILTIN_DENY_HOME_RELPATHS, data_dir_tool_deny
+# Server-written only: the host's own protection of a run's tool sandbox
+# (abstractruntime workspace_scoped_tools: enforced by the path resolver,
+# never rendered into the system prompt, inherited by child runs).
+_BUILTIN_DENY_KEYS = ("workspace_builtin_deny_prefixes", "workspace_builtin_allow")
 
+
+def _strip_client_builtin_deny(input_data: Dict[str, Any]) -> None:
+    """A client never sets the host's protection (an allow entry of "/" would
+    lift it): whatever it sent under these keys is dropped."""
+    for key in _BUILTIN_DENY_KEYS:
+        input_data.pop(key, None)
+
+
+def _apply_builtin_tool_deny(input_data: Dict[str, Any], *, principal: Optional["GatewayPrincipal"]) -> None:
+    """The built-in deny rule for the run's tools, as PREFIXES: the gateway's
+    data folder and the account's credential/config folders
+    (`workspace_builtin_deny_prefixes`), with ONE exception, the run's own
+    gateway-made workspace folder inside the data folder
+    (`workspace_builtin_allow`). Never an enumeration of a folder's contents:
+    the list is the same for every run of a gateway, whatever the data folder
+    holds, and the runtime enforces it without writing it into the model's
+    prompt (REVIEW/16: enumerating the data folder grew every prompt by ~950
+    tokens a turn and cold-started the prompt cache each turn). A credential
+    folder that CONTAINS the run's workspace is left out (it would deny the
+    workspace itself). The operator's own `workspace_ignored_paths` are not
+    touched. An admin turns the rule off for runs with the stored setting
+    workspace_builtin_deny."""
+    from ..runtime_config import resolve_workspace_builtin_deny_enabled
+    from ..workspace_browse import BUILTIN_DENY_HOME_RELPATHS
+
+    _strip_client_builtin_deny(input_data)
     data_dir = gateway_data_dir_from_env()
     if not resolve_workspace_builtin_deny_enabled(data_dir):
         return
     raw_root = input_data.get("workspace_root")
     root = Path(str(raw_root)).expanduser().resolve() if isinstance(raw_root, str) and raw_root.strip() else None
     home = Path.home()
-    entries: List[Path] = [Path(os.path.realpath(str(home / rel))) for rel in BUILTIN_DENY_HOME_RELPATHS]
-    data_root = data_dir.expanduser().resolve()
-    keep = root if root is not None and _is_under_allowed_roots(root, [data_root]) else None
-    entries.extend(data_dir_tool_deny(data_root, keep))
+    creds: List[Path] = [Path(os.path.realpath(str(home / rel))) for rel in BUILTIN_DENY_HOME_RELPATHS]
     if root is not None:
-        entries = [e for e in entries if not _is_under_allowed_roots(root, [e])]
-    existing = _parse_any_string_list(input_data.get("workspace_ignored_paths") or input_data.get("workspaceIgnoredPaths"))
-    merged = list(dict.fromkeys(existing + [str(e) for e in entries]))
-    if merged:
-        input_data["workspace_ignored_paths"] = "\n".join(merged)
-        input_data.pop("workspaceIgnoredPaths", None)
+        creds = [c for c in creds if not _is_under_allowed_roots(root, [c])]
+    data_root = Path(os.path.realpath(str(data_dir.expanduser())))
+    prefixes = list(dict.fromkeys([str(data_root)] + [str(c) for c in creds]))
+    input_data["workspace_builtin_deny_prefixes"] = prefixes
+    if root is not None and root != data_root and _is_under_allowed_roots(root, [data_root]):
+        input_data["workspace_builtin_allow"] = [str(root)]
 
 
 def _sanitize_run_workspace_policy(
@@ -10221,11 +10239,14 @@ async def stream_ledger(
     from ..live_deltas import get_hub, resolve_chain_in_store, scope_key, sse_frame
 
     live_hub = get_hub()
-    live_data_dir = getattr(svc.host, "data_dir", None) or svc.stores.base_dir
+    # The hub is keyed by (the owner's data folder, root run). Every gateway
+    # host has its data folder; a host without one cannot scope live deltas
+    # and fails here, loudly, rather than streaming from a shared key.
+    live_data_dir = svc.host.data_dir
     live_scope = scope_key(live_data_dir)
     # The run's parent chain in the CALLER's run store (the tenancy check
-    # above already passed): the hub is keyed by (data folder, root run).
-    live_chain = await asyncio.to_thread(resolve_chain_in_store, rs, run0)
+    # above already passed).
+    live_chain = await asyncio.to_thread(resolve_chain_in_store, rs, run0, run_id=run_id2)
 
     async def _gen():
         tail = resolve_ledger_tail(svc.host.ledger_store, run_id2, start_index=start_index)

@@ -98,6 +98,7 @@ def test_idle_stream_never_materializes_the_list_and_stops_on_disconnect() -> No
     class _Host:
         run_store = _RunStore()
         ledger_store = spy
+        data_dir = "/nonexistent/cursoring-test"  # the live-delta hub's scope (never written)
 
     class _Svc:
         host = _Host()
@@ -172,6 +173,7 @@ def test_divergent_count_never_busy_loops_and_terminal_done_still_sends() -> Non
     class _Host:
         run_store = _RunStore()
         ledger_store = spy
+        data_dir = "/nonexistent/cursoring-test"  # the live-delta hub's scope (never written)
 
     class _Svc:
         host = _Host()

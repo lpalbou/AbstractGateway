@@ -259,8 +259,8 @@ def test_a_launch_folder_that_contains_the_data_folder_never_serves_it(tmp_path:
         from abstractgateway.service import get_gateway_service
 
         vars_ = get_gateway_service().host.run_store.load(rid).vars
-        ignored = str(vars_.get("workspace_ignored_paths") or "").splitlines()
-        assert str((tmp_path / "runtime").resolve()) in ignored, ignored
+        denied = vars_.get("workspace_builtin_deny_prefixes") or []
+        assert str((tmp_path / "runtime").resolve()) in denied, denied
 
 
 def test_builtin_deny_list_hides_credential_folders(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -279,14 +279,14 @@ def test_builtin_deny_list_hides_credential_folders(tmp_path: Path, monkeypatch:
         assert r.status_code == 404
         from abstractgateway.service import get_gateway_service
 
-        ignored = str(get_gateway_service().host.run_store.load(rid).vars.get("workspace_ignored_paths") or "").splitlines()
-        assert str((home / ".ssh").resolve()) in ignored
+        denied = get_gateway_service().host.run_store.load(rid).vars.get("workspace_builtin_deny_prefixes") or []
+        assert str((home / ".ssh").resolve()) in denied
         cfg = client.get("/api/gateway/admin/runtime-config", headers=h).json()["builtin_deny"]
         assert cfg["enabled"] is True and str((home / ".ssh").resolve()) in cfg["value"]
         assert client.post("/api/gateway/admin/runtime-config", headers=h, json={"workspace_builtin_deny": False}).status_code == 200
         rid2 = _start(client, h, workspace_root=str(home))
-        ignored2 = str(get_gateway_service().host.run_store.load(rid2).vars.get("workspace_ignored_paths") or "")
-        assert str((home / ".ssh").resolve()) not in ignored2, "the admin turned the runs part off"
+        vars2 = get_gateway_service().host.run_store.load(rid2).vars
+        assert "workspace_builtin_deny_prefixes" not in vars2, "the admin turned the runs part off"
         # Browse still refuses (for every principal).
         assert client.get(f"/api/gateway/runs/{rid2}/workspace/content?path=.ssh/id_ed25519", headers=h).status_code == 404
 
@@ -375,3 +375,92 @@ def test_another_users_run_is_404_on_all_three_routes(tmp_path: Path, monkeypatc
         for route in ("workspace", "workspace/files", "workspace/content?path=private.txt"):
             r = client.get(f"/api/gateway/runs/{rid}/{route}", headers=bob)
             assert r.status_code == 404, (route, r.status_code, r.text)
+
+
+def test_builtin_deny_is_prefixes_and_the_prompt_is_stable_while_the_data_folder_grows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """REVIEW/16 (2026-09-26): the built-in rule is the data folder + the
+    credential folders as PREFIXES and one allow entry (the run's own folder),
+    never an enumeration of what the data folder holds. Two turns of one
+    session with files added to the data folder between them get the same
+    entries and a byte-identical workspace section of the system prompt; the
+    tool sandbox still refuses the data folder and serves the run's folder."""
+    from abstractruntime.integrations.abstractcore.workspace_scoped_tools import (
+        WorkspaceScope,
+        describe_workspace_scope,
+        rewrite_tool_arguments,
+    )
+
+    client, h = _client(tmp_path, monkeypatch)
+    data = (tmp_path / "runtime").resolve()
+    with client:
+        from abstractgateway.service import get_gateway_service
+
+        rs = get_gateway_service().host.run_store
+        first = _start(client, h, workspace_access_mode="all_except_ignored",
+                       workspace_ignored_paths=str(tmp_path / "operator-said-no"))
+        # The data folder grows between the turns (runs, ledgers, other sessions).
+        for i in range(40):
+            (data / f"run_extra_{i}.json").write_text("{}")
+        other_ws = data / "workspaces" / "session-someone-else"
+        other_ws.mkdir(parents=True, exist_ok=True)
+        (other_ws / "secret.txt").write_text("theirs")
+        second = _start(client, h, workspace_access_mode="all_except_ignored",
+                        workspace_ignored_paths=str(tmp_path / "operator-said-no"))
+
+        v1, v2 = rs.load(first).vars, rs.load(second).vars
+        own = Path(v1["workspace_root"])
+        assert own.parent.parent == data and v2["workspace_root"] == v1["workspace_root"], "one session, one folder"
+        assert v1["workspace_builtin_deny_prefixes"] == v2["workspace_builtin_deny_prefixes"]
+        assert v1["workspace_builtin_deny_prefixes"][0] == str(data)
+        assert all(not p.startswith(str(data) + os.sep) for p in v1["workspace_builtin_deny_prefixes"]), (
+            "nothing INSIDE the data folder is listed: no enumeration"
+        )
+        assert v1["workspace_builtin_allow"] == v2["workspace_builtin_allow"] == [str(own)]
+        # The operator's own entry is kept as it was, and is the only ignored path.
+        assert str(v1["workspace_ignored_paths"]).splitlines() == [str(tmp_path / "operator-said-no")]
+
+        p1 = describe_workspace_scope(WorkspaceScope.from_input_data(v1))
+        p2 = describe_workspace_scope(WorkspaceScope.from_input_data(v2))
+        assert p1 == p2, "the workspace section of the system prompt is byte-identical across turns"
+        assert str(data) not in p1.replace(str(own), ""), "no data-folder path other than the run's own is shown"
+        assert "session-someone-else" not in p1
+
+        # Enforced: the session run reads its own folder (inside the denied data folder)...
+        scope = WorkspaceScope.from_input_data(v2)
+        (own / "notes.txt").write_text("mine")
+        ok = rewrite_tool_arguments(tool_name="read_file", args={"file_path": str(own / "notes.txt")}, scope=scope)
+        assert Path(ok["file_path"]).resolve() == (own / "notes.txt").resolve()
+        # ...and a run whose launch folder CONTAINS the data folder is refused
+        # everything in it by the host rule (not merely by the workspace bound).
+        wide = _start(client, h, workspace_root=str(tmp_path))
+        vw = rs.load(wide).vars
+        assert "workspace_builtin_allow" not in vw
+        wide_scope = WorkspaceScope.from_input_data(vw)
+        for denied in (data / "run_extra_3.json", other_ws / "secret.txt", data / "auth"):
+            with pytest.raises(ValueError, match="protected by the host"):
+                rewrite_tool_arguments(tool_name="read_file", args={"file_path": str(denied)}, scope=wide_scope)
+        (tmp_path / "bundles" / "readme.txt").write_text("fine")
+        ok = rewrite_tool_arguments(tool_name="read_file", args={"file_path": "bundles/readme.txt"}, scope=wide_scope)
+        assert Path(ok["file_path"]).resolve() == (tmp_path / "bundles" / "readme.txt").resolve()
+        assert describe_workspace_scope(wide_scope).count(str(data)) == 0, "the rule is enforced, not described"
+
+
+def test_a_client_cannot_send_the_hosts_builtin_entries(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, h = _client(tmp_path, monkeypatch)
+    with client:
+        rid = _start(client, h, workspace_builtin_allow=["/"], workspace_builtin_deny_prefixes=[])
+        from abstractgateway.service import get_gateway_service
+
+        v = get_gateway_service().host.run_store.load(rid).vars
+        assert v["workspace_builtin_allow"] == [v["workspace_root"]], "the client's allow entry is dropped"
+        assert str((tmp_path / "runtime").resolve()) in v["workspace_builtin_deny_prefixes"]
+        # A run outside the data folder gets NO allow entry: the client's is dropped, not kept.
+        wide = _start(client, h, workspace_root=str(tmp_path), workspace_builtin_allow=["/"])
+        assert "workspace_builtin_allow" not in get_gateway_service().host.run_store.load(wide).vars
+        # With the rule turned off by an admin, a client still cannot set it.
+        assert client.post("/api/gateway/admin/runtime-config", headers=h, json={"workspace_builtin_deny": False}).status_code == 200
+        off = _start(client, h, workspace_builtin_allow=["/"], workspace_builtin_deny_prefixes=["/nothing"])
+        v_off = get_gateway_service().host.run_store.load(off).vars
+        assert "workspace_builtin_allow" not in v_off and "workspace_builtin_deny_prefixes" not in v_off

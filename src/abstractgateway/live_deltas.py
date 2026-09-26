@@ -809,11 +809,13 @@ def install_live_delta_sink(runtime: Any, *, data_dir: Any, run_store: Any) -> N
     attach_terminal_hook(runtime, data_dir=scope, run_store=run_store)
 
 
-def resolve_chain_in_store(run_store: Any, run: Any) -> Tuple[str, ...]:
+def resolve_chain_in_store(run_store: Any, run: Any, *, run_id: Optional[str] = None) -> Tuple[str, ...]:
     """The parent chain of `run` in THIS run store (the caller's): used by the
     SSE route after its tenancy check, never a cache another user filled."""
 
-    rid = str(getattr(run, "run_id", "") or "").strip()
+    rid = str(run_id or getattr(run, "run_id", "") or "").strip()
+    if not rid:
+        raise LiveDeltaError("cannot resolve the live-delta chain of a run without an id")
     out = [rid]
     seen = {rid}
     parent = str(getattr(run, "parent_run_id", None) or "").strip() or None
