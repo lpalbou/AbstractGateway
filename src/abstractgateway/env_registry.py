@@ -245,7 +245,8 @@ _EXPLICIT: Tuple[EnvVarSpec, ...] = (
                "reported as overridden_by_env (security carve-out)"),
     _spec("ABSTRACTGATEWAY_TRUST_PROXY", DEPLOYMENT,
           superseded_by="network.trust_proxy (POST /api/gateway/network; `abstractgateway network set --trust-proxy`)",
-          note="start-time override reported as overridden_by_env"),
+          note="legacy fallback, used only while no trust_proxy is saved (the saved setting wins; "
+               "network_exposure.resolve_trust_proxy); unlike ABSTRACTGATEWAY_ALLOWED_ORIGINS, it is NOT an override"),
     _spec("ABSTRACTGATEWAY_PROTECT_READ", DEPLOYMENT, note="auth topology"),
     _spec("ABSTRACTGATEWAY_PROTECT_WRITE", DEPLOYMENT, note="auth topology"),
     _spec("ABSTRACTGATEWAY_SESSION_COOKIE", DEPLOYMENT),

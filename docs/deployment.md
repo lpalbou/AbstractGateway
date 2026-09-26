@@ -149,9 +149,12 @@ Common:
   Network → *Advanced: reverse proxy*, the TUI's Connection screen, or
   `abstractgateway network set --allowed-origins https://gateway.example.com --trust-proxy on`
   (inside a container: `docker exec <container> abstractgateway network set …`).
-  They apply to the next request. `ABSTRACTGATEWAY_ALLOWED_ORIGINS` /
-  `ABSTRACTGATEWAY_TRUST_PROXY` in the container environment still pin them
-  (reported as `overridden_by_env`); see
+  They apply to the next request. `ABSTRACTGATEWAY_ALLOWED_ORIGINS` in the
+  container environment still pins the origins (reported as
+  `overridden_by_env`). `ABSTRACTGATEWAY_TRUST_PROXY` does NOT pin trust proxy:
+  it is used only while nothing is saved, and a saved switch (from the
+  console, the TUI or `network set`, possibly in a mounted data folder) wins
+  over it; check `abstractgateway network status` in the container. See
   [configuration.md](./configuration.md#reverse-proxy-allowed-origins-and-trust-proxy).
 - `input.text` capability route: default for LLM/agent nodes
 - `ABSTRACTGATEWAY_TOOL_MODE`: `approval`, `passthrough`, `delegated`, or local dev modes

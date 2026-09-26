@@ -97,6 +97,16 @@ identity module of the next AbstractCore release.
   (`workspace_builtin_deny_prefixes`, with the run's own folder as the one
   exception, `workspace_builtin_allow`) that the runtime enforces without
   writing them into the model's prompt. Scheduled runs get them too.
+- **Trust proxy: the saved setting now wins over the environment.**
+  `ABSTRACTGATEWAY_TRUST_PROXY` used to override the saved `trust_proxy`
+  switch; it is now only a fallback when nothing is saved, and the same rule
+  decides sign-in lockouts, the audit log's client address and whether a
+  caller sits at the gateway computer. Security consequence: a deployment that
+  pinned `ABSTRACTGATEWAY_TRUST_PROXY=0` (for example in a container) while its
+  settings file says `true` now takes the client address from
+  `X-Forwarded-For`. Check `abstractgateway network status`, and turn the saved
+  switch off with `abstractgateway network set --trust-proxy off`.
+  `ABSTRACTGATEWAY_ALLOWED_ORIGINS` keeps overriding the saved origins.
 - Agents started by the Telegram, email and agora bridges, by entity
   summons and by schedules can no longer reach files outside their
   conversation's folder (the gateway's data folder and credential folders

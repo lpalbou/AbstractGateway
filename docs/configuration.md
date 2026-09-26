@@ -292,16 +292,28 @@ written), e.g. `1 origin is not valid (nothing was saved): https://x.example/: n
 trailing slash: an origin is scheme://host[:port] (write https://x.example)`.
 An empty list clears the setting back to the default.
 
-**The environment override.** `ABSTRACTGATEWAY_ALLOWED_ORIGINS` /
-`ABSTRACTGATEWAY_TRUST_PROXY` in the environment a gateway was started with
-still decide (a deployment pin, the security carve-out in `env_registry.py`),
-and every surface says so: the payload carries `source: "env"` and
-`overridden_by_env: true` with `env_name`/`env_value` and a `note` ("This
-gateway was started with … in its environment: …"); saving is still allowed
-and answers `changed.<field>.applies: "overridden_by_env"` ("Saved, but not in
-effect"). The value in the settings applies once the gateway starts without
-the variable. The origins `serve` itself exports for a network mode are never
-counted as an override.
+**The environment variables.** The two settings do not treat the launch
+environment the same way:
+
+- **Browser origins.** `ABSTRACTGATEWAY_ALLOWED_ORIGINS` in the environment a
+  gateway was started with still decides (a deployment pin, the security
+  carve-out in `env_registry.py`), and every surface says so: the payload
+  carries `source: "env"` and `overridden_by_env: true` with
+  `env_name`/`env_value` and a `note` ("This gateway was started with … in its
+  environment: …"); saving is still allowed and answers
+  `changed.allowed_origins.applies: "overridden_by_env"` ("Saved, but not in
+  effect"). The saved list applies once the gateway starts without the
+  variable. The origins `serve` itself exports for a network mode are never
+  counted as an override.
+- **Trust proxy.** The SAVED setting decides; `ABSTRACTGATEWAY_TRUST_PROXY` is
+  only a fallback used when nothing is saved (`source: "env"`,
+  `overridden_by_env: true` then). Once the switch is saved, it applies to the
+  next request whatever the environment says (`source: "setting"`, with a
+  `note` that the variable is also set and the saved switch wins). The same
+  rule is used for sign-in lockouts and the audit log's client address and for
+  deciding whether a caller sits at the gateway computer. Once saved, change
+  it with the switch (`abstractgateway network set --trust-proxy on|off`), not
+  with the variable.
 
 Status payload (`GET /api/gateway/network`, `reverse_proxy`):
 
