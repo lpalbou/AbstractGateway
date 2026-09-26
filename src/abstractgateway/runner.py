@@ -42,6 +42,18 @@ from abstractruntime.storage.commands import (
 logger = logging.getLogger(__name__)
 
 
+def _is_lost_resume_race(exc: BaseException) -> bool:
+    """True for the refusal AbstractRuntime gives a resume whose wait is gone.
+
+    Two runner paths resume a parent when its child finishes (the tick
+    thread's parent resume and the loop's repair pass). Since AbstractRuntime
+    0.5.1 a wait is resumed at most once and the slower path is refused with
+    exactly `ValueError("Run is not waiting")`: the parent was already
+    resumed, nothing is wrong. Anything else is a real failure.
+    """
+    return isinstance(exc, ValueError) and str(exc) == "Run is not waiting"
+
+
 def _is_pause_wait(waiting: Any, *, run_id: str) -> bool:
     if waiting is None:
         return False
@@ -1654,8 +1666,25 @@ class GatewayRunner:
                     max_steps=0,
                 )
                 self._queue_direct_tick(getattr(r, "run_id", None))
-            except Exception:
-                # Best-effort recovery only; avoid blocking the runner loop on a single bad tree.
+            except Exception as e:
+                if _is_lost_resume_race(e):
+                    # The tick thread resumed this parent first (the list was
+                    # taken before it saved): nothing to repair.
+                    logger.debug(
+                        "GatewayRunner: repair skip %s (wait %s already resumed)",
+                        r.run_id,
+                        getattr(wait, "wait_key", None),
+                    )
+                    continue
+                # Best-effort recovery only; one bad tree must not block the
+                # others behind it — but a parent that cannot be resumed from
+                # a finished child is stuck, so it is never silent.
+                logger.warning(
+                    "GatewayRunner: repair could not resume %s on finished child %s (retries next poll)",
+                    r.run_id,
+                    sub_run_id.strip(),
+                    exc_info=True,
+                )
                 continue
 
     def _submit_tick(self, run_id: str, *, priority: bool = False) -> None:
@@ -2561,13 +2590,24 @@ class GatewayRunner:
                     payload["node_traces"] = runtime.get_node_traces(child_run_id) or {}
                 except Exception:
                     payload["node_traces"] = {}
-            runtime.resume(
-                workflow=wf,
-                run_id=r.run_id,
-                wait_key=getattr(wait, "wait_key", None),
-                payload=payload,
-                max_steps=0,
-            )
+            try:
+                runtime.resume(
+                    workflow=wf,
+                    run_id=r.run_id,
+                    wait_key=getattr(wait, "wait_key", None),
+                    payload=payload,
+                    max_steps=0,
+                )
+            except ValueError as e:
+                if not _is_lost_resume_race(e):
+                    raise
+                # The repair pass resumed this parent first: nothing to do.
+                logger.debug(
+                    "GatewayRunner: parent-resume skip %s (wait %s already resumed)",
+                    r.run_id,
+                    getattr(wait, "wait_key", None),
+                )
+                continue
             # resume(max_steps=0) only clears the wait: the parent is RUNNING
             # on its resume_to_node and needs a TICK to execute it. That tick
             # used to wait for the next scan pass (~0.25-0.75s per subflow
