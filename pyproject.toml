@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "abstractgateway"
-version = "0.4.4"
+version = "0.5.0"
 description = "AbstractGateway: deployable Run Gateway host for AbstractRuntime (commands + ledger)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -16,15 +16,15 @@ dependencies = [
   # token deltas with parent_run_id and the built-in tool deny prefixes
   # (runtime 6567ed4), which an older runtime would silently ignore; the host
   # refuses to start on a runtime without them.
-  "AbstractRuntime>=0.4.37",
+  "AbstractRuntime>=0.5.0",
   # Floor only (no extras; Runtime chooses them). The gateway relies on
-  # AbstractCore 2.15.3 (host-job download progress and parent jobs, the
-  # recommended text tiers, the operator HF-offline snapshot, download end
-  # reasons, a default MLX model id that exists on Hugging Face, an MLX eject
-  # that frees every holder, the MLX held-memory report); Runtime
+  # AbstractCore 2.16.0 (abstractcore.utils.identity for the About rows,
+  # process-wide model residency and eject semantics, host-job download
+  # progress, the recommended text tiers, the MLX held-memory report); Runtime
   # alone would keep an older Core on upgrade.
-  "abstractcore>=2.15.3",
-  "abstractagent>=0.3.13",
+  "abstractcore>=2.16.0",
+  # 0.3.14: delegated sub-agents inherit the run's _runtime.stream switch.
+  "abstractagent>=0.3.14",
   "AbstractMemory[lancedb]>=0.3.0",
   # 0.3.0 ships the curated skill shelf inside the package (abstractskill.bundled)
   # and seed_registry, which the gateway uses to keep <data dir>/skills/registry.
@@ -49,7 +49,7 @@ dependencies = [
 # Tooling extras for contributors: `dev`, `docs`.
 
 embeddings = [
-  "abstractcore[embeddings]>=2.15.3",
+  "abstractcore[embeddings]>=2.16.0",
 ]
 
 # Desktop tray / menu-bar icon shown by `abstractgateway serve` (macOS, Windows,
@@ -67,16 +67,16 @@ tray = [
 # deployment entry point, Gateway's `apple` profile installs the full native
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
-  "AbstractRuntime[apple]>=0.4.36",
-  "abstractagent[apple]>=0.3.13",
+  "AbstractRuntime[apple]>=0.5.0",
+  "abstractagent[apple]>=0.3.14",
   "AbstractMemory[all-apple]>=0.3.0",
 ]
 
 # Native/container GPU Gateway profile. This is the full local GPU aggregate for
 # Python installs and for the NVIDIA Docker image.
 gpu = [
-  "AbstractRuntime[gpu]>=0.4.36",
-  "abstractagent[gpu]>=0.3.13",
+  "AbstractRuntime[gpu]>=0.5.0",
+  "abstractagent[gpu]>=0.3.14",
   "AbstractMemory[all-gpu]>=0.3.0",
 ]
 dev = [

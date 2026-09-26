@@ -288,9 +288,9 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.4.36`
-- `abstractcore>=2.15.3`
-- `abstractagent>=0.3.13`
+- `AbstractRuntime>=0.5.0`
+- `abstractcore>=2.16.0`
+- `abstractagent>=0.3.14`
 - `AbstractMemory[lancedb]>=0.3.0`
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
@@ -4768,8 +4768,8 @@ Evidence: `src/abstractgateway/routes/gateway.py` (`host_state`,
 Public (no sign-in): which versions this gateway runs, for About screens.
 
 ```json
-{"abstractframework": "0.3.3", "abstractgateway": "0.4.4",
- "packages": {"abstractcore": "2.15.3", "abstractruntime": "0.4.36", "abstractskill": "0.3.0"}}
+{"abstractframework": "0.4.0", "abstractgateway": "0.5.0",
+ "packages": {"abstractcore": "2.16.0", "abstractruntime": "0.5.0", "abstractskill": "0.3.0"}}
 ```
 
 `abstractframework` is null when the framework meta-package is not installed
@@ -5353,7 +5353,7 @@ you omit `flow_id`.
 | --- | --- | --- | --- |
 | `basic-agent` | 0.0.4 | `81795ea9`* (`abstractcode.agent.v1`) | The framework default chat agent: one Agent node with tools, memory, and status updates. Serves entity phases and chat hosts. |
 | `coding-agent` | 0.2.6 | `coder` (`abstractcode.agent.v1`), `coding-agent`* (`abstractcode.coding.v1`) | Verify-gated coding: a builder agent writes code, an independent verifier runs build/execute/match gates each round, and failures feed back as reprompts until gates pass. `coder` is the chat entrypoint; `coding-agent` is the structured pipeline. |
-| `deep-research` | 0.1.7 | `deep-research`* (`abstractcode.agent.v1`, `abstractresearch.deep.v1`) | Production research with adversarial review, a verified source ledger, and Markdown/PDF/DOCX export. See [deep-research.md](docs/deep-research.md). |
+| `deep-research` | 0.1.8 | `deep-research`* (`abstractcode.agent.v1`, `abstractresearch.deep.v1`) | Production research with adversarial review, a verified source ledger, and Markdown/PDF/DOCX export. See [deep-research.md](docs/deep-research.md). |
 | `co-scientist` | 0.2.0 | `co-scientist`* (`abstractresearch.coscientist.v1`) | Multi-agent hypothesis engine: literature grounding through the deep-research investigation flows, then cycles of generation, reflection, Elo-ranked pairwise debate, and evolution into a final reviewed research overview. |
 | `abstractassistant-orchestrator` | 0.0.0 | `d5d4e5a1`* (`abstractassistant.agent.v1`) | Orchestrator for the compact AbstractAssistant tray surface. |
 | `docs-qa` | 0.1.0 | `docsqa001`* | Documentation Q&A grounded on the asking app's `llms.txt` corpus; also auto-published into the tenant workflow catalog at boot. |
@@ -5462,7 +5462,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.4.4
+docker pull ghcr.io/lpalbou/abstractgateway:0.5.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -5470,7 +5470,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.4.4-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.5.0-gpu
 ```
 
 The image names `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -5679,7 +5679,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.4.4-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.5.0-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -5837,7 +5837,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.4.4
+docker pull ghcr.io/lpalbou/abstractgateway:0.5.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -5845,7 +5845,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.4.4-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.5.0-gpu
 ```
 
 The `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR names are
@@ -6171,7 +6171,7 @@ Related repos:
 ## Prerequisites
 
 - Python `>=3.10` (see `pyproject.toml`)
-- AbstractRuntime 0.4.37 or later, installed with the gateway; the gateway
+- AbstractRuntime 0.5.0 or later, installed with the gateway; the gateway
   refuses to start on an older runtime and names the version to install
 - Workflows: none needed to start. The gateway serves its shipped bundles
   ([shipped-workflows.md](docs/shipped-workflows.md)); you can point it at your
@@ -6346,7 +6346,7 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.4.4-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:0.5.0-gpu` with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -6472,7 +6472,7 @@ deny rules the gateway relies on; the message names what is missing. Upgrade
 it in the gateway's Python, then start again:
 
 ```bash
-pip install -U "abstractruntime>=0.4.37"
+pip install -U "abstractruntime>=0.5.0"
 ```
 
 ### The one-time sign-in link does not work
@@ -6758,12 +6758,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-09-26
 
-Requires AbstractSkill 0.3.0 (installed automatically) and AbstractRuntime
-0.4.37 (live replies and the built-in tool deny rules; the gateway refuses to
-start on an older runtime and says so). The tray's About rows use the
-identity module of the next AbstractCore release.
+Requires AbstractCore 2.16.0, AbstractRuntime 0.5.0 (live replies and the
+built-in tool deny rules; the gateway refuses to start on an older runtime and
+says so), AbstractAgent 0.3.14 (sub-agents follow the run's live-reply switch)
+and AbstractSkill 0.3.0, all installed automatically. The terminal console is
+`abstractgateway-console` 0.9.0 (About, the stream-replies knob).
 
 ### Added
 
@@ -6879,12 +6880,6 @@ identity module of the next AbstractCore release.
 - A settings write that names an unknown setting is refused as a whole and
   saves nothing.
 
-## [0.4.4] - 2026-09-25
-
-Requires AbstractCore 2.15.3 and AbstractRuntime 0.4.36 (installed
-automatically). The terminal console is unchanged (`abstractgateway-console`
-0.8.0).
-
 ### Fixed
 
 - **Ejecting a model frees its memory.** Ejecting a model from the console or
@@ -6903,7 +6898,11 @@ automatically). The terminal console is unchanged (`abstractgateway-console`
   restart the gateway. A model kept in memory by another part of the gateway
   shows as **resident via other holders**; ejecting it frees every holder.
 - When the Models and Engines tabs cannot load, their card names AbstractCore
-  2.15.3 as the version to install.
+  2.16.0 as the version to install.
+- The shipped `deep-research` workflow (now bundle 0.1.8) researches the
+  message AbstractCode sends it (`prompt`) when no `request` is given, and
+  reports `success`; before, it researched an empty request when started
+  from AbstractCode.
 
 ## [0.4.3] - 2026-09-25
 
@@ -8151,7 +8150,7 @@ desktop Assistant, scripts) and **AbstractRuntime**:
 
 - **AbstractGateway** (this package): HTTP/SSE API, durability glue, security,
   and the operator control plane.
-- **AbstractRuntime** (required, 0.4.37 or later): run model, tick loop,
+- **AbstractRuntime** (required, 0.5.0 or later): run model, tick loop,
   workflow registry, stores, live token deltas and the workspace-scoped tools.
   The gateway checks the installed runtime when it builds its workflow host and
   refuses to start on an older one, naming the version to install.
@@ -9446,7 +9445,7 @@ book), not the operator's HTTP surface.
 
 # `deep-research` Shipped Workflow
 
-Gateway packages `deep-research@0.1.7.flow` as a supported shipped bundle. It
+Gateway packages `deep-research@0.1.8.flow` as a supported shipped bundle. It
 is available from the normal bundle registry alongside `basic-agent` when the
 packaged bundle directory is used. It replaces the `dp-research` bundle id,
 which is no longer shipped.
@@ -9454,14 +9453,16 @@ which is no longer shipped.
 ## Contract
 
 - Bundle id: `deep-research`
-- Version: `0.1.7`
+- Version: `0.1.8`
 - Entrypoint flow id: `deep-research`
 - Interfaces: `abstractcode.agent.v1`, `abstractresearch.deep.v1`
 - Editable source flows: `abstractflow/examples/flows/deep-*.json`
 
 The workflow exposes a small product-facing input contract:
 
-- `request`: what should be researched.
+- `request`: what should be researched. AbstractCode and other
+  `abstractcode.agent.v1` hosts send the user's message as `prompt`; the
+  workflow researches `prompt` when `request` is empty.
 - `viewpoint`: the angle, thesis, audience stance, or evaluation lens.
 - `effort`: `quick`, `standard`, or `thorough`.
 - `provider` / `model`: optional overrides. Leave blank to use Gateway/Core
@@ -9473,6 +9474,8 @@ source/citation policy, export title, and export prefix. The derived review
 round count is enforced by a root `For` control node: each round runs
 investigation, persists the latest evidence, runs adversarial review, persists
 reviewer guidance, and feeds that guidance into the next investigation pass.
+
+The end node's `success` output is `true` when the run produced a report.
 
 Derived `deadline_minutes` and `max_sources` are carried into prompts and audit
 objects; they do not preempt an in-flight provider call.

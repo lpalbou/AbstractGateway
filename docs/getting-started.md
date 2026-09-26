@@ -23,7 +23,7 @@ Related repos:
 ## Prerequisites
 
 - Python `>=3.10` (see `pyproject.toml`)
-- AbstractRuntime 0.4.37 or later, installed with the gateway; the gateway
+- AbstractRuntime 0.5.0 or later, installed with the gateway; the gateway
   refuses to start on an older runtime and names the version to install
 - Workflows: none needed to start. The gateway serves its shipped bundles
   ([shipped-workflows.md](./shipped-workflows.md)); you can point it at your
@@ -198,7 +198,7 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.4.4-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:0.5.0-gpu` with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.

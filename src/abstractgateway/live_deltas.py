@@ -80,7 +80,7 @@ _role_lock = threading.Lock()
 # never written into the prompt: runtime 6567ed4). An older runtime would
 # silently ignore the deny keys, so `require_runtime_features` refuses to
 # build a host on it.
-ABSTRACTRUNTIME_FLOOR = "0.4.37"
+ABSTRACTRUNTIME_FLOOR = "0.5.0"
 
 
 class LiveDeltaError(RuntimeError):

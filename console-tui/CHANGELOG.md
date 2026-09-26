@@ -1,10 +1,18 @@
 # Changelog — abstractgateway-console
 
-## Unreleased
+## 0.9.0 (2026-09-26) — About, default agent workflows, skills shelf, stream replies
 
-Needs the AbstractGateway release that carries `agents.streaming_default`
-for the stream-replies knob; against an older gateway the knob row says "not
+Needs AbstractGateway 0.5.0 for the default agent workflows, the skills shelf
+and the stream-replies knob; against an older gateway those rows say "not
 available on this gateway" and everything else works as before.
+
+- **Default agent workflows.** Runtimes → *Runtime knobs* lists
+  `agents.default_workflow.<interface>` for each agent interface (the value,
+  whether it is saved or built in, and the workflow it runs now); the
+  Workflows screen marks the entrypoint that is an interface's default.
+- **Skills shelf.** Runtimes → *Runtime knobs* shows `skills.shelf`: the
+  folder the gateway reads skills from and why (saved, environment, or the
+  seeded default).
 
 - **About.** `F1` (or `?` outside a text field) opens About: "AbstractGateway
   console <version>", "Part of AbstractFramework — https://abstractframework.ai",

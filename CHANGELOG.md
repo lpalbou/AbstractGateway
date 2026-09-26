@@ -5,12 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-09-26
 
-Requires AbstractSkill 0.3.0 (installed automatically) and AbstractRuntime
-0.4.37 (live replies and the built-in tool deny rules; the gateway refuses to
-start on an older runtime and says so). The tray's About rows use the
-identity module of the next AbstractCore release.
+Requires AbstractCore 2.16.0, AbstractRuntime 0.5.0 (live replies and the
+built-in tool deny rules; the gateway refuses to start on an older runtime and
+says so), AbstractAgent 0.3.14 (sub-agents follow the run's live-reply switch)
+and AbstractSkill 0.3.0, all installed automatically. The terminal console is
+`abstractgateway-console` 0.9.0 (About, the stream-replies knob).
 
 ### Added
 
@@ -126,12 +127,6 @@ identity module of the next AbstractCore release.
 - A settings write that names an unknown setting is refused as a whole and
   saves nothing.
 
-## [0.4.4] - 2026-09-25
-
-Requires AbstractCore 2.15.3 and AbstractRuntime 0.4.36 (installed
-automatically). The terminal console is unchanged (`abstractgateway-console`
-0.8.0).
-
 ### Fixed
 
 - **Ejecting a model frees its memory.** Ejecting a model from the console or
@@ -150,7 +145,11 @@ automatically). The terminal console is unchanged (`abstractgateway-console`
   restart the gateway. A model kept in memory by another part of the gateway
   shows as **resident via other holders**; ejecting it frees every holder.
 - When the Models and Engines tabs cannot load, their card names AbstractCore
-  2.15.3 as the version to install.
+  2.16.0 as the version to install.
+- The shipped `deep-research` workflow (now bundle 0.1.8) researches the
+  message AbstractCode sends it (`prompt`) when no `request` is given, and
+  reports `success`; before, it researched an empty request when started
+  from AbstractCode.
 
 ## [0.4.3] - 2026-09-25
 

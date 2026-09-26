@@ -22,7 +22,7 @@ desktop Assistant, scripts) and **AbstractRuntime**:
 
 - **AbstractGateway** (this package): HTTP/SSE API, durability glue, security,
   and the operator control plane.
-- **AbstractRuntime** (required, 0.4.37 or later): run model, tick loop,
+- **AbstractRuntime** (required, 0.5.0 or later): run model, tick loop,
   workflow registry, stores, live token deltas and the workspace-scoped tools.
   The gateway checks the installed runtime when it builds its workflow host and
   refuses to start on an older one, naming the version to install.

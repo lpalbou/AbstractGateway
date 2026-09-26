@@ -1,6 +1,6 @@
 [package]
 name = "abstractgateway-console"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 # MSRV floor comes from the engine (abstracttui 0.3.6 still declares 1.87).
 rust-version = "1.87"

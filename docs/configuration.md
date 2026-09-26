@@ -39,9 +39,9 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.4.36`
-- `abstractcore>=2.15.3`
-- `abstractagent>=0.3.13`
+- `AbstractRuntime>=0.5.0`
+- `abstractcore>=2.16.0`
+- `abstractagent>=0.3.14`
 - `AbstractMemory[lancedb]>=0.3.0`
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
