@@ -443,6 +443,9 @@ def test_a_child_stream_carries_its_subtree_and_the_root_stream_everything(gw) -
     from abstractgateway.service import get_gateway_service
 
     svc = get_gateway_service()
+    # These hand-made runs have no workflow: the runner would fail them (which
+    # rightly closes their calls) before the streams below are opened.
+    svc.runner.stop()
     rs = svc.host.run_store
     sink = svc.host.runtime._live_delta_sink  # the sink the bundle host registered
     _save_run(rs, "root-a")
