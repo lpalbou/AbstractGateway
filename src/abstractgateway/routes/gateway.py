@@ -27471,6 +27471,10 @@ def _host_state_payload() -> Dict[str, Any]:
         "memory": memory,
         "gpu": gpu,
         "models": models,
+        # The runtime's residency diagnostics (pending ejects, the last
+        # default switch's ejects), the same dict `/models/loaded` carries;
+        # always present, `{}` when the runtime reports none.
+        "residency_diagnostics": (residency.get("diagnostics") if isinstance(residency.get("diagnostics"), dict) else {}),
         "session_caches": session_caches,
         "totals": {
             "models": len(models or []),

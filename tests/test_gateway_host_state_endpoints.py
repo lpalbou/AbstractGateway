@@ -999,3 +999,35 @@ def test_agentic_os_reads_are_user_level_and_mutations_stay_admin(
         admin_cleared = client.post("/api/gateway/sessions/sess1/prompt_cache/clear_all", headers=admin_headers)
         assert admin_cleared.status_code == 200, admin_cleared.text
         assert admin_cleared.json()["ok"] is True
+
+
+class _DiagnosticsFacade(_FullStubHostFacade):
+    DIAG: Dict[str, Any] = {
+        "pending_ejects": [{"provider": "mlx", "model": "old", "reason": "default switch", "since": 1.0}],
+        "last_switch_ejects": [{"provider": "mlx", "model": "old", "ok": False, "deferred": True, "reason": "held"}],
+    }
+
+    def list_model_residency(self, **kwargs: Any) -> Dict[str, Any]:
+        out = super().list_model_residency(**kwargs)
+        out["diagnostics"] = dict(self.DIAG)
+        return out
+
+
+def test_host_state_carries_residency_diagnostics_like_models_loaded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+
+    _patch_gpu(monkeypatch, {"supported": True})
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_host_facade", lambda: (_DiagnosticsFacade(), None))
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        state = client.get("/api/gateway/host/state", headers=headers).json()
+        loaded = client.get("/api/gateway/models/loaded", headers=headers).json()
+    assert state["residency_diagnostics"] == loaded["diagnostics"] == _DiagnosticsFacade.DIAG
+
+    # Always present: {} when the runtime reports no diagnostics.
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_host_facade", lambda: (_FullStubHostFacade(), None))
+    with client:
+        state = client.get("/api/gateway/host/state", headers=headers).json()
+    assert state["residency_diagnostics"] == {}
