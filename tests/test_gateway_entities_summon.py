@@ -369,10 +369,21 @@ def test_human_preempts_a_live_agent_run_at_the_door(client: TestClient):
     # Freeze the holder run as LIVE deterministically: WAITING with no due
     # wait is inert to the tick loop (never scheduled), non-terminal to the
     # seat, and legitimately cancellable (cancel_run cancels RUNNING/WAITING).
+    # First let the runner finish its own tick of this run (the tiny flow ends
+    # at once): freezing it while that tick is still saving let the tick's
+    # final save overwrite the freeze under a loaded machine (flaky, REVIEW/19).
     from abstractruntime.core.models import RunStatus
     from abstractgateway.service import get_gateway_service
 
     svc = get_gateway_service()
+    deadline = time.time() + 30.0
+    while time.time() < deadline:
+        cur = svc.host.run_store.load(run_1)
+        if cur is not None and getattr(cur.status, "value", cur.status) in {"completed", "failed", "cancelled"}:
+            break
+        time.sleep(0.02)
+    else:
+        raise AssertionError("the runner never finished the holder's first tick")
     run = svc.host.run_store.load(run_1)
     run.status = RunStatus.WAITING
     run.waiting = None
