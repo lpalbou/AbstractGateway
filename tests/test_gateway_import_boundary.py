@@ -45,7 +45,14 @@ def _abstractcore_imports(path: Path) -> list[str]:
 # must run before anything imports torch (see its docstring); it touches no
 # AbstractCore config/LLM/tool surface, and AbstractRuntime has no facade for
 # the GPU reservation yet. Any other direct import stays RED.
-_BOOTSTRAP_EXEMPTIONS = frozenset({("cli.py", "import abstractcore")})
+#
+# The tray's About (tray/app.py) reads the AbstractFramework identity through
+# `abstractcore.utils.identity` (CONTRACTS §B names it as THE shared Python
+# API for the descriptor): presentation text only, no config/LLM/tool surface.
+_BOOTSTRAP_EXEMPTIONS = frozenset({
+    ("cli.py", "import abstractcore"),
+    ("app.py", "from abstractcore.utils.identity import about_lines, app_identity, gateway_version_rows"),
+})
 
 
 def _is_exempt(offender: str) -> bool:

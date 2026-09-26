@@ -87,6 +87,11 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # session only for a one-time code written by the LOCAL CLI into the data
     # dir, and the route itself refuses any non-loopback or proxied peer.
     ("POST", "/api/gateway/session/claim"),
+    # Desktop hand-over (CONTRACTS A1, 2026-09-25): the third public write.
+    # It mints a session only for a one-time code the gateway wrote into a
+    # 0600 file of its data dir when a person opened the Assistant, and the
+    # route refuses any non-loopback, proxied or app-server-relayed caller.
+    ("POST", "/api/gateway/apps/desktop-handover"),
     # --- self-service surfaces: the caller acts only on itself -------------
     # A polite dequeue of the CALLER from a queue it joined (interaction
     # surface, same class as chat/visit/summon).
@@ -268,13 +273,20 @@ PUBLIC_WRITES = {
     # First-run claim (2026-09-23): loopback-peer-only, one-time code from the
     # local CLI; see test_gateway_first_run.py for the peer/replay pins.
     ("POST", "/api/gateway/session/claim"),
+    # Desktop hand-over (2026-09-25): direct-loopback-only, one-time code the
+    # gateway wrote into a 0600 file; see test_gateway_desktop_handover.py.
+    ("POST", "/api/gateway/apps/desktop-handover"),
+    # Not a write: the one public READ inside the boundary (versions only,
+    # no paths or secrets; see test_gateway_about.py).
+    ("GET", "/api/gateway/about"),
 }
 
 
 def test_the_public_write_exemption_is_exactly_session_login() -> None:
-    """Inside the boundary, exactly TWO writes skip authentication: the login
-    that mints credentials and the first-run claim that redeems a one-time
-    local code. Widening `_public_auth_path` widens the unauthenticated
+    """Inside the boundary, exactly the listed routes skip authentication: the
+    login that mints credentials, the first-run claim and the desktop
+    hand-over that redeem one-time local codes, and the public version read
+    (GET /about). Widening `_public_auth_path` widens the unauthenticated
     surface — it must never happen silently."""
     from abstractgateway.security import load_gateway_auth_policy_from_env
     from abstractgateway.security.gateway_security import GatewaySecurityMiddleware
@@ -289,7 +301,7 @@ def test_the_public_write_exemption_is_exactly_session_login() -> None:
             continue
         assert middleware._public_auth_path(_concrete(path), method) is False, (
             f"{method} {path} is exempted from authentication by _public_auth_path — "
-            "only session/login and session/claim may be public inside the boundary"
+            "only the PUBLIC_WRITES routes may be public inside the boundary"
         )
 
 
