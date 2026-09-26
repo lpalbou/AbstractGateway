@@ -45,7 +45,7 @@ deny rules the gateway relies on; the message names what is missing. Upgrade
 it in the gateway's Python, then start again:
 
 ```bash
-pip install -U "abstractruntime>=0.5.0"
+pip install -U "abstractruntime>=0.5.1"
 ```
 
 ### The one-time sign-in link does not work

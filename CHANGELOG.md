@@ -5,7 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.1] - 2026-09-26
+
+Requires AbstractRuntime 0.5.1, AbstractCore 2.16.1 and AbstractAgent 0.3.15.
+
+### Changed
+
+- Minimum versions raised to AbstractRuntime 0.5.1 (a wait is resumed only once, so a finished
+  child can no longer make its parent run it again), AbstractCore 2.16.1 (MLX models receive
+  prompts in their own chat template, so tool calls and replies from local MLX models are read
+  correctly) and AbstractAgent 0.3.15 (CodeAct and MemAct agents no longer crash, and an agent that
+  announces tool calls without making them is asked again instead of stopping).
 
 ### Fixed
 

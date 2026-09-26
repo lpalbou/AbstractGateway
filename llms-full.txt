@@ -288,9 +288,9 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.5.0`
-- `abstractcore>=2.16.0`
-- `abstractagent>=0.3.14`
+- `AbstractRuntime>=0.5.1`
+- `abstractcore>=2.16.1`
+- `abstractagent>=0.3.15`
 - `AbstractMemory[lancedb]>=0.3.0`
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
@@ -4768,8 +4768,8 @@ Evidence: `src/abstractgateway/routes/gateway.py` (`host_state`,
 Public (no sign-in): which versions this gateway runs, for About screens.
 
 ```json
-{"abstractframework": "0.4.0", "abstractgateway": "0.5.0",
- "packages": {"abstractcore": "2.16.0", "abstractruntime": "0.5.0", "abstractskill": "0.3.0"}}
+{"abstractframework": "0.4.0", "abstractgateway": "0.5.1",
+ "packages": {"abstractcore": "2.16.1", "abstractruntime": "0.5.1", "abstractskill": "0.3.0"}}
 ```
 
 `abstractframework` is null when the framework meta-package is not installed
@@ -5462,7 +5462,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.5.0
+docker pull ghcr.io/lpalbou/abstractgateway:0.5.1
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -5470,7 +5470,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.5.0-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.5.1-gpu
 ```
 
 The image names `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -5679,7 +5679,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.5.0-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.5.1-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -5837,7 +5837,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.5.0
+docker pull ghcr.io/lpalbou/abstractgateway:0.5.1
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -5845,7 +5845,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.5.0-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.5.1-gpu
 ```
 
 The `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR names are
@@ -6171,7 +6171,7 @@ Related repos:
 ## Prerequisites
 
 - Python `>=3.10` (see `pyproject.toml`)
-- AbstractRuntime 0.5.0 or later, installed with the gateway; the gateway
+- AbstractRuntime 0.5.1 or later, installed with the gateway; the gateway
   refuses to start on an older runtime and names the version to install
 - Workflows: none needed to start. The gateway serves its shipped bundles
   ([shipped-workflows.md](docs/shipped-workflows.md)); you can point it at your
@@ -6346,7 +6346,7 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.5.0-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:0.5.1-gpu` with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -6472,7 +6472,7 @@ deny rules the gateway relies on; the message names what is missing. Upgrade
 it in the gateway's Python, then start again:
 
 ```bash
-pip install -U "abstractruntime>=0.5.0"
+pip install -U "abstractruntime>=0.5.1"
 ```
 
 ### The one-time sign-in link does not work
@@ -6757,6 +6757,26 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.5.1] - 2026-09-26
+
+Requires AbstractRuntime 0.5.1, AbstractCore 2.16.1 and AbstractAgent 0.3.15.
+
+### Changed
+
+- Minimum versions raised to AbstractRuntime 0.5.1 (a wait is resumed only once, so a finished
+  child can no longer make its parent run it again), AbstractCore 2.16.1 (MLX models receive
+  prompts in their own chat template, so tool calls and replies from local MLX models are read
+  correctly) and AbstractAgent 0.3.15 (CodeAct and MemAct agents no longer crash, and an agent that
+  announces tool calls without making them is asked again instead of stopping).
+
+### Fixed
+
+- A flow whose Agent or subflow node waits on a child could run that child twice when the child
+  finished exactly as the runner ticked (twice the time and tokens). The fix is in
+  AbstractRuntime 0.5.1, which resumes a wait only once; this gateway change only quiets the
+  harmless second attempt (a debug line instead of an error), and a parent the runner cannot
+  resume after its child finished is now logged as a warning instead of being skipped silently.
 
 ## [0.5.0] - 2026-09-26
 
@@ -8150,7 +8170,7 @@ desktop Assistant, scripts) and **AbstractRuntime**:
 
 - **AbstractGateway** (this package): HTTP/SSE API, durability glue, security,
   and the operator control plane.
-- **AbstractRuntime** (required, 0.5.0 or later): run model, tick loop,
+- **AbstractRuntime** (required, 0.5.1 or later): run model, tick loop,
   workflow registry, stores, live token deltas and the workspace-scoped tools.
   The gateway checks the installed runtime when it builds its workflow host and
   refuses to start on an older one, naming the version to install.
