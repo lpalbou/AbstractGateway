@@ -127,24 +127,33 @@ class Unavailable:
 Resolution = Union[Resolved, Unavailable]
 
 
+class DefaultWorkflowUnavailable(RuntimeError):
+    """A `@default` start whose default cannot run (host-level callers)."""
+
+    def __init__(self, resolution: Any, message: str) -> None:
+        super().__init__(message)
+        self.resolution = resolution
+
+
 # ---------------------------------------------------------------- parsing
 
 
 def parse_workflow_ref(raw: Any) -> tuple[str, str, Optional[str], str]:
     """`[scope:]bundle[@version]:flow` -> (registry_scope, bundle_id,
-    version | None, flow_id); scope `private` (default) or `catalog`.
-    Raises DefaultWorkflowError in words."""
+    version | None, flow_id); scope `private` (default) or `catalog`. The
+    bundle part ends at the FIRST `:` after the optional scope word, so a
+    flow id may itself contain `:`. Raises DefaultWorkflowError in words."""
     text = str(raw if raw is not None else "").strip()
     hint = "write [private:|catalog:]bundle[@version]:flow, e.g. basic-agent:81795ea9 or coding-agent@0.2.7:coder"
-    parts = [p.strip() for p in text.split(":")]
-    if len(parts) == 3:
-        scope_word, prefix, flow_id = parts
-        if scope_word not in SCOPE_WORDS:
-            raise DefaultWorkflowError(f"{text!r}: unknown scope {scope_word!r} (private or catalog); {hint}")
-        scope = SCOPE_WORDS[scope_word]
-    elif len(parts) == 2:
-        scope, (prefix, flow_id) = SCOPE_WORDS["private"], parts
+    scope = SCOPE_WORDS["private"]
+    head, sep, rest = text.partition(":")
+    if sep and head.strip() in SCOPE_WORDS and ":" in rest:
+        scope, text_body = SCOPE_WORDS[head.strip()], rest
     else:
+        text_body = text
+    prefix, sep, flow_id = text_body.partition(":")
+    prefix, flow_id = prefix.strip(), flow_id.strip()
+    if not sep:
         raise DefaultWorkflowError(f"{text!r} is not a workflow reference; {hint}")
     bundle_id, at, version = prefix.partition("@")
     bundle_id, version = bundle_id.strip(), version.strip()

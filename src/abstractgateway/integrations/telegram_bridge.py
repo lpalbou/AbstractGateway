@@ -11,6 +11,8 @@ import threading
 import time
 from typing import Any, Callable, Dict, Optional
 
+from ..agent_defaults import DefaultWorkflowUnavailable
+
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -442,26 +444,22 @@ class TelegramBridge:
         return bool(self._cfg.enabled)
 
     def _run_target(self, *, chat_id: int) -> Optional[tuple]:
-        """(flow_id, bundle_id, bundle_version) for the next run. "@default"
-        resolves the gateway default workflow for abstractcode.agent.v1 at
-        every message (a change in the console applies to the next message);
-        when it cannot run, the chat is told why and nothing starts."""
+        """(flow_id, bundle_id, extra start kwargs) for the next run. Unset =
+        `@default` for abstractcode.agent.v1: the HOST resolves it at every
+        message (a change in the console applies to the next message) and
+        records `workflow_selection.source: gateway_default` in the run."""
         if self._cfg.flow_id != "@default":
-            return (self._cfg.flow_id, self._cfg.bundle_id, None)
-        from ..agent_defaults import CODE_AGENT_INTERFACE, Unavailable, host_entrypoint_index, resolve_default_agent_workflow, unavailable_detail
-        from ..users import gateway_data_dir_from_env
+            return (self._cfg.flow_id, self._cfg.bundle_id, {})
+        from ..agent_defaults import CODE_AGENT_INTERFACE
 
-        res = resolve_default_agent_workflow(
-            CODE_AGENT_INTERFACE, index=host_entrypoint_index(self._host), data_dir=gateway_data_dir_from_env()
-        )
-        if isinstance(res, Unavailable):
-            import logging
+        return ("@default", None, {"interface": CODE_AGENT_INTERFACE})
 
-            detail = unavailable_detail(res)
-            logging.getLogger(__name__).error("Telegram bridge: %s", detail)
-            self._send_text(chat_id=int(chat_id), text=f"Sorry — this gateway cannot start its default agent: {res.reason}")
-            return None
-        return (res.flow_id, res.bundle_id, res.bundle_version)
+    def _default_unavailable(self, *, chat_id: int, exc: Exception) -> None:
+        import logging
+
+        logging.getLogger(__name__).error("Telegram bridge: %s", exc)
+        reason = getattr(getattr(exc, "resolution", None), "reason", None) or str(exc)
+        self._send_text(chat_id=int(chat_id), text=f"Sorry — this gateway cannot start its default agent: {reason}")
 
     def start(self) -> None:
         if not self._cfg.enabled:
@@ -2456,16 +2454,17 @@ class TelegramBridge:
 
         try:
             target = self._run_target(chat_id=int(chat_id))
-            if target is None:
-                return
             run_id = self._host.start_run(
                 flow_id=target[0],
                 bundle_id=target[1],
-                **({"bundle_version": target[2]} if target[2] else {}),
+                **target[2],
                 input_data=input_data,
                 actor_id="gateway",
                 session_id=session_id,
             )
+        except DefaultWorkflowUnavailable as exc:
+            self._default_unavailable(chat_id=int(chat_id), exc=exc)
+            return
         except Exception:
             self._send_text(chat_id=int(chat_id), text="Sorry — failed to start the run.")
             return
@@ -2844,16 +2843,17 @@ class TelegramBridge:
 
         try:
             target = self._run_target(chat_id=int(chat_id))
-            if target is None:
-                return
             run_id = self._host.start_run(
                 flow_id=target[0],
                 bundle_id=target[1],
-                **({"bundle_version": target[2]} if target[2] else {}),
+                **target[2],
                 input_data=input_data,
                 actor_id="gateway",
                 session_id=session_id,
             )
+        except DefaultWorkflowUnavailable as exc:
+            self._default_unavailable(chat_id=int(chat_id), exc=exc)
+            return
         except Exception:
             self._send_text(chat_id=int(chat_id), text="Sorry — failed to start the run.")
             return

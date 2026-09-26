@@ -2170,7 +2170,39 @@ class WorkflowBundleGatewayHost:
         bundle_id: Optional[str] = None,
         bundle_version: Optional[str] = None,
         session_id: Optional[str] = None,
+        interface: Optional[str] = None,
     ) -> str:
+        # flow_id "@default": the gateway default workflow for `interface`
+        # (agents.default_workflow), for in-process callers (the Telegram
+        # bridge) — the same resolution as POST /runs/start, recorded in the
+        # run as workflow_selection.source "gateway_default". Unavailable ->
+        # DefaultWorkflowUnavailable, never another workflow.
+        if str(flow_id or "").strip() == "@default":
+            from ..agent_defaults import (
+                DefaultWorkflowUnavailable,
+                Unavailable,
+                host_entrypoint_index,
+                resolve_default_agent_workflow,
+                unavailable_detail,
+            )
+            from ..users import gateway_data_dir_from_env
+
+            if bundle_id or bundle_version:
+                raise ValueError("flow_id '@default' chooses the workflow itself; do not pass bundle_id/bundle_version")
+            iface = str(interface or "").strip()
+            if not iface:
+                raise ValueError("flow_id '@default' needs an interface (e.g. abstractcode.agent.v1)")
+            res = resolve_default_agent_workflow(iface, index=host_entrypoint_index(self), data_dir=gateway_data_dir_from_env())
+            if isinstance(res, Unavailable):
+                raise DefaultWorkflowUnavailable(res, unavailable_detail(res))
+            if res.registry_scope != "private":
+                raise DefaultWorkflowUnavailable(
+                    res,
+                    f"the gateway default workflow for {iface} is the catalog workflow {res.workflow_id}; "
+                    "this caller starts workflows of the gateway's own registry only",
+                )
+            input_data = {**dict(input_data or {}), "workflow_selection": {**res.resolved_dict(), "source": "gateway_default", "interface": iface}}
+            flow_id, bundle_id, bundle_version = res.flow_id, res.bundle_id, res.bundle_version
         # A DEFAULT IS A DEFAULT, WHICHEVER ENTRY POINT SET IT. Gateway writes
         # push themselves into the live runtime; a `abstractcore config
         # set-default` / console-TUI write cannot. One `stat` here (no parse)

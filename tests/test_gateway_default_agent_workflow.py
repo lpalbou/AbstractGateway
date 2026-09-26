@@ -109,7 +109,11 @@ def test_parse_workflow_ref() -> None:
     assert parse_workflow_ref("private:coder:code") == ("private", "coder", None, "code")
     assert parse_workflow_ref("catalog:coder@2:code") == ("tenant_catalog", "coder", "2", "code")
     assert format_workflow_ref("coder", "2", "code", "tenant_catalog") == "catalog:coder@2:code"
-    for bad in ("coder", ":code", "coder@:code", "coder:", "a@b@c:d", "tenant:coder:code", "a:b:c:d", "", None):
+    # A flow id may contain ':' (split on the FIRST ':' after the scope word).
+    assert parse_workflow_ref("coder:ns:flow") == ("private", "coder", None, "ns:flow")
+    assert parse_workflow_ref("catalog:coder@1:a:b") == ("tenant_catalog", "coder", "1", "a:b")
+    assert parse_workflow_ref("tenant:coder:code") == ("private", "tenant", None, "coder:code")
+    for bad in ("coder", ":code", "coder@:code", "coder:", "a@b@c:d", "", None):
         with pytest.raises(DefaultWorkflowError):
             parse_workflow_ref(bad)
 
@@ -476,11 +480,9 @@ console.log(JSON.stringify(out));
 
 
 def test_telegram_bridge_unset_flow_follows_the_gateway_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """No ABSTRACT_TELEGRAM_FLOW_ID/BUNDLE_ID: the bridge resolves the gateway
-    default for abstractcode.agent.v1 at every message (not a hard-coded
-    basic-agent), and when it cannot run it tells the chat and starts nothing."""
-    from types import SimpleNamespace
-
+    """No ABSTRACT_TELEGRAM_FLOW_ID/BUNDLE_ID: the bridge starts `@default` +
+    abstractcode.agent.v1 and the HOST resolves it at every message, so the
+    run records source gateway_default; unavailable -> the chat is told."""
     from abstractgateway.integrations.telegram_bridge import TelegramBridge, TelegramBridgeConfig
 
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "data"))
@@ -488,25 +490,24 @@ def test_telegram_bridge_unset_flow_follows_the_gateway_default(tmp_path: Path, 
         monkeypatch.delenv(k, raising=False)
     cfg = TelegramBridgeConfig.from_env(base_dir=tmp_path)
     assert cfg.flow_id == "@default" and cfg.bundle_id is None
+    bridge = TelegramBridge(config=cfg, host=None, runner=None, artifact_store=None)
+    assert bridge._run_target(chat_id=1) == ("@default", None, {"interface": CODE}), "never a bundle picked client-side"
 
-    def bundle(bid: str, ver: str, fid: str, ifaces: list) -> Any:
-        ep = SimpleNamespace(flow_id=fid, name=fid, interfaces=ifaces)
-        return SimpleNamespace(manifest=SimpleNamespace(bundle_id=bid, bundle_version=ver, default_entrypoint=fid, entrypoints=[ep]))
 
-    host = SimpleNamespace(
-        bundles={"basic-agent": {"0.0.5": bundle("basic-agent", "0.0.5", "ba", [CODE])},
-                 "coder": {"1.0.0": bundle("coder", "1.0.0", "code", [CODE])}},
-        bundle_sources={}, latest_bundle_versions={"basic-agent": "0.0.5", "coder": "1.0.0"}, deprecation_store=None,
-    )
-    bridge = TelegramBridge(config=cfg, host=host, runner=None, artifact_store=None)
-    sent: list = []
-    bridge._send_text = lambda *, chat_id, text: sent.append(text)  # type: ignore[method-assign]
+def test_host_start_resolves_default_and_records_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, h = _client(tmp_path, monkeypatch)
+    with client:
+        from abstractgateway.agent_defaults import DefaultWorkflowUnavailable
+        from abstractgateway.service import get_gateway_service
 
-    assert bridge._run_target(chat_id=1) == ("ba", "basic-agent", "0.0.5")
-    store = tmp_path / "data" / "config" / "runtime_config.json"
-    store.parent.mkdir(parents=True, exist_ok=True)
-    store.write_text(json.dumps({"agents": {"default_workflow": {CODE: "coder:code"}}}), encoding="utf-8")
-    assert bridge._run_target(chat_id=1) == ("code", "coder", "1.0.0"), "a changed default applies to the next message"
-    store.write_text(json.dumps({"agents": {"default_workflow": {CODE: "gone:x"}}}), encoding="utf-8")
-    assert bridge._run_target(chat_id=1) is None
-    assert sent and "'gone' is not on this gateway" in sent[-1]
+        host = get_gateway_service().host
+        rid = host.start_run(flow_id="@default", interface=CODE, input_data={}, actor_id="gateway", session_id="tg:1")
+        run = host.run_store.load(rid)
+        assert run.workflow_id == "basic-agent@0.0.1:ba"
+        assert run.vars["workflow_selection"]["source"] == "gateway_default"
+        assert run.vars["workflow_selection"]["interface"] == CODE
+        with pytest.raises(DefaultWorkflowUnavailable) as e:
+            host.start_run(flow_id="@default", interface=ASSIST, input_data={}, actor_id="gateway")
+        assert "agents.default_workflow.abstractassistant.agent.v1" in str(e.value)
+        with pytest.raises(ValueError):
+            host.start_run(flow_id="@default", input_data={}, actor_id="gateway")
