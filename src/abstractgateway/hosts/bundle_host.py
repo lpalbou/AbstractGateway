@@ -1517,8 +1517,10 @@ class WorkflowBundleGatewayHost:
         # builds publishes its runs' live deltas -- into the in-process hub,
         # or, in a split runner process, into `<data dir>/live/*.deltas.jsonl`
         # for the API process to tail -- and closes a run's live state when it
-        # ends. No try/except: a runtime without the seam cannot stream, and
-        # that must be visible at boot, not a silently frozen reply bubble.
+        # ends. No try/except: a runtime without the seam cannot stream (nor
+        # enforce the built-in tool deny, see live_deltas.require_runtime_features),
+        # and that must be visible at boot, not a silently frozen reply bubble
+        # or a silently open data folder.
         from ..live_deltas import install_live_delta_sink, sweep_finished_live_files
 
         install_live_delta_sink(runtime, data_dir=data_root, run_store=run_store)

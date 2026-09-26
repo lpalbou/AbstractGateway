@@ -12,7 +12,11 @@ license = { text = "MIT" }
 authors = [{ name = "Laurent-Philippe Albou" }]
 
 dependencies = [
-  "AbstractRuntime>=0.4.36",
+  # Floor = live_deltas.ABSTRACTRUNTIME_FLOOR (a test keeps them equal): live
+  # token deltas with parent_run_id and the built-in tool deny prefixes
+  # (runtime 6567ed4), which an older runtime would silently ignore; the host
+  # refuses to start on a runtime without them.
+  "AbstractRuntime>=0.4.37",
   # Floor only (no extras; Runtime chooses them). The gateway relies on
   # AbstractCore 2.15.3 (host-job download progress and parent jobs, the
   # recommended text tiers, the operator HF-offline snapshot, download end

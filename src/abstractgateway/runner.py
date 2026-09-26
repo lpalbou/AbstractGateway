@@ -317,6 +317,7 @@ class GatewayRunner:
         self._kill_switch = StopKillSwitch(
             run_store=lambda: self.run_store,
             ledger_store=lambda: self.ledger_store,
+            on_terminal=self._close_live_state,
             settings=lambda: _resolve_kill_switch_settings(
                 self._kill_switch_data_dir, default_deadline_s=float(self._cfg.stop_kill_switch_s)
             ),
@@ -2319,6 +2320,13 @@ class GatewayRunner:
     # Tick execution + subworkflow parent resumption
     # ---------------------------------------------------------------------
 
+    def _close_live_state(self, run: Any) -> None:
+        """A run this runner ended by writing its status straight to the store
+        (no Runtime, no terminal hooks): close its live token stream too."""
+        from .live_deltas import close_run_live_state
+
+        close_run_live_state(run, data_dir=self._base_dir, run_store=self.run_store)
+
     def _clear_resolution_failure(self, run_id: str) -> None:
         with self._resolution_failures_lock:
             self._resolution_failures.pop(run_id, None)
@@ -2362,6 +2370,10 @@ class GatewayRunner:
             latest.updated_at = utc_now_iso()
             self.run_store.save(latest)
             logger.error("GatewayRunner: failing run %s — workflow unresolvable: %s", run_id, err)
+            try:
+                self._close_live_state(latest)
+            except Exception:
+                logger.exception("GatewayRunner: closing the live state of failed run %s failed", run_id)
             try:
                 rec = StepRecord.start(
                     run=latest,
@@ -2419,6 +2431,10 @@ class GatewayRunner:
                     latest.error = err
                     latest.updated_at = utc_now_iso()
                     runtime.run_store.save(latest)
+                    try:
+                        self._close_live_state(latest)
+                    except Exception:
+                        logger.exception("GatewayRunner: closing the live state of failed run %s failed", run_id)
                     try:
                         rec = StepRecord.start(
                             run=latest,

@@ -119,12 +119,17 @@ class StopKillSwitch:
         interval_s: float = WATCH_INTERVAL_S,
         grace_s: float = KILL_GRACE_S,
         watch: bool = True,
+        on_terminal: Optional[Callable[[Any], Any]] = None,
     ) -> None:
         # Stores may be given as zero-arg callables (the runner resolves its
         # host's stores lazily); resolved at use, never at construction.
         self._run_store_ref = run_store
         self._ledger_store_ref = ledger_store
         self._settings = settings
+        # Called with each run this switch marks CANCELLED straight in the
+        # store (no Runtime, so no terminal hooks): the runner passes the
+        # live-delta cleanup (live_deltas.close_run_live_state).
+        self._on_terminal = on_terminal
         self._kill = kill
         self._inflight = inflight
         self._clock = clock
@@ -355,6 +360,12 @@ class StopKillSwitch:
                 self._run_store.save(run)
             except Exception:  # noqa: BLE001
                 logger.exception("stop kill switch: could not mark run %s CANCELLED", rid)
+                continue
+            if self._on_terminal is not None:
+                try:
+                    self._on_terminal(run)
+                except Exception:  # noqa: BLE001 - logged loudly; the stop itself stands
+                    logger.exception("stop kill switch: closing the live state of run %s failed", rid)
 
 
 def resolve_settings(data_dir: Any, *, default_deadline_s: float = DEFAULT_DEADLINE_S) -> Dict[str, Any]:

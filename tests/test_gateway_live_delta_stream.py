@@ -443,20 +443,24 @@ def test_a_child_stream_carries_its_subtree_and_the_root_stream_everything(gw) -
     from abstractgateway.service import get_gateway_service
 
     svc = get_gateway_service()
-    # These hand-made runs have no workflow: the runner would fail them (which
-    # rightly closes their calls) before the streams below are opened.
-    svc.runner.stop()
     rs = svc.host.run_store
     sink = svc.host.runtime._live_delta_sink  # the sink the bundle host registered
-    _save_run(rs, "root-a")
-    _save_run(rs, "child-a", parent="root-a")
-    _save_run(rs, "grand-a", parent="child-a")
-    _save_run(rs, "sib-a", parent="root-a")
+    # WAITING with no wait: live, but inert to the runner's tick loop. (These
+    # hand-made runs have no workflow; a RUNNING one would be failed by the
+    # runner, which rightly closes its calls, racing the streams below.)
+    _save_run(rs, "root-a", status="waiting")
+    _save_run(rs, "child-a", parent="root-a", status="waiting")
+    _save_run(rs, "grand-a", parent="child-a", status="waiting")
+    _save_run(rs, "sib-a", parent="root-a", status="waiting")
     sink(_ev("llm.delta", "root-a", "r1", 0, text="root says", channel="content"))
     sink(_ev("llm.delta", "child-a", "k1", 0, parent="root-a", text="child says", channel="content"))
     sink(_ev("llm.delta", "grand-a", "g1", 0, parent="child-a", text="grandchild says", channel="content"))
     sink(_ev("llm.delta", "sib-a", "s1", 0, parent="root-a", text="sibling says", channel="content"))
 
+    from abstractgateway.live_deltas import get_hub, scope_key
+
+    _scope = scope_key(svc.host.data_dir)
+    assert get_hub().open_calls(_scope, "root-a") == ["g1", "k1", "r1", "s1"], get_hub().tracked_roots()
     # The runs end behind the hub's back (no runtime terminal hook reached it):
     # the stream's own terminal check closes the open calls before `done`.
     for rid in ("root-a", "child-a", "grand-a", "sib-a"):
@@ -474,9 +478,11 @@ def test_a_child_stream_carries_its_subtree_and_the_root_stream_everything(gw) -
     ]
     assert child[-1]["event"] == "done"
 
+    _diag = {"open_before_root_stream": get_hub().open_calls(_scope, "root-a"), "child_events": [e.get("event") for e in child]}
     root = _read_stream(client, "/api/gateway/runs/root-a/ledger/stream?after=0&heartbeat_s=1", headers=HEADERS)
+    _diag["root_events"] = [(e.get("event"), (e.get("data") or {}).get("call_id")) for e in root]
     assert sorted(e["data"]["text"] for e in root if e.get("event") == "llm.delta") == ["root says", "sibling says"], (
-        "the child's calls were closed by its own stream; the root still had its own and the sibling's open"
+        "the child's calls were closed by its own stream; the root still had its own and the sibling's open", _diag
     )
     assert root[-1]["event"] == "done"
 
@@ -538,3 +544,132 @@ def test_another_users_run_is_404_and_leaks_no_delta(tmp_path: Path, monkeypatch
         alice_stream = _read_stream(client, "/api/gateway/runs/shared-id/ledger/stream?after=0&heartbeat_s=1", headers=alice)
         assert [e["data"]["text"] for e in alice_stream if e.get("event") == "llm.delta"] == ["alice secret"]
         assert get_hub().open_calls(str(Path(a_svc.host.data_dir).resolve()), "shared-id") == []
+
+
+def _open_call_for(svc: Any, run_id: str, *, status: str = "waiting") -> str:
+    from abstractgateway.live_deltas import scope_key
+
+    _save_run(svc.host.run_store, run_id, status=status)
+    svc.host.runtime._live_delta_sink(_ev("llm.delta", run_id, f"call-{run_id}", 0, text="partial", channel="content"))
+    return scope_key(svc.host.data_dir)
+
+
+def test_a_kill_switched_run_with_no_subscriber_leaves_no_live_state(gw) -> None:
+    """REVIEW/19 G1: the kill switch marks runs CANCELLED straight in the
+    store (no Runtime, no hooks); nobody watches; the hub must still let go."""
+    from abstractgateway.live_deltas import get_hub
+    from abstractgateway.service import get_gateway_service
+    from abstractgateway.stop_kill_switch import StopKillSwitch
+
+    svc = get_gateway_service()
+    scope = _open_call_for(svc, "killed-run")
+    assert get_hub().open_calls(scope, "killed-run") == ["call-killed-run"]
+
+    now = [1000.0]
+    stuck = [{"run_id": "killed-run", "node_id": "llm", "step_id": "call-killed-run", "effect_type": "llm_call",
+              "attempt": 1, "provider": "mlx", "model": "m", "elapsed_s": 30.0, "thread": "tick-1"}]
+    switch = StopKillSwitch(
+        run_store=svc.host.run_store, ledger_store=svc.host.ledger_store,
+        settings=lambda: {"deadline_s": 1.0, "source": "stored"},
+        kill=lambda step_id, **kw: (stuck.clear(), {"injected": True, "step_id": step_id})[1],
+        inflight=lambda ids: list(stuck), clock=lambda: now[0], sleep=lambda s: None, watch=False,
+        on_terminal=svc.runner._close_live_state,
+    )
+    incident = switch.arm(root_run_id="killed-run", run_ids=["killed-run"])
+    now[0] += 2.0
+    assert switch.check(incident) == "fired"
+    assert svc.host.run_store.load("killed-run").status.value == "cancelled"
+    assert (scope, "killed-run") not in get_hub().tracked_roots(), "the hub let go of the killed run"
+
+
+def test_runs_the_runner_fails_in_the_store_leave_no_live_state(gw) -> None:
+    """REVIEW/19 G1: the unresolvable-workflow and tick-exception promotions."""
+    from abstractgateway.live_deltas import get_hub
+    from abstractgateway.service import get_gateway_service
+
+    svc = get_gateway_service()
+    runner = svc.runner
+
+    # These paths promote RUNNING runs only.
+    scope = _open_call_for(svc, "unresolvable-run", status="running")
+    for _ in range(50):
+        runner._note_resolution_failure("unresolvable-run", KeyError("Workflow 'test' not registered"))
+        if svc.host.run_store.load("unresolvable-run").status.value == "failed":
+            break
+    assert svc.host.run_store.load("unresolvable-run").status.value == "failed"
+    assert (scope, "unresolvable-run") not in get_hub().tracked_roots()
+
+    _open_call_for(svc, "exploding-run", status="running")
+
+    class _Boom:
+        run_store = svc.host.run_store
+
+        def tick(self, **kw: Any) -> Any:
+            raise RuntimeError("tick exploded")
+
+    original = svc.host.runtime_and_workflow_for_run
+    try:
+        svc.host.runtime_and_workflow_for_run = lambda rid: (_Boom(), object())  # type: ignore[assignment]
+        runner._tick_run("exploding-run")
+    finally:
+        svc.host.runtime_and_workflow_for_run = original  # type: ignore[assignment]
+    assert svc.host.run_store.load("exploding-run").status.value == "failed"
+    assert (scope, "exploding-run") not in get_hub().tracked_roots()
+
+
+def test_split_runner_kill_switch_closes_and_deletes_the_live_file(gw, monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractgateway import live_deltas as ld
+    from abstractgateway.service import get_gateway_service
+
+    svc = get_gateway_service()
+    monkeypatch.setattr(ld, "_process_role", ld.ROLE_RUNNER)
+    scope = ld.scope_key(svc.host.data_dir)
+    _save_run(svc.host.run_store, "split-run", status="waiting")
+    ld._file_sink_for(scope).publish(scope, _ev("llm.delta", "split-run", "c1", 0, text="x", channel="content"), ("split-run",))
+    path = ld.live_file_path(scope, "split-run")
+    assert path.exists()
+    run = svc.host.run_store.load("split-run")
+    run.status = __import__("abstractruntime").RunStatus.CANCELLED
+    svc.host.run_store.save(run)
+    svc.runner._close_live_state(run)
+    assert not path.exists(), "the runner's live file is deleted when the run ends"
+    assert "split-run" not in ld._file_sink_for(scope)._fds, "and its descriptor closed"
+
+
+def test_the_runtime_floor_is_declared_once_and_checked_at_host_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """REVIEW/19 G2: the deny prefixes and the live sink need a recent runtime;
+    an older one must stop the host from building, loudly."""
+    import dataclasses
+    import re
+
+    from abstractgateway import live_deltas as ld
+
+    pyproject = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
+    m = re.search(r'"AbstractRuntime>=([0-9.]+)"', pyproject)
+    assert m and m.group(1) == ld.ABSTRACTRUNTIME_FLOOR
+
+    from abstractruntime import InMemoryLedgerStore, InMemoryRunStore
+    from abstractruntime.integrations.abstractcore import workspace_scoped_tools as wst
+
+    from abstractgateway.hosts.bundle_host import WorkflowBundleGatewayHost
+
+    @dataclasses.dataclass(frozen=True)
+    class _OldScope:  # the WorkspaceScope of a runtime before 6567ed4
+        root: Path
+
+    real_scope = wst.WorkspaceScope
+    monkeypatch.setattr(wst, "WorkspaceScope", _OldScope)
+    bundles = tmp_path / "bundles"
+    _write_llm_bundle(bundles)
+    with pytest.raises(ld.RuntimeTooOld, match=r"abstractruntime>=" + re.escape(ld.ABSTRACTRUNTIME_FLOOR) + r".*builtin_deny_prefixes"):
+        WorkflowBundleGatewayHost.load_from_dir(
+            bundles_dir=bundles, data_dir=tmp_path / "data", run_store=InMemoryRunStore(),
+            ledger_store=InMemoryLedgerStore(), artifact_store=None,
+        )
+
+    class _NoSinkRuntime:
+        pass
+
+    monkeypatch.setattr(wst, "WorkspaceScope", real_scope)
+    with pytest.raises(ld.RuntimeTooOld, match="set_live_delta_sink"):
+        ld.require_runtime_features(_NoSinkRuntime())

@@ -72,6 +72,16 @@ FILE_TAIL_POLL_S = 0.03
 _process_role = ROLE_COMBINED
 _role_lock = threading.Lock()
 
+# The AbstractRuntime release this gateway needs (pyproject `AbstractRuntime>=`
+# says the same; tests/test_gateway_live_delta_stream.py keeps the two equal).
+# It carries: live token deltas with `parent_run_id` (set_live_delta_sink),
+# the S-2 parity gate, and the host's built-in tool deny
+# (`workspace_builtin_deny_prefixes` / `workspace_builtin_allow`, enforced and
+# never written into the prompt: runtime 6567ed4). An older runtime would
+# silently ignore the deny keys, so `require_runtime_features` refuses to
+# build a host on it.
+ABSTRACTRUNTIME_FLOOR = "0.4.37"
+
 
 class LiveDeltaError(RuntimeError):
     """A live-delta event or seam that does not match the contract."""
@@ -766,28 +776,76 @@ def _backend_for(data_dir: Any) -> Any:
     return _file_sink_for(data_dir) if process_role() == ROLE_RUNNER else _hub
 
 
+def close_run_live_state(run: Any, *, data_dir: Any, run_store: Any) -> int:
+    """A run reached a terminal status: close its live state in this process
+    (hub: a synthetic `llm.delta_end` for every call of it, or of its subtree,
+    still open, and a root's state freed; runner process: a terminal line in
+    the root's live file, the file closed and deleted when the run is the
+    root). Returns the number of calls closed (hub) or lines written (file).
+
+    Every code path that ends a run WITHOUT a Runtime (the stop kill switch,
+    the runner's unresolvable-workflow and tick-exception promotions) must
+    call this after saving the status; runs ended through a Runtime get it
+    from `attach_terminal_hook`."""
+
+    rid = str(getattr(run, "run_id", "") or "").strip()
+    if not rid:
+        raise LiveDeltaError("cannot close the live state of a run without an id")
+    scope = scope_key(data_dir)
+    resolver = resolver_for(scope, run_store)
+    chain = resolver.chain(rid, getattr(run, "parent_run_id", None), known_parent=True)
+    try:
+        return _backend_for(scope).run_terminal(scope, rid, getattr(run, "status", None), chain)
+    finally:
+        if chain[-1] == rid:
+            resolver.forget_root(rid)
+
+
 def attach_terminal_hook(runtime: Any, *, data_dir: Any, run_store: Any) -> None:
     """Close the live state of a run when it reaches a terminal status on
     `runtime` (every Runtime object that can end a run in this process: the
     host's, and the ones a runner builds to apply cancel/pause commands)."""
 
     scope = scope_key(data_dir)
-    resolver = resolver_for(scope, run_store)
-    backend = _backend_for(scope)
 
     def _on_terminal(run: Any) -> None:
-        rid = str(getattr(run, "run_id", "") or "").strip()
-        if not rid:
-            return
-        parent = getattr(run, "parent_run_id", None)
-        chain = resolver.chain(rid, parent, known_parent=True)
-        try:
-            backend.run_terminal(scope, rid, getattr(run, "status", None), chain)
-        finally:
-            if chain[-1] == rid:
-                resolver.forget_root(rid)
+        if str(getattr(run, "run_id", "") or "").strip():
+            close_run_live_state(run, data_dir=scope, run_store=run_store)
 
     runtime.add_terminal_hook(_on_terminal)
+
+
+class RuntimeTooOld(RuntimeError):
+    """The installed AbstractRuntime lacks a feature this gateway relies on."""
+
+
+def require_runtime_features(runtime: Any) -> None:
+    """Refuse, loudly and at host build, a runtime without the features the
+    gateway depends on (probed by their symbols, not the version string, so a
+    source checkout works as soon as it has them)."""
+
+    missing: List[str] = []
+    if not callable(getattr(runtime, "set_live_delta_sink", None)) or not callable(getattr(runtime, "add_terminal_hook", None)):
+        missing.append("live token deltas (Runtime.set_live_delta_sink / add_terminal_hook)")
+    try:
+        from abstractruntime.integrations.abstractcore import workspace_scoped_tools as wst
+
+        fields = getattr(wst.WorkspaceScope, "__dataclass_fields__", {}) or {}
+        if "builtin_deny_prefixes" not in fields or "builtin_allow" not in fields:
+            missing.append("the host's built-in tool deny (WorkspaceScope.builtin_deny_prefixes / builtin_allow)")
+    except Exception as exc:  # noqa: BLE001 - a missing module is the same answer
+        missing.append(f"the workspace-scoped tools ({type(exc).__name__}: {exc})")
+    if missing:
+        try:
+            from importlib.metadata import version
+
+            installed = version("abstractruntime")
+        except Exception:  # noqa: BLE001
+            installed = "unknown"
+        raise RuntimeTooOld(
+            f"this gateway needs abstractruntime>={ABSTRACTRUNTIME_FLOOR}; the installed abstractruntime "
+            f"({installed}) lacks: {'; '.join(missing)}. Upgrade it: pip install -U 'abstractruntime>={ABSTRACTRUNTIME_FLOOR}'"
+        )
 
 
 def install_live_delta_sink(runtime: Any, *, data_dir: Any, run_store: Any) -> None:
@@ -796,6 +854,7 @@ def install_live_delta_sink(runtime: Any, *, data_dir: Any, run_store: Any) -> N
     The seam fails loudly: a runtime without `set_live_delta_sink` /
     `add_terminal_hook` is a runtime this gateway cannot stream with."""
 
+    require_runtime_features(runtime)
     scope = scope_key(data_dir)
     resolver = resolver_for(scope, run_store)
     backend = _backend_for(scope)

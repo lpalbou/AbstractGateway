@@ -31,7 +31,9 @@ def _sibling_pyproject(package_dir: str) -> dict:
 def test_base_install_is_remote_light_server() -> None:
     data = _pyproject()
     deps = list(data["project"]["dependencies"])
-    assert "AbstractRuntime>=0.4.36" in deps
+    from abstractgateway.live_deltas import ABSTRACTRUNTIME_FLOOR
+
+    assert f"AbstractRuntime>={ABSTRACTRUNTIME_FLOOR}" in deps
     assert "abstractcore>=2.15.3" in deps
     assert "abstractagent>=0.3.13" in deps
     assert "AbstractMemory[lancedb]>=0.3.0" in deps
