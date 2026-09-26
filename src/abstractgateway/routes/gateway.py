@@ -710,7 +710,11 @@ async def gateway_admin_write_runtime_config(request: Request, payload: Dict[str
     try:
         # The workflows are indexed only when an agents setting is written
         # (the response then carries the fresh `agents` block).
-        touches_agents = any(str(k) == "agents" or str(k).startswith("agents.") for k in (payload or {}))
+        touches_agents = any(
+            str(k).startswith("agents.default_workflow")
+            or (str(k) == "agents" and not (isinstance(v, dict) and set(v) <= {"streaming_default"}))
+            for k, v in (payload or {}).items()
+        )
         agent_index = await _off_the_event_loop(_settings_agent_index, principal) if touches_agents else None
         out = write_runtime_config(gateway_data_dir_from_env(), dict(payload or {}), actor=actor, agent_index=agent_index)
         request.state.audit_detail["setting_change"].update({"ok": True, "applied": out.get("applied")})
@@ -4044,6 +4048,34 @@ def _data_dir_workspace_problem(
             "for this conversation or one of your runs"
         )
     return None
+
+
+def _apply_run_stream_switch(input_data: Dict[str, Any], *, interactive: bool) -> None:
+    """Live token streaming has ONE run-level switch: `input_data._runtime.stream`.
+
+    - Present: it must be a boolean (a string "true" or null is refused with
+      400, never read as "off").
+    - Absent: an INTERACTIVE start (`POST /runs/start`) takes the gateway
+      default `agents.streaming_default`; scheduled runs, bridges and the
+      entity loop never do (nobody watches them live).
+    A flow node whose LLM call says `stream: false` wins over both (the
+    runtime ends that call with `delta_end {reason: "unavailable", detail:
+    "node_stream_off"}`)."""
+
+    rt = input_data.get("_runtime")
+    if isinstance(rt, dict) and "stream" in rt:
+        if not isinstance(rt["stream"], bool):
+            raise HTTPException(
+                status_code=400,
+                detail=f"input_data._runtime.stream must be true or false (got {rt['stream']!r})",
+            )
+        return
+    if not interactive:
+        return
+    from ..runtime_config import resolve_streaming_default
+
+    if resolve_streaming_default(gateway_data_dir_from_env()):
+        _ensure_input_runtime_namespace(input_data)["stream"] = True
 
 
 def _apply_builtin_tool_deny(input_data: Dict[str, Any], *, principal: Optional["GatewayPrincipal"]) -> None:
@@ -8014,6 +8046,7 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
         session_id = str(req.session_id).strip() if isinstance(req.session_id, str) and str(req.session_id).strip() else None
         input_data = _strip_client_workflow_policy(dict(req.input_data or {}))
         input_data.pop("_gateway_workspace", None)  # server-written only (below)
+        _apply_run_stream_switch(input_data, interactive=True)
         input_data = _sanitize_run_workspace_policy(input_data, principal=principal, session_id=session_id)
         input_data = _normalize_run_context_media(input_data)
         thinking = _normalize_gateway_thinking(req.thinking)
@@ -8173,6 +8206,9 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
 
     catalog_input_data: Optional[Dict[str, Any]] = None
     schedule_input_data = _strip_client_workflow_policy(dict(req.input_data or {}))
+    # Validated like /runs/start, but the gateway streaming default is never
+    # applied to a schedule (nobody watches a scheduled run live).
+    _apply_run_stream_switch(schedule_input_data, interactive=False)
     catalog_selection = await _off_the_event_loop(
         _maybe_resolve_catalog_start,
         svc=svc,
@@ -8355,6 +8391,9 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
         raise HTTPException(status_code=500, detail=f"Failed to register schedule wrapper workflow: {e}")
 
     input_data = catalog_input_data if catalog_selection is not None and catalog_input_data is not None else dict(schedule_input_data)
+    # The built-in deny list binds every scheduled execution's tool sandbox
+    # too (the target runs get these vars), exactly as on /runs/start.
+    _apply_builtin_tool_deny(input_data, principal=principal)
     # How the TARGET was chosen, written into the target's inputs (every
     # scheduled execution carries it) and on the wrapper run itself.
     workflow_selection = _workflow_selection_before_start(svc, agent_default=agent_default, catalog_selection=catalog_selection)
@@ -10126,6 +10165,16 @@ async def stream_ledger(
     `after` query param is absent/0 — the emitted `id:` lines carry the
     same records-consumed cursor the param uses.
 
+    LIVE TOKEN DELTAS (live_deltas.py): runs started with
+    `input_data._runtime.stream: true` also get `event: llm.delta` and
+    `event: llm.delta_end` frames on this stream, WITHOUT an `id:` line
+    (they are not ledger records; `Last-Event-ID` never moves because of
+    them). On connect the stream first sends one snapshot frame per call
+    still open (`snapshot: true`, the text so far), then live frames
+    interleaved with the `step` frames. A stream of a run carries the deltas
+    of that run and of every run below it. A delta_end is sent after the
+    call's durable record; `done` is sent only after every live frame.
+
     H7b loop discipline stands: every store read runs OFF the event loop;
     abandoned clients are detected and stop the generator; terminal runs
     get one final drain then an explicit `done` frame (never a hang).
@@ -10169,11 +10218,37 @@ async def stream_ledger(
         s = str(s).strip().lower()
         return s in {"completed", "failed", "cancelled"}
 
+    from ..live_deltas import get_hub, resolve_chain_in_store, scope_key, sse_frame
+
+    live_hub = get_hub()
+    live_data_dir = getattr(svc.host, "data_dir", None) or svc.stores.base_dir
+    live_scope = scope_key(live_data_dir)
+    # The run's parent chain in the CALLER's run store (the tenancy check
+    # above already passed): the hub is keyed by (data folder, root run).
+    live_chain = await asyncio.to_thread(resolve_chain_in_store, rs, run0)
+
     async def _gen():
         tail = resolve_ledger_tail(svc.host.ledger_store, run_id2, start_index=start_index)
         loop = asyncio.get_running_loop()
         dirty = asyncio.Event()
         dirty.set()  # first pass always drains (catch-up)
+        live = await asyncio.to_thread(
+            live_hub.subscribe, live_scope, live_chain, loop=loop, data_dir=live_data_dir
+        )
+
+        async def _wait_news(timeout: float) -> None:
+            """Wake on a ledger append OR a live delta (raises TimeoutError)."""
+            if dirty.is_set() or live.ready.is_set():
+                return
+            waiters = [asyncio.ensure_future(dirty.wait()), asyncio.ensure_future(live.ready.wait())]
+            try:
+                done_w, _ = await asyncio.wait(waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                for w in waiters:
+                    w.cancel()
+            if not done_w:
+                raise asyncio.TimeoutError
+
         unsubscribe = None
         observable = find_observable(svc.host.ledger_store)
         if observable is not None:
@@ -10190,6 +10265,9 @@ async def stream_ledger(
             except Exception:
                 unsubscribe = None
         try:
+            # Snapshots first: one frame per call still open (and channel).
+            if live.snapshot:
+                yield b"".join(sse_frame(f) for f in live.snapshot)
             last_emit = loop.time()
             last_status_check = last_emit
             terminal = _is_terminal(getattr(run0, "status", None))
@@ -10209,6 +10287,20 @@ async def stream_ledger(
                     return
                 emitted = False
                 progressed = False
+                # Live frames are taken BEFORE this pass reads the ledger. The
+                # runtime emits a call's deltas, THEN appends its durable
+                # record, THEN emits its delta_end; so the deltas taken here
+                # go out before the records this pass reads, and the
+                # delta_ends after them (a delta_end always follows its
+                # record on the wire).
+                live_frames = live.drain()
+                live_ends = [f for f in live_frames if f.get("kind") == "llm.delta_end"]
+                live_deltas = [f for f in live_frames if f.get("kind") != "llm.delta_end"]
+                if live_ends:
+                    dirty.set()
+                if live_deltas:
+                    yield b"".join(sse_frame(f) for f in live_deltas)
+                    last_emit = loop.time()
                 if dirty.is_set():
                     dirty.clear()
                     new_records = await asyncio.to_thread(tail.read_new)
@@ -10239,6 +10331,9 @@ async def stream_ledger(
                         # More may already be pending past max_records: re-drain
                         # immediately rather than waiting for the next signal.
                         dirty.set()
+                if live_ends:
+                    yield b"".join(sse_frame(f) for f in live_ends)
+                    last_emit = loop.time()
                 if not emitted:
                     # Silent progress (fable5 adversary P0-2): an empty read
                     # can still have ADVANCED (catch-up records swallowed by
@@ -10256,6 +10351,20 @@ async def stream_ledger(
                     # a status event appended just after the terminal save
                     # (F6 window) is caught before `terminal` is re-read.
                     if terminal:
+                        # Close this run's live calls (the runtime's terminal
+                        # hook normally did already: this is the backstop for
+                        # a run ended by a process that could not reach this
+                        # hub) and send every live frame BEFORE `done`.
+                        try:
+                            final_run = await asyncio.to_thread(rs.load, run_id2)
+                            live_hub.run_terminal(
+                                live_scope, run_id2, getattr(final_run, "status", None), live_chain
+                            )
+                        except Exception:
+                            logger.warning("live delta close for run %s failed", run_id2, exc_info=True)
+                        final_frames = live.drain()
+                        if final_frames:
+                            yield b"".join(sse_frame(f) for f in final_frames)
                         payload = json.dumps(
                             {"run_id": run_id2, "cursor": int(tail.index), "status": "terminal"},
                             ensure_ascii=False,
@@ -10295,13 +10404,11 @@ async def stream_ledger(
                     # terminal-save/last-append race resolves in milliseconds
                     # rather than at the next 0.25s poll.
                     try:
-                        await asyncio.wait_for(
-                            dirty.wait(),
-                            timeout=(_SSE_SETTLE_POLL_S if settle_checks_left > 0 else 0.25),
-                        )
+                        await _wait_news(_SSE_SETTLE_POLL_S if settle_checks_left > 0 else 0.25)
                     except asyncio.TimeoutError:
                         dirty.set()  # timed poll: run one tail read
         finally:
+            live.close()
             if callable(unsubscribe):
                 try:
                     unsubscribe()
@@ -17291,6 +17398,22 @@ async def discovery_capabilities() -> Dict[str, Any]:
 
     caps["vision_fallback"] = {"installed": bool(caps["abstractcore"].get("installed"))}
     caps["media"] = {"installed": bool(caps["abstractcore"].get("installed"))}
+
+    # Live token streaming (live_deltas.py): readable by every client, so a
+    # client without admin rights can show the effective default.
+    from ..runtime_config import resolve_streaming_default
+
+    caps["streaming"] = {
+        "deltas": True,
+        "default": resolve_streaming_default(gateway_data_dir_from_env()),
+        "run_field": "_runtime.stream",
+        "events": ["llm.delta", "llm.delta_end"],
+        "endpoint": _api_gateway_path("/runs/{run_id}/ledger/stream"),
+        # A subscription to a run receives the deltas of that run and of every
+        # run below it; frames carry run_id and root_run_id.
+        "subtree": True,
+        "end_reasons": ["completed", "failed", "cancelled", "unavailable"],
+    }
 
     caps["contracts"] = _build_client_capability_contracts(caps)
 

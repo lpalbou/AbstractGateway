@@ -1513,6 +1513,20 @@ class WorkflowBundleGatewayHost:
         except Exception:  # pragma: no cover - steering must never block runtime construction
             logger.warning("#FALLBACK could not attach steer sidecar for %s", data_root, exc_info=True)
 
+        # Live token streaming (live_deltas.py): every runtime this host
+        # builds publishes its runs' live deltas -- into the in-process hub,
+        # or, in a split runner process, into `<data dir>/live/*.deltas.jsonl`
+        # for the API process to tail -- and closes a run's live state when it
+        # ends. No try/except: a runtime without the seam cannot stream, and
+        # that must be visible at boot, not a silently frozen reply bubble.
+        from ..live_deltas import install_live_delta_sink, sweep_finished_live_files
+
+        install_live_delta_sink(runtime, data_dir=data_root, run_store=run_store)
+        try:
+            sweep_finished_live_files(data_root, run_store)
+        except OSError:
+            logger.warning("live delta file sweep failed for %s", data_root, exc_info=True)
+
         # Register derived workflows required by VisualFlow semantics:
         # - per-Agent-node ReAct subworkflows
         # - per-OnEvent-node listener workflows (Blueprint-style)

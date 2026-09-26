@@ -1071,6 +1071,11 @@ def main(argv: list[str] | None = None) -> None:
         if bool(getattr(args, "no_runner", False)):
             # Override env for this process: do not start the background runner loop in the HTTP API process.
             os.environ["ABSTRACTGATEWAY_RUNNER"] = "0"
+            # Split deployment: runs execute in `abstractgateway runner`, so live
+            # token deltas arrive through <data dir>/live files this process tails.
+            from .live_deltas import ROLE_API, set_process_role
+
+            set_process_role(ROLE_API)
 
         try:
             import uvicorn
@@ -1152,6 +1157,12 @@ def main(argv: list[str] | None = None) -> None:
         # Force runner enabled for this process.
         prev_runner_env = os.environ.get("ABSTRACTGATEWAY_RUNNER")
         os.environ["ABSTRACTGATEWAY_RUNNER"] = "1"
+
+        # Runner-only process: live token deltas go to <data dir>/live files
+        # that the API process (serve --no-runner) tails.
+        from .live_deltas import ROLE_RUNNER, set_process_role
+
+        set_process_role(ROLE_RUNNER)
 
         from .service import start_gateway_runner, stop_gateway_runner
 

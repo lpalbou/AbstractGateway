@@ -88,6 +88,13 @@ def test_discovery_capabilities_requires_auth(tmp_path: Path, monkeypatch: pytes
             for capability in ("voice", "audio", "vision", "music"):
                 assert isinstance(plugin_caps.get(capability), dict)
 
+        # Live token streaming (clients key on a literal `deltas: true` inside
+        # this envelope; `default` is agents.streaming_default, off unless saved).
+        streaming = caps.get("streaming")
+        assert streaming["deltas"] is True and streaming["default"] is False
+        assert streaming["run_field"] == "_runtime.stream"
+        assert streaming["events"] == ["llm.delta", "llm.delta_end"]
+
         contracts = caps.get("contracts")
         assert isinstance(contracts, dict)
         assert contracts.get("version") == 1

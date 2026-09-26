@@ -2007,6 +2007,11 @@ class GatewayRunner:
 
     def _apply_run_control(self, typ: str, *, run_id: str, payload: Dict[str, Any], apply_to_tree: bool) -> None:
         runtime = Runtime(run_store=self.run_store, ledger_store=self.ledger_store, artifact_store=self.artifact_store)
+        # A cancel ends runs on THIS Runtime object: their live token
+        # streams must close here too (synthetic delta_end, state freed).
+        from .live_deltas import attach_terminal_hook
+
+        attach_terminal_hook(runtime, data_dir=self._base_dir, run_store=self.run_store)
 
         reason = payload.get("reason")
         reason_str = str(reason).strip() if isinstance(reason, str) and reason.strip() else None
