@@ -7,8 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Requires AbstractSkill 0.3.0 (installed automatically). The tray's About
-rows use the identity module of the next AbstractCore release.
+Requires AbstractSkill 0.3.0 (installed automatically) and AbstractRuntime
+0.4.37 (live replies and the built-in tool deny rules; the gateway refuses to
+start on an older runtime and says so). The tray's About rows use the
+identity module of the next AbstractCore release.
 
 ### Added
 
@@ -67,7 +69,8 @@ rows use the identity module of the next AbstractCore release.
   that connects mid-reply first gets the text so far (`snapshot: true`); a
   run's stream also carries its sub-runs' replies; a call that could not
   stream says why (`reason: "unavailable"` with a `detail`); a run stopped
-  mid-reply closes its open call (`synthetic: true`). No size cap. Works
+  mid-reply closes its open call (`synthetic: true`), whoever ended it (a
+  stop, the kill switch, a run the runner failed). No size cap. Works
   with `serve --no-runner` + `abstractgateway runner` too (through a
   private file per run in `<data dir>/live`, deleted when the run ends).
   `GET /discovery/capabilities` advertises it as `streaming`.

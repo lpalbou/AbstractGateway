@@ -457,7 +457,12 @@ advertises the feature to every client:
 With `serve --no-runner` plus `abstractgateway runner`, the runner writes a
 run's deltas to `<data dir>/live/<root run id>.deltas.jsonl` (readable by the
 gateway's user only) and the API process reads them from there; the file is
-deleted when the run ends, and files of finished runs are removed at start.
+deleted when the run ends (however it ends: completed, failed, stopped, or
+stopped by the kill switch), and files of finished runs are removed at start.
+Disk use: the file holds every delta of every call of the run and of its
+sub-runs, and grows until the ROOT run ends; nothing is capped, so a long agent
+run that makes many calls (a coding agent working for an hour) can leave a file
+of several megabytes in `<data dir>/live` while it runs.
 
 Evidence: `src/abstractgateway/live_deltas.py`, `src/abstractgateway/routes/gateway.py`
 (`stream_ledger`, `_apply_run_stream_switch`, `discovery_capabilities`),
