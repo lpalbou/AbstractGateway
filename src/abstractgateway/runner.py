@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional, Protocol
 
-from abstractruntime import Runtime
+from abstractruntime import Runtime, StaleResumeError
 from abstractruntime.core.event_keys import build_event_wait_key
 from abstractruntime.core.models import Effect, EffectType, RunStatus, StepRecord, WaitReason
 from abstractruntime.core.vars import is_paused_vars
@@ -47,11 +47,12 @@ def _is_lost_resume_race(exc: BaseException) -> bool:
 
     Two runner paths resume a parent when its child finishes (the tick
     thread's parent resume and the loop's repair pass). Since AbstractRuntime
-    0.5.1 a wait is resumed at most once and the slower path is refused with
-    exactly `ValueError("Run is not waiting")`: the parent was already
-    resumed, nothing is wrong. Anything else is a real failure.
+    0.5.1 a wait is resumed at most once and the slower path gets
+    `StaleResumeError`: "Run is not waiting", or a wait-key mismatch when the
+    winner's tick already parked the parent on its next wait. The parent was
+    already resumed; nothing is wrong. Anything else is a real failure.
     """
-    return isinstance(exc, ValueError) and str(exc) == "Run is not waiting"
+    return isinstance(exc, StaleResumeError)
 
 
 def _is_pause_wait(waiting: Any, *, run_id: str) -> bool:

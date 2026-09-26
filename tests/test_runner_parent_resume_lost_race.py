@@ -3,7 +3,8 @@
 When a child finishes, the tick thread (`_resume_subworkflow_parents`) and the
 loop's repair pass (`_repair_terminal_subworkflow_waits`) may both try to
 resume the same parent. AbstractRuntime resumes a wait at most once and
-refuses the slower caller with `ValueError("Run is not waiting")`
+refuses the slower caller with `StaleResumeError` ("Run is not waiting", or a
+wait-key mismatch when the winner already parked the parent on its next wait)
 (2026-09-26 incident: before that, both got through and the parent's Agent
 node ran its child twice). The loser must log at DEBUG, raise nothing and go
 on with the other parents; every other failure keeps being surfaced.
@@ -156,3 +157,32 @@ def test_repair_pass_other_errors_warn_with_traceback_and_continue(tmp_path, cap
     assert not _lost_race_logs(caplog)
     nxt = host.run_store.load("p-next")
     assert nxt.status == RunStatus.RUNNING and nxt.waiting is None
+
+
+def test_repair_pass_lost_race_on_next_wait_key_mismatch_is_debug_and_continues(tmp_path, caplog) -> None:
+    """The winner's tick already parked the parent on its NEXT child's wait."""
+    host, runner, stale = _setup(tmp_path)
+    moved_on = _waiting_parent("p-won")
+    moved_on.waiting.wait_key = "subworkflow:next-child"
+    moved_on.waiting.details = {"sub_run_id": "next-child"}
+    host.run_store.save(moved_on)
+
+    with caplog.at_level(logging.DEBUG, logger="abstractgateway.runner"):
+        runner._repair_terminal_subworkflow_waits(waiting=stale)
+
+    _assert_lost_race_handled(host, caplog)
+    assert host.run_store.load("p-won").waiting.wait_key == "subworkflow:next-child"
+
+
+def test_tick_path_lost_race_on_next_wait_key_mismatch_is_debug_and_continues(tmp_path, caplog, monkeypatch) -> None:
+    host, runner, stale = _setup(tmp_path)
+    moved_on = _waiting_parent("p-won")
+    moved_on.waiting.wait_key = "subworkflow:next-child"
+    moved_on.waiting.details = {"sub_run_id": "next-child"}
+    host.run_store.save(moved_on)
+    monkeypatch.setattr(runner, "_waiting_parents_for_child", lambda child_run_id: stale)
+
+    with caplog.at_level(logging.DEBUG, logger="abstractgateway.runner"):
+        runner._resume_subworkflow_parents(child_run_id=CHILD, child_output={"answer": "ok"})
+
+    _assert_lost_race_handled(host, caplog)
