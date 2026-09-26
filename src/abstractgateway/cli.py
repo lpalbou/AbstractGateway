@@ -1068,6 +1068,9 @@ def main(argv: list[str] | None = None) -> None:
             silence_gpu_metrics_access_log = False
 
         prev_runner_env = os.environ.get("ABSTRACTGATEWAY_RUNNER")
+        from .live_deltas import process_role as _live_role, set_process_role as _set_live_role
+
+        prev_live_role = _live_role()
         if bool(getattr(args, "no_runner", False)):
             # Override env for this process: do not start the background runner loop in the HTTP API process.
             os.environ["ABSTRACTGATEWAY_RUNNER"] = "0"
@@ -1131,6 +1134,8 @@ def main(argv: list[str] | None = None) -> None:
                 os.environ.pop("ABSTRACTGATEWAY_RUNNER", None)
             else:
                 os.environ["ABSTRACTGATEWAY_RUNNER"] = prev_runner_env
+            # Like the env above: the live-delta role belongs to this serve only.
+            _set_live_role(prev_live_role)
             # Restart requested from the tray/console (host_control,
             # 2026-09-05): ONLY after uvicorn returned cleanly (a Ctrl-C or
             # an exception during the drain means "stop", never "bounce"),
@@ -1160,8 +1165,9 @@ def main(argv: list[str] | None = None) -> None:
 
         # Runner-only process: live token deltas go to <data dir>/live files
         # that the API process (serve --no-runner) tails.
-        from .live_deltas import ROLE_RUNNER, set_process_role
+        from .live_deltas import ROLE_RUNNER, process_role, set_process_role
 
+        prev_live_role = process_role()
         set_process_role(ROLE_RUNNER)
 
         from .service import start_gateway_runner, stop_gateway_runner
@@ -1188,6 +1194,7 @@ def main(argv: list[str] | None = None) -> None:
                 os.environ.pop("ABSTRACTGATEWAY_RUNNER", None)
             else:
                 os.environ["ABSTRACTGATEWAY_RUNNER"] = prev_runner_env
+            set_process_role(prev_live_role)
         return
 
     if args.cmd == "config":

@@ -19,8 +19,11 @@ def test_cli_serve_no_runner_sets_env_and_invokes_uvicorn(monkeypatch: pytest.Mo
     uvicorn = types.ModuleType("uvicorn")
 
     def _run(app: str, **kwargs: object) -> None:
+        from abstractgateway.live_deltas import ROLE_API, process_role
+
         called["app"] = app
         called.update(kwargs)
+        called["live_role"] = process_role()
         assert os.environ.get("ABSTRACTGATEWAY_RUNNER") == "0"
 
     uvicorn.run = _run  # type: ignore[attr-defined]
@@ -36,6 +39,12 @@ def test_cli_serve_no_runner_sets_env_and_invokes_uvicorn(monkeypatch: pytest.Mo
     assert called["port"] == 9999
     assert called["reload"] is False
     assert called["log_level"] == "error"
+    # The API process of a split deployment tails the runner's live files
+    # while it serves, and the role is given back when serve returns.
+    from abstractgateway.live_deltas import ROLE_API, ROLE_COMBINED, process_role
+
+    assert called["live_role"] == ROLE_API
+    assert process_role() == ROLE_COMBINED
 
 
 @pytest.mark.basic
@@ -46,7 +55,10 @@ def test_cli_runner_forces_runner_env_and_calls_start_stop(monkeypatch: pytest.M
     calls: list[str] = []
 
     def _start() -> None:
+        from abstractgateway.live_deltas import ROLE_RUNNER, process_role
+
         assert os.environ.get("ABSTRACTGATEWAY_RUNNER") == "1"
+        assert process_role() == ROLE_RUNNER, "a runner-only process writes live deltas to files"
         calls.append("start")
 
     def _stop() -> None:
@@ -78,6 +90,9 @@ def test_cli_runner_forces_runner_env_and_calls_start_stop(monkeypatch: pytest.M
     # CLI sets the env var for the process while running, but restores it on exit.
     assert os.environ.get("ABSTRACTGATEWAY_RUNNER") is None
     assert calls == ["start", "stop"]
+    from abstractgateway.live_deltas import ROLE_COMBINED, process_role
+
+    assert process_role() == ROLE_COMBINED, "the role is given back when the runner returns"
 
 
 @pytest.mark.basic
