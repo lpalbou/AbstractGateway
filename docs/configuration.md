@@ -306,7 +306,8 @@ environment the same way:
   variable. The origins `serve` itself exports for a network mode are never
   counted as an override.
 - **Trust proxy.** The SAVED setting decides; `ABSTRACTGATEWAY_TRUST_PROXY` is
-  only a fallback used when nothing is saved (`source: "env"`,
+  only a fallback used when nothing is saved — once the switch has been saved,
+  the variable no longer applies to that data folder (`source: "env"`,
   `overridden_by_env: true` then). Once the switch is saved, it applies to the
   next request whatever the environment says (`source: "setting"`, with a
   `note` that the variable is also set and the saved switch wins). The same

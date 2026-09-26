@@ -531,10 +531,12 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
   it applies to the next request. Only when your own proxy sits in front of
   every request; otherwise any client chooses the address the gateway sees.
   The ephemeral tray token never honours it (raw socket peer only).
-- A gateway started with `ABSTRACTGATEWAY_TRUST_PROXY` in its environment uses
-  that value instead for IP attribution and lockouts; the status reports
-  `overridden_by_env: true`. The same-machine rule reads the saved setting
-  first ([Callers on this computer](#callers-on-this-computer)).
+- Trust proxy follows one rule everywhere (IP attribution, lockouts, the
+  same-machine rule and the network status): the saved setting first, and the
+  `ABSTRACTGATEWAY_TRUST_PROXY` environment variable only while nothing is
+  saved. Once the switch has been saved, the variable no longer applies to
+  that data folder; use `abstractgateway network set --trust-proxy on|off`
+  (see [Callers on this computer](#callers-on-this-computer)).
 
 ## Production checklist (minimal)
 
