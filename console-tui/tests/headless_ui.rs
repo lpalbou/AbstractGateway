@@ -7192,3 +7192,34 @@ fn workflows_payload_carries_agent_default_marks() {
     assert_eq!(agent_default_marks("coder", &d.agent_defaults).len(), 1);
     assert!(agent_default_marks("code", &d.agent_defaults).is_empty(), "a prefix of another bundle id must not match");
 }
+
+
+#[test]
+fn skills_shelf_parse_render_and_body() {
+    use abstractgateway_console::ui::runtimes::skills_shelf_body;
+
+    let v = json!({"writable": true, "skills": {"shelf": {
+        "key": "skills.shelf", "value": null, "source": "seeded", "resolved": "/d/skills/registry",
+        "available": true, "reason": null, "default_path": "/d/skills/registry", "bundled_version": "2026.09.25"}}});
+    let d = abstractgateway_console::store::RuntimeConfigData::from_value(&v);
+    let sh = d.skills_shelf.clone().expect("shelf parsed");
+    assert!(sh.available && sh.source == "seeded" && sh.bundled_version == "2026.09.25");
+    assert_eq!(skills_shelf_body(&sh, ""), json!({}));
+    assert_eq!(skills_shelf_body(&sh, " /x/reg "), json!({"skills.shelf": "/x/reg"}));
+    let stored = abstractgateway_console::store::SkillsShelf { value: "/x".into(), source: "stored".into(), ..Default::default() };
+    assert_eq!(skills_shelf_body(&stored, ""), json!({"skills.shelf": ""}));
+
+    let mut h = harness_sized(Size::new(140, 70));
+    h.connect_as_admin();
+    h.goto_screen(4);
+    h.store
+        .runtimes
+        .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
+    h.turns(2);
+    h.ui.rt_knobs_folded.set(false);
+    h.turns(2);
+    h.store.runtime_config.set(Loadable::Ready(d));
+    let s = h.turns(2);
+    assert!(s.contains("skills.shelf: /d/skills/registry (curated 2026.09.25)  (seeded)"), "shelf row:\n{s}");
+    assert!(s.contains("Edit skills shelf"), "editor entry point:\n{s}");
+}

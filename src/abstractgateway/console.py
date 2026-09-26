@@ -2254,6 +2254,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        <div id="apps-root" class="core-console-root"></div>
 	        <div id="apps-settings-root" class="core-console-root"></div>
 	        <div id="backlog-settings-root" class="core-console-root"></div>
+	        <div id="skills-settings-root" class="core-console-root"></div>
 	      </div>
 	      <div id="tab-network" class="tab-panel">
 	        <div id="network-root" class="core-console-root"></div>
@@ -11303,6 +11304,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         mountAppsSettings("tab", $("apps-settings-root"));
         // The backlog folder + exec runner + process manager (mission II).
         mountBacklogSettings($("backlog-settings-root"));
+        // The skills shelf (skills.shelf, console_ui.py).
+        mountSkillsShelf("tab", $("skills-settings-root"));
         return;
       }
       if (tab === "network") {

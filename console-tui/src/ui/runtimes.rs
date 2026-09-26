@@ -491,6 +491,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                         && d.workspace_blocked_paths.is_empty()
                                         && d.apps.is_empty()
                                         && d.agent_defaults.is_empty()
+                                        && d.skills_shelf.is_none()
                                 },
                                 "the gateway reported no runtime knobs",
                                 |d| knobs_view(cx, &ctx_knobs, &tt, d),
@@ -1215,9 +1216,28 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
             span(format!("  ({})", a.source), t.text_faint),
         ]));
     }
+    // The skills shelf (skills.shelf): which folder, from which source.
+    if let Some(sh) = &d.skills_shelf {
+        let (now, tone) = if sh.available {
+            let v = if sh.bundled_version.is_empty() { String::new() } else { format!(" (curated {})", sh.bundled_version) };
+            (format!("{}{v}", sh.resolved), t.text)
+        } else {
+            (format!("unavailable: {}", sh.reason), t.warn)
+        };
+        rows.push(line(vec![
+            span(format!("{:>20}: ", "skills.shelf"), t.text_muted),
+            span(ellipsize(&now, 80), tone),
+            span(format!("  ({})", sh.source), t.text_faint),
+        ]));
+        for w in &sh.warnings {
+            rows.push(line(vec![span(format!("{:>20}  ⚠ {}", "", ellipsize(w, 96)), t.warn)]));
+        }
+    }
     Element::new()
         .style(LayoutStyle::column())
         .child(if d.writable {
+            let ctx5 = ctx.clone();
+            let current_shelf = d.clone();
             let ctx2 = ctx.clone();
             let current = d.clone();
             let ctx3 = ctx.clone();
@@ -1237,6 +1257,14 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
                 } else {
                     Button::new("Edit apps settings")
                         .on_click(move || open_apps_settings_form(cx, &ctx3, current_apps.clone()))
+                        .element(cx, t)
+                        .build()
+                })
+                .child(if current_shelf.skills_shelf.is_none() {
+                    Element::new().style(LayoutStyle::default().h(0)).build()
+                } else {
+                    Button::new("Edit skills shelf")
+                        .on_click(move || open_skills_shelf_form(cx, &ctx5, current_shelf.clone()))
                         .element(cx, t)
                         .build()
                 })
@@ -1382,6 +1410,94 @@ fn open_agent_defaults_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
                                     .map(|(n, sig)| (n.clone(), sig.get_untracked()))
                                     .collect();
                                 let body = agent_defaults_body(&agents_now, &typed);
+                                if body.as_object().map(|m| m.is_empty()).unwrap_or(true) {
+                                    form_error.set(Some("nothing changed".into()));
+                                    return;
+                                }
+                                form_error.set(None);
+                                in_flight.set(true);
+                                ctx_save.send(Cmd::SaveRuntimeConfig {
+                                    body: body.into(),
+                                    form_id: Some(form_id),
+                                });
+                            })
+                            .element(mcx, &t0)
+                            .build(),
+                    )
+                    .child(
+                        Button::new("Cancel (Esc)")
+                            .on_click(move || close_cancel())
+                            .element(mcx, &t0)
+                            .build(),
+                    )
+                    .build(),
+            )
+            .build()
+    });
+}
+
+/// The body the skills shelf form sends: `{"skills.shelf": text}` when it
+/// differs from the SAVED value ("" = back to the gateway's own copy); `{}`
+/// when nothing changed.
+pub fn skills_shelf_body(current: &crate::store::SkillsShelf, typed: &str) -> Value {
+    let was = if current.source == "stored" { current.value.as_str() } else { "" };
+    let now = typed.trim();
+    if now == was {
+        return Value::Object(serde_json::Map::new());
+    }
+    serde_json::json!({ "skills.shelf": now })
+}
+
+fn open_skills_shelf_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
+    if !current.writable {
+        ctx.store
+            .notice
+            .set(Some("this needs an admin token".into()));
+        return;
+    }
+    let Some(shelf) = current.skills_shelf.clone() else { return };
+    let ctx2 = ctx.clone();
+    open_form(ctx, cx, Size::new(110, 14), move |mcx, close| {
+        let theme = use_theme(mcx);
+        let t0 = theme.get().tokens;
+        let form_error = mcx.signal(Option::<String>::None);
+        let in_flight = mcx.signal(false);
+        let form_id = crate::worker::next_form_id();
+        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
+        let sig = mcx.signal(if shelf.source == "stored" { shelf.value.clone() } else { String::new() });
+        let ctx_save = ctx2.clone();
+        let close_cancel = close.clone();
+        let shelf_now = shelf.clone();
+        Element::new()
+            .focusable()
+            .autofocus()
+            .style(LayoutStyle::column().gap(0))
+            .child(line(vec![span_bold("Skills shelf", t0.accent)]))
+            .child(line(vec![span(
+                "a folder holding skills/<name>/SKILL.md; empty = the gateway's own copy of the curated shelf",
+                t0.text_faint,
+            )]))
+            .child(field(
+                &t0,
+                "folder",
+                TextInput::new()
+                    .value(sig)
+                    .placeholder(format!("{} (now: {} · {})", shelf.default_path, if shelf.available { shelf.resolved.as_str() } else { "unavailable" }, shelf.source))
+                    .layout(LayoutStyle::default().w(80).h(1))
+                    .element(mcx, &t0)
+                    .build(),
+            ))
+            .child(super::message_slot(theme, form_error, in_flight))
+            .child(
+                Element::new()
+                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                    .child(
+                        Button::new("Save")
+                            .on_click(move || {
+                                if in_flight.get_untracked() {
+                                    return;
+                                }
+                                let body = skills_shelf_body(&shelf_now, &sig.get_untracked());
                                 if body.as_object().map(|m| m.is_empty()).unwrap_or(true) {
                                     form_error.set(Some("nothing changed".into()));
                                     return;

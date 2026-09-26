@@ -541,6 +541,9 @@ _SOURCE_WORDS = {
     "env": "environment (legacy)",
     "default": "default",
     "account": "account",
+    "seeded": "the gateway's own copy",
+    "checkout": "framework checkout",
+    "none": "none",
 }
 
 
@@ -558,6 +561,9 @@ _AGENT_PREFIX = "agents.default_workflow."
 def _setting_row(cfg: Dict[str, Any], key: str) -> Optional[Dict[str, Any]]:
     if key.startswith(_AGENT_PREFIX):
         row = ((cfg.get("agents") or {}).get("default_workflow") or {}).get(key[len(_AGENT_PREFIX):])
+        return row if isinstance(row, dict) else None
+    if key == "skills.shelf":
+        row = (cfg.get("skills") or {}).get("shelf")
         return row if isinstance(row, dict) else None
     if key.startswith("apps."):
         row = (cfg.get("apps") or {}).get(key[len("apps."):])
@@ -586,6 +592,10 @@ def _print_setting(key: str, row: Dict[str, Any]) -> None:
         print(f"  {row['label']}: {row.get('help') or ''}".rstrip())
     if row.get("available") is False:
         print(f"  NOT AVAILABLE: {row.get('reason')}")
+    if row.get("key") == "skills.shelf" and row.get("resolved"):
+        print(f"  reads {row['resolved']}" + (f" (curated shelf {row.get('bundled_version')})" if row.get("bundled_version") else ""))
+    for w in row.get("warnings") or []:
+        print(f"  note: {w}")
     if isinstance(row.get("resolved"), dict):
         r = row["resolved"]
         print(f"  runs {r.get('workflow_id')} ({r.get('name')}, {r.get('registry_scope')})")
@@ -694,7 +704,7 @@ def _cmd_runtime_get(args: argparse.Namespace) -> None:
     from .runtime_config import BACKLOG_SETTINGS, read_runtime_config
 
     wants_agents = bool(args.key and str(args.key).startswith(_AGENT_PREFIX))
-    cfg = read_runtime_config(_runtime_data_dir(args), include_agents=wants_agents)
+    cfg = read_runtime_config(_runtime_data_dir(args), include_agents=wants_agents, include_skills=args.key == "skills.shelf")
     keys = [args.key] if args.key else [row["key"] for row in BACKLOG_SETTINGS]
     rows: Dict[str, Any] = {}
     for key in keys:
@@ -704,7 +714,7 @@ def _cmd_runtime_get(args: argparse.Namespace) -> None:
             if key.startswith(_AGENT_PREFIX):
                 ifaces = sorted(((cfg.get("agents") or {}).get("default_workflow") or {}).keys())
                 raise SystemExit(f"unknown agent interface in {key!r}; this gateway knows {ifaces}")
-            raise SystemExit(f"unknown setting {key!r}; one of {known}, apps.<name> or {_AGENT_PREFIX}<interface>")
+            raise SystemExit(f"unknown setting {key!r}; one of {known}, apps.<name>, skills.shelf or {_AGENT_PREFIX}<interface>")
         rows[key] = row
     if bool(args.json):
         print(json.dumps(rows if not args.key else rows[args.key], indent=2, default=str))

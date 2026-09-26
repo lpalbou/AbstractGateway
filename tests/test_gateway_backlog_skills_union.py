@@ -39,20 +39,28 @@ def _make_app(*, monkeypatch: pytest.MonkeyPatch, gateway_base_dir: Path) -> Fas
     return app
 
 
+def _curated_registry() -> Path:
+    """The curated registry the installed abstractskill ships. Fails (never
+    skips) when it is missing: the gateway depends on it."""
+    from abstractskill.bundled import bundled_registry_dir
+
+    reg = Path(bundled_registry_dir())
+    for name in ("coredoc", "backlog"):
+        assert (reg / "skills" / name / "SKILL.md").is_file(), f"curated skill {name!r} missing from {reg}"
+    return reg
+
+
 def test_execute_payload_records_the_skills_union(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    pytest.importorskip("abstractskill")
     gateway_dir = tmp_path / "gateway"
     (gateway_dir / "backlog_exec_queue").mkdir(parents=True, exist_ok=True)
-    # The FRAMEWORK repo root: the real curated shelf rides the checkout.
-    framework_root = Path(__file__).resolve().parents[2]
     item_dir = tmp_path / "repo" / "docs" / "backlog" / "planned"
     item_dir.mkdir(parents=True, exist_ok=True)
     (item_dir / "730-framework-skills.md").write_text("# 730 — skills union\n\nBody.\n", encoding="utf-8")
     monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", str(tmp_path / "repo"))
     monkeypatch.setenv("ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER", "1")
-    # Point the shelf at the real registry (the repo-root inference would
-    # miss it because the triage root here is the test's scratch repo).
-    monkeypatch.setenv("ABSTRACTGATEWAY_SKILLS_SHELF", str(framework_root / "abstractskill" / "registry"))
+    # The real curated shelf: the one abstractskill ships (a missing shelf
+    # FAILS here, it is a dependency of the gateway).
+    monkeypatch.setenv("ABSTRACTGATEWAY_SKILLS_SHELF", str(_curated_registry()))
 
     app = _make_app(monkeypatch=monkeypatch, gateway_base_dir=gateway_dir)
     with TestClient(app) as client:
@@ -96,7 +104,8 @@ def test_missing_shelf_is_a_labeled_verdict_never_a_block(tmp_path: Path, monkey
         skills = payload["skills"]
         assert skills["requested"][:2] == ["coredoc", "backlog"]
         assert skills["active"] == []
-        assert any("#FALLBACK" in v for v in skills["verdicts"])
+        assert any("No skill shelf is available" in v and "skills.shelf" in v for v in skills["verdicts"]), skills["verdicts"]
+        assert not any("#FALLBACK" in v for v in skills["verdicts"])
 
 
 def test_spawn_env_carries_shelf_plus_trust_registry_for_active_skills_only(
@@ -134,13 +143,9 @@ def test_held_verdicts_unpack_name_and_reasons_never_repr(tmp_path: Path, monkey
     'name — reasons', never a Python repr (skill c1783 gap 1). Forced by
     pointing the resolver at a shelf with NO validation records: every
     skill lands held-as-unverified."""
-    pytest.importorskip("abstractskill")
     from abstractgateway.skills_union import resolve_backlog_skills
 
-    framework_root = Path(__file__).resolve().parents[2]
-    real_registry = framework_root / "abstractskill" / "registry"
-    if not real_registry.is_dir():
-        pytest.skip("curated shelf not present in this checkout")
+    real_registry = _curated_registry()
     # Shelf = the real skills dir, but an EMPTY (present, record-less)
     # registry: every skill lands held-as-unverified -> the pair-unpacking
     # path runs for real. (A MISSING registry file refuses loudly at load —

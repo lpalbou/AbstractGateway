@@ -44,37 +44,60 @@ def _repo_root_for_shelf(data_dir: Path) -> Optional[Path]:
     resolution the triage/backlog lane uses (runtime_config: launch flag >
     stored setting > legacy env > the gateway's own folder)."""
     try:
-        from .runtime_config import resolve_triage_repo_root
+        from .runtime_config import resolve_backlog_root
+        from .users import gateway_data_dir_from_env
 
-        raw = resolve_triage_repo_root(Path(data_dir))
+        # The checkout rung of the shelf only (skills_shelf.py). Reading it
+        # never creates the backlog folder (ensure=False).
+        res = resolve_backlog_root(gateway_data_dir_from_env(), ensure=False)
+        raw = res.get("value") if res.get("available") else None
     except Exception:
         raw = None
-    return Path(raw).expanduser().resolve() if raw else None
+    return Path(str(raw)).expanduser().resolve() if raw else None
 
 
 def skills_inventory(*, data_dir: Path) -> Dict[str, Any]:
     """The gateway's skills inventory, sourced from the abstractskill shelf.
 
-    Returns {"skills": [roster rows], "shelf": path|None, "warnings": [...]}.
-    Roster row = the ruled shape + explainability: name, description,
-    trust_level, blocked, requires_review, tree_hash, source (with binding
-    strength), has_scripts, and the verdict's reasons verbatim."""
-    out: Dict[str, Any] = {"skills": [], "shelf": None, "warnings": []}
+    Returns {"skills": [roster rows], "shelf": path|None, "shelf_source":
+    stored|env|seeded|checkout|none, "bundled_version": str|None,
+    "warnings": [plain sentences]}. Roster row = the ruled shape +
+    explainability: name, description, trust_level, blocked,
+    requires_review, tree_hash, source (with binding strength), has_scripts,
+    and the verdict's reasons verbatim. An empty list always comes with a
+    warning that says why and what to do."""
+    from .skills_shelf import SETTING_KEY, bundled_version
+
+    fix = (
+        f"Set the shelf in the console (Settings, Skills shelf) or with "
+        f"`abstractgateway config set {SETTING_KEY} <folder>`."
+    )
+    out: Dict[str, Any] = {"skills": [], "shelf": None, "shelf_source": "none", "bundled_version": None, "warnings": []}
 
     try:
         from abstractskill import FilesystemSkillLoader, TrustRegistry, evaluate_trust
         from abstractskill.tree import inspect_skill_dir
-    except Exception:
+    except Exception as exc:
         out["warnings"].append(
-            "#FALLBACK abstractskill is not installed on this gateway — no skills inventory"
+            f"Skills are unavailable: the AbstractSkill package is not installed with this gateway ({exc}). "
+            "Reinstall AbstractGateway to get it."
         )
         return out
+    out["bundled_version"] = bundled_version()
+    if out["bundled_version"] is None:
+        out["warnings"].append(
+            "The installed AbstractSkill package is older than 0.3.0 and carries no curated skill shelf; "
+            "update AbstractGateway to get the curated skills."
+        )
 
-    from .skills_union import _shelf_registry_dir
+    from .skills_union import shelf_resolution
 
-    registry_dir, shelf_note = _shelf_registry_dir(_repo_root_for_shelf(data_dir))
+    shelf = shelf_resolution(_repo_root_for_shelf(data_dir))
+    out["shelf_source"] = shelf["source"]
+    out["warnings"].extend(shelf["warnings"])
+    registry_dir = shelf["registry"]
     if registry_dir is None:
-        out["warnings"].append(f"#FALLBACK no curated shelf found ({shelf_note})")
+        out["warnings"].append(f"No skill shelf is available: {shelf['reason']}. {fix}")
         return out
 
     skills_root = registry_dir / "skills"
@@ -93,7 +116,10 @@ def skills_inventory(*, data_dir: Path) -> Dict[str, Any]:
         from abstractskill import TrustRegistry as _TR
 
         registry = _TR()
-        out["warnings"].append(f"#FALLBACK trust registry failed to load ({e}) — all skills render unverified")
+        out["warnings"].append(
+            f"The shelf's trust files could not be read ({e}), so every skill is shown as unverified. "
+            f"Check validations.yaml, advisories.yaml and guidance.yaml in {registry_dir}."
+        )
 
     loader = FilesystemSkillLoader(skills_root)
     for meta in loader.discover(on_warning=out["warnings"].append):
@@ -115,7 +141,7 @@ def skills_inventory(*, data_dir: Path) -> Dict[str, Any]:
                 tree_hash = inventory.tree_hash
                 has_scripts = bool(inventory.has_scripts)
             except Exception as e:
-                out["warnings"].append(f"#FALLBACK could not inspect skill {meta.name!r}: {e}")
+                out["warnings"].append(f"The skill {meta.name!r} could not be inspected ({e}); it is shown as unverified.")
 
         source = None
         try:
@@ -155,6 +181,8 @@ def skills_inventory(*, data_dir: Path) -> Dict[str, Any]:
         row["has_scripts"] = has_scripts
         row["source"] = source
         out["skills"].append(row)
+    if not out["skills"]:
+        out["warnings"].append(f"The skill shelf at {skills_root} holds no skills (no skills/<name>/SKILL.md). {fix}")
     return out
 
 
@@ -202,7 +230,10 @@ def resolve_run_skills(names: List[str], *, data_dir: Path) -> Dict[str, Any]:
 
     registry_dir, shelf_note = _shelf_registry_dir(_repo_root_for_shelf(data_dir))
     if registry_dir is None:
-        out["verdicts"].append(f"#FALLBACK no curated shelf found ({shelf_note}) — requested skills did not resolve")
+        out["verdicts"].append(
+            f"No skill shelf is available ({shelf_note}); the requested skills were not added. "
+            "Set the shelf in the console (Settings, Skills shelf) or with `abstractgateway config set skills.shelf <folder>`."
+        )
         return out
 
     skills_root = registry_dir / "skills"

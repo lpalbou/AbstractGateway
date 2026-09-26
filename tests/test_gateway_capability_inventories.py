@@ -89,10 +89,12 @@ def test_skills_inventory_marks_scripts_for_review(tmp_path: Path, monkeypatch: 
     assert row["requires_review"] is True
 
 
-def test_skills_inventory_absent_shelf_is_an_honest_empty(tmp_path: Path) -> None:
+def test_skills_inventory_absent_shelf_is_an_honest_empty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
     out = skills_inventory(data_dir=tmp_path / "runtime")
-    assert out["skills"] == [] and out["shelf"] is None
-    assert any("no curated shelf" in w for w in out["warnings"])
+    assert out["skills"] == [] and out["shelf"] is None and out["shelf_source"] == "none"
+    assert any(w.startswith("No skill shelf is available") and "skills.shelf" in w for w in out["warnings"]), out["warnings"]
+    assert not any("#FALLBACK" in w or "ABSTRACTGATEWAY_" in w for w in out["warnings"]), out["warnings"]
 
 
 # ---------------------------------------------------------------------- mcp

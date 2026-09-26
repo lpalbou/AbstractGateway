@@ -115,10 +115,12 @@ def test_blocked_skill_never_rides(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert any(v.startswith("blocked: demo-skill") for v in out["verdicts"])
 
 
-def test_missing_shelf_is_a_labeled_verdict_not_a_crash(tmp_path: Path) -> None:
+def test_missing_shelf_is_a_labeled_verdict_not_a_crash(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path / "runtime"))
+    monkeypatch.delenv("ABSTRACTGATEWAY_SKILLS_SHELF", raising=False)
     out = resolve_run_skills(["demo-skill"], data_dir=tmp_path / "runtime")
     assert out["active"] == []
-    assert any("no curated shelf" in v for v in out["verdicts"])
+    assert any("No skill shelf is available" in v for v in out["verdicts"]), out["verdicts"]
 
 
 # --------------------------------------------------------------- read_skill

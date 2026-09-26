@@ -27,34 +27,29 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # The operator-confirmed item-class defaults for framework backlog items.
 FRAMEWORK_ITEM_DEFAULT_SKILLS = ("coredoc", "backlog")
 
-_SHELF_ENV = "ABSTRACTGATEWAY_SKILLS_SHELF"
 _CODE_ROOTS_ENV = "ABSTRACTCODE_SKILLS_ROOTS"
 
 
-def _shelf_registry_dir(repo_root: Optional[Path]) -> Tuple[Optional[Path], Optional[str]]:
-    """The curated shelf's registry dir (contains skills/ + validations.yaml).
+def shelf_resolution(repo_root: Optional[Path] = None) -> Dict[str, Any]:
+    """The gateway's skills shelf (skills_shelf.resolve_skills_shelf):
+    saved setting > legacy environment > the seeded copy in the gateway's
+    data folder > a framework checkout next to the backlog folder. The
+    setting and the seeded copy are gateway-wide (the root data folder)."""
+    from .skills_shelf import resolve_skills_shelf
+    from .users import gateway_data_dir_from_env
 
-    Resolution: ABSTRACTGATEWAY_SKILLS_SHELF > the triage repo's
-    abstractskill/registry (the framework checkout ships the shelf) > None.
-    Returns (dir, refusal_note) — a SET-but-wrong env names the actual case
-    so an operator typo is diagnosable from the payload (skill c1783 minor).
-    """
-    env = str(os.getenv(_SHELF_ENV, "") or "").strip()
-    if env:
-        p = Path(env).expanduser()
-        if p.is_dir():
-            return p, None
-        return None, f"{_SHELF_ENV} is set but not a directory: {p}"
-    if repo_root is not None:
-        candidate = Path(repo_root) / "abstractskill" / "registry"
-        if candidate.is_dir():
-            return candidate, None
-    return None, f"{_SHELF_ENV} unset and no abstractskill/registry under the triage root"
+    return resolve_skills_shelf(gateway_data_dir_from_env(), checkout_root=repo_root)
+
+
+def _shelf_registry_dir(repo_root: Optional[Path]) -> Tuple[Optional[Path], Optional[str]]:
+    """(registry dir | None, why not in plain words)."""
+    res = shelf_resolution(repo_root)
+    return res["registry"], res["reason"]
 
 
 def resolve_backlog_skills(
@@ -94,7 +89,8 @@ def resolve_backlog_skills(
     registry_dir, shelf_note = _shelf_registry_dir(repo_root)
     if registry_dir is None:
         out["verdicts"].append(
-            f"#FALLBACK no curated shelf found ({shelf_note}) — requested teachings did not resolve"
+            f"No skill shelf is available ({shelf_note}); the requested skills were not added. "
+            "Set the shelf in the console (Settings, Skills shelf) or with `abstractgateway config set skills.shelf <folder>`."
         )
         return out
 

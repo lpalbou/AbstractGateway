@@ -2650,6 +2650,105 @@ CONSOLE_UI_JS = r"""
       agentDefaultsRefresh();
     }
 
+    // ---- Skills shelf (skills.shelf) ----
+    // GET /api/gateway/admin/runtime-config -> skills.shelf {key, label, help,
+    // value, source: stored|env|seeded|checkout|none, resolved, available,
+    // reason, default_path, bundled_version, warnings?}. Save = POST
+    // {"skills.shelf": path | ""} ("" = back to the gateway's own copy);
+    // "Refresh the curated shelf" = POST /api/gateway/admin/skills/reseed.
+    const skillsShelfStore = { data: null, error: "", saving: false, saved: null, draft: null, views: new Map() };
+    function skillsShelfSourcePill(r) {
+      if (r.source === "stored") return uiPill("Saved setting", "info");
+      if (r.source === "env") return uiPill("Environment (legacy)", "warn", "Set by the environment this gateway was started with; saving a folder here replaces it");
+      if (r.source === "seeded") return uiPill("The gateway's own copy", "muted");
+      if (r.source === "checkout") return uiPill("Framework checkout", "warn");
+      return uiPill("None", "err");
+    }
+    function skillsShelfMarkup() {
+      const st = skillsShelfStore;
+      if (st.error && !st.data) return `<div class="ui-alert tone-err" role="alert"><strong>Could not read the skills shelf setting.</strong><span>${esc(st.error)}</span></div>`;
+      if (!st.data) return `<div class="ui-empty">Reading the skills shelf setting...</div>`;
+      const r = ((st.data.skills || {}).shelf) || null;
+      if (!r) return `<div class="ui-alert tone-err" role="alert"><strong>This gateway did not report its skills shelf.</strong></div>`;
+      const admin = !!st.data.writable;
+      const stored = r.source === "stored" ? String(r.value || "") : "";
+      const val = st.draft !== null ? st.draft : stored;
+      let out = `<div class="ui-apps-setting" data-skills-shelf><div class="ui-apps-setting__head"><label for="skills-shelf-input">${esc(r.label || "Skills shelf")}</label>${skillsShelfSourcePill(r)}</div>`
+        + `<input type="text" id="skills-shelf-input" data-skills-shelf-input autocomplete="off" spellcheck="false" value="${esc(val)}" placeholder="${esc(r.default_path || "")}"${admin && !st.saving ? "" : " disabled"}>`
+        + `<p class="ui-net-proxy__text">${esc(r.help || "")}</p>`
+        + (r.available && r.resolved ? `<p class="ui-net-proxy__text" data-skills-shelf-now>Reads <code>${esc(r.resolved)}</code>${r.bundled_version ? ` · curated shelf ${esc(r.bundled_version)}` : ""}</p>` : "")
+        + (!r.available ? `<p class="ui-field-msg tone-warn" data-skills-shelf-now>Not available: ${esc(r.reason || "")}</p>` : "")
+        + (r.warnings || []).map((w) => `<p class="ui-field-msg tone-warn">${esc(w)}</p>`).join("")
+        + `<span class="ui-advanced ui-sub"><code>abstractgateway config set skills.shelf …</code></span>`;
+      if (admin) {
+        out += `<div class="ui-card__actions"><button type="button" class="ui-btn is-primary" data-skills-shelf-save${st.saving ? " disabled" : ""}>${st.saving ? "Saving..." : "Save skills shelf"}</button>`
+          + `<button type="button" class="ui-btn" data-skills-shelf-reseed${st.saving ? " disabled" : ""}>Refresh the curated shelf</button></div>`;
+      }
+      if (st.saved) out += `<p class="ui-net-proxy__saved tone-${esc(st.saved.tone)}" role="status" data-skills-shelf-saved><b>${esc(st.saved.head)}</b><span>${esc(st.saved.text)}</span></p>`;
+      else if (!admin) out += `<p class="ui-net-proxy__saved" role="status"><span>Only an admin can change this.</span></p>`;
+      return out + `</div>`;
+    }
+    function skillsShelfRender() { for (const el of skillsShelfStore.views.values()) if (el) el.innerHTML = skillsShelfMarkup(); }
+    async function skillsShelfRefresh() {
+      try {
+        skillsShelfStore.data = await api("/api/gateway/admin/runtime-config");
+        skillsShelfStore.error = "";
+      } catch (err) {
+        skillsShelfStore.error = String((err && err.message) || err);
+      }
+      skillsShelfRender();
+    }
+    function seedReportText(rep) {
+      const n = (k) => (Array.isArray(rep && rep[k]) ? rep[k].length : 0);
+      const kept = rep && rep.kept ? Object.keys(rep.kept).length : 0;
+      return `Curated shelf ${rep && rep.bundled_version ? rep.bundled_version : "?"}: ${n("added")} added, ${n("updated")} updated, ${n("unchanged")} unchanged, ${kept} kept as they are (your edits are never overwritten).`;
+    }
+    async function skillsShelfAction(kind) {
+      const st = skillsShelfStore;
+      if (!st.data || st.saving) return;
+      st.saving = true;
+      st.saved = null;
+      skillsShelfRender();
+      try {
+        if (kind === "reseed") {
+          const rep = await api("/api/gateway/admin/skills/reseed", { method: "POST", body: "{}" });
+          st.saved = { tone: "ok", head: "Refreshed", text: seedReportText(rep) };
+          st.data = await api("/api/gateway/admin/runtime-config");
+        } else {
+          const r = ((st.data.skills || {}).shelf) || {};
+          const was = r.source === "stored" ? String(r.value || "") : "";
+          const now = String(st.draft !== null ? st.draft : was).trim();
+          if (now === was) { st.saved = { tone: "ok", head: "Nothing changed", text: "" }; }
+          else {
+            st.data = await api("/api/gateway/admin/runtime-config", { method: "POST", body: JSON.stringify({ "skills.shelf": now }) });
+            st.draft = null;
+            st.saved = { tone: "ok", head: "Saved", text: "New runs and the skills lists read this shelf." };
+          }
+        }
+      } catch (err) {
+        const data = (err && err.data) || {};
+        st.saved = { tone: "err", head: kind === "reseed" ? "Not refreshed" : "Not saved", text: String((data && data.detail) || (err && err.message) || err) };
+      }
+      st.saving = false;
+      skillsShelfRender();
+    }
+    function mountSkillsShelf(key, el) {
+      if (!el) return;
+      skillsShelfStore.views.set(key, el);
+      el.onclick = (event) => {
+        const t = event && event.target && event.target.closest ? event.target : null;
+        if (!t) return;
+        if (t.closest("[data-skills-shelf-save]")) skillsShelfAction("save");
+        else if (t.closest("[data-skills-shelf-reseed]")) skillsShelfAction("reseed");
+      };
+      el.oninput = (event) => {
+        const i = event && event.target && event.target.matches && event.target.matches("[data-skills-shelf-input]") ? event.target : null;
+        if (i) skillsShelfStore.draft = i.value;
+      };
+      skillsShelfRender();
+      skillsShelfRefresh();
+    }
+
     // ---- The kit islands: AfTopBarActions + AfAppearanceDialog ----
     const islands = { lib: null, topbar: null, appearance: null, appearanceOpen: false, phase: "loading", signingOut: false, identity: "" };
     function islandsLib() {

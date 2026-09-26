@@ -1516,6 +1516,7 @@ def read_runtime_config(
     is_admin: bool = True,
     agent_index: Optional[List[Dict[str, Any]]] = None,
     include_agents: bool = False,
+    include_skills: bool = False,
 ) -> Dict[str, Any]:
     """The authoritative runtime-config posture (continuum c1550 ask 1).
     Each knob carries {value, source}; the executor also carries the
@@ -1594,7 +1595,62 @@ def read_runtime_config(
         # request: the per-knob resolvers below read this function too, and
         # must not scan workflows to answer "what is the workspace root".
         out["agents"] = _agents_payload(data_dir, agent_index)
+    if include_skills:
+        # skills.shelf (skills_shelf.py): {key, value, source: stored|env|
+        # seeded|checkout|none, resolved, available, reason, default_path,
+        # bundled_version, ...}. Non-admins see the posture, not the paths.
+        out["skills"] = {"shelf": _skills_shelf_payload(data_dir, is_admin=is_admin)}
     return out
+
+
+def _skills_shelf_payload(data_dir: Path, *, is_admin: bool) -> Dict[str, Any]:
+    from .skills_shelf import shelf_setting_payload
+
+    checkout = None
+    try:
+        # ensure=False: reading a setting never creates the backlog folder.
+        res = resolve_backlog_root(Path(data_dir), ensure=False)
+        checkout = Path(str(res["value"])).expanduser().resolve() if res.get("available") and res.get("value") else None
+    except Exception:  # noqa: BLE001 - the checkout rung is optional
+        checkout = None
+    row = shelf_setting_payload(Path(data_dir), checkout_root=checkout)
+    if not is_admin:
+        keep = {k: row[k] for k in ("key", "label", "help", "source", "available", "bundled_version", "cli") if k in row}
+        keep["configured"] = bool(row.get("value"))
+        return keep
+    return row
+
+
+def _write_skills_changes(stored: Dict[str, Any], changes: Dict[str, Any], applied: Dict[str, Any]) -> None:
+    """`skills.shelf` (flat) or {"skills": {"shelf": PATH}}; "" clears (back
+    to the environment, else the gateway's seeded copy)."""
+    from .skills_shelf import SETTING_KEY, validate_shelf_value
+
+    pairs: List[tuple] = []
+    for k, v in changes.items():
+        if k == SETTING_KEY:
+            pairs.append(("shelf", v))
+        elif isinstance(k, str) and k.startswith("skills."):
+            raise RuntimeConfigError(f"unknown setting {k!r}; the skills setting is {SETTING_KEY}")
+    if "skills" in changes:
+        block = changes["skills"]
+        if not isinstance(block, dict) or set(block) - {"shelf"}:
+            raise RuntimeConfigError('skills must be {"shelf": "<folder>" | ""}')
+        pairs.extend(block.items())
+    if not pairs:
+        return
+    skills = dict(stored.get("skills") or {}) if isinstance(stored.get("skills"), dict) else {}
+    for name, raw in pairs:
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            skills.pop(name, None)
+            applied[SETTING_KEY] = None
+        else:
+            skills[name] = validate_shelf_value(raw)
+            applied[SETTING_KEY] = skills[name]
+    if skills:
+        stored["skills"] = skills
+    else:
+        stored.pop("skills", None)
 
 
 def _parse_kill_switch_seconds(raw: Any) -> float:
@@ -1681,13 +1737,13 @@ _WRITE_KEYS = frozenset({
     "workspace_mounts", "workspace_allowed_paths", "workspace_blocked_paths",
     "client_workspace_scope_overrides", "trust_client_launch_folder", "workspace_default_mode",
     "user_workspace_policies", "executor", "operator_email", "stop_kill_switch_s",
-    "allow_engine_install", "apps", "agents",
+    "allow_engine_install", "apps", "agents", "skills",
 })
 
 
 def _is_known_write_key(key: Any) -> bool:
     k = str(key)
-    return k in _WRITE_KEYS or k.startswith("apps.") or k.startswith("agents.")
+    return k in _WRITE_KEYS or k.startswith("apps.") or k.startswith("agents.") or k.startswith("skills.")
 
 
 @_locked_store_write
@@ -1726,7 +1782,7 @@ def write_runtime_config(
         # keys it knows and quietly dropping the rest.
         raise RuntimeConfigError(
             f"unknown setting(s) {unknown}; nothing was saved. Known: {sorted(_WRITE_KEYS)} "
-            "plus apps.<name>, agents.default_workflow.<interface>"
+            "plus apps.<name>, agents.default_workflow.<interface>, skills.shelf"
         )
     for _switch in ("process_manager", "backlog_exec_runner"):
         if _switch in changes:
@@ -1909,6 +1965,7 @@ def write_runtime_config(
 
     _write_apps_changes(stored, changes, applied)
     _write_agents_changes(stored, changes, applied, agent_index)
+    _write_skills_changes(stored, changes, applied)
 
     if not applied:
         raise RuntimeConfigError(
@@ -1919,7 +1976,7 @@ def write_runtime_config(
             "workspace_default_mode, user_workspace_policies, executor, operator_email, "
             "stop_kill_switch_s, allow_engine_install, "
             + ", ".join(r["key"] for r in APPS_SETTINGS)
-            + ", agents.default_workflow.<interface>)"
+            + ", agents.default_workflow.<interface>, skills.shelf)"
         )
 
     stored["_last_changed_by"] = str(actor)
@@ -1929,7 +1986,9 @@ def write_runtime_config(
     _write_store(data_dir, stored)
 
     touched_agents = any(str(k).startswith("agents.default_workflow.") for k in applied)
-    out = read_runtime_config(data_dir, agent_index=agent_index, include_agents=touched_agents)
+    out = read_runtime_config(
+        data_dir, agent_index=agent_index, include_agents=touched_agents, include_skills="skills.shelf" in applied
+    )
     out["applied"] = applied
     out["changed_by"] = str(actor)
     return out

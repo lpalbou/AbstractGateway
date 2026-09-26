@@ -689,6 +689,7 @@ async def gateway_admin_read_runtime_config(request: Request) -> Dict[str, Any]:
         gateway_data_dir_from_env(),
         is_admin=principal.is_admin(),
         agent_index=await _off_the_event_loop(_settings_agent_index, principal),
+        include_skills=True,
     )
 
 
@@ -14071,7 +14072,25 @@ async def gateway_skills_inventory(request: Request) -> Dict[str, Any]:
     from ..capability_inventories import skills_inventory
 
     svc = get_gateway_service()
-    return skills_inventory(data_dir=Path(svc.stores.base_dir))
+    return await asyncio.to_thread(skills_inventory, data_dir=Path(svc.stores.base_dir))
+
+
+@router.post("/admin/skills/reseed")
+async def gateway_admin_skills_reseed(request: Request) -> Dict[str, Any]:
+    """Seed the gateway's own skills shelf (<data dir>/skills/registry) from
+    the curated registry the installed AbstractSkill ships, now. Adds what is
+    missing, refreshes only what an earlier seed wrote and nobody edited;
+    returns the SeedReport ({dest, bundled_version, previous_version, added,
+    updated, unchanged, kept_*, not_in_bundle, changed, kept}). A saved or
+    environment shelf elsewhere is untouched (and still wins)."""
+    _require_admin_principal(request)
+    from ..skills_shelf import seed
+
+    outcome = await asyncio.to_thread(seed, gateway_data_dir_from_env())
+    request.state.audit_detail = {"skills_reseed": {"ok": bool(outcome.get("ok"))}}
+    if not outcome.get("ok"):
+        raise HTTPException(status_code=409, detail=f"the skills shelf could not be seeded at {outcome.get('dest')}: {outcome.get('error')}")
+    return outcome["report"]
 
 
 @router.get("/mcp/servers")

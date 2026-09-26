@@ -39,11 +39,12 @@ def test_capability_map_put_is_a_durable_marked_event(monkeypatch: pytest.Monkey
     with TestClient(app, headers={"Authorization": "Bearer capmap-marker-secret"}) as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark("Castor")}).status_code == 201
 
-        # Absent by default — an uninstalled map reads honestly, never 404s
-        # (the entity exists; the teaching just is not installed).
+        # Born with the curated map: the gateway seeds its skills shelf at
+        # start from the registry abstractskill ships, and a birth installs
+        # the shelf's capability map.
         r0 = client.get("/api/gateway/entities/Castor/capability-map")
         assert r0.status_code == 200, r0.text
-        assert r0.json() == {"installed": False, "size": 0, "sha256": None, "content": None}
+        assert r0.json()["installed"] is True and "How your memory works" in r0.json()["content"]
 
         # Install: marker-first write.
         r1 = client.put("/api/gateway/entities/Castor/capability-map", json={"content": teaching_v1})
@@ -71,9 +72,11 @@ def test_capability_map_put_is_a_durable_marked_event(monkeypatch: pytest.Monkey
         markers_path = data_dir / "entities" / ".host_stream" / "castor.jsonl"
         rows = [json.loads(line) for line in markers_path.read_text(encoding="utf-8").splitlines()]
         changed = [m for m in rows if m.get("payload", {}).get("kind") == "capability_map_changed"]
-        assert len(changed) == 2
-        first, second = changed[0]["payload"], changed[1]["payload"]
-        assert first["old_sha256"] is None
+        # [birth install of the curated map, v1, v2]
+        assert len(changed) == 3
+        birth, first, second = changed[0]["payload"], changed[1]["payload"], changed[2]["payload"]
+        assert birth["at_birth"] is True and birth["sha256"]
+        assert first["old_sha256"] == birth["sha256"]
         assert first["new_sha256"] == hashlib.sha256(teaching_v1.encode("utf-8")).hexdigest()
         assert second["old_sha256"] == first["new_sha256"]
         assert second["new_sha256"] == hashlib.sha256(teaching_v2.encode("utf-8")).hexdigest()
@@ -84,7 +87,7 @@ def test_capability_map_put_is_a_durable_marked_event(monkeypatch: pytest.Monkey
         r4 = client.put("/api/gateway/entities/Castor/capability-map", json={"content": "   "})
         assert r4.status_code == 400
         rows = [json.loads(line) for line in markers_path.read_text(encoding="utf-8").splitlines()]
-        assert len([m for m in rows if m.get("payload", {}).get("kind") == "capability_map_changed"]) == 2
+        assert len([m for m in rows if m.get("payload", {}).get("kind") == "capability_map_changed"]) == 3
 
 
 def test_capability_map_runtime_delivery_reads_the_installed_file(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

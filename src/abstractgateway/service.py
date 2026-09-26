@@ -465,6 +465,20 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
         root_data_dir = Path(getattr(cfg, "root_data_dir", None) or cfg.data_dir).expanduser().resolve()
         tenant_id = safe_principal_component(getattr(cfg, "tenant_id", "default"), default="default")
 
+        # The skills shelf (skills_shelf.py): seed <data dir>/skills/registry
+        # from the curated registry abstractskill ships, once per process
+        # (never at import). seed_registry never overwrites an operator's
+        # edit and locks against concurrent gateway processes; a failure is
+        # logged and shown by /skills, never fatal to a start.
+        try:
+            from .skills_shelf import seed_at_start
+
+            seeded = seed_at_start(root_data_dir)
+            if not seeded.get("ok"):
+                boot_warnings.append(f"skills shelf not seeded at {seeded.get('dest')}: {seeded.get('error')}")
+        except Exception as e:  # noqa: BLE001
+            boot_warnings.append(f"skills shelf seed failed: {type(e).__name__}: {e}")
+
         # Fresh-install UX (card 013): ensure the shipped catalog bundles
         # (docs-qa — the console drawer's transport) are published into THIS
         # tenant's catalog before the host scans the catalog dir, so a fresh

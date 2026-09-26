@@ -1369,6 +1369,45 @@ pub struct RuntimeConfigData {
     /// Default agent workflow per agent interface
     /// (`agents.default_workflow.<interface>`), in the gateway's order.
     pub agent_defaults: Vec<AgentDefault>,
+    /// The skills shelf (`skills.shelf`); None when the gateway does not
+    /// report it.
+    pub skills_shelf: Option<SkillsShelf>,
+}
+
+/// `skills.shelf`: where the gateway reads skills from.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SkillsShelf {
+    /// The saved/environment value ("" when the gateway's own copy is used).
+    pub value: String,
+    /// stored | env | seeded | checkout | none
+    pub source: String,
+    pub resolved: String,
+    pub available: bool,
+    pub reason: String,
+    pub default_path: String,
+    pub bundled_version: String,
+    pub warnings: Vec<String>,
+}
+
+pub fn skills_shelf_from(v: &Value) -> Option<SkillsShelf> {
+    let r = v.get("skills")?.get("shelf")?;
+    if !r.is_object() {
+        return None;
+    }
+    Some(SkillsShelf {
+        value: s(r, "value").unwrap_or_default(),
+        source: s(r, "source").unwrap_or_else(|| "?".into()),
+        resolved: s(r, "resolved").unwrap_or_default(),
+        available: b(r, "available").unwrap_or(false),
+        reason: s(r, "reason").unwrap_or_default(),
+        default_path: s(r, "default_path").unwrap_or_default(),
+        bundled_version: s(r, "bundled_version").unwrap_or_default(),
+        warnings: r
+            .get("warnings")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(|w| w.as_str().map(str::to_string)).collect())
+            .unwrap_or_default(),
+    })
 }
 
 /// One `agents.default_workflow.<interface>` row: what "Gateway default"
@@ -1629,6 +1668,7 @@ impl RuntimeConfigData {
             executors,
             apps,
             agent_defaults: agent_defaults_from(v),
+            skills_shelf: skills_shelf_from(v),
         }
     }
 }
