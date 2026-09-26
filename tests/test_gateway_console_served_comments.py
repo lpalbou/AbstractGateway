@@ -17,8 +17,10 @@ from abstractgateway.console import (
 )
 
 # `mission` is case-sensitive: "a mission the entity works on" is UI text,
-# "mission Z" is a project codename.
-_NARRATIVE = re.compile(r"[Mm]ission [A-Z]{1,2}\d?\b|(?i:charter|2026-0\d|laurent|dm#\d)")
+# "mission Z" is a project codename. The author's full name is shown on
+# purpose (the AbstractFramework identity every About screen carries); a bare
+# "laurent" in the page is still maintainer narrative.
+_NARRATIVE = re.compile(r"[Mm]ission [A-Z]{1,2}\d?\b|(?i:charter|2026-0\d|laurent(?!-philippe albou)|dm#\d)")
 
 
 @pytest.fixture(scope="module")
