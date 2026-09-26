@@ -1315,7 +1315,29 @@ Client scope overrides (permissive; trusted machines only):
 Discoverability:
 - `GET /api/gateway/workspace/policy` returns `{policy: {...}}` including whether client overrides are enabled (mount names only; no absolute paths).
 
-Evidence: `src/abstractgateway/routes/gateway.py` (`_workspace_root`, `_workspace_mounts`, `_sanitize_run_workspace_policy`, `_client_workspace_scope_overrides_enabled`, `start_run`).
+Built-in deny list. These folders of the gateway's user account are never
+listed nor served by the workspace browser (`GET /runs/{run_id}/workspace/…`),
+for anyone:
+
+`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`, `~/.kube`,
+`~/Library/Keychains`, `~/.abstractgateway`, `~/.abstractcode`,
+`~/.abstractassistant`, `~/.abstractcontinuum`, `~/.abstractcore`, and the
+gateway's data folder (except a run's own conversation folder inside it).
+
+The same folders are added to every run's tool deny list
+(`workspace_ignored_paths`), so an agent's file tools cannot read them either.
+For runs this is a default an admin may turn off: `abstractgateway config set
+workspace_builtin_deny off` (or `POST /api/gateway/admin/runtime-config
+{"workspace_builtin_deny": false}`); the workspace browser keeps hiding them.
+`GET /api/gateway/admin/runtime-config` reports the list as `builtin_deny
+{value: [paths], enabled, source}`. The file tools honour the deny list; shell
+commands a run is allowed to execute are not confined by it.
+
+A run cannot use a folder inside the gateway's data folder as its
+`workspace_root`, except the conversation folder the gateway made for the same
+user and session (or one of that user's per-run folders).
+
+Evidence: `src/abstractgateway/routes/gateway.py` (`_workspace_root`, `_workspace_mounts`, `_sanitize_run_workspace_policy`, `_apply_builtin_tool_deny`, `_browse_workspace_root`, `start_run`), `src/abstractgateway/workspace_browse.py`.
 
 ### Durability backend
 
@@ -1942,7 +1964,9 @@ Python environment as the gateway; a gateway-only install may not.
   connected to this gateway and signed in as you automatically: the gateway
   starts it with `--gateway-url <address> --gateway-handover-file <file>`,
   where the file (readable by you only, in `<data dir>/handover/`) holds a
-  one-time code valid for two minutes. The Assistant reads and deletes the
+  one-time code valid for two minutes and the id of the user who clicked
+  Open (`{schema: "abstractgateway.desktop_handover.v1", code, base_url,
+  expires_at, user_id}`). The Assistant reads and deletes the
   file, trades the code for a remembered sign-in and keeps it. No code or
   token is ever on its command line or in its environment. An Assistant that
   is already running cannot receive a code: if it is not signed in, quit it
@@ -3114,7 +3138,11 @@ honours `Range` (206; 416 outside the file).
 
 Paths are relative to the folder: absolute paths and `..` are refused (400),
 a link that leads outside is refused (403), the gateway's own marker file is
-never listed nor served. The workspace access policy (allowed and blocked
+never listed nor served. The built-in deny list (credential folders such as
+`~/.ssh`, and the gateway's data folder; see
+[Configuration](docs/configuration.md#workspace-policy-filesystem-scope)) is never
+listed, and reading inside it answers 404, even when the run's folder
+contains it. The workspace access policy (allowed and blocked
 folders, launch-folder trust) is applied again at every call, and nothing
 else in the gateway's data folder is ever served. A run cannot be started
 with a `workspace_root` inside the gateway's data folder either, except the
@@ -5904,6 +5932,16 @@ rows use the identity module of the next AbstractCore release.
   folders, the Assistant).
 - A run cannot use a folder inside the gateway's data folder as its
   workspace, except the conversation folder the gateway made for it.
+- **Built-in deny list.** Credential and configuration folders of the
+  gateway's user account (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`,
+  `~/.kube`, `~/Library/Keychains`, the `~/.abstract*` app folders) and the
+  gateway's data folder are never shown by the workspace browser, and runs'
+  file tools are denied them by default (an admin can turn that part off with
+  `workspace_builtin_deny`).
+- A request relayed by an app on this computer is recognised by the app's
+  proxy marker, and a forwarded request from another machine is never
+  treated as local; the stored reverse-proxy setting wins over the
+  environment.
 - A settings write that names an unknown setting is refused as a whole and
   saves nothing.
 

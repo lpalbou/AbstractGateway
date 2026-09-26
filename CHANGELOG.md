@@ -50,6 +50,16 @@ rows use the identity module of the next AbstractCore release.
   folders, the Assistant).
 - A run cannot use a folder inside the gateway's data folder as its
   workspace, except the conversation folder the gateway made for it.
+- **Built-in deny list.** Credential and configuration folders of the
+  gateway's user account (`~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gcloud`,
+  `~/.kube`, `~/Library/Keychains`, the `~/.abstract*` app folders) and the
+  gateway's data folder are never shown by the workspace browser, and runs'
+  file tools are denied them by default (an admin can turn that part off with
+  `workspace_builtin_deny`).
+- A request relayed by an app on this computer is recognised by the app's
+  proxy marker, and a forwarded request from another machine is never
+  treated as local; the stored reverse-proxy setting wins over the
+  environment.
 - A settings write that names an unknown setting is refused as a whole and
   saves nothing.
 
