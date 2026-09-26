@@ -1,4 +1,4 @@
-"""CLI verbs for the no-terminal first run (2026-09-23):
+"""CLI verbs for the no-terminal first run:
 
 - `abstractgateway claim` / `abstractgateway-config claim-url [--open]`
 - `abstractgateway service install|uninstall|enable|disable|status` (enable /
@@ -176,7 +176,7 @@ def add_service_subparser(sub: Any) -> None:
                 "--pin-command-line",
                 action="store_true",
                 dest="pin_command_line",
-                help="Technical: put --host/--port on the login item's command line (the pre-2026-09-24 shape). "
+                help="Technical: put --host/--port on the login item's command line (the shape of earlier releases). "
                 "They then override the Network setting, which no longer applies (reported as overridden_by_cli).",
             )
         if name == "enable":

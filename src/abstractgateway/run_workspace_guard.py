@@ -13,7 +13,7 @@ summons, the sandbox routes, scheduled wrappers whose children inherit it):
   with ONE exception, the run's own folder inside the data folder
   (`workspace_builtin_allow`). Never an enumeration of a folder's contents,
   never in `workspace_ignored_paths`, never rendered into the model's prompt
-  (the runtime enforces the two keys silently; REVIEW/16). Whatever a client
+  (the runtime enforces the two keys silently). Whatever a client
   sent under these two keys is dropped first.
 
 The client-facing policy check (`routes/gateway.py`

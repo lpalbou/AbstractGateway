@@ -54,7 +54,7 @@ def add_apps_subparser(sub: Any) -> None:
         p = verbs.add_parser(name, help=helptext)
         p.add_argument("app")
         conn(p)
-    # Terminal versions (mission Y): parity with the console's "Install for
+    # Terminal versions: parity with the console's "Install for
     # Terminal" and "Open in Terminal".
     p = verbs.add_parser("install-tui", help="Install an app's terminal version (Code): prebuilt release binary, checksum-verified")
     p.add_argument("app", help="code")
@@ -70,7 +70,7 @@ def add_apps_subparser(sub: Any) -> None:
     p = verbs.add_parser("jobs", help="Recent install/update jobs (or one job with its full log)")
     p.add_argument("job_id", nargs="?", default=None)
     conn(p)
-    # Settings (mission Z): the stored apps.* runtime-config keys, edited in
+    # Settings: the stored apps.* runtime-config keys, edited in
     # this data dir's settings store (the same store the console writes).
     cfg = verbs.add_parser("config", help="Apps settings (Node.js, ports, listening address, mirrors): get or set")
     cverbs = cfg.add_subparsers(dest="apps_config_cmd", required=True)

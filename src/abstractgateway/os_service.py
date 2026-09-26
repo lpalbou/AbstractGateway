@@ -1,5 +1,5 @@
 """`abstractgateway service install|uninstall|status`: start the gateway at login,
-per user, without admin rights (2026-09-23).
+per user, without admin rights.
 
 - macOS: a LaunchAgent `~/Library/LaunchAgents/ai.abstractframework.gateway.plist`
   (`RunAtLoad`, `KeepAlive`, logs under `~/Library/Logs/AbstractGateway/`),
@@ -17,7 +17,7 @@ per user, without admin rights (2026-09-23).
   value `AbstractGateway` (no admin) whose command is
   `pythonw.exe -m abstractgateway.os_service launch ...`, so no console window
   appears, with output going to a log file. It replaced the Startup-folder
-  shortcut of 2026-09-23 (2026-09-24): a Run value is a plain string, so the
+  shortcut an earlier release used: a Run value is a plain string, so the
   registration can be READ BACK and verified (a `.lnk` cannot without COM),
   and Task Manager's "Startup apps" switch for it is readable
   (`StartupApproved\\Run`). An older shortcut is removed by install/uninstall.
@@ -26,11 +26,11 @@ Every generated artifact is a pure function of (platform, home, executable,
 data dir[, host, port when pinned]), so tests render all three OSes on any OS.
 `--dry-run` prints the files and the exact commands and touches nothing.
 
-The bind is the NETWORK SETTING's (2026-09-24, mission T): every registration
+The bind is the NETWORK SETTING's: every registration
 starts plain `serve` — no `--host`, no `--port` — so `abstractgateway network
 set localhost|lan|internet [--port N]` (the tray's Network menu, the console's
 panel) applies at the next start. A command-line flag would win over the
-setting forever (`overridden_by_cli`), which is why the 2026-09-23
+setting forever (`overridden_by_cli`), which is why earlier
 registrations (`serve --host 127.0.0.1 --port N`) made the setting inert.
 Install/enable SEED the setting first (`resolve_service_bind` +
 `seed_network_setting`, through `network_exposure.apply_network_change`):
@@ -68,7 +68,7 @@ from .host_paths import normalize_platform
 LAUNCHD_LABEL = "ai.abstractframework.gateway"
 SYSTEMD_UNIT = "abstractgateway.service"
 XDG_AUTOSTART_FILE = "abstractgateway.desktop"
-WINDOWS_SHORTCUT = "AbstractGateway.lnk"  # the 2026-09-23 mechanism; removed when found
+WINDOWS_SHORTCUT = "AbstractGateway.lnk"  # an earlier release's mechanism; removed when found
 WINDOWS_RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 WINDOWS_STARTUP_APPROVED_KEY = r"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
 WINDOWS_RUN_VALUE = "AbstractGateway"
@@ -104,7 +104,7 @@ class ServicePlan:
     experimental: bool = False
     mechanism: str = ""
     # True only for `--pin-command-line`: `serve --host H --port P` on the
-    # command line, which overrides the Network setting (the 2026-09-23 shape).
+    # command line, which overrides the Network setting (the shape of earlier releases).
     pinned: bool = False
     # The bind resolution + the setting write it needs (resolve_service_bind).
     network: Dict[str, Any] = field(default_factory=dict)
@@ -146,7 +146,7 @@ def _xdg_config_home(home: Path, env: Dict[str, str]) -> Path:
 
 
 def windows_startup_shortcut_path(home: Path, env: Optional[Dict[str, str]] = None) -> Path:
-    """The Startup-folder shortcut the 2026-09-23 installer wrote (now legacy)."""
+    """The Startup-folder shortcut an earlier installer wrote (now legacy)."""
     env = os.environ if env is None else env
     appdata = str(env.get("APPDATA") or "").strip()
     base = Path(appdata) if appdata else home / "AppData" / "Roaming"
@@ -553,7 +553,7 @@ def choose_port(
 
 
 # ---------------------------------------------------------------------------
-# The bind: the Network setting, seeded at install/enable (2026-09-24)
+# The bind: the Network setting, seeded at install/enable
 # ---------------------------------------------------------------------------
 
 
@@ -590,7 +590,7 @@ def resolve_service_bind(
     must hold for it. Pure except for reading the setting and port probes.
 
     Mode: `--host` (mapped, `_mode_for_host_flag`) > the stored setting >
-    `localhost` (the bind every registration had before 2026-09-24).
+    `localhost` (the bind every registration had before the Network setting).
     Port: `--port` > the stored setting's port > the running gateway's
     (`enable`) > the previous registration's > the first free from 8080.
     `seed` is the setting write (`{mode, port}`), None when it already holds
@@ -815,7 +815,7 @@ def build_install_plan(
         # A "disabled" switch Task Manager left for an earlier registration
         # would silently veto the new one: registering means ON.
         plan.registry.append({"op": "delete", "key": WINDOWS_STARTUP_APPROVED_KEY, "name": WINDOWS_RUN_VALUE, "missing_ok": True})
-        # The 2026-09-23 Startup shortcut would start a SECOND gateway at login.
+        # An earlier release's Startup shortcut would start a SECOND gateway at login.
         plan.remove.append(str(windows_startup_shortcut_path(home, env)))
         plan.commands.append(["@start-detached", *launch])
         plan.notes.append(f"EXPERIMENTAL on Windows: {windows_run_display()} (per user, no admin); not yet validated on a real Windows VM.")
@@ -1008,7 +1008,7 @@ def write_service_record(plan: ServicePlan) -> Path:
         "unit_path": plan.files[0]["path"] if plan.files else (windows_run_display() if plan.platform == "windows" else str(service_file_path(plan.platform, Path.home()))),
         "installed_at": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
         "experimental": plan.experimental,
-        # 2026-09-24: `pinned` false = plain `serve`, the Network setting binds;
+        # `pinned` false = plain `serve`, the Network setting binds;
         # true = --pin-command-line. A record WITHOUT the key predates it.
         "pinned": bool(plan.pinned),
         "bind_source": "command_line" if plan.pinned else "network_setting",
@@ -1067,7 +1067,7 @@ def service_status(
         "installed_at": (rec or {}).get("installed_at"),
         "record_for_this_data_dir": rec is not None,
         # True/False from the record; None = no record, or one written before
-        # 2026-09-24 (whose registration pins --host/--port: see
+        # the Network setting existed (whose registration pins --host/--port: see
         # autostart_status for the read-back and the repair wording).
         "pinned": (rec or {}).get("pinned") if isinstance((rec or {}).get("pinned"), bool) else None,
         "loaded": None,

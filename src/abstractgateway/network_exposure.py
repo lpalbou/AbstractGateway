@@ -1,6 +1,6 @@
 """Network exposure: WHO can reach this gateway, and at which addresses.
 
-One setting, three modes (operator ask 2026-09-24: "an option in the systray,
+One setting, three modes (operator ask: "an option in the systray,
 the WUI and the TUI to define if the gateway is accessible only localhost,
 local network or open to the internet, and copy buttons to rapidly get the
 IP/port"):
@@ -204,7 +204,7 @@ def auth_posture(env: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
     }
 
 
-# Operator rule (2026-09-24): user-facing text never tells anyone to set an
+# Operator rule: user-facing text never tells anyone to set an
 # environment variable. Auth topology is a start-time (deployment) choice, so
 # these describe the state the gateway was STARTED in and what a plain start
 # does, naming the variable only as where that state came from.
@@ -277,10 +277,10 @@ def auth_check(mode: str, posture: Mapping[str, Any]) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Reverse proxy: allowed browser origins + trusted X-Forwarded-For (mission Z)
+# Reverse proxy: allowed browser origins + trusted X-Forwarded-For
 # ---------------------------------------------------------------------------
 #
-# Operator 2026-09-24: "i explicitly told you i don't like env vars. most
+# The operator: "i explicitly told you i don't like env vars. most
 # should be something one can configure from the consoles (wui+tui)". The two
 # knobs a reverse-proxy deployment needs are stored in the network setting
 # (`allowed_origins`, `trust_proxy`) and edited through the same door as the
@@ -454,6 +454,34 @@ def proxy_env_facts(env: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
     }
 
 
+def resolve_trust_proxy(stored: Any, trust_proxy_env: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    """THE trust-proxy precedence, used by every reader (IP attribution and
+    lockouts in the security middleware, the same-machine rule, the status
+    payload): the STORED network setting first, then the legacy launch
+    environment (ABSTRACTGATEWAY_TRUST_PROXY) only when nothing is stored,
+    else off. -> {value: bool, source: stored|env|default}."""
+    if isinstance(stored, bool):
+        return {"value": stored, "source": "stored"}
+    if trust_proxy_env:
+        return {"value": bool(trust_proxy_env.get("value")), "source": "env"}
+    return {"value": False, "source": "default"}
+
+
+def trust_proxy_now(data_dir: Optional[Path] = None, *, env: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
+    """`resolve_trust_proxy` for this gateway right now (settings file + the
+    launch environment)."""
+    env = os.environ if env is None else env
+    if data_dir is None:
+        from .users import gateway_data_dir_from_env
+
+        data_dir = gateway_data_dir_from_env()
+    from .runtime_config import _read_store
+
+    raw = _read_store(Path(data_dir)).get("network")
+    stored = raw.get("trust_proxy") if isinstance(raw, dict) else None
+    return resolve_trust_proxy(stored, proxy_env_facts(env).get("trust_proxy_env"))
+
+
 def reverse_proxy_status(setting: Mapping[str, Any], facts: Mapping[str, Any]) -> Dict[str, Any]:
     """The `reverse_proxy` block of gateway_network_v1: per knob the stored
     value (what the controls edit), the winning `source` (setting | env |
@@ -491,20 +519,27 @@ def reverse_proxy_status(setting: Mapping[str, Any], facts: Mapping[str, Any]) -
         origins["invalid"] = list(setting["invalid_allowed_origins"])
     tenv = facts.get("trust_proxy_env")
     t_stored = setting.get("trust_proxy_source") == "stored"
+    resolved = resolve_trust_proxy(setting.get("trust_proxy") if t_stored else None, tenv)
     trust: Dict[str, Any] = {
         "value": bool(setting.get("trust_proxy")),
-        "source": "env" if tenv else ("setting" if t_stored else "default"),
-        "overridden_by_env": bool(tenv),
-        "effective": bool(tenv["value"]) if tenv else bool(setting.get("trust_proxy")),
+        "source": {"stored": "setting", "env": "env", "default": "default"}[resolved["source"]],
+        "overridden_by_env": resolved["source"] == "env",
+        "effective": bool(resolved["value"]),
         "applies": "live",
     }
     if tenv:
         trust["env_name"] = tenv["name"]
         trust["env_value"] = bool(tenv["value"])
-        trust["note"] = (
-            f"This gateway was started with {tenv['name']}={tenv.get('raw', '')} in its environment: it decides "
-            f"({'on' if tenv['value'] else 'off'}), and the switch saved here applies once the gateway is started without it."
-        )
+        if resolved["source"] == "env":
+            trust["note"] = (
+                f"This gateway was started with {tenv['name']}={tenv.get('raw', '')} in its environment and nothing is "
+                f"saved here, so it decides ({'on' if tenv['value'] else 'off'}); saving the switch here replaces it."
+            )
+        else:
+            trust["note"] = (
+                f"{tenv['name']}={tenv.get('raw', '')} is also in this gateway's environment; the switch saved here "
+                "wins (the environment variable is only a fallback when nothing is saved)."
+            )
     if trust["effective"]:
         trust["warning"] = (
             "Trust proxy is on: the gateway takes the client address from X-Forwarded-For. That is right only when "
@@ -519,7 +554,7 @@ class LiveReverseProxy:
     """What the security middleware adds to its start-time policy, per request."""
 
     extra_origins: Tuple[str, ...] = ()
-    trust_proxy: Optional[bool] = None  # None = no say (env decides, or nothing stored)
+    trust_proxy: bool = False  # resolve_trust_proxy: stored > launch env > off
 
 
 _LIVE_LOCK = threading.Lock()
@@ -531,8 +566,9 @@ def live_reverse_proxy(data_dir: Optional[Path] = None, *, env: Optional[Mapping
 
     One stat() of the settings file per call; the file is parsed again only
     when it changed (mtime/size/inode), so a console or CLI change applies to
-    the next request, from this process or another. An env override leaves
-    the stored value out (`extra_origins=()` / `trust_proxy=None`)."""
+    the next request, from this process or another. An origins env override
+    leaves the stored origins out (`extra_origins=()`); `trust_proxy` is the
+    one resolution, `resolve_trust_proxy` (stored > launch env > off)."""
     env = os.environ if env is None else env
     if data_dir is None:
         from .users import gateway_data_dir_from_env
@@ -563,7 +599,8 @@ def live_reverse_proxy(data_dir: Optional[Path] = None, *, env: Optional[Mapping
                 continue  # reported as `invalid` by the status payload; never applied
             if o not in extra:
                 extra.append(o)
-    trust = bool(raw["trust_proxy"]) if (env_key[1] is None and isinstance(raw.get("trust_proxy"), bool)) else None
+    tenv = {"value": _as_bool_text(env_key[1][1])} if env_key[1] is not None else None
+    trust = bool(resolve_trust_proxy(raw.get("trust_proxy"), tenv)["value"])
     value = LiveReverseProxy(extra_origins=tuple(extra), trust_proxy=trust)
     with _LIVE_LOCK:
         _LIVE_CACHE.update({"key": key, "value": value})
@@ -1195,7 +1232,7 @@ def mode_warnings(
     mode: str, port: int, *, lan_urls: List[str], proxy: Optional[Mapping[str, Any]] = None
 ) -> List[str]:
     """What to know about `mode`. Never an instruction to set an environment
-    variable (operator rule 2026-09-24): every knob named here is a control in
+    variable (operator rule): every knob named here is a control in
     the console, the TUI and the CLI."""
     if mode == "localhost":
         return []
@@ -1685,7 +1722,7 @@ def _login_name() -> str:
 def run_network_command(args: Any) -> int:
     from .host_paths import resolve_data_dir
 
-    # `--data-dir` wins (it was accepted but ignored before mission Z).
+    # `--data-dir` wins (it used to be accepted but ignored).
     explicit = getattr(args, "data_dir", None)
     data_dir = Path(str(explicit)).expanduser().resolve() if explicit else resolve_data_dir().path
     cmd = getattr(args, "network_cmd", "")

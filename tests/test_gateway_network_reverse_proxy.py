@@ -177,9 +177,14 @@ def test_status_sources_default_setting_env(tmp_path) -> None:
     assert o["source"] == "env" and o["overridden_by_env"] is True
     assert o["value"] == ["https://gateway.example.com"] and o["effective"] == ["https://pinned.example"]
     assert o["env_name"] == "ABSTRACTGATEWAY_ALLOWED_ORIGINS" and "started with ABSTRACTGATEWAY_ALLOWED_ORIGINS" in o["note"]
-    assert t["source"] == "env" and t["overridden_by_env"] is True and t["value"] is True and t["effective"] is False
+    # Trust proxy: ONE precedence (resolve_trust_proxy): the saved switch wins
+    # over the legacy launch environment, which only fills in when nothing is saved.
+    assert t["source"] == "setting" and t["overridden_by_env"] is False and t["value"] is True and t["effective"] is True
+    assert "wins" in t["note"]
     for note in (o["note"], t["note"]):
         assert not ENV_INSTRUCTION.search(note), note
+    rp_env_only = _status(tmp_path / "fresh", {"ABSTRACTGATEWAY_TRUST_PROXY": "1"})["reverse_proxy"]["trust_proxy"]
+    assert rp_env_only["source"] == "env" and rp_env_only["overridden_by_env"] is True and rp_env_only["effective"] is True
 
 
 def test_serve_exported_origins_are_not_an_operator_override(tmp_path) -> None:
@@ -196,10 +201,19 @@ def test_serve_exported_origins_are_not_an_operator_override(tmp_path) -> None:
     assert o["effective"] == ["http://localhost:*", "http://127.0.0.1:*", "http://192.168.1.23:8080", "https://gateway.example.com"]
 
 
-def test_saving_under_an_env_override_says_it_is_not_in_effect(tmp_path) -> None:
+def test_saving_trust_proxy_under_the_legacy_env_takes_effect(tmp_path) -> None:
+    """The saved switch wins over ABSTRACTGATEWAY_TRUST_PROXY (one resolver)."""
     env = {"ABSTRACTGATEWAY_TRUST_PROXY": "1"}
     st, body = _apply(tmp_path, env, trust_proxy=False)
-    assert st == 200 and body["changed"]["trust_proxy"]["applies"] == "overridden_by_env"
+    assert st == 200 and body["changed"]["trust_proxy"]["applies"] == "live"
+    assert not any(w.startswith("Saved, but not in effect:") and "trust" in w.lower() for w in body["warnings"])
+    assert _status(tmp_path, env)["reverse_proxy"]["trust_proxy"]["effective"] is False
+
+
+def test_saving_origins_under_an_env_override_says_it_is_not_in_effect(tmp_path) -> None:
+    env = {"ABSTRACTGATEWAY_ALLOWED_ORIGINS": "https://pinned.example"}
+    st, body = _apply(tmp_path, env, allowed_origins=["https://gateway.example.com"])
+    assert st == 200 and body["changed"]["allowed_origins"]["applies"] == "overridden_by_env"
     assert any(w.startswith("Saved, but not in effect:") for w in body["warnings"])
 
 

@@ -149,10 +149,10 @@ class GatewayRunnerConfig:
     poller_reap_min_age_s: float = 3600.0
     poller_reap_interval_s: float = 300.0
 
-    # STOP KILL SWITCH (stop_kill_switch.py, incident 2026-09-22): seconds a
+    # STOP KILL SWITCH (stop_kill_switch.py, incident): seconds a
     # cancelled run's model call may keep decoding after the cancel command
     # was applied before that INFERENCE is killed in process (never the
-    # gateway: operator rule 2026-09-23). This is the
+    # gateway: operator rule). This is the
     # DEFAULT rung only: the runtime-config key `stop_kill_switch_s` (console)
     # and env ABSTRACTGATEWAY_STOP_KILL_SWITCH_S supersede it, re-read at every
     # Stop. 0 disables the switch (logged at every arm, never silent).
@@ -268,7 +268,7 @@ class GatewayRunner:
         )
 
         self._stop = threading.Event()
-        # WAKE (chat-turn overhead, 2026-09-22): the loop's between-pass sleep
+        # WAKE: the loop's between-pass sleep
         # is an Event wait, not a blind `_stop.wait(poll_interval)`, so an
         # IN-PROCESS event that makes a run runnable is served immediately
         # instead of sleeping out the rest of the tick. poll_interval_s stays
@@ -462,7 +462,7 @@ class GatewayRunner:
         logger.info("GatewayRunner worker started (base_dir=%s)", self._base_dir)
 
     # ---------------------------------------------------------------------
-    # In-process wake seam (chat-turn overhead, 2026-09-22)
+    # In-process wake seam
     # ---------------------------------------------------------------------
 
     def _report_stop_kill_switch_posture(self) -> None:
@@ -1517,7 +1517,7 @@ class GatewayRunner:
                     continue
                 self._submit_tick(rid, priority=True)
 
-        # DRAIN BETWEEN THE WALKS (mission B2). Each store query below is a
+        # DRAIN BETWEEN THE WALKS. Each store query below is a
         # full directory walk — ~57ms each at 9,326 run files, ~0.18s for the
         # pass — and this method runs on the LOOP thread, the same thread that
         # serves the direct-tick queue. An in-process event landing mid-pass
@@ -1687,7 +1687,7 @@ class GatewayRunner:
             # fingerprint gate — any run-file write moves the fingerprint, so
             # a scan still follows within scan_gate_idle_interval_s.
             #
-            # WHY (mission B2): forcing the scan here ran a full pass after
+            # WHY: forcing the scan here ran a full pass after
             # EVERY tick — four whole-directory walks, ~0.18s at 9,326 run
             # files — on the LOOP thread, so the next hop's wake could not be
             # served until the pass finished. That was 0.88s of a no-tool chat
@@ -3031,8 +3031,8 @@ class GatewayRunner:
 
 class _SingletonFileLocker:
     """Exclusive, non-blocking, process-scoped file lock: `flock` on POSIX,
-    `msvcrt.locking` on Windows (first-run, 2026-09-23 — Windows used to run
-    with NO mutual exclusion, so two gateways on one data dir double-ticked).
+    `msvcrt.locking` on Windows (without it, two gateways on one data dir
+    on Windows double-ticked).
 
     Both are released by the OS when the holding process dies, which is the
     property the runner's staleness handling relies on (a dead holder never

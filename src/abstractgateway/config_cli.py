@@ -527,7 +527,7 @@ def _add_default_scope_args(parser: argparse.ArgumentParser) -> None:
 
 
 
-# ---- `abstractgateway config get|set|unset` (mission II) -------------------
+# ---- `abstractgateway config get|set|unset` -------------------
 # The runtime settings from a terminal: the same store and the same
 # validation as the console form and Continuum's Settings (the one door,
 # runtime_config.write_runtime_config). When a gateway is serving THIS data
@@ -811,7 +811,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_default_scope_args(clear_default)
     clear_default.set_defaults(func=_cmd_clear_default)
 
-    # Runtime settings (mission II): the console / Continuum settings door
+    # Runtime settings: the console / Continuum settings door
     # from a terminal. Keys: triage_repo_root (the backlog folder),
     # backlog_exec_runner, process_manager, executor, ... and apps.<name>.
     rt_get = sub.add_parser(

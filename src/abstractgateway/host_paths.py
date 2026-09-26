@@ -1,4 +1,4 @@
-"""Where a gateway keeps its data when nobody said (first-run install, 2026-09-23).
+"""Where a gateway keeps its data when nobody said.
 
 Before this module, an unset ``ABSTRACTGATEWAY_DATA_DIR`` meant ``./runtime``
 relative to the WORKING DIRECTORY. That is right for a developer checkout (the

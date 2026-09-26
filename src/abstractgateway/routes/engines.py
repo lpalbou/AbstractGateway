@@ -15,7 +15,7 @@ runtime-config knob `allow_engine_install`, which with no stored choice is on
 for a loopback bind AND for a caller on the gateway machine itself (loopback
 or this host's own address, no proxy headers: security/same_machine.py). The job logic is
 `abstractgateway.engines_install`; detection comes from AbstractCore through
-`core_config`. Moved here from `routes/gateway.py` (2026-09-24).
+`core_config`. Moved here from `routes/gateway.py`.
 """
 
 from __future__ import annotations

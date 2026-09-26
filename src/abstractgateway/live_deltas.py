@@ -110,8 +110,17 @@ def scope_key(data_dir: Any) -> str:
     return str(Path(str(data_dir)).expanduser().resolve())
 
 
+def _absolute_data_dir(data_dir: Any) -> Path:
+    """Live files are only ever written inside an ABSOLUTE data folder: a
+    relative scope would land wherever the process happens to run."""
+    p = Path(str(scope_key(data_dir)))
+    if not p.is_absolute():
+        raise LiveDeltaError(f"live delta files need an absolute data folder, got {str(data_dir)!r}")
+    return p
+
+
 def live_dir(data_dir: Any) -> Path:
-    return Path(scope_key(data_dir)) / LIVE_DIR_NAME
+    return _absolute_data_dir(data_dir) / LIVE_DIR_NAME
 
 
 def live_file_path(data_dir: Any, root_run_id: str) -> Path:
@@ -528,7 +537,7 @@ class FileDeltaSink:
     the API's tailer reads from its still-open descriptor)."""
 
     def __init__(self, data_dir: Any) -> None:
-        self._data_dir = scope_key(data_dir)
+        self._data_dir = str(_absolute_data_dir(data_dir))
         self._lock = threading.Lock()
         self._fds: Dict[str, int] = {}
         self._open_calls: Dict[str, set] = {}

@@ -56,7 +56,7 @@ async def _lifespan(_app: FastAPI):
             get_tray_supervisor().stop()
         except Exception:
             pass
-        # Serve record (first-run, 2026-09-23): same reason as the tray —
+        # Serve record: same reason as the tray —
         # the CLI's `finally` never runs after a re-raised SIGTERM. Removes
         # <data>/run/gateway-serve.json only when it names THIS pid.
         try:
@@ -67,7 +67,7 @@ async def _lifespan(_app: FastAPI):
         except Exception:
             pass
         # The serve launch flags (`--backlog-root`, `--exec-runner`) of THIS
-        # process, same reason (mission II).
+        # process, same reason.
         try:
             import os as _os
 

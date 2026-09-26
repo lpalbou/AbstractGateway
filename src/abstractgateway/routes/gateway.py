@@ -704,7 +704,7 @@ async def gateway_admin_write_runtime_config(request: Request, payload: Dict[str
 
     actor = f"person:{principal.user_id}" if getattr(principal, "user_id", None) else "person:operator"
     # The security middleware's audit line for this request carries WHAT was
-    # asked (keys only on a refusal) and what landed (mission Z).
+    # asked (keys only on a refusal) and what landed.
     request.state.audit_detail = {"setting_change": {"setting": "runtime_config", "actor": actor, "ok": False,
                                                      "keys": sorted(str(k) for k in (payload or {}))}}
     try:
@@ -7048,7 +7048,7 @@ def _require_workflow_registry_write(request: Request, host: Any) -> GatewayPrin
     the operator's, and every authenticated principal was handed write access
     to it. `/session/login` used to authenticate registry users regardless of
     auth mode, so a non-admin could delete or overwrite the shared workflows.
-    Since mission BB (2026-09-24) a non-admin registry identity cannot hold a
+    A non-admin registry identity cannot hold a
     session while user accounts are off (security/sessions.py
     `principal_barred_from_shared_runtime`); this gate stays as the second,
     independent line on every registry door.
@@ -10101,7 +10101,7 @@ async def get_ledger_batch(req: LedgerBatchRequest) -> Dict[str, Any]:
     return {"runs": await asyncio.to_thread(_collect)}
 
 
-# SSE terminal-detection settle window (mission B2). After a drain that
+# SSE terminal-detection settle window. After a drain that
 # emitted records, the ledger-stream generator re-reads the RUN STATUS on the
 # next progress-less pass instead of waiting for the 0.75s idle tick: the
 # terminal state lives in the run file, so "records stopped" is the only hint
@@ -10180,7 +10180,7 @@ async def stream_ledger(
     abandoned clients are detected and stop the generator; terminal runs
     get one final drain then an explicit `done` frame (never a hang).
 
-    Terminal LATENCY (mission B2): the run's terminal state is in the run
+    Terminal LATENCY: the run's terminal state is in the run
     file, not the ledger, so a drain that emitted records opens a short
     bounded settle window (`_SSE_SETTLE_CHECKS` status re-reads at
     `_SSE_SETTLE_POLL_S`) instead of deferring the check to the 0.75s idle
@@ -20314,7 +20314,7 @@ def _backlog_root_resolution() -> Dict[str, Any]:
 def _backlog_repo_root() -> Optional[Path]:
     """The backlog folder every backlog/report/process route reads, or None
     when it is not available (then `_backlog_unavailable_detail()` says why).
-    Mission II: this used to read ONLY the environment, so the stored setting
+    this used to read ONLY the environment, so the stored setting
     was cosmetic for the whole backlog family and a fresh install had no
     backlog at all."""
     res = _backlog_root_resolution()
@@ -20785,7 +20785,7 @@ async def triage_apply_decision(decision_id: str, req: TriageDecisionApplyReques
 
 @router.get("/backlog/status")
 async def backlog_status(request: Request) -> Dict[str, Any]:
-    """Where the backlog lives and whether it is usable (mission II). Any
+    """Where the backlog lives and whether it is usable. Any
     signed-in user reads the posture; server paths (`path`, `backlog_dir`,
     `default_path`) are for admins only (the triage_repo_root redaction rule).
 
@@ -21939,7 +21939,7 @@ async def audit_log_tail(
 
 def _process_manager_enabled() -> bool:
     # The runtime setting `process_manager` (stored > env > default): the
-    # stored choice is honoured here too (mission Z; it read the env only).
+    # stored choice is honoured here too (it used to read the env only).
     from ..runtime_config import resolve_process_manager_enabled
 
     return bool(resolve_process_manager_enabled(gateway_data_dir_from_env()))
@@ -25551,7 +25551,7 @@ async def model_download_cancel(job_id: str, request: Request) -> Dict[str, Any]
     from ..model_downloads import cancel_job
 
     principal = _require_admin_principal(request)
-    # WHO ASKED is recorded on the job (mission KK): a console sends
+    # WHO ASKED is recorded on the job: a console sends
     # `{"via": "console"}` when a person clicked Cancel; anything else is an
     # API call. The final state then says "admin cancelled this download in
     # the console at 21:15", never a bare "Cancelled".
@@ -25725,7 +25725,7 @@ async def host_profile_get(refresh: bool = Query(False, description="Measure aga
 
 
 # GET /engines, GET /engines/{id} and POST /engines/{id}/install moved to
-# `routes/engines.py` (2026-09-24): user-level installs with needs_admin /
+# `routes/engines.py`: user-level installs with needs_admin /
 # needs_tools jobs, contract `gateway_engines_v2`.
 
 
@@ -27592,7 +27592,7 @@ def _host_state_payload() -> Dict[str, Any]:
         "ok": True,
         "ts": time.time(),
         **({"host": host_block} if host_block is not None else {}),
-        # Install facts (first-run, 2026-09-23): which data dir and why, the
+        # Install facts: which data dir and why, the
         # auth posture, the login service, the first-run wizard state.
         "gateway": _gateway_install_block(),
         "memory": memory,

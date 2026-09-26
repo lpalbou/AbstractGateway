@@ -107,7 +107,7 @@ def parse_codex_model_spec(raw: Any) -> Tuple[str, Optional[str]]:
 def _resolved_backlog_root(gateway_data_dir: Path) -> Optional[Path]:
     """THE backlog folder (runtime_config.resolve_backlog_root: launch flag >
     stored setting > legacy env > the gateway's own folder), or None when it
-    is not available. Mission II: this read only the environment before, so
+    is not available. this read only the environment before, so
     the runner ignored the stored setting."""
     try:
         from ..runtime_config import resolve_triage_repo_root

@@ -1,4 +1,4 @@
-"""Is this HTTP request coming from the gateway machine itself? (mission HH, 2026-09-24)
+"""Is this HTTP request coming from the gateway machine itself?
 
 One rule, used wherever "the person at the gateway's keyboard" gets a default
 the rest of the network does not (installing apps and engines on this host,
@@ -144,22 +144,16 @@ APP_PROXY_HEADER = "x-abstractframework-app-proxy"
 
 
 def trust_proxy_mode() -> bool:
-    """The gateway trusts a reverse proxy's client address: the STORED
+    """The gateway trusts a reverse proxy's client address, by the one rule
+    every reader shares (network_exposure.resolve_trust_proxy): the STORED
     network setting `trust_proxy` first; the legacy launch environment
     (ABSTRACTGATEWAY_TRUST_PROXY) only when nothing is stored."""
-    import os
+    from ..network_exposure import proxy_env_facts, resolve_trust_proxy, trust_proxy_now
 
     try:
-        from ..runtime_config import _read_store
-        from ..users import gateway_data_dir_from_env
-
-        net = _read_store(gateway_data_dir_from_env()).get("network")
-        if isinstance(net, dict) and isinstance(net.get("trust_proxy"), bool):
-            return bool(net["trust_proxy"])
-    except Exception:  # noqa: BLE001 - unreadable store: the legacy rung, then off
-        pass
-    raw = str(os.getenv("ABSTRACTGATEWAY_TRUST_PROXY") or os.getenv("ABSTRACTFLOW_GATEWAY_TRUST_PROXY") or "").strip().lower()
-    return raw in {"1", "true", "yes", "on"}
+        return bool(trust_proxy_now()["value"])
+    except Exception:  # noqa: BLE001 - unreadable store: the environment alone, then off
+        return bool(resolve_trust_proxy(None, proxy_env_facts().get("trust_proxy_env"))["value"])
 
 
 def request_is_from_this_machine(

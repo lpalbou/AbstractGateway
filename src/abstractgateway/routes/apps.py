@@ -24,14 +24,14 @@ listed too (`source: "external"`, `managed: false`, apps_manager
 reads the same cookies whoever started it. Stop answers 409
 `started_outside_gateway` for them.
 
-Install (mission LL): ONE job that installs the browser app AND, for an app
+Install: ONE job that installs the browser app AND, for an app
 with a terminal version that has a prebuilt download for this computer (Code),
 the terminal app too (the job's two `parts`); it starts nothing. The desktop
 app (the Assistant, `kind: "desktop"`, apps_desktop.py) installs into the
 gateway's own Python through the same route, and `/launch` opens it on the
 gateway computer's screen for a caller at that computer only.
 
-Terminal apps (mission Y): each app row carries `interfaces[]` (kind "web"
+Terminal apps: each app row carries `interfaces[]` (kind "web"
 and, for Code, kind "tui"). `POST /{id}/install-tui` installs a prebuilt
 terminal app (admin, same "allow engine install" rule). `POST /{id}/launch-tui`
 (admin) opens it in a new terminal window ON THE GATEWAY MACHINE, only when

@@ -586,7 +586,7 @@ def _record_serve_stop() -> None:
 
 
 def _apply_backlog_launch_flags(args: Any, data_dir: Path) -> None:
-    """`serve --backlog-root PATH` / `--exec-runner on|off` (mission II).
+    """`serve --backlog-root PATH` / `--exec-runner on|off`.
 
     Validated like every other door (a refusal stops the start with the
     plain sentence), then recorded for this run under <data dir>/run/ so the
@@ -818,13 +818,13 @@ def main(argv: list[str] | None = None) -> None:
     data_purge.add_argument("--dry-run", action="store_true", help="Account without deleting")
     data_purge.add_argument("--yes", action="store_true", help="Confirm the real purge (required without --dry-run)")
 
-    # Network exposure (2026-09-24): the tray/console/TUI setting from a shell,
+    # Network exposure: the tray/console/TUI setting from a shell,
     # through the same functions as GET/POST /api/gateway/network.
     from .network_exposure import add_network_subparser
 
     add_network_subparser(sub)
 
-    # Model residency from a shell (2026-09-23): the SAME routes the web console,
+    # Model residency from a shell: the SAME routes the web console,
     # the console TUI and the tray drive (GET /models/loaded, POST /models/load,
     # POST /models/unload) — list, warm, eject — against a RUNNING gateway.
     models_cmd = sub.add_parser(
@@ -941,13 +941,13 @@ def main(argv: list[str] | None = None) -> None:
         _migrate_legacy_core_config_store()
 
         # ------------------------------------------------------------------
-        # First run (2026-09-23): an unconfigured `serve` binds loopback and
+        # First run: an unconfigured `serve` binds loopback and
         # turns user auth on, so it STARTS; explicit configuration always wins
         # and a non-loopback bind without auth still refuses below.
         # ------------------------------------------------------------------
         from .first_run import apply_loopback_auth_default
 
-        # Network exposure (2026-09-24): host/port = `--host/--port` > the
+        # Network exposure: host/port = `--host/--port` > the
         # stored setting (localhost / lan / internet, runtime-config key
         # `network`) > the historical default. Every override, auth export
         # and refusal is printed here and reported by GET /api/gateway/network.
@@ -1017,8 +1017,8 @@ def main(argv: list[str] | None = None) -> None:
                     "[WARN] Gateway is binding to 0.0.0.0/:: (non-loopback). "
                     "If you expose this service (ngrok/LAN), ensure you use strong Gateway auth and restrict origins."
                 )
-                # Mission Z: hardening steps are settings and commands, never
-                # environment variables (operator rule 2026-09-24).
+                # hardening steps are settings and commands, never
+                # environment variables (operator rule).
                 _stderr("       Hardening:")
                 if bool(getattr(policy, "user_auth_enabled", False)):
                     _stderr("         every person signs in with their own account (console: Users); create the")
@@ -1354,7 +1354,7 @@ def main(argv: list[str] | None = None) -> None:
         if data_dir is None:
             data_dir = _default_data_dir()
 
-        # The folder flows as an ARGUMENT (mission II): `--repo-root` > THE
+        # The folder flows as an ARGUMENT: `--repo-root` > THE
         # backlog-folder resolution (saved setting > legacy env > the
         # gateway's own folder). Nothing is written to os.environ.
         repo_root = _backlog_exec_repo_root(args, data_dir)

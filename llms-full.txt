@@ -4063,9 +4063,13 @@ These exist to help thin clients adapt to the deployed gateway.
 - Skills inventory: `GET /api/gateway/skills` — the abstractskill shelf with
   trust verdicts (roster rows `{name, description, trust_level, blocked,
   requires_review, tree_hash, source, has_scripts, reasons}`); degradations
-  are labeled `warnings`, never a fabricated list. Shelf resolution:
-  `ABSTRACTGATEWAY_SKILLS_SHELF`, else the triage repo's
-  `abstractskill/registry`.
+  are labeled `warnings`, never a fabricated list. The shelf is, in order:
+  the saved setting `skills.shelf`, then the legacy launch environment value
+  (reported as such), then the gateway's own copy in
+  `<data dir>/skills/registry`, then a framework checkout's shelf (only when
+  that copy is missing), else none; the response names which as
+  `shelf_source` (`stored`, `env`, `seeded`, `checkout`, `none`). See
+  [Skills shelf](#skills-shelf).
 - MCP server inventory: `GET /api/gateway/mcp/servers` — the declared
   registry at `<data_dir>/config/mcp_servers.json`
   (`{"version": 1, "servers": [{"name", "url"?, "description"?,

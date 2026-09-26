@@ -106,7 +106,7 @@ def _is_loopback_ip(host: str) -> bool:
 
 _EPHEMERAL_TOKENS_LOCK = threading.Lock()
 _EPHEMERAL_TOKENS: Dict[str, str] = {}  # token -> label
-# token -> the principal it acts as (mission Y, 2026-09-24: a terminal app
+# token -> the principal it acts as (a terminal app
 # opened from the console signs in as the CALLER, not as the operator). A
 # token without an entry here is the tray's: the local admin principal.
 _EPHEMERAL_PRINCIPALS: Dict[str, Any] = {}
@@ -606,15 +606,16 @@ class GatewaySecurityMiddleware:
                     return None
         return None
 
-    # -- live reverse-proxy settings (mission Z) ------------------------------
+    # -- live reverse-proxy settings ------------------------------
     #
     # `allowed_origins` and `trust_proxy` are ALSO stored settings (network
     # exposure, POST /api/gateway/network), read per request so a console or
-    # CLI change applies to the next request. The start-time policy (env or
-    # default) stays the floor: stored origins are ADDED to it, stored trust
-    # can only turn trust on, and an env value set at start overrides the
-    # stored one (network_exposure.live_reverse_proxy returns no say then).
-    # Unreadable settings: the start-time policy alone applies, logged at ERROR.
+    # CLI change applies to the next request. Stored origins are ADDED to the
+    # start-time list (an origins env value set at start overrides them).
+    # Trust follows network_exposure.resolve_trust_proxy: the stored setting,
+    # else the launch environment, else off - the same rule as the
+    # same-machine check. Unreadable settings: the start-time policy alone
+    # applies, logged at ERROR.
 
     def _live_reverse_proxy(self) -> Any:
         try:
@@ -640,10 +641,13 @@ class GatewaySecurityMiddleware:
         return base + tuple(o for o in live.extra_origins if o not in base)
 
     def _effective_trust_proxy(self) -> bool:
-        if self._policy.trust_proxy:
-            return True
+        # One precedence everywhere (network_exposure.resolve_trust_proxy):
+        # the stored setting, else the launch environment, else off. Only
+        # when the settings cannot be read does the start-time value apply.
         live = self._live_reverse_proxy()
-        return bool(live is not None and live.trust_proxy is True)
+        if live is None:
+            return bool(self._policy.trust_proxy)
+        return bool(live.trust_proxy)
 
     def _client_ip(self, scope: dict) -> str:
         if self._effective_trust_proxy():

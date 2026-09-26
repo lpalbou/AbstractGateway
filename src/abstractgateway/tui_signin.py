@@ -1,4 +1,4 @@
-"""Sign a terminal app in to this gateway, then become it (mission Y, 2026-09-24).
+"""Sign a terminal app in to this gateway, then become it.
 
 Run by the one-use launcher script the gateway writes when the console (or
 the tray) asks for "Open in Terminal" (`apps_manager.launch_tui`):

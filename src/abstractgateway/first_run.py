@@ -1,5 +1,5 @@
 """No-terminal first run: loopback auth default, one-time claim codes, the
-serve record and the per-data-dir first-run state (2026-09-23).
+serve record and the per-data-dir first-run state.
 
 THE PROBLEM. A fresh install used to need three terminal skills before the
 console opened: exporting an auth token, knowing where the data dir went, and
@@ -72,8 +72,7 @@ _POSTURE_ENV = (
     "ABSTRACTGATEWAY_PROTECT_WRITE",
     "ABSTRACTFLOW_GATEWAY_PROTECT_WRITE",
     # Read protection off = every anonymous READ runs as the local admin
-    # (security middleware): a posture statement too (mission AA finding,
-    # closed in mission Z).
+    # (security middleware): a posture statement too.
     "ABSTRACTGATEWAY_PROTECT_READ",
     "ABSTRACTFLOW_GATEWAY_PROTECT_READ",
 )

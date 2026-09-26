@@ -98,11 +98,11 @@ def resolve_gateway_run_workspace(
 
     Returns `(path, session_scoped)`; the directory exists on return.
 
-    Session-stable by default (2026-09-22). A per-run `workspaces/<uuid4>`
+    Session-stable by default. A per-run `workspaces/<uuid4>`
     is rendered into the SYSTEM prompt as the run's default working
     directory, so in a conversation — where every turn is a new run — the
     HEAD of the prompt changed on every turn and no prefix/KV cache could
-    restore anything (Mission A measured `cold`, `cached_tokens: 0` on all
+    restore anything (measured: `cold`, `cached_tokens: 0` on all
     7 turns of a session). Clients that read the first run's workspace back
     and echo it (abstractcode web, abstractassistant) papered over this;
     clients that do not (the Telegram bridge, thin HTTP callers) paid full

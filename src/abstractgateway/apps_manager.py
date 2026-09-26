@@ -264,7 +264,7 @@ def spec_for(app_id: str) -> AppSpec:
 
 
 # ---------------------------------------------------------------------------
-# What an app holds (mission JJ, 2026-09-24): the console's Entity card offers
+# What an app holds: the console's Entity card offers
 # "Create your first entity" on a gateway that hosts none, and opens the app
 # on its creation deep link through the sign-in handover (`handover_path`).
 # ---------------------------------------------------------------------------
@@ -523,7 +523,7 @@ class Job:
         self.error: Optional[Dict[str, Any]] = None
         self.result: Dict[str, Any] = {}
         self.steps: List[Dict[str, Any]] = []
-        # The job's child rows (mission LL): one Install that installs the
+        # The job's child rows: one Install that installs the
         # browser app AND its terminal app shows both, e.g.
         # [{"id": "install", "label": "Code in the browser", "state": "done"},
         #  {"id": "install-tui", "label": "Code in the terminal", "state": "running"}].
@@ -1120,7 +1120,7 @@ def _pid_command(pid: int) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
-# Apps started OUTSIDE the gateway — mission HH, 2026-09-24
+# Apps started OUTSIDE the gateway
 #
 # The gateway manages what it installed under `<data>/apps/`, but the same
 # apps also run started some other way: the framework's dev stack
@@ -1328,7 +1328,7 @@ def detect_external_apps(
 
 
 # ---------------------------------------------------------------------------
-# Terminal apps (TUIs) — mission Y, 2026-09-24
+# Terminal apps (TUIs)
 #
 # Some apps also exist as a terminal app. Today that is Code only
 # (`abstractcode`, a Rust TUI in the abstractcode repository); Flow, Observer,
@@ -1635,7 +1635,7 @@ class AppsManager:
         # How many entities this gateway hosts (the Entity card's first-run
         # button); tests replace it.
         self.entities_counter: Callable[[], Optional[int]] = gateway_entities_count
-        # Desktop apps (mission LL, apps_desktop.py): every OS touch point is
+        # Desktop apps (apps_desktop.py): every OS touch point is
         # replaceable, so no test finds, installs or launches the real one.
         from . import apps_desktop as _desk
 
@@ -1675,7 +1675,7 @@ class AppsManager:
         return p
 
     # -- config ---------------------------------------------------------------
-    # Mission Z seam: every knob is the runtime-config setting `apps.<name>`
+    # Seam: every knob is the runtime-config setting `apps.<name>`
     # (stored > env > default, validated there; the ENV_* names above are its
     # labeled fallback rung). Read at each use, so a console/TUI/CLI change
     # applies to the next app start or download.
@@ -2197,8 +2197,8 @@ class AppsManager:
             shutil.rmtree(d, ignore_errors=True)
 
     def install_includes_terminal(self, app_id: str) -> Optional[TuiSpec]:
-        """The terminal app that an Install of this app also installs (mission
-        LL, operator 2026-09-24: "it should always download both wui and tui
+        """The terminal app that an Install of this app also installs (
+        LL, The operator: "it should always download both wui and tui
         if both are present"): the app has one (TUI_BY_APP), it is not on this
         computer yet, and a prebuilt binary exists for this computer. None
         otherwise: then Install installs the browser app only and the terminal
@@ -2976,7 +2976,7 @@ class AppsManager:
             "command": f"npx {spec.package}",
         }
 
-    # -- desktop apps (mission LL, 2026-09-24): the Assistant ---------------------------
+    # -- desktop apps: the Assistant ---------------------------
     def desktop_presence(self, app_id: str, *, refresh: bool = False) -> Dict[str, Any]:
         """apps_desktop.detect_assistant on this machine (cached a few seconds:
         the running check lists processes)."""
@@ -3350,7 +3350,7 @@ class AppsManager:
             "needs_node_install": not bool(node.get("available")),
             "install_available": (not installed) and allowed and not registry_error,
             "install_blocked_reason": blocked,
-            # What the Install button installs (mission LL): "web", plus "tui"
+            # What the Install button installs: "web", plus "tui"
             # when the app's terminal version comes with it on this computer.
             "install_parts": ["web", "tui"] if (not installed and self.install_includes_terminal(spec.id) is not None) else ["web"],
             "actions": actions,
@@ -3359,7 +3359,7 @@ class AppsManager:
             # Entity: {"entities_count": n | None}; None for the other apps.
             "content_summary": self.content_summary(spec) if installed else None,
         }
-        # Every way this app runs (mission Y): the browser app above, and a
+        # Every way this app runs: the browser app above, and a
         # terminal app for the apps that have one (Code). docs/apps.md.
         interfaces = [self.web_interface(row, spec)]
         tui = TUI_BY_APP.get(spec.id)
@@ -3407,7 +3407,7 @@ class AppsManager:
             )
             for spec in APPS
         ]
-        # Desktop apps (mission LL): after the five browser apps, stack order.
+        # Desktop apps: after the five browser apps, stack order.
         from .apps_desktop import DESKTOP_APPS
 
         rows += [self.desktop_row(d.id, caller=caller) for d in DESKTOP_APPS]

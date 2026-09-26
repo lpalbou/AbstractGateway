@@ -83,7 +83,7 @@ async def triage_action_apply(token: str, request: Request):
     from ..users import gateway_data_dir_from_env
 
     data_dir = gateway_data_dir_from_env()
-    # THE backlog-folder resolution (mission II): `serve --backlog-root` >
+    # THE backlog-folder resolution: `serve --backlog-root` >
     # stored setting > legacy env > the gateway's own folder.
     from ..runtime_config import resolve_triage_repo_root
 

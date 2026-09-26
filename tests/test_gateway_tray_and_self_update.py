@@ -55,7 +55,8 @@ def test_there_is_no_tray_setting_and_the_retired_one_refuses(tmp_path: Path) ->
 
     with pytest.raises(RuntimeConfigError) as exc:
         write_runtime_config(tmp_path, {"desktop_tray": False}, actor="person:admin")
-    assert "always shown" in str(exc.value)
+    assert "shown while the gateway runs" in str(exc.value)
+    assert "serve --no-tray" in str(exc.value), "every reason the icon can be absent is named"
     # ...and it refused BEFORE writing: nothing about the store changed.
     assert "desktop_tray" not in read_runtime_config(tmp_path)
 
@@ -266,7 +267,7 @@ def test_tray_and_update_routes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
         # The retired knob refuses rather than pretending to have applied.
         r = c.post("/api/gateway/admin/runtime-config", headers=h, json={"desktop_tray": False})
-        assert r.status_code == 400 and "always shown" in r.json()["detail"]
+        assert r.status_code == 400 and "shown while the gateway runs" in r.json()["detail"]
 
         assert c.get("/api/gateway/host/update").status_code == 401
         r = c.get("/api/gateway/host/update", headers=h)

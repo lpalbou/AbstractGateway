@@ -63,7 +63,7 @@ class EnvVarSpec:
     console_path: str = ""           # planned console/CLI section (phase 1+)
     alias_of: str = ""               # for legacy_alias rows
     note: str = ""
-    # The stored setting that replaces this env var (mission Z): where a user
+    # The stored setting that replaces this env var: where a user
     # changes it (console/TUI/CLI). The env var stays readable as the labeled
     # fallback (behavior rows) or override (deployment carve-out rows).
     superseded_by: str = ""

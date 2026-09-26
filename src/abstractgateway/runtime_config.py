@@ -680,7 +680,7 @@ def resolve_allow_engine_install(data_dir: Path, *, caller_on_this_machine: bool
 
 
 def allow_engine_install_for_caller(policy: Dict[str, Any], *, caller_on_this_machine: bool) -> Dict[str, Any]:
-    """The host policy above, applied to ONE caller (mission HH, 2026-09-24).
+    """The host policy above, applied to ONE caller.
 
     With no stored choice, a caller on the gateway machine itself (loopback
     peer or one of this host's own addresses, no proxy headers:
@@ -733,7 +733,7 @@ def _network_payload(stored: Dict[str, Any], env: Optional[Any] = None) -> Dict[
     ack = raw.get("internet_acknowledged")
     out["internet_acknowledged"] = dict(ack) if isinstance(ack, dict) and out["mode"] == "internet" else None
     out["bind_host"] = out.get("default_bind_host") or MODE_BIND_HOST[out["mode"]]
-    # Reverse proxy (mission Z): browser origins allowed on top of the
+    # Reverse proxy: browser origins allowed on top of the
     # built-in localhost ones, and whether X-Forwarded-For names the client.
     # Stored values only here; network_exposure.reverse_proxy_status adds the
     # env override and the effective values the middleware applies.
@@ -817,8 +817,7 @@ def write_network_setting(
 
 
 # ---- Browser apps (apps_manager.py reads these through resolve_apps_setting) --
-# Mission Z (operator 2026-09-24: "i explicitly told you i don't like env
-# vars"): the five ABSTRACTGATEWAY_APPS_* knobs mission O added become stored
+# The five ABSTRACTGATEWAY_APPS_* knobs are stored
 # settings `apps.<name>`, written through the generic runtime-config door
 # (POST /api/gateway/admin/runtime-config {"apps.host": ...}) and the CLI
 # `abstractgateway apps config get|set`. Precedence is the ruled law of this
@@ -1092,9 +1091,7 @@ def executor_registry() -> List[Dict[str, Any]]:
     return out
 
 
-# ---- Backlog folder + exec runner (mission II, operator 2026-09-24: "fix
-# continuum for a new fresh install ... handled with proper settings and
-# --param_name") ----------------------------------------------------------
+# ---- Backlog folder + exec runner (settings and launch flags) ---------------
 #
 # ONE resolution, used by every consumer (the backlog routes, the process
 # manager, the exec runner, triage, the settings surfaces):
@@ -1854,15 +1851,16 @@ def write_runtime_config(
                 stored[_switch] = _strict_bool(_switch, raw_switch)
                 applied[_switch] = stored[_switch]
     if "desktop_tray" in changes:
-        # RETIRED (operator ruling 2026-09-06): the menu bar / tray icon is the
-        # gateway's presence on the desktop, so while it serves, it is there.
-        # An unknown key is otherwise ignored silently; a caller still sending
-        # this one is acting on a setting that no longer exists and deserves to
-        # be told, not to get a 200 that changed nothing.
+        # RETIRED: the menu bar / tray icon is the gateway's presence on the
+        # desktop, so while it serves, it is there (unless the operator started
+        # it with --no-tray). A caller still sending this key is acting on a
+        # setting that no longer exists and is told so, never given a 200 that
+        # changed nothing.
         raise RuntimeConfigError(
-            "desktop_tray was removed: the menu bar / tray icon is always shown while the gateway "
-            "runs. It can only be absent when this machine cannot hold it (no desktop session, "
-            "`serve --reload`, a runner-only process, or the `tray` extra not installed) — "
+            "desktop_tray was removed: the menu bar / tray icon is shown while the gateway runs, "
+            "unless it was started with `serve --no-tray` (for a test or scratch gateway next to your "
+            "usual one). Otherwise it is only absent when this machine cannot hold it (no desktop "
+            "session, `serve --reload`, a runner-only process, or the `tray` extra not installed) — "
             "GET /api/gateway/host/tray names which."
         )
     if "triage_repo_root" in changes:
@@ -1871,7 +1869,7 @@ def write_runtime_config(
             stored.pop("triage_repo_root", None)  # clear = fall back to the launch flag / env / default
             applied["triage_repo_root"] = None
         else:
-            # One validation for every door (mission II): an existing folder
+            # One validation for every door: an existing folder
             # holding docs/backlog, or the gateway's own folder (created).
             stored["triage_repo_root"] = str(validate_backlog_root(raw, data_dir))
             applied["triage_repo_root"] = stored["triage_repo_root"]

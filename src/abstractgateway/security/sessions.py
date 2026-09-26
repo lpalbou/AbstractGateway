@@ -195,7 +195,7 @@ def principal_barred_from_shared_runtime(
 ) -> bool:
     """True when `principal` may NOT hold a gateway session in the current mode.
 
-    THE ISOLATION RULE (mission BB, 2026-09-24). Per-principal service
+    THE ISOLATION RULE. Per-principal service
     resolution (`service.get_gateway_service`) keys on
     `gateway_user_auth_enabled()`: with user accounts ON every principal gets
     its OWN runtime, so a registry user acting on "its" capability defaults,

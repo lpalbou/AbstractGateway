@@ -1,4 +1,4 @@
-"""Console model catalog as cards (mission X2, 2026-09-24).
+"""Console model catalog as cards.
 
 The operator, on the Models tab ("72 models, 170 artifacts" as one table of
 model rows with artifact sub-rows): "seeing only the Q4 is a bit
@@ -37,7 +37,7 @@ functions share the console's scope (``state``, ``api``, ``$``, ``esc``,
 from __future__ import annotations
 
 CATALOG_CSS = r"""
-    /* ================= Model catalog as cards (mission X2) ================= */
+    /* ================= Model catalog as cards ================= */
     #catalog-cards-root, #first-run-model-catalog { display: grid; gap: 18px; min-width: 0; }
     .mc-root { display: grid; gap: 18px; min-width: 0; }
     .mc-host { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; color: var(--text-secondary); font-size: var(--font-size-sm); }
@@ -153,7 +153,7 @@ CATALOG_CSS = r"""
 """
 
 CATALOG_JS = r"""
-    // ================= Model catalog as cards (mission X2) =================
+    // ================= Model catalog as cards =================
     // Contract: GET /api/gateway/models/catalog (AbstractCore model_catalog_v1:
     // rows[{id, display_name, vendor, params_total, params_active, license,
     // capabilities, starter, artifacts[{provider, artifact, engine, quant,
@@ -253,7 +253,7 @@ CATALOG_JS = r"""
     function mcJobDone(job) { return !!job && (job.state === "done" || job.status === "completed"); }
     function mcInstalled(a) { return ((a.presence || {}).status === "installed") || mcJobDone(mcJob(a)); }
     function mcFits(a) { return a.supported_on_host !== false && ["fits", "tight"].includes(String((a.fit || {}).verdict || "")); }
-    // quant_class is AbstractCore's (mission W1). A payload where ANY artifact
+    // quant_class is AbstractCore's. A payload where ANY artifact
     // lacks it cannot drive the quant filter: the view says so, loudly.
     function mcQuantReported() {
       const rows = mcRows();

@@ -379,3 +379,15 @@ def test_sweep_deletes_only_finished_or_vanished_runs_files(tmp_path: Path) -> N
 def test_process_role_is_validated() -> None:
     with pytest.raises(ValueError):
         ld.set_process_role("both")
+
+
+def test_live_files_are_never_written_under_a_relative_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A scope that is not an absolute folder (a broken resolver, a bare
+    name) must fail loudly instead of writing next to the process's cwd."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(ld, "scope_key", lambda data_dir: "one")
+    with pytest.raises(ld.LiveDeltaError, match="absolute data folder"):
+        ld.FileDeltaSink("one")
+    with pytest.raises(ld.LiveDeltaError, match="absolute data folder"):
+        ld.live_file_path("one", "root")
+    assert not (tmp_path / "one").exists()

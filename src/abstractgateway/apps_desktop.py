@@ -1,4 +1,4 @@
-"""Desktop apps next to the browser apps: AbstractAssistant (mission LL, 2026-09-24).
+"""Desktop apps next to the browser apps: AbstractAssistant.
 
 AbstractAssistant is the framework's desktop companion: a Python/Qt menu-bar
 app (PyPI `abstractassistant`), not a browser app. The root `abstractframework`

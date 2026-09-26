@@ -326,7 +326,7 @@ def _open_verified(real: Path, root: Path) -> int:
     return fd
 
 
-# ---- The built-in deny list (operator ruling 2026-09-26) -------------------
+# ---- The built-in deny list (operator ruling) -------------------
 # Credential and configuration folders of the gateway's user account, plus the
 # gateway's data folder: never listed nor served by the workspace routes, and
 # added to every run's tool deny list (an admin may turn that off for runs with

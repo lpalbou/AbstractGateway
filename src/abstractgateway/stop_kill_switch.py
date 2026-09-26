@@ -2,7 +2,7 @@
 an operator-chosen deadline has that INFERENCE killed — in process, never the
 gateway.
 
-WHY (incident 2026-09-22)
+WHY (incident)
 -------------------------
 A runaway generation kept decoding for an hour after Stop because nothing
 passed the cancel to the in-flight model call. The soft path now does
@@ -11,7 +11,7 @@ the provider stops within one token). This module is the BACKSTOP for a call
 whose loop does not observe the event (a provider lane without cancel support,
 a non-streaming HTTP request, a bug in the soft path).
 
-OPERATOR RULE (2026-09-23): the kill switch kills the INFERENCE ONLY. It never
+OPERATOR RULE: the kill switch kills the INFERENCE ONLY. It never
 terminates or restarts the gateway process; other runs, other sessions, the
 HTTP surface and the runner keep working throughout.
 

@@ -183,7 +183,7 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
     # Browser apps (apps_manager.py): installing Node.js or an app, updating,
     # starting and stopping app processes run software on the gateway host.
     # `POST /apps/{id}/open` stays user-level: it mints a session for the
-    # caller only (routes/apps.py). Terminal apps (mission Y): installing one
+    # caller only (routes/apps.py). Terminal apps: installing one
     # writes a binary on the host, and opening one starts a terminal window on
     # the gateway machine's screen -- both admin, like install/launch.
     GatewayRoutePolicy(

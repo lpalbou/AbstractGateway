@@ -1,8 +1,8 @@
-"""Sync the console's React islands from the abstractuic kit (mission L).
+"""Sync the console's React islands from the abstractuic kit.
 
 The console is HTML served from Python (no npm build at serve time), yet its
 theme selector and connect/disconnect control must be the kit's REAL
-components (operator order 2026-09-24: "reuse the widgets from abstractuic
+components (operator order: "reuse the widgets from abstractuic
 for the theme selector and connect/disconnect"). The kit builds them into
 one self-contained IIFE (`ui-kit/scripts/build_islands.mjs` ->
 `ui-kit/islands/dist/af-console-islands.js`, defining

@@ -1,6 +1,6 @@
 """Start the gateway at login — ONE truthful switch shared by the tray
 ("Start AbstractGateway at login"), the CLI (`abstractgateway service
-enable|disable|status`) and the installers (2026-09-24).
+enable|disable|status`) and the installers.
 
 The registrations themselves are rendered and executed by `os_service`
 (LaunchAgent / systemd user unit / XDG autostart entry / HKCU Run value); this
@@ -14,7 +14,7 @@ gateway start at the next login? A file being present is not enough:
              is not enabled, launchd/Task Manager/the desktop switched it off;
 - `other`  — a valid registration for ANOTHER data dir (another gateway).
 
-A registration runs plain `serve` (2026-09-24): the Network setting
+A registration runs plain `serve`: the Network setting
 (`abstractgateway network`) decides host and port at each start. One that
 still carries `--host/--port` (every registration written before, or a
 deliberate `--pin-command-line`) overrides the setting forever; unless the

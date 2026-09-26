@@ -120,3 +120,40 @@ def test_no_tray_flag_decision() -> None:
 
     d = tray_decision(no_tray=True, dependencies=(True, None), probes={})
     assert d.start is False and d.reason == "no_tray_flag"
+
+
+@pytest.mark.parametrize("stored,env,want", [
+    (None, "1", True),    # nothing saved: the legacy environment decides
+    (False, "1", False),  # the saved switch wins over the environment
+    (True, "0", True),
+    (None, None, False),
+])
+def test_ip_attribution_and_the_same_machine_rule_share_one_trust_proxy_answer(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, stored, env, want
+) -> None:
+    """One resolver (network_exposure.resolve_trust_proxy): the middleware's
+    client IP (sign-in lockouts, audit) and the same-machine rule agree."""
+    import json
+
+    from abstractgateway import network_exposure as ne
+    from abstractgateway.security import same_machine as sm
+    from abstractgateway.security.gateway_security import GatewaySecurityMiddleware, load_gateway_auth_policy_from_env
+
+    data = tmp_path / "data"
+    (data / "config").mkdir(parents=True)
+    if stored is not None:
+        (data / "config" / "runtime_config.json").write_text(json.dumps({"network": {"trust_proxy": stored}}))
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data))
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "t")
+    if env is None:
+        monkeypatch.delenv("ABSTRACTGATEWAY_TRUST_PROXY", raising=False)
+    else:
+        monkeypatch.setenv("ABSTRACTGATEWAY_TRUST_PROXY", env)
+    monkeypatch.delenv("ABSTRACTFLOW_GATEWAY_TRUST_PROXY", raising=False)
+    ne._LIVE_CACHE.update({"key": None, "value": None})
+
+    mw = GatewaySecurityMiddleware(lambda *_: None, policy=load_gateway_auth_policy_from_env())
+    scope = {"type": "http", "client": ("10.0.0.9", 5000), "headers": [(b"x-forwarded-for", b"203.0.113.7")]}
+    assert mw._client_ip(scope) == ("203.0.113.7" if want else "10.0.0.9")
+    assert sm.trust_proxy_mode() is want
+    assert ne.trust_proxy_now()["value"] is want
