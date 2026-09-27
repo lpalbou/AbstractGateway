@@ -3639,7 +3639,8 @@ pub fn export_verified(
 /// The file on disk holds exactly `want` bytes.
 fn export_verify(path: &std::path::Path, want: u64) -> Result<String, String> {
     match std::fs::metadata(path) {
-        Ok(m) if m.len() == want => Ok(format!("{} holds {want} bytes", path.display())),
+        // The size LEADS: a journal row cut at 80 columns still says it.
+        Ok(m) if m.len() == want => Ok(format!("{want} bytes in {}", path.display())),
         Ok(m) => Err(format!(
             "{} holds {} bytes, the gateway sent {want}",
             path.display(),

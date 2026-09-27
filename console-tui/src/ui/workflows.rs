@@ -205,6 +205,10 @@ fn export_selected(cx: Scope, ctx: &Ctx) {
     open_form(ctx, cx, Size::new(96, 11), move |mcx, close| {
         let theme = use_theme(mcx);
         let t0 = theme.get().tokens;
+        // The path field fits the dialog as clamped on THIS terminal (a
+        // fixed 70 cells ran past the border at 80 columns).
+        let input_w =
+            (96.min(abstracttui::app::use_viewport(mcx).get_untracked().w - 2) - 26).clamp(20, 70);
         let dest = mcx.signal(default_dest.clone());
         let form_error = mcx.signal(Option::<String>::None);
         let in_flight = mcx.signal(false);
@@ -239,7 +243,7 @@ fn export_selected(cx: Scope, ctx: &Ctx) {
             .style(LayoutStyle::column().gap(0))
             .child(line(vec![span_bold(format!("Export {label}"), t0.accent)]))
             .child(line(vec![span(
-                "saved on THIS machine (an existing file is never overwritten) — Enter exports",
+                "saved on THIS machine; an existing file is never overwritten",
                 t0.text_faint,
             )]))
             .child(field(
@@ -247,7 +251,7 @@ fn export_selected(cx: Scope, ctx: &Ctx) {
                 "save to",
                 TextInput::new()
                     .value(dest)
-                    .layout(LayoutStyle::default().w(70).h(1))
+                    .layout(LayoutStyle::default().w(input_w).h(1))
                     .on_submit(move |_: &str| submit())
                     .element(mcx, &t0)
                     .autofocus()
@@ -341,6 +345,10 @@ fn open_import(cx: Scope, ctx: &Ctx) {
     open_form(ctx, cx, Size::new(96, 11), move |mcx, close| {
         let theme = use_theme(mcx);
         let t0 = theme.get().tokens;
+        // The path field fits the dialog as clamped on THIS terminal (a
+        // fixed 70 cells ran past the border at 80 columns).
+        let input_w =
+            (96.min(abstracttui::app::use_viewport(mcx).get_untracked().w - 2) - 26).clamp(20, 70);
         let path = mcx.signal(String::new());
         let form_error = mcx.signal(Option::<String>::None);
         let in_flight = mcx.signal(false);
@@ -381,7 +389,7 @@ fn open_import(cx: Scope, ctx: &Ctx) {
                 TextInput::new()
                     .value(path)
                     .placeholder("~/Downloads/my-workflow.flow")
-                    .layout(LayoutStyle::default().w(70).h(1))
+                    .layout(LayoutStyle::default().w(input_w).h(1))
                     .on_submit(move |_: &str| submit())
                     .element(mcx, &t0)
                     .autofocus()

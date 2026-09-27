@@ -9243,3 +9243,26 @@ fn a_choice_dialog_covers_the_screen_while_open() {
         "the screen is back:\n{s}"
     );
 }
+
+/// 80x24: the export dialog's path field stays inside the dialog.
+#[test]
+fn workflow_export_dialog_fits_at_80x24() {
+    use abstractgateway_console::store::workflows_from_payload;
+    let mut h = harness_sized(Size::new(80, 24));
+    h.connect_as_admin();
+    h.goto_screen(5);
+    h.store.workflows.set(Loadable::Ready(workflows_from_payload(&json!({
+        "items": [{"bundle_id": "demo", "bundle_version": "1.0.0", "entrypoints": [{"flow_id": "main"}]}]
+    }))));
+    h.turns(2);
+    h.type_text("e");
+    let s = h.turns(3);
+    let row = s
+        .lines()
+        .find(|l| l.contains("save to"))
+        .unwrap_or_else(|| panic!("{s}"));
+    assert!(
+        row.trim_end().ends_with('│'),
+        "the path field stays inside:\n{row}"
+    );
+}
