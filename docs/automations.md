@@ -99,6 +99,10 @@ an error (500 `internal_error`).
   the gateway's usual protection of the data folder and your credential
   folders applies to every occurrence.
 - The same `request_id` with a different request → 409 `identity_conflict`.
+- `target.input_data` is your workflow's input. Keys the server owns are
+  dropped from it: `_meta`, `workspace_read_only` and `_runtime.tool_policy`
+  (tool approval is set by `policy.tool_approval`); `_runtime.allowed_tools`
+  is kept (it only narrows the tools).
 - `policy.tool_approval`: `"auto"` (default) or `"ask"`. An automation runs
   unattended, so it cannot stop to ask before every tool call: **creating
   it is the consent** for the tools its target offers, and under `auto`
@@ -187,7 +191,7 @@ depends on `kind`:
 |---|---|
 | `ask_user` | `{"response": "…"}` |
 | `tool_approval` | `{"approved": true}` or `{"approved": false}` (optional `tool_ids`) |
-| `event` | the event payload (a JSON object) |
+| `event` | `{"payload": {…}}` (the event payload, wrapped) |
 
 For an automation's runs the gateway refuses an answer of the wrong shape
 (422 `invalid_request`, field `payload`): `{"response": "approve"}` to a tool
@@ -298,6 +302,10 @@ editor stores the suggestion in the VisualFlow document as
   `automation_defaults` keyed by entrypoint flow id.
 
 ## Commands through the run command door
+
+Run commands (`pause`, `resume`, `cancel`, `conclude`, `update_schedule`, …)
+aimed at an automation's id are refused (409 `invalid_state`): an automation
+is controlled only with the `automation.*` types.
 
 The six `automation.*` command types also go through the durable command door
 of run commands, `POST /api/gateway/commands`, with `run_id` set to the

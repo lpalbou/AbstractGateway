@@ -28625,6 +28625,19 @@ async def attachments_upload(
     return {**stored, "attachment": stored.get("artifact")}
 
 
+def _refuse_run_command_on_automation_root(svc: Any, *, run_id: str, typ: str) -> None:
+    run = svc.runner.run_store.load(str(run_id))
+    meta = (run.vars or {}).get("_meta") if run is not None and isinstance(run.vars, dict) else None
+    if isinstance(meta, dict) and isinstance(meta.get("automation"), dict):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "reason_code": "invalid_state",
+                "message": f"'{typ}' does not apply to an automation; use the automation.* commands (e.g. automation.pause, automation.archive)",
+            },
+        )
+
+
 def _check_automation_wait_answer(svc: Any, *, run_id: str, command_payload: Dict[str, Any]) -> None:
     """Refuse at the door an answer whose shape does not fit the wait (decision D1).
 
@@ -28659,8 +28672,8 @@ def _check_automation_wait_answer(svc: Any, *, run_id: str, command_payload: Dic
         )
     elif kind == "ask_user":
         ok = isinstance(answer, dict) and "response" in answer and "approved" not in answer
-    else:  # event: the event's own payload, any JSON object
-        ok = isinstance(answer, dict)
+    else:  # event: {payload: <object>} (the runtime's ANSWER_PAYLOADS shape)
+        ok = isinstance(answer, dict) and set(answer) == {"payload"} and isinstance(answer.get("payload"), dict)
     if not ok:
         raise HTTPException(
             status_code=422,
@@ -28701,6 +28714,11 @@ async def submit_command(req: SubmitCommandRequest) -> SubmitCommandResponse:
         # Refuse at the door what the runner could only reject later: the
         # target must be an automation root in THIS principal's store.
         _require_automation_controller(svc, str(req.run_id))
+    elif typ != "emit_event":
+        # A run command at an automation ROOT would break it (review 46 G1): a
+        # runtime pause freezes the controller while it reads active, a cancel
+        # fails it for good. The automation.* types are its only door.
+        _refuse_run_command_on_automation_root(svc, run_id=str(req.run_id), typ=typ)
 
     # H4 steer door: entity visit runs refuse raw steers SYNCHRONOUSLY (the
     # H5 rite is not built; runtime's Runtime.steer refuses asynchronously as

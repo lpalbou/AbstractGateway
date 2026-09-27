@@ -11,7 +11,9 @@ Every non-2xx answer on these paths carries
 
 from __future__ import annotations
 
+import copy
 import datetime
+import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -21,7 +23,8 @@ from pydantic import BaseModel, ConfigDict
 # without them fails at import, never silently.
 from abstractruntime.automation_queries import ChangedSinceUnsupported, InvalidCursor, automation_summary, list_automations
 from abstractruntime.automations.attention import list_attention, normalize_occurrence_output, pending_waits
-from abstractruntime.automations.ledger import automation_records, find_by_idempotency_key, record_key
+from abstractruntime.automations.commands import command_digest
+from abstractruntime.automations.ledger import automation_records, find_by_idempotency_key, record_key, record_payload
 from abstractruntime.automations.models import (
     AutomationError as RuntimeAutomationError,
     automation_id_for,
@@ -38,8 +41,8 @@ from abstractruntime.automations.service import (
 )
 from abstractruntime.core.models import RunStatus
 from abstractruntime.core.run_attribution import filter_values
-from abstractruntime.core.runtime import run_mutation_lock
 from abstractruntime.session_history import SessionHistoryError
+from abstractruntime.session_turns import OccurrenceNotInSession
 from abstractruntime.storage.commands import CommandRecord
 
 from ..automation_attention import (
@@ -66,6 +69,7 @@ from .gateway import (
 )
 
 router = APIRouter(prefix="/gateway", tags=["automations"])
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -190,20 +194,6 @@ def _domain_error(exc: RuntimeAutomationError, *, command_id: Optional[str] = No
 def _principal_tuple(principal: Any) -> tuple[str, str]:
     """The (tenant, user) an automation id is derived from (same tuple as the seen store)."""
     return str(getattr(principal, "tenant_id", None) or "default"), str(getattr(principal, "user_id", None) or "")
-
-
-def _claim_for_gateway(run_store: Any, run_id: str) -> None:
-    """Runs the runtime creates (controller, discussion root) are ticked by the
-    gateway runner only when they are gateway-owned (`actor_id == "gateway"`);
-    their children inherit it. The run was just created and never ticked, so
-    the mutation lock is uncontended."""
-    with run_mutation_lock(str(run_id)):
-        run = run_store.load(str(run_id))
-        if run is None:
-            raise LookupError(f"run {run_id} vanished right after it was created")
-        if run.actor_id != "gateway":
-            run.actor_id = "gateway"
-            run_store.save(run)
 
 
 def _nudge(svc: Any, run_id: str) -> None:
@@ -449,9 +439,20 @@ def _guarded_input_data(svc: Any, principal: Any, input_data: Dict[str, Any], *,
     automation's gateway-owned workspace, and the built-in tool deny rule
     (occurrences and discussions are started by the runtime, so they carry
     the protection in their inputs rather than through `host.start_run`)."""
-    data = _strip_client_workflow_policy(dict(input_data))
+    data = _strip_client_workflow_policy(copy.deepcopy(dict(input_data)))
     data.pop("_gateway_workspace", None)
     data.pop("workspace_read_only", None)
+    # Server-owned keys never come from a client (review 47 P2-1): every
+    # `_meta.*` (automation / occurrence / discussion attribution, digests;
+    # a client `_meta.automation` made an occurrence index as a controller),
+    # the read-only mount, and the tool grant (`policy.tool_approval` is the
+    # one documented way to set it). `_runtime.allowed_tools` stays: it only
+    # narrows what the target may call.
+    data.pop("_meta", None)
+    runtime_ns = data.get("_runtime")
+    if isinstance(runtime_ns, dict):
+        for key in ("workspace_read_only", "tool_policy"):
+            runtime_ns.pop(key, None)
     session_id = automation_session_id(automation_id)
     try:
         data = _sanitize_run_workspace_policy(data, principal=principal, session_id=session_id)
@@ -522,10 +523,11 @@ def _create(svc: Any, principal: Any, body: CreateAutomationBody) -> Dict[str, A
         request["policy"] = body.policy
     runtime = svc.host.runtime
     try:
-        created_id, revision = create_automation(runtime, request)
+        # Gateway-owned from its creation: the runner ticks only actor
+        # "gateway" runs, and children inherit the actor (review 47 P2-3).
+        created_id, revision = create_automation(runtime, request, actor_id="gateway")
     except RuntimeAutomationError as e:
         raise _domain_error(e)
-    _claim_for_gateway(runtime.run_store, created_id)
     _nudge(svc, created_id)
     controller = load_automation_controller(svc, created_id)
     return {"automation_id": created_id, "revision": revision, "summary": automation_summary_row(svc, principal, controller)}
@@ -553,7 +555,12 @@ def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str]
     items: List[Dict[str, Any]] = []
     for row in page.items:
         controller = run_store.load(str(row["automation_id"]))
-        summary = automation_summary_row(svc, principal, controller)
+        try:
+            summary = automation_summary_row(svc, principal, controller)
+        except (RuntimeAutomationError, LookupError, ValueError, KeyError, TypeError) as e:
+            # One malformed row must never take the whole list down (review 47 P2-1).
+            logger.warning("automations list: skipping malformed automation %s: %s", row.get("automation_id"), e)
+            continue
         if wanted is None or summary["status"] in wanted:
             items.append(summary)
     if page.next_cursor is None:
@@ -713,6 +720,16 @@ def _command(svc: Any, principal: Any, automation_id: str, command_id: str, type
     )
     if decided is None:
         _refuse_at_the_door(controller, type_, command_id=command_id)
+    else:
+        # The same id for a DIFFERENT command (same digest rule as the runtime,
+        # over what the runner will hand it: payload without expected_revision).
+        body = dict(payload)
+        expected = body.pop("expected_revision", None)
+        if record_payload(decided).get("command_digest") != command_digest(type_, body, expected):
+            raise AutomationError(
+                409, "identity_conflict", f"command_id {command_id!r} was already used for a different command.",
+                field="command_id", command_id=command_id,
+            )
     return _append_command(
         svc,
         automation_id=str(controller.run_id),
@@ -863,12 +880,14 @@ def _discuss(svc: Any, principal: Any, automation_id: str, body: DiscussBody) ->
             occurrence_index=int(body.occurrence_index),
             request_id=str(body.request_id),
             prompt=str(body.prompt),
+            actor_id="gateway",
         )
     except RuntimeAutomationError as e:
         raise _domain_error(e)
+    except OccurrenceNotInSession as e:
+        raise AutomationError(404, "occurrence_not_found", str(e), field="occurrence_index")
     except SessionHistoryError as e:
         raise AutomationError(409, str(getattr(e, "reason_code", "history_unavailable")), str(e))
-    _claim_for_gateway(runtime.run_store, out["run_id"])
     _nudge(svc, out["run_id"])
     return {"session_id": out["session_id"], "run_id": out["run_id"], "session_kind": "discussion"}
 

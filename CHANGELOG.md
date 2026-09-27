@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+Requires the AbstractRuntime release that contains Automations v1 with
+`policy.tool_approval` and typed waits (abstractruntime main 3cc9900 or later):
+the minimum AbstractRuntime version is raised to it when this is released.
+
 ### Added
 
 - **Automations.** Run a workflow again and again on a schedule ("every 2 minutes") or on
@@ -51,6 +55,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     shape `{"detail": {"reason_code", "message"}}`.
 
 ### Fixed
+
+- Run commands (`pause`, `cancel`, …) sent to an automation's id were accepted and broke the
+  automation (a paused controller that still read "active", a cancel that failed it for good);
+  they are now refused with 409 and a pointer to the `automation.*` commands.
 
 - A scheduled run listed by `GET /api/gateway/runs` said `is_scheduled: false`; it now says `true`.
 

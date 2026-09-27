@@ -460,7 +460,13 @@ def test_discussion_is_a_read_only_fork_and_later_turns_are_restamped(live: Test
                   json={"request_id": "d1", "occurrence_index": 1, "prompt": "why?"})
     assert r.status_code == 200, r.text
     out = r.json()
-    assert out["session_kind"] == "discussion" and out["session_id"] == "discussion-session:d1"
+    assert out["session_kind"] == "discussion" and out["session_id"].startswith("discussion-session:")
+    again = live.post(f"/api/gateway/automations/{aid}/discuss", headers=HEADERS,
+                      json={"request_id": "d1", "occurrence_index": 1, "prompt": "why?"})
+    assert again.status_code == 200 and again.json() == out            # same request: same discussion
+    clash = live.post(f"/api/gateway/automations/{aid}/discuss", headers=HEADERS,
+                      json={"request_id": "d1", "occurrence_index": 1, "prompt": "something else"})
+    assert clash.status_code == 409 and _envelope(clash)["reason_code"] == "identity_conflict"
     from abstractgateway.service import get_gateway_service
 
     store = get_gateway_service().host.run_store
@@ -659,3 +665,121 @@ def test_d3_a_retried_occurrence_is_one_turn(live: TestClient) -> None:
     assert list(turns) == [row["run_id"]]   # one turn: the last attempt
     bloc = live.get(f"/api/gateway/sessions/{session}/history/bloc?limit=10", headers=HEADERS).json()["turns"]
     assert [t["run_id"] for t in bloc] == [row["run_id"]]
+
+
+# ------------------------------------------------------ reviews 46 / 47 / 49
+
+
+def test_p2_1_client_server_keys_never_reach_the_definition(live: TestClient) -> None:
+    body = {
+        "request_id": "crafted", "title": "crafted",
+        "target": {"bundle_ref": live.bundle_ref, "flow_id": ECHO_FLOW_ID, "input_data": {
+            "prompt": "p",
+            "workspace_read_only": False,
+            "_meta": {"automation": {"title": "FAKE"}, "discussion": {"automation_id": "x"}, "creation_digest": "sha256:0"},
+            "_runtime": {"workspace_read_only": False, "tool_policy": {"auto_approve_tools": ["execute_command"]}, "allowed_tools": ["read_file"]},
+        }},
+        "trigger": {"source_id": "manual", "source_version": 1, "config": {}},
+    }
+    r = live.post("/api/gateway/automations", headers=HEADERS, json=body)
+    assert r.status_code == 200, r.text
+    aid = r.json()["automation_id"]
+    data = live.get(f"/api/gateway/automations/{aid}", headers=HEADERS).json()["definition"]["target"]["input_data"]
+    assert "_meta" not in data and "workspace_read_only" not in data
+    assert data["_runtime"] == {"allowed_tools": ["read_file"]}
+    row = _run_now_and_wait(live, aid, "c1", index=1)
+    assert _rows(live, "")[row["run_id"]]["role"] == "occurrence"
+    assert live.get("/api/gateway/automations", headers=HEADERS).status_code == 200
+
+
+def test_p2_1_a_malformed_row_is_skipped_not_a_500(live: TestClient) -> None:
+    good = _create(live, request_id="good")["automation_id"]
+    broken = controller_run()
+    broken.vars.pop("_runtime")          # a controller row without its state
+    save_runs(broken)
+    r = live.get("/api/gateway/automations", headers=HEADERS)
+    assert r.status_code == 200, r.text
+    ids = [s["automation_id"] for s in r.json()["items"]]
+    assert good in ids and broken.run_id not in ids
+
+
+@pytest.mark.parametrize("typ", ["pause", "resume", "cancel", "conclude", "update_schedule", "inject_guidance", "compact_memory"])
+def test_g1_run_commands_are_refused_on_an_automation_root(live: TestClient, typ: str) -> None:
+    aid = _create(live, request_id=f"g1-{typ}")["automation_id"]
+    r = live.post("/api/gateway/commands", headers=HEADERS, json={"command_id": f"g1-{typ}", "run_id": aid, "type": typ, "payload": {}})
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"]["reason_code"] == "invalid_state"
+
+
+def test_g2_a_failed_host_lookup_is_recorded(live: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractgateway.service import get_gateway_service
+    from abstractruntime.automations.ledger import find_by_idempotency_key, record_key, record_payload
+
+    aid = _create(live, request_id="g2")["automation_id"]
+    svc = get_gateway_service()
+
+    def lookup_fails(run_id):
+        raise KeyError(f"Workflow for {run_id} not registered")
+
+    monkeypatch.setattr(svc.host, "runtime_and_workflow_for_run", lookup_fails)
+    _command(live, aid, "automation.pause", "g2-pause")
+    rec = wait_until(lambda: find_by_idempotency_key(svc.host.ledger_store, aid, record_key("automation.command_result", aid, "g2-pause")), timeout_s=10)
+    payload = record_payload(rec)
+    assert payload["status"] == "rejected" and payload["error"]["reason_code"] == "internal_error"
+
+
+def test_g2_an_unrecordable_failure_keeps_the_cursor(live: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+
+    import abstractruntime.automations.commands as commands
+    from abstractgateway.service import get_gateway_service
+    from abstractruntime.automations.ledger import find_by_idempotency_key, record_key
+
+    aid = _create(live, request_id="g2b")["automation_id"]
+    svc = get_gateway_service()
+
+    def boom(*_a, **_k):
+        raise RuntimeError("host down")
+
+    monkeypatch.setattr(svc.host, "runtime_and_workflow_for_run", boom)
+    monkeypatch.setattr(commands, "record_automation_command_result", boom)
+    receipt = _command(live, aid, "automation.pause", "g2b-pause")
+    time.sleep(1.0)
+    assert svc.runner._cursor_store.load() < receipt["seq"]          # not passed
+    monkeypatch.undo()
+    wait_until(lambda: find_by_idempotency_key(svc.host.ledger_store, aid, record_key("automation.command_result", aid, "g2b-pause")), timeout_s=10)
+    wait_until(lambda: svc.runner._cursor_store.load() >= receipt["seq"], timeout_s=10)
+
+
+def test_a49_2_event_answers_are_wrapped_in_payload() -> None:
+    from types import SimpleNamespace
+
+    from abstractruntime.core.models import RunState, RunStatus, WaitReason, WaitState
+    from fastapi import HTTPException
+
+    from abstractgateway.routes.gateway import _check_automation_wait_answer
+
+    run = RunState(run_id="r1", workflow_id="w", status=RunStatus.WAITING, current_node="n",
+                   vars={"_meta": {"occurrence": {"automation_id": "a", "occurrence_index": 1, "role": "occurrence"}}},
+                   waiting=WaitState(reason=WaitReason.EVENT, wait_key="evt:1", prompt="Pick one"))
+    svc = SimpleNamespace(runner=SimpleNamespace(run_store=SimpleNamespace(load=lambda _rid: run)))
+    _check_automation_wait_answer(svc, run_id="r1", command_payload={"wait_key": "evt:1", "payload": {"payload": {"choice": "a"}}})
+    for bad in ({"choice": "a"}, {"response": "a"}, {"payload": "a"}):
+        with pytest.raises(HTTPException) as err:
+            _check_automation_wait_answer(svc, run_id="r1", command_payload={"wait_key": "evt:1", "payload": bad})
+        assert err.value.status_code == 422 and err.value.detail["field"] == "payload"
+
+
+def test_a_reused_command_id_for_another_command_is_an_identity_conflict(live: TestClient) -> None:
+    from abstractgateway.service import get_gateway_service
+
+    aid = _create(live, request_id="ids")["automation_id"]
+    store = get_gateway_service().host.run_store
+    assert store.load(aid).actor_id == "gateway"                      # owned from creation
+    _command(live, aid, "automation.pause", "same-id")
+    wait_until(lambda: live.get(f"/api/gateway/automations/{aid}", headers=HEADERS).json()["summary"]["status"] == "paused")
+    r = live.post(f"/api/gateway/automations/{aid}/commands", headers=HEADERS, json={"command_id": "same-id", "type": "automation.archive"})
+    assert r.status_code == 409 and _envelope(r) == {
+        "reason_code": "identity_conflict", "message": _envelope(r)["message"], "field": "command_id", "command_id": "same-id"}
+    dup = live.post(f"/api/gateway/automations/{aid}/commands", headers=HEADERS, json={"command_id": "same-id", "type": "automation.pause"})
+    assert dup.status_code == 200 and dup.json()["duplicate"] is True

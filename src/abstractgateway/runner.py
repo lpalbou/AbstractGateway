@@ -31,6 +31,11 @@ from abstractruntime.core.vars import is_paused_vars
 from abstractruntime.scheduler.scheduler import utc_now_iso
 from . import host_control
 from .automation_command_types import AUTOMATION_COMMAND_TYPES, COMMAND_TYPES
+
+
+class CommandNotRecorded(RuntimeError):
+    """An automation command failed on the host AND its failure could not be
+    recorded in the automation's ledger: the command cursor must not pass it."""
 from abstractruntime.storage.commands import (
     CommandCursorStore,
     CommandRecord,
@@ -1300,6 +1305,13 @@ class GatewayRunner:
         for rec in items:
             try:
                 self._apply_command(rec)
+            except CommandNotRecorded:
+                # An automation command whose failure could not even be
+                # recorded: stop HERE (cursor not advanced) and retry it at the
+                # next poll, rather than accept-then-silence.
+                logger.exception("GatewayRunner: automation command %s could not be recorded; retrying next poll", rec.command_id)
+                self._scan_force = True
+                return cur
             except Exception as e:
                 # Durable inbox: we advance cursor even if a command fails so it does not block the stream.
                 logger.exception("GatewayRunner failed applying command %s: %s", rec.command_id, e)
@@ -1831,8 +1843,8 @@ class GatewayRunner:
             self._priority_tick_ids.add(automation_id)
         command_payload = dict(payload)
         expected_revision = command_payload.pop("expected_revision", None)
-        runtime, _wf = self._host.runtime_and_workflow_for_run(automation_id)
         try:
+            runtime, _wf = self._host.runtime_and_workflow_for_run(automation_id)
             result = apply_automation_command(
                 runtime,
                 automation_id=automation_id,
@@ -1844,14 +1856,21 @@ class GatewayRunner:
             )
         except Exception as exc:
             logger.exception("GatewayRunner: automation command %s (%s) failed on the host", rec.command_id, typ)
-            record_automation_command_result(
-                runtime,
+            # Recorded through a plain Runtime over the same stores: the host
+            # lookup itself may be what failed (review 46 G2). If recording
+            # fails too, this raises CommandNotRecorded and the cursor stays.
+            recorder = Runtime(run_store=self.run_store, ledger_store=self.ledger_store, artifact_store=self.artifact_store)
+            try:
+                record_automation_command_result(
+                    recorder,
                 automation_id=automation_id,
                 command_id=str(rec.command_id),
                 type=typ,
-                error={"reason_code": "internal_error", "message": f"{type(exc).__name__}: {exc}"},
-                actor=rec.client_id,
-            )
+                    error={"reason_code": "internal_error", "message": f"{type(exc).__name__}: {exc}"},
+                    actor=rec.client_id,
+                )
+            except Exception as record_exc:
+                raise CommandNotRecorded(str(rec.command_id)) from record_exc
             return
         logger.info(
             "gateway automation command %s type=%s automation=%s status=%s duplicate=%s",
