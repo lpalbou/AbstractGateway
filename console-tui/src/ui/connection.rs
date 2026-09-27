@@ -387,7 +387,7 @@ fn status_view(t: &TokenSet, conn: &ConnPhase, token_source: Option<String>) -> 
                     )])
                 } else {
                     line(vec![span(
-                        "  note: user management needs an admin token; those screens will show 403",
+                        "  not an admin: admin-only actions are refused with the reason; reads still work",
                         t.warn,
                     )])
                 })

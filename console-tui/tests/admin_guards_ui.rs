@@ -545,3 +545,19 @@ fn users_screen_keys_live_without_any_table() {
     let s = h.key(b"n");
     assert!(s.contains("Summon"), "n opens the summon form:\n{s}");
 }
+
+/// The connected line tells a non-admin what the guards do (refuse with
+/// the reason) — never the old "those screens will show 403" promise.
+#[test]
+fn connection_line_describes_the_guards_for_a_non_admin() {
+    let mut h = harness();
+    h.connect(false);
+    let s = h.on(ui::SCREEN_CONNECTION, false);
+    assert!(
+        s.contains(
+            "not an admin: admin-only actions are refused with the reason; reads still work"
+        ),
+        "connected line names the guard behaviour:\n{s}"
+    );
+    assert!(!s.contains("will show 403"), "no stale 403 promise:\n{s}");
+}
