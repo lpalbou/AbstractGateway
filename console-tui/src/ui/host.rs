@@ -243,6 +243,7 @@ pub fn open(ctx: &Ctx, cx: Scope) {
         let c_ref = ctx2.clone();
         let (k_r, k_q, k_s) = (close.clone(), close.clone(), close.clone());
 
+        let viewport = abstracttui::app::use_viewport(mcx);
         let body = dyn_view(LayoutStyle::column().gap(0).grow(1.0), move || {
             let t = theme.get().tokens;
             let _ = store.tick.get();
@@ -336,14 +337,17 @@ pub fn open(ctx: &Ctx, cx: Scope) {
             if let Some(l) = op.lifecycle.get() {
                 rows.push(line(vec![span(ellipsize(&l, 100), t.info)]));
             }
-            rows.push(line(vec![span(
-                if is_admin {
-                    "p pause/resume · R restart · Q quit · u check for update · U install update · r reload · Esc close"
-                } else {
-                    "only an admin can pause, restart, quit or update this gateway · r reload · Esc close"
-                },
-                t.text_faint,
-            )]));
+            // Wrapped to the panel (never cut): at 80 columns the one-line
+            // key list lost "r reload · Esc close".
+            let keys = if is_admin {
+                "p pause/resume · R restart · Q quit · u check for update · U install update · r reload · Esc close"
+            } else {
+                "only an admin can pause, restart, quit or update this gateway · r reload · Esc close"
+            };
+            let wrap_w = (viewport.get().w.min(104) - 8).max(20) as usize;
+            for l in super::util::wrap_text(keys, wrap_w) {
+                rows.push(line(vec![span(l, t.text_faint)]));
+            }
             let mut col = Element::new().style(LayoutStyle::column().gap(0).grow(1.0));
             for r in rows {
                 col = col.child(r);
@@ -363,7 +367,9 @@ pub fn open(ctx: &Ctx, cx: Scope) {
             let (kb_r, kb_q, kb_s) = (k_r.clone(), k_q.clone(), k_s.clone());
             // Rebuilt when the runner answer changes: the pause button
             // names the verb it will perform (web parity).
-            dyn_view_scoped(LayoutStyle::row().h(1).shrink(0.0), move |bcx| {
+            // TWO rows (process verbs, update verbs): one row of five ran
+            // past the panel border at 80 columns.
+            dyn_view_scoped(LayoutStyle::column().h(2).shrink(0.0), move |bcx| {
                 let t = theme.get().tokens;
                 let label = match op.runner.get() {
                     Loadable::Ready(r) if r.paused => "Resume workflows",
@@ -377,7 +383,7 @@ pub fn open(ctx: &Ctx, cx: Scope) {
                     b_s.clone(),
                 );
                 let (kb_r, kb_q, kb_s) = (kb_r.clone(), kb_q.clone(), kb_s.clone());
-                Element::new()
+                let process = Element::new()
                     .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
                     .child(
                         Button::new(label)
@@ -397,6 +403,9 @@ pub fn open(ctx: &Ctx, cx: Scope) {
                             .element(bcx, &t)
                             .build(),
                     )
+                    .build();
+                let update = Element::new()
+                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
                     .child(
                         Button::new("Check for update")
                             .on_click(move || check_update(&b_u))
@@ -409,6 +418,11 @@ pub fn open(ctx: &Ctx, cx: Scope) {
                             .element(bcx, &t)
                             .build(),
                     )
+                    .build();
+                Element::new()
+                    .style(LayoutStyle::column().gap(0).h(2).shrink(0.0))
+                    .child(process)
+                    .child(update)
                     .build()
             })
         } else {
@@ -435,7 +449,7 @@ pub fn open(ctx: &Ctx, cx: Scope) {
             .child(line(vec![
                 span_bold("Gateway host", t0.accent),
                 span(
-                    "  — this gateway process, as the web console's Gateway card shows it",
+                    "  — this gateway process (the web's Gateway card)",
                     t0.text_faint,
                 ),
             ]))

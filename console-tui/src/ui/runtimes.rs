@@ -1392,7 +1392,7 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
             let ctx6 = ctx.clone();
             let current_stream = d.clone();
 
-            Element::new()
+            let row1 = Element::new()
                 .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
                 .child(
                     Button::new("Edit workspace access policy")
@@ -1416,6 +1416,10 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
                         .element(cx, t)
                         .build()
                 })
+                .build();
+            // Second row: one row of five buttons ran past 80 columns.
+            let row2 = Element::new()
+                .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
                 .child(if current_agents.agent_defaults.is_empty() {
                     Element::new().style(LayoutStyle::default().h(0)).build()
                 } else {
@@ -1436,6 +1440,11 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
                         .element(cx, t)
                         .build()
                 })
+                .build();
+            Element::new()
+                .style(LayoutStyle::column().gap(0).shrink(0.0))
+                .child(row1)
+                .child(row2)
                 .build()
         } else {
             Element::new().style(LayoutStyle::default().h(0)).build()

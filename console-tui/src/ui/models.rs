@@ -277,9 +277,15 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .child(
             Block::new()
                 .border(BorderKind::Rounded)
+                // The title must fit INSIDE the border: at 80 columns the
+                // long one ran into the corner (no closing run).
                 .title(
-                    "Resources — what is resident on the execution host right now \
-                     · ~ = estimated size, not measured",
+                    if abstracttui::app::use_viewport(cx).get_untracked().w >= 110 {
+                        "Resources — what is resident on the execution host right now \
+                         · ~ = estimated size, not measured"
+                    } else {
+                        "Resources — resident on the execution host · ~ = estimated"
+                    },
                 )
                 .fill(t.surface)
                 .layout(

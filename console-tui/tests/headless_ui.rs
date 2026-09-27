@@ -9126,3 +9126,63 @@ fn streaming_default_knob_reads_edits_and_never_hides() {
         );
     }
 }
+
+/// 80x24 (review 2 e): the Resources title fits inside its border, the
+/// host panel's buttons and key list stay inside the panel, and the spark
+/// templates intro wraps instead of being cut.
+#[test]
+fn eighty_by_twenty_four_nothing_is_clipped() {
+    let mut h = harness_sized(Size::new(80, 24));
+    h.connect_as_admin();
+    h.ui.wizard.set(false);
+    h.ui.screen.set(7);
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
+    let s = h.turns(3);
+    let title = s
+        .lines()
+        .find(|l| l.contains("╭ Resources"))
+        .expect("title row");
+    assert!(
+        title.trim_end().ends_with("─╮"),
+        "the title closes inside the border:\n{title}"
+    );
+
+    h.store.op.runner.set(Loadable::Ready(paused_runner()));
+    h.key(b"\x1bOR");
+    let s = h.turns(3);
+    for needle in ["Install update…", "Quit…", "Esc close"] {
+        let row = s
+            .lines()
+            .find(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("{needle}:\n{s}"));
+        assert!(
+            row.trim_end().ends_with('│'),
+            "'{needle}' stays inside the panel:\n{row}"
+        );
+    }
+    h.press_escape();
+    h.turns(2);
+
+    h.ui.screen.set(3);
+    h.store
+        .users
+        .set(Loadable::Ready(users_from_payload(&users_fixture())));
+    h.store
+        .entities
+        .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
+    h.turns(2);
+    h.type_text("s");
+    let s = h.turns(3);
+    assert!(s.contains("Spark templates"), "{s}");
+    assert!(
+        s.contains("framework default is the floor"),
+        "the intro wraps, never cut:\n{s}"
+    );
+    assert!(
+        !s.lines()
+            .any(|l| l.contains("A template is") && l.contains('…')),
+        "no ellipsis on the intro:\n{s}"
+    );
+}

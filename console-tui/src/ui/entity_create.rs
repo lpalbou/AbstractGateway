@@ -808,10 +808,14 @@ pub fn open_templates_modal(cx: Scope, ctx: &Ctx) {
         }
         let ctx_b = ctx2.clone();
         let close_b = close.clone();
+        // Wrapped to the dialog as it is ON THIS TERMINAL (the modal
+        // clamps to the viewport): wrapping at the nominal width cut
+        // every line at 80 columns.
+        let dialog_w = TPL_W.min(abstracttui::app::use_viewport(mcx).get_untracked().w - 2);
         let intro = prose(
             Element::new().style(LayoutStyle::column().gap(0)),
             "A template is a reusable blueprint — every save is a new version; the framework default is the floor and can be seeded but not edited. Editing a template never touches a living entity.",
-            (TPL_W - 6) as usize,
+            (dialog_w - 6).max(20) as usize,
             t0.text_faint,
         )
         .build();
