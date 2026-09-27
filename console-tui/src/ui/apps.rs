@@ -840,6 +840,9 @@ fn open_log_modal(cx: Scope, ctx: &Ctx, row: &AppRow) {
     apps.log.set(Loadable::Loading);
     ctx.send(Cmd::LoadAppLog { app_id: row.id.clone(), tail: LOG_TAIL });
     let size = super::preview_size(cx);
+    // The pane's rows: the modal minus its title, head, footer, keys and
+    // button lines and the border — so the newest lines fill the pane.
+    let page = (size.h - 8).max(3);
     let ctx2 = ctx.clone();
     let id = row.id.clone();
     let name = row.name.clone();
@@ -888,7 +891,7 @@ fn open_log_modal(cx: Scope, ctx: &Ctx, row: &AppRow) {
                         let mut col = Element::new().style(LayoutStyle::column().gap(0).grow(1.0));
                         col = col.child(line(vec![span_bold(l.head(), t0.text)]));
                         if !l.lines.is_empty() {
-                            col = col.child(scroll_lines(pcx, &t0, l.lines.join("\n"), top));
+                            col = col.child(scroll_lines(pcx, &t0, l.lines.join("\n"), top, page));
                         }
                         let mut foot = Vec::new();
                         if l.capped() {
@@ -930,10 +933,9 @@ fn open_log_modal(cx: Scope, ctx: &Ctx, row: &AppRow) {
 
 /// A read-only scrolling text pane that opens at the END (newest lines
 /// in view, like the web panel). ↑/↓ line, PgUp/PgDn page, Home/End.
-fn scroll_lines(_cx: Scope, t: &TokenSet, text: String, top: Signal<i32>) -> View {
+fn scroll_lines(_cx: Scope, t: &TokenSet, text: String, top: Signal<i32>, page: i32) -> View {
     let t0 = *t;
     let total = abstracttui::widgets::CodeView::line_count(&text) as i32;
-    let page = 15;
     let max_top = (total - page).max(0);
     let cur = top.get().clamp(0, max_top);
     if cur != top.get_untracked() {

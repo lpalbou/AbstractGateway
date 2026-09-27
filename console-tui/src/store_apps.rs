@@ -708,9 +708,9 @@ pub fn primary_verb(row: &AppRow, job: Option<&AppJob>, admin: bool) -> Option<V
     }
     let landing = first_run_landing(row);
     let label = landing.map(|(l, _)| l).unwrap_or("Open");
-    let mut v = if row.running {
-        VerbState::on(AppVerb::Open, label)
-    } else if row.has("launch") && admin {
+    // Running: anyone signed in may open. Stopped: Open starts it first,
+    // which is an admin action.
+    let mut v = if row.running || (row.has("launch") && admin) {
         VerbState::on(AppVerb::Open, label)
     } else {
         VerbState::off(
@@ -830,16 +830,23 @@ pub fn secondary_verbs(
         } else {
             VerbState::on(AppVerb::OpenTerminal, "Open in Terminal")
         });
-        let label = if t.installed {
-            match &t.latest_version {
-                Some(v) => format!("Update terminal app to {v}"),
-                None => "Update terminal app".to_string(),
-            }
-        } else {
-            "Install terminal app".to_string()
+        let label = match (&t.latest_version, t.installed && t.update_available) {
+            (Some(v), true) => format!("Update terminal app to {v}"),
+            (None, true) => "Update terminal app".to_string(),
+            _ if t.installed => "Update terminal app".to_string(),
+            _ => "Install terminal app".to_string(),
         };
         out.push(if t_active {
             VerbState::off(AppVerb::InstallTerminal, label, "Its install is running")
+        } else if t.installed && !t.update_available {
+            VerbState::off(
+                AppVerb::InstallTerminal,
+                label,
+                match &t.version {
+                    Some(v) => format!("The terminal app is up to date ({v})"),
+                    None => "The terminal app is up to date".to_string(),
+                },
+            )
         } else if !t.install_available {
             let mut why = t
                 .install_blocked_reason
@@ -849,8 +856,6 @@ pub fn secondary_verbs(
                 why.push_str(" — y copies the install command");
             }
             VerbState::off(AppVerb::InstallTerminal, label, why)
-        } else if t.installed && !t.update_available {
-            VerbState::off(AppVerb::InstallTerminal, label, "The terminal app is up to date")
         } else if !t.installed && !row.installed {
             VerbState::off(AppVerb::InstallTerminal, label, format!("Install {} first: its Install installs both", row.name))
         } else if !admin {
