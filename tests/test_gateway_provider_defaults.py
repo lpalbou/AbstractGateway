@@ -284,11 +284,17 @@ def test_a_fresh_install_serves_the_three_recommended_routes_with_their_provenan
     for key, provider, model in (
         ("output.text", "lmstudio", "qwen/qwen3.5-9b"),
         ("output.voice", "supertonic", "supertonic-3"),
-        ("output.image", "mlx-gen", "AbstractFramework/flux.2-klein-4b-8bit"),
     ):
         assert rows[key]["configured"] is True, f"{key} must be an ordinary configured row"
         assert rows[key]["provider"] == provider
         assert rows[key]["model"] == model
+    # The pinned host is Linux/CUDA: the MLX-Gen image recommendation cannot run
+    # here, so AbstractCore (2.17.0) does not seed it and says why on the row.
+    image = rows["output.image"]
+    assert image["configured"] is False, "a route this host cannot run must not be seeded"
+    unavailable = image["recommendation_unavailable"]
+    assert (unavailable["provider"], unavailable["model"]) == ("mlx-gen", "AbstractFramework/flux.2-klein-4b-8bit")
+    assert unavailable["reason"]
 
     assert payload.get("seeded") == "recommended-v1", "the payload must carry the seed provenance"
 

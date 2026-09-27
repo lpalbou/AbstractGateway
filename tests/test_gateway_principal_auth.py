@@ -1045,10 +1045,14 @@ def test_a_fresh_gateway_serves_the_recommended_seed_and_users_inherit_it(tmp_pa
     for key, provider, model in (
         ("output.text", "lmstudio", "qwen/qwen3.5-9b"),
         ("output.voice", "supertonic", "supertonic-3"),
-        ("output.image", "mlx-gen", "AbstractFramework/flux.2-klein-4b-8bit"),
     ):
         assert rows[key]["configured"] is True, f"{key} must be an ordinary configured row"
         assert (rows[key]["provider"], rows[key]["model"]) == (provider, model)
+    # Linux/CUDA host (pinned above): the MLX-Gen image recommendation cannot run
+    # here, so it is not seeded and the row says why.
+    assert rows["output.image"]["configured"] is False
+    assert rows["output.image"]["recommendation_unavailable"]["provider"] == "mlx-gen"
+    assert rows["output.image"]["recommendation_unavailable"]["reason"]
     assert body.get("seeded") == "recommended-v1", "the payload must carry the seed provenance"
 
     # The operator overrides the recommendation gateway-wide...
