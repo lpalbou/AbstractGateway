@@ -2978,7 +2978,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
   <script id="af-console-islands">/*__AF_CONSOLE_ISLANDS_JS__*/</script>
   <!--__ABSTRACTCORE_FRAGMENT_SCRIPT__-->
   <script>
-		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
+		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), providerStateLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
 		    const $ = (id) => document.getElementById(id);
 		    const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 		    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] || ch);
@@ -4716,7 +4716,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      try {
 	        const payload = await api(withQuery("/api/gateway/voice/voices", { providers_only: true, compact: true }));
 	        const providers = providerOptionsFromCatalog(payload, ["tts_providers", "providers", "available_providers"]);
-	        setSelectOptions(provSel, providers, { emptyLabel: "Choose a provider…", disabled: !providers.length, selected: selProvider });
+	        setSelectOptions(provSel, providers, { emptyLabel: "Choose a provider…", disabled: !providers.length, selected: selProvider, labelMap: catalogProviderStateLabels(payload) });
 	        if (selProvider && providers.includes(selProvider)) {
 	          await loadEntityVoiceModels(selProvider, selModel, selVoice);
 	        }
@@ -7335,6 +7335,19 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       }
       return dedupeOptionValues(out);
     }
+    // Per-provider STATE the catalog reports (cloud voice providers:
+    // `needs_key` until a key is configured): a label map for THAT picker
+    // only — never written to the global providerLabels, where "openai"
+    // also names the text provider.
+    function catalogProviderStateLabels(payload) {
+      const out = new Map();
+      for (const item of arrayValue(payload?.items)) {
+        const rec = objectValue(item); const provider = catalogProviderFromItem(item);
+        if (!rec || !provider || !rec.needs_key) continue;
+        out.set(provider, `${catalogLabelFromItem(item, provider)} — ${textValue(rec.status) || "needs an API key"}`);
+      }
+      return out;
+    }
     function modelOptionsFromCatalog(payload, provider, valueKeys = [], mapKeys = []) {
       const wanted = String(provider || "").trim().toLowerCase();
       const out = [];
@@ -7758,6 +7771,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (!state.providerModels.has(cacheKey)) {
 	        const payload = await api(path);
 	        let providers = providerOptionsFromCatalog(payload, catalog.providerKeys, catalog.mapKeys);
+	        state.providerStateLabels.set(catalog.scope, catalogProviderStateLabels(payload));
 	        if (!providers.length && catalog.useConfiguredProviderFallback) providers = configuredProviderOptions();
 	        state.providerModels.set(cacheKey, providers);
 	      }
@@ -11460,6 +11474,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        emptyLabel: providers.length ? "Select provider..." : catalog.emptyProviders,
 	        disabled: !providers.length,
 	        selected: row.provider || "",
+	        labelMap: state.providerStateLabels.get(catalog.scope) || null,
 	      });
 	      // Same rule as the model lane: a provider field that can only offer
 	      // DISCOVERED values is a dead end when nothing can be reached — and a

@@ -84,6 +84,7 @@ from ..provider_connections import (
     builtin_provider_connection_specs,
     builtin_provider_public_row,
     configured_builtin_provider_public_rows,
+    configured_provider_api_key,
     configured_provider_request_kwargs,
 )
 from .. import host_control, host_metrics, self_update
@@ -15425,6 +15426,7 @@ def _compact_voice_catalog_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "tts_profiles_by_provider",
         "tts_formats_by_provider",
         "controls",
+        "cloud_providers",
     )
     return {key: payload[key] for key in keep_keys if key in payload}
 
@@ -15802,6 +15804,90 @@ def _module_available(module_name: str) -> bool:
         return False
 
 
+# Cloud voice providers (TTS and STT): ALWAYS listed, so a user can see they
+# exist before configuring them, marked `needs_key` until a key is configured
+# — in the environment, or through the Providers screen (AbstractCore's
+# `api_keys.<provider>` or an endpoint profile of that family with a key).
+_VOICE_CLOUD_PROVIDERS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("openai", "OpenAI", ("OPENAI_API_KEY", "ABSTRACTVOICE_OPENAI_API_KEY")),
+    ("openai-compatible", "OpenAI-compatible", ("ABSTRACTVOICE_REMOTE_API_KEY", "OPENAI_API_KEY")),
+)
+
+
+def _voice_cloud_provider_details(provider: Optional[str] = None) -> list[Dict[str, Any]]:
+    """[{provider, label, display_name, cloud, needs_key, key_source, state, reason}]
+    for the cloud voice providers (filtered to `provider` when given)."""
+    wanted = str(provider or "").strip().lower().replace("_", "-")
+    current_base, root_base = _gateway_profile_dirs()
+    profiles = None
+    out: list[Dict[str, Any]] = []
+    for provider_id, name, env_keys in _VOICE_CLOUD_PROVIDERS:
+        if wanted and wanted != provider_id:
+            continue
+        source: Optional[str] = "environment" if _env_first(*env_keys) else None
+        if source is None:
+            key, _scope = configured_provider_api_key(
+                provider_id, current_base_dir=current_base, root_base_dir=root_base, include_env=False
+            )
+            if key:
+                source = "providers"
+        if source is None:
+            if profiles is None:
+                profiles = effective_endpoint_profiles(base_dir=current_base, root_base_dir=root_base)
+            if any(
+                p.enabled and p.provider_family.lower() == provider_id and str(p.api_key or "").strip()
+                for p in profiles
+            ):
+                source = "providers"
+        needs_key = source is None
+        out.append(
+            {
+                "provider": provider_id,
+                "display_name": name,
+                "label": name,
+                "status": "needs an API key (add it under Providers)" if needs_key else "ready",
+                "cloud": True,
+                "needs_key": needs_key,
+                "key_source": source,
+                "state": "needs_key" if needs_key else "ready",
+                "reason": (
+                    f"{name} is a cloud service: add its API key under Providers to use it"
+                    if needs_key
+                    else f"API key configured ({'Providers screen' if source == 'providers' else 'environment'})"
+                ),
+            }
+        )
+    return out
+
+
+def _with_voice_cloud_providers(
+    payload: Dict[str, Any], *, list_keys: tuple[str, ...], provider: Optional[str] = None
+) -> Dict[str, Any]:
+    """`payload` with the cloud voice providers appended to each list in
+    `list_keys` and their states under `cloud_providers`."""
+    details = _voice_cloud_provider_details(provider)
+    out = dict(payload)
+    for key in list_keys:
+        values = [str(x) for x in (out.get(key) or []) if isinstance(x, str) and str(x).strip()]
+        present = {v.strip().lower() for v in values}
+        values.extend(d["provider"] for d in details if d["provider"] not in present)
+        out[key] = values
+    out["cloud_providers"] = details
+    return out
+
+
+def _voice_provider_catalog_items(payload: Dict[str, Any], *, provider_keys: tuple[str, ...]) -> list[Dict[str, Any]]:
+    """Provider items with each cloud provider's state merged in (label,
+    needs_key, key_source, state, reason) — what both consoles render."""
+    by_id = {d["provider"]: d for d in (payload.get("cloud_providers") or []) if isinstance(d, dict)}
+    items = _gateway_catalog_provider_items(payload, provider_keys=provider_keys)
+    for item in items:
+        detail = by_id.get(str(item.get("id") or "").strip().lower())
+        if detail:
+            item.update(detail)
+    return items
+
+
 def _static_voice_providers_only_response() -> Dict[str, Any]:
     tts_providers: List[str] = []
     stt_providers: List[str] = []
@@ -15813,12 +15899,8 @@ def _static_voice_providers_only_response() -> Dict[str, Any]:
 
     add(tts_providers, _resolved_voice_engine("tts"))
     add(stt_providers, _resolved_voice_engine("stt"))
-    if _env_first("OPENAI_API_KEY", "ABSTRACTVOICE_OPENAI_API_KEY"):
-        add(tts_providers, "openai")
-        add(stt_providers, "openai")
-    if _env_first("ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL", "ABSTRACTVOICE_REMOTE_BASE_URL"):
-        add(tts_providers, "openai-compatible")
-        add(stt_providers, "openai-compatible")
+    # openai / openai-compatible: always listed by the callers through
+    # `_with_voice_cloud_providers` (with their needs_key state).
     if _module_available("piper") or _module_available("piper_phonemize"):
         add(tts_providers, "piper")
     if _module_available("omnivoice"):
@@ -17635,8 +17717,10 @@ async def voice_voices_catalog(
             model=model,
             providers_only=providers_only,
         )
+        if providers_only:
+            out = _with_voice_cloud_providers(out, list_keys=("providers", "tts_providers"), provider=provider)
         items = (
-            _gateway_catalog_provider_items(out, provider_keys=("providers", "tts_providers"))
+            _voice_provider_catalog_items(out, provider_keys=("providers", "tts_providers"))
             if providers_only
             else _gateway_catalog_voice_items(out)
         )
@@ -17665,8 +17749,10 @@ async def voice_voices_catalog(
         model=model,
         providers_only=providers_only,
     )
+    if providers_only:
+        out = _with_voice_cloud_providers(out, list_keys=("providers", "tts_providers"), provider=provider)
     items = (
-        _gateway_catalog_provider_items(out, provider_keys=("providers", "tts_providers"))
+        _voice_provider_catalog_items(out, provider_keys=("providers", "tts_providers"))
         if providers_only
         else _gateway_catalog_voice_items(out)
     )
@@ -17722,6 +17808,7 @@ async def audio_speech_models_catalog(
                 )
             except Exception as e:
                 raise HTTPException(status_code=502, detail=str(e)) from e
+        out = _with_voice_cloud_providers(out, list_keys=("providers", "tts_providers"), provider=provider)
         out.setdefault("models", [])
         out["models"] = []
         out.setdefault("models_by_provider", {})
@@ -17730,7 +17817,7 @@ async def audio_speech_models_catalog(
             out,
             kind="providers",
             scope="tts",
-            items=_gateway_catalog_provider_items(out, provider_keys=("providers", "tts_providers")),
+            items=_voice_provider_catalog_items(out, provider_keys=("providers", "tts_providers")),
             provider=provider,
             metadata={"providers_only": True},
         )
@@ -17845,11 +17932,12 @@ async def audio_transcription_models_catalog(
             out["stt_models_by_provider"] = {}
             out["provider_models"] = []
             out["active_provider"] = stt_providers[0] if stt_providers else None
+        out = _with_voice_cloud_providers(out, list_keys=("providers", "stt_providers", "available_providers"), provider=provider)
         return _gateway_catalog_response(
             out,
             kind="providers",
             scope="stt",
-            items=_gateway_catalog_provider_items(out, provider_keys=("providers", "stt_providers", "available_providers")),
+            items=_voice_provider_catalog_items(out, provider_keys=("providers", "stt_providers", "available_providers")),
             provider=provider,
             metadata={"providers_only": True},
         )

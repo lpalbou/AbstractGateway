@@ -25,6 +25,25 @@ def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient
     return TestClient(app), {"Authorization": f"Bearer {token}"}
 
 
+# Cloud voice providers are ALWAYS listed (wave 2): marked needs_key until a
+# key is configured (environment or the Providers screen).
+def _cloud_items() -> list[dict[str, Any]]:
+    return [
+        {
+            "id": pid, "provider": pid, "name": pid, "display_name": name,
+            "label": name, "status": "needs an API key (add it under Providers)",
+            "cloud": True, "needs_key": True, "key_source": None, "state": "needs_key",
+            "reason": f"{name} is a cloud service: add its API key under Providers to use it",
+        }
+        for pid, name in (("openai", "OpenAI"), ("openai-compatible", "OpenAI-compatible"))
+    ]
+
+
+def _without_cloud_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("OPENAI_API_KEY", "ABSTRACTVOICE_OPENAI_API_KEY", "ABSTRACTVOICE_REMOTE_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+
+
 def _patch_discovery_facade(monkeypatch: pytest.MonkeyPatch, *, facade: object) -> None:
     import abstractgateway.routes.gateway as gateway_routes
 
@@ -288,8 +307,8 @@ def test_speech_provider_only_catalog_uses_fast_static_provider_path(
     assert body["catalog"]["scope"] == "tts"
     assert body["catalog"]["providers_only"] is True
     assert body["models"] == []
-    assert body["providers"] == ["omnivoice"]
-    assert body["items"] == [{"id": "omnivoice", "label": "omnivoice", "provider": "omnivoice", "name": "omnivoice"}]
+    assert body["providers"] == ["omnivoice", "openai", "openai-compatible"]
+    assert body["items"] == [{"id": "omnivoice", "label": "omnivoice", "provider": "omnivoice", "name": "omnivoice"}, *_cloud_items()]
 
 
 def test_speech_provider_only_catalog_uses_runtime_voice_catalog_when_available(
@@ -309,6 +328,7 @@ def test_speech_provider_only_catalog_uses_runtime_voice_catalog_when_available(
             }
 
     _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+    _without_cloud_keys(monkeypatch)
 
     client, headers = _client(tmp_path, monkeypatch)
     with client:
@@ -316,9 +336,9 @@ def test_speech_provider_only_catalog_uses_runtime_voice_catalog_when_available(
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["providers"] == ["remote-tts"]
-    assert body["tts_providers"] == ["remote-tts"]
-    assert body["items"] == [{"id": "remote-tts", "label": "remote-tts", "provider": "remote-tts", "name": "remote-tts"}]
+    assert body["providers"] == ["remote-tts", "openai", "openai-compatible"]
+    assert body["tts_providers"] == ["remote-tts", "openai", "openai-compatible"]
+    assert body["items"] == [{"id": "remote-tts", "label": "remote-tts", "provider": "remote-tts", "name": "remote-tts"}, *_cloud_items()]
     assert calls == [
         {
             "base_url": None,
@@ -361,11 +381,12 @@ def test_transcription_provider_only_catalog_uses_fast_static_stt_provider_path(
     assert body["catalog"]["scope"] == "stt"
     assert body["catalog"]["providers_only"] is True
     assert body["models"] == []
-    assert body["providers"] == ["faster-whisper"]
+    assert body["providers"] == ["faster-whisper", "openai", "openai-compatible"]
     assert body["tts_providers"] == []
-    assert body["stt_providers"] == ["faster-whisper"]
+    assert body["stt_providers"] == ["faster-whisper", "openai", "openai-compatible"]
     assert body["items"] == [
-        {"id": "faster-whisper", "label": "faster-whisper", "provider": "faster-whisper", "name": "faster-whisper"}
+        {"id": "faster-whisper", "label": "faster-whisper", "provider": "faster-whisper", "name": "faster-whisper"},
+        *_cloud_items(),
     ]
 
 
@@ -386,6 +407,7 @@ def test_transcription_provider_only_catalog_uses_runtime_voice_catalog_when_ava
             }
 
     _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+    _without_cloud_keys(monkeypatch)
 
     client, headers = _client(tmp_path, monkeypatch)
     with client:
@@ -393,11 +415,11 @@ def test_transcription_provider_only_catalog_uses_runtime_voice_catalog_when_ava
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["providers"] == ["remote-stt"]
-    assert body["available_providers"] == ["remote-stt"]
+    assert body["providers"] == ["remote-stt", "openai", "openai-compatible"]
+    assert body["available_providers"] == ["remote-stt", "openai", "openai-compatible"]
     assert body["tts_providers"] == []
-    assert body["stt_providers"] == ["remote-stt"]
-    assert body["items"] == [{"id": "remote-stt", "label": "remote-stt", "provider": "remote-stt", "name": "remote-stt"}]
+    assert body["stt_providers"] == ["remote-stt", "openai", "openai-compatible"]
+    assert body["items"] == [{"id": "remote-stt", "label": "remote-stt", "provider": "remote-stt", "name": "remote-stt"}, *_cloud_items()]
     assert calls == [
         {
             "base_url": None,
@@ -913,3 +935,74 @@ def test_embedding_provider_only_catalog_keeps_provider_items(
         {"provider": "huggingface", "label": "HuggingFace", "id": "huggingface", "name": "huggingface"},
         {"provider": "lmstudio", "label": "LMStudio", "id": "lmstudio", "name": "lmstudio"},
     ]
+
+
+def test_voice_providers_list_cloud_providers_needs_key_until_a_key_is_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GET /voice/voices?providers_only: openai / openai-compatible always
+    listed; a key in the environment, or one stored through the Providers
+    screen (an endpoint profile of that family), flips needs_key off."""
+
+    class StubDiscoveryFacade:
+        def get_voice_catalog(self, **_kwargs: Any) -> Dict[str, Any]:
+            return {"available": True, "providers": ["supertonic"], "tts_providers": ["supertonic"], "stt_providers": []}
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+    _without_cloud_keys(monkeypatch)
+    client, headers = _client(tmp_path, monkeypatch)
+    url = "/api/gateway/voice/voices?providers_only=true&compact=true"
+
+    def states(body: Dict[str, Any]) -> Dict[str, tuple]:
+        return {i["id"]: (i.get("needs_key"), i.get("key_source")) for i in body["items"]}
+
+    with client:
+        body = client.get(url, headers=headers).json()
+        assert body["tts_providers"] == ["supertonic", "openai", "openai-compatible"]
+        assert states(body) == {"supertonic": (None, None), "openai": (True, None), "openai-compatible": (True, None)}
+        assert [d["provider"] for d in body["cloud_providers"]] == ["openai", "openai-compatible"]
+
+        # A key stored through the Providers screen (endpoint profile, family openai).
+        created = client.post(
+            "/api/gateway/config/provider-endpoint-profiles",
+            headers=headers,
+            json={"id": "my-openai", "display_name": "My OpenAI", "provider_family": "openai",
+                  "base_url": "https://api.openai.com/v1", "api_key": "sk-scratch-not-real", "scope": "gateway"},
+        )
+        assert created.status_code == 200, created.text
+        try:
+            body = client.get(url, headers=headers).json()
+            assert states(body)["openai"] == (False, "providers")
+            item = next(i for i in body["items"] if i["id"] == "openai")
+            assert item["label"] == "OpenAI" and item["status"] == "ready" and item["state"] == "ready" and "Providers screen" in item["reason"]
+            assert states(body)["openai-compatible"] == (True, None)
+        finally:
+            assert client.delete("/api/gateway/config/provider-endpoint-profiles/my-openai", headers=headers).status_code == 200
+
+        monkeypatch.setenv("ABSTRACTVOICE_REMOTE_API_KEY", "scratch-not-real")
+        body = client.get(url, headers=headers).json()
+        assert states(body)["openai-compatible"] == (False, "environment")
+        assert states(body)["openai"] == (True, None)
+
+        # A provider filter keeps only that cloud provider.
+        body = client.get(url + "&provider=openai", headers=headers).json()
+        assert [i["id"] for i in body["items"]] == ["openai"]
+
+
+def test_voice_cloud_provider_counts_an_abstractcore_api_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+
+    _without_cloud_keys(monkeypatch)
+    seen: list[tuple] = []
+
+    def fake_key(provider_id: str, **kw: Any) -> tuple[str, str]:
+        seen.append((provider_id, kw.get("include_env")))
+        return ("sk-core", "abstractcore.config") if provider_id == "openai" else ("", "")
+
+    monkeypatch.setattr(gateway_routes, "configured_provider_api_key", fake_key)
+    client, _headers = _client(tmp_path, monkeypatch)
+    with client:
+        details = {d["provider"]: d for d in gateway_routes._voice_cloud_provider_details()}
+    assert details["openai"]["needs_key"] is False and details["openai"]["key_source"] == "providers"
+    assert details["openai-compatible"]["needs_key"] is True
+    assert ("openai", False) in seen  # env is checked on its own, first
