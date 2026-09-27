@@ -1544,13 +1544,11 @@ fn users_and_entities_render_with_admin_gate() {
     assert!(s.contains("Testor"), "entity row:\n{s}");
     assert!(s.contains("asleep"), "entity state:\n{s}");
     assert!(s.contains("q:3 p:0 i:7"), "drives summary:\n{s}");
-    // Entities are manageable (state/config), while creation/summon
-    // stay deliberately outside this console — the title teaches both.
+    // Entities are summoned, talked to and managed here (web parity) —
+    // the title teaches the keys.
     assert!(s.contains("m = manage"), "manage affordance:\n{s}");
-    assert!(
-        s.contains("stay outside this console"),
-        "creation out-of-scope note:\n{s}"
-    );
+    assert!(s.contains("n = summon"), "summon affordance:\n{s}");
+    assert!(s.contains("c = talk"), "talk affordance:\n{s}");
     // Selecting a row keeps its manage snapshot warm; the inline strip
     // became the right Drawer — `i` teaches and toggles it.
     assert!(
@@ -1745,6 +1743,345 @@ fn entity_manage_menu_state_flow_sends_post() {
     // The modal closed on Apply (outcome rides toast + journal).
     let s = h.turns(2);
     assert!(!s.contains("Entity state — Testor"), "modal closed:\n{s}");
+}
+
+// ---- entity parity: summon / talk / card / voice audition -------------
+
+use abstractgateway_console::api::entities as ent;
+use abstractgateway_console::worker::entities::EntityCmd;
+
+fn entity_screen(h: &mut Harness) {
+    h.connect_as_admin();
+    h.goto_screen(3);
+    h.store
+        .users
+        .set(Loadable::Ready(users_from_payload(&users_fixture())));
+    h.store
+        .entities
+        .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
+    h.turns(2);
+}
+
+/// Recorded `/entities/templates` + `/creation-defaults` shapes.
+fn creation_kit_fixture() -> ent::CreationKit {
+    let (templates, template_warnings) = ent::templates_from_payload(&json!({
+        "templates": [
+            {"id": "framework-default", "name": "Framework default",
+             "description": "The framework floor", "source": "builtin",
+             "editable": false, "version": 1,
+             "spark": {"name": "", "core_values": ["shared_vulnerability"]},
+             "core_values": ["shared_vulnerability"]}
+        ],
+        "warnings": []
+    }));
+    let mut kit = ent::CreationKit {
+        templates,
+        template_warnings,
+        ..Default::default()
+    };
+    kit.apply_defaults(Ok(&json!({
+        "substrate": {"provider": null, "model": null, "source": "unset"},
+        "embedding": {"provider": "huggingface", "model": "all-minilm", "source": "route"},
+        "warnings": ["#FALLBACK no gateway-wide entity substrate configured"]
+    })));
+    kit
+}
+
+#[test]
+fn summon_validates_first_then_confirms_then_creates() {
+    let mut h = harness();
+    entity_screen(&mut h);
+    h.drain_cmds();
+    h.type_text("n");
+    let s = h.turns(2);
+    assert!(s.contains("Summon a new entity"), "summon form:\n{s}");
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::LoadCreationKit)))
+            .is_some(),
+        "opening re-reads the creation kit"
+    );
+    h.store
+        .entity_kit
+        .set(Loadable::Ready(creation_kit_fixture()));
+    let s = h.turns(2);
+    assert!(s.contains("Framework default"), "template picker:\n{s}");
+    assert!(s.contains("shared_vulnerability"), "locked core values:\n{s}");
+
+    // Name (autofocused) → Tab to the template → the Advanced toggle →
+    // Validate & create.
+    h.type_text("Castor");
+    h.turn();
+    h.key(b"\t");
+    h.turn();
+    h.key(b"\t");
+    h.turn();
+    h.key(b"\t");
+    h.turn();
+    h.type_text("\r");
+    h.turns(2);
+    let body = match h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::ValidateEntity { .. }))) {
+        Some(Cmd::Entity(EntityCmd::ValidateEntity { name, body })) => {
+            assert_eq!(name, "Castor");
+            body
+        }
+        other => panic!("expected the dry-run first, got {other:?}"),
+    };
+    assert_eq!(body.0["spark"]["name"], "Castor", "the name fills the spark");
+    assert_eq!(body.0["spark"]["core_values"][0], "shared_vulnerability");
+    // Nothing irreversible before the confirm.
+    assert!(
+        !h.drain_cmds()
+            .iter()
+            .any(|c| matches!(c, Cmd::Entity(EntityCmd::CreateEntity { .. }))),
+        "no create before the dry-run answers"
+    );
+
+    // Green dry-run with a warning → the confirm names the permanence.
+    h.store.entity_check.set(Loadable::Ready(ent::CreateCheck::from_value(
+        "Castor",
+        &json!({"ok": true, "warnings": ["spark lint: no interests seeded"]}),
+    )));
+    let s = h.turns(3);
+    assert!(s.contains("Summon Castor?"), "confirm stage:\n{s}");
+    assert!(s.contains("There is no delete"), "permanence named:\n{s}");
+    assert!(
+        s.contains("no interests seeded"),
+        "dry-run warnings reviewed BEFORE the birth:\n{s}"
+    );
+    // The Validate button left with the stage: the next Tab starts at
+    // the name field, then the template, the toggle, "Summon Castor".
+    for _ in 0..4 {
+        h.key(b"\t");
+        h.turn();
+    }
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::CreateEntity { .. }))) {
+        Some(Cmd::Entity(EntityCmd::CreateEntity {
+            name,
+            body,
+            substrate,
+            policy,
+            warnings,
+            ..
+        })) => {
+            assert_eq!(name, "Castor");
+            assert_eq!(body.0["spark"]["name"], "Castor");
+            assert!(substrate.is_none(), "Advanced untouched: no substrate write");
+            assert!(policy.is_none(), "Advanced untouched: no policy write");
+            assert_eq!(warnings, vec!["spark lint: no interests seeded"]);
+        }
+        other => panic!("expected CreateEntity, got {other:?}"),
+    }
+}
+
+#[test]
+fn summon_refusal_shows_the_web_sentence_and_writes_nothing() {
+    let mut h = harness();
+    entity_screen(&mut h);
+    h.type_text("n");
+    h.turns(2);
+    h.store
+        .entity_kit
+        .set(Loadable::Ready(creation_kit_fixture()));
+    h.turns(2);
+    h.type_text("Testor");
+    h.turn();
+    for _ in 0..3 {
+        h.key(b"\t");
+        h.turn();
+    }
+    h.type_text("\r");
+    h.turns(2);
+    assert!(h
+        .find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::ValidateEntity { .. })))
+        .is_some());
+    h.store.entity_check.set(Loadable::Ready(ent::CreateCheck::from_value(
+        "Testor",
+        &json!({"ok": false, "would_conflict": true, "errors": []}),
+    )));
+    let s = h.turns(3);
+    assert!(
+        s.contains("Cannot create: an entity with this name already exists"),
+        "refusal:\n{s}"
+    );
+    assert!(!s.contains("Summon Testor?"), "no confirm on a red dry-run:\n{s}");
+    assert!(!h
+        .drain_cmds()
+        .iter()
+        .any(|c| matches!(c, Cmd::Entity(EntityCmd::CreateEntity { .. }))));
+}
+
+#[test]
+fn talk_opens_a_visit_sends_turns_and_renders_replies() {
+    let mut h = harness();
+    entity_screen(&mut h);
+    h.drain_cmds();
+    h.type_text("c");
+    let s = h.turns(2);
+    assert!(s.contains("Talk — Testor"), "talk panel:\n{s}");
+    assert!(s.contains("no visit open"), "honest empty state:\n{s}");
+    // Input is focused; Tab → Open visit.
+    h.key(b"\t");
+    h.turn();
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::ChatOpen { .. }))) {
+        Some(Cmd::Entity(EntityCmd::ChatOpen { name })) => assert_eq!(name, "Testor"),
+        other => panic!("expected ChatOpen, got {other:?}"),
+    }
+    // The worker's open fold (recorded web-format frame).
+    h.store.entity_chat.update(|c| {
+        c.busy = false;
+        c.apply_open(&json!({"chat_id": "chat_42", "yielded_loop": false}));
+    });
+    let s = h.turns(2);
+    assert!(s.contains("visit open (chat_42)"), "open status:\n{s}");
+    assert!(s.contains("Close visit"), "close affordance:\n{s}");
+    // The Open button left with the state change: Tab walks the
+    // transcript (scrollable) and then the input.
+    h.key(b"\t");
+    h.turn();
+    h.key(b"\t");
+    h.turn();
+    h.type_text("hello Testor");
+    h.turn();
+    h.type_text("\r");
+    let s = h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::ChatTurn { .. }))) {
+        Some(Cmd::Entity(EntityCmd::ChatTurn {
+            name,
+            chat_id,
+            text,
+        })) => {
+            assert_eq!(name, "Testor");
+            assert_eq!(chat_id, "chat_42");
+            assert_eq!(text, "hello Testor");
+        }
+        other => panic!("expected ChatTurn, got {other:?}\n{s}"),
+    }
+    assert!(s.contains("hello Testor"), "your line lands at once:\n{s}");
+    assert!(s.contains("thinking"), "status while the turn runs:\n{s}");
+    h.store.entity_chat.update(|c| {
+        c.busy = false;
+        c.apply_turn(&json!({"reply": "Hello — I remember you.", "memories_in_context": 3}));
+    });
+    let s = h.turns(2);
+    assert!(s.contains("Hello — I remember you."), "reply rendered:\n{s}");
+    assert!(s.contains("3 memories in context"), "turn status:\n{s}");
+}
+
+#[test]
+fn talk_refuses_while_another_entitys_visit_is_open() {
+    let mut h = harness();
+    entity_screen(&mut h);
+    h.store.entity_chat.set(ent::ChatState {
+        entity: "Pollux".into(),
+        chat_id: Some("chat_9".into()),
+        ..Default::default()
+    });
+    h.type_text("c");
+    let s = h.turns(2);
+    assert!(!s.contains("Talk — Testor"), "no second visit:\n{s}");
+    assert!(
+        h.store
+            .notice
+            .get_untracked()
+            .unwrap_or_default()
+            .contains("a visit with Pollux is still open"),
+        "the refusal names the open visit"
+    );
+}
+
+#[test]
+fn manage_menu_opens_the_identity_card() {
+    let mut h = harness();
+    entity_screen(&mut h);
+    h.type_text("m");
+    h.turns(2);
+    // state is the initial pick; card sits ten rows below it.
+    for _ in 0..10 {
+        h.key(b"\x1b[B");
+        h.turn();
+    }
+    h.type_text("\r");
+    let s = h.turns(3);
+    assert!(s.contains("Identity card — Testor"), "card modal:\n{s}");
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::LoadCard { name }) if name == "Testor"))
+            .is_some(),
+        "the card read fired"
+    );
+    h.store
+        .entity_card
+        .set(Loadable::Ready(ent::EntityCard::from_value(
+            "Testor",
+            &json!({"handle": "testor@127.0.0.1", "entity_id": "entity:testor",
+                    "state": {"state": "asleep"},
+                    "moments": [{"at": "2026-09-27T10:00:00Z", "kind": "born"}]}),
+        )));
+    let s = h.turns(2);
+    assert!(s.contains("testor@127.0.0.1"), "entity id row:\n{s}");
+    assert!(s.contains("Recent moments"), "moments:\n{s}");
+    assert!(s.contains("born"), "moment row:\n{s}");
+}
+
+#[test]
+fn voice_audition_sends_the_unsaved_selection_and_shows_the_file() {
+    let mut h = harness_sized(Size::new(110, 40));
+    entity_screen(&mut h);
+    h.type_text("m");
+    h.turns(2);
+    // state → substrate → voice.
+    h.key(b"\x1b[B");
+    h.turn();
+    h.key(b"\x1b[B");
+    h.turn();
+    h.type_text("\r");
+    let s = h.turns(3);
+    assert!(s.contains("Voice — Testor"), "voice form:\n{s}");
+    assert!(s.contains("Audition"), "audition verb:\n{s}");
+    h.type_text("openai");
+    h.turn();
+    h.key(b"\t");
+    h.turn();
+    h.type_text("gpt-4o-mini-tts");
+    h.turn();
+    // voice → clear checkbox → Audition.
+    for _ in 0..3 {
+        h.key(b"\t");
+        h.turn();
+    }
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::VoiceAudition { .. }))) {
+        Some(Cmd::Entity(EntityCmd::VoiceAudition {
+            name,
+            provider,
+            model,
+            voice,
+        })) => {
+            assert_eq!(name, "Testor");
+            assert_eq!(provider, "openai");
+            assert_eq!(model, "gpt-4o-mini-tts");
+            assert_eq!(voice, None, "blank voice = provider default");
+        }
+        other => panic!("expected VoiceAudition, got {other:?}"),
+    }
+    h.store
+        .entity_audition
+        .set(Loadable::Ready(ent::AuditionOutcome {
+            entity: "Testor".into(),
+            summary: "Synthesized in 1.0s with openai/gpt-4o-mini-tts".into(),
+            path: Some("/tmp/abstractgateway-console/Testor-audition-a1.wav".into()),
+            bytes: 2048,
+            error: None,
+            player: None,
+        }));
+    let s = h.turns(2);
+    assert!(s.contains("audio saved:"), "file path shown:\n{s}");
+    assert!(s.contains("Testor-audition-a1.wav"), "path:\n{s}");
+    assert!(s.contains("no command-line audio player"), "honest no-player line:\n{s}");
 }
 
 #[test]
@@ -2956,7 +3293,7 @@ fn first_run_screens_survive_tight_height() {
     h.goto_screen(3);
     let s = h.turns(3);
     assert!(
-        s.contains("no entities on this gateway"),
+        s.contains("no entities yet — n summons the first one"),
         "entities empty-state renders (not crushed):\n{s}"
     );
 

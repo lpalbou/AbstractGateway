@@ -8,6 +8,8 @@
 /// The About modal (F1 / ?).
 pub mod about;
 pub mod connection;
+pub mod entity_chat;
+pub mod entity_create;
 pub mod entity_manage;
 pub mod models;
 pub mod network;
@@ -1591,6 +1593,9 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     pairs.push(("t", "rotate token"));
                     pairs.push(("d", "delete"));
                     pairs.push(("m", "manage entity"));
+                    pairs.push(("n", "summon entity"));
+                    pairs.push(("c", "talk"));
+                    pairs.push(("s", "spark templates"));
                     pairs.push(("i", "inspect"));
                     pairs.push(("v", "kept data of deleted users"));
                     pairs.push(("r", "refresh"));

@@ -1,4 +1,5 @@
-//! Users & entities: gateway user CRUD (admin) + read-only entity roster.
+//! Users & entities: gateway user CRUD (admin) + the entity roster
+//! (summon `n`, talk `c`, spark templates `s`, manage `m`).
 //!
 //! The token rule: create/rotate responses carry the token EXACTLY
 //! ONCE — it goes to a dedicated modal with a copy affordance and an
@@ -37,6 +38,9 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ctx_manage = ctx.clone();
     let ctx_resv = ctx.clone();
     let ctx_inspect = ctx.clone();
+    let ctx_summon = ctx.clone();
+    let ctx_talk = ctx.clone();
+    let ctx_tpl = ctx.clone();
 
     // Keep the manage snapshot warm for the SELECTED entity: arrowing
     // to a row loads its detail (worker serializes; entity rosters are
@@ -88,6 +92,40 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .style(LayoutStyle::column().gap(1))
         .shortcut(KeyChord::plain(Key::Char('m')), move |_| {
             manage_selected_entity(cx, &ctx_manage);
+        })
+        .shortcut(KeyChord::plain(Key::Char('n')), move |_| {
+            // Summon — the web's "Summon entity" (create is user-level;
+            // Advanced configuration inside is admin-only).
+            if store.conn.with_untracked(ConnPhase::is_connected) {
+                super::entity_create::open_summon_form(cx, &ctx_summon);
+            } else {
+                store.notice.set(Some(
+                    "not connected — probe on the Connection screen first".into(),
+                ));
+            }
+        })
+        .shortcut(KeyChord::plain(Key::Char('c')), move |_| {
+            // Talk first — the web's first row action.
+            if !store.conn.with_untracked(ConnPhase::is_connected) {
+                store.notice.set(Some(
+                    "not connected — probe on the Connection screen first".into(),
+                ));
+            } else if let Some(e) = selected_entity(&ctx_talk) {
+                super::entity_chat::open_talk_modal(cx, &ctx_talk, e.name);
+            } else {
+                store
+                    .notice
+                    .set(Some("no entity selected — nobody to talk to".into()));
+            }
+        })
+        .shortcut(KeyChord::plain(Key::Char('s')), move |_| {
+            if store.conn.with_untracked(ConnPhase::is_connected) {
+                super::entity_create::open_templates_modal(cx, &ctx_tpl);
+            } else {
+                store.notice.set(Some(
+                    "not connected — probe on the Connection screen first".into(),
+                ));
+            }
         })
         .shortcut(KeyChord::plain(Key::Char('v')), move |_| {
             if store.conn.with_untracked(ConnPhase::is_connected) {
@@ -219,7 +257,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .child(
             Block::new()
                 .border(BorderKind::Rounded)
-                .title("Entities (m = manage — creation/summon/visits stay outside this console)")
+                .title("Entities (n = summon · c = talk · m = manage · s = spark templates)")
                 .fill(t.surface)
                 .layout(
                     LayoutStyle::column()
@@ -245,7 +283,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                 || store.tick.get(),
                                 &data,
                                 |d: &Vec<EntityRow>| d.is_empty(),
-                                "no entities on this gateway",
+                                "no entities yet — n summons the first one",
                                 |d| {
                                     entities_table(gcx, &tt, d, ui.entity_sel, move |_| {
                                         // Activation = the `m` manage
