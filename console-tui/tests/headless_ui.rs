@@ -6512,6 +6512,69 @@ fn models_tab_locked_row_shows_the_lock_marker() {
     );
 }
 
+/// The Resources poll re-creates the table region every ~4 s: the keys
+/// must stay live across it (review 2 N1 — the old first-mount-only
+/// autofocus left u/k/w/e/c/m dead after the first poll).
+#[test]
+fn resources_keys_survive_the_host_state_poll() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.goto_screen(7);
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
+    h.turns(2);
+    // Three poll answers land (each a fresh Ready: the region regenerates).
+    for _ in 0..3 {
+        h.store
+            .host_state
+            .set(Loadable::Ready(host_state_fixture()));
+        h.turns(2);
+    }
+    h.type_text("u");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Unload mlx/qwen3-32b"),
+        "u still opens the unload confirm after the poll:\n{s}"
+    );
+}
+
+/// Runtimes: the first `w` fires the lazy runtime-config read; when it
+/// lands the inventory region re-renders — the second `w` must still
+/// reach the screen and open the form (review 2 N2).
+#[test]
+fn runtimes_w_works_after_the_lazy_config_lands() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.goto_screen(4);
+    h.store
+        .runtimes
+        .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
+    h.turns(2);
+    h.drain_cmds();
+    h.type_text("w");
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::LoadRuntimeConfig))
+            .is_some(),
+        "the first w fires the lazy load"
+    );
+    h.store.runtime_config.set(Loadable::Ready(
+        abstractgateway_console::store::RuntimeConfigData::from_value(&json!({
+            "writable": true,
+            "workspace_root": {"value": "/srv/workspace", "source": "stored"},
+            "user_workspace_policies": {"value": "{}", "source": "default"}
+        })),
+    ));
+    h.turns(3);
+    h.type_text("w");
+    let s = h.turns(3);
+    assert!(
+        s.contains("Workspace policy — default:admin"),
+        "the second w opens the policy form:\n{s}"
+    );
+}
+
 /// `u` = danger confirm, defaulting to KEEP; only the explicit danger
 /// choice emits the unload command — with force:false (force is the
 /// 409-gated second confirm's business).

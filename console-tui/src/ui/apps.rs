@@ -123,6 +123,9 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         });
     }
     let ctx_body = ctx.clone();
+    // The panel regenerates on every job-progress tick: the keeper
+    // carries the keyboard across (and stays off a widget the user left).
+    let keeper = super::util::FocusKeeper::new();
     root.child(
         Block::new()
             .border(BorderKind::Rounded)
@@ -141,7 +144,10 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     let conn = store.conn.get();
                     let data = apps.overview.get();
                     let admin = is_admin(&conn);
-                    match &data {
+                    let waiting = match &data {
+                        Loadable::Ready(d) => {
+                            return ready_view(gcx, &ctx_body, &tt, d, admin, &keeper)
+                        }
                         // The web's "This gateway cannot manage apps right now":
                         // the honest failure kind, never a guessed list.
                         Loadable::Failed(e) => Element::new()
@@ -166,8 +172,8 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                             .label("looking for the apps…")
                             .element(&tt)
                             .build(),
-                        Loadable::Ready(d) => ready_view(gcx, &ctx_body, &tt, d, admin),
-                    }
+                    };
+                    keeper.anchor(waiting)
                 },
             ))
             .element(t)
@@ -176,7 +182,14 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     .build()
 }
 
-fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &AppsOverview, admin: bool) -> View {
+fn ready_view(
+    cx: Scope,
+    ctx: &Ctx,
+    t: &TokenSet,
+    d: &AppsOverview,
+    admin: bool,
+    keeper: &super::util::FocusKeeper,
+) -> View {
     let apps = ctx.store.apps;
     // Tracked: job progress and notes re-render the panel.
     let jobs = apps.jobs.get();
@@ -227,14 +240,15 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &AppsOverview, admin: bool)
         ]));
     }
     if d.apps.is_empty() {
-        return col
-            .child(line(vec![span(
+        return keeper.anchor(
+            col.child(line(vec![span(
                 "∅ this gateway lists no apps",
                 t.text_muted,
             )]))
-            .build();
+            .build(),
+        );
     }
-    col = col.child(apps_table(cx, ctx, t, d, admin, &job_of));
+    col = col.child(apps_table(cx, ctx, t, d, admin, &job_of, keeper));
     if let Some(row) = d.apps.get(apps.sel.get()) {
         let job = job_of(&app_key(&row.id), row.active_job.as_ref());
         let tjob = job_of(
@@ -334,6 +348,7 @@ fn apps_table(
     d: &AppsOverview,
     admin: bool,
     job_of: &dyn Fn(&str, Option<&AppJob>) -> Option<AppJob>,
+    keeper: &super::util::FocusKeeper,
 ) -> View {
     let vw = abstracttui::app::use_viewport(cx).get().w;
     let mut rows: Vec<Vec<String>> = d
@@ -383,14 +398,14 @@ fn apps_table(
     let cols = widths::columns(&rules, &mut rows, vw - widths::BLOCK_CHROME - 2);
     let visible = (d.apps.len() as i32 + 1).clamp(2, 8);
     let ctx_act = ctx.clone();
-    Table::new(cols)
-        .rows(rows)
-        .selection(ctx.store.apps.sel)
-        .on_activate(move |_| run_key(cx, &ctx_act, None))
-        .layout(LayoutStyle::default().h(visible).shrink(0.0))
-        .element(cx, t)
-        .autofocus()
-        .build()
+    keeper.wire(
+        Table::new(cols)
+            .rows(rows)
+            .selection(ctx.store.apps.sel)
+            .on_activate(move |_| run_key(cx, &ctx_act, None))
+            .layout(LayoutStyle::default().h(visible).shrink(0.0))
+            .element(cx, t),
+    )
 }
 
 fn note_lines(mut col: Element, t: &TokenSet, note: &AppNote, indent: usize) -> Element {

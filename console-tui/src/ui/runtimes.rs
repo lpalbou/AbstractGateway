@@ -303,7 +303,10 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ctx_inspect = ctx.clone();
     let ctx_forget = ctx.clone();
     let ctx_open_row = ctx.clone();
-    let autofocus_armed = std::rc::Rc::new(std::cell::Cell::new(false));
+    // The inventory region regenerates when data lands (the runtimes
+    // read, the lazy runtime-config read behind `w`): the keeper carries
+    // the keyboard from one table instance to the next.
+    let keeper = super::util::FocusKeeper::new();
 
     Element::new()
         // gap 0: the bordered blocks separate themselves; at 80x24 the
@@ -378,7 +381,8 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                             ),
                             _ => None,
                         };
-                        loadable_view(
+                        super::util::loadable_view_kept(
+                            &keeper,
                             &tt,
                             &store.conn.get(),
                             || store.tick.get(),
@@ -386,12 +390,7 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                             |d: &Vec<RuntimeRow>| d.is_empty(),
                             "no runtimes reported",
                             |d| {
-                                // Arm autofocus once per page life.
-                                let first = !autofocus_armed.get();
-                                if first {
-                                    autofocus_armed.set(true);
-                                }
-                                table(gcx, &tt, d, ui.runtime_sel, policy_keys.clone(), first, move |idx| choose(&ctx_choose, idx))
+                                table(gcx, &tt, d, ui.runtime_sel, policy_keys.clone(), &keeper, move |idx| choose(&ctx_choose, idx))
                             },
                         )
                     },
@@ -3676,7 +3675,7 @@ fn table(
     data: &[RuntimeRow],
     sel: Signal<usize>,
     policy_keys: Option<std::collections::HashSet<String>>,
-    autofocus: bool,
+    keeper: &super::util::FocusKeeper,
     on_choose: impl FnMut(usize) + Clone + 'static,
 ) -> View {
     let vw = abstracttui::app::use_viewport(cx).get().w;
@@ -3767,15 +3766,10 @@ fn table(
         .on_select(on_choose.clone())
         .on_activate(on_choose)
         .layout(LayoutStyle::default().grow(1.0));
-    let el = el.element(cx, t);
-    // FIRST MOUNT ONLY (design adversary BLOCKER-1): `.autofocus()` is
-    // re-armed by every Dyn regeneration — a store write while a modal is
-    // open would drag focus back to this table mid-keystroke.
-    if autofocus {
-        el.autofocus().build()
-    } else {
-        el.build()
-    }
+    // The keeper, not a bare `.autofocus()`: a regeneration hands the
+    // keyboard back only to a table that held it (design adversary
+    // BLOCKER-1: never drag focus back from where the user moved it).
+    keeper.wire(el.element(cx, t))
 }
 
 /// The selected run + the scope its rows were loaded under (actions

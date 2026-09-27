@@ -14,7 +14,7 @@
 use abstracttui::prelude::*;
 use abstracttui::widgets::{Table, TextInput};
 
-use super::util::{field, line, loadable_view, span, span_bold};
+use super::util::{field, line, span, span_bold};
 use super::widths;
 use super::{open_form, Ctx};
 use crate::store::{WorkflowRow, WorkflowsData};
@@ -96,14 +96,15 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         .min_h(6)
                         .padding(Edges::all(1)),
                 )
-                .child(dyn_view_scoped(
-                    LayoutStyle::default().grow(1.0),
+                .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), {
+                    let keeper = super::util::FocusKeeper::new();
                     move |gcx| {
                         let conn = store.conn.get();
                         let data = store.workflows.get();
                         let sel = ui.workflow_sel;
                         let _ = &ctx_table;
-                        loadable_view(
+                        super::util::loadable_view_kept(
+                            &keeper,
                             &tt,
                             &conn,
                             || store.tick.get(),
@@ -111,7 +112,8 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                             |d: &WorkflowsData| d.rows.is_empty() && d.skipped.is_empty(),
                             "no workflows registered on this gateway",
                             |d: &WorkflowsData| {
-                                let mut children: Vec<View> = vec![master_table(gcx, &tt, d, sel)];
+                                let mut children: Vec<View> =
+                                    vec![master_table(gcx, &tt, d, sel, &keeper)];
                                 if let Some(row) = d.rows.get(sel.get()) {
                                     children.push(detail_block(
                                         gcx,
@@ -132,8 +134,8 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                 col.build()
                             },
                         )
-                    },
-                ))
+                    }
+                }))
                 .element(t)
                 .build(),
         )
@@ -320,7 +322,13 @@ fn open_import(cx: Scope, ctx: &Ctx) {
     });
 }
 
-fn master_table(cx: Scope, t: &TokenSet, d: &WorkflowsData, sel: Signal<usize>) -> View {
+fn master_table(
+    cx: Scope,
+    t: &TokenSet,
+    d: &WorkflowsData,
+    sel: Signal<usize>,
+    keeper: &super::util::FocusKeeper,
+) -> View {
     let vw = abstracttui::app::use_viewport(cx).get().w;
     let wide = vw >= 100;
     let default_id = d.default_bundle_id.clone();
@@ -381,13 +389,13 @@ fn master_table(cx: Scope, t: &TokenSet, d: &WorkflowsData, sel: Signal<usize>) 
     rules.push(widths::ColRule::head("status", 10));
 
     let cols = widths::columns(&rules, &mut rows, vw - widths::BLOCK_CHROME);
-    Table::new(cols)
-        .rows(rows)
-        .selection(sel)
-        .layout(LayoutStyle::default().grow(1.0))
-        .element(cx, t)
-        .autofocus()
-        .build()
+    keeper.wire(
+        Table::new(cols)
+            .rows(rows)
+            .selection(sel)
+            .layout(LayoutStyle::default().grow(1.0))
+            .element(cx, t),
+    )
 }
 
 /// The gateway default agent workflows (interface, workflow_id) that run

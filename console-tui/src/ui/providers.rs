@@ -25,9 +25,7 @@ use abstracttui::prelude::*;
 use abstracttui::widgets::Table;
 use serde_json::{json, Value};
 
-use super::util::{
-    ellipsize, error_panel, error_panel_hint, field, line, loadable_view, span, span_bold,
-};
+use super::util::{ellipsize, error_panel, error_panel_hint, field, line, span, span_bold};
 use super::widths;
 use super::{open_form, Ctx};
 use crate::store::{ConnPhase, Loadable, Profile, ProfilesData, ProvidersData};
@@ -142,10 +140,12 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 )
                 .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), {
                     let ctx_act = ctx.clone();
+                    let keeper = super::util::FocusKeeper::new();
                     move |gcx| {
                         let data = store.profiles.get();
                         let ctx_act = ctx_act.clone();
-                        loadable_view(
+                        super::util::loadable_view_kept(
+                            &keeper,
                             &tt,
                             &store.conn.get(),
                             || store.tick.get(),
@@ -153,7 +153,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                             |d: &ProfilesData| d.profiles.is_empty(),
                             "no providers yet — press a to add a connection",
                             |d| {
-                                unified_table(gcx, &tt, d, ui.profile_sel, move |_| {
+                                unified_table(gcx, &tt, d, ui.profile_sel, &keeper, move |_| {
                                     // Activation (Enter / Space / double-
                                     // click) = the `e` path: Edit for
                                     // managed rows, Override for
@@ -236,6 +236,7 @@ fn unified_table(
     t: &TokenSet,
     data: &ProfilesData,
     sel: Signal<usize>,
+    keeper: &super::util::FocusKeeper,
     on_activate: impl FnMut(usize) + 'static,
 ) -> View {
     // Width-aware columns: which columns APPEAR is a breakpoint decision
@@ -303,14 +304,14 @@ fn unified_table(
     rules.push(widths::ColRule::head("origin", 8));
     // The screen's bordered block spends one cell on each side.
     let cols = widths::columns(&rules, &mut rows, vw - widths::BLOCK_CHROME);
-    Table::new(cols)
-        .rows(rows)
-        .selection(sel)
-        .on_activate(on_activate)
-        .layout(LayoutStyle::default().grow(1.0))
-        .element(cx, t)
-        .autofocus()
-        .build()
+    keeper.wire(
+        Table::new(cols)
+            .rows(rows)
+            .selection(sel)
+            .on_activate(on_activate)
+            .layout(LayoutStyle::default().grow(1.0))
+            .element(cx, t),
+    )
 }
 
 /// One word for where a row lives: managed rows show their scope

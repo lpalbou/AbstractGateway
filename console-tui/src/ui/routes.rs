@@ -11,7 +11,7 @@ use abstracttui::prelude::*;
 use abstracttui::widgets::Table;
 use serde_json::{json, Value};
 
-use super::util::{field, line, loadable_view, or_dash, span, span_bold};
+use super::util::{field, line, or_dash, span, span_bold};
 use super::widths;
 use super::widths::BLOCK_CHROME;
 use super::Ctx;
@@ -289,10 +289,12 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 }))
                 .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), {
                     let ctx_act = ctx.clone();
+                    let keeper = super::util::FocusKeeper::new();
                     move |gcx| {
                         let data = store.routes.get();
                         let ctx_act = ctx_act.clone();
-                        loadable_view(
+                        super::util::loadable_view_kept(
+                            &keeper,
                             &tt,
                             &store.conn.get(),
                             || store.tick.get(),
@@ -303,7 +305,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                 let weights = store.availability.with(|a| {
                                     a.ready().map(|a| a.by_route.clone()).unwrap_or_default()
                                 });
-                                routes_table(gcx, &tt, d, &weights, ui.route_sel, move |_| {
+                                routes_table(gcx, &tt, d, &weights, ui.route_sel, &keeper, move |_| {
                                     // Activation = the Enter/e path, one
                                     // body (per-row editability refusals
                                     // included). The screen-level Enter
@@ -406,6 +408,7 @@ fn routes_table(
     data: &RoutesData,
     weights: &std::collections::HashMap<String, WeightsRow>,
     sel: Signal<usize>,
+    keeper: &super::util::FocusKeeper,
     on_activate: impl FnMut(usize) + 'static,
 ) -> View {
     // Width-aware columns (0900 class): which columns APPEAR is a
@@ -498,14 +501,14 @@ fn routes_table(
     // mounts bare in PageHost's page region and passes the viewport
     // straight through — one policy, per-screen chrome.
     let cols = widths::columns(&rules, &mut rows, w - BLOCK_CHROME);
-    Table::new(cols)
-        .rows(rows)
-        .selection(sel)
-        .on_activate(on_activate)
-        .layout(LayoutStyle::default().grow(1.0))
-        .element(cx, t)
-        .autofocus()
-        .build()
+    keeper.wire(
+        Table::new(cols)
+            .rows(rows)
+            .selection(sel)
+            .on_activate(on_activate)
+            .layout(LayoutStyle::default().grow(1.0))
+            .element(cx, t),
+    )
 }
 
 fn selected_route(ctx: &Ctx) -> Option<RouteRow> {
