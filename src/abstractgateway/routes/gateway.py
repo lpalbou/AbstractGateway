@@ -24595,7 +24595,7 @@ class _GatewayApplyRecommendedDefaultsRequest(BaseModel):
 
     only: Optional[List[str]] = Field(
         default=None,
-        description="Limit to some recommendations: text, voice, image. Unset means all three.",
+        description="Limit to some recommendations, by AbstractCore's selector words (text, voice, image, video). Unset means every recommended route.",
     )
     force: bool = Field(default=False, description="Also replace routes configured differently.")
     dry_run: bool = Field(default=False, description="Report what would change and write nothing.")

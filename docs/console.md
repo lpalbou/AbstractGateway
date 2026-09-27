@@ -113,7 +113,7 @@ downloads are the gateway's own jobs (see [Model downloads](model-downloads.md))
 
 - The card header: the model's name, organisation, parameter count and
   licence, its capabilities (Text, Thinking, Tools, Vision, Audio, Embedding,
-  Voice, Image) and a **Starter** badge for the models of the recommended
+  Voice, Image, Video) and a **Starter** badge for the models of the recommended
   starter set.
 - The card body: one row per downloadable build (artifact) of that model: the
   provider (MLX, Ollama, LM Studio, Hugging Face, ...), the artifact id (long
