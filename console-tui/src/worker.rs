@@ -481,11 +481,13 @@ pub enum Cmd {
     LoadCandidates {
         name: String,
     },
-    /// Promote (with optional corroboration) or reject one candidate.
+    /// Promote (with the corroborating record ids) or reject one candidate.
     CandidateAct {
         name: String,
         record_id: String,
         promote: bool,
+        /// Promote only (ignored by reject): the records that corroborate it.
+        corroborating_ids: Vec<String>,
         reason: String,
     },
     /// Entity parity: summon, templates, card, talk, voice audition.
@@ -2147,7 +2149,7 @@ fn handle(
             wake.post(move || s.sandbox.set(Loadable::Loading));
             let started = std::time::Instant::now();
             let out = with_busy(store, wake, &label, || {
-                require_client(client)?.sandbox_text(&request.0)
+                require_client(client)?.sandbox_generate(&request.0)
             });
             let ms = started.elapsed().as_millis() as u64;
             wake.post(move || crate::ui::sandbox::publish_text(&s, &provider, &model, out, ms));
@@ -2259,14 +2261,9 @@ fn handle(
                         }
                         c.run_voice_tts(&voice_run_id, &body)
                     } else {
-                        c.sandbox_generate_with_controls(
-                            &key,
-                            &provider,
-                            &model,
-                            "Reply with the single word: ready.",
-                            16,
-                            &controls,
-                        )
+                        c.sandbox_generate(&crate::api::sandbox_docs::route_test_body(
+                            &key, &provider, &model, &controls,
+                        ))
                     }
                 },
             );
@@ -2680,17 +2677,14 @@ fn handle(
             name,
             record_id,
             promote,
+            corroborating_ids,
             reason,
         } => {
             let verb = if promote { "promote" } else { "reject" };
             let short = suffix_chars(&record_id, 8);
             let action = format!("{verb} candidate …{short} on '{name}'");
             let (write, verify) = with_busy(store, wake, &action, || {
-                let body = if promote {
-                    serde_json::json!({ "corroborating_ids": [], "reason": reason })
-                } else {
-                    serde_json::json!({ "reason": reason })
-                };
+                let body = crate::store::candidate_act_body(promote, &corroborating_ids, &reason);
                 let write = require_client(client)
                     .and_then(|c| c.entity_candidate_act(&name, &record_id, promote, &body));
                 let verify = require_client(client).and_then(|c| c.entity_candidates(&name));

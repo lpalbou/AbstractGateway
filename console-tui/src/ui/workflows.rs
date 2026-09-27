@@ -17,9 +17,14 @@ use abstracttui::widgets::{Table, TextInput};
 use super::util::{field, line, loadable_view, span, span_bold};
 use super::widths;
 use super::{open_form, Ctx};
-use crate::store::{ConnPhase, WorkflowRow, WorkflowsData};
+use crate::store::{WorkflowRow, WorkflowsData};
 use crate::worker::operator::OpCmd;
 use crate::worker::Cmd;
+
+/// The footer verbs of this screen that only an admin may use: delete
+/// (one version / every version), import and reload. Listing and export
+/// stay open to every principal — the web keeps the tab for everyone.
+pub const ADMIN_KEYS: &[&str] = &["d", "D", "i", "L"];
 
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
@@ -185,6 +190,11 @@ fn export_selected(ctx: &Ctx) {
 /// Delete confirms first (web parity: "This removes … from disk. There is
 /// no undo."), defaulting to keep.
 fn delete_selected(cx: Scope, ctx: &Ctx, whole_bundle: bool) {
+    // `DELETE /bundles/{id}` is admin-only (the handler's admin check);
+    // the web renders Delete for admins only.
+    if !super::util::admin_gate(&ctx.store, "deleting a workflow") {
+        return;
+    }
     let Some(row) = selected_row(ctx) else {
         ctx.store
             .notice
@@ -221,19 +231,10 @@ fn delete_selected(cx: Scope, ctx: &Ctx, whole_bundle: bool) {
     );
 }
 
-fn is_admin(ctx: &Ctx) -> Result<(), &'static str> {
-    ctx.store.conn.with_untracked(|c| match c {
-        ConnPhase::Connected(id) if id.admin => Ok(()),
-        ConnPhase::Connected(_) => Err("importing and reloading workflows needs an admin token"),
-        _ => Err("not connected — probe on the Connection screen first"),
-    })
-}
-
 /// `L`: re-read the bundles folder on the gateway (POST /bundles/reload),
 /// then re-list — what "fix the cause and reload" below asks for.
 fn reload(ctx: &Ctx) {
-    if let Err(why) = is_admin(ctx) {
-        ctx.store.notice.set(Some(why.into()));
+    if !super::util::admin_gate(&ctx.store, "reloading workflows") {
         return;
     }
     ctx.send(Cmd::Operator(OpCmd::ReloadWorkflows {
@@ -245,8 +246,7 @@ fn reload(ctx: &Ctx) {
 /// elsewhere than the gateway — the bytes are uploaded, like the web's
 /// file picker). overwrite=false, reload=true: the web's exact request.
 fn open_import(cx: Scope, ctx: &Ctx) {
-    if let Err(why) = is_admin(ctx) {
-        ctx.store.notice.set(Some(why.into()));
+    if !super::util::admin_gate(&ctx.store, "importing a workflow") {
         return;
     }
     let ctx2 = ctx.clone();

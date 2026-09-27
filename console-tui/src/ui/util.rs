@@ -179,6 +179,36 @@ pub fn clamp_selection(
     });
 }
 
+/// The ONE admin gate for a verb (key press, menu pick, form save): true
+/// when the caller may send it; otherwise the notice lane says why
+/// ([`crate::store::ConnPhase::admin_refusal`]) and nothing is sent.
+pub fn admin_gate(store: &crate::store::Store, what: &str) -> bool {
+    match store.conn.with_untracked(|c| c.admin_refusal(what)) {
+        Some(why) => {
+            store.notice.set(Some(why));
+            false
+        }
+        None => true,
+    }
+}
+
+/// Footer pairs for a screen: a principal known NOT to be an admin does
+/// not see the verbs listed in `admin_keys` (the web console hides the
+/// same controls; pressing one still answers with the reason).
+pub fn visible_hints<'a>(
+    pairs: Vec<(&'a str, &'a str)>,
+    admin_keys: &[&str],
+    non_admin: bool,
+) -> Vec<(&'a str, &'a str)> {
+    if !non_admin {
+        return pairs;
+    }
+    pairs
+        .into_iter()
+        .filter(|(k, _)| !admin_keys.contains(k))
+        .collect()
+}
+
 /// Status badge for configured / covered / default / error states.
 pub fn badge(t: &TokenSet, label: &str, tone: Tone) -> View {
     Badge::new(label).tone(tone).element(t).build()

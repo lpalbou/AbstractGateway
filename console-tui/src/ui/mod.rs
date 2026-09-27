@@ -524,15 +524,22 @@ impl Ctx {
                 }
             }
             3 => {
-                s.users.set(Loadable::Loading);
+                // The users registry is admin-only (`/admin/users`): a
+                // non-admin is told so on screen, never sent for a 403.
+                if !s.conn.with_untracked(ConnPhase::is_known_non_admin) {
+                    s.users.set(Loadable::Loading);
+                    self.send(Cmd::LoadUsers);
+                }
                 s.entities.set(Loadable::Loading);
                 // The inspector's detail must honor `r`'s "refreshing
                 // live data" promise too (F17): NotAsked here → the
                 // selection effect reloads it when fresh entities land.
                 s.entity_detail.set(Loadable::NotAsked);
-                self.send(Cmd::LoadUsers);
                 self.send(Cmd::LoadEntities);
             }
+            // The whole Runtimes screen is admin-only (`/admin/runtimes`;
+            // the web hides the tab): nothing to load for a non-admin.
+            4 if s.conn.with_untracked(ConnPhase::is_known_non_admin) => {}
             4 => {
                 // ONLY the inventory loads here (operator directive
                 // 2026-07-26: no eager runs/sessions). The detail slots
@@ -1283,9 +1290,11 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
                 }
                 2 => matches!(store.routes.get(), Loadable::NotAsked),
                 3 => {
-                    matches!(store.users.get(), Loadable::NotAsked)
+                    (matches!(store.users.get(), Loadable::NotAsked)
+                        && !store.conn.with(ConnPhase::is_known_non_admin))
                         || matches!(store.entities.get(), Loadable::NotAsked)
                 }
+                4 if store.conn.with(ConnPhase::is_known_non_admin) => false,
                 4 => {
                     // ONLY the inventory: runs / data_homes /
                     // runtime_config are owned by their panel effects
@@ -1704,6 +1713,10 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
             let t = theme.get().tokens;
             let wizard = ui.wizard.get();
             let screen = ui.screen.get();
+            // A principal known NOT to be an admin does not see the admin
+            // verbs (the web hides the same controls); pressing one still
+            // answers with the reason.
+            let non_admin = store.conn.with(ConnPhase::is_known_non_admin);
             let mut pairs: Vec<(&str, &str)> = Vec::new();
             // Universal pairs FIRST (adversary round-3): the hint row
             // truncates right-edge-first, and Ctrl+C used to sit last —
@@ -1758,6 +1771,8 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     pairs.push(("w", "my workspace policy"));
                     pairs.push(("r", "refresh"));
                 }
+                // The whole Runtimes screen is admin-only: no verbs.
+                4 if non_admin => {}
                 4 => {
                     pairs.push(("Enter", "inspect runtime"));
                     pairs.push(("f", "filter"));
@@ -1817,14 +1832,24 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 }
                 _ => {}
             }
+            let admin_keys: &[&str] = match screen {
+                SCREEN_ROUTES => routes::ADMIN_KEYS,
+                SCREEN_USERS => users::ADMIN_KEYS,
+                SCREEN_WORKFLOWS => workflows::ADMIN_KEYS,
+                SCREEN_MODELS => models::ADMIN_KEYS,
+                _ => &[],
+            };
+            let mut pairs = util::visible_hints(pairs, admin_keys, non_admin);
             // The setup guide's chord LAST: every screen has it, so it
             // yields to the screen's own verbs when the row truncates
-            // (the Setup step and the goal line teach it too).
-            pairs.push(if wizard {
-                ("Ctrl+G", "leave/skip guide")
-            } else {
-                ("Ctrl+G", "setup guide")
-            });
+            // (the Setup step and the goal line teach it too). The guide
+            // is an admin surface (its writes are admin routes; the web
+            // hides "Setup guide" for a non-admin).
+            if wizard {
+                pairs.push(("Ctrl+G", "leave/skip guide"));
+            } else if !non_admin {
+                pairs.push(("Ctrl+G", "setup guide"));
+            }
             // LAST: the row truncates right-edge-first, so the host panel
             // key shows wherever the screen's own verbs leave room.
             pairs.push((host::OPEN_KEY_LABEL, "gateway host"));

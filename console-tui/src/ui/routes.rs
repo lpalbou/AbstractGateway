@@ -19,6 +19,12 @@ use crate::api::firstrun::{can_download_all, GroupStatus};
 use crate::store::{ConnPhase, Loadable, RouteRow, RoutesData, WeightsRow};
 use crate::worker::Cmd;
 
+/// The footer verbs of this screen that only an admin may use (the
+/// gateway's admin routes: model downloads, their cancel, and
+/// apply-recommended). Editing and clearing a route stay open to every
+/// principal, like the web's Configure / Clear.
+pub const ADMIN_KEYS: &[&str] = &["w", "a", "D", "C"];
+
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
@@ -547,6 +553,11 @@ fn clear_selected(cx: Scope, ctx: &Ctx) {
 /// gateway kept is named in the journal line, from the server's own
 /// report — this console never re-derives that decision.
 fn apply_recommended(cx: Scope, ctx: &Ctx) {
+    // Admin-only server-side (apply-recommended rewrites the HOST-WIDE
+    // store); the web hides its button for a non-admin.
+    if !super::util::admin_gate(&ctx.store, "applying the recommended routes") {
+        return;
+    }
     let ctx_keep = ctx.clone();
     let ctx_force = ctx.clone();
     let prompt = abstracttui::app::ChoicePrompt::new(
@@ -731,10 +742,7 @@ fn open_plan(cx: Scope, ctx: &Ctx) {
 /// under the web's rule (some recommended model absent, no group
 /// running), always after a confirm that names what will be fetched.
 fn download_all(cx: Scope, ctx: &Ctx) {
-    if !ctx.store.conn.with_untracked(ConnPhase::is_connected) {
-        ctx.store
-            .notice
-            .set(Some("not connected — Download all runs on the gateway host".into()));
+    if !super::util::admin_gate(&ctx.store, "Download all") {
         return;
     }
     let plan = ctx
@@ -780,22 +788,15 @@ fn download_all(cx: Scope, ctx: &Ctx) {
 
 /// `C` — cancel the running Download all (admin; every child stops).
 fn cancel_download_all(cx: Scope, ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "cancelling a download") {
+        return;
+    }
     let Some(g) = ctx.store.download_group.get_untracked().filter(GroupStatus::running) else {
         ctx.store
             .notice
             .set(Some("no Download all is running — nothing to cancel".into()));
         return;
     };
-    let admin = ctx.store.conn.with_untracked(|c| match c {
-        ConnPhase::Connected(id) => id.admin,
-        _ => false,
-    });
-    if !admin {
-        ctx.store
-            .notice
-            .set(Some("cancelling a download is admin-only on the gateway".into()));
-        return;
-    }
     let ctx2 = ctx.clone();
     let job = g.job.clone();
     super::confirm_danger(
@@ -817,6 +818,11 @@ fn cancel_download_all(cx: Scope, ctx: &Ctx) {
 /// `unknown` answer, where guessing would spend the host's disk on a
 /// model that may already be there.
 fn download_selected(cx: Scope, ctx: &Ctx) {
+    // `POST /models/download` spends the shared host's disk: admin-only
+    // on the gateway (security/authorization.py, resource "models").
+    if !super::util::admin_gate(&ctx.store, "downloading model weights") {
+        return;
+    }
     let Some(row) = selected_route(ctx) else {
         ctx.store
             .notice
@@ -1067,6 +1073,53 @@ fn picked_pair(
 /// The voice picker WRITES INTO the options JSON — the single source of
 /// truth the save path reads, so what the field shows is exactly what
 /// will be stored. ix 0 = provider default (removes the key).
+/// The options text the editor showed at open (its prefill) — what a save
+/// compares against to know whether the operator edited the options.
+fn shown_options(row: &RouteRow) -> String {
+    row.options.as_ref().map(|o| o.to_string()).unwrap_or_default()
+}
+
+/// The route save body, the web's exact rule (console.py saveDefault):
+/// THE SAVE SENDS WHAT THE EDITOR OWNS AND THE OPERATOR CHANGED.
+/// `{provider, model}` always; `reasoning` on the text route only, always
+/// explicit ("" clears it); `base_url` and `options` ONLY when they differ
+/// from what the editor showed — both are prefilled from a grid read that
+/// may be minutes old, so naming them unconditionally would roll back a
+/// change made meanwhile (e.g. `abstractcore config`). A field the operator
+/// emptied differs from what was shown, so it IS sent ("" / `{}`), which is
+/// how an override gets cleared. Options text is validated whenever there
+/// is some, edited or not. `base_url` and `options` are (now, shown).
+pub fn route_save_body(
+    provider: &str,
+    model: &str,
+    reasoning: Option<&str>,
+    base_url: (&str, &str),
+    options: (&str, &str),
+) -> Result<Value, String> {
+    let mut body = json!({ "provider": provider, "model": model });
+    if let Some(r) = reasoning {
+        body["reasoning"] = Value::String(r.to_string());
+    }
+    let (url_now, url_shown) = (base_url.0.trim(), base_url.1.trim());
+    if url_now != url_shown {
+        body["base_url"] = Value::String(url_now.to_string());
+    }
+    let (opts_now, opts_shown) = (options.0.trim(), options.1.trim());
+    let parsed = if opts_now.is_empty() {
+        json!({})
+    } else {
+        match serde_json::from_str::<Value>(opts_now) {
+            Ok(v) if v.is_object() => v,
+            Ok(_) => return Err("options must be a JSON object".into()),
+            Err(e) => return Err(format!("options JSON does not parse: {e}")),
+        }
+    };
+    if opts_now != opts_shown {
+        body["options"] = parsed;
+    }
+    Ok(body)
+}
+
 fn merge_voice_into_options(
     options_json: Signal<String>,
     form_error: Signal<Option<String>>,
@@ -1902,58 +1955,25 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                         ));
                                         return;
                                     };
-                                    let opts_text = options_json.get_untracked();
-                                    let opts_text = opts_text.trim();
-                                    let options: Option<Value> = if opts_text.is_empty() {
-                                        None
-                                    } else {
-                                        match serde_json::from_str::<Value>(opts_text) {
-                                            Ok(v) if v.is_object() => Some(v),
-                                            Ok(_) => {
-                                                form_error.set(Some(
-                                                    "options must be a JSON object".into(),
-                                                ));
-                                                return;
-                                            }
-                                            Err(e) => {
-                                                form_error.set(Some(format!(
-                                                    "options JSON does not parse: {e}"
-                                                )));
-                                                return;
-                                            }
+                                    let reasoning = is_text.then(|| {
+                                        crate::store::REASONING_LEVELS
+                                            .get(reasoning_ix.get_untracked().wrapping_sub(1))
+                                            .map(|s| (*s).to_string())
+                                            .unwrap_or_default()
+                                    });
+                                    let body = match route_save_body(
+                                        &provider,
+                                        &model,
+                                        reasoning.as_deref(),
+                                        (&base_url.get_untracked(), row3.base_url.as_deref().unwrap_or("")),
+                                        (&options_json.get_untracked(), &shown_options(&row3)),
+                                    ) {
+                                        Ok(body) => body,
+                                        Err(e) => {
+                                            form_error.set(Some(e));
+                                            return;
                                         }
                                     };
-                                    // THE SAVE SENDS WHAT THIS FORM
-                                    // OWNS, AND NOTHING ELSE — and it
-                                    // sends every owned field
-                                    // EXPLICITLY, "" included. The
-                                    // write path preserves fields it is
-                                    // not given (core_config.py's
-                                    // field-preserving merge), so an
-                                    // OMITTED empty base URL / options
-                                    // would silently restore the stored
-                                    // value the operator just cleared.
-                                    // Fields with no control here
-                                    // (reasoning on a non-text route)
-                                    // stay unnamed on purpose.
-                                    let mut body = json!({
-                                        "provider": provider,
-                                        "model": model,
-                                        "base_url": base_url.get_untracked().trim(),
-                                        "options": options.unwrap_or_else(|| json!({})),
-                                    });
-                                    if is_text {
-                                        body["reasoning"] = Value::String(
-                                            crate::store::REASONING_LEVELS
-                                                .get(
-                                                    reasoning_ix
-                                                        .get_untracked()
-                                                        .wrapping_sub(1),
-                                                )
-                                                .map(|s| (*s).to_string())
-                                                .unwrap_or_default(),
-                                        );
-                                    }
                                     form_error.set(None);
                                     in_flight.set(true);
                                     ctx_s.send(Cmd::PutRoute {
@@ -2100,5 +2120,27 @@ mod speculation_tests {
                 .unwrap(),
             input
         );
+    }
+
+    /// The route save rule, the web's saveDefault: untouched base URL /
+    /// options are NOT named; edited or emptied ones ARE ("" / {}); the
+    /// text route's reasoning is always explicit; bad options refuse.
+    #[test]
+    fn route_save_body_sends_what_the_operator_changed() {
+        let opts = r#"{"temperature":0.7}"#;
+        let untouched = route_save_body("lmstudio", "m", None, ("http://h/v1", "http://h/v1"), (opts, opts)).unwrap();
+        assert_eq!(untouched, json!({"provider": "lmstudio", "model": "m"}));
+        let cleared = route_save_body("lmstudio", "m", None, ("", "http://h/v1"), ("", opts)).unwrap();
+        assert_eq!(cleared["base_url"], "", "an emptied base URL is sent empty");
+        assert_eq!(cleared["options"], json!({}), "emptied options are sent as {{}}");
+        let edited = route_save_body("p", "m", Some(""), (" http://x ", ""), (r#"{"a":1}"#, "")).unwrap();
+        assert_eq!(edited["base_url"], "http://x", "trimmed");
+        assert_eq!(edited["options"], json!({"a": 1}));
+        assert_eq!(edited["reasoning"], "", "text route: explicit, \"\" clears");
+        let with_reasoning = route_save_body("p", "m", Some("high"), ("", ""), ("", "")).unwrap();
+        assert_eq!(with_reasoning, json!({"provider": "p", "model": "m", "reasoning": "high"}));
+        // Validated even when untouched: a stored typo never rides along.
+        assert!(route_save_body("p", "m", None, ("", ""), ("[1]", "[1]")).is_err());
+        assert!(route_save_body("p", "m", None, ("", ""), ("{nope", "")).is_err());
     }
 }

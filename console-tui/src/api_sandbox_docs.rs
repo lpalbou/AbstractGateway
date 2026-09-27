@@ -21,10 +21,12 @@ use serde_json::Value;
 use super::{err_from_ureq, urlencode, ApiError, ApiErrorKind, ApiResult, GatewayClient};
 
 impl GatewayClient {
-    /// Text sandbox turn — the body is built by the caller
-    /// (`ui::sandbox::text_body`) so the exact web payload is unit-tested
-    /// without a socket. Slow lane: a real model call.
-    pub fn sandbox_text(&self, body: &Value) -> ApiResult<Value> {
+    /// `POST /sandbox/generate` — the ONE client of this route. The body
+    /// is built by the caller (`ui::sandbox::text_body` for the Review
+    /// sandbox, [`route_test_body`] for the Routes Test) so each exact web
+    /// payload is unit-tested without a socket. Slow lane: a real model
+    /// call.
+    pub fn sandbox_generate(&self, body: &Value) -> ApiResult<Value> {
         self.send("POST", "/sandbox/generate", body, true)
     }
 
@@ -127,6 +129,29 @@ impl GatewayClient {
     }
 }
 
+/// The Routes editor's Test probe for a non-voice route, exactly the
+/// web's (console.py testDefault): `{capability, provider, model, prompt}`
+/// plus `speculation` / `reasoning` when the operator chose them — and NO
+/// `max_tokens`: the prompt bounds the probe. A cap truncated models that
+/// emit a preamble or reasoning tokens into a false "(empty response)".
+pub fn route_test_body(capability: &str, provider: &str, model: &str, controls: &Value) -> Value {
+    let mut body = serde_json::json!({
+        "capability": capability,
+        "provider": provider,
+        "model": model,
+        "prompt": ROUTE_TEST_PROMPT,
+    });
+    for key in ["speculation", "reasoning"] {
+        if let Some(value) = controls.get(key).filter(|v| !v.is_null()) {
+            body[key] = value.clone();
+        }
+    }
+    body
+}
+
+/// The web's probe prompt, verbatim.
+pub const ROUTE_TEST_PROMPT: &str = "Reply with the single word: ready.";
+
 /// A multipart/form-data body (RFC 7578) for the attachment upload. The
 /// boundary is checked against the payload so it can never collide.
 pub fn multipart_body(
@@ -178,7 +203,34 @@ pub fn multipart_body(
 
 #[cfg(test)]
 mod tests {
-    use super::multipart_body;
+    use super::{multipart_body, route_test_body};
+    use serde_json::json;
+
+    /// The Routes Test body is the web's probe key for key (console.py
+    /// testDefault) — above all, no `max_tokens`.
+    #[test]
+    fn route_test_body_is_the_web_probe() {
+        let plain = route_test_body("output.text", "lmstudio", "qwen", &json!({}));
+        assert_eq!(
+            plain,
+            json!({
+                "capability": "output.text", "provider": "lmstudio", "model": "qwen",
+                "prompt": "Reply with the single word: ready."
+            })
+        );
+        let spec = json!({"mode": "native_mtp", "num_draft_tokens": 3, "require_acceleration": true});
+        let with = route_test_body(
+            "output.text",
+            "mlx",
+            "m",
+            &json!({"speculation": spec, "reasoning": "high"}),
+        );
+        assert_eq!(with["speculation"], spec);
+        assert_eq!(with["reasoning"], "high");
+        assert!(with.get("max_tokens").is_none(), "no cap: {with}");
+        let nulls = route_test_body("output.text", "p", "m", &json!({"reasoning": null}));
+        assert!(nulls.get("reasoning").is_none(), "null controls stay unnamed");
+    }
 
     #[test]
     fn multipart_carries_the_web_fields_and_the_bytes() {

@@ -140,6 +140,35 @@ impl ConnPhase {
     pub fn is_connected(&self) -> bool {
         matches!(self, ConnPhase::Connected(_))
     }
+
+    /// Connected with an admin principal (`/me` said `admin: true`).
+    pub fn is_admin(&self) -> bool {
+        matches!(self, ConnPhase::Connected(id) if id.admin)
+    }
+
+    /// A principal is known and it is NOT an admin. A connection being
+    /// re-verified keeps its identity, so a screen gated on this does not
+    /// flicker while the health authority re-checks.
+    pub fn is_known_non_admin(&self) -> bool {
+        matches!(self, ConnPhase::Connected(id) | ConnPhase::Verifying(id) if !id.admin)
+    }
+
+    /// Why an admin-only act is refused BEFORE anything is sent, or None
+    /// when it may go. `what` names the act ("applying the recommended
+    /// routes"). The admin rule is the gateway's own
+    /// (`security/authorization.py` GATEWAY_ROUTE_POLICIES and the handlers'
+    /// admin checks); the web console hides these controls for the same
+    /// principals — a key here says why instead of earning a 403.
+    pub fn admin_refusal(&self, what: &str) -> Option<String> {
+        match self {
+            ConnPhase::Connected(id) if id.admin => None,
+            ConnPhase::Connected(id) | ConnPhase::Verifying(id) => Some(format!(
+                "{what} is admin-only on the gateway — signed in as {}, not an admin",
+                id.user_id
+            )),
+            _ => Some("not connected — probe on the Connection screen first".to_string()),
+        }
+    }
 }
 
 /// The ONE probe-error -> phase mapping (extracted from the worker's
@@ -3164,6 +3193,28 @@ pub struct CandidateRow {
     pub kind: String,
 }
 
+/// The corroborating record ids an operator typed, split exactly like the
+/// web's promote prompt (`ids.split(",").map(s => s.trim()).filter(Boolean)`).
+pub fn parse_corroborating_ids(text: &str) -> Vec<String> {
+    text.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// The candidate act body, the web's exact shape (console.py
+/// loadEntityCandidates): promote = `{corroborating_ids, reason}` (the
+/// engine's independence test needs >= 2 distinct origins), reject =
+/// `{reason}`.
+pub fn candidate_act_body(promote: bool, corroborating_ids: &[String], reason: &str) -> Value {
+    if promote {
+        serde_json::json!({ "corroborating_ids": corroborating_ids, "reason": reason })
+    } else {
+        serde_json::json!({ "reason": reason })
+    }
+}
+
 pub fn candidates_from_payload(entity: &str, v: &Value) -> (String, Vec<CandidateRow>) {
     let rows = rows_from(v, &["candidates"], |c| {
         Some(CandidateRow {
@@ -4486,5 +4537,41 @@ mod tests {
         let set = json!({"provider": "kokoro", "model": "m1", "voice": "af"});
         let d = EntityDetail::fold("castor", None, Some(&set), None, None);
         assert_eq!(d.voice, Some(("kokoro".into(), "m1".into(), "af".into())));
+    }
+
+    fn identity(admin: bool) -> Identity {
+        Identity::from_me(&json!({
+            "principal": {"user_id": "alice", "tenant_id": "default", "admin": admin}
+        }))
+        .unwrap()
+    }
+
+    /// The admin gate's reason: None for an admin, the principal named for
+    /// a non-admin (connected or being re-verified), "not connected"
+    /// otherwise.
+    #[test]
+    fn admin_refusal_names_the_principal() {
+        assert_eq!(ConnPhase::Connected(identity(true)).admin_refusal("x"), None);
+        let why = ConnPhase::Connected(identity(false)).admin_refusal("deleting a user").unwrap();
+        assert!(why.contains("deleting a user is admin-only") && why.contains("alice"), "{why}");
+        assert!(ConnPhase::Verifying(identity(false)).admin_refusal("x").is_some());
+        assert!(ConnPhase::NotConnected.admin_refusal("x").unwrap().contains("not connected"));
+        assert!(ConnPhase::Connected(identity(false)).is_known_non_admin());
+        assert!(ConnPhase::Verifying(identity(false)).is_known_non_admin());
+        assert!(!ConnPhase::Connected(identity(true)).is_known_non_admin());
+        assert!(!ConnPhase::NotConnected.is_known_non_admin(), "unknown is not non-admin");
+    }
+
+    /// Promote carries the typed ids split like the web's prompt; reject
+    /// carries only the reason.
+    #[test]
+    fn candidate_act_body_is_the_web_shape() {
+        let ids = parse_corroborating_ids(" rec_a, ,rec_b ,");
+        assert_eq!(ids, vec!["rec_a".to_string(), "rec_b".to_string()]);
+        assert_eq!(
+            candidate_act_body(true, &ids, "two sources"),
+            json!({"corroborating_ids": ["rec_a", "rec_b"], "reason": "two sources"})
+        );
+        assert_eq!(candidate_act_body(false, &ids, "no"), json!({"reason": "no"}));
     }
 }

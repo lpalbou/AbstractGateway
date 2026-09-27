@@ -1693,12 +1693,14 @@ fn route_editor_override_flow_sends_put_with_picked_pair() {
 /// stored value. The control belongs on the text route and on no other,
 /// exactly as the web console's `isTextGenerationDefault` gates it.
 ///
-/// The save also proves the field-preserving contract from the client
-/// side: every field this form OWNS is sent explicitly, `""`/`{}`
-/// included, so a base URL or an options dict the operator emptied is
-/// actually cleared rather than silently restored by the merge.
+/// The save also proves the web's save rule (console.py saveDefault):
+/// base URL and options travel ONLY when the operator changed them from
+/// what the editor showed (the prefill may be minutes old — naming them
+/// unconditionally would roll back a change made meanwhile); reasoning
+/// on the text route is always explicit. `ui::routes::route_save_body`
+/// pins the emptied-field case ("" / {} ARE sent).
 #[test]
-fn text_route_editor_carries_reasoning_and_sends_owned_fields_explicitly() {
+fn text_route_editor_carries_reasoning_and_sends_only_what_changed() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(2);
@@ -1729,10 +1731,16 @@ fn text_route_editor_carries_reasoning_and_sends_owned_fields_explicitly() {
     assert!(s.contains("reasoning"), "the reasoning row renders:\n{s}");
 
     // Tab: mode → provider → model → base URL → reasoning → options → MTP →
-    // [Save]. Nothing is edited: the pair the row already carries is
-    // re-sent (this form's mode radio requires it), and every other
-    // owned field goes out explicitly.
-    for _ in 0..7 {
+    // [Save]. Only the base URL is edited: the pair the row already
+    // carries is re-sent (this form's mode radio requires it), reasoning
+    // is explicit, the untouched options stay unnamed.
+    for _ in 0..3 {
+        h.key(b"\t");
+        h.turn();
+    }
+    h.type_text("http://127.0.0.1:1234/v1");
+    h.turn();
+    for _ in 0..4 {
         h.key(b"\t");
         h.turn();
     }
@@ -1749,11 +1757,13 @@ fn text_route_editor_carries_reasoning_and_sends_owned_fields_explicitly() {
                 "the stored effort survives a save that did not touch it"
             );
             assert_eq!(
-                body["base_url"], "",
-                "an empty owned field is sent EMPTY — omitting it would let \
-                 the field-preserving merge restore a cleared value"
+                body["base_url"], "http://127.0.0.1:1234/v1",
+                "the edited base URL is sent"
             );
-            assert_eq!(body["options"], serde_json::json!({}), "same for options");
+            assert!(
+                body.get("options").is_none(),
+                "untouched options are not named (the store keeps them): {body:?}"
+            );
         }
         other => panic!("expected PutRoute, got {other:?}"),
     }

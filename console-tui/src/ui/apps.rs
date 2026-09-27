@@ -867,7 +867,7 @@ fn open_log_modal(cx: Scope, ctx: &Ctx, row: &AppRow) {
                 let cur = c_more.store.apps.log.with_untracked(|l| l.ready().cloned());
                 match cur {
                     Some(l) if l.can_show_more() => {
-                        reload(&c_more, &id_more, (l.tail * 4).min(crate::api::api_apps::APP_LOG_MAX))
+                        reload(&c_more, &id_more, (l.tail * 4).min(crate::api::apps::APP_LOG_MAX))
                     }
                     Some(_) => c_more.store.notice.set(Some("the whole log is shown (or the 5000-line ceiling is reached)".into())),
                     None => {}
