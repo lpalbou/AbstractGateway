@@ -1,0 +1,309 @@
+{
+ "ok": true,
+ "writable": true,
+ "routes": [
+  {
+   "key": "input.text",
+   "kind": "input",
+   "modality": "text",
+   "label": "Text Input",
+   "task": "text_understanding",
+   "provider": "lmstudio",
+   "model": "qwen/qwen3.5-9b",
+   "source": "abstractcore.capability_defaults",
+   "configured": true
+  },
+  {
+   "key": "input.image",
+   "kind": "input",
+   "modality": "image",
+   "label": "Image Input",
+   "task": "image_understanding",
+   "package_hint": "abstractvision or a vision-capable LLM",
+   "source": "abstractcore.capability_defaults",
+   "provider": "lmstudio",
+   "model": "qwen/qwen3.5-9b",
+   "base_url": null,
+   "configured": true,
+   "covered_by": "input.text",
+   "read_only": true
+  },
+  {
+   "key": "input.video",
+   "kind": "input",
+   "modality": "video",
+   "label": "Video Input",
+   "task": "video_understanding",
+   "package_hint": "abstractvideo or a video-capable LLM",
+   "source": "abstractcore.capability_defaults",
+   "provider": "lmstudio",
+   "model": "qwen/qwen3.5-9b",
+   "base_url": null,
+   "configured": true,
+   "covered_by": "input.text",
+   "read_only": false,
+   "coverage_mode": "video_frames",
+   "overrideable": true
+  },
+  {
+   "key": "input.voice",
+   "kind": "input",
+   "modality": "voice",
+   "label": "Voice Input",
+   "task": "speech_to_text",
+   "package_hint": "abstractvoice",
+   "option_examples": {
+    "language": "en"
+   },
+   "source": "not_configured",
+   "configured": false
+  },
+  {
+   "key": "input.sound",
+   "kind": "input",
+   "modality": "sound",
+   "label": "Sound Input",
+   "task": "audio_understanding",
+   "package_hint": "abstractsound or abstractmusic",
+   "source": "not_configured",
+   "configured": false
+  },
+  {
+   "key": "input.music",
+   "kind": "input",
+   "modality": "music",
+   "label": "Music Input",
+   "task": "music_understanding",
+   "package_hint": "abstractmusic or a music-capable LLM",
+   "source": "not_configured",
+   "configured": false
+  },
+  {
+   "key": "input.scene3d",
+   "kind": "input",
+   "modality": "scene3d",
+   "label": "3D Scene Input",
+   "task": "scene3d_understanding",
+   "package_hint": "abstract3d",
+   "source": "not_configured",
+   "configured": false
+  },
+  {
+   "key": "output.text",
+   "kind": "output",
+   "modality": "text",
+   "label": "Text Output",
+   "task": "text_generation",
+   "provider": "lmstudio",
+   "model": "qwen/qwen3.5-9b",
+   "source": "abstractcore.capability_defaults",
+   "derived_from": "input.text",
+   "read_only": true,
+   "configured": true
+  },
+  {
+   "key": "output.image",
+   "kind": "output",
+   "modality": "image",
+   "label": "Image Output",
+   "task": "image_generation",
+   "package_hint": "abstractvision",
+   "provider": "mlx-gen",
+   "model": "AbstractFramework/flux.2-klein-4b-8bit",
+   "source": "abstractcore.capability_defaults",
+   "configured": true,
+   "route_unavailable": {
+    "provider": "mlx-gen",
+    "model": "AbstractFramework/flux.2-klein-4b-8bit",
+    "reason": "MLX-Gen image generation needs MLX, and MLX runs only on Apple Silicon Macs (macOS, arm64); set output.image to an image engine this host runs: diffusers (install profile gpu), sdcpp (stable-diffusion.cpp, optional extra) or a cloud image provider"
+   },
+   "task_keys": [
+    "output.image.text_to_image",
+    "output.image.image_to_image",
+    "output.image.image_upscale"
+   ]
+  },
+  {
+   "key": "output.image.text_to_image",
+   "kind": "output",
+   "modality": "image",
+   "label": "Image Generation",
+   "task": "text_to_image",
+   "package_hint": "abstractvision",
+   "source": "not_configured",
+   "configured": false,
+   "broad_key": "output.image",
+   "inherits_broad": true
+  },
+  {
+   "key": "output.image.image_to_image",
+   "kind": "output",
+   "modality": "image",
+   "label": "Image Edit",
+   "task": "image_to_image",
+   "package_hint": "abstractvision",
+   "source": "not_configured",
+   "configured": false,
+   "broad_key": "output.image",
+   "inherits_broad": true
+  },
+  {
+   "key": "output.image.image_upscale",
+   "kind": "output",
+   "modality": "image",
+   "label": "Image Restore / Upscale",
+   "task": "image_upscale",
+   "package_hint": "abstractvision",
+   "option_examples": {
+    "resolution": "2x",
+    "softness": 0.25
+   },
+   "source": "not_configured",
+   "configured": false,
+   "broad_key": "output.image",
+   "inherits_broad": true
+  },
+  {
+   "key": "output.video",
+   "kind": "output",
+   "modality": "video",
+   "label": "Video Output",
+   "task": "video_generation",
+   "package_hint": "abstractvideo or abstractvision",
+   "source": "not_configured",
+   "configured": false,
+   "recommendation_unavailable": {
+    "provider": "mlx-gen",
+    "model": "AbstractFramework/wan2.2-ti2v-5b-diffusers-8bit",
+    "reason": "MLX-Gen video generation needs MLX, and MLX runs only on Apple Silicon Macs (macOS, arm64); no other local engine in AbstractFramework generates video today (abstractvision's Diffusers video path is disabled, stable-diffusion.cpp has none); the remaining option is an OpenAI-compatible video endpoint (abstractvision openai-compatible backend)"
+   },
+   "task_keys": [
+    "output.video.text_to_video",
+    "output.video.image_to_video"
+   ]
+  },
+  {
+   "key": "output.video.text_to_video",
+   "kind": "output",
+   "modality": "video",
+   "label": "Video Generation",
+   "task": "text_to_video",
+   "package_hint": "abstractvideo or abstractvision",
+   "source": "not_configured",
+   "configured": false,
+   "broad_key": "output.video"
+  },
+  {
+   "key": "output.video.image_to_video",
+   "kind": "output",
+   "modality": "video",
+   "label": "Image To Video",
+   "task": "image_to_video",
+   "package_hint": "abstractvideo or abstractvision",
+   "source": "not_configured",
+   "configured": false,
+   "broad_key": "output.video"
+  },
+  {
+   "key": "output.voice",
+   "kind": "output",
+   "modality": "voice",
+   "label": "Voice Output",
+   "task": "text_to_speech",
+   "package_hint": "abstractvoice",
+   "option_examples": {
+    "voice": "default"
+   },
+   "source": "not_configured",
+   "configured": false
+  },
+  {
+   "key": "output.sound",
+   "kind": "output",
+   "modality": "sound",
+   "label": "Sound Effects Output",
+   "task": "sound_generation",
+   "package_hint": "abstractsound or abstractmusic",
+   "source": "not_configured",
+   "configured": false
+  },
+  {
+   "key": "output.music",
+   "kind": "output",
+   "modality": "music",
+   "label": "Music Output",
+   "task": "music_generation",
+   "package_hint": "abstractmusic",
+   "source": "not_configured",
+   "configured": false
+  },
+  {
+   "key": "output.scene3d",
+   "kind": "output",
+   "modality": "scene3d",
+   "label": "3D Scene Output",
+   "task": "scene3d_generation",
+   "package_hint": "abstract3d",
+   "source": "not_configured",
+   "configured": false,
+   "task_keys": [
+    "output.scene3d.text_to_scene3d",
+    "output.scene3d.image_to_scene3d"
+   ]
+  },
+  {
+   "key": "output.scene3d.text_to_scene3d",
+   "kind": "output",
+   "modality": "scene3d",
+   "label": "Text To 3D",
+   "task": "text_to_scene3d",
+   "package_hint": "abstract3d",
+   "source": "not_configured",
+   "configured": false,
+   "broad_key": "output.scene3d"
+  },
+  {
+   "key": "output.scene3d.image_to_scene3d",
+   "kind": "output",
+   "modality": "scene3d",
+   "label": "Image To 3D",
+   "task": "image_to_scene3d",
+   "package_hint": "abstract3d",
+   "source": "not_configured",
+   "configured": false,
+   "broad_key": "output.scene3d"
+  },
+  {
+   "key": "embedding.text",
+   "kind": "embedding",
+   "modality": "text",
+   "label": "Text Embeddings",
+   "task": "text_embedding",
+   "package_hint": "abstractcore.embeddings",
+   "source": "not_configured",
+   "configured": false
+  },
+  {
+   "key": "embedding.image",
+   "kind": "embedding",
+   "modality": "image",
+   "label": "Image Embeddings",
+   "task": "image_embedding",
+   "package_hint": "abstractcore.embeddings or abstractvision",
+   "source": "not_configured",
+   "configured": false
+  },
+  {
+   "key": "rerank.text",
+   "kind": "rerank",
+   "modality": "text",
+   "label": "Text Rerank",
+   "task": "text_rerank",
+   "package_hint": "future reranker manager",
+   "source": "not_configured",
+   "configured": false
+  }
+ ],
+ "authority": "abstractcore.gateway_runtime",
+ "errors": []
+}

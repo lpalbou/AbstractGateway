@@ -6,7 +6,7 @@
 
 use abstracttui::prelude::*;
 
-use super::util::{badge, field, line, span, span_bold};
+use super::util::{badge, esc_releases_focus, field, line, span, span_bold};
 use super::Ctx;
 use crate::store::ConnPhase;
 use abstracttui::widgets::Tone;
@@ -21,17 +21,42 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ctx_submit_tok = ctx.clone();
 
     let env_set = ctx.env_token_set;
+    let notice = store.notice;
+
+    // ≤ TIGHT_ROWS terminal rows (REVIEW-1 M3): the roomy layout (gap 1,
+    // padding 1) needs ~32 rows once connected; below that the column
+    // flex-shrank its rows to ZERO and the top of the screen went blank.
+    // Tight = no gaps, no vertical padding, and the two lines the status
+    // block already says (the connected intro, the About hint — F1 is in
+    // --help and the footer) step aside. Every row is pinned (`pin`):
+    // whatever still does not fit clips at the bottom, never the top.
+    let vp = abstracttui::app::use_viewport(cx);
+    let tight = cx.memo(move || vp.get().h <= TIGHT_ROWS);
+    // A memo, so the URL slot below re-mounts only when this FLIPS — not
+    // on every probe transition (a remount puts the caret back at 0).
+    // The URL field takes the caret only before the first connection of
+    // the session: after one, a dropped gateway leaves the keyboard to the
+    // screen keys (`r` re-probes; Tab reaches the field).
+    let live = cx.memo(move || {
+        ui.was_connected.get()
+            || store
+                .conn
+                .with(|c| matches!(c, ConnPhase::Connected(_) | ConnPhase::Verifying(_)))
+    });
 
     Block::new()
         .border(BorderKind::Rounded)
         .title("Connection")
         .fill(t.surface)
-        .layout(LayoutStyle::column().gap(1).grow(1.0).padding(Edges::all(1)))
+        .layout(roomy_or_tight(false))
         // State precedes the controls that change it: a first-run
         // operator reads top-down, and two inputs + a button read as
         // "fill me in" even when already connected (review finding).
-        .child(dyn_view(LayoutStyle::line(1), move || {
+        .child(dyn_view(LayoutStyle::default().shrink(0.0), move || {
             let t = tt;
+            if tight.get() && store.conn.get().is_connected() {
+                return Element::new().style(LayoutStyle::default().h(0)).build();
+            }
             if store.conn.get().is_connected() {
                 line(vec![span_bold(
                     "Connected — nothing to change here unless you want a different gateway or identity. Ctrl+N continues.",
@@ -44,33 +69,49 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 )])
             }
         }))
-        .child(field(
-            t,
-            "Gateway URL",
-            TextInput::new()
+        // The URL field takes the caret ONLY while there is no live
+        // connection (REVIEW-1 M2): connected, a focused URL box turned
+        // every screen key (`5`, `q`, …) into typing. The slot re-mounts
+        // when the connection lands or drops — a remount is how the
+        // engine blurs (the focused node vanished → focus none → the
+        // root's keys), and how a lost connection hands the caret back.
+        // A flaky read (Verifying) is still "connected" here: it must not
+        // yank the caret into the URL box mid-way through another screen.
+        .child(dyn_view_scoped(LayoutStyle::default().h(1).shrink(0.0), move |gcx| {
+            let t = tt;
+            let live = live.get();
+            let ctx_u = ctx_submit_url.clone();
+            let el = TextInput::new()
                 .value(ui.conn_url)
                 .placeholder("http://127.0.0.1:8080")
                 .placeholder_while_focused(true)
-                .on_submit(move |_| ctx_submit_url.connect_now())
+                .on_submit(move |_| ctx_u.connect_now())
                 .layout(LayoutStyle::default().w(46).h(1))
-                .element(cx, t)
-                .autofocus()
-                .build(),
-        ))
-        .child(field(
+                .element(gcx, &t);
+            let el = esc_releases_focus(el, notice);
+            field(
+                &t,
+                "Gateway URL",
+                if live { el.build() } else { el.autofocus().build() },
+            )
+        }))
+        .child(pin(field(
             t,
             "Admin token",
-            TextInput::new()
-                .value(ui.conn_token)
-                .masked(true)
-                .placeholder("bearer token — blank uses $ABSTRACTGATEWAY_AUTH_TOKEN")
-                .placeholder_while_focused(true)
-                .on_submit(move |_| ctx_submit_tok.connect_now())
-                .layout(LayoutStyle::default().w(46).h(1))
-                .element(cx, t)
-                .build(),
-        ))
-        .child(field(
+            esc_releases_focus(
+                TextInput::new()
+                    .value(ui.conn_token)
+                    .masked(true)
+                    .placeholder("bearer token — blank uses $ABSTRACTGATEWAY_AUTH_TOKEN")
+                    .placeholder_while_focused(true)
+                    .on_submit(move |_| ctx_submit_tok.connect_now())
+                    .layout(LayoutStyle::default().w(46).h(1))
+                    .element(cx, t),
+                notice,
+            )
+            .build(),
+        )))
+        .child(pin(field(
             t,
             "",
             // The empty masked field is the universal "not logged in"
@@ -96,7 +137,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     )])
                 }
             }),
-        ))
+        )))
         .child(dyn_view_scoped(
             LayoutStyle::default().h(1).shrink(0.0),
             move |gcx| {
@@ -120,21 +161,29 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 )
             },
         ))
-        .child(dyn_view(LayoutStyle::column().gap(0), move || {
+        .child(dyn_view(LayoutStyle::column().gap(0).shrink(0.0), move || {
             status_view(&tt, &store.conn.get(), ui.token_source.get())
         }))
         // About (F1 / ? anywhere): this console, the framework it is part
         // of, and the connected gateway's versions. A hint line, not a
         // button: a focusable here would shift the screen's Tab chain.
-        .child(line(vec![
-            span("About: ", tt.text_muted),
-            span("F1 (or ?) — this console, AbstractFramework, the gateway's versions", tt.text_faint),
-        ]))
+        .child(dyn_view(LayoutStyle::default().shrink(0.0), move || {
+            if tight.get() {
+                return Element::new().style(LayoutStyle::default().h(0)).build();
+            }
+            line(vec![
+                span("About: ", tt.text_muted),
+                span(
+                    "F1 (or ?) — this console, AbstractFramework, the gateway's versions",
+                    tt.text_faint,
+                ),
+            ])
+        }))
         // The acknowledgment line: EVERY probe updates it (number, UTC
         // time, outcome, latency) — a re-probe that lands on the same
         // state is still visibly a new event. This line is why the
         // Probe button can never feel dead again.
-        .child(dyn_view(LayoutStyle::line(1), move || {
+        .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
             let t = tt;
             match store.last_probe.get() {
                 Some(p) => line(vec![
@@ -155,8 +204,49 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         // addresses to copy — the gateway's `gateway_network_v1` verdicts.
         .child(super::network::panel(cx, ctx, t))
         .element(t)
+        .style_signal(move || roomy_or_tight(tight.get()))
         .build()
 }
+
+/// At or under this many terminal rows the Connection screen drops its
+/// gaps and vertical padding (M3: the roomy layout needs ~32 connected).
+pub const TIGHT_ROWS: i32 = 32;
+
+/// `.clip()`: pinned rows that still overflow are cut at the content box —
+/// never painted over the block's bottom border.
+fn roomy_or_tight(tight: bool) -> LayoutStyle {
+    if tight {
+        LayoutStyle::column()
+            .gap(0)
+            .grow(1.0)
+            .padding(Edges::hv(1, 0))
+            .clip()
+    } else {
+        LayoutStyle::column()
+            .gap(1)
+            .grow(1.0)
+            .padding(Edges::all(1))
+            .clip()
+    }
+}
+
+/// A row that keeps its height under pressure: the column clips what
+/// does not fit at the bottom instead of flex-shrinking rows to nothing.
+fn pin(v: View) -> View {
+    Element::new()
+        .style(LayoutStyle::column().shrink(0.0))
+        .child(v)
+        .build()
+}
+
+/// The token-source line of a probe that sent NO Authorization header —
+/// the one writer's constant every reader compares against (lib.rs boot
+/// probe, `Ctx::effective_credentials_with_source`, the 401 copy).
+pub const NO_TOKEN_SENT: &str = "none — no Authorization header sent";
+
+/// Where the gateway keeps its admin token — the gateway's own words
+/// (`abstractgateway serve --help`, `--print-token`).
+pub const ADMIN_TOKEN_PATH: &str = "<data dir>/auth/bootstrap-admin-token";
 
 /// The honest states, visually distinct — never one generic "error".
 /// Auth failures name the SOURCE of the token that was rejected (field /
@@ -182,13 +272,37 @@ fn status_view(t: &TokenSet, conn: &ConnPhase, token_source: Option<String>) -> 
             "◌ a request failed — re-checking the gateway…",
             t.warn,
         )]),
+        // Two different 401s (REVIEW-1 M6): nothing was sent (sign-in
+        // needed — say WHERE the admin token lives), or a token was sent
+        // and refused (say which one, and the same way out).
+        ConnPhase::Unauthorized(msg) if token_source.as_deref() == Some(NO_TOKEN_SENT) => {
+            Element::new()
+                .style(LayoutStyle::column())
+                .child(line(vec![span_bold(
+                    "✗ sign-in needed (401) — no token was sent",
+                    t.error,
+                )]))
+                .child(line(vec![span(format!("  {msg}"), t.text)]))
+                .child(line(vec![span(
+                    format!("  admin token: {ADMIN_TOKEN_PATH} on the gateway host"),
+                    t.warn,
+                )]))
+                .child(line(vec![span(
+                    "  paste it in Admin token, or launch with --token-file PATH",
+                    t.text_muted,
+                )]))
+                .build()
+        }
         ConnPhase::Unauthorized(msg) => Element::new()
             .style(LayoutStyle::column())
-            .child(line(vec![span_bold("✗ unauthorized (401)", t.error)]))
+            .child(line(vec![span_bold(
+                "✗ unauthorized (401) — the gateway rejected the token sent",
+                t.error,
+            )]))
             .child(line(vec![span(format!("  {msg}"), t.text)]))
             .child(source_line(t))
             .child(line(vec![span(
-                "  the gateway is reachable but rejected that token — fix it (the field, or the one this terminal was started with) or mint a fresh user token",
+                format!("  admin token: {ADMIN_TOKEN_PATH} on the gateway host"),
                 t.text_muted,
             )]))
             .build(),
@@ -272,12 +386,12 @@ fn status_view(t: &TokenSet, conn: &ConnPhase, token_source: Option<String>) -> 
                 )]))
                 .child(if id.admin {
                     line(vec![span(
-                        "  ready — Ctrl+N continues to Providers (] also works outside text fields)",
+                        "  ready — Ctrl+N continues to the next step (] also works outside text fields)",
                         t.text_muted,
                     )])
                 } else {
                     line(vec![span(
-                        "  note: user management needs an admin token; those screens will show 403",
+                        "  not an admin: admin-only actions are refused with the reason; reads still work",
                         t.warn,
                     )])
                 })

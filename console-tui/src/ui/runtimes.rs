@@ -23,7 +23,47 @@ use crate::store::{
 };
 use crate::worker::Cmd;
 
+/// The Runtimes screen is admin-only end to end: every read and write it
+/// makes is an `/admin/*` route, and the web console hides the whole tab
+/// for a non-admin (console.py renderAccount). A principal known NOT to
+/// be an admin gets the reason instead of a screen of 403 panels; the
+/// screen rebuilds when the principal changes.
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
+    let store = ctx.store;
+    let non_admin = cx.memo(move || store.conn.with(ConnPhase::is_known_non_admin));
+    let ctx = ctx.clone();
+    let tt = *t;
+    dyn_view_scoped(LayoutStyle::default().grow(1.0), move |scx| {
+        if non_admin.get() {
+            admin_only_view(&tt, &ctx)
+        } else {
+            admin_view(scx, &ctx, &tt)
+        }
+    })
+}
+
+fn admin_only_view(t: &TokenSet, ctx: &Ctx) -> View {
+    let why = ctx
+        .store
+        .conn
+        .with_untracked(|c| c.admin_refusal("the Runtimes screen"))
+        .unwrap_or_default();
+    Block::new()
+        .border(BorderKind::Rounded)
+        .title("Runtimes")
+        .fill(t.surface)
+        .layout(LayoutStyle::column().grow(1.0).padding(Edges::all(1)))
+        .child(line(vec![span(why, t.text_muted)]))
+        .child(line(vec![span(
+            "data planes, runs, caches and the gateway knobs are admin surfaces — \
+             sign in with an admin token to see them",
+            t.text_faint,
+        )]))
+        .element(t)
+        .build()
+}
+
+fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
     let tt = *t;
@@ -263,7 +303,10 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ctx_inspect = ctx.clone();
     let ctx_forget = ctx.clone();
     let ctx_open_row = ctx.clone();
-    let autofocus_armed = std::rc::Rc::new(std::cell::Cell::new(false));
+    // The inventory region regenerates when data lands (the runtimes
+    // read, the lazy runtime-config read behind `w`): the keeper carries
+    // the keyboard from one table instance to the next.
+    let keeper = super::util::FocusKeeper::new();
 
     Element::new()
         // gap 0: the bordered blocks separate themselves; at 80x24 the
@@ -338,7 +381,8 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                             ),
                             _ => None,
                         };
-                        loadable_view(
+                        super::util::loadable_view_kept(
+                            &keeper,
                             &tt,
                             &store.conn.get(),
                             || store.tick.get(),
@@ -346,12 +390,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                             |d: &Vec<RuntimeRow>| d.is_empty(),
                             "no runtimes reported",
                             |d| {
-                                // Arm autofocus once per page life.
-                                let first = !autofocus_armed.get();
-                                if first {
-                                    autofocus_armed.set(true);
-                                }
-                                table(gcx, &tt, d, ui.runtime_sel, policy_keys.clone(), first, move |idx| choose(&ctx_choose, idx))
+                                table(gcx, &tt, d, ui.runtime_sel, policy_keys.clone(), &keeper, move |idx| choose(&ctx_choose, idx))
                             },
                         )
                     },
@@ -493,6 +532,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                         && d.agent_defaults.is_empty()
                                         && d.skills_shelf.is_none()
                                         && d.streaming_default.is_none()
+                                        && d.backlog.is_empty()
                                 },
                                 "the gateway reported no runtime knobs",
                                 |d| knobs_view(cx, &ctx_knobs, &tt, d),
@@ -960,26 +1000,30 @@ fn toolbar_row(
                 .build(),
         )
         .child(
-            TextInput::new()
-                .value(draft)
-                .placeholder(placeholder)
-                // ENTER COMMITS: this worker is one serial lane, so a
-                // request per keystroke would stampede it.
-                .on_submit(move |_| {
-                    let next = draft.get_untracked().trim().to_string();
-                    if query.get_untracked() != next {
-                        query.set(next);
-                        on_change();
-                    }
-                })
-                .layout(
-                    LayoutStyle::default()
-                        .basis(Dimension::Cells(0))
-                        .grow(1.0)
-                        .h(1),
-                )
-                .element(cx, &t0)
-                .build(),
+            // Esc hands the keyboard back to the panel (REVIEW-1 M2).
+            super::util::esc_releases_focus(
+                TextInput::new()
+                    .value(draft)
+                    .placeholder(placeholder)
+                    // ENTER COMMITS: this worker is one serial lane, so a
+                    // request per keystroke would stampede it.
+                    .on_submit(move |_| {
+                        let next = draft.get_untracked().trim().to_string();
+                        if query.get_untracked() != next {
+                            query.set(next);
+                            on_change();
+                        }
+                    })
+                    .layout(
+                        LayoutStyle::default()
+                            .basis(Dimension::Cells(0))
+                            .grow(1.0)
+                            .h(1),
+                    )
+                    .element(cx, &t0),
+                ctx.store.notice,
+            )
+            .build(),
         )
         .build()
 }
@@ -1189,7 +1233,14 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
         rows.push(line(vec![
             span(format!("{:>20}: ", a.key), t.text_muted),
             span(
-                ellipsize(if a.value.is_empty() { "—" } else { a.value.as_str() }, 48),
+                ellipsize(
+                    if a.value.is_empty() {
+                        "—"
+                    } else {
+                        a.value.as_str()
+                    },
+                    48,
+                ),
                 t.text,
             ),
             span(format!("  ({})", a.source), t.text_faint),
@@ -1222,18 +1273,32 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
     match &d.streaming_default {
         Some(sd) => rows.push(line(vec![
             span(format!("{:>20}: ", "stream replies"), t.text_muted),
-            span(if sd.value { "on — interactive replies stream live" } else { "off — replies arrive whole" }, t.text),
+            span(
+                if sd.value {
+                    "on — interactive replies stream live"
+                } else {
+                    "off — replies arrive whole"
+                },
+                t.text,
+            ),
             span(format!("  ({})", sd.source), t.text_faint),
         ])),
         None => rows.push(line(vec![
             span(format!("{:>20}: ", "stream replies"), t.text_muted),
-            span("not available on this gateway (its settings read has no agents.streaming_default)", t.warn),
+            span(
+                "not available on this gateway (its settings read has no agents.streaming_default)",
+                t.warn,
+            ),
         ])),
     }
     // The skills shelf (skills.shelf): which folder, from which source.
     if let Some(sh) = &d.skills_shelf {
         let (now, tone) = if sh.available {
-            let v = if sh.bundled_version.is_empty() { String::new() } else { format!(" (curated {})", sh.bundled_version) };
+            let v = if sh.bundled_version.is_empty() {
+                String::new()
+            } else {
+                format!(" (curated {})", sh.bundled_version)
+            };
             (format!("{}{v}", sh.resolved), t.text)
         } else {
             (format!("unavailable: {}", sh.reason), t.warn)
@@ -1244,9 +1309,75 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
             span(format!("  ({})", sh.source), t.text_faint),
         ]));
         for w in &sh.warnings {
-            rows.push(line(vec![span(format!("{:>20}  ⚠ {}", "", ellipsize(w, 96)), t.warn)]));
+            rows.push(line(vec![span(
+                format!("{:>20}  ⚠ {}", "", ellipsize(w, 96)),
+                t.warn,
+            )]));
         }
     }
+    // Backlog settings (Continuum): folder, exec runner, process manager —
+    // value + where it comes from (web: "Advanced: backlog settings").
+    for b in &d.backlog {
+        let now = if b.redacted {
+            "(hidden — admin only)".to_string()
+        } else if b.value.is_empty() {
+            "—".to_string()
+        } else {
+            b.value.clone()
+        };
+        rows.push(line(vec![
+            span(format!("{:>20}: ", b.key), t.text_muted),
+            span(ellipsize(&now, 72), t.text),
+            span(
+                format!(
+                    "  ({})",
+                    crate::store::operator::backlog_source_word(&b.source)
+                ),
+                t.text_faint,
+            ),
+        ]));
+        if b.available == Some(false) {
+            rows.push(line(vec![span(
+                format!("{:>20}  ⚠ not available: {}", "", ellipsize(&b.reason, 90)),
+                t.warn,
+            )]));
+        }
+    }
+    // The skills-shelf / backlog verbs get their OWN button row under the
+    // first one (that row already overflows 160 columns; a row at the
+    // bottom of the knobs falls off shorter terminals).
+    let tail_row: View = if d.writable && (!d.backlog.is_empty() || d.skills_shelf.is_some()) {
+        let ctx7 = ctx.clone();
+        let current_backlog = d.clone();
+        let ctx8 = ctx.clone();
+        Element::new()
+            .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+            .child(if current_backlog.backlog.is_empty() {
+                Element::new().style(LayoutStyle::default().h(0)).build()
+            } else {
+                // Web: "Advanced: backlog settings" (Continuum).
+                Button::new("Edit backlog settings")
+                    .on_click(move || {
+                        open_backlog_settings_form(cx, &ctx7, current_backlog.clone())
+                    })
+                    .element(cx, t)
+                    .build()
+            })
+            .child(if d.skills_shelf.is_none() {
+                Element::new().style(LayoutStyle::default().h(0)).build()
+            } else {
+                // Web: "Refresh the curated shelf" beside the shelf field.
+                Button::new("Refresh the curated skills shelf")
+                    .on_click(move || {
+                        ctx8.send(Cmd::Operator(crate::worker::operator::OpCmd::ReseedSkills))
+                    })
+                    .element(cx, t)
+                    .build()
+            })
+            .build()
+    } else {
+        Element::new().style(LayoutStyle::default().h(0)).build()
+    };
     Element::new()
         .style(LayoutStyle::column())
         .child(if d.writable {
@@ -1260,7 +1391,8 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
             let current_agents = d.clone();
             let ctx6 = ctx.clone();
             let current_stream = d.clone();
-            Element::new()
+
+            let row1 = Element::new()
                 .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
                 .child(
                     Button::new("Edit workspace access policy")
@@ -1284,11 +1416,17 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
                         .element(cx, t)
                         .build()
                 })
+                .build();
+            // Second row: one row of five buttons ran past 80 columns.
+            let row2 = Element::new()
+                .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
                 .child(if current_agents.agent_defaults.is_empty() {
                     Element::new().style(LayoutStyle::default().h(0)).build()
                 } else {
                     Button::new("Edit default agent workflows")
-                        .on_click(move || open_agent_defaults_form(cx, &ctx4, current_agents.clone()))
+                        .on_click(move || {
+                            open_agent_defaults_form(cx, &ctx4, current_agents.clone())
+                        })
                         .element(cx, t)
                         .build()
                 })
@@ -1296,28 +1434,225 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
                     Element::new().style(LayoutStyle::default().h(0)).build()
                 } else {
                     Button::new("Edit stream replies")
-                        .on_click(move || open_streaming_default_form(cx, &ctx6, current_stream.clone()))
+                        .on_click(move || {
+                            open_streaming_default_form(cx, &ctx6, current_stream.clone())
+                        })
                         .element(cx, t)
                         .build()
                 })
+                .build();
+            Element::new()
+                .style(LayoutStyle::column().gap(0).shrink(0.0))
+                .child(row1)
+                .child(row2)
                 .build()
         } else {
             Element::new().style(LayoutStyle::default().h(0)).build()
         })
+        .child(tail_row)
         .children(rows)
         .build()
+}
+
+/// Backlog settings form (web "Advanced: backlog settings"): the folder
+/// (prefilled with the SAVED value only — a default written back would
+/// silently become a saved one), and two switches with a third "not
+/// saved" state. Save sends only what changed; the gateway validates and
+/// its sentence is shown on refusal. "Use the gateway's own folder"
+/// fills the folder with the default path.
+fn open_backlog_settings_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
+    use crate::store::operator::{backlog_settings_body, backlog_source_word};
+    if !current.writable {
+        ctx.store
+            .notice
+            .set(Some("this needs an admin token".into()));
+        return;
+    }
+    let ctx2 = ctx.clone();
+    open_form(ctx, cx, Size::new(110, 22), move |mcx, close| {
+        let theme = use_theme(mcx);
+        let t0 = theme.get().tokens;
+        let form_error = mcx.signal(Option::<String>::None);
+        let in_flight = mcx.signal(false);
+        let form_id = crate::worker::next_form_id();
+        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
+        let rows = current.backlog.clone();
+        let fields: Vec<(String, Signal<String>)> = rows
+            .iter()
+            .map(|b| (b.key.clone(), mcx.signal(b.saved.clone())))
+            .collect();
+        let mut col = Element::new()
+            .focusable()
+            .autofocus()
+            .style(LayoutStyle::column().gap(0))
+            .child(line(vec![span_bold("Backlog settings (Continuum)", t0.accent)]))
+            .child(line(vec![span(
+                "empty / not saved = the launch flag, else the default (the gateway's own folder; switches off) · applies at once",
+                t0.text_faint,
+            )]));
+        for (b, (_, sig)) in rows.iter().zip(fields.iter()) {
+            let sig = *sig;
+            col = col.child(line(vec![
+                span_bold(b.label.clone(), t0.text),
+                span(
+                    format!("  ({})", backlog_source_word(&b.source)),
+                    t0.text_faint,
+                ),
+                span(
+                    if b.flag.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  · launch flag: serve {}", b.flag)
+                    },
+                    t0.text_faint,
+                ),
+            ]));
+            if b.is_folder() {
+                col = col.child(field(
+                    &t0,
+                    "folder",
+                    TextInput::new()
+                        .value(sig)
+                        .placeholder(if b.value.is_empty() {
+                            b.default_path.clone()
+                        } else {
+                            b.value.clone()
+                        })
+                        .layout(LayoutStyle::default().w(80).h(1))
+                        .element(mcx, &t0)
+                        .build(),
+                ));
+                col = col.child(line(vec![span(
+                    ellipsize(
+                        &format!(
+                            "in use: {}",
+                            if b.value.is_empty() {
+                                "(hidden)"
+                            } else {
+                                b.value.as_str()
+                            }
+                        ),
+                        104,
+                    ),
+                    t0.text_faint,
+                )]));
+                if b.available == Some(false) {
+                    col = col.child(line(vec![span(
+                        ellipsize(&format!("⚠ not available: {}", b.reason), 104),
+                        t0.warn,
+                    )]));
+                }
+                if !b.default_path.is_empty() && b.value != b.default_path {
+                    let def = b.default_path.clone();
+                    let ctx_def = ctx2.clone();
+                    col = col.child(
+                        // Web parity: this button SAVES at once.
+                        Button::new("Use the gateway's own folder")
+                            .on_click(move || {
+                                if in_flight.get_untracked() {
+                                    return;
+                                }
+                                form_error.set(None);
+                                in_flight.set(true);
+                                ctx_def.send(Cmd::SaveRuntimeConfig {
+                                    body: json!({ "triage_repo_root": def.clone() }).into(),
+                                    form_id: Some(form_id),
+                                });
+                            })
+                            .element(mcx, &t0)
+                            .build(),
+                    );
+                }
+            } else {
+                let now = b.value.clone();
+                col = col.child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
+                    let label = match sig.get().as_str() {
+                        "on" => "On".to_string(),
+                        "off" => "Off".to_string(),
+                        _ => format!("Not saved (now {now})"),
+                    };
+                    line(vec![
+                        span(format!("{:>18} ", "saved:"), t0.text_muted),
+                        span(label, t0.text),
+                    ])
+                }));
+                col = col.child(
+                    Button::new(format!("change {}", b.label.to_lowercase()))
+                        .on_click(move || {
+                            sig.update(|v| {
+                                *v = match v.as_str() {
+                                    "" => "on".to_string(),
+                                    "on" => "off".to_string(),
+                                    _ => String::new(),
+                                }
+                            })
+                        })
+                        .element(mcx, &t0)
+                        .build(),
+                );
+            }
+            col = col.child(line(vec![span(ellipsize(&b.help, 106), t0.text_faint)]));
+        }
+        let ctx_save = ctx2.clone();
+        let close_cancel = close.clone();
+        col.child(super::message_slot(theme, form_error, in_flight))
+            .child(
+                Element::new()
+                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                    .child(
+                        Button::new("Save backlog settings")
+                            .on_click(move || {
+                                if in_flight.get_untracked() {
+                                    return;
+                                }
+                                let typed: Vec<(String, String)> = fields
+                                    .iter()
+                                    .map(|(k, sig)| (k.clone(), sig.get_untracked()))
+                                    .collect();
+                                let body = backlog_settings_body(&rows, &typed);
+                                if body.as_object().map(|m| m.is_empty()).unwrap_or(true) {
+                                    form_error.set(Some("nothing changed".into()));
+                                    return;
+                                }
+                                form_error.set(None);
+                                in_flight.set(true);
+                                ctx_save.send(Cmd::SaveRuntimeConfig {
+                                    body: body.into(),
+                                    form_id: Some(form_id),
+                                });
+                            })
+                            .element(mcx, &t0)
+                            .build(),
+                    )
+                    .child(
+                        Button::new("Cancel (Esc)")
+                            .on_click(move || close_cancel())
+                            .element(mcx, &t0)
+                            .build(),
+                    )
+                    .build(),
+            )
+            .build()
+    });
 }
 
 /// The body the apps form sends: only the settings whose text changed,
 /// as flat `apps.<name>` keys; an emptied field sends "" (= clear back to
 /// env/default), exactly like `abstractgateway apps config set <name> ""`.
-pub fn apps_settings_body(current: &[crate::store::AppsSetting], typed: &[(String, String)]) -> Value {
+pub fn apps_settings_body(
+    current: &[crate::store::AppsSetting],
+    typed: &[(String, String)],
+) -> Value {
     let mut body = serde_json::Map::new();
     for (name, text) in typed {
         let Some(cur) = current.iter().find(|a| &a.name == name) else {
             continue;
         };
-        let was = if cur.source == "stored" { cur.value.as_str() } else { "" };
+        let was = if cur.source == "stored" {
+            cur.value.as_str()
+        } else {
+            ""
+        };
         let now = text.trim();
         if now != was {
             body.insert(cur.key.clone(), Value::String(now.to_string()));
@@ -1330,13 +1665,20 @@ pub fn apps_settings_body(current: &[crate::store::AppsSetting], typed: &[(Strin
 /// changed, as {"agents": {"default_workflow": {interface: value}}}; an
 /// emptied field sends "" (= back to the built-in default). `{}` when
 /// nothing changed.
-pub fn agent_defaults_body(current: &[crate::store::AgentDefault], typed: &[(String, String)]) -> Value {
+pub fn agent_defaults_body(
+    current: &[crate::store::AgentDefault],
+    typed: &[(String, String)],
+) -> Value {
     let mut changed = serde_json::Map::new();
     for (iface, text) in typed {
         let Some(cur) = current.iter().find(|a| &a.interface == iface) else {
             continue;
         };
-        let was = if cur.source == "stored" { cur.value.as_str() } else { "" };
+        let was = if cur.source == "stored" {
+            cur.value.as_str()
+        } else {
+            ""
+        };
         let now = text.trim();
         if now != was {
             changed.insert(iface.clone(), Value::String(now.to_string()));
@@ -1365,7 +1707,9 @@ fn open_streaming_default_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData)
             .set(Some("this needs an admin token".into()));
         return;
     }
-    let Some(sd) = current.streaming_default.clone() else { return };
+    let Some(sd) = current.streaming_default.clone() else {
+        return;
+    };
     let ctx2 = ctx.clone();
     open_form(ctx, cx, Size::new(100, 12), move |mcx, close| {
         let theme = use_theme(mcx);
@@ -1387,12 +1731,21 @@ fn open_streaming_default_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData)
             .child(field(
                 &t0,
                 "stream replies",
-                Checkbox::new("interactive runs that do not ask either way stream their replies live")
-                    .checked(on)
-                    .element(mcx, &t0)
-                    .build(),
+                Checkbox::new(
+                    "interactive runs that do not ask either way stream their replies live",
+                )
+                .checked(on)
+                .element(mcx, &t0)
+                .build(),
             ))
-            .child(line(vec![span(format!("now: {} ({})", if sd.value { "on" } else { "off" }, sd.source), t0.text_faint)]))
+            .child(line(vec![span(
+                format!(
+                    "now: {} ({})",
+                    if sd.value { "on" } else { "off" },
+                    sd.source
+                ),
+                t0.text_faint,
+            )]))
             .child(super::message_slot(theme, form_error, in_flight))
             .child(
                 Element::new()
@@ -1457,7 +1810,11 @@ fn open_agent_defaults_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
             .map(|a| {
                 (
                     a.interface.clone(),
-                    mcx.signal(if a.source == "stored" { a.value.clone() } else { String::new() }),
+                    mcx.signal(if a.source == "stored" {
+                        a.value.clone()
+                    } else {
+                        String::new()
+                    }),
                 )
             })
             .collect();
@@ -1471,14 +1828,25 @@ fn open_agent_defaults_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
                 t0.text_faint,
             )]));
         for (a, (_, sig)) in current.agent_defaults.iter().zip(fields.iter()) {
-            let builtin = if a.builtin.is_empty() { "none".to_string() } else { a.builtin.clone() };
+            let builtin = if a.builtin.is_empty() {
+                "none".to_string()
+            } else {
+                a.builtin.clone()
+            };
             col = col
                 .child(field(
                     &t0,
                     &a.interface,
                     TextInput::new()
                         .value(*sig)
-                        .placeholder(format!("built-in: {builtin} · now: {}", if a.available { a.workflow_id.as_str() } else { "unavailable" }))
+                        .placeholder(format!(
+                            "built-in: {builtin} · now: {}",
+                            if a.available {
+                                a.workflow_id.as_str()
+                            } else {
+                                "unavailable"
+                            }
+                        ))
                         .layout(LayoutStyle::default().w(64).h(1))
                         .element(mcx, &t0)
                         .build(),
@@ -1495,7 +1863,10 @@ fn open_agent_defaults_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
                     t0.text_faint,
                 )]));
             if !a.available {
-                col = col.child(line(vec![span(ellipsize(&format!("⚠ {}", a.reason), 106), t0.warn)]));
+                col = col.child(line(vec![span(
+                    ellipsize(&format!("⚠ {}", a.reason), 106),
+                    t0.warn,
+                )]));
             }
         }
         let ctx_save = ctx2.clone();
@@ -1546,7 +1917,11 @@ fn open_agent_defaults_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
 /// differs from the SAVED value ("" = back to the gateway's own copy); `{}`
 /// when nothing changed.
 pub fn skills_shelf_body(current: &crate::store::SkillsShelf, typed: &str) -> Value {
-    let was = if current.source == "stored" { current.value.as_str() } else { "" };
+    let was = if current.source == "stored" {
+        current.value.as_str()
+    } else {
+        ""
+    };
     let now = typed.trim();
     if now == was {
         return Value::Object(serde_json::Map::new());
@@ -1561,7 +1936,9 @@ fn open_skills_shelf_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
             .set(Some("this needs an admin token".into()));
         return;
     }
-    let Some(shelf) = current.skills_shelf.clone() else { return };
+    let Some(shelf) = current.skills_shelf.clone() else {
+        return;
+    };
     let ctx2 = ctx.clone();
     open_form(ctx, cx, Size::new(110, 14), move |mcx, close| {
         let theme = use_theme(mcx);
@@ -1570,7 +1947,11 @@ fn open_skills_shelf_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
         let in_flight = mcx.signal(false);
         let form_id = crate::worker::next_form_id();
         super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
-        let sig = mcx.signal(if shelf.source == "stored" { shelf.value.clone() } else { String::new() });
+        let sig = mcx.signal(if shelf.source == "stored" {
+            shelf.value.clone()
+        } else {
+            String::new()
+        });
         let ctx_save = ctx2.clone();
         let close_cancel = close.clone();
         let shelf_now = shelf.clone();
@@ -1642,24 +2023,32 @@ fn open_apps_settings_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
         return;
     }
     let ctx2 = ctx.clone();
-    open_form(ctx, cx, Size::new(96, 12 + 2 * current.apps.len() as i32), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        let form_error = mcx.signal(Option::<String>::None);
-        let in_flight = mcx.signal(false);
-        let form_id = crate::worker::next_form_id();
-        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
-        let fields: Vec<(String, Signal<String>)> = current
-            .apps
-            .iter()
-            .map(|a| {
-                (
-                    a.name.clone(),
-                    mcx.signal(if a.source == "stored" { a.value.clone() } else { String::new() }),
-                )
-            })
-            .collect();
-        let mut col = Element::new()
+    open_form(
+        ctx,
+        cx,
+        Size::new(96, 12 + 2 * current.apps.len() as i32),
+        move |mcx, close| {
+            let theme = use_theme(mcx);
+            let t0 = theme.get().tokens;
+            let form_error = mcx.signal(Option::<String>::None);
+            let in_flight = mcx.signal(false);
+            let form_id = crate::worker::next_form_id();
+            super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
+            let fields: Vec<(String, Signal<String>)> = current
+                .apps
+                .iter()
+                .map(|a| {
+                    (
+                        a.name.clone(),
+                        mcx.signal(if a.source == "stored" {
+                            a.value.clone()
+                        } else {
+                            String::new()
+                        }),
+                    )
+                })
+                .collect();
+            let mut col = Element::new()
             .focusable()
             .autofocus()
             .style(LayoutStyle::column().gap(0))
@@ -1668,67 +2057,156 @@ fn open_apps_settings_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
                 "empty = the default (or the value this gateway's environment gives); applies at the next app start or download",
                 t0.text_faint,
             )]));
-        for (a, (_, sig)) in current.apps.iter().zip(fields.iter()) {
-            col = col
-                .child(field(
-                    &t0,
-                    &a.label,
-                    TextInput::new()
-                        .value(*sig)
-                        .placeholder(format!(
-                            "{} (now: {} · {})",
-                            a.placeholder,
-                            if a.value.is_empty() { "—" } else { a.value.as_str() },
-                            a.source
-                        ))
-                        .layout(LayoutStyle::default().w(60).h(1))
-                        .element(mcx, &t0)
+            for (a, (_, sig)) in current.apps.iter().zip(fields.iter()) {
+                col = col
+                    .child(field(
+                        &t0,
+                        &a.label,
+                        TextInput::new()
+                            .value(*sig)
+                            .placeholder(format!(
+                                "{} (now: {} · {})",
+                                a.placeholder,
+                                if a.value.is_empty() {
+                                    "—"
+                                } else {
+                                    a.value.as_str()
+                                },
+                                a.source
+                            ))
+                            .layout(LayoutStyle::default().w(60).h(1))
+                            .element(mcx, &t0)
+                            .build(),
+                    ))
+                    .child(line(vec![span(ellipsize(&a.help, 92), t0.text_faint)]));
+            }
+            let ctx_save = ctx2.clone();
+            let close_cancel = close.clone();
+            let apps_now = current.apps.clone();
+            col.child(super::message_slot(theme, form_error, in_flight))
+                .child(
+                    Element::new()
+                        .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                        .child(
+                            Button::new("Save")
+                                .on_click(move || {
+                                    if in_flight.get_untracked() {
+                                        return;
+                                    }
+                                    let typed: Vec<(String, String)> = fields
+                                        .iter()
+                                        .map(|(n, sig)| (n.clone(), sig.get_untracked()))
+                                        .collect();
+                                    let body = apps_settings_body(&apps_now, &typed);
+                                    if body.as_object().map(|m| m.is_empty()).unwrap_or(true) {
+                                        form_error.set(Some("nothing changed".into()));
+                                        return;
+                                    }
+                                    form_error.set(None);
+                                    in_flight.set(true);
+                                    ctx_save.send(Cmd::SaveRuntimeConfig {
+                                        body: body.into(),
+                                        form_id: Some(form_id),
+                                    });
+                                })
+                                .element(mcx, &t0)
+                                .build(),
+                        )
+                        .child(
+                            Button::new("Cancel (Esc)")
+                                .on_click(move || close_cancel())
+                                .element(mcx, &t0)
+                                .build(),
+                        )
                         .build(),
-                ))
-                .child(line(vec![span(ellipsize(&a.help, 92), t0.text_faint)]));
+                )
+                .build()
+        },
+    );
+}
+
+/// The gateway-wide workspace defaults form, as the web models it
+/// (console.py renderGatewayPolicyModal / saveWorkspacePolicyModal).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WorkspaceDefaults {
+    pub root: String,
+    pub allowed: String,
+    pub blocked: String,
+    /// "whitelist" | "blacklist".
+    pub mode: String,
+    /// Launch-folder trust: None = inherit (not stored).
+    pub trust: Option<bool>,
+    /// The legacy full bypass: None = inherit (not stored).
+    pub overrides: Option<bool>,
+}
+
+impl WorkspaceDefaults {
+    /// The form's prefill: only STORED choices for the root and the two
+    /// switches (a resolved env/default value written back would become a
+    /// stored setting); the path lists and the posture as served.
+    pub fn prefill(c: &RuntimeConfigData) -> WorkspaceDefaults {
+        let stored = |source: &str| source == "stored";
+        WorkspaceDefaults {
+            root: if stored(&c.workspace_root_source) {
+                c.workspace_root.clone()
+            } else {
+                String::new()
+            },
+            allowed: c.workspace_allowed_paths.clone(),
+            blocked: c.workspace_blocked_paths.clone(),
+            mode: if c.workspace_default_mode == "blacklist" {
+                "blacklist".into()
+            } else {
+                "whitelist".into()
+            },
+            trust: stored(&c.trust_client_launch_folder_source)
+                .then_some(c.trust_client_launch_folder),
+            overrides: stored(&c.client_workspace_scope_overrides_source)
+                .then_some(c.client_workspace_scope_overrides),
         }
-        let ctx_save = ctx2.clone();
-        let close_cancel = close.clone();
-        let apps_now = current.apps.clone();
-        col.child(super::message_slot(theme, form_error, in_flight))
-            .child(
-                Element::new()
-                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                    .child(
-                        Button::new("Save")
-                            .on_click(move || {
-                                if in_flight.get_untracked() {
-                                    return;
-                                }
-                                let typed: Vec<(String, String)> = fields
-                                    .iter()
-                                    .map(|(n, sig)| (n.clone(), sig.get_untracked()))
-                                    .collect();
-                                let body = apps_settings_body(&apps_now, &typed);
-                                if body.as_object().map(|m| m.is_empty()).unwrap_or(true) {
-                                    form_error.set(Some("nothing changed".into()));
-                                    return;
-                                }
-                                form_error.set(None);
-                                in_flight.set(true);
-                                ctx_save.send(Cmd::SaveRuntimeConfig {
-                                    body: body.into(),
-                                    form_id: Some(form_id),
-                                });
-                            })
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .child(
-                        Button::new("Cancel (Esc)")
-                            .on_click(move || close_cancel())
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .build(),
-            )
-            .build()
-    });
+    }
+
+    /// `POST /admin/runtime-config` body, the web's exact shape: the root
+    /// is null when blank (inherit), trust is null when inherited, the
+    /// bypass is named only when chosen. `user_workspace_policies` is
+    /// DELIBERATELY absent: present-but-empty deletes the whole per-user
+    /// map server-side (per-user edits ride the single-entry PUT).
+    pub fn body(&self) -> Value {
+        let root = self.root.trim();
+        let mode = if self.mode.is_empty() {
+            "whitelist"
+        } else {
+            self.mode.as_str()
+        };
+        let mut body = json!({
+            "workspace_default_mode": mode,
+            "workspace_root": if root.is_empty() { Value::Null } else { Value::String(root.to_string()) },
+            "workspace_allowed_paths": self.allowed.trim(),
+            "workspace_blocked_paths": self.blocked.trim(),
+            "trust_client_launch_folder": self.trust.map(Value::Bool).unwrap_or(Value::Null),
+        });
+        if let Some(on) = self.overrides {
+            body["client_workspace_scope_overrides"] = Value::Bool(on);
+        }
+        body
+    }
+}
+
+/// Tri-state select index: 0 = inherit, 1 = on, 2 = off.
+fn tri_index(v: Option<bool>) -> usize {
+    match v {
+        None => 0,
+        Some(true) => 1,
+        Some(false) => 2,
+    }
+}
+
+fn tri_value(ix: usize) -> Option<bool> {
+    match ix {
+        1 => Some(true),
+        2 => Some(false),
+        _ => None,
+    }
 }
 
 fn open_workspace_policy_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
@@ -1742,16 +2220,38 @@ fn open_workspace_policy_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) 
     open_form(ctx, cx, Size::new(92, 32), move |mcx, close| {
         let theme = use_theme(mcx);
         let t0 = theme.get().tokens;
-        let workspace_root = mcx.signal(current.workspace_root.clone());
-        let workspace_allowed_paths = mcx.signal(current.workspace_allowed_paths.clone());
-        let workspace_blocked_paths = mcx.signal(current.workspace_blocked_paths.clone());
-        let allow_client_scope = mcx.signal(current.client_workspace_scope_overrides);
-        let trust_launch_folder = mcx.signal(current.trust_client_launch_folder);
-        let default_mode = mcx.signal(current.workspace_default_mode.clone());
+        // Only STORED choices prefill (the web's renderGatewayPolicyModal):
+        // writing a resolved env/default value back would silently promote
+        // it to a stored setting.
+        let pre = WorkspaceDefaults::prefill(&current);
+        let workspace_root = mcx.signal(pre.root.clone());
+        let workspace_allowed_paths = mcx.signal(pre.allowed.clone());
+        let workspace_blocked_paths = mcx.signal(pre.blocked.clone());
+        let allow_client_scope = mcx.signal(tri_index(pre.overrides));
+        let trust_launch_folder = mcx.signal(tri_index(pre.trust));
+        let default_mode = mcx.signal(pre.mode.clone());
         let allowed_state = TextAreaState::new(mcx);
-        allowed_state.set_text(current.workspace_allowed_paths.clone());
+        allowed_state.set_text(pre.allowed.clone());
         let blocked_state = TextAreaState::new(mcx);
-        blocked_state.set_text(current.workspace_blocked_paths.clone());
+        blocked_state.set_text(pre.blocked.clone());
+        let root_placeholder = if current.workspace_root.trim().is_empty() {
+            "blank = inherit (env/default fallback)".to_string()
+        } else {
+            format!("blank = inherit ({})", current.workspace_root.trim())
+        };
+        let inherit_label = |now: bool| {
+            SelectOption::new(format!("inherit (now {})", if now { "on" } else { "off" }))
+        };
+        let trust_options = vec![
+            inherit_label(current.trust_client_launch_folder),
+            SelectOption::new("on"),
+            SelectOption::new("off"),
+        ];
+        let overrides_options = vec![
+            inherit_label(current.client_workspace_scope_overrides),
+            SelectOption::new("on"),
+            SelectOption::new("off"),
+        ];
         let form_error = mcx.signal(Option::<String>::None);
         let in_flight = mcx.signal(false);
         let form_id = crate::worker::next_form_id();
@@ -1777,7 +2277,7 @@ fn open_workspace_policy_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) 
                 "default workspace",
                 TextInput::new()
                     .value(workspace_root)
-                    .placeholder("blank = env/default fallback")
+                    .placeholder(root_placeholder)
                     .placeholder_while_focused(true)
                     .layout(LayoutStyle::default().w(60).h(1))
                     .element(mcx, &t0)
@@ -1786,11 +2286,16 @@ fn open_workspace_policy_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) 
             .child(field(
                 &t0,
                 "launch folder trust",
-                Checkbox::new("an agent may write in the folder it was started from (default on)")
-                    .checked(trust_launch_folder)
+                Select::new(trust_options)
+                    .value(trust_launch_folder)
+                    .layout(LayoutStyle::default().w(24).h(1).shrink(0.0))
                     .element(mcx, &t0)
                     .build(),
             ))
+            .child(line(vec![span(
+                "  an agent may write in the folder it was started from (gateway default on)",
+                t0.text_faint,
+            )]))
             .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
                 let label = if default_mode.get() == "blacklist" {
                     "allow everything, refuse listed folders (wide grant)"
@@ -1812,11 +2317,16 @@ fn open_workspace_policy_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) 
             .child(field(
                 &t0,
                 "full bypass (legacy)",
-                Checkbox::new("unlike launch-folder trust (one folder), clients may scope ANY server folder — postures stop applying")
-                    .checked(allow_client_scope)
+                Select::new(overrides_options)
+                    .value(allow_client_scope)
+                    .layout(LayoutStyle::default().w(24).h(1).shrink(0.0))
                     .element(mcx, &t0)
                     .build(),
             ))
+            .child(line(vec![span(
+                "  unlike launch-folder trust (one folder), clients may scope ANY server folder — postures stop applying",
+                t0.text_faint,
+            )]))
             .child(field(
                 &t0,
                 "allowed workspaces",
@@ -1865,30 +2375,19 @@ fn open_workspace_policy_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) 
                                 if in_flight.get_untracked() {
                                     return;
                                 }
-                                let root = workspace_root.get_untracked().trim().to_string();
-                                let allowed = workspace_allowed_paths.get_untracked().trim().to_string();
-                                let blocked = workspace_blocked_paths.get_untracked().trim().to_string();
-                                let root_value = if root.is_empty() {
-                                    Value::Null
-                                } else {
-                                    Value::String(root)
-                                };
+                                let body = WorkspaceDefaults {
+                                    root: workspace_root.get_untracked(),
+                                    allowed: workspace_allowed_paths.get_untracked(),
+                                    blocked: workspace_blocked_paths.get_untracked(),
+                                    mode: default_mode.get_untracked(),
+                                    trust: tri_value(trust_launch_folder.get_untracked()),
+                                    overrides: tri_value(allow_client_scope.get_untracked()),
+                                }
+                                .body();
                                 form_error.set(None);
                                 in_flight.set(true);
-                                // user_workspace_policies is DELIBERATELY absent:
-                                // present-but-empty means "delete the whole map"
-                                // server-side — naming it here would wipe every
-                                // per-user policy (design adversary B2).
                                 ctx_save.send(Cmd::SaveRuntimeConfig {
-                                    body: json!({
-                                        "workspace_root": root_value,
-                                        "workspace_allowed_paths": allowed,
-                                        "workspace_blocked_paths": blocked,
-                                        "client_workspace_scope_overrides": allow_client_scope.get_untracked(),
-                                        "trust_client_launch_folder": trust_launch_folder.get_untracked(),
-                                        "workspace_default_mode": default_mode.get_untracked(),
-                                    })
-                                    .into(),
+                                    body: body.into(),
                                     form_id: Some(form_id),
                                 });
                             })
@@ -3185,7 +3684,7 @@ fn table(
     data: &[RuntimeRow],
     sel: Signal<usize>,
     policy_keys: Option<std::collections::HashSet<String>>,
-    autofocus: bool,
+    keeper: &super::util::FocusKeeper,
     on_choose: impl FnMut(usize) + Clone + 'static,
 ) -> View {
     let vw = abstracttui::app::use_viewport(cx).get().w;
@@ -3276,15 +3775,10 @@ fn table(
         .on_select(on_choose.clone())
         .on_activate(on_choose)
         .layout(LayoutStyle::default().grow(1.0));
-    let el = el.element(cx, t);
-    // FIRST MOUNT ONLY (design adversary BLOCKER-1): `.autofocus()` is
-    // re-armed by every Dyn regeneration — a store write while a modal is
-    // open would drag focus back to this table mid-keystroke.
-    if autofocus {
-        el.autofocus().build()
-    } else {
-        el.build()
-    }
+    // The keeper, not a bare `.autofocus()`: a regeneration hands the
+    // keyboard back only to a table that held it (design adversary
+    // BLOCKER-1: never drag focus back from where the user moved it).
+    keeper.wire(el.element(cx, t))
 }
 
 /// The selected run + the scope its rows were loaded under (actions
@@ -3599,5 +4093,56 @@ mod tests {
     fn the_note_line_names_the_half_that_answered() {
         assert_eq!(query_bit("*.jpg"), "q=\"*.jpg\" (glob)");
         assert_eq!(query_bit("photo"), "q=\"photo\"");
+    }
+
+    fn config(v: serde_json::Value) -> RuntimeConfigData {
+        RuntimeConfigData::from_value(&v)
+    }
+
+    /// Inherited (non-stored) values never prefill the gateway defaults
+    /// form, so a save cannot promote them to stored settings — the web's
+    /// renderGatewayPolicyModal rule.
+    #[test]
+    fn workspace_defaults_prefill_only_stored_choices() {
+        let inherited = config(json!({
+            "writable": true,
+            "workspace_root": {"value": "/srv/ws", "source": "env"},
+            "trust_client_launch_folder": {"value": true, "source": "default"},
+            "client_workspace_scope_overrides": {"value": false, "source": "default"},
+            "workspace_allowed_paths": {"value": "/a\n/b", "source": "stored"},
+            "workspace_blocked_paths": {"value": "", "source": "default"},
+            "workspace_default_mode": {"value": "whitelist", "source": "default"},
+        }));
+        let pre = WorkspaceDefaults::prefill(&inherited);
+        assert_eq!(pre.root, "", "an env root is not a stored choice");
+        assert_eq!(pre.trust, None);
+        assert_eq!(pre.overrides, None);
+        assert_eq!(pre.allowed, "/a\n/b");
+        assert_eq!(
+            pre.body(),
+            json!({
+                "workspace_default_mode": "whitelist",
+                "workspace_root": null,
+                "workspace_allowed_paths": "/a\n/b",
+                "workspace_blocked_paths": "",
+                "trust_client_launch_folder": null,
+            }),
+            "inherit = null trust, no bypass key (the web's exact body)"
+        );
+        let stored = config(json!({
+            "workspace_root": {"value": "/srv/ws", "source": "stored"},
+            "trust_client_launch_folder": {"value": false, "source": "stored"},
+            "client_workspace_scope_overrides": {"value": true, "source": "stored"},
+            "workspace_default_mode": {"value": "blacklist", "source": "stored"},
+        }));
+        let body = WorkspaceDefaults::prefill(&stored).body();
+        assert_eq!(body["workspace_root"], "/srv/ws");
+        assert_eq!(body["trust_client_launch_folder"], false);
+        assert_eq!(body["client_workspace_scope_overrides"], true);
+        assert_eq!(body["workspace_default_mode"], "blacklist");
+        assert!(
+            body.get("user_workspace_policies").is_none(),
+            "never names the per-user map"
+        );
     }
 }

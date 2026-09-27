@@ -7,16 +7,28 @@
 
 /// The About modal (F1 / ?).
 pub mod about;
+/// The Apps screen (browser apps, the desktop Assistant, Node.js).
+pub mod apps;
 pub mod connection;
+pub mod docs;
+pub mod entity_chat;
+pub mod entity_create;
 pub mod entity_manage;
+/// Gateway host panel (F3) + the paused / restart banner.
+pub mod host;
 pub mod models;
+/// The caller's own workspace policy (Users screen, `w`).
+pub mod my_policy;
 pub mod network;
 pub mod providers;
 pub mod review;
 pub mod routes;
 pub mod runtimes;
+pub mod sandbox;
 pub mod users;
 pub mod util;
+/// Setup: the first-run guide's welcome step + the first-run lifecycle.
+pub mod welcome;
 pub mod widths;
 pub mod workflows;
 
@@ -25,7 +37,7 @@ use std::rc::Rc;
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
-use abstracttui::app::{ChoiceOutcome, ChoicePrompt, Modal, Overlays, Toast};
+use abstracttui::app::{ChoiceOutcome, ChoicePrompt, Modal, Overlays};
 use abstracttui::prelude::*;
 use abstracttui::reactive::IntervalHandle;
 use abstracttui::widgets::PageHost;
@@ -35,7 +47,7 @@ use crate::worker::Cmd;
 use abstractcore_console::screens::Remote;
 use util::{hints, line, span, span_bold};
 
-pub const SCREENS: [&str; 10] = [
+pub const SCREENS: [&str; 12] = [
     "Connection",
     "Providers",
     "Routes",
@@ -51,12 +63,19 @@ pub const SCREENS: [&str; 10] = [
     // the model catalog / downloads / deletes, and the local engines.
     abstractcore_console::screens::CATALOG_TITLE,
     abstractcore_console::screens::ENGINES_TITLE,
+    // The web console's Apps tab (ui/apps.rs); key `A`.
+    "Apps",
+    // The first-run guide's welcome step (no jump key: 1-9, 0 and A are
+    // taken; Ctrl+G opens the guide on it, Ctrl+N/P reach it in browse).
+    "Setup",
 ];
 
 /// Screens with semantic weight get NAMES (round-4 P3-2): the bare
 /// literals were confined to this module but 3 of them carry meaning
 /// a reader had to reconstruct.
 pub const SCREEN_CONNECTION: usize = 0;
+pub const SCREEN_PROVIDERS: usize = 1;
+pub const SCREEN_ROUTES: usize = 2;
 pub const SCREEN_USERS: usize = 3;
 pub const SCREEN_WORKFLOWS: usize = 5;
 pub const SCREEN_REVIEW: usize = 6;
@@ -65,11 +84,47 @@ pub const SCREEN_MODELS: usize = 7;
 pub const SCREEN_CATALOG: usize = 8;
 /// AbstractCore's shared "Engines" screen (page id `engines`), key `0`.
 pub const SCREEN_ENGINES: usize = 9;
+/// The Apps screen (browser apps, Assistant, Node.js), key `A`. The
+/// first-run wizard references it BY THIS NAME; the number may move.
+pub const SCREEN_APPS: usize = 10;
+/// The setup guide's welcome step (page id `setup`), no jump key.
+pub const SCREEN_WELCOME: usize = 11;
+/// Screens reachable by a digit key (1-9, then 0).
+pub const DIGIT_SCREENS: usize = 10;
+/// Screens reachable by a jump key: the digit screens, then Apps (`A`).
+/// Every screen at or past this index (Setup) has no jump key.
+pub const KEYED_SCREENS: usize = SCREEN_APPS + 1;
+
+/// The first-run wizard, in the web guide's order (`console.py`
+/// `FIRST_RUN_STEPS` = welcome → engines → model → apps → done), mapped
+/// onto this console's screens. Connection comes first because the
+/// terminal must sign in; Providers sits beside Engines because the web
+/// engines step sends cloud users to the Providers tab; the model step
+/// is Routes (the recommended plan, Apply, Download all) then the Models
+/// catalog ("or pick any model that fits"); Review carries Finish.
+/// The web guide gates NO step (every step is optional, Next is always
+/// enabled); the only gate here is the sign-in one on Connection.
+/// The web guide's "apps" step is the Apps screen, between the model
+/// step (Models catalog) and Review.
+pub const WIZARD_STEPS: [usize; 8] = [
+    SCREEN_CONNECTION,
+    SCREEN_WELCOME,
+    SCREEN_ENGINES,
+    SCREEN_PROVIDERS,
+    SCREEN_ROUTES,
+    SCREEN_CATALOG,
+    SCREEN_APPS,
+    SCREEN_REVIEW,
+];
 
 /// The digit that jumps to screen `i` in browse mode: 1-9, then 0 for
 /// the tenth (PageHost's own number jump covers 1-9 only).
 pub fn screen_key(i: usize) -> char {
-    if i == 9 {
+    if i == SCREEN_APPS {
+        // The digits are spent: the Apps screen gets a LETTER (shifted,
+        // so no screen's own lowercase verb ever collides with it).
+        'A'
+    } else if i == 9 {
         '0'
     } else {
         char::from_digit(i as u32 + 1, 10).expect("screens 1-9")
@@ -79,7 +134,7 @@ pub fn screen_key(i: usize) -> char {
 /// Stable PageHost page ids, parallel to `SCREENS`. `ui.screen: usize`
 /// stays the source of truth (the wizard gate reads indexes); a two-way
 /// equality-guarded bridge keeps PageHost's string `active` in lockstep.
-pub const SCREEN_IDS: [&str; 10] = [
+pub const SCREEN_IDS: [&str; 12] = [
     "connection",
     "providers",
     "routes",
@@ -92,6 +147,8 @@ pub const SCREEN_IDS: [&str; 10] = [
     // execution planes). The shared contract names these two.
     abstractcore_console::screens::CATALOG_ID,
     abstractcore_console::screens::ENGINES_ID,
+    "apps",
+    "setup",
 ];
 
 /// Durable per-screen UI state (Copy: all signals).
@@ -102,6 +159,19 @@ pub struct UiState {
     pub screen: Signal<usize>,
     /// The user explicitly chose to continue without a connection.
     pub offline_ok: Signal<bool>,
+    /// A connection was established this session: from then on the
+    /// Connection screen's URL field never takes the caret by itself (a
+    /// lost connection must leave `r` a re-probe, not a typed letter).
+    pub was_connected: Signal<bool>,
+    /// `--wizard` / `--browse` was given: the first-run read never
+    /// changes the mode.
+    pub mode_forced: Signal<bool>,
+    /// The first-run boot decision was taken (once per session).
+    pub first_run_decided: Signal<bool>,
+    /// (form id, outcome) of a Finish / Skip setup in flight.
+    pub first_run_pending: Signal<Option<(u64, String)>>,
+    /// Why the last Finish / Skip setup did not close the guide.
+    pub first_run_error: Signal<Option<String>>,
 
     pub conn_url: Signal<String>,
     pub conn_token: Signal<String>,
@@ -206,6 +276,11 @@ impl UiState {
             wizard: cx.signal(true),
             screen: cx.signal(0),
             offline_ok: cx.signal(false),
+            was_connected: cx.signal(false),
+            mode_forced: cx.signal(false),
+            first_run_decided: cx.signal(false),
+            first_run_pending: cx.signal(None),
+            first_run_error: cx.signal(None),
             conn_url: cx.signal(url),
             conn_token: cx.signal(token),
             token_source: cx.signal(None),
@@ -299,6 +374,11 @@ pub fn reset_screens(s: &abstractcore_console::screens::ScreensStore) {
     s.engines.set(Remote::NotAsked);
     s.catalog.set(Remote::NotAsked);
     s.installed.set(Remote::NotAsked);
+    // Per-gateway reads of the optional verbs (abstractcore-console 0.3).
+    s.text_default.set(Remote::NotAsked);
+    s.feed.set(Remote::NotAsked);
+    s.plans.set(Default::default());
+    s.hub.set(None);
     s.engine_filter.set(None);
     s.providers_seen.set(Vec::new());
     s.catalog_sel.set(0);
@@ -353,7 +433,7 @@ impl Ctx {
                     );
                     (Some(t), d)
                 }
-                _ => (None, "none — no Authorization header sent".to_string()),
+                _ => (None, connection::NO_TOKEN_SENT.to_string()),
             }
         };
         (url, token, source)
@@ -449,15 +529,22 @@ impl Ctx {
                 }
             }
             3 => {
-                s.users.set(Loadable::Loading);
+                // The users registry is admin-only (`/admin/users`): a
+                // non-admin is told so on screen, never sent for a 403.
+                if !s.conn.with_untracked(ConnPhase::is_known_non_admin) {
+                    s.users.set(Loadable::Loading);
+                    self.send(Cmd::LoadUsers);
+                }
                 s.entities.set(Loadable::Loading);
                 // The inspector's detail must honor `r`'s "refreshing
                 // live data" promise too (F17): NotAsked here → the
                 // selection effect reloads it when fresh entities land.
                 s.entity_detail.set(Loadable::NotAsked);
-                self.send(Cmd::LoadUsers);
                 self.send(Cmd::LoadEntities);
             }
+            // The whole Runtimes screen is admin-only (`/admin/runtimes`;
+            // the web hides the tab): nothing to load for a non-admin.
+            4 if s.conn.with_untracked(ConnPhase::is_known_non_admin) => {}
             4 => {
                 // ONLY the inventory loads here (operator directive
                 // 2026-07-26: no eager runs/sessions). The detail slots
@@ -502,6 +589,15 @@ impl Ctx {
             // engines read), reached when the root `r` handles the key.
             SCREEN_CATALOG => self.screens.refresh_catalog(),
             SCREEN_ENGINES => self.screens.refresh_engines(),
+            SCREEN_APPS => {
+                // Rows stay on screen while re-checking (web "Check
+                // again"); a first read shows the loading state.
+                if s.apps.overview.with_untracked(|o| o.ready().is_none()) {
+                    s.apps.overview.set(Loadable::Loading);
+                }
+                self.send(Cmd::LoadApps { latest: true });
+            }
+            SCREEN_WELCOME => welcome::refresh(self),
             _ => {}
         }
     }
@@ -563,8 +659,27 @@ pub fn open_prompt(
     resolve: impl FnOnce(ChoiceOutcome) + 'static,
 ) {
     ui.prompt_open.update(|n| *n += 1);
+    // THE SCREEN DOES NOT SHOW THROUGH A DIALOG (review 2, 80x24): the
+    // engine's choice dialog is frameless on a translucent scrim, so the
+    // screen around and under it read as part of the dialog. An opaque
+    // backdrop layer just under the modal band covers the screen while
+    // the prompt is open (removed when it resolves, whatever the answer).
+    let backdrop = cx.use_context::<abstracttui::app::Overlays>().map(|ov| {
+        let vp = abstracttui::app::use_viewport(cx).get_untracked();
+        let ground = abstracttui::app::current_theme().tokens.bg;
+        ov.layer_draw(
+            abstracttui::app::MODAL_Z - 1,
+            abstracttui::base::Rect::from_size(vp),
+            move |canvas, rect| {
+                canvas.fill_styled(rect, ' ', &abstracttui::render::Style::new().bg(ground));
+            },
+        )
+    });
     prompt
         .on_resolve(move |outcome| {
+            if let Some(b) = &backdrop {
+                b.remove();
+            }
             ui.prompt_open.update(|n| *n = n.saturating_sub(1));
             resolve(outcome);
         })
@@ -822,6 +937,9 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
     let ctx_refresh = ctx.clone();
     let ctx_about = ctx.clone();
     let ctx_about2 = ctx.clone();
+    let ctx_guide = ctx.clone();
+    let ctx_host = ctx.clone();
+    let ctx_docs = ctx.clone();
 
     let mut root_el = Element::new()
         .style(LayoutStyle::column())
@@ -832,7 +950,7 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
                 // A Models/Engines job runs ON THE GATEWAY and survives
                 // us, but the console is its only live progress view —
                 // quitting mid-download is a decision, not a keystroke.
-                if ctx_q.screens.store.job_active() {
+                if ctx_q.screens.store.job_running() {
                     ctx_q.store.notice.set(Some(
                         "a models/engines job is running on the gateway — c on Models/Engines \
                          cancels it (Ctrl+C quits anyway; the gateway keeps running it)"
@@ -877,10 +995,15 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
                 // was the dead-action class (F3) wearing a live label.
                 // (Screen 5 left this list with the inline sandbox: its
                 // provider picker is live data.)
+                // On Connection the live datum IS the connection: `r`
+                // re-probes it (the Re-probe button's path).
                 if matches!(s, SCREEN_CONNECTION) {
-                    ctx_refresh.store.notice.set(Some(
-                        "nothing to refresh here — r reloads live data on screens 2-9 and 0".into(),
-                    ));
+                    let (url, _) = ctx_refresh.effective_credentials();
+                    ctx_refresh
+                        .store
+                        .notice
+                        .set(Some(format!("⟳ re-probing {url}…")));
+                    ctx_refresh.connect_now();
                     return;
                 }
                 // The immediate ack: fast domains repaint identically
@@ -897,11 +1020,23 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
                 ctx_refresh.store.notice.set(Some(
                     "verifying the gateway connection — retrying automatically, one moment".into(),
                 ));
+            } else if matches!(ctx_refresh.store.conn.get_untracked(), ConnPhase::Probing) {
+                ctx_refresh
+                    .store
+                    .notice
+                    .set(Some("already probing the gateway — one moment".into()));
             } else {
-                ctx_refresh.store.notice.set(Some(
-                    "not connected — probe on the Connection screen first (r refreshes live data)"
-                        .into(),
-                ));
+                // Not connected (never probed, unreachable, refused): `r`
+                // means "try again" — re-probe with the same URL and token
+                // the Probe button uses. A gateway that came back (after a
+                // quit, a restart, a reboot) is one keypress away instead
+                // of a trip to the Connection screen.
+                let (url, _) = ctx_refresh.effective_credentials();
+                ctx_refresh
+                    .store
+                    .notice
+                    .set(Some(format!("⟳ not connected — probing {url} again…")));
+                ctx_refresh.connect_now();
             }
         })
         .shortcut(KeyChord::new(Mods::CTRL, Key::Char('l')), |_| {
@@ -909,22 +1044,41 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         })
         // About: F1 anywhere (function keys survive focused text fields),
         // `?` wherever no text field holds the caret.
-        .shortcut(KeyChord::plain(Key::F(1)), move |_| about::open(&ctx_about, cx))
-        .shortcut(KeyChord::plain(Key::Char('?')), move |_| about::open(&ctx_about2, cx));
-    // Digit keys at the root. Wizard: a REFUSAL with a reason, so a
-    // swallowed digit never reads as a dead app (F3). Browse: PageHost
-    // owns digit jumps (its number_jump surface), but its shortcut rides
-    // the FOCUSED path — on a page where nothing holds focus (a table
-    // still loading) the digit reaches this root handler instead, which
-    // then performs the jump itself. `0` is always ours: PageHost's
-    // number surface is 1-9, and the tenth screen (Engines) needs a key.
-    for i in 0..SCREENS.len() {
+        // The setup guide: Ctrl+G reopens it from browse, leaves or skips
+        // it from the wizard (a Ctrl chord: works inside text fields).
+        .shortcut(KeyChord::new(Mods::CTRL, Key::Char('g')), move |_| {
+            welcome::guide_key(&ctx_guide, cx)
+        })
+        .shortcut(KeyChord::plain(Key::F(1)), move |_| {
+            about::open(&ctx_about, cx)
+        })
+        .shortcut(KeyChord::plain(Key::Char('?')), move |_| {
+            about::open(&ctx_about2, cx)
+        })
+        // Gateway host panel (pause/resume, restart, quit, update): F3
+        // anywhere — a function key survives focused text fields.
+        .shortcut(KeyChord::plain(host::OPEN_KEY), move |_| {
+            host::open(&ctx_host, cx)
+        })
+        // Docs assistant (the web top bar's ✦ drawer): F2 anywhere — a
+        // function key, so it works with the caret in a text field.
+        .shortcut(KeyChord::plain(Key::F(2)), move |_| {
+            docs::open(&ctx_docs, cx)
+        });
+    // Screen keys (1-9, 0, A) at the root — the ONE jump surface. Wizard:
+    // a REFUSAL with a reason, so a swallowed digit never reads as a dead
+    // app (F3). Browse: the jump. PageHost's own number_jump is off: it
+    // re-anchors focus on the host root even when the digit names the
+    // screen already shown, and that left the screen's keys dead (the
+    // page is not on the root→focus path) — review 2 pty proof, `8` then
+    // `w` on Resources. A same-screen key here changes nothing.
+    for i in 0..KEYED_SCREENS {
         let ctx_i = ctx.clone();
         let key = screen_key(i);
         root_el = root_el.shortcut(KeyChord::plain(Key::Char(key)), move |_| {
             if ctx_i.ui.wizard.get_untracked() {
                 ctx_i.store.notice.set(Some(
-                    "digit jumps work in browse mode — walk the wizard with Ctrl+N and Finish on the Review step"
+                    "screen jumps (1-9, 0, A) work in browse mode — in the guide Ctrl+N walks, Ctrl+G jumps to a step or leaves"
                         .into(),
                 ));
             } else if ctx_i.ui.screen.get_untracked() != i {
@@ -982,6 +1136,8 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         let c7 = host_ctx.clone();
         let c8 = host_ctx.clone();
         let c9 = host_ctx.clone();
+        let c10 = host_ctx.clone();
+        let c11 = host_ctx.clone();
         PageHost::new()
             .page(SCREEN_IDS[0], "1 Connection", move |gcx| {
                 connection::view(gcx, &c0, &theme.get().tokens)
@@ -1014,8 +1170,14 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
             .page(SCREEN_IDS[9], "0 Engines", move |gcx| {
                 abstractcore_console::screens::engines(gcx, &c9.screens_for_page())
             })
+            .page(SCREEN_IDS[SCREEN_APPS], "A Apps", move |gcx| {
+                apps::view(gcx, &c10, &theme.get().tokens)
+            })
+            .page(SCREEN_IDS[SCREEN_WELCOME], "Setup", move |gcx| {
+                welcome::view(gcx, &c11, &theme.get().tokens)
+            })
             .active(active)
-            .number_jump(!wizard_now)
+            .number_jump(false)
             .chords(&prev_chords, &next_chords)
             .view(hcx)
     });
@@ -1056,6 +1218,9 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
 
     root_el
         .child(header(cx, &ctx, theme))
+        // "Workflows are paused" (web: every tab) + the restart/quit
+        // watcher line; zero rows when neither applies.
+        .child(host::banner(&ctx, theme))
         // One blank line between the title bar and the tab bar
         // (operator ask 2026-07-24: the header must never butt directly
         // against the components below). Pinned like the header — a
@@ -1086,12 +1251,16 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
                 if goal.is_empty() {
                     return Element::new().style(LayoutStyle::default().h(0)).build();
                 }
+                // "Step N of M" (the web guide's kicker) when the screen
+                // is one of the guide's steps.
+                let step = WIZARD_STEPS
+                    .iter()
+                    .position(|s| *s == screen)
+                    .map(|i| format!(" Step {}/{} ", i + 1, WIZARD_STEPS.len()))
+                    .unwrap_or_else(|| " Step goal: ".to_string());
                 Element::new()
                     .style(LayoutStyle::line(1).shrink(0.0))
-                    .child(line(vec![
-                        span(" Step goal: ", t.accent),
-                        span(goal, t.text_muted),
-                    ]))
+                    .child(line(vec![span(step, t.accent), span(goal, t.text_muted)]))
                     .build()
             }
         }))
@@ -1106,10 +1275,8 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
 /// tightest screen; the goal row is what pushed it over at 80x24).
 fn wizard_goal(screen: usize) -> &'static str {
     match screen {
-        1 => "make one provider usable — a adds a key; e edits or overrides env rows; t tests.",
-        2 => {
-            "optional — the engine picks models by default; override only to pin a provider/model."
-        }
+        1 => "optional — cloud providers only need a key: a adds one; e edits; t tests.",
+        2 => "your default model — a applies the recommended set; D downloads all of it.",
         SCREEN_USERS => {
             "mint a token per app/person that connects (a); skip if the admin token is enough."
         }
@@ -1117,9 +1284,8 @@ fn wizard_goal(screen: usize) -> &'static str {
         SCREEN_WORKFLOWS => {
             "nothing to configure — the registered workflows; e exports, d/D delete."
         }
-        SCREEN_REVIEW => {
-            "run one real test (Enter in the prompt) to prove a provider, then Finish."
-        }
+        SCREEN_REVIEW => "optionally run one real test (Tab to the prompt, Enter), then Finish.",
+        SCREEN_WELCOME => "this computer at a glance — every step is optional; Ctrl+G jumps to a step or leaves.",
         SCREEN_MODELS => {
             "nothing to configure — live models, memory & caches; Finish lives on Review."
         }
@@ -1129,6 +1295,7 @@ fn wizard_goal(screen: usize) -> &'static str {
         SCREEN_ENGINES => {
             "optional — i installs a local engine (Ollama, MLX…) on the gateway host, after a confirm."
         }
+        SCREEN_APPS => "optional — i installs a browser app; o opens it signed in (a one-time link).",
         _ => "",
     }
 }
@@ -1137,10 +1304,22 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
     let store = ctx.store;
     let ui = ctx.ui;
 
+    cx.effect(move || {
+        if store.conn.with(ConnPhase::is_connected) && !ui.was_connected.get_untracked() {
+            ui.was_connected.set(true);
+        }
+    });
+
     // The centralized connection authority (health.rs): transport
     // failures anywhere trigger ONE background probe that settles the
     // story every surface tells.
     crate::health::install(cx, ctx);
+
+    // First run: read the state at connect, take the boot decision,
+    // route Finish / Skip outcomes (ui/welcome.rs).
+    welcome::install(cx, ctx);
+    // The paused-banner poll (/host/runner, 15 s while connected).
+    host::install(cx, ctx);
 
     // Screen-entry data loading: when connected and a screen's domains
     // were never asked, ask. Loading is set synchronously in
@@ -1163,9 +1342,11 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
                 }
                 2 => matches!(store.routes.get(), Loadable::NotAsked),
                 3 => {
-                    matches!(store.users.get(), Loadable::NotAsked)
+                    (matches!(store.users.get(), Loadable::NotAsked)
+                        && !store.conn.with(ConnPhase::is_known_non_admin))
                         || matches!(store.entities.get(), Loadable::NotAsked)
                 }
+                4 if store.conn.with(ConnPhase::is_known_non_admin) => false,
                 4 => {
                     // ONLY the inventory: runs / data_homes /
                     // runtime_config are owned by their panel effects
@@ -1195,6 +1376,8 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
                     let s = ctx.screens.store;
                     s.engines.with(Remote::is_not_asked) || s.host.with(Remote::is_not_asked)
                 }
+                SCREEN_APPS => matches!(store.apps.overview.get(), Loadable::NotAsked),
+                SCREEN_WELCOME => matches!(store.welcome.get(), Loadable::NotAsked),
                 // Deliberately NOT keyed here: host-state freshness is
                 // owned end-to-end by the poll-lifecycle effect below
                 // (a second trigger lane would race it into double
@@ -1297,22 +1480,11 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
         });
     }
 
-    // Notices → toast (and the footer mirrors the latest one).
-    {
-        let overlays = ctx.overlays.clone();
-        cx.effect(move || {
-            if let Some(n) = store.notice.get() {
-                let viewport = abstracttui::app::use_viewport(cx).get_untracked();
-                Toast::show(
-                    &overlays,
-                    cx,
-                    viewport,
-                    util::ellipsize(&n, (viewport.w as usize).saturating_sub(6).max(20)),
-                    Duration::from_secs(4),
-                );
-            }
-        });
-    }
+    // Notices render in ONE place: the footer's status line (below).
+    // They used to ALSO pop an engine Toast, which rests on row 1 and
+    // slides in over row 0 — drawing over the header's connection status
+    // and the paused/restart banner (REVIEW-1 minor). The footer line is
+    // never covered and keeps the notice while an operation is busy.
 
     // Token-once modals: create-user / rotate-token responses queue up
     // and show ONE AT A TIME — never bulldozing an unread token modal
@@ -1381,32 +1553,59 @@ fn wizard_next(ctx: &Ctx, cx: Scope) {
                 if let ChoiceOutcome::Answered(a) = outcome {
                     if a.selected.iter().any(|s| s == "offline") {
                         ui.offline_ok.set(true);
-                        ui.screen.update(|s| *s = (*s + 1).min(SCREENS.len() - 1));
+                        if let Some(next) = wizard_step_after(SCREEN_CONNECTION) {
+                            ui.screen.set(next);
+                        }
                     }
                 }
             },
         );
         return;
     }
-    if screen + 1 < SCREENS.len() {
-        ctx.ui.screen.set(screen + 1);
-    } else {
-        ctx.store.notice.set(Some(
-            "already on the last step — Finish on the Review step switches to browse mode".into(),
-        ));
+    match wizard_step_after(screen) {
+        Some(next) => ctx.ui.screen.set(next),
+        None => ctx.store.notice.set(Some(
+            "already on the last step — Finish (or Skip setup) records it and switches to browse mode"
+                .into(),
+        )),
+    }
+}
+
+/// The guide step after `screen` (`None` on the last one). A screen off
+/// the guide's path (reached in browse, then Ctrl+G) resumes at the
+/// first guide step after it in screen order, else at the welcome step.
+pub fn wizard_step_after(screen: usize) -> Option<usize> {
+    match WIZARD_STEPS.iter().position(|s| *s == screen) {
+        Some(i) => WIZARD_STEPS.get(i + 1).copied(),
+        None => Some(SCREEN_WELCOME),
+    }
+}
+
+/// The guide step before `screen` (`None` on the first one).
+pub fn wizard_step_before(screen: usize) -> Option<usize> {
+    match WIZARD_STEPS.iter().position(|s| *s == screen) {
+        Some(0) => None,
+        Some(i) => Some(WIZARD_STEPS[i - 1]),
+        None => Some(SCREEN_WELCOME),
     }
 }
 
 fn wizard_back(ctx: &Ctx) {
-    if ctx.ui.screen.get_untracked() == 0 {
+    let screen = ctx.ui.screen.get_untracked();
+    let prev = if ctx.ui.wizard.get_untracked() {
+        wizard_step_before(screen)
+    } else {
+        screen.checked_sub(1)
+    };
+    match prev {
+        Some(p) => ctx.ui.screen.set(p),
         // Esc/[ at the first screen is a no-op — say so instead of
         // swallowing the key (F3).
-        ctx.store
+        None => ctx
+            .store
             .notice
-            .set(Some("already on the first screen".into()));
-        return;
+            .set(Some("already on the first screen".into())),
     }
-    ctx.ui.screen.update(|s| *s = s.saturating_sub(1));
 }
 
 fn header(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Theme>) -> View {
@@ -1469,6 +1668,16 @@ fn header(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
             span(format!("· {url} "), t.text_muted),
             span(format!("{dot} "), dot_ink),
             span(label, t.text),
+            // The web's session-only ✦ button, as a hint: last span, so
+            // it is the first thing a narrow terminal truncates.
+            span(
+                if conn.is_connected() {
+                    "  · F2 docs assistant"
+                } else {
+                    ""
+                },
+                t.text_faint,
+            ),
         ])
     })
 }
@@ -1476,6 +1685,8 @@ fn header(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
 fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Theme>) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
+    let screens_caps = ctx.screens.caps;
+    let screens_access = ctx.screens.store.access;
     let engine_notices = abstracttui::app::use_startup_notices(_cx);
     Element::new()
         // Chrome rows: pinned like the header (finding-0240 class) —
@@ -1495,8 +1706,8 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
             // NAMED in every debug run into a lane nobody read. App
             // notices win the slot (actionable acks); the engine line
             // shows whenever the app lane is idle.
+            let notice = store.notice.get();
             if ops.is_empty() {
-                let notice = store.notice.get();
                 return match notice {
                     Some(n) => line(vec![span(format!(" {n}"), t.text_muted)]),
                     None => {
@@ -1531,6 +1742,12 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 };
             }
             let mut parts = Vec::new();
+            // The latest notice leads (it is the ack of what the operator
+            // just did); the busy ops follow it on the same line.
+            if let Some(n) = notice {
+                parts.push(span(format!(" {n}"), t.text_muted));
+                parts.push(span(" ·", t.text_faint));
+            }
             for (i, op) in ops.iter().enumerate() {
                 if i > 0 {
                     parts.push(span(" · ", t.text_faint));
@@ -1549,22 +1766,27 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
             let t = theme.get().tokens;
             let wizard = ui.wizard.get();
             let screen = ui.screen.get();
+            // A principal known NOT to be an admin does not see the admin
+            // verbs (the web hides the same controls); pressing one still
+            // answers with the reason.
+            let non_admin = store.conn.with(ConnPhase::is_known_non_admin);
             let mut pairs: Vec<(&str, &str)> = Vec::new();
-            // Universal pairs FIRST (adversary round-3): the hint row
-            // truncates right-edge-first, and Ctrl+C used to sit last —
-            // on wizard data screens (where q is refused) no quit
-            // affordance survived at ≤120 cols. Per-screen verbs are
-            // the cheaper loss: refusal notices re-teach them.
+            // THE SCREEN'S OWN KEYS LEAD (review 2, 80x24): the row
+            // truncates right-edge-first, and with the universal pairs
+            // first an 80-column footer showed no screen verb at all.
+            // Quit follows them (and the guide's Ctrl+N stays first in
+            // the wizard); the rest of the universal keys come after.
+            let mut globals: Vec<(&str, &str)> = Vec::new();
             if wizard {
-                pairs.push(("Ctrl+N/]", "next step"));
-                pairs.push(("Ctrl+P/Esc", "back"));
-                pairs.push(("Ctrl+C", "quit"));
+                globals.push(("Ctrl+N/]", "next step"));
+                globals.push(("Ctrl+C", "quit"));
+                globals.push(("Ctrl+P/Esc", "back"));
             } else {
-                pairs.push(("1-9,0", "screens"));
-                pairs.push(("Ctrl+N/P", "next/prev"));
-                pairs.push(("q/Ctrl+C", "quit"));
+                globals.push(("q/Ctrl+C", "quit"));
+                globals.push(("1-9,0,A", "screens"));
+                globals.push(("Ctrl+N/P", "next/prev"));
             }
-            pairs.push(("Tab", "focus"));
+            globals.push(("Tab", "focus"));
             match screen {
                 1 => {
                     pairs.push(("a", "add connection"));
@@ -1578,11 +1800,15 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     pairs.push(("Enter/e", "edit route"));
                     pairs.push(("x", "clear route"));
                     // `d` is "delete" on Connections/Users and
-                    // "download" here. The three never share a screen,
-                    // the hint row names the verb for the screen you are
-                    // on, and the download confirms with the artifact
-                    // spelled out before it spends a byte.
+                    // "download" nowhere: weights are `w`, the whole
+                    // recommended set `D`, each behind a confirm. (The
+                    // plan line on the screen teaches p / D / a too, for
+                    // rows too narrow to reach them here.)
                     pairs.push(("w", "download weights"));
+                    pairs.push(("a", "apply recommended"));
+                    pairs.push(("D", "download all"));
+                    pairs.push(("C", "cancel download all"));
+                    pairs.push(("p", "recommended plan"));
                     pairs.push(("r", "refresh"));
                 }
                 3 => {
@@ -1591,10 +1817,16 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     pairs.push(("t", "rotate token"));
                     pairs.push(("d", "delete"));
                     pairs.push(("m", "manage entity"));
+                    pairs.push(("n", "summon entity"));
+                    pairs.push(("c", "talk"));
+                    pairs.push(("s", "spark templates"));
                     pairs.push(("i", "inspect"));
                     pairs.push(("v", "kept data of deleted users"));
+                    pairs.push(("w", "my workspace policy"));
                     pairs.push(("r", "refresh"));
                 }
+                // The whole Runtimes screen is admin-only: no verbs.
+                4 if non_admin => {}
                 4 => {
                     pairs.push(("Enter", "inspect runtime"));
                     pairs.push(("f", "filter"));
@@ -1619,10 +1851,12 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     pairs.push(("e", "export .flow"));
                     pairs.push(("d", "delete version"));
                     pairs.push(("D", "delete every version"));
+                    pairs.push(("i", "import .flow"));
+                    pairs.push(("L", "reload from disk"));
                     pairs.push(("r", "refresh"));
                 }
                 SCREEN_REVIEW => {
-                    pairs.push(("Enter", "run the test (REAL generation)"));
+                    pairs.push(("Tab→prompt, Enter", "run the test (REAL generation)"));
                     pairs.push(("r", "refresh providers"));
                 }
                 SCREEN_MODELS => {
@@ -1640,17 +1874,89 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 }
                 // The shared screens publish their own verbs.
                 SCREEN_CATALOG => {
-                    pairs.extend_from_slice(abstractcore_console::screens::catalog::HINTS);
+                    pairs.extend(abstractcore_console::screens::catalog::hints(
+                        screens_caps,
+                        &screens_access.get(),
+                    ));
                     pairs.push(("r", "refresh"));
                 }
                 SCREEN_ENGINES => {
-                    pairs.extend_from_slice(abstractcore_console::screens::engines::HINTS);
+                    pairs.extend(abstractcore_console::screens::engines::hints(
+                        screens_caps,
+                        &screens_access.get(),
+                    ));
+                }
+                SCREEN_APPS => pairs.extend_from_slice(apps::HINTS),
+                SCREEN_WELCOME => {
+                    pairs.push(("r", "refresh"));
                 }
                 _ => {}
             }
+            let admin_keys: &[&str] = match screen {
+                SCREEN_ROUTES => routes::ADMIN_KEYS,
+                SCREEN_USERS => users::ADMIN_KEYS,
+                SCREEN_WORKFLOWS => workflows::ADMIN_KEYS,
+                SCREEN_MODELS => models::ADMIN_KEYS,
+                _ => &[],
+            };
+            let (screen_pairs, gated) = util::admin_hint_pairs(pairs, admin_keys, non_admin);
+            let mut pairs: Vec<(&str, &str)> = Vec::new();
+            if wizard {
+                pairs.push(globals.remove(0)); // Ctrl+N: the guide's walk
+            }
+            pairs.extend(screen_pairs);
+            if let Some(keys) = gated.as_deref() {
+                pairs.push((keys, "admin only"));
+            }
+            pairs.extend(globals);
+            // The setup guide's chord LAST: every screen has it, so it
+            // yields to the screen's own verbs when the row truncates
+            // (the Setup step and the goal line teach it too). The guide
+            // is an admin surface (its writes are admin routes; the web
+            // hides "Setup guide" for a non-admin).
+            if wizard {
+                pairs.push(("Ctrl+G", "steps/leave guide"));
+            } else if !non_admin {
+                pairs.push(("Ctrl+G", "setup guide"));
+            }
+            // LAST: the row truncates right-edge-first, so the host panel
+            // key shows wherever the screen's own verbs leave room.
+            pairs.push((host::OPEN_KEY_LABEL, "gateway host"));
             hints(&t, &pairs)
         }))
         .build()
+}
+
+/// Who may change the gateway host from AbstractCore's Models/Engines
+/// screens (9 and 0), from the connection: the web console's rule, admins
+/// only. A connection being re-verified keeps its principal (no flicker).
+/// The ReadOnly reason ends every refusal those screens give ("only an
+/// admin can download models — signed in as ana, not an admin").
+pub fn screens_access(conn: &ConnPhase) -> abstractcore_console::screens::Access {
+    use abstractcore_console::screens::Access;
+    match conn {
+        ConnPhase::Connected(id) | ConnPhase::Verifying(id) if id.admin => Access::Admin,
+        ConnPhase::Connected(id) | ConnPhase::Verifying(id) => {
+            Access::ReadOnly(format!("signed in as {}, not an admin", id.user_id))
+        }
+        _ => Access::ReadOnly("not signed in to a gateway".into()),
+    }
+}
+
+/// [`screens_access`] as a signal kept current from `store.conn` — what
+/// `ScreensCtx::new` takes (lib.rs and the headless tests share it).
+pub fn screens_access_signal(
+    cx: Scope,
+    store: Store,
+) -> Signal<abstractcore_console::screens::Access> {
+    let access = cx.signal(store.conn.with_untracked(screens_access));
+    cx.effect(move || {
+        let next = store.conn.with(screens_access);
+        if access.with_untracked(|a| *a != next) {
+            access.set(next);
+        }
+    });
+    access
 }
 
 /// Scheme-default URL normalization, shared by the Probe button and the

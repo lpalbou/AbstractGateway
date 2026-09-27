@@ -12,13 +12,19 @@
 //! disk and still needs a decision.
 
 use abstracttui::prelude::*;
-use abstracttui::widgets::Table;
+use abstracttui::widgets::{Table, TextInput};
 
-use super::util::{line, loadable_view, span, span_bold};
+use super::util::{field, line, span, span_bold};
 use super::widths;
-use super::Ctx;
+use super::{open_form, Ctx};
 use crate::store::{WorkflowRow, WorkflowsData};
+use crate::worker::operator::OpCmd;
 use crate::worker::Cmd;
+
+/// The footer verbs of this screen that only an admin may use: delete
+/// (one version / every version), import and reload. Listing and export
+/// stay open to every principal — the web keeps the tab for everyone.
+pub const ADMIN_KEYS: &[&str] = &["d", "D", "i", "L"];
 
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
@@ -37,6 +43,8 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ctx_del_all = ctx.clone();
     let ctx_refresh = ctx.clone();
     let ctx_drafts = ctx.clone();
+    let ctx_import = ctx.clone();
+    let ctx_reload = ctx.clone();
 
     Element::new()
         .style(LayoutStyle::column().gap(0))
@@ -59,15 +67,22 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         })
         .shortcut(KeyChord::plain(Key::Char('e')), {
             let c = ctx_export.clone();
-            move |_| export_selected(&c)
+            move |_| export_selected(cx, &c)
         })
         .shortcut(KeyChord::plain(Key::Char('d')), {
             let c = ctx_del_ver.clone();
-            move |_| delete_selected(&c, false)
+            move |_| delete_selected(cx, &c, false)
         })
         .shortcut(KeyChord::plain(Key::Char('D')), {
             let c = ctx_del_all.clone();
-            move |_| delete_selected(&c, true)
+            move |_| delete_selected(cx, &c, true)
+        })
+        // Web parity: "Import…" (a .flow bundle) and a registry reload.
+        .shortcut(KeyChord::plain(Key::Char('i')), move |_| {
+            open_import(cx, &ctx_import)
+        })
+        .shortcut(KeyChord::plain(Key::Char('L')), move |_| {
+            reload(&ctx_reload)
         })
         .child(
             Block::new()
@@ -81,14 +96,15 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         .min_h(6)
                         .padding(Edges::all(1)),
                 )
-                .child(dyn_view_scoped(
-                    LayoutStyle::default().grow(1.0),
+                .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), {
+                    let keeper = super::util::FocusKeeper::new();
                     move |gcx| {
                         let conn = store.conn.get();
                         let data = store.workflows.get();
                         let sel = ui.workflow_sel;
                         let _ = &ctx_table;
-                        loadable_view(
+                        super::util::loadable_view_kept(
+                            &keeper,
                             &tt,
                             &conn,
                             || store.tick.get(),
@@ -96,7 +112,8 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                             |d: &WorkflowsData| d.rows.is_empty() && d.skipped.is_empty(),
                             "no workflows registered on this gateway",
                             |d: &WorkflowsData| {
-                                let mut children: Vec<View> = vec![master_table(gcx, &tt, d, sel)];
+                                let mut children: Vec<View> =
+                                    vec![master_table(gcx, &tt, d, sel, &keeper)];
                                 if let Some(row) = d.rows.get(sel.get()) {
                                     children.push(detail_block(
                                         gcx,
@@ -117,8 +134,8 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                 col.build()
                             },
                         )
-                    },
-                ))
+                    }
+                }))
                 .element(t)
                 .build(),
         )
@@ -131,6 +148,10 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 span(" delete version  ", tt.text_muted),
                 span("D", tt.accent),
                 span(" delete bundle  ", tt.text_muted),
+                span("i", tt.accent),
+                span(" import .flow  ", tt.text_muted),
+                span("L", tt.accent),
+                span(" reload  ", tt.text_muted),
                 span("t", tt.accent),
                 span(
                     if drafts {
@@ -154,26 +175,124 @@ fn selected_row(ctx: &Ctx) -> Option<WorkflowRow> {
         .with_untracked(|d| d.ready().and_then(|w| w.rows.get(sel).cloned()))
 }
 
-fn export_selected(ctx: &Ctx) {
-    let Some(row) = selected_row(ctx) else { return };
+/// Where an export lands by default: the console's own downloads folder
+/// (the sandbox's artifacts go there too), never the working directory.
+pub fn export_default_path(bundle_id: &str, version: &str) -> String {
+    super::sandbox::artifact_dir()
+        .join(format!("{bundle_id}@{version}.flow"))
+        .display()
+        .to_string()
+}
+
+/// `e`: export the selected version's ORIGINAL bytes to a LOCAL file. The
+/// TUI is frequently not on the gateway's machine, so the file lands on
+/// THIS one; the destination is shown (editable) and confirmed first.
+fn export_selected(cx: Scope, ctx: &Ctx) {
+    let Some(row) = selected_row(ctx) else {
+        ctx.store
+            .notice
+            .set(Some("no workflow selected — nothing to export".into()));
+        return;
+    };
     let version = row
         .versions
         .first()
         .map(|(v, _, _, _)| v.clone())
         .unwrap_or_default();
-    // A LOCAL path: the TUI is frequently not on the machine running the
-    // gateway, so writing "somewhere on the server" would be an export the
-    // operator cannot find.
-    let dest = format!("./{}@{}.flow", row.bundle_id, version);
-    ctx.send(Cmd::ExportWorkflow {
-        bundle_id: row.bundle_id,
-        version,
-        dest,
+    let label = format!("{}@{}", row.bundle_id, version);
+    let default_dest = export_default_path(&row.bundle_id, &version);
+    let ctx2 = ctx.clone();
+    open_form(ctx, cx, Size::new(96, 11), move |mcx, close| {
+        let theme = use_theme(mcx);
+        let t0 = theme.get().tokens;
+        // The path field fits the dialog as clamped on THIS terminal (a
+        // fixed 70 cells ran past the border at 80 columns).
+        let input_w =
+            (96.min(abstracttui::app::use_viewport(mcx).get_untracked().w - 2) - 26).clamp(20, 70);
+        let dest = mcx.signal(default_dest.clone());
+        let form_error = mcx.signal(Option::<String>::None);
+        let in_flight = mcx.signal(false);
+        let form_id = crate::worker::next_form_id();
+        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
+        let submit = {
+            let ctx_s = ctx2.clone();
+            let bundle_id = row.bundle_id.clone();
+            let version = version.clone();
+            move || {
+                if in_flight.get_untracked() {
+                    return;
+                }
+                let d = dest.get_untracked().trim().to_string();
+                if d.is_empty() {
+                    form_error.set(Some("type where to save the .flow file".into()));
+                    return;
+                }
+                form_error.set(None);
+                in_flight.set(true);
+                ctx_s.send(Cmd::ExportWorkflow {
+                    bundle_id: bundle_id.clone(),
+                    version: version.clone(),
+                    dest: d,
+                    form_id: Some(form_id),
+                });
+            }
+        };
+        let submit2 = submit.clone();
+        let close_cancel = close.clone();
+        Element::new()
+            .style(LayoutStyle::column().gap(0))
+            .child(line(vec![span_bold(format!("Export {label}"), t0.accent)]))
+            .child(line(vec![span(
+                "saved on THIS machine; an existing file is never overwritten",
+                t0.text_faint,
+            )]))
+            .child(field(
+                &t0,
+                "save to",
+                TextInput::new()
+                    .value(dest)
+                    .layout(LayoutStyle::default().w(input_w).h(1))
+                    .on_submit(move |_: &str| submit())
+                    .element(mcx, &t0)
+                    .autofocus()
+                    .build(),
+            ))
+            .child(super::message_slot(theme, form_error, in_flight))
+            .child(
+                Element::new()
+                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                    .child(
+                        Button::new("Export")
+                            .on_click(submit2)
+                            .element(mcx, &t0)
+                            .build(),
+                    )
+                    .child(
+                        Button::new("Cancel (Esc)")
+                            .on_click(move || close_cancel())
+                            .element(mcx, &t0)
+                            .build(),
+                    )
+                    .build(),
+            )
+            .build()
     });
 }
 
-fn delete_selected(ctx: &Ctx, whole_bundle: bool) {
-    let Some(row) = selected_row(ctx) else { return };
+/// Delete confirms first (web parity: "This removes … from disk. There is
+/// no undo."), defaulting to keep.
+fn delete_selected(cx: Scope, ctx: &Ctx, whole_bundle: bool) {
+    // `DELETE /bundles/{id}` is admin-only (the handler's admin check);
+    // the web renders Delete for admins only.
+    if !super::util::admin_gate(&ctx.store, "deleting a workflow") {
+        return;
+    }
+    let Some(row) = selected_row(ctx) else {
+        ctx.store
+            .notice
+            .set(Some("no workflow selected — nothing to delete".into()));
+        return;
+    };
     let version = if whole_bundle {
         String::new()
     } else {
@@ -182,13 +301,124 @@ fn delete_selected(ctx: &Ctx, whole_bundle: bool) {
             .map(|(v, _, _, _)| v.clone())
             .unwrap_or_default()
     };
-    ctx.send(Cmd::DeleteWorkflow {
-        bundle_id: row.bundle_id,
-        version,
+    let (label, scope) = if version.is_empty() {
+        (row.bundle_id.clone(), "EVERY version of this workflow")
+    } else {
+        (format!("{}@{}", row.bundle_id, version), "this version")
+    };
+    let c = ctx.clone();
+    let bundle_id = row.bundle_id;
+    super::confirm_danger(
+        cx,
+        ctx.ui,
+        format!(
+            "Delete {label}? This removes {scope} from disk. There is no undo. \
+             If you may need it again, export it first (e)."
+        ),
+        "Delete",
+        "Keep it",
+        move || {
+            c.send(Cmd::DeleteWorkflow { bundle_id, version });
+        },
+    );
+}
+
+/// `L`: re-read the bundles folder on the gateway (POST /bundles/reload),
+/// then re-list — what "fix the cause and reload" below asks for.
+fn reload(ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "reloading workflows") {
+        return;
+    }
+    ctx.send(Cmd::Operator(OpCmd::ReloadWorkflows {
+        include_drafts: ctx.ui.workflow_drafts.get_untracked(),
+    }));
+}
+
+/// `i`: install a `.flow` from a path on THIS machine (the TUI may run
+/// elsewhere than the gateway — the bytes are uploaded, like the web's
+/// file picker). overwrite=false, reload=true: the web's exact request.
+fn open_import(cx: Scope, ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "importing a workflow") {
+        return;
+    }
+    let ctx2 = ctx.clone();
+    open_form(ctx, cx, Size::new(96, 11), move |mcx, close| {
+        let theme = use_theme(mcx);
+        let t0 = theme.get().tokens;
+        // The path field fits the dialog as clamped on THIS terminal (a
+        // fixed 70 cells ran past the border at 80 columns).
+        let input_w =
+            (96.min(abstracttui::app::use_viewport(mcx).get_untracked().w - 2) - 26).clamp(20, 70);
+        let path = mcx.signal(String::new());
+        let form_error = mcx.signal(Option::<String>::None);
+        let in_flight = mcx.signal(false);
+        let form_id = crate::worker::next_form_id();
+        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
+        let submit = {
+            let ctx_s = ctx2.clone();
+            move || {
+                if in_flight.get_untracked() {
+                    return;
+                }
+                let p = path.get_untracked();
+                if p.trim().is_empty() {
+                    form_error.set(Some("type the path of a .flow file on this machine".into()));
+                    return;
+                }
+                form_error.set(None);
+                in_flight.set(true);
+                ctx_s.send(Cmd::Operator(OpCmd::ImportWorkflow {
+                    path: p,
+                    include_drafts: ctx_s.ui.workflow_drafts.get_untracked(),
+                    form_id: Some(form_id),
+                }));
+            }
+        };
+        let submit2 = submit.clone();
+        let close_cancel = close.clone();
+        Element::new()
+            .style(LayoutStyle::column().gap(0))
+            .child(line(vec![span_bold("Import a workflow bundle (.flow)", t0.accent)]))
+            .child(line(vec![span(
+                "a file on THIS machine — its bytes are uploaded to the gateway; an existing version is never overwritten",
+                t0.text_faint,
+            )]))
+            .child(field(
+                &t0,
+                "file",
+                TextInput::new()
+                    .value(path)
+                    .placeholder("~/Downloads/my-workflow.flow")
+                    .layout(LayoutStyle::default().w(input_w).h(1))
+                    .on_submit(move |_: &str| submit())
+                    .element(mcx, &t0)
+                    .autofocus()
+                    .build(),
+            ))
+            .child(super::message_slot(theme, form_error, in_flight))
+            .child(
+                Element::new()
+                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                    .child(Button::new("Import").on_click(submit2).element(mcx, &t0).build())
+                    .child(
+                        Button::new("Cancel (Esc)")
+                            .on_click(move || close_cancel())
+                            .element(mcx, &t0)
+                            .build(),
+                    )
+                    .build(),
+            )
+            .build()
     });
 }
 
-fn master_table(cx: Scope, t: &TokenSet, d: &WorkflowsData, sel: Signal<usize>) -> View {
+fn master_table(
+    cx: Scope,
+    t: &TokenSet,
+    d: &WorkflowsData,
+    sel: Signal<usize>,
+    keeper: &super::util::FocusKeeper,
+) -> View {
     let vw = abstracttui::app::use_viewport(cx).get().w;
     let wide = vw >= 100;
     let default_id = d.default_bundle_id.clone();
@@ -249,18 +479,21 @@ fn master_table(cx: Scope, t: &TokenSet, d: &WorkflowsData, sel: Signal<usize>) 
     rules.push(widths::ColRule::head("status", 10));
 
     let cols = widths::columns(&rules, &mut rows, vw - widths::BLOCK_CHROME);
-    Table::new(cols)
-        .rows(rows)
-        .selection(sel)
-        .layout(LayoutStyle::default().grow(1.0))
-        .element(cx, t)
-        .autofocus()
-        .build()
+    keeper.wire(
+        Table::new(cols)
+            .rows(rows)
+            .selection(sel)
+            .layout(LayoutStyle::default().grow(1.0))
+            .element(cx, t),
+    )
 }
 
 /// The gateway default agent workflows (interface, workflow_id) that run
 /// an entrypoint of `bundle_id` (any version).
-pub fn agent_default_marks(bundle_id: &str, agent_defaults: &[(String, String)]) -> Vec<(String, String)> {
+pub fn agent_default_marks(
+    bundle_id: &str,
+    agent_defaults: &[(String, String)],
+) -> Vec<(String, String)> {
     let prefix = format!("{bundle_id}@");
     agent_defaults
         .iter()

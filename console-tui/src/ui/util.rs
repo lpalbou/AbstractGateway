@@ -11,6 +11,73 @@ use abstracttui::widgets::{Badge, Tone};
 use crate::api::{ApiError, ApiErrorKind};
 use crate::store::Loadable;
 
+/// KEYBOARD OWNERSHIP ACROSS RE-RENDERS. A screen's primary widget (its
+/// table) lives inside a reactive region that regenerates when data lands
+/// (a poll, a lazy read): the old instance unmounts WITH the focus, the
+/// engine drops focus to nothing, and the screen's keys — which resolve
+/// along the root→focus path — go dead. A first-mount-only autofocus
+/// cannot fix it, and an always-on one steals the keyboard back from
+/// whatever the user moved to.
+///
+/// The keeper remembers whether its widget held the keyboard when it
+/// vanished (an unmount delivers no FocusOut, a Tab/click away does) and
+/// hands the focus to the next instance only then — or while the page's
+/// widget never got the keyboard at all (a first autofocus can be
+/// dropped when its instance is replaced in the same frame, e.g. the
+/// loading anchor giving way to the table). Create one per page
+/// (`FocusKeeper::new()` in the page scope, outside the region) and pass
+/// every instance of the primary widget through [`FocusKeeper::wire`];
+/// states with no widget (empty, loading, error) go through
+/// [`FocusKeeper::anchor`] so the keys stay live there too.
+#[derive(Clone, Default)]
+pub struct FocusKeeper {
+    /// The current (or last unmounted) instance holds the keyboard.
+    held: std::rc::Rc<std::cell::Cell<bool>>,
+    /// Some instance ever received the keyboard on this page.
+    ever: std::rc::Rc<std::cell::Cell<bool>>,
+}
+
+impl FocusKeeper {
+    pub fn new() -> FocusKeeper {
+        FocusKeeper::default()
+    }
+
+    /// Whether the next instance takes the focus.
+    fn wants_focus(&self) -> bool {
+        !self.ever.get() || self.held.get()
+    }
+
+    /// Wire one instance of the primary widget.
+    pub fn wire(&self, el: Element) -> View {
+        let want = self.wants_focus();
+        let (held, ever) = (self.held.clone(), self.ever.clone());
+        let el = el.on(abstracttui::ui::Phase::Bubble, move |_ctx, ev| match ev {
+            abstracttui::ui::UiEvent::FocusIn => {
+                held.set(true);
+                ever.set(true);
+            }
+            abstracttui::ui::UiEvent::FocusOut => held.set(false),
+            _ => {}
+        });
+        if want {
+            el.autofocus().build()
+        } else {
+            el.build()
+        }
+    }
+
+    /// A focusable stand-in for a widget-less state (the screen's keys
+    /// stay live on an empty list or while loading).
+    pub fn anchor(&self, content: View) -> View {
+        self.wire(
+            Element::new()
+                .focusable()
+                .style(LayoutStyle::column().grow(1.0))
+                .child(content),
+        )
+    }
+}
+
 /// A styled span for [`line`].
 pub type SpanSpec = (String, Rgba, bool);
 
@@ -157,6 +224,32 @@ pub fn field_w(t: &TokenSet, label: &str, label_w: i32, child: View) -> View {
         .build()
 }
 
+/// The notice Esc leaves when it hands the keyboard back to the screen.
+pub const FOCUS_RELEASED: &str =
+    "text field released — the screen's keys work again (Esc again goes back)";
+
+/// Esc on a PAGE-level text field (never a modal's: there Esc closes the
+/// modal) releases the keyboard to the screen instead of navigating:
+/// a text field swallows every plain key (digits, verbs, `q`), so without
+/// this a caret parked in a field — the URL box at boot, the sandbox
+/// prompt — turns every screen key into typing with no visible way out
+/// but Tab. The field's own shortcut is the deepest registration, so it
+/// wins over the root's Esc (back); the SECOND Esc, with nothing focused,
+/// reaches the root and goes back as before.
+///
+/// Mechanics: a shortcut runs after the handler walk, whose last bubble
+/// step is the tree root — `current()` is that root, a non-focusable
+/// element. Focusing it is the engine's blur (key dispatch targets
+/// `focus.or(root)`, so the root's shortcuts own the keyboard again).
+pub fn esc_releases_focus(el: Element, notice: Signal<Option<String>>) -> Element {
+    el.shortcut(KeyChord::plain(Key::Escape), move |ecx| {
+        if let Some(root) = ecx.current() {
+            ecx.request_focus(root);
+            notice.set(Some(FOCUS_RELEASED.into()));
+        }
+    })
+}
+
 /// Clamp a table-selection signal when its row count shrinks (deleting
 /// the last row otherwise leaves the highlight past the end: no row
 /// selected, every row action silently dead). Call from the screen's
@@ -177,6 +270,39 @@ pub fn clamp_selection(
             sel.set(len - 1);
         }
     });
+}
+
+/// The ONE admin gate for a verb (key press, menu pick, form save): true
+/// when the caller may send it; otherwise the notice lane says why
+/// ([`crate::store::ConnPhase::admin_refusal`]) and nothing is sent.
+pub fn admin_gate(store: &crate::store::Store, what: &str) -> bool {
+    match store.conn.with_untracked(|c| c.admin_refusal(what)) {
+        Some(why) => {
+            store.notice.set(Some(why));
+            false
+        }
+        None => true,
+    }
+}
+
+/// Footer pairs for a screen. For a principal known NOT to be an admin the
+/// verbs in `admin_keys` leave their slots and come back as ONE compact
+/// disabled-with-the-reason pair — `("w/a/D/C", "admin only")`, the
+/// returned key string — the way the shared Models/Engines screens label
+/// theirs ("download: admin only"). Pressing one still answers with the
+/// full reason.
+pub fn admin_hint_pairs<'a>(
+    pairs: Vec<(&'a str, &'a str)>,
+    admin_keys: &[&str],
+    non_admin: bool,
+) -> (Vec<(&'a str, &'a str)>, Option<String>) {
+    if !non_admin {
+        return (pairs, None);
+    }
+    let (gated, kept): (Vec<_>, Vec<_>) =
+        pairs.into_iter().partition(|(k, _)| admin_keys.contains(k));
+    let keys = gated.iter().map(|(k, _)| *k).collect::<Vec<_>>().join("/");
+    (kept, (!keys.is_empty()).then_some(keys))
 }
 
 /// Status badge for configured / covered / default / error states.
@@ -230,6 +356,30 @@ pub fn loadable_view<T>(
             line(vec![span(format!("∅ {empty_text}"), t.text_muted)])
         }
         Loadable::Ready(v) => ready(v),
+    }
+}
+
+/// [`loadable_view`] for a region whose ready state is a screen's primary
+/// widget wired through `keeper`: every other state (not asked, loading,
+/// failed, empty) renders on the keeper's focusable anchor, so the
+/// screen's keys stay live while the data is away.
+#[allow(clippy::too_many_arguments)]
+pub fn loadable_view_kept<T>(
+    keeper: &FocusKeeper,
+    t: &TokenSet,
+    conn: &crate::store::ConnPhase,
+    tick: impl Fn() -> u64,
+    data: &Loadable<T>,
+    empty_check: impl Fn(&T) -> bool,
+    empty_text: &str,
+    ready: impl FnOnce(&T) -> View,
+) -> View {
+    let widget = matches!(data, Loadable::Ready(v) if !empty_check(v));
+    let view = loadable_view(t, conn, tick, data, &empty_check, empty_text, ready);
+    if widget {
+        view
+    } else {
+        keeper.anchor(view)
     }
 }
 
@@ -359,7 +509,9 @@ pub fn hints(t: &TokenSet, pairs: &[(&str, &str)]) -> View {
     let mut spans = Vec::new();
     for (i, (k, v)) in pairs.iter().enumerate() {
         if i > 0 {
-            spans.push(span("  ·  ", t.text_faint));
+            // One cell of air each side: at 80 columns the wider
+            // separator alone cost a whole screen verb.
+            spans.push(span(" · ", t.text_faint));
         }
         spans.push(span_bold((*k).to_string(), t.accent));
         spans.push(span(format!(" {v}"), t.text_muted));

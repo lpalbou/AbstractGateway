@@ -81,6 +81,7 @@ fn harness_sized(size: Size) -> Harness {
             cx,
             transport.clone(),
             overlays.clone(),
+            cx.signal(abstractcore_console::screens::Access::Admin),
             ScreensOptions {
                 // The same wiring as lib.rs: outcomes toast through the
                 // gateway console's own notice lane.
@@ -574,7 +575,7 @@ fn pagehost_browse_navigation_digits_and_chords() {
             .notice
             .get_untracked()
             .unwrap_or_default()
-            .contains("digit jumps work in browse mode"),
+            .contains("screen jumps (1-9, 0, A) work in browse mode"),
         "wizard digit refusal carries its reason"
     );
 }
@@ -635,7 +636,10 @@ fn connection_states_render_distinctly() {
     let s = h.turn();
     assert!(s.contains("unauthorized (401)"), "401 state:\n{s}");
     assert!(s.contains("bad token"), "verbatim detail:\n{s}");
-    assert!(s.contains("rejected that token"), "actionable hint:\n{s}");
+    assert!(
+        s.contains("rejected the token sent"),
+        "actionable hint:\n{s}"
+    );
 
     h.store
         .conn
@@ -668,11 +672,16 @@ fn wizard_gate_blocks_next_until_connected_or_offline() {
     let _ = h.turns(2);
     assert_eq!(h.ui.screen.get_untracked(), 0, "stay keeps the step");
 
-    // Once connected, Ctrl+N advances.
+    // Once connected, Ctrl+N advances — to the guide's next step, the
+    // Setup (welcome) screen, as in the web guide's order.
     h.connect_as_admin();
     h.key(b"\x0e");
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 1, "advanced to providers");
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_WELCOME,
+        "advanced to the welcome step"
+    );
 }
 
 #[test]
@@ -686,11 +695,525 @@ fn wizard_gate_offline_choice_advances() {
     h.turn();
     h.type_text("\r");
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 1, "offline choice advances");
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_WELCOME,
+        "offline choice advances to the welcome step"
+    );
     let s = h.turn();
     assert!(
         s.contains("not loaded yet"),
-        "providers screen shows honest not-asked state offline:\n{s}"
+        "the welcome step shows an honest not-asked state offline:\n{s}"
+    );
+}
+
+// =======================================================================
+// First run (the web console's setup guide, headless parity)
+// =======================================================================
+
+use abstractgateway_console::api::firstrun::{FirstRunState, GroupStatus, WelcomeSummary};
+
+fn first_run(completed: bool) -> FirstRunState {
+    FirstRunState::from_value(&json!({
+        "completed": completed,
+        "completed_at": if completed { json!("2026-09-27T10:00:00Z") } else { Value::Null },
+        "completed_by": if completed { json!("admin") } else { Value::Null },
+        "outcome": if completed { json!("finished") } else { Value::Null },
+    }))
+}
+
+fn user_identity() -> Identity {
+    Identity::from_me(&json!({
+        "ok": true,
+        "principal": {"user_id": "alice", "tenant_id": "default",
+                      "roles": ["user"], "admin": false},
+        "auth": {"mode": "users"},
+        "routing": {"mode": "per-principal"}
+    }))
+    .expect("identity parses")
+}
+
+/// The connection landing reads `GET /host/first-run` (once per gateway).
+#[test]
+fn connect_reads_the_first_run_state() {
+    let mut h = harness();
+    h.turn();
+    h.drain_cmds();
+    h.connect_as_admin();
+    h.turns(2);
+    let cmds = h.drain_cmds();
+    assert_eq!(
+        cmds.iter()
+            .filter(|c| matches!(c, Cmd::LoadFirstRun))
+            .count(),
+        1,
+        "exactly one first-run read at connect: {cmds:?}"
+    );
+    assert!(matches!(
+        h.store.first_run.get_untracked(),
+        Loadable::Loading
+    ));
+}
+
+/// Not completed + admin: the guide stays open and continues at the
+/// welcome step (the web guide opens on "welcome").
+#[test]
+fn first_run_open_keeps_the_guide_and_lands_on_welcome() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.store.first_run.set(Loadable::Ready(first_run(false)));
+    h.turns(2);
+    assert!(h.ui.wizard.get_untracked(), "guide stays open");
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_WELCOME);
+}
+
+/// Completed: browse mode, like the web console (no guide).
+#[test]
+fn first_run_completed_starts_in_browse() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.store.first_run.set(Loadable::Ready(first_run(true)));
+    h.turns(2);
+    assert!(!h.ui.wizard.get_untracked(), "completed → browse");
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_CONNECTION);
+}
+
+/// The web guide opens for admins only (its writes are admin routes).
+#[test]
+fn first_run_open_for_a_non_admin_is_browse() {
+    let mut h = harness();
+    h.store.conn.set(ConnPhase::Connected(user_identity()));
+    h.turn();
+    h.store.first_run.set(Loadable::Ready(first_run(false)));
+    h.turns(2);
+    assert!(!h.ui.wizard.get_untracked(), "non-admin → browse");
+}
+
+/// --wizard / --browse force the mode whatever the first-run state.
+#[test]
+fn forced_mode_ignores_the_first_run_state() {
+    let mut h = harness();
+    h.ui.mode_forced.set(true);
+    h.connect_as_admin();
+    h.store.first_run.set(Loadable::Ready(first_run(true)));
+    h.turns(2);
+    assert!(h.ui.wizard.get_untracked(), "--wizard wins over completed");
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_CONNECTION);
+}
+
+/// The wizard walks the web guide's order, with Finish last.
+#[test]
+fn wizard_walks_the_web_guide_order() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.ui.wizard.set(true);
+    h.ui.screen.set(ui::SCREEN_WELCOME);
+    h.turns(2);
+    let mut seen = vec![ui::SCREEN_WELCOME];
+    for _ in 0..8 {
+        h.key(b"\x0e");
+        h.turns(2);
+        let s = h.ui.screen.get_untracked();
+        if seen.last() == Some(&s) {
+            break;
+        }
+        seen.push(s);
+    }
+    assert_eq!(
+        seen,
+        vec![
+            ui::SCREEN_WELCOME,
+            ui::SCREEN_ENGINES,
+            ui::SCREEN_PROVIDERS,
+            ui::SCREEN_ROUTES,
+            ui::SCREEN_CATALOG,
+            ui::SCREEN_APPS,
+            ui::SCREEN_REVIEW,
+        ],
+        "Ctrl+N walks welcome → engines → providers → model (routes, catalog) → apps → done"
+    );
+    // Back walks the same path in reverse.
+    h.key(b"\x10");
+    h.turns(2);
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_APPS);
+    h.key(b"\x10");
+    h.turns(2);
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_CATALOG);
+}
+
+/// The welcome step renders the web tiles from `/host/state`.
+#[test]
+fn welcome_step_shows_this_computer() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.ui.wizard.set(true);
+    h.ui.screen.set(ui::SCREEN_WELCOME);
+    h.turns(2);
+    assert!(
+        h.drain_cmds().iter().any(|c| matches!(c, Cmd::LoadWelcome)),
+        "entering the step reads /host/state"
+    );
+    h.store.first_run.set(Loadable::Ready(first_run(false)));
+    h.store
+        .welcome
+        .set(Loadable::Ready(WelcomeSummary::from_host_state(&json!({
+            "host": {"host_name": "forge.local"},
+            "gateway": {"data_dir": "/srv/gw", "data_dir_source": "env", "auth_mode": "users",
+                        "service": {"installed": false, "mechanism": "launchd-agent"}},
+            "memory": {"ram": {"total_bytes": 137438953472u64}},
+            "gpu": {"gpus": [{"name": "Apple M5 Max"}]}
+        }))));
+    let s = h.turns(2);
+    for needle in [
+        "forge.local",
+        "128.0 GB",
+        "Apple M5 Max",
+        "/srv/gw",
+        "User accounts",
+        "Not yet",
+        "First run:",
+        "not completed",
+        "Local engines",
+    ] {
+        assert!(s.contains(needle), "welcome shows '{needle}':\n{s}");
+    }
+}
+
+/// Finish POSTs the outcome; the guide closes only on the verified
+/// write-done, and a failure keeps it open with the reason.
+#[test]
+fn finish_records_the_outcome_and_closes_only_when_verified() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.ui.wizard.set(true);
+    h.ui.screen.set(ui::SCREEN_REVIEW);
+    let s = h.turns(3);
+    h.drain_cmds();
+    let row = find_row(&s, "Skip setup");
+    let col = s
+        .lines()
+        .nth(row - 1)
+        .unwrap()
+        .find(" Finish ")
+        .expect("Finish")
+        + 2;
+    click_at(&mut h, col, row);
+    h.turns(2);
+    let cmd = h.find_cmd(|c| matches!(c, Cmd::CompleteFirstRun { .. }));
+    let fid = match cmd {
+        Some(Cmd::CompleteFirstRun { outcome, form_id }) => {
+            assert_eq!(outcome, "finished");
+            form_id.expect("routed back")
+        }
+        other => panic!("expected CompleteFirstRun, got {other:?}"),
+    };
+    assert!(
+        h.ui.wizard.get_untracked(),
+        "still in the guide until verified"
+    );
+    // A failed verify keeps the guide open and says why.
+    h.ui.write_done
+        .set(Some((fid, Err("VERIFY FAILED: completed=false".into()))));
+    let s = h.turns(2);
+    assert!(h.ui.wizard.get_untracked());
+    assert!(s.contains("VERIFY FAILED"), "reason on screen:\n{s}");
+    // Retry, verified this time.
+    click_at(&mut h, col, row);
+    h.turns(2);
+    let fid = match h.find_cmd(|c| matches!(c, Cmd::CompleteFirstRun { .. })) {
+        Some(Cmd::CompleteFirstRun { form_id, .. }) => form_id.unwrap(),
+        other => panic!("expected CompleteFirstRun, got {other:?}"),
+    };
+    h.ui.write_done
+        .set(Some((fid, Ok("GET /host/first-run: completed".into()))));
+    h.turns(2);
+    assert!(!h.ui.wizard.get_untracked(), "verified → browse");
+}
+
+/// Ctrl+G: browse reopens the guide at welcome; in the guide it offers
+/// Skip setup, which records `skipped`.
+#[test]
+fn ctrl_g_reopens_and_skips_the_guide() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.goto_screen(3);
+    h.key(b"\x07");
+    h.turns(2);
+    assert!(h.ui.wizard.get_untracked(), "Ctrl+G reopens the guide");
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_WELCOME);
+    h.drain_cmds();
+    h.key(b"\x07");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Skip setup") && s.contains("Leave for now"),
+        "{s}"
+    );
+    // Options: stay (initial), leave, skip, then the steps → Down ×2 = skip.
+    for _ in 0..2 {
+        h.key(b"\x1b[B");
+        h.turn();
+    }
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::CompleteFirstRun { .. })) {
+        Some(Cmd::CompleteFirstRun { outcome, .. }) => assert_eq!(outcome, "skipped"),
+        other => panic!("expected a skipped CompleteFirstRun, got {other:?}"),
+    }
+}
+
+/// The web guide's stepper lets the user open any step directly; here
+/// Ctrl+G in the guide lists every step (current one marked) and picking
+/// one goes there.
+#[test]
+fn ctrl_g_in_the_guide_jumps_to_any_step() {
+    let mut h = harness_sized(Size::new(120, 40));
+    h.connect_as_admin();
+    h.ui.wizard.set(true);
+    h.ui.screen.set(ui::SCREEN_WELCOME);
+    h.turns(2);
+    h.key(b"\x07");
+    let s = h.turns(2);
+    assert!(s.contains("go to a step"), "the guide menu opens:\n{s}");
+    assert!(
+        s.contains("Go to 2. Welcome (you are here)"),
+        "current step marked:\n{s}"
+    );
+    assert!(
+        s.contains("Go to 1. Connection"),
+        "the steps are listed:\n{s}"
+    );
+    // Options: stay (initial), leave, skip, steps 1..8 → Down ×9 = step 7 (Apps).
+    for _ in 0..9 {
+        h.key(b"\x1b[B");
+        h.turn();
+    }
+    h.type_text("\r");
+    h.turns(2);
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_APPS,
+        "jumped to Apps"
+    );
+    assert!(h.ui.wizard.get_untracked(), "still in the guide");
+    let s = h.turns(1);
+    assert!(s.contains("Step 7/8"), "the step kicker follows:\n{s}");
+}
+
+/// Jumping past Connection keeps the terminal's sign-in gate.
+#[test]
+fn guide_step_jump_needs_a_sign_in() {
+    let mut h = harness_sized(Size::new(120, 40));
+    h.turn();
+    h.ui.wizard.set(true);
+    h.ui.screen.set(ui::SCREEN_CONNECTION);
+    h.turns(2);
+    h.key(b"\x07");
+    h.turns(2);
+    // Not signed in: no Skip option → stay, leave, steps → Down ×8 = step 7.
+    for _ in 0..8 {
+        h.key(b"\x1b[B");
+        h.turn();
+    }
+    h.type_text("\r");
+    h.turns(2);
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_CONNECTION,
+        "gate holds"
+    );
+    let notice = h.store.notice.get_untracked().unwrap_or_default();
+    assert!(
+        notice.contains("sign in on the Connection step first"),
+        "{notice}"
+    );
+}
+
+fn availability_with_plan() -> AvailabilityData {
+    AvailabilityData::from_value(&json!({
+        "routes": [],
+        "recommended": {
+            "recommended": [
+                {"route": "input.text", "provider": "mlx", "artifact": "big-4bit",
+                 "status": "unknown", "tier": "memory >= 128 GiB",
+                 "warning": "Big may not fit this computer"},
+                {"route": "output.voice", "provider": "supertonic", "artifact": "supertonic-3",
+                 "status": "absent"}
+            ],
+            "total": 2, "installed": 0, "absent": 1, "unknown": 1, "gaps": []
+        }
+    }))
+}
+
+/// The model step (Routes in the guide) shows the recommended plan with
+/// the fit warning; D confirms, then sends ONE Download all.
+#[test]
+fn routes_model_step_shows_the_plan_and_downloads_all() {
+    let mut h = harness_sized(Size::new(150, 40));
+    h.connect_as_admin();
+    h.ui.wizard.set(true);
+    h.ui.screen.set(ui::SCREEN_ROUTES);
+    h.turns(2);
+    h.store.routes.set(Loadable::Ready(routes_fixture()));
+    h.store
+        .availability
+        .set(Loadable::Ready(availability_with_plan()));
+    let s = h.turns(2);
+    assert!(
+        s.contains("recommended for this computer: 0 of 2 installed"),
+        "{s}"
+    );
+    assert!(s.contains("1 fit warning"), "{s}");
+    assert!(
+        s.contains("⚠ Big may not fit this computer"),
+        "warning verbatim:\n{s}"
+    );
+    assert!(s.contains("Not downloaded"), "{s}");
+    h.drain_cmds();
+    h.type_text("D");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Download the recommended set"),
+        "confirm first:\n{s}"
+    );
+    // Danger confirm defaults to keep → Up to "Download all".
+    h.key(b"\x1b[A");
+    h.turn();
+    h.type_text("\r");
+    h.turns(2);
+    let cmds = h.drain_cmds();
+    assert_eq!(
+        cmds.iter()
+            .filter(|c| matches!(c, Cmd::DownloadRecommended))
+            .count(),
+        1,
+        "{cmds:?}"
+    );
+    // Progress: the parent job's line, and D refuses while it runs.
+    h.store
+        .download_group
+        .set(Some(GroupStatus::from_job(&json!({
+            "job_id": "grp_1", "status": "running", "state": "downloading", "percent": 40.2,
+            "message": "Downloading 2 models · 0 of 2 ready"
+        }))));
+    let s = h.turns(2);
+    assert!(s.contains("Download all 40% — Downloading 2 models"), "{s}");
+    h.type_text("D");
+    h.turns(2);
+    assert!(
+        h.store
+            .notice
+            .get_untracked()
+            .unwrap_or_default()
+            .contains("already running"),
+        "no second group while one runs"
+    );
+}
+
+// ---- Host-aware "unavailable" recommendations (AbstractCore) -----------
+
+/// The exact reason AbstractCore's `recommended_unavailable_routes`
+/// gives for `output.image` on a Linux/CUDA host (branch parity/defaults).
+const MLXGEN_UNAVAILABLE: &str = "MLX-Gen image generation needs MLX, and MLX runs only on Apple Silicon Macs (macOS, arm64); set output.image to an image engine this host runs: diffusers (install profile gpu), sdcpp (stable-diffusion.cpp, optional extra) or a cloud image provider";
+
+fn routes_with_unavailable_image() -> RoutesData {
+    RoutesData::from_value(&json!({
+        "ok": true, "writable": true,
+        "authority": "abstractcore.gateway_runtime", "source": "abstractcore.gateway_runtime",
+        "errors": [],
+        "routes": [
+            {"key": "input.text", "kind": "input", "modality": "text", "label": "Text Input",
+             "provider": "ollama", "model": "qwen3:8b", "configured": true,
+             "source": "abstractcore.gateway_runtime"},
+            {"key": "output.image", "kind": "output", "modality": "image", "label": "Image Output",
+             "configured": false, "source": "not_configured",
+             "recommendation_unavailable": {
+                 "provider": "mlx-gen",
+                 "model": "AbstractFramework/flux.2-klein-4b-8bit",
+                 "reason": MLXGEN_UNAVAILABLE}},
+            {"key": "output.voice", "kind": "output", "modality": "voice", "label": "Voice Output",
+             "configured": false, "source": "not_configured"}
+        ]
+    }))
+}
+
+#[test]
+fn unset_row_carries_its_unavailable_recommendation() {
+    let d = routes_with_unavailable_image();
+    let image = d.rows.iter().find(|r| r.key == "output.image").unwrap();
+    let u = image.recommendation_unavailable.as_ref().expect("parsed");
+    assert_eq!(u.provider, "mlx-gen");
+    assert_eq!(u.model, "AbstractFramework/flux.2-klein-4b-8bit");
+    assert_eq!(u.reason, MLXGEN_UNAVAILABLE);
+    assert_eq!(image.state_label(), "unavailable here");
+    // Absent field = the old behaviour.
+    let voice = d.rows.iter().find(|r| r.key == "output.voice").unwrap();
+    assert!(voice.recommendation_unavailable.is_none());
+    assert_eq!(voice.state_label(), "not configured");
+}
+
+/// The Routes row for such a capability shows the reason (state column +
+/// selected-row line), and `p` lists it under "Not available".
+#[test]
+fn routes_show_the_unavailable_reason_and_the_plan_lists_it() {
+    let mut h = harness_sized(Size::new(200, 40));
+    h.connect_as_admin();
+    h.goto_screen(ui::SCREEN_ROUTES);
+    h.store
+        .routes
+        .set(Loadable::Ready(routes_with_unavailable_image()));
+    h.store
+        .availability
+        .set(Loadable::Ready(availability_with_plan()));
+    h.ui.route_sel.set(1);
+    let s = h.turns(3);
+    assert!(s.contains("unavailable here"), "state column:\n{s}");
+    assert!(
+        s.contains("the recommended mlx-gen · AbstractFramework/flux.2-klein-4b-8bit cannot run on this computer: MLX-Gen image generation needs MLX"),
+        "selected-row reason:\n{s}"
+    );
+    h.type_text("p");
+    let s = h.turns(3);
+    assert!(
+        s.contains("Not available on this computer (left unset)"),
+        "plan section:\n{s}"
+    );
+    assert!(
+        s.contains("output.image: recommended mlx-gen AbstractFramework/flux.2-klein-4b-8bit"),
+        "{s}"
+    );
+    assert!(
+        s.contains("MLX runs only on Apple Silicon"),
+        "reason in the plan:\n{s}"
+    );
+}
+
+/// Apply-recommended's report: `unavailable` rows are counted and named
+/// with their reason, and never read as "every route already matched".
+#[test]
+fn applied_recommended_summary_counts_unavailable_rows() {
+    use abstractgateway_console::worker::applied_recommended_summary;
+    let payload = json!({"applied_recommended": {
+        "ok": true, "dry_run": false, "force": false,
+        "changed": 0, "kept": 0, "already": 2, "unavailable": 1,
+        "routes": [
+            {"key": "input.text", "selector": "text", "action": "already", "changed": false,
+             "recommended": {"provider": "ollama", "model": "qwen3:8b"},
+             "before": {"provider": "ollama", "model": "qwen3:8b"},
+             "after": {"provider": "ollama", "model": "qwen3:8b"}, "download": {}},
+            {"key": "output.voice", "selector": "voice", "action": "already", "changed": false,
+             "recommended": {"provider": "supertonic", "model": "supertonic-3"},
+             "before": {"provider": "supertonic", "model": "supertonic-3"},
+             "after": {"provider": "supertonic", "model": "supertonic-3"}, "download": {}},
+            {"key": "output.image", "selector": "image", "action": "unavailable", "changed": false,
+             "recommended": {}, "before": {}, "after": {}, "download": {},
+             "reason": MLXGEN_UNAVAILABLE}
+        ]
+    }});
+    let summary = applied_recommended_summary(&payload);
+    assert_ne!(summary, "every recommended route already matched");
+    assert!(
+        summary.contains("1 not available on this host, left unset: output.image (MLX-Gen image generation needs MLX"),
+        "{summary}"
     );
 }
 
@@ -1293,12 +1816,14 @@ fn route_editor_override_flow_sends_put_with_picked_pair() {
 /// stored value. The control belongs on the text route and on no other,
 /// exactly as the web console's `isTextGenerationDefault` gates it.
 ///
-/// The save also proves the field-preserving contract from the client
-/// side: every field this form OWNS is sent explicitly, `""`/`{}`
-/// included, so a base URL or an options dict the operator emptied is
-/// actually cleared rather than silently restored by the merge.
+/// The save also proves the web's save rule (console.py saveDefault):
+/// base URL and options travel ONLY when the operator changed them from
+/// what the editor showed (the prefill may be minutes old — naming them
+/// unconditionally would roll back a change made meanwhile); reasoning
+/// on the text route is always explicit. `ui::routes::route_save_body`
+/// pins the emptied-field case ("" / {} ARE sent).
 #[test]
-fn text_route_editor_carries_reasoning_and_sends_owned_fields_explicitly() {
+fn text_route_editor_carries_reasoning_and_sends_only_what_changed() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(2);
@@ -1329,10 +1854,16 @@ fn text_route_editor_carries_reasoning_and_sends_owned_fields_explicitly() {
     assert!(s.contains("reasoning"), "the reasoning row renders:\n{s}");
 
     // Tab: mode → provider → model → base URL → reasoning → options → MTP →
-    // [Save]. Nothing is edited: the pair the row already carries is
-    // re-sent (this form's mode radio requires it), and every other
-    // owned field goes out explicitly.
-    for _ in 0..7 {
+    // [Save]. Only the base URL is edited: the pair the row already
+    // carries is re-sent (this form's mode radio requires it), reasoning
+    // is explicit, the untouched options stay unnamed.
+    for _ in 0..3 {
+        h.key(b"\t");
+        h.turn();
+    }
+    h.type_text("http://127.0.0.1:1234/v1");
+    h.turn();
+    for _ in 0..4 {
         h.key(b"\t");
         h.turn();
     }
@@ -1349,14 +1880,41 @@ fn text_route_editor_carries_reasoning_and_sends_owned_fields_explicitly() {
                 "the stored effort survives a save that did not touch it"
             );
             assert_eq!(
-                body["base_url"], "",
-                "an empty owned field is sent EMPTY — omitting it would let \
-                 the field-preserving merge restore a cleared value"
+                body["base_url"], "http://127.0.0.1:1234/v1",
+                "the edited base URL is sent"
             );
-            assert_eq!(body["options"], serde_json::json!({}), "same for options");
+            assert!(
+                body.get("options").is_none(),
+                "untouched options are not named (the store keeps them): {body:?}"
+            );
         }
         other => panic!("expected PutRoute, got {other:?}"),
     }
+}
+
+/// The text route editor's options box hides `speculation` (the MTP
+/// selector owns it, like the web).
+#[test]
+fn text_route_options_box_hides_speculation() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.goto_screen(2);
+    let mut routes = routes_fixture();
+    routes.rows[0].options = Some(json!({"temperature": 0.2, "speculation": false}));
+    h.store.routes.set(Loadable::Ready(routes));
+    h.store.providers.set(Loadable::Ready(providers_fixture()));
+    h.turns(2);
+    h.type_text("e");
+    let s = h.turns(3);
+    assert!(
+        s.contains(r#"{"temperature":0.2}"#),
+        "the box shows the other options:\n{s}"
+    );
+    assert!(
+        !s.contains(r#""speculation""#),
+        "speculation is not in the box:\n{s}"
+    );
+    assert!(s.contains("MTP default"), "the selector owns it:\n{s}");
 }
 
 #[test]
@@ -1544,13 +2102,11 @@ fn users_and_entities_render_with_admin_gate() {
     assert!(s.contains("Testor"), "entity row:\n{s}");
     assert!(s.contains("asleep"), "entity state:\n{s}");
     assert!(s.contains("q:3 p:0 i:7"), "drives summary:\n{s}");
-    // Entities are manageable (state/config), while creation/summon
-    // stay deliberately outside this console — the title teaches both.
+    // Entities are summoned, talked to and managed here (web parity) —
+    // the title teaches the keys.
     assert!(s.contains("m = manage"), "manage affordance:\n{s}");
-    assert!(
-        s.contains("stay outside this console"),
-        "creation out-of-scope note:\n{s}"
-    );
+    assert!(s.contains("n = summon"), "summon affordance:\n{s}");
+    assert!(s.contains("c = talk"), "talk affordance:\n{s}");
     // Selecting a row keeps its manage snapshot warm; the inline strip
     // became the right Drawer — `i` teaches and toggles it.
     assert!(
@@ -1747,6 +2303,413 @@ fn entity_manage_menu_state_flow_sends_post() {
     assert!(!s.contains("Entity state — Testor"), "modal closed:\n{s}");
 }
 
+// ---- entity parity: summon / talk / card / voice audition -------------
+
+use abstractgateway_console::api::entities as ent;
+use abstractgateway_console::worker::entities::EntityCmd;
+
+fn entity_screen(h: &mut Harness) {
+    h.connect_as_admin();
+    h.goto_screen(3);
+    h.store
+        .users
+        .set(Loadable::Ready(users_from_payload(&users_fixture())));
+    h.store
+        .entities
+        .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
+    h.turns(2);
+}
+
+/// Recorded `/entities/templates` + `/creation-defaults` shapes.
+fn creation_kit_fixture() -> ent::CreationKit {
+    let (templates, template_warnings) = ent::templates_from_payload(&json!({
+        "templates": [
+            {"id": "framework-default", "name": "Framework default",
+             "description": "The framework floor", "source": "builtin",
+             "editable": false, "version": 1,
+             "spark": {"name": "", "core_values": ["shared_vulnerability"]},
+             "core_values": ["shared_vulnerability"]}
+        ],
+        "warnings": []
+    }));
+    let mut kit = ent::CreationKit {
+        templates,
+        template_warnings,
+        ..Default::default()
+    };
+    kit.apply_defaults(Ok(&json!({
+        "substrate": {"provider": null, "model": null, "source": "unset"},
+        "embedding": {"provider": "huggingface", "model": "all-minilm", "source": "route"},
+        "warnings": ["#FALLBACK no gateway-wide entity substrate configured"]
+    })));
+    kit
+}
+
+#[test]
+fn summon_validates_first_then_confirms_then_creates() {
+    let mut h = harness();
+    entity_screen(&mut h);
+    h.drain_cmds();
+    h.type_text("n");
+    let s = h.turns(2);
+    assert!(s.contains("Summon a new entity"), "summon form:\n{s}");
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::LoadCreationKit)))
+            .is_some(),
+        "opening re-reads the creation kit"
+    );
+    h.store
+        .entity_kit
+        .set(Loadable::Ready(creation_kit_fixture()));
+    let s = h.turns(2);
+    assert!(s.contains("Framework default"), "template picker:\n{s}");
+    assert!(
+        s.contains("shared_vulnerability"),
+        "locked core values:\n{s}"
+    );
+
+    // Name (autofocused) → Tab to the template → the Advanced toggle →
+    // Validate & create.
+    h.type_text("Castor");
+    h.turn();
+    for _ in 0..3 {
+        h.key(b"\t");
+        h.turn();
+    }
+    h.type_text("\r");
+    h.turns(2);
+    let body = match h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::ValidateEntity { .. }))) {
+        Some(Cmd::Entity(EntityCmd::ValidateEntity { name, body })) => {
+            assert_eq!(name, "Castor");
+            body
+        }
+        other => panic!("expected the dry-run first, got {other:?}"),
+    };
+    assert_eq!(
+        body.0["spark"]["name"], "Castor",
+        "the name fills the spark"
+    );
+    assert_eq!(body.0["spark"]["core_values"][0], "shared_vulnerability");
+    // Nothing irreversible before the confirm.
+    assert!(
+        !h.drain_cmds()
+            .iter()
+            .any(|c| matches!(c, Cmd::Entity(EntityCmd::CreateEntity { .. }))),
+        "no create before the dry-run answers"
+    );
+
+    // Green dry-run with a warning → the confirm names the permanence.
+    h.store
+        .entity_check
+        .set(Loadable::Ready(ent::CreateCheck::from_value(
+            "Castor",
+            &json!({"ok": true, "warnings": ["spark lint: no interests seeded"]}),
+        )));
+    let s = h.turns(3);
+    assert!(s.contains("Summon Castor?"), "confirm stage:\n{s}");
+    assert!(s.contains("There is no delete"), "permanence named:\n{s}");
+    assert!(
+        s.contains("no interests seeded"),
+        "dry-run warnings reviewed BEFORE the birth:\n{s}"
+    );
+    // The button row is static, so focus is still on Validate: one Tab
+    // reaches Summon (focus never drops when the stage changes).
+    h.key(b"\t");
+    h.turn();
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::CreateEntity { .. }))) {
+        Some(Cmd::Entity(EntityCmd::CreateEntity {
+            name,
+            body,
+            substrate,
+            policy,
+            warnings,
+            ..
+        })) => {
+            assert_eq!(name, "Castor");
+            assert_eq!(body.0["spark"]["name"], "Castor");
+            assert!(
+                substrate.is_none(),
+                "Advanced untouched: no substrate write"
+            );
+            assert!(policy.is_none(), "Advanced untouched: no policy write");
+            assert_eq!(warnings, vec!["spark lint: no interests seeded"]);
+        }
+        other => panic!("expected CreateEntity, got {other:?}"),
+    }
+}
+
+#[test]
+fn summon_refusal_shows_the_web_sentence_and_writes_nothing() {
+    let mut h = harness();
+    entity_screen(&mut h);
+    h.type_text("n");
+    h.turns(2);
+    h.store
+        .entity_kit
+        .set(Loadable::Ready(creation_kit_fixture()));
+    h.turns(2);
+    h.type_text("Testor");
+    h.turn();
+    for _ in 0..3 {
+        h.key(b"\t");
+        h.turn();
+    }
+    h.type_text("\r");
+    h.turns(2);
+    assert!(h
+        .find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::ValidateEntity { .. })))
+        .is_some());
+    h.store
+        .entity_check
+        .set(Loadable::Ready(ent::CreateCheck::from_value(
+            "Testor",
+            &json!({"ok": false, "would_conflict": true, "errors": []}),
+        )));
+    let s = h.turns(3);
+    assert!(
+        s.contains("Cannot create: an entity with this name already exists"),
+        "refusal:\n{s}"
+    );
+    assert!(
+        !s.contains("Summon Testor?"),
+        "no confirm on a red dry-run:\n{s}"
+    );
+    assert!(!h
+        .drain_cmds()
+        .iter()
+        .any(|c| matches!(c, Cmd::Entity(EntityCmd::CreateEntity { .. }))));
+}
+
+#[test]
+fn talk_opens_a_visit_sends_turns_and_renders_replies() {
+    let mut h = harness();
+    entity_screen(&mut h);
+    h.drain_cmds();
+    h.type_text("c");
+    let s = h.turns(2);
+    assert!(s.contains("Talk — Testor"), "talk panel:\n{s}");
+    assert!(s.contains("no visit open"), "honest empty state:\n{s}");
+    // Input is focused: draft the first line, then Tab → Open visit.
+    h.type_text("hello Testor");
+    h.turn();
+    h.key(b"\t");
+    h.turn();
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::ChatOpen { .. }))) {
+        Some(Cmd::Entity(EntityCmd::ChatOpen { name })) => assert_eq!(name, "Testor"),
+        other => panic!("expected ChatOpen, got {other:?}"),
+    }
+    // The worker's open fold (recorded web-format frame).
+    h.store.entity_chat.update(|c| {
+        c.busy = false;
+        c.apply_open(&json!({"chat_id": "chat_42", "yielded_loop": false}));
+    });
+    let s = h.turns(2);
+    assert!(s.contains("visit open (chat_42)"), "open status:\n{s}");
+    assert!(s.contains("Close visit"), "close affordance:\n{s}");
+    // The static row keeps focus on Open visit: Tab → Send.
+    h.key(b"\t");
+    h.turn();
+    h.type_text("\r");
+    let s = h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::ChatTurn { .. }))) {
+        Some(Cmd::Entity(EntityCmd::ChatTurn {
+            name,
+            chat_id,
+            text,
+        })) => {
+            assert_eq!(name, "Testor");
+            assert_eq!(chat_id, "chat_42");
+            assert_eq!(text, "hello Testor");
+        }
+        other => panic!("expected ChatTurn, got {other:?}\n{s}"),
+    }
+    assert!(s.contains("hello Testor"), "your line lands at once:\n{s}");
+    assert!(s.contains("thinking"), "status while the turn runs:\n{s}");
+    h.store.entity_chat.update(|c| {
+        c.busy = false;
+        c.apply_turn(&json!({"reply": "Hello — I remember you.", "memories_in_context": 3}));
+    });
+    let s = h.turns(2);
+    assert!(
+        s.contains("Hello — I remember you."),
+        "reply rendered:\n{s}"
+    );
+    assert!(s.contains("3 memories in context"), "turn status:\n{s}");
+    // Focus law (the pty drive's catch): after open + turn the keyboard
+    // is still inside the panel, so Esc hides IT — never the page's own
+    // Esc (wizard back) behind a panel that stays up.
+    h.press_escape();
+    let s = h.turns(2);
+    assert!(!s.contains("Talk — Testor"), "Esc hides the panel:\n{s}");
+    assert!(s.contains("n = summon"), "still on Users & Entities:\n{s}");
+    assert_eq!(
+        h.store.entity_chat.get_untracked().chat_id.as_deref(),
+        Some("chat_42"),
+        "hiding never abandons the live visit"
+    );
+}
+
+#[test]
+fn talk_refuses_while_another_entitys_visit_is_open() {
+    let mut h = harness();
+    entity_screen(&mut h);
+    h.store.entity_chat.set(ent::ChatState {
+        entity: "Pollux".into(),
+        chat_id: Some("chat_9".into()),
+        ..Default::default()
+    });
+    h.type_text("c");
+    let s = h.turns(2);
+    assert!(!s.contains("Talk — Testor"), "no second visit:\n{s}");
+    assert!(
+        h.store
+            .notice
+            .get_untracked()
+            .unwrap_or_default()
+            .contains("a visit with Pollux is still open"),
+        "the refusal names the open visit"
+    );
+}
+
+#[test]
+fn manage_menu_opens_the_identity_card() {
+    let mut h = harness();
+    entity_screen(&mut h);
+    h.type_text("m");
+    h.turns(2);
+    // state is the initial pick; card sits ten rows below it.
+    for _ in 0..10 {
+        h.key(b"\x1b[B");
+        h.turn();
+    }
+    h.type_text("\r");
+    let s = h.turns(3);
+    assert!(s.contains("Identity card — Testor"), "card modal:\n{s}");
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::LoadCard { name }) if name == "Testor"))
+            .is_some(),
+        "the card read fired"
+    );
+    h.store
+        .entity_card
+        .set(Loadable::Ready(ent::EntityCard::from_value(
+            "Testor",
+            &json!({"handle": "testor@127.0.0.1", "entity_id": "entity:testor",
+                    "state": {"state": "asleep"},
+                    "moments": [{"at": "2026-09-27T10:00:00Z", "kind": "born"}]}),
+        )));
+    let s = h.turns(2);
+    assert!(s.contains("testor@127.0.0.1"), "entity id row:\n{s}");
+    assert!(s.contains("Recent moments"), "moments:\n{s}");
+    assert!(s.contains("born"), "moment row:\n{s}");
+}
+
+#[test]
+fn voice_audition_sends_the_unsaved_selection_and_shows_the_file() {
+    let mut h = harness_sized(Size::new(110, 40));
+    entity_screen(&mut h);
+    h.type_text("m");
+    h.turns(2);
+    // state → substrate → voice.
+    h.key(b"\x1b[B");
+    h.turn();
+    h.key(b"\x1b[B");
+    h.turn();
+    h.type_text("\r");
+    let s = h.turns(3);
+    assert!(s.contains("Voice — Testor"), "voice form:\n{s}");
+    assert!(s.contains("Audition"), "audition verb:\n{s}");
+    h.type_text("openai");
+    h.turn();
+    h.key(b"\t");
+    h.turn();
+    h.type_text("gpt-4o-mini-tts");
+    h.turn();
+    // voice → clear checkbox → Audition.
+    for _ in 0..3 {
+        h.key(b"\t");
+        h.turn();
+    }
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::VoiceAudition { .. }))) {
+        Some(Cmd::Entity(EntityCmd::VoiceAudition {
+            name,
+            provider,
+            model,
+            voice,
+        })) => {
+            assert_eq!(name, "Testor");
+            assert_eq!(provider, "openai");
+            assert_eq!(model, "gpt-4o-mini-tts");
+            assert_eq!(voice, None, "blank voice = provider default");
+        }
+        other => panic!("expected VoiceAudition, got {other:?}"),
+    }
+    h.store
+        .entity_audition
+        .set(Loadable::Ready(ent::AuditionOutcome {
+            entity: "Testor".into(),
+            summary: "Synthesized in 1.0s with openai/gpt-4o-mini-tts".into(),
+            path: Some("/tmp/abstractgateway-console/Testor-audition-a1.wav".into()),
+            bytes: 2048,
+            error: None,
+            player: None,
+        }));
+    let s = h.turns(2);
+    assert!(s.contains("audio saved:"), "file path shown:\n{s}");
+    assert!(s.contains("Testor-audition-a1.wav"), "path:\n{s}");
+    assert!(
+        s.contains("no command-line audio player"),
+        "honest no-player line:\n{s}"
+    );
+}
+
+/// Own-time Start with the fields left blank sends the web's body: an
+/// empty object (the gateway applies its own tick/day/rest defaults),
+/// never the console's own 20 / 8 / 30.
+#[test]
+fn own_time_start_with_blank_fields_sends_the_web_body() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.goto_screen(3);
+    h.store
+        .users
+        .set(Loadable::Ready(users_from_payload(&users_fixture())));
+    h.store
+        .entities
+        .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
+    h.turns(2);
+    h.type_text("m");
+    h.turns(2);
+    for _ in 0..4 {
+        h.key(b"\x1b[B");
+        h.turn();
+    }
+    h.type_text("\r");
+    let s = h.turns(3);
+    assert!(s.contains("Own time — Testor"), "own-time form open:\n{s}");
+    h.drain_cmds();
+    // tick → ticks → rest → grant hours → Grant → Revoke → Start loop.
+    for _ in 0..6 {
+        h.key(b"\t");
+        h.turn();
+    }
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::EntityLoop { start: true, .. })) {
+        Some(Cmd::EntityLoop { name, body, .. }) => {
+            assert_eq!(name, "Testor");
+            assert_eq!(*body, json!({}), "blank fields are omitted like the web");
+        }
+        other => panic!("expected a loop start, got {other:?}"),
+    }
+}
+
 #[test]
 fn entity_tool_policy_editor_saves_changed_phases_only() {
     let mut h = harness();
@@ -1869,6 +2832,38 @@ fn runtimes_table_renders_sizes_and_states() {
     assert!(s.contains("asleep (alive)"), "entity state cell:\n{s}");
 }
 
+/// A write that applied but left something the operator must see (an
+/// apply-recommended with routes this computer cannot run) is journaled
+/// in the warning tone with its reason — never a plain ✓ (review 2 d).
+#[test]
+fn review_journal_marks_writes_that_need_attention() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.goto_screen(6);
+    h.store.journal.update(|j| {
+        j.push(JournalEntry {
+            attention: Some("1 configured route cannot run on this computer".into()),
+            when: "10:00:00Z".into(),
+            action: "POST apply-recommended routes".into(),
+            outcome: Ok("applied".into()),
+            verified: Some(Ok("GET re-read the route grid".into())),
+        });
+    });
+    let s = h.turns(2);
+    assert!(
+        s.contains("10:00:00Z ! POST apply-recommended routes"),
+        "warning mark:\n{s}"
+    );
+    assert!(
+        s.contains("needs attention · 1 configured route cannot run on this computer"),
+        "the reason is journaled:\n{s}"
+    );
+    assert!(
+        !s.contains("10:00:00Z ✓ POST apply-recommended"),
+        "never a plain success:\n{s}"
+    );
+}
+
 #[test]
 fn review_journal_renders_writes_and_verification() {
     let mut h = harness();
@@ -1876,6 +2871,7 @@ fn review_journal_renders_writes_and_verification() {
     h.goto_screen(6);
     h.store.journal.update(|j| {
         j.push(JournalEntry {
+            attention: None,
             when: "10:00:00Z".into(),
             action: "PUT capability route output.voice".into(),
             outcome: Ok("applied".into()),
@@ -1884,6 +2880,7 @@ fn review_journal_renders_writes_and_verification() {
             )),
         });
         j.push(JournalEntry {
+            attention: None,
             when: "10:01:00Z".into(),
             action: "POST user 'bob'".into(),
             outcome: Err("HTTP 400: user exists".into()),
@@ -1916,9 +2913,11 @@ fn review_empty_state_and_finish_button() {
         s.contains("no changes applied this session"),
         "journal empty state:\n{s}"
     );
+    // The guide's last step: Finish AND Skip setup (both recorded on
+    // the gateway, like the web guide's footer).
     assert!(
-        s.contains("Finish — switch to browse mode"),
-        "wizard finish:\n{s}"
+        s.contains(" Finish ") && s.contains("Skip setup"),
+        "wizard finish + skip:\n{s}"
     );
     // The redesign: the sandbox is INLINE — its pickers and prompt live
     // on the screen itself, no modal between the operator and the test.
@@ -1957,7 +2956,9 @@ fn review_inline_sandbox_runs_and_renders_full_result() {
         );
     });
     h.turns(3);
-    // Enter in the (autofocused) prompt runs the test with the picks.
+    // Enter in the prompt runs the test with the picks (the prompt is
+    // focused by the operator, never autofocused — REVIEW-1 M1).
+    click_field(&mut h, "prompt");
     h.type_text("\r");
     h.turns(2);
     match h.find_cmd(|c| matches!(c, Cmd::SandboxTest { .. })) {
@@ -1965,6 +2966,7 @@ fn review_inline_sandbox_runs_and_renders_full_result() {
             provider,
             model,
             prompt,
+            ..
         }) => {
             assert_eq!(provider, "lmstudio");
             assert_eq!(model, "test-model-b");
@@ -2029,6 +3031,7 @@ fn review_sandbox_refusals_name_reasons() {
     // Not connected: refuse with the connect teaching.
     h.goto_screen(6);
     h.turns(2);
+    click_field(&mut h, "prompt");
     h.type_text("\r");
     h.turns(2);
     let notice = h.store.notice.get_untracked().unwrap_or_default();
@@ -2079,6 +3082,7 @@ fn review_screen_renders_whole_at_both_sizes() {
                 h.store.journal.update(|j| {
                     for i in 0..3 {
                         j.push(JournalEntry {
+                            attention: None,
                             when: format!("10:0{i}:00Z"),
                             action: format!("PUT route output.route{i}"),
                             outcome: Ok("applied".into()),
@@ -2123,8 +3127,8 @@ fn review_screen_renders_whole_at_both_sizes() {
                 "[{label}] Generate button:\n{s}"
             );
             assert!(
-                s.contains("Finish — switch to browse mode"),
-                "[{label}] wizard finish reachable:\n{s}"
+                s.contains(" Finish ") && s.contains("Skip setup"),
+                "[{label}] wizard finish + skip reachable:\n{s}"
             );
             match state {
                 "ready" => {
@@ -2278,6 +3282,7 @@ fn reprobe_resets_cached_domains() {
     h.goto_screen(0);
     h.ui.wizard.set(true);
     h.turns(2);
+    click_field(&mut h, "Gateway URL");
     h.type_text("\r");
     h.turns(2);
     assert!(
@@ -2600,7 +3605,9 @@ fn dirty_guard_disarms_on_edit_after_warning() {
 /// knob surface with per-knob PROVENANCE (value + which layer set it).
 #[test]
 fn runtime_knobs_render_with_provenance() {
-    let mut h = harness();
+    // Two rows taller than the default harness: the knobs gained a second
+    // button row (backlog settings + skills reseed).
+    let mut h = harness_sized(Size::new(110, 36));
     h.connect_as_admin();
     h.goto_screen(4);
     h.store
@@ -2658,7 +3665,7 @@ fn runtime_knobs_render_with_provenance() {
         "knob value + provenance:\n{s}"
     );
     assert!(
-        s.contains("process_manager: false  (default)"),
+        s.contains("process_manager: off  (default)"),
         "bool knob rendered:\n{s}"
     );
     assert!(
@@ -2755,6 +3762,12 @@ fn title_bar_and_separator_survive_content_pressure() {
         for screen in 0..ui::SCREENS.len() {
             h.ui.screen.set(screen);
             let scr = h.turns(3);
+            // The Setup step has no jump key: its tab is titled bare.
+            let want = if screen < ui::KEYED_SCREENS {
+                format!("{} {}", ui::screen_key(screen), ui::SCREENS[screen])
+            } else {
+                ui::SCREENS[screen].to_string()
+            };
             let lines: Vec<&str> = scr.lines().collect();
             assert!(
                 lines[0].contains("AbstractGateway Console"),
@@ -2769,12 +3782,36 @@ fn title_bar_and_separator_survive_content_pressure() {
             // "the ACTIVE tab's title sits on row 2", which holds at
             // every screen; "1 Connection" is honestly behind ‹ when
             // the window has slid right.
-            let want = format!("{} {}", ui::screen_key(screen), ui::SCREENS[screen]);
             assert!(
                 lines[2].contains(&want),
                 "tab bar at row 2 shows '{want}' (wizard={wizard} screen={screen}):\n{scr}"
             );
         }
+    }
+}
+
+/// 80x24 (review 2 e): every screen's footer leads with the screen's
+/// OWN keys; the universal ones follow and truncate first.
+#[test]
+fn footer_leads_with_the_screen_keys_at_80x24() {
+    let mut h = harness_sized(Size::new(80, 24));
+    h.connect_as_admin();
+    h.ui.wizard.set(false);
+    for (screen, lead) in [
+        (1usize, "a add connection"),
+        (2, "Enter/e edit route"),
+        (3, "a add user"),
+        (4, "Enter inspect runtime"),
+        (5, "t show/hide drafts"),
+        (7, "u unload"),
+    ] {
+        h.ui.screen.set(screen);
+        let s = h.turns(3);
+        let footer = s.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");
+        assert!(
+            footer.trim_start().starts_with(lead),
+            "screen {screen} footer leads with '{lead}':\n{footer}"
+        );
     }
 }
 
@@ -2849,6 +3886,82 @@ fn health_authority_verifies_then_retries_once() {
     h.store.providers.set(Loadable::Failed(net_err()));
     h.turns(3);
     assert_eq!(probes.borrow().len(), 2, "user re-arm allows one more");
+}
+
+/// The gateway dies while the console sits on Connection (a screen that
+/// loads nothing): the paused-banner poll's transport failure reaches the
+/// health authority, so the screen stops saying "● connected" once the
+/// probe settles; `r` there re-probes (review 2 minor f).
+#[test]
+fn a_dead_gateway_under_the_connection_screen_is_noticed() {
+    let mut h = harness();
+    let probes: Rc<RefCell<Vec<u64>>> = Rc::new(RefCell::new(Vec::new()));
+    {
+        let probes = probes.clone();
+        *h.prober.borrow_mut() = Some(Box::new(move |_url, _token, gen| {
+            probes.borrow_mut().push(gen);
+        }));
+    }
+    h.connect_as_admin();
+    h.ui.wizard.set(false);
+    h.ui.screen.set(ui::SCREEN_CONNECTION);
+    let s = h.turns(2);
+    assert!(s.contains("● connected"), "{s}");
+    let _ = h.drain_cmds();
+    // `r` on Connection re-probes the connection itself.
+    h.type_text("r");
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::Connect { .. })).is_some(),
+        "r on Connection re-probes"
+    );
+    h.connect_as_admin();
+    h.turns(2);
+    // The runner poll fails at the transport layer (the gateway died).
+    abstractgateway_console::worker::operator::runner_poll_failed(
+        h.store,
+        abstractgateway_console::api::ApiError {
+            kind: abstractgateway_console::api::ApiErrorKind::Unreachable,
+            message: "GET /host/runner: Connection refused".into(),
+            body: None,
+            timed_out: false,
+        },
+    );
+    h.turns(2);
+    assert_eq!(
+        probes.borrow().len(),
+        1,
+        "the health authority verifies once"
+    );
+    let gen = h.store.probe_gen.get_untracked();
+    abstractgateway_console::health::settle(
+        h.store,
+        &h.tx,
+        gen,
+        Err(abstractgateway_console::api::ApiError {
+            kind: abstractgateway_console::api::ApiErrorKind::Unreachable,
+            message: "GET /ping: Connection refused".into(),
+            body: None,
+            timed_out: false,
+        }),
+    );
+    let s = h.turns(2);
+    assert!(!s.contains("● connected"), "no stale connected dot:\n{s}");
+    // The gateway is back: `r` re-probes — it is not typed into the URL
+    // field (the field takes the caret only before the first connection).
+    let url = h.ui.conn_url.get_untracked();
+    let _ = h.drain_cmds();
+    h.type_text("r");
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::Connect { .. })).is_some(),
+        "r re-probes after the loss"
+    );
+    assert_eq!(
+        h.ui.conn_url.get_untracked(),
+        url,
+        "nothing typed into the URL"
+    );
 }
 
 /// settle(Err) settles the ONE story every panel tells.
@@ -2956,7 +4069,7 @@ fn first_run_screens_survive_tight_height() {
     h.goto_screen(3);
     let s = h.turns(3);
     assert!(
-        s.contains("no entities on this gateway"),
+        s.contains("no entities yet — n summons the first one"),
         "entities empty-state renders (not crushed):\n{s}"
     );
 
@@ -2964,6 +4077,7 @@ fn first_run_screens_survive_tight_height() {
     // right and saved one thing).
     h.store.journal.update(|j| {
         j.push(abstractgateway_console::store::JournalEntry {
+            attention: None,
             when: "12:00:00Z".into(),
             action: "PUT route output.text".into(),
             outcome: Ok("applied".into()),
@@ -3010,20 +4124,24 @@ fn wizard_steps_carry_a_goal_line() {
     let mut h = harness();
     h.connect_as_admin();
     h.ui.wizard.set(true);
-    for (screen, needle) in [
-        (1usize, "make one provider usable"),
-        (2, "the engine picks models by default"),
-        (3, "mint a token"),
-        (4, "storage inventory"),
-        (5, "the registered workflows"),
-        (6, "run one real test"),
-        (7, "live models"),
+    // The guide's steps carry "Step N/8" (the web guide's kicker) and
+    // their goal; screens off the guide's path keep "Step goal:".
+    for (screen, step, needle) in [
+        (ui::SCREEN_WELCOME, "Step 2/8", "this computer at a glance"),
+        (1usize, "Step 4/8", "cloud providers only need a key"),
+        (2, "Step 5/8", "a applies the recommended set"),
+        (ui::SCREEN_APPS, "Step 7/8", "i installs a browser app"),
+        (6, "Step 8/8", "run one real test"),
+        (3, "Step goal:", "mint a token"),
+        (4, "Step goal:", "storage inventory"),
+        (5, "Step goal:", "the registered workflows"),
+        (7, "Step goal:", "live models"),
     ] {
         h.ui.screen.set(screen);
         let s = h.turns(2);
         assert!(
-            s.contains("Step goal:") && s.contains(needle),
-            "wizard screen {screen} goal line:\n{s}"
+            s.contains(step) && s.contains(needle),
+            "wizard screen {screen} goal line ({step}):\n{s}"
         );
     }
     // Browse mode: no goal line.
@@ -3031,7 +4149,7 @@ fn wizard_steps_carry_a_goal_line() {
     h.ui.screen.set(1);
     let s = h.turns(2);
     assert!(
-        !s.contains("Step goal:"),
+        !s.contains("Step goal:") && !s.contains("Step 4/8"),
         "browse mode has no goal line:\n{s}"
     );
 }
@@ -3151,6 +4269,17 @@ fn click_at(h: &mut Harness, x: usize, y: usize) {
 fn double_click_at(h: &mut Harness, x: usize, y: usize) {
     click_at(h, x, y);
     click_at(h, x, y);
+}
+
+/// Put the caret in the text field labelled `label` (the field column
+/// starts after the 18-cell label). Page text fields never autofocus
+/// once connected (REVIEW-1 M1/M2): a test types into one the way an
+/// operator does — by focusing it first.
+fn click_field(h: &mut Harness, label: &str) {
+    let s = h.turns(1);
+    let row = find_row(&s, label);
+    click_at(h, 25, row);
+    h.turns(2);
 }
 
 /// 1-based row of the first rendered line containing `needle`.
@@ -3735,6 +4864,7 @@ fn gateway_reset_forgets_the_chosen_runtime() {
     h.goto_screen(0);
     h.ui.wizard.set(true);
     h.turns(2);
+    click_field(&mut h, "Gateway URL");
     h.type_text("\r");
     h.turns(2);
     assert!(
@@ -3877,7 +5007,10 @@ fn runtimes_inspector_fits_at_80x24() {
         s.contains("Runtime knobs"),
         "knobs disclosure header survives at 80x24:\n{s}"
     );
-    assert!(s.contains("focus"), "footer hints survive at 80x24:\n{s}");
+    assert!(
+        s.contains("inspect runtime"),
+        "the screen's own keys lead the footer at 80x24:\n{s}"
+    );
 }
 
 /// Honesty pin: a user plane the gateway lists with `data_dir: null`
@@ -4214,17 +5347,39 @@ fn a_applies_the_recommended_routes() {
         "the default answer never overrules the operator: {dbg}"
     );
 
-    // The second answer is the explicit overrule.
+    // Like the web, the first pass never forces: the prompt has no
+    // overrule answer (keep, cancel).
     h.key(b"a");
+    let s = h.turns(2);
+    assert!(!s.contains("replace mine too"), "no up-front force:\n{s}");
+    h.press_escape();
     h.turns(2);
-    h.key(b"\x1b[B");
+    h.drain_cmds();
+    // The report kept routes: the worker offers the web's second pass,
+    // "Replace mine too", defaulting to leave.
+    h.store.apply_followup.set(Some("Replace mine too".into()));
+    let s = h.turns(3);
+    assert!(
+        s.contains("Replace mine too") && s.contains("Leave them as they are"),
+        "the second pass is offered:\n{s}"
+    );
+    h.key(b"\r");
+    h.turns(2);
+    assert!(
+        !format!("{:?}", h.drain_cmds()).contains("ApplyRecommendedRoutes"),
+        "leave (the default) forces nothing"
+    );
+    h.store.apply_followup.set(Some("Replace mine too".into()));
+    let s = h.turns(3);
+    assert!(s.contains("Leave them as they are"), "offered again:\n{s}");
+    h.key(b"\x1b[A");
     h.turn();
     h.key(b"\r");
     h.turns(2);
     let dbg = format!("{:?}", h.drain_cmds());
     assert!(
         dbg.contains("ApplyRecommendedRoutes") && dbg.contains("force: true"),
-        "the danger answer forces: {dbg}"
+        "the explicit second pass forces: {dbg}"
     );
 }
 
@@ -5544,6 +6699,98 @@ fn models_tab_locked_row_shows_the_lock_marker() {
     );
 }
 
+/// The Resources poll re-creates the table region every ~4 s: the keys
+/// must stay live across it (review 2 N1 — the old first-mount-only
+/// autofocus left u/k/w/e/c/m dead after the first poll).
+#[test]
+fn resources_keys_survive_the_host_state_poll() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.goto_screen(7);
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
+    h.turns(2);
+    // Three poll answers land (each a fresh Ready: the region regenerates).
+    for _ in 0..3 {
+        h.store
+            .host_state
+            .set(Loadable::Ready(host_state_fixture()));
+        h.turns(2);
+    }
+    h.type_text("u");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Unload mlx/qwen3-32b"),
+        "u still opens the unload confirm after the poll:\n{s}"
+    );
+}
+
+/// Resources with NOTHING resident (no table): `w` still warms up after
+/// the poll re-renders the region (the keeper's anchor holds the keys).
+#[test]
+fn resources_w_works_with_no_model_resident_across_polls() {
+    let empty = || {
+        host_state_from_payload(&json!({
+            "ok": true, "ts": 1756252800.0,
+            "host": {"host_id": "h-1", "host_name": "studio.local"},
+            "memory": {"ram": {"total_bytes": 137438953472u64, "available_bytes": 51539607552u64,
+                               "used_bytes": 85899345920u64, "percent": 62.5}},
+            "models": [], "session_caches": [],
+            "totals": {"models": 0, "models_resident": 0, "session_caches": 0}
+        }))
+    };
+    let mut h = harness_sized(Size::new(80, 24));
+    h.connect_as_admin();
+    h.goto_screen(7);
+    for _ in 0..3 {
+        h.store.host_state.set(Loadable::Ready(empty()));
+        h.turns(2);
+    }
+    h.type_text("w");
+    let s = h.turns(3);
+    assert!(
+        s.contains("Load (warm up) a model"),
+        "w opens the warm-up form:\n{s}"
+    );
+}
+
+/// Runtimes: the first `w` fires the lazy runtime-config read; when it
+/// lands the inventory region re-renders — the second `w` must still
+/// reach the screen and open the form (review 2 N2).
+#[test]
+fn runtimes_w_works_after_the_lazy_config_lands() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.goto_screen(4);
+    h.store
+        .runtimes
+        .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
+    h.turns(2);
+    h.drain_cmds();
+    h.type_text("w");
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::LoadRuntimeConfig))
+            .is_some(),
+        "the first w fires the lazy load"
+    );
+    h.store.runtime_config.set(Loadable::Ready(
+        abstractgateway_console::store::RuntimeConfigData::from_value(&json!({
+            "writable": true,
+            "workspace_root": {"value": "/srv/workspace", "source": "stored"},
+            "user_workspace_policies": {"value": "{}", "source": "default"}
+        })),
+    ));
+    h.turns(3);
+    h.type_text("w");
+    let s = h.turns(3);
+    assert!(
+        s.contains("Workspace policy — default:admin"),
+        "the second w opens the policy form:\n{s}"
+    );
+}
+
 /// `u` = danger confirm, defaulting to KEEP; only the explicit danger
 /// choice emits the unload command — with force:false (force is the
 /// 409-gated second confirm's business).
@@ -6174,7 +7421,12 @@ impl ConsoleTransport for MockTransport {
         self.record(format!("installed provider={}", provider.unwrap_or("-")));
         Ok(fixture("models_installed"))
     }
-    fn start_download(&self, provider: &str, artifact: &str) -> Result<Value, TransportError> {
+    fn start_download(
+        &self,
+        provider: &str,
+        artifact: &str,
+        _expected_bytes: Option<u64>,
+    ) -> Result<Value, TransportError> {
         self.record(format!("download {provider} {artifact}"));
         self.started(Self::job_doc(
             "download",
@@ -6358,8 +7610,8 @@ fn models_tab_9_renders_the_shared_catalog_once() {
         s.contains("ollama: unreachable"),
         "installed errors shown:\n{s}"
     );
-    // The gateway footer: the new digit range + the screen's own verbs.
-    assert!(s.contains("1-9,0"), "{s}");
+    // The gateway footer: the screen's own verbs lead (review 2: at any
+    // width the screen's keys come before the universal ones).
     assert!(s.contains("download") && s.contains("filter"), "{s}");
     // Entering read host, catalog and installed ONCE each — the gateway's
     // connected-entry effect and the screen's mount effect must not
@@ -6407,7 +7659,10 @@ fn zero_jumps_to_engines_in_browse_and_is_refused_in_the_wizard() {
     h.key(b"0");
     let s = h.turns(2);
     assert_eq!(h.ui.screen.get_untracked(), 1, "wizard does not jump");
-    assert!(s.contains("digit jumps work in browse mode"), "{s}");
+    assert!(
+        s.contains("screen jumps (1-9, 0, A) work in browse mode"),
+        "{s}"
+    );
 }
 
 #[test]
@@ -6418,7 +7673,7 @@ fn wizard_walks_on_to_models_and_engines_with_their_goals() {
     h.ui.screen.set(ui::SCREEN_CATALOG);
     let s = h.settle_until_contains("Qwen3 8B");
     assert!(
-        s.contains("Step goal:") && s.contains("w downloads a model"),
+        s.contains("Step 6/8") && s.contains("w downloads a model"),
         "{s}"
     );
     h.ui.screen.set(ui::SCREEN_ENGINES);
@@ -6467,7 +7722,10 @@ fn download_progress_reaches_the_gateway_toast_lane() {
     let s = h.settle_until("the job at 42%", |s| s.contains("42%"));
     assert!(s.contains("download ollama qwen3:8b"), "{s}");
     assert!(s.contains("c cancels"), "{s}");
-    assert!(h.screens.job_active(), "held at running: the job is still active");
+    assert!(
+        h.screens.job_running(),
+        "held at running: the job is still active"
+    );
     *h.mock.hold_polls.lock().unwrap() = false;
     // The outcome lands on the GATEWAY's notice signal (shared lane):
     // the footer mirrors it and the toast effect shows it.
@@ -6479,7 +7737,7 @@ fn download_progress_reaches_the_gateway_toast_lane() {
         notice.contains("download ollama qwen3:8b completed"),
         "the gateway notice carries it: {notice}"
     );
-    assert!(!h.screens.job_active());
+    assert!(!h.screens.job_running());
 }
 
 #[test]
@@ -6576,7 +7834,7 @@ fn a_running_install_blocks_q_and_c_cancels_it() {
     h.turns(1);
     h.key(b"\r");
     h.settle_until_contains("Downloading ollama");
-    assert!(h.screens.job_active());
+    assert!(h.screens.job_running());
     // Browse-mode q refuses while the gateway job runs.
     h.key(b"q");
     h.settle_until_contains("models/engines job is running on the gateway");
@@ -6584,7 +7842,7 @@ fn a_running_install_blocks_q_and_c_cancels_it() {
     let s = h.settle_until_contains("⊘ install ollama cancelled");
     assert!(s.contains("cancelled"), "{s}");
     assert!(h.mock.called("cancel engine_install_1"));
-    assert!(!h.screens.job_active());
+    assert!(!h.screens.job_running());
 }
 
 #[test]
@@ -6662,9 +7920,11 @@ fn set_network(h: &mut Harness, v: Value) -> String {
     h.turns(3)
 }
 
-/// Focus the mode picker: Tab past URL, token and the probe button.
+/// Focus the mode picker: Tab past the tab bar, URL, token and the probe
+/// button. Connected, nothing holds the caret (REVIEW-1 M2: the URL field
+/// autofocuses only while not connected), so the chain starts at the top.
 fn focus_network_modes(h: &mut Harness) {
-    for _ in 0..3 {
+    for _ in 0..5 {
         h.key(b"\t");
         h.turn();
     }
@@ -6839,7 +8099,10 @@ fn network_refused_mode_says_the_fix_and_posts_nothing() {
             .is_none(),
         "a refused mode posts nothing"
     );
-    assert!(s.contains("fix: started with accounts off"), "fix shown:\n{s}");
+    assert!(
+        s.contains("fix: started with accounts off"),
+        "fix shown:\n{s}"
+    );
 }
 
 #[test]
@@ -6885,6 +8148,12 @@ fn network_c_in_the_url_field_still_types() {
     h.store.notice.set(None);
     h.ui.conn_url.set(String::new());
     h.turn();
+    // Connected, the URL field no longer holds the caret (M2): Tab past
+    // the tab bar into it.
+    for _ in 0..2 {
+        h.key(b"\t");
+        h.turn();
+    }
     h.type_text("c");
     h.turns(2);
     assert_eq!(
@@ -6902,13 +8171,17 @@ fn network_c_in_the_url_field_still_types() {
     );
 }
 
-
 // =======================================================================
 // Reverse proxy (mission Z): allowed origins + trust proxy, same door as
 // the mode (POST /network), the gateway's words on refusal.
 // =======================================================================
 
-fn proxy_fixture(origins: &[&str], trust: bool, env_origins: Option<&[&str]>, env_trust: Option<bool>) -> Value {
+fn proxy_fixture(
+    origins: &[&str],
+    trust: bool,
+    env_origins: Option<&[&str]>,
+    env_trust: Option<bool>,
+) -> Value {
     let mut v = network_fixture("internet", "0.0.0.0", false, true);
     let mut o = json!({
         "value": origins, "source": if origins.is_empty() {"default"} else {"setting"},
@@ -6932,10 +8205,10 @@ fn proxy_fixture(origins: &[&str], trust: bool, env_origins: Option<&[&str]>, en
     v
 }
 
-/// Tab from the URL field to the origins edit line (URL, token, probe,
-/// modes, addresses, origins).
+/// Tab to the origins edit line (tab bar, URL, token, probe, modes,
+/// addresses, origins) — connected, nothing holds the caret (M2).
 fn focus_origins_line(h: &mut Harness) {
-    for _ in 0..5 {
+    for _ in 0..7 {
         h.key(b"\t");
         h.turn();
     }
@@ -6947,7 +8220,10 @@ fn network_reverse_proxy_shows_values_and_where_they_come_from() {
     h.connect_as_admin();
     h.ui.screen.set(0);
     h.turns(2);
-    let s = set_network(&mut h, proxy_fixture(&["https://gateway.example.com"], false, None, None));
+    let s = set_network(
+        &mut h,
+        proxy_fixture(&["https://gateway.example.com"], false, None, None),
+    );
     for needle in [
         "Reverse proxy",
         "origins: https://gateway.example.com [saved setting]",
@@ -6965,7 +8241,12 @@ fn network_reverse_proxy_shows_values_and_where_they_come_from() {
     // The environment override is said in words, per field.
     let s = set_network(
         &mut h,
-        proxy_fixture(&["https://gateway.example.com"], false, Some(&["https://pinned.example"]), Some(true)),
+        proxy_fixture(
+            &["https://gateway.example.com"],
+            false,
+            Some(&["https://pinned.example"]),
+            Some(true),
+        ),
     );
     assert!(s.contains("[environment override]"), "override tag:\n{s}");
     assert!(
@@ -6976,9 +8257,16 @@ fn network_reverse_proxy_shows_values_and_where_they_come_from() {
         s.contains("this gateway was started with ABSTRACTGATEWAY_TRUST_PROXY in its environment: trust proxy is on"),
         "trust override line:\n{s}"
     );
-    assert!(!s.contains("set ABSTRACTGATEWAY"), "never an env instruction:\n{s}");
+    assert!(
+        !s.contains("set ABSTRACTGATEWAY"),
+        "never an env instruction:\n{s}"
+    );
     if let Ok(dir) = std::env::var("MISSION_Z_RENDER_DIR") {
-        std::fs::write(format!("{dir}/tui_network_reverse_proxy_env_override.txt"), &s).expect("write render");
+        std::fs::write(
+            format!("{dir}/tui_network_reverse_proxy_env_override.txt"),
+            &s,
+        )
+        .expect("write render");
     }
 }
 
@@ -6988,7 +8276,10 @@ fn network_origins_line_enter_saves_the_whole_list() {
     h.connect_as_admin();
     h.ui.screen.set(0);
     h.turns(2);
-    set_network(&mut h, proxy_fixture(&["https://a.example"], false, None, None));
+    set_network(
+        &mut h,
+        proxy_fixture(&["https://a.example"], false, None, None),
+    );
     h.drain_cmds();
     focus_origins_line(&mut h);
     h.key(b"\x1b[F"); // End
@@ -6998,16 +8289,26 @@ fn network_origins_line_enter_saves_the_whole_list() {
     h.type_text("\r");
     h.turns(2);
     match h.find_cmd(|c| matches!(c, Cmd::SetNetworkProxy { .. })) {
-        Some(Cmd::SetNetworkProxy { allowed_origins, trust_proxy }) => {
+        Some(Cmd::SetNetworkProxy {
+            allowed_origins,
+            trust_proxy,
+        }) => {
             assert_eq!(
                 allowed_origins,
-                Some(vec!["https://a.example".to_string(), "https://b.example:8443".to_string()])
+                Some(vec![
+                    "https://a.example".to_string(),
+                    "https://b.example:8443".to_string()
+                ])
             );
             assert_eq!(trust_proxy, None, "only the origins change");
         }
         other => panic!("expected SetNetworkProxy origins, got {other:?}"),
     }
-    assert!(h.find_cmd(|c| matches!(c, Cmd::SetNetwork { .. })).is_none(), "the mode is untouched");
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::SetNetwork { .. }))
+            .is_none(),
+        "the mode is untouched"
+    );
 }
 
 #[test]
@@ -7024,12 +8325,380 @@ fn network_trust_checkbox_saves_on_toggle() {
     h.type_text(" ");
     h.turns(2);
     match h.find_cmd(|c| matches!(c, Cmd::SetNetworkProxy { .. })) {
-        Some(Cmd::SetNetworkProxy { allowed_origins, trust_proxy }) => {
+        Some(Cmd::SetNetworkProxy {
+            allowed_origins,
+            trust_proxy,
+        }) => {
             assert_eq!(trust_proxy, Some(true));
             assert_eq!(allowed_origins, None, "only trust changes");
         }
         other => panic!("expected SetNetworkProxy trust, got {other:?}"),
     }
+}
+
+// ---------------------------------------------------------------------
+// Operator controls (web parity): host panel (F3), paused banner,
+// workflow import/reload/delete-confirm, backlog settings + reseed,
+// the caller's own workspace policy.
+// ---------------------------------------------------------------------
+
+fn paused_runner() -> abstractgateway_console::store::operator::HostRunner {
+    abstractgateway_console::store::operator::HostRunner::from_value(&json!({
+        "paused": true, "paused_at": "2026-09-27T10:00:00+00:00", "paused_by": "default/admin",
+        "inflight_ticks": 0, "runner_in_process": true,
+        "capabilities": {"restart": true, "shutdown": true, "reason": null}
+    }))
+}
+
+fn is_op(c: &Cmd, f: impl Fn(&abstractgateway_console::worker::operator::OpCmd) -> bool) -> bool {
+    matches!(c, Cmd::Operator(op) if f(op))
+}
+
+#[test]
+fn paused_banner_shows_on_every_screen_and_f2_panel_resumes() {
+    use abstractgateway_console::worker::operator::OpCmd;
+    let mut h = harness_sized(Size::new(140, 40));
+    h.connect_as_admin();
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::PollRunner { .. })))
+            .is_some(),
+        "connecting starts the /host/runner poll behind the banner"
+    );
+    let s = h.turns(1);
+    assert!(
+        !s.contains("Workflows are paused"),
+        "no banner before an answer:\n{s}"
+    );
+    h.store.op.runner.set(Loadable::Ready(paused_runner()));
+    for screen in [1usize, 5] {
+        h.goto_screen(screen);
+        let s = h.turns(2);
+        assert!(
+            s.contains("Workflows are paused since 2026-09-27 10:00:00 +00:00 by default/admin"),
+            "banner on screen {screen}:\n{s}"
+        );
+        assert!(s.contains("F3 → p resumes"), "admin is told how:\n{s}");
+    }
+    let _ = h.drain_cmds();
+    h.key(b"\x1bOR"); // F3
+    let s = h.turns(2);
+    assert!(s.contains("Gateway host"), "F3 opens the host panel:\n{s}");
+    assert!(s.contains("Paused — still running"), "state pill:\n{s}");
+    assert!(
+        s.contains("Resume workflows"),
+        "the button names its verb:\n{s}"
+    );
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::LoadHost { admin: true })))
+            .is_some(),
+        "opening reads runner + tray + update"
+    );
+    h.type_text("p");
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::SetPaused { pause: false })))
+            .is_some(),
+        "p on a paused runner resumes"
+    );
+}
+
+#[test]
+fn host_panel_refuses_non_admin_verbs_with_a_reason() {
+    use abstractgateway_console::worker::operator::OpCmd;
+    let mut h = harness_sized(Size::new(140, 40));
+    let user = Identity::from_me(&json!({
+        "ok": true,
+        "principal": {"user_id": "bob", "tenant_id": "default", "roles": ["user"], "admin": false},
+        "auth": {"mode": "users"}, "routing": {"mode": "per-principal"}
+    }))
+    .expect("identity");
+    h.store.conn.set(ConnPhase::Connected(user));
+    h.turns(2);
+    h.store.op.runner.set(Loadable::Ready(paused_runner()));
+    let s = h.turns(2);
+    assert!(
+        s.contains("Workflows are paused"),
+        "the banner is for everyone:\n{s}"
+    );
+    assert!(
+        !s.contains("F3 → p resumes"),
+        "but only admins are told to resume:\n{s}"
+    );
+    h.key(b"\x1bOR"); // F3
+    let s = h.turns(2);
+    assert!(
+        s.contains("only an admin can pause, restart, quit or update"),
+        "reason shown:\n{s}"
+    );
+    assert!(!s.contains("Restart…"), "no admin buttons:\n{s}");
+    let _ = h.drain_cmds();
+    h.type_text("p");
+    h.turns(2);
+    assert!(
+        h.drain_cmds()
+            .iter()
+            .all(|c| !is_op(c, |o| matches!(o, OpCmd::SetPaused { .. }))),
+        "a non-admin pause is refused before sending"
+    );
+}
+
+#[test]
+fn restart_and_quit_confirm_first_and_default_to_keep() {
+    use abstractgateway_console::worker::operator::OpCmd;
+    let mut h = harness_sized(Size::new(140, 40));
+    h.connect_as_admin();
+    h.store.op.runner.set(Loadable::Ready(paused_runner()));
+    h.turns(2);
+    h.key(b"\x1bOR"); // F3
+    h.turns(2);
+    h.type_text("R");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Restart AbstractGateway?"),
+        "restart confirm:\n{s}"
+    );
+    h.type_text("\r"); // keep is the default
+    h.turns(2);
+    assert!(
+        h.drain_cmds()
+            .iter()
+            .all(|c| !is_op(c, |o| matches!(o, OpCmd::Restart))),
+        "keep does not restart"
+    );
+    h.key(b"\x1bOR"); // F3
+    h.turns(2);
+    h.type_text("Q");
+    let s = h.turns(2);
+    assert!(s.contains("Quit AbstractGateway?"), "quit confirm:\n{s}");
+    h.key(b"\x1b[A");
+    h.turn();
+    h.type_text("\r");
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::Shutdown)))
+            .is_some(),
+        "the danger option quits"
+    );
+    // A process that cannot restart itself says why, and sends nothing.
+    let mut r = paused_runner();
+    r.cap_restart = false;
+    r.cap_reason = "started with --reload".into();
+    h.store.op.runner.set(Loadable::Ready(r));
+    h.key(b"\x1bOR"); // F3
+    h.turns(2);
+    h.type_text("R");
+    let s = h.turns(2);
+    assert!(
+        s.contains("restart is not available: started with --reload"),
+        "reason:\n{s}"
+    );
+}
+
+/// `e` shows the destination (the console's downloads folder, never the
+/// working directory) and exports only after Enter (review 2 N3).
+#[test]
+fn workflow_export_confirms_the_destination_first() {
+    use abstractgateway_console::store::workflows_from_payload;
+    let mut h = harness_sized(Size::new(140, 40));
+    h.connect_as_admin();
+    h.goto_screen(5);
+    h.store.workflows.set(Loadable::Ready(workflows_from_payload(&json!({
+        "items": [{"bundle_id": "demo", "bundle_version": "1.0.0", "entrypoints": [{"flow_id": "main"}]}]
+    }))));
+    h.turns(2);
+    let _ = h.drain_cmds();
+    h.type_text("e");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Export demo@1.0.0"),
+        "the export form opens:\n{s}"
+    );
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::ExportWorkflow { .. }))
+            .is_none(),
+        "nothing is written before the confirm"
+    );
+    let want = abstractgateway_console::ui::workflows::export_default_path("demo", "1.0.0");
+    assert!(
+        want.contains("abstractgateway-console") && !want.starts_with("./"),
+        "{want}"
+    );
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::ExportWorkflow { .. })) {
+        Some(Cmd::ExportWorkflow { dest, form_id, .. }) => {
+            assert_eq!(dest, want, "the shown destination is the one written");
+            assert!(form_id.is_some(), "the form waits for the outcome");
+        }
+        other => panic!("expected an export, got {other:?}"),
+    }
+}
+
+#[test]
+fn workflows_import_reload_and_delete_confirm() {
+    use abstractgateway_console::store::workflows_from_payload;
+    use abstractgateway_console::worker::operator::OpCmd;
+    let mut h = harness_sized(Size::new(140, 40));
+    h.connect_as_admin();
+    h.goto_screen(5);
+    h.store.workflows.set(Loadable::Ready(workflows_from_payload(&json!({
+        "items": [{"bundle_id": "demo", "bundle_version": "1.0.0", "entrypoints": [{"flow_id": "main"}]}]
+    }))));
+    let s = h.turns(2);
+    assert!(s.contains("i import .flow"), "panel hint:\n{s}");
+    let _ = h.drain_cmds();
+    // Delete asks first; keep (default) sends nothing.
+    h.type_text("d");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Delete demo@1.0.0? This removes this version from"),
+        "confirm:\n{s}"
+    );
+    h.type_text("\r");
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::DeleteWorkflow { .. }))
+            .is_none(),
+        "keep does not delete"
+    );
+    // Reload.
+    h.type_text("L");
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::ReloadWorkflows { .. })))
+            .is_some(),
+        "L reloads the registry"
+    );
+    // Import: a local path, Enter submits.
+    h.type_text("i");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Import a workflow bundle (.flow)"),
+        "import form:\n{s}"
+    );
+    h.type_text("/tmp/x.flow\r");
+    h.turns(2);
+    match h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::ImportWorkflow { .. }))) {
+        Some(Cmd::Operator(OpCmd::ImportWorkflow { path, form_id, .. })) => {
+            assert_eq!(path, "/tmp/x.flow");
+            assert!(form_id.is_some(), "the form awaits the outcome");
+        }
+        other => panic!("expected ImportWorkflow, got {other:?}"),
+    }
+}
+
+#[test]
+fn backlog_settings_rows_and_skills_reseed_in_the_knobs() {
+    use abstractgateway_console::worker::operator::OpCmd;
+    let mut h = harness_sized(Size::new(160, 70));
+    h.connect_as_admin();
+    h.goto_screen(4);
+    h.store
+        .runtimes
+        .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
+    h.turns(2);
+    h.ui.rt_knobs_folded.set(false);
+    h.turns(2);
+    h.store.runtime_config.set(Loadable::Ready(
+        abstractgateway_console::store::RuntimeConfigData::from_value(&json!({
+            "writable": true,
+            "triage_repo_root": {"source": "default", "value": "/d/backlog", "default_path": "/d/backlog",
+                                 "available": true, "label": "Backlog folder"},
+            "backlog_exec_runner": {"value": false, "source": "default", "label": "Backlog exec runner"},
+            "process_manager": {"value": true, "source": "stored", "label": "Process manager"},
+            "skills": {"shelf": {"value": null, "source": "seeded", "resolved": "/d/skills/registry",
+                                 "available": true, "default_path": "/d/skills/registry", "bundled_version": "2026.09.25"}}
+        })),
+    ));
+    let s = h.turns(2);
+    assert!(
+        s.contains("triage_repo_root: /d/backlog  (default)"),
+        "folder row:\n{s}"
+    );
+    assert!(
+        s.contains("backlog_exec_runner: off  (default)"),
+        "runner row:\n{s}"
+    );
+    assert!(
+        s.contains("process_manager: on  (saved setting)"),
+        "pm row:\n{s}"
+    );
+    assert!(
+        s.contains("Edit backlog settings"),
+        "editor entry point:\n{s}"
+    );
+    assert!(
+        s.contains("Refresh the curated skills shelf"),
+        "reseed entry point:\n{s}"
+    );
+    let _ = h.drain_cmds();
+    // Click the reseed button: find it on screen and press it by mouse.
+    let (row, col) = s
+        .lines()
+        .enumerate()
+        .find_map(|(i, l)| {
+            l.find("Refresh the curated skills shelf")
+                .map(|c| (i, l[..c].chars().count()))
+        })
+        .expect("button on screen");
+    let click = format!(
+        "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+        col + 3,
+        row + 1,
+        col + 3,
+        row + 1
+    );
+    h.key(click.as_bytes());
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::ReseedSkills)))
+            .is_some(),
+        "the button posts the reseed"
+    );
+}
+
+#[test]
+fn users_w_opens_my_workspace_policy() {
+    use abstractgateway_console::store::operator::MyPolicy;
+    use abstractgateway_console::worker::operator::OpCmd;
+    let mut h = harness_sized(Size::new(140, 44));
+    h.connect_as_admin();
+    h.goto_screen(3);
+    h.store
+        .users
+        .set(Loadable::Ready(users_from_payload(&users_fixture())));
+    h.store
+        .entities
+        .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
+    h.turns(2);
+    let _ = h.drain_cmds();
+    h.type_text("w");
+    let s = h.turns(2);
+    assert!(s.contains("My workspace policy"), "form opens:\n{s}");
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::LoadMyPolicy)))
+            .is_some(),
+        "it reads GET /workspace/policy/self"
+    );
+    h.store
+        .op
+        .my_policy
+        .set(Loadable::Ready(MyPolicy::from_value(&json!({
+            "tenant_id": "default", "user_id": "admin", "policy": {}, "customized": false,
+            "effective": {"mode": "whitelist", "trust_client_launch_folder": true,
+                          "workspace_allowed_paths": [], "workspace_blocked_paths": []}
+        }))));
+    let s = h.turns(2);
+    assert!(
+        s.contains("Effective: whitelist mode · launch-folder trust on · 0 allowed · 0 refused"),
+        "effective:\n{s}"
+    );
+    assert!(
+        s.contains("inherits the gateway defaults"),
+        "inherit state:\n{s}"
+    );
+    assert!(s.contains("Reset to inherited"), "reset verb:\n{s}");
 }
 
 #[test]
@@ -7041,7 +8710,10 @@ fn network_reverse_proxy_is_read_only_without_admin() {
     let mut v = proxy_fixture(&["https://a.example"], true, None, None);
     v["writable"] = json!(false);
     let s = set_network(&mut h, v);
-    assert!(s.contains("changing the reverse proxy needs an admin token"), "read-only:\n{s}");
+    assert!(
+        s.contains("changing the reverse proxy needs an admin token"),
+        "read-only:\n{s}"
+    );
     assert!(!s.contains("Enter saves"), "no edit line:\n{s}");
 }
 
@@ -7051,23 +8723,40 @@ fn network_proxy_body_and_notes_use_the_gateways_words() {
     use abstractgateway_console::ui::network::parse_origins_line;
     use abstractgateway_console::worker::{network_proxy_body, network_proxy_note};
 
-    assert_eq!(parse_origins_line(" https://a.example, ,https://b.example "), vec!["https://a.example", "https://b.example"]);
+    assert_eq!(
+        parse_origins_line(" https://a.example, ,https://b.example "),
+        vec!["https://a.example", "https://b.example"]
+    );
     assert_eq!(parse_origins_line(""), Vec::<String>::new());
-    assert_eq!(network_proxy_body(&Some(vec![]), None), json!({"allowed_origins": []}));
-    assert_eq!(network_proxy_body(&None, Some(false)), json!({"trust_proxy": false}));
+    assert_eq!(
+        network_proxy_body(&Some(vec![]), None),
+        json!({"allowed_origins": []})
+    );
+    assert_eq!(
+        network_proxy_body(&None, Some(false)),
+        json!({"trust_proxy": false})
+    );
     let refused = "1 origin is not valid (nothing was saved): https://x.example/: no trailing slash: an origin is scheme://host[:port] (write https://x.example)";
     let err = ApiError {
         kind: ApiErrorKind::Http(400),
         message: "bad".into(),
-        body: Some(json!({"ok": false, "reason_code": "invalid_origins", "refused_reason": refused})),
+        body: Some(
+            json!({"ok": false, "reason_code": "invalid_origins", "refused_reason": refused}),
+        ),
         timed_out: false,
     };
-    assert_eq!(network_proxy_note(&Err(err)), format!("✗ reverse proxy refused: {refused}"));
+    assert_eq!(
+        network_proxy_note(&Err(err)),
+        format!("✗ reverse proxy refused: {refused}")
+    );
     let ok = json!({"changed": {"allowed_origins": {"applies": "live"}, "trust_proxy": {"applies": "overridden_by_env"}}});
     let note = network_proxy_note(&Ok(ok));
     assert!(note.contains("origins saved, applies now"), "{note}");
     assert!(note.contains("trust proxy saved, NOT in effect"), "{note}");
-    assert_eq!(network_proxy_note(&Ok(json!({"changed": {}}))), "✓ reverse proxy: no change");
+    assert_eq!(
+        network_proxy_note(&Ok(json!({"changed": {}}))),
+        "✓ reverse proxy: no change"
+    );
 }
 
 fn apps_runtime_config() -> Value {
@@ -7101,7 +8790,10 @@ fn apps_settings_render_in_runtime_knobs_with_their_source() {
     ));
     let s = h.turns(2);
     assert!(s.contains("apps.host: 0.0.0.0  (stored)"), "host row:\n{s}");
-    assert!(s.contains("apps.node: system  (env)"), "env-sourced row:\n{s}");
+    assert!(
+        s.contains("apps.node: system  (env)"),
+        "env-sourced row:\n{s}"
+    );
     assert!(s.contains("apps.ports: —  (default)"), "default row:\n{s}");
     assert!(s.contains("Edit apps settings"), "editor entry point:\n{s}");
     if let Ok(dir) = std::env::var("MISSION_Z_RENDER_DIR") {
@@ -7116,14 +8808,21 @@ fn apps_settings_body_sends_only_changed_keys_and_clears_with_empty() {
     let d = abstractgateway_console::store::RuntimeConfigData::from_value(&apps_runtime_config());
     assert_eq!(d.apps.len(), 3);
     // Unchanged (stored host kept, env/default fields left empty) -> nothing.
-    let same = vec![("host".to_string(), "0.0.0.0".to_string()), ("ports".to_string(), String::new()), ("node".to_string(), String::new())];
+    let same = vec![
+        ("host".to_string(), "0.0.0.0".to_string()),
+        ("ports".to_string(), String::new()),
+        ("node".to_string(), String::new()),
+    ];
     assert_eq!(apps_settings_body(&d.apps, &same), json!({}));
     let typed = vec![
-        ("host".to_string(), String::new()),              // clear the stored value
-        ("ports".to_string(), " 3200-3299 ".to_string()),  // new
-        ("node".to_string(), String::new()),              // env value never promoted to stored
+        ("host".to_string(), String::new()), // clear the stored value
+        ("ports".to_string(), " 3200-3299 ".to_string()), // new
+        ("node".to_string(), String::new()), // env value never promoted to stored
     ];
-    assert_eq!(apps_settings_body(&d.apps, &typed), json!({"apps.host": "", "apps.ports": "3200-3299"}));
+    assert_eq!(
+        apps_settings_body(&d.apps, &typed),
+        json!({"apps.host": "", "apps.ports": "3200-3299"})
+    );
 }
 
 fn agents_runtime_config() -> Value {
@@ -7156,15 +8855,29 @@ fn agent_defaults_parse_render_and_body() {
 
     let d = abstractgateway_console::store::RuntimeConfigData::from_value(&agents_runtime_config());
     assert_eq!(d.agent_defaults.len(), 2);
-    let code = d.agent_defaults.iter().find(|a| a.interface == "abstractcode.agent.v1").unwrap();
+    let code = d
+        .agent_defaults
+        .iter()
+        .find(|a| a.interface == "abstractcode.agent.v1")
+        .unwrap();
     assert!(code.available && code.workflow_id == "coder@1.1.0:code" && code.source == "stored");
-    assert_eq!(code.eligible, vec!["basic-agent:ba".to_string(), "coder:code".to_string()]);
-    let assist = d.agent_defaults.iter().find(|a| a.interface == "abstractassistant.agent.v1").unwrap();
+    assert_eq!(
+        code.eligible,
+        vec!["basic-agent:ba".to_string(), "coder:code".to_string()]
+    );
+    let assist = d
+        .agent_defaults
+        .iter()
+        .find(|a| a.interface == "abstractassistant.agent.v1")
+        .unwrap();
     assert!(!assist.available && assist.reason.contains("built-in orchestrator"));
 
     // Body: only changed rows; "" clears; a default-sourced row left empty sends nothing.
     let same = vec![
-        ("abstractcode.agent.v1".to_string(), "coder:code".to_string()),
+        (
+            "abstractcode.agent.v1".to_string(),
+            "coder:code".to_string(),
+        ),
         ("abstractassistant.agent.v1".to_string(), String::new()),
     ];
     assert_eq!(agent_defaults_body(&d.agent_defaults, &same), json!({}));
@@ -7186,9 +8899,18 @@ fn agent_defaults_parse_render_and_body() {
     h.turns(2);
     h.store.runtime_config.set(Loadable::Ready(d));
     let s = h.turns(2);
-    assert!(s.contains("abstractcode.agent.v1 → coder@1.1.0:code (Coder)  (stored)"), "code row:\n{s}");
-    assert!(s.contains("abstractassistant.agent.v1 → unavailable: no host workflow"), "assistant row:\n{s}");
-    assert!(s.contains("Edit default agent workflows"), "editor entry point:\n{s}");
+    assert!(
+        s.contains("abstractcode.agent.v1 → coder@1.1.0:code (Coder)  (stored)"),
+        "code row:\n{s}"
+    );
+    assert!(
+        s.contains("abstractassistant.agent.v1 → unavailable: no host workflow"),
+        "assistant row:\n{s}"
+    );
+    assert!(
+        s.contains("Edit default agent workflows"),
+        "editor entry point:\n{s}"
+    );
 }
 
 #[test]
@@ -7203,11 +8925,19 @@ fn workflows_payload_carries_agent_default_marks() {
             "abstractcode.agent.v1": {"workflow_id": "coder@1.1.0:code", "bundle_id": "coder", "source": "stored"}
         }
     }));
-    assert_eq!(d.agent_defaults, vec![("abstractcode.agent.v1".to_string(), "coder@1.1.0:code".to_string())]);
+    assert_eq!(
+        d.agent_defaults,
+        vec![(
+            "abstractcode.agent.v1".to_string(),
+            "coder@1.1.0:code".to_string()
+        )]
+    );
     assert_eq!(agent_default_marks("coder", &d.agent_defaults).len(), 1);
-    assert!(agent_default_marks("code", &d.agent_defaults).is_empty(), "a prefix of another bundle id must not match");
+    assert!(
+        agent_default_marks("code", &d.agent_defaults).is_empty(),
+        "a prefix of another bundle id must not match"
+    );
 }
-
 
 #[test]
 fn skills_shelf_parse_render_and_body() {
@@ -7220,8 +8950,15 @@ fn skills_shelf_parse_render_and_body() {
     let sh = d.skills_shelf.clone().expect("shelf parsed");
     assert!(sh.available && sh.source == "seeded" && sh.bundled_version == "2026.09.25");
     assert_eq!(skills_shelf_body(&sh, ""), json!({}));
-    assert_eq!(skills_shelf_body(&sh, " /x/reg "), json!({"skills.shelf": "/x/reg"}));
-    let stored = abstractgateway_console::store::SkillsShelf { value: "/x".into(), source: "stored".into(), ..Default::default() };
+    assert_eq!(
+        skills_shelf_body(&sh, " /x/reg "),
+        json!({"skills.shelf": "/x/reg"})
+    );
+    let stored = abstractgateway_console::store::SkillsShelf {
+        value: "/x".into(),
+        source: "stored".into(),
+        ..Default::default()
+    };
     assert_eq!(skills_shelf_body(&stored, ""), json!({"skills.shelf": ""}));
 
     let mut h = harness_sized(Size::new(140, 70));
@@ -7235,7 +8972,10 @@ fn skills_shelf_parse_render_and_body() {
     h.turns(2);
     h.store.runtime_config.set(Loadable::Ready(d));
     let s = h.turns(2);
-    assert!(s.contains("skills.shelf: /d/skills/registry (curated 2026.09.25)  (seeded)"), "shelf row:\n{s}");
+    assert!(
+        s.contains("skills.shelf: /d/skills/registry (curated 2026.09.25)  (seeded)"),
+        "shelf row:\n{s}"
+    );
     assert!(s.contains("Edit skills shelf"), "editor entry point:\n{s}");
 }
 
@@ -7252,10 +8992,16 @@ fn about_modal_lists_the_identity_and_the_gateway_versions() {
     h.key(b"\x1bOP");
     let s = h.turns(2);
     assert!(
-        matches!(h.find_cmd(|c| matches!(c, Cmd::LoadAbout)), Some(Cmd::LoadAbout)),
+        matches!(
+            h.find_cmd(|c| matches!(c, Cmd::LoadAbout)),
+            Some(Cmd::LoadAbout)
+        ),
         "opening About (connected) reads GET /about"
     );
-    assert!(s.contains("reading GET /api/gateway/about"), "loading row:\n{s}");
+    assert!(
+        s.contains("reading GET /api/gateway/about"),
+        "loading row:\n{s}"
+    );
     h.store.about.set(Loadable::Ready(json!({
         "abstractgateway": "0.4.4", "abstractframework": "0.3.4",
         "packages": {"abstractcore": "2.15.3", "abstractgateway": "0.4.4", "abstractruntime": "0.4.35"}
@@ -7279,7 +9025,10 @@ fn about_modal_lists_the_identity_and_the_gateway_versions() {
     ] {
         assert!(s.contains(needle), "missing {needle:?}:\n{s}");
     }
-    assert!(!s.contains("Gateway package abstractgateway"), "the gateway itself is not a package row");
+    assert!(
+        !s.contains("Gateway package abstractgateway"),
+        "the gateway itself is not a package row"
+    );
     h.press_escape();
     let s = h.turns(2);
     assert!(!s.contains("Report an issue:"), "Esc closes About:\n{s}");
@@ -7295,15 +9044,28 @@ fn about_modal_says_why_the_gateway_rows_are_missing() {
     h.goto_screen(0);
     h.key(b"\x1bOP");
     let s = h.turns(2);
-    assert!(h.find_cmd(|c| matches!(c, Cmd::LoadAbout)).is_none(), "no read while not connected");
-    assert!(s.contains("Gateway: unavailable (not connected to a gateway"), "not-connected row:\n{s}");
-    assert!(s.contains("AbstractGateway console"), "identity still shown:\n{s}");
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::LoadAbout)).is_none(),
+        "no read while not connected"
+    );
+    assert!(
+        s.contains("Gateway: unavailable (not connected to a gateway"),
+        "not-connected row:\n{s}"
+    );
+    assert!(
+        s.contains("AbstractGateway console"),
+        "identity still shown:\n{s}"
+    );
     // A failed read is one visible row.
-    let failed: Loadable<Value> = Loadable::Failed(ApiError::new(ApiErrorKind::Unreachable, "HTTP 404"));
+    let failed: Loadable<Value> =
+        Loadable::Failed(ApiError::new(ApiErrorKind::Unreachable, "HTTP 404"));
     let rows = gateway_rows(true, &failed);
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].0, "Gateway");
-    assert!(rows[0].1.starts_with("unavailable (") && rows[0].1.contains("HTTP 404"), "{rows:?}");
+    assert!(
+        rows[0].1.starts_with("unavailable (") && rows[0].1.contains("HTTP 404"),
+        "{rows:?}"
+    );
 }
 
 #[test]
@@ -7311,21 +9073,39 @@ fn about_is_on_the_connection_screen_and_question_mark() {
     let mut h = harness_sized(Size::new(120, 50));
     h.goto_screen(0);
     let s = h.turns(2);
-    assert!(s.contains("About: F1 (or ?)"), "Connection screen names the About key:\n{s}");
+    assert!(
+        s.contains("About: F1 (or ?)"),
+        "Connection screen names the About key:\n{s}"
+    );
     h.connect_as_admin();
     h.goto_screen(3);
     h.key(b"?");
     let s = h.turns(2);
-    assert!(s.contains("Contact: contact@abstractframework.ai"), "? opens About:\n{s}");
+    assert!(
+        s.contains("Contact: contact@abstractframework.ai"),
+        "? opens About:\n{s}"
+    );
 }
 
 #[test]
 fn about_flag_text_carries_every_line() {
     let ok = abstractgateway_console::about_text(Ok(json!({"abstractgateway": "0.4.4"})));
-    assert!(ok.starts_with(&format!("AbstractGateway console {}\n", env!("CARGO_PKG_VERSION"))), "{ok}");
-    assert!(ok.contains("Gateway: AbstractGateway 0.4.4") && ok.contains("Gateway framework: not installed on the gateway host"));
+    assert!(
+        ok.starts_with(&format!(
+            "AbstractGateway console {}\n",
+            env!("CARGO_PKG_VERSION")
+        )),
+        "{ok}"
+    );
+    assert!(
+        ok.contains("Gateway: AbstractGateway 0.4.4")
+            && ok.contains("Gateway framework: not installed on the gateway host")
+    );
     let down = abstractgateway_console::about_text(Err("network failure: refused".into()));
-    assert!(down.ends_with("Gateway: unavailable (network failure: refused)"), "{down}");
+    assert!(
+        down.ends_with("Gateway: unavailable (network failure: refused)"),
+        "{down}"
+    );
     assert!(down.contains("Contact: contact@abstractframework.ai"));
 }
 
@@ -7340,12 +9120,22 @@ fn streaming_default_knob_reads_edits_and_never_hides() {
     let sd = streaming_default_from(&on).expect("parsed");
     assert!(sd.value && sd.source == "stored");
     assert_eq!(streaming_default_body(&sd, true), json!({}));
-    assert_eq!(streaming_default_body(&sd, false), json!({"agents": {"streaming_default": false}}));
+    assert_eq!(
+        streaming_default_body(&sd, false),
+        json!({"agents": {"streaming_default": false}})
+    );
     assert!(streaming_default_from(&json!({"agents": {"default_workflow": {}}})).is_none());
-    assert!(streaming_default_from(&json!({"agents": {"streaming_default": {"value": "yes", "source": "stored"}}})).is_none());
+    assert!(streaming_default_from(
+        &json!({"agents": {"streaming_default": {"value": "yes", "source": "stored"}}})
+    )
+    .is_none());
 
     for (payload, want, button) in [
-        (on.clone(), "stream replies: on — interactive replies stream live  (stored)", true),
+        (
+            on.clone(),
+            "stream replies: on — interactive replies stream live  (stored)",
+            true,
+        ),
         (
             json!({"writable": true, "agents": {"streaming_default": {"value": false, "source": "default"}}}),
             "stream replies: off — replies arrive whole  (default)",
@@ -7373,6 +9163,146 @@ fn streaming_default_knob_reads_edits_and_never_hides() {
         h.store.runtime_config.set(Loadable::Ready(d));
         let s = h.turns(2);
         assert!(s.contains(want), "row {want:?}:\n{s}");
-        assert_eq!(s.contains("Edit stream replies"), button, "edit entry point:\n{s}");
+        assert_eq!(
+            s.contains("Edit stream replies"),
+            button,
+            "edit entry point:\n{s}"
+        );
     }
+}
+
+/// 80x24 (review 2 e): the Resources title fits inside its border, the
+/// host panel's buttons and key list stay inside the panel, and the spark
+/// templates intro wraps instead of being cut.
+#[test]
+fn eighty_by_twenty_four_nothing_is_clipped() {
+    let mut h = harness_sized(Size::new(80, 24));
+    h.connect_as_admin();
+    h.ui.wizard.set(false);
+    h.ui.screen.set(7);
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
+    let s = h.turns(3);
+    let title = s
+        .lines()
+        .find(|l| l.contains("╭ Resources"))
+        .expect("title row");
+    assert!(
+        title.trim_end().ends_with("─╮"),
+        "the title closes inside the border:\n{title}"
+    );
+
+    h.store.op.runner.set(Loadable::Ready(paused_runner()));
+    h.key(b"\x1bOR");
+    let s = h.turns(3);
+    for needle in ["Install update…", "Quit…", "Esc close"] {
+        let row = s
+            .lines()
+            .find(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("{needle}:\n{s}"));
+        assert!(
+            row.trim_end().ends_with('│'),
+            "'{needle}' stays inside the panel:\n{row}"
+        );
+    }
+    h.press_escape();
+    h.turns(2);
+
+    h.ui.screen.set(3);
+    h.store
+        .users
+        .set(Loadable::Ready(users_from_payload(&users_fixture())));
+    h.store
+        .entities
+        .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
+    h.turns(2);
+    h.type_text("s");
+    let s = h.turns(3);
+    assert!(s.contains("Spark templates"), "{s}");
+    assert!(
+        s.contains("framework default is the floor"),
+        "the intro wraps, never cut:\n{s}"
+    );
+    assert!(
+        !s.lines()
+            .any(|l| l.contains("A template is") && l.contains('…')),
+        "no ellipsis on the intro:\n{s}"
+    );
+}
+/// A choice dialog does not show the screen through (review 2 e): an
+/// opaque backdrop covers the screen while the prompt is open, and it is
+/// gone once the prompt resolves.
+#[test]
+fn a_choice_dialog_covers_the_screen_while_open() {
+    let mut h = harness_sized(Size::new(80, 24));
+    h.connect_as_admin();
+    h.goto_screen(2);
+    h.store.routes.set(Loadable::Ready(routes_fixture()));
+    let s = h.turns(3);
+    assert!(s.contains("Routes — which provider"), "{s}");
+    h.key(b"a");
+    let s = h.turns(3);
+    assert!(
+        s.contains("Apply — keep routes I configured"),
+        "the dialog:\n{s}"
+    );
+    assert!(
+        !s.contains("Routes — which provider") && !s.contains("input.video"),
+        "the screen does not show around/through the dialog:\n{s}"
+    );
+    h.press_escape();
+    let s = h.turns(3);
+    assert!(
+        s.contains("Routes — which provider"),
+        "the screen is back:\n{s}"
+    );
+}
+
+/// 80x24: the export dialog's path field stays inside the dialog.
+#[test]
+fn workflow_export_dialog_fits_at_80x24() {
+    use abstractgateway_console::store::workflows_from_payload;
+    let mut h = harness_sized(Size::new(80, 24));
+    h.connect_as_admin();
+    h.goto_screen(5);
+    h.store.workflows.set(Loadable::Ready(workflows_from_payload(&json!({
+        "items": [{"bundle_id": "demo", "bundle_version": "1.0.0", "entrypoints": [{"flow_id": "main"}]}]
+    }))));
+    h.turns(2);
+    h.type_text("e");
+    let s = h.turns(3);
+    let row = s
+        .lines()
+        .find(|l| l.contains("save to"))
+        .unwrap_or_else(|| panic!("{s}"));
+    assert!(
+        row.trim_end().ends_with('│'),
+        "the path field stays inside:\n{row}"
+    );
+}
+
+/// Pressing the key of the screen already shown changes nothing — the
+/// screen's keys stay live (review 2 pty proof: `8` then `w` on
+/// Resources went dead when the host re-anchored focus on itself).
+#[test]
+fn the_current_screen_key_keeps_the_screen_keys_live() {
+    let mut h = harness_sized(Size::new(80, 24));
+    h.connect_as_admin();
+    h.goto_screen(1);
+    h.key(b"8");
+    h.turns(2);
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
+    h.turns(2);
+    assert_eq!(h.ui.screen.get_untracked(), 7, "8 jumps to Resources");
+    h.key(b"8");
+    h.turns(2);
+    h.type_text("w");
+    let s = h.turns(3);
+    assert!(
+        s.contains("Load (warm up) a model"),
+        "w still reaches the screen:\n{s}"
+    );
 }

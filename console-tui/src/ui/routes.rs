@@ -11,18 +11,74 @@ use abstracttui::prelude::*;
 use abstracttui::widgets::Table;
 use serde_json::{json, Value};
 
-use super::util::{field, line, loadable_view, or_dash, span, span_bold};
+use super::util::{field, line, or_dash, span, span_bold};
 use super::widths;
 use super::widths::BLOCK_CHROME;
 use super::Ctx;
+use crate::api::firstrun::{can_download_all, GroupStatus};
 use crate::store::{ConnPhase, Loadable, RouteRow, RoutesData, WeightsRow};
 use crate::worker::Cmd;
+
+/// The footer verbs of this screen that only an admin may use (the
+/// gateway's admin routes: model downloads, their cancel, and
+/// apply-recommended). Editing and clearing a route stay open to every
+/// principal, like the web's Configure / Clear.
+pub const ADMIN_KEYS: &[&str] = &["w", "a", "D", "C"];
+
+/// The route keys apply-recommended plans — AbstractCore's
+/// `RECOMMENDED_SELECTORS` (config/capability_defaults.py: text, voice,
+/// image, video). A task row (`output.image.text_to_image`) is not among
+/// them: `a` never replaces it, only an edit does.
+pub const RECOMMENDED_ROUTE_KEYS: [&str; 4] =
+    ["input.text", "output.voice", "output.image", "output.video"];
+
+/// What fixes a configured route this computer cannot run — the truth
+/// per row and per principal: `a` → "Replace mine too" only for a key the
+/// recommendation plans, an edit for any other row, and nothing a
+/// non-admin could do themselves.
+pub fn broken_route_fix(key: &str, admin: bool) -> &'static str {
+    match (admin, RECOMMENDED_ROUTE_KEYS.contains(&key)) {
+        (false, _) => "an admin can change it",
+        (true, true) => "a, then Replace mine too, swaps in what runs here (or clears it)",
+        (true, false) => "not part of the recommendation: Enter edits it",
+    }
+}
 
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
     let tt = *t;
     let viewport = abstracttui::app::use_viewport(cx);
+
+    // The web's second pass: after a non-forced apply that kept routes or
+    // left one that cannot run here, offer the forced apply under the
+    // web's own label ("Replace mine too" / "Clear what cannot run here").
+    {
+        let ctx_f = ctx.clone();
+        cx.effect(move || {
+            let Some(label) = store.apply_followup.get() else {
+                return;
+            };
+            store.apply_followup.set(None);
+            let ctx_go = ctx_f.clone();
+            let title = if label == "Replace mine too" {
+                "The recommended routes were applied; routes you configured were kept."
+            } else {
+                "The recommended routes were applied; a configured route this computer cannot run was left in place."
+            };
+            let prompt = abstracttui::app::ChoicePrompt::new(title.to_string())
+            .option_with(abstracttui::app::ChoiceOption::new("force", label).danger(true))
+            .option("leave", "Leave them as they are")
+            .initial("leave");
+            super::open_prompt(cx, ctx_f.ui, prompt, move |outcome| {
+                if let abstracttui::app::ChoiceOutcome::Answered(a) = outcome {
+                    if a.selected.first().map(String::as_str) == Some("force") {
+                        ctx_go.send(Cmd::ApplyRecommendedRoutes { force: true });
+                    }
+                }
+            });
+        });
+    }
 
     super::util::clamp_selection(cx, ui.route_sel, move || {
         store
@@ -63,6 +119,22 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .shortcut(KeyChord::plain(Key::Char('a')), {
             let ctx_apply = ctx.clone();
             move |_| apply_recommended(cx, &ctx_apply)
+        })
+        // The web guide's model step: "Download all" (one parent job for
+        // the whole recommended set), its cancel, and the full plan with
+        // AbstractCore's fit warnings. Capital D/C: `d` deletes two
+        // screens over, and a bulk download must never be a reflex key.
+        .shortcut(KeyChord::plain(Key::Char('D')), {
+            let ctx_all = ctx.clone();
+            move |_| download_all(cx, &ctx_all)
+        })
+        .shortcut(KeyChord::plain(Key::Char('C')), {
+            let ctx_cancel = ctx.clone();
+            move |_| cancel_download_all(cx, &ctx_cancel)
+        })
+        .shortcut(KeyChord::plain(Key::Char('p')), {
+            let ctx_plan = ctx.clone();
+            move |_| open_plan(cx, &ctx_plan)
         })
         .child(
             Block::new()
@@ -213,12 +285,65 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         _ => line(vec![span(String::new(), t.text)]),
                     }
                 }))
+                // RECOMMENDED FOR THIS COMPUTER (the web guide's model
+                // step): the Download-all progress while it exists, and
+                // the plan — one line per model in the wizard, one
+                // summary line in browse; `p` shows every word.
+                .child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
+                    let t = tt;
+                    let avail = (viewport.get().w - BLOCK_CHROME).max(20) as usize;
+                    let wizard = ui.wizard.get();
+                    let mut rows: Vec<View> = Vec::new();
+                    if let Some(g) = store.download_group.get() {
+                        rows.push(line(vec![span_bold(
+                            widths::middle_fit(&g.line(), avail as i32),
+                            group_tone(&t, &g),
+                        )]));
+                    }
+                    let plan = store
+                        .availability
+                        .with(|a| a.ready().map(|a| a.plan.clone()).unwrap_or_default());
+                    if !plan.is_empty() {
+                        let installed = plan.iter().filter(|r| r.status == "installed").count();
+                        let warned = plan.iter().filter(|r| r.warning.is_some()).count();
+                        let mut head = format!(
+                            "recommended for this computer: {installed} of {} installed",
+                            plan.len()
+                        );
+                        if warned > 0 {
+                            head.push_str(&format!(
+                                " · {warned} fit warning{}",
+                                if warned == 1 { "" } else { "s" }
+                            ));
+                        }
+                        rows.push(line(vec![
+                            span_bold(head, if warned > 0 { t.warn } else { t.text }),
+                            span("  ·  p plan · D download all · a apply", t.text_faint),
+                        ]));
+                        if wizard {
+                            for r in &plan {
+                                let mut spans = vec![
+                                    span(format!("  {:<14}", r.title()), t.text_muted),
+                                    span(format!("{:<15}", r.status_label()), status_tone(&t, &r.status)),
+                                    span(format!("{} {}", r.provider, r.artifact), t.text),
+                                ];
+                                if let Some(w) = &r.warning {
+                                    spans.push(span(format!("  ⚠ {w}"), t.warn));
+                                }
+                                rows.push(line(spans));
+                            }
+                        }
+                    }
+                    Element::new().style(LayoutStyle::column()).children(rows).build()
+                }))
                 .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), {
                     let ctx_act = ctx.clone();
+                    let keeper = super::util::FocusKeeper::new();
                     move |gcx| {
                         let data = store.routes.get();
                         let ctx_act = ctx_act.clone();
-                        loadable_view(
+                        super::util::loadable_view_kept(
+                            &keeper,
                             &tt,
                             &store.conn.get(),
                             || store.tick.get(),
@@ -229,7 +354,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                 let weights = store.availability.with(|a| {
                                     a.ready().map(|a| a.by_route.clone()).unwrap_or_default()
                                 });
-                                routes_table(gcx, &tt, d, &weights, ui.route_sel, move |_| {
+                                routes_table(gcx, &tt, d, &weights, ui.route_sel, &keeper, move |_| {
                                     // Activation = the Enter/e path, one
                                     // body (per-row editability refusals
                                     // included). The screen-level Enter
@@ -260,7 +385,37 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     match row {
                         Some(r) => {
                             let mut spans = vec![span_bold(format!(" {} ", r.key), t.accent)];
-                            if r.is_task_parent() {
+                            // The core console's words (abstractcore-console
+                            // ui/routes.rs), so both grids say the same.
+                            if let Some(u) = r.route_unavailable.as_ref().filter(|_| r.configured) {
+                                // Configured, and this host cannot run it
+                                // (REVIEW-1 contract): never shown as fine,
+                                // and the fix named is the one that exists.
+                                let admin = store.conn.with(|c| c.is_admin());
+                                spans.push(span(
+                                    format!(
+                                        "configured but cannot run on this computer: {} — {}  ",
+                                        u.reason,
+                                        broken_route_fix(&r.key, admin)
+                                    ),
+                                    t.error,
+                                ));
+                            } else if let Some(u) = &r.recommendation_unavailable {
+                                // Host-aware recommendation: unset because
+                                // the recommended engine cannot run here.
+                                let what = u.pair_text();
+                                spans.push(span(
+                                    if what.is_empty() {
+                                        format!("nothing recommended runs on this computer: {}  ", u.reason)
+                                    } else {
+                                        format!(
+                                            "the recommended {what} cannot run on this computer: {}  ",
+                                            u.reason
+                                        )
+                                    },
+                                    t.warn,
+                                ));
+                            } else if r.is_task_parent() {
                                 spans.push(span(
                                     format!(
                                         "serves any {} task with no row of its own  ",
@@ -304,6 +459,7 @@ fn routes_table(
     data: &RoutesData,
     weights: &std::collections::HashMap<String, WeightsRow>,
     sel: Signal<usize>,
+    keeper: &super::util::FocusKeeper,
     on_activate: impl FnMut(usize) + 'static,
 ) -> View {
     // Width-aware columns (0900 class): which columns APPEAR is a
@@ -396,14 +552,14 @@ fn routes_table(
     // mounts bare in PageHost's page region and passes the viewport
     // straight through — one policy, per-screen chrome.
     let cols = widths::columns(&rules, &mut rows, w - BLOCK_CHROME);
-    Table::new(cols)
-        .rows(rows)
-        .selection(sel)
-        .on_activate(on_activate)
-        .layout(LayoutStyle::default().grow(1.0))
-        .element(cx, t)
-        .autofocus()
-        .build()
+    keeper.wire(
+        Table::new(cols)
+            .rows(rows)
+            .selection(sel)
+            .on_activate(on_activate)
+            .layout(LayoutStyle::default().grow(1.0))
+            .element(cx, t),
+    )
 }
 
 fn selected_route(ctx: &Ctx) -> Option<RouteRow> {
@@ -469,29 +625,318 @@ fn clear_selected(cx: Scope, ctx: &Ctx) {
 /// gateway kept is named in the journal line, from the server's own
 /// report — this console never re-derives that decision.
 fn apply_recommended(cx: Scope, ctx: &Ctx) {
+    // Admin-only server-side (apply-recommended rewrites the HOST-WIDE
+    // store); the web hides its button for a non-admin.
+    if !super::util::admin_gate(&ctx.store, "applying the recommended routes") {
+        return;
+    }
     let ctx_keep = ctx.clone();
-    let ctx_force = ctx.clone();
     let prompt = abstracttui::app::ChoicePrompt::new(
-        "Apply the framework's recommended routes (text, voice, image) on the execution host?"
+        "Apply the framework's recommended routes (text, voice, images, video — what this computer can run) on the execution host?"
             .to_string(),
     )
     .option("keep", "Apply — keep routes I configured")
-    .option_with(
-        abstracttui::app::ChoiceOption::new("force", "Apply — replace mine too").danger(true),
-    )
     .option("cancel", "Cancel")
     .initial("keep");
     super::open_prompt(cx, ctx.ui, prompt, move |outcome| {
         if let abstracttui::app::ChoiceOutcome::Answered(a) = outcome {
-            let choice = a.selected.first().cloned().unwrap_or_default();
-            let (ctx2, force) = match choice.as_str() {
-                "keep" => (ctx_keep, false),
-                "force" => (ctx_force, true),
-                _ => return,
-            };
-            ctx2.send(Cmd::ApplyRecommendedRoutes { force });
+            if a.selected.first().map(String::as_str) == Some("keep") {
+                ctx_keep.send(Cmd::ApplyRecommendedRoutes { force: false });
+            }
         }
     });
+}
+
+fn status_tone(t: &TokenSet, status: &str) -> Rgba {
+    match status {
+        "installed" => t.ok,
+        "absent" => t.warn,
+        _ => t.text_muted,
+    }
+}
+
+fn group_tone(t: &TokenSet, g: &GroupStatus) -> Rgba {
+    if g.running() {
+        t.info
+    } else if g.status == "completed" {
+        t.ok
+    } else if g.status == "cancelled" {
+        t.text_muted
+    } else {
+        t.error
+    }
+}
+
+/// `p` — the recommended plan in full: every card of the web guide's
+/// model step (status, provider, artifact, memory tier, the fit warning
+/// verbatim, the evidence and the CLI), plus the Download-all job.
+fn open_plan(cx: Scope, ctx: &Ctx) {
+    let plan = ctx
+        .store
+        .availability
+        .with_untracked(|a| a.ready().map(|a| a.plan.clone()));
+    let Some(plan) = plan else {
+        ctx.store.notice.set(Some(
+            "the recommended plan is not loaded yet (r reloads the weights)".into(),
+        ));
+        return;
+    };
+    let store = ctx.store;
+    let size = super::preview_size(cx);
+    super::open_form(ctx, cx, size, move |mcx, close| {
+        let t = use_theme(mcx).get().tokens;
+        let width = (size.w - 8).max(20) as usize;
+        let mut rows: Vec<View> = Vec::new();
+        let current = store.routes.with_untracked(|r| {
+            r.ready().and_then(|d| {
+                d.rows
+                    .iter()
+                    .find(|row| row.key == "output.text" && row.model.is_some())
+                    .or_else(|| {
+                        d.rows
+                            .iter()
+                            .find(|row| row.key == "input.text" && row.model.is_some())
+                    })
+                    .map(|row| row.pair_text())
+            })
+        });
+        rows.push(line(vec![span(
+            match current {
+                Some(c) => format!("Text model now: {c}"),
+                None => "No text model is set yet.".to_string(),
+            },
+            t.text_muted,
+        )]));
+        rows.push(line(vec![span(String::new(), t.text)]));
+        if plan.is_empty() {
+            rows.push(line(vec![span(
+                "This gateway reported no recommended downloads.",
+                t.text_muted,
+            )]));
+        }
+        for r in &plan {
+            rows.push(line(vec![
+                span_bold(format!("{}  ", r.title()), t.text),
+                span(r.status_label().to_string(), status_tone(&t, &r.status)),
+            ]));
+            rows.push(line(vec![span(
+                format!("  {} {}  (route {})", r.provider, r.artifact, r.route),
+                t.text,
+            )]));
+            if let Some(tier) = &r.tier {
+                rows.push(line(vec![span(
+                    format!("  Chosen by memory: {tier}"),
+                    t.text_faint,
+                )]));
+            }
+            if let Some(w) = &r.warning {
+                for (i, l) in super::util::wrap_text(w, width.saturating_sub(4))
+                    .into_iter()
+                    .enumerate()
+                {
+                    rows.push(line(vec![span(
+                        format!("  {}{l}", if i == 0 { "⚠ " } else { "  " }),
+                        t.warn,
+                    )]));
+                }
+            }
+            if let Some(e) = &r.evidence {
+                rows.push(line(vec![span(format!("  evidence: {e}"), t.text_faint)]));
+            }
+            if let Some(i) = &r.instruction {
+                rows.push(line(vec![span(format!("  CLI: {i}"), t.text_faint)]));
+            }
+            rows.push(line(vec![span(String::new(), t.text)]));
+        }
+        // Recommended routes this host cannot run (AbstractCore's
+        // host-aware defaults): left unset, never written, with the reason.
+        let unavailable: Vec<(String, crate::store::RecommendationUnavailable)> =
+            store.routes.with_untracked(|r| {
+                r.ready()
+                    .map(|d| {
+                        d.rows
+                            .iter()
+                            .filter_map(|row| {
+                                row.recommendation_unavailable
+                                    .clone()
+                                    .map(|u| (row.key.clone(), u))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            });
+        if !unavailable.is_empty() {
+            rows.push(line(vec![span_bold(
+                "Not available on this computer (left unset)",
+                t.warn,
+            )]));
+            for (key, u) in &unavailable {
+                rows.push(line(vec![span(
+                    format!("  {key}: recommended {} {}", u.provider, u.model),
+                    t.text,
+                )]));
+                for l in super::util::wrap_text(&u.reason, width.saturating_sub(4)) {
+                    rows.push(line(vec![span(format!("    {l}"), t.text_muted)]));
+                }
+            }
+            rows.push(line(vec![span(String::new(), t.text)]));
+        }
+        // Configured routes this host cannot run (`route_unavailable`): a
+        // plan that listed only the gaps would call these routes fine.
+        let broken: Vec<(String, crate::store::RecommendationUnavailable)> =
+            store.routes.with_untracked(|r| {
+                r.ready()
+                    .map(|d| {
+                        d.rows
+                            .iter()
+                            // A derived row (output.text ← input.text)
+                            // carries its source's flag: listed once.
+                            .filter(|row| row.derived_from.is_none())
+                            .filter_map(|row| {
+                                row.route_unavailable.clone().map(|u| (row.key.clone(), u))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            });
+        if !broken.is_empty() {
+            rows.push(line(vec![span_bold(
+                "Configured but cannot run on this computer",
+                t.warn,
+            )]));
+            let admin = store.conn.with_untracked(|c| c.is_admin());
+            for (key, u) in &broken {
+                rows.push(line(vec![span(
+                    format!("  {key}: {} {}", u.provider, u.model),
+                    t.text,
+                )]));
+                for l in super::util::wrap_text(&u.reason, width.saturating_sub(4)) {
+                    rows.push(line(vec![span(format!("    {l}"), t.text_muted)]));
+                }
+                rows.push(line(vec![span(
+                    format!("    fix: {}", broken_route_fix(key, admin)),
+                    t.text_faint,
+                )]));
+            }
+            rows.push(line(vec![span(String::new(), t.text)]));
+        }
+        if let Some(g) = store.download_group.get_untracked() {
+            rows.push(line(vec![span_bold(g.line(), group_tone(&t, &g))]));
+            for (name, state) in &g.files {
+                rows.push(line(vec![span(format!("  {name}: {state}"), t.text_muted)]));
+            }
+        }
+        rows.push(line(vec![span(
+            if store.conn.with_untracked(|c| c.is_admin()) {
+                "On Routes: a applies the recommended routes (yours are kept) · D downloads all · C cancels it"
+            } else {
+                "Applying the recommended routes and downloading models are admin-only"
+            },
+            t.text_faint,
+        )]));
+        let c = close.clone();
+        Element::new()
+            .style(LayoutStyle::column().grow(1.0))
+            .child(line(vec![span_bold(
+                "Recommended for this computer",
+                t.accent,
+            )]))
+            .child(
+                Scroll::new(
+                    Element::new()
+                        .style(LayoutStyle::column())
+                        .children(rows)
+                        .build(),
+                )
+                .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
+                .scrollbar_auto_hide(true)
+                .view(mcx),
+            )
+            .child(
+                Button::new("Close")
+                    .on_click(move || c())
+                    .element(mcx, &t)
+                    .build(),
+            )
+            .build()
+    });
+}
+
+/// `D` — "Download all": the recommended set in ONE parent job, exactly
+/// the web guide's `POST /models/download {"recommended": true}`. Offered
+/// under the web's rule (some recommended model absent, no group
+/// running), always after a confirm that names what will be fetched.
+fn download_all(cx: Scope, ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "Download all") {
+        return;
+    }
+    let plan = ctx
+        .store
+        .availability
+        .with_untracked(|a| a.ready().map(|a| a.plan.clone()));
+    let Some(plan) = plan else {
+        ctx.store.notice.set(Some(
+            "the recommended plan is not loaded yet (r reloads the weights)".into(),
+        ));
+        return;
+    };
+    let group = ctx.store.download_group.get_untracked();
+    if group.as_ref().map(GroupStatus::running).unwrap_or(false) {
+        ctx.store.notice.set(Some(
+            "Download all is already running — C cancels it, p shows its progress".into(),
+        ));
+        return;
+    }
+    if !can_download_all(&plan, group.as_ref()) {
+        ctx.store.notice.set(Some(
+            "nothing to download — no recommended model is reported absent on this host".into(),
+        ));
+        return;
+    }
+    let list = plan
+        .iter()
+        .map(|r| format!("{} {} ({})", r.provider, r.artifact, r.status_label()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let ctx2 = ctx.clone();
+    super::confirm_danger(
+        cx,
+        ctx.ui,
+        format!(
+            "Download the recommended set on the gateway host? {list}. Models already there              finish at once; the rest run the providers' own tools and may fetch many gigabytes."
+        ),
+        "Download all",
+        "Not now",
+        move || ctx2.send(Cmd::DownloadRecommended),
+    );
+}
+
+/// `C` — cancel the running Download all (admin; every child stops).
+fn cancel_download_all(cx: Scope, ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "cancelling a download") {
+        return;
+    }
+    let Some(g) = ctx
+        .store
+        .download_group
+        .get_untracked()
+        .filter(GroupStatus::running)
+    else {
+        ctx.store.notice.set(Some(
+            "no Download all is running — nothing to cancel".into(),
+        ));
+        return;
+    };
+    let ctx2 = ctx.clone();
+    let job = g.job.clone();
+    super::confirm_danger(
+        cx,
+        ctx.ui,
+        format!("Cancel Download all ({job})? Every model still downloading stops."),
+        "Cancel downloads",
+        "Keep downloading",
+        move || ctx2.send(Cmd::CancelDownloadGroup { job: job.clone() }),
+    );
 }
 
 /// `d` — download the selected route's model weights on the execution
@@ -503,6 +948,11 @@ fn apply_recommended(cx: Scope, ctx: &Ctx) {
 /// `unknown` answer, where guessing would spend the host's disk on a
 /// model that may already be there.
 fn download_selected(cx: Scope, ctx: &Ctx) {
+    // `POST /models/download` spends the shared host's disk: admin-only
+    // on the gateway (security/authorization.py, resource "models").
+    if !super::util::admin_gate(&ctx.store, "downloading model weights") {
+        return;
+    }
     let Some(row) = selected_route(ctx) else {
         ctx.store
             .notice
@@ -664,29 +1114,17 @@ fn voice_test_run_id(store: &crate::store::Store) -> String {
         ConnPhase::Connected(id) => (id.tenant_id.clone(), id.user_id.clone()),
         _ => (String::new(), String::new()),
     });
-    fn sanitize(s: &str, fallback: &str) -> String {
-        let out: String = s
-            .to_lowercase()
-            .chars()
-            .map(|c| {
-                if c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, ':' | '-' | '_') {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        let out = out.trim_matches('_').to_string();
-        if out.is_empty() {
-            fallback.to_string()
-        } else {
-            out
-        }
-    }
+    voice_test_run_id_for(&tenant, &user)
+}
+
+/// The web's `voiceTestRunId` for a principal (parts folded like the
+/// sandbox's: one alphabet with the server's run-id pattern).
+pub fn voice_test_run_id_for(tenant: &str, user: &str) -> String {
+    use super::sandbox::session_memory_id_part as part;
     format!(
         "session_memory_gateway_console_voicetest_{}_{}",
-        sanitize(&tenant, "default"),
-        sanitize(&user, "user")
+        part(tenant, "default"),
+        part(user, "user")
     )
 }
 
@@ -753,6 +1191,56 @@ fn picked_pair(
 /// The voice picker WRITES INTO the options JSON — the single source of
 /// truth the save path reads, so what the field shows is exactly what
 /// will be stored. ix 0 = provider default (removes the key).
+/// The options text the editor showed at open (its prefill) — what a save
+/// compares against to know whether the operator edited the options.
+fn shown_options(row: &RouteRow) -> String {
+    row.options
+        .as_ref()
+        .map(|o| o.to_string())
+        .unwrap_or_default()
+}
+
+/// The route save body, the web's exact rule (console.py saveDefault):
+/// THE SAVE SENDS WHAT THE EDITOR OWNS AND THE OPERATOR CHANGED.
+/// `{provider, model}` always; `reasoning` on the text route only, always
+/// explicit ("" clears it); `base_url` and `options` ONLY when they differ
+/// from what the editor showed — both are prefilled from a grid read that
+/// may be minutes old, so naming them unconditionally would roll back a
+/// change made meanwhile (e.g. `abstractcore config`). A field the operator
+/// emptied differs from what was shown, so it IS sent ("" / `{}`), which is
+/// how an override gets cleared. Options text is validated whenever there
+/// is some, edited or not. `base_url` and `options` are (now, shown).
+pub fn route_save_body(
+    provider: &str,
+    model: &str,
+    reasoning: Option<&str>,
+    base_url: (&str, &str),
+    options: (&str, &str),
+) -> Result<Value, String> {
+    let mut body = json!({ "provider": provider, "model": model });
+    if let Some(r) = reasoning {
+        body["reasoning"] = Value::String(r.to_string());
+    }
+    let (url_now, url_shown) = (base_url.0.trim(), base_url.1.trim());
+    if url_now != url_shown {
+        body["base_url"] = Value::String(url_now.to_string());
+    }
+    let (opts_now, opts_shown) = (options.0.trim(), options.1.trim());
+    let parsed = if opts_now.is_empty() {
+        json!({})
+    } else {
+        match serde_json::from_str::<Value>(opts_now) {
+            Ok(v) if v.is_object() => v,
+            Ok(_) => return Err("options must be a JSON object".into()),
+            Err(e) => return Err(format!("options JSON does not parse: {e}")),
+        }
+    };
+    if opts_now != opts_shown {
+        body["options"] = parsed;
+    }
+    Ok(body)
+}
+
 fn merge_voice_into_options(
     options_json: Signal<String>,
     form_error: Signal<Option<String>>,
@@ -797,6 +1285,65 @@ fn options_voice(options_json: &str) -> Option<String> {
                 .map(str::to_string)
                 .filter(|s| !s.is_empty())
         })
+}
+
+/// The web's route-editor split (console.py: the options box hides
+/// `speculation` on a text-generation route; the MTP selector owns it):
+/// (what the options box shows, the `{"speculation": …}` the selector
+/// edits — "" when unset). Other routes show every option.
+pub fn split_route_options(options: Option<&Value>, is_text: bool) -> (String, String) {
+    let Some(Value::Object(map)) = options else {
+        return (
+            options.map(|o| o.to_string()).unwrap_or_default(),
+            String::new(),
+        );
+    };
+    if !is_text {
+        return (Value::Object(map.clone()).to_string(), String::new());
+    }
+    let mut rest = map.clone();
+    let spec = rest.remove("speculation");
+    let shown = if rest.is_empty() {
+        String::new()
+    } else {
+        Value::Object(rest).to_string()
+    };
+    let spec = spec
+        .map(|v| json!({ "speculation": v }).to_string())
+        .unwrap_or_default();
+    (shown, spec)
+}
+
+/// The options a save or test sends: the box, plus the selector's
+/// `speculation` on a text route. `speculation` typed into the box is
+/// refused with the web's words ("Use the MTP selector …"). A box that
+/// does not parse is passed through unchanged (the save's own
+/// validation names that error).
+pub fn compose_route_options(shown: &str, spec: &str, is_text: bool) -> Result<String, String> {
+    if !is_text {
+        return Ok(shown.to_string());
+    }
+    let mut map = if shown.trim().is_empty() {
+        serde_json::Map::new()
+    } else {
+        match serde_json::from_str::<Value>(shown) {
+            Ok(Value::Object(m)) => m,
+            _ => return Ok(shown.to_string()),
+        }
+    };
+    if map.contains_key("speculation") {
+        return Err("Use the MTP selector for speculation; the options box edits the remaining provider settings.".into());
+    }
+    if let Ok(Value::Object(s)) = serde_json::from_str::<Value>(spec) {
+        if let Some(v) = s.get("speculation") {
+            map.insert("speculation".into(), v.clone());
+        }
+    }
+    Ok(if map.is_empty() {
+        String::new()
+    } else {
+        Value::Object(map).to_string()
+    })
 }
 
 /// A selector is an editor for options.speculation, never a second setting.
@@ -911,22 +1458,14 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
         // choices the web console's select offers, index 0 = "not set".
         let reasoning_init_ix = crate::store::reasoning_index(row.reasoning.as_deref());
         let reasoning_ix = mcx.signal(reasoning_init_ix);
-        let options_json = mcx.signal(
-            row.options
-                .as_ref()
-                .map(|o| o.to_string())
-                .unwrap_or_default(),
-        );
+        // The options box shows everything but a text route's
+        // `speculation`, which the MTP selector owns (web parity).
+        let (shown_init, spec_init) = split_route_options(row.options.as_ref(), is_text);
+        let options_json = mcx.signal(shown_init);
+        let spec_json = mcx.signal(spec_init.clone());
         let speculation_ix = mcx.signal(speculation_index(
-            row.options.as_ref().unwrap_or(&Value::Null),
+            &serde_json::from_str::<Value>(&spec_init).unwrap_or(Value::Null),
         ));
-        mcx.effect(move || {
-            if let Ok(options) = serde_json::from_str::<Value>(&options_json.get()) {
-                speculation_ix.set(speculation_index(&options));
-            } else if options_json.get().trim().is_empty() {
-                speculation_ix.set(0);
-            }
-        });
         let form_error = mcx.signal(Option::<String>::None);
         let in_flight = mcx.signal(false);
         let esc_armed = mcx.signal(false);
@@ -944,6 +1483,7 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                 model_custom.get_untracked(),
                 base_url.get_untracked(),
                 options_json.get_untracked(),
+                spec_json.get_untracked(),
             );
             super::install_dirty_guard_with(
                 mcx,
@@ -955,6 +1495,7 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                         || model_custom.get_untracked() != initial.3
                         || base_url.get_untracked() != initial.4
                         || options_json.get_untracked() != initial.5
+                        || spec_json.get_untracked() != initial.6
                         || reasoning_ix.get_untracked() != reasoning_init_ix
                 },
                 move || {
@@ -965,6 +1506,7 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                         model_custom.get(),
                         base_url.get(),
                         options_json.get(),
+                        spec_json.get(),
                         reasoning_ix.get(),
                     );
                 },
@@ -1461,8 +2003,8 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                     .iter().map(|label| SelectOption::new(*label)).collect::<Vec<_>>())
                                     .value(speculation_ix)
                                     .on_change(move |ix| {
-                                        match speculation_options(&options_json.get_untracked(), ix) {
-                                            Ok(value) => { options_json.set(value); form_error.set(None); }
+                                        match speculation_options(&spec_json.get_untracked(), ix) {
+                                            Ok(value) => { spec_json.set(value); form_error.set(None); }
                                             Err(error) => form_error.set(Some(error)),
                                         }
                                     })
@@ -1588,58 +2130,36 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                         ));
                                         return;
                                     };
-                                    let opts_text = options_json.get_untracked();
-                                    let opts_text = opts_text.trim();
-                                    let options: Option<Value> = if opts_text.is_empty() {
-                                        None
-                                    } else {
-                                        match serde_json::from_str::<Value>(opts_text) {
-                                            Ok(v) if v.is_object() => Some(v),
-                                            Ok(_) => {
-                                                form_error.set(Some(
-                                                    "options must be a JSON object".into(),
-                                                ));
-                                                return;
-                                            }
-                                            Err(e) => {
-                                                form_error.set(Some(format!(
-                                                    "options JSON does not parse: {e}"
-                                                )));
-                                                return;
-                                            }
+                                    let reasoning = is_text.then(|| {
+                                        crate::store::REASONING_LEVELS
+                                            .get(reasoning_ix.get_untracked().wrapping_sub(1))
+                                            .map(|s| (*s).to_string())
+                                            .unwrap_or_default()
+                                    });
+                                    let options = match compose_route_options(
+                                        &options_json.get_untracked(),
+                                        &spec_json.get_untracked(),
+                                        is_text,
+                                    ) {
+                                        Ok(o) => o,
+                                        Err(e) => {
+                                            form_error.set(Some(e));
+                                            return;
                                         }
                                     };
-                                    // THE SAVE SENDS WHAT THIS FORM
-                                    // OWNS, AND NOTHING ELSE — and it
-                                    // sends every owned field
-                                    // EXPLICITLY, "" included. The
-                                    // write path preserves fields it is
-                                    // not given (core_config.py's
-                                    // field-preserving merge), so an
-                                    // OMITTED empty base URL / options
-                                    // would silently restore the stored
-                                    // value the operator just cleared.
-                                    // Fields with no control here
-                                    // (reasoning on a non-text route)
-                                    // stay unnamed on purpose.
-                                    let mut body = json!({
-                                        "provider": provider,
-                                        "model": model,
-                                        "base_url": base_url.get_untracked().trim(),
-                                        "options": options.unwrap_or_else(|| json!({})),
-                                    });
-                                    if is_text {
-                                        body["reasoning"] = Value::String(
-                                            crate::store::REASONING_LEVELS
-                                                .get(
-                                                    reasoning_ix
-                                                        .get_untracked()
-                                                        .wrapping_sub(1),
-                                                )
-                                                .map(|s| (*s).to_string())
-                                                .unwrap_or_default(),
-                                        );
-                                    }
+                                    let body = match route_save_body(
+                                        &provider,
+                                        &model,
+                                        reasoning.as_deref(),
+                                        (&base_url.get_untracked(), row3.base_url.as_deref().unwrap_or("")),
+                                        (&options, &shown_options(&row3)),
+                                    ) {
+                                        Ok(body) => body,
+                                        Err(e) => {
+                                            form_error.set(Some(e));
+                                            return;
+                                        }
+                                    };
                                     form_error.set(None);
                                     in_flight.set(true);
                                     ctx_s.send(Cmd::PutRoute {
@@ -1681,7 +2201,14 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                     };
                                     let mut controls = json!({});
                                     if row_t.is_text_generation() {
-                                        let text = options_json.get_untracked();
+                                        let text = match compose_route_options(
+                                            &options_json.get_untracked(),
+                                            &spec_json.get_untracked(),
+                                            true,
+                                        ) {
+                                            Ok(t) => t,
+                                            Err(e) => { form_error.set(Some(e)); return; }
+                                        };
                                         let parsed = if text.trim().is_empty() { Ok(json!({})) } else { serde_json::from_str::<Value>(&text) };
                                         let options = match parsed {
                                             Ok(value) if value.is_object() => value,
@@ -1744,6 +2271,49 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
 mod speculation_tests {
     use super::*;
 
+    /// The voice test run id folds like the web's `voiceTestRunId`.
+    #[test]
+    fn voice_test_run_id_folds_like_the_web() {
+        assert_eq!(
+            super::voice_test_run_id_for("a:b", "John..Doe"),
+            "session_memory_gateway_console_voicetest_a_b_john_doe"
+        );
+        assert_eq!(
+            super::voice_test_run_id_for("", ""),
+            "session_memory_gateway_console_voicetest_default_user"
+        );
+    }
+
+    /// The web's route editor (review 2 minor g): a text route's options
+    /// box hides `speculation` (the MTP selector owns it) and refuses it
+    /// typed there; an untouched editor saves exactly what was stored.
+    #[test]
+    fn options_box_hides_and_refuses_speculation_on_text_routes() {
+        let stored = json!({"temperature": 0.2, "speculation": false});
+        let (shown, spec) = split_route_options(Some(&stored), true);
+        assert_eq!(shown, r#"{"temperature":0.2}"#);
+        assert_eq!(spec, r#"{"speculation":false}"#);
+        assert_eq!(
+            compose_route_options(&shown, &spec, true).unwrap(),
+            stored.to_string(),
+            "unchanged editor = the stored options, so the save omits them"
+        );
+        let err = compose_route_options(r#"{"speculation":true}"#, &spec, true).unwrap_err();
+        assert!(
+            err.starts_with("Use the MTP selector for speculation"),
+            "{err}"
+        );
+        // Other routes show and send every option.
+        let voice = json!({"voice": "M3", "speculation": 1});
+        let (shown, spec) = split_route_options(Some(&voice), false);
+        assert_eq!(shown, voice.to_string());
+        assert_eq!(spec, "");
+        assert_eq!(
+            compose_route_options(&shown, "", false).unwrap(),
+            voice.to_string()
+        );
+    }
+
     #[test]
     fn selector_keeps_off_distinct_from_inherit_and_preserves_options() {
         let off: Value =
@@ -1786,5 +2356,43 @@ mod speculation_tests {
                 .unwrap(),
             input
         );
+    }
+
+    /// The route save rule, the web's saveDefault: untouched base URL /
+    /// options are NOT named; edited or emptied ones ARE ("" / {}); the
+    /// text route's reasoning is always explicit; bad options refuse.
+    #[test]
+    fn route_save_body_sends_what_the_operator_changed() {
+        let opts = r#"{"temperature":0.7}"#;
+        let untouched = route_save_body(
+            "lmstudio",
+            "m",
+            None,
+            ("http://h/v1", "http://h/v1"),
+            (opts, opts),
+        )
+        .unwrap();
+        assert_eq!(untouched, json!({"provider": "lmstudio", "model": "m"}));
+        let cleared =
+            route_save_body("lmstudio", "m", None, ("", "http://h/v1"), ("", opts)).unwrap();
+        assert_eq!(cleared["base_url"], "", "an emptied base URL is sent empty");
+        assert_eq!(
+            cleared["options"],
+            json!({}),
+            "emptied options are sent as {{}}"
+        );
+        let edited =
+            route_save_body("p", "m", Some(""), (" http://x ", ""), (r#"{"a":1}"#, "")).unwrap();
+        assert_eq!(edited["base_url"], "http://x", "trimmed");
+        assert_eq!(edited["options"], json!({"a": 1}));
+        assert_eq!(edited["reasoning"], "", "text route: explicit, \"\" clears");
+        let with_reasoning = route_save_body("p", "m", Some("high"), ("", ""), ("", "")).unwrap();
+        assert_eq!(
+            with_reasoning,
+            json!({"provider": "p", "model": "m", "reasoning": "high"})
+        );
+        // Validated even when untouched: a stored typo never rides along.
+        assert!(route_save_body("p", "m", None, ("", ""), ("[1]", "[1]")).is_err());
+        assert!(route_save_body("p", "m", None, ("", ""), ("{nope", "")).is_err());
     }
 }

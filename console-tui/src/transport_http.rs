@@ -15,12 +15,22 @@
 //! | `engines_status(probe)` | `GET /engines?probe=0\|1` | B `engines_status_v1` |
 //! | `models_catalog(q, engine, fits)` | `GET /models/catalog?q=&engine=&fits=0\|1` | C `model_catalog_v1` |
 //! | `models_installed(provider)` | `GET /models/installed[?provider=]` | D `models_installed_v1` |
-//! | `start_download(p, a)` | `POST /models/download {provider, artifact, dry_run:false}` | E `host_job_v1` |
+//! | `start_download(p, a, expected_bytes)` | `POST /models/download {provider, artifact, dry_run:false[, expected_bytes]}` (the gateway's disk pre-check) | E `host_job_v1` |
+//! | `download_job(id)` | `GET /models/download/{id}` (knows `grp_` groups) | E (`{ok, job}`) |
 //! | `delete_model(p, a, force)` | `POST /models/delete {provider, artifact, dry_run:false, force}` | E |
 //! | `engine_install(id, dry_run)` | `POST /engines/{id}/install {dry_run}` | E |
 //! | `job(id)` | `GET /jobs/{id}` | E |
 //! | `cancel_job(id)` | `POST /jobs/{id}/cancel {}` | E |
 //! | `host_label()` | `/host/state` → `host.host_name`, else the URL's host | — |
+//! | `cancel_download(id)` | `POST /models/download/{id}/cancel {"via":"console"}` (downloads + `grp_` groups; other kinds keep `/jobs/{id}/cancel`) | E (`{ok, job}`) |
+//! | `capabilities()` | every optional verb below | — |
+//! | `models_catalog_hub(q, engine, fits)` | `GET /models/catalog?q=&hub=true&engine=&fits=` | C |
+//! | `download_jobs()` | `GET /models/downloads` | E (`{ok, jobs}`) |
+//! | `capability_defaults()` | `GET /config/capability-defaults` | — |
+//! | `set_text_default(p, m)` | `PUT /config/capability-defaults/output/text {provider, model, base_url:"", reasoning:"", options:{}}` (sets exactly the model) | — |
+//! | `engine_install_at(id, dry_run, loc)` | `POST /engines/{id}/install {dry_run, location}` | E |
+//! | `engine_job_continue(id, action)` | `POST /engines/jobs/{id}/continue {action?}` | E |
+//! | `engine_server(id, start\|stop)` | `POST /engines/{id}/start\|stop` | — |
 //!
 //! Errors keep the gateway's honest classes:
 //!
@@ -46,7 +56,10 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 
-use abstractcore_console::transport::{ConsoleTransport, TransportError, TransportErrorKind};
+use abstractcore_console::transport::{
+    ConsoleTransport, InstallLocation, ServerAction, TransportCaps, TransportError,
+    TransportErrorKind,
+};
 use serde_json::Value;
 
 use crate::api::{ApiError, ApiErrorKind, GatewayClient};
@@ -280,10 +293,22 @@ impl ConsoleTransport for HttpTransport {
         self.client()?.models_installed(provider).map_err(map_error)
     }
 
-    fn start_download(&self, provider: &str, artifact: &str) -> Result<Value, TransportError> {
+    fn start_download(
+        &self,
+        provider: &str,
+        artifact: &str,
+        expected_bytes: Option<u64>,
+    ) -> Result<Value, TransportError> {
         self.client()?
-            .models_download(provider, artifact, false)
+            .models_download(provider, artifact, false, expected_bytes)
             .map_err(map_error)
+    }
+
+    /// `GET /models/download/{id}` — the one route that knows a
+    /// "download all" group (`grp_…`); answers `{"ok", "job"}` (the
+    /// screens accept the envelope).
+    fn download_job(&self, id: &str) -> Result<Value, TransportError> {
+        self.client()?.model_download_job(id).map_err(map_error)
     }
 
     fn delete_model(
@@ -316,6 +341,79 @@ impl ConsoleTransport for HttpTransport {
     fn host_label(&self) -> String {
         let base = self.base_url();
         label_for(&base, self.learned_name(&base).as_deref())
+    }
+
+    /// The gateway has every optional verb (the web console's routes).
+    /// Admin-only ones are refused by the gateway itself (403 →
+    /// `Refused`, its message shown), never pre-empted here.
+    fn capabilities(&self) -> TransportCaps {
+        TransportCaps::ALL
+    }
+
+    /// The web console's download cancel route and payload (console_ui.py
+    /// `dlCancel`); engine installs and deletes keep `/jobs/{id}/cancel`.
+    fn cancel_download(&self, id: &str) -> Result<Value, TransportError> {
+        self.client()?.cancel_model_download(id).map_err(map_error)
+    }
+
+    fn models_catalog_hub(
+        &self,
+        q: &str,
+        engine: Option<&str>,
+        fits_only: bool,
+    ) -> Result<Value, TransportError> {
+        self.client()?
+            .models_catalog_hub(q, engine, fits_only)
+            .map_err(map_error)
+    }
+
+    fn download_jobs(&self) -> Result<Value, TransportError> {
+        self.client()?.models_downloads().map_err(map_error)
+    }
+
+    fn capability_defaults(&self) -> Result<Value, TransportError> {
+        self.client()?.capability_defaults().map_err(map_error)
+    }
+
+    /// The web console's "Use as default": `PUT …/output/text` with the
+    /// served model id; the gateway answers the refreshed grid.
+    fn set_text_default(&self, provider: &str, model: &str) -> Result<Value, TransportError> {
+        self.client()?
+            .put_route(
+                "output",
+                "text",
+                None,
+                &serde_json::json!({"provider": provider, "model": model,
+                    "base_url": "", "reasoning": "", "options": {}}),
+            )
+            .map_err(map_error)
+    }
+
+    fn engine_install_at(
+        &self,
+        id: &str,
+        dry_run: bool,
+        location: InstallLocation,
+    ) -> Result<Value, TransportError> {
+        self.client()?
+            .engine_install_at(id, dry_run, location.as_str())
+            .map_err(map_error)
+    }
+
+    fn engine_job_continue(
+        &self,
+        job_id: &str,
+        action: Option<&str>,
+    ) -> Result<Value, TransportError> {
+        self.client()?
+            .engine_job_continue(job_id, action)
+            .map_err(map_error)
+    }
+
+    fn engine_server(&self, id: &str, action: ServerAction) -> Result<Value, TransportError> {
+        self.client()?
+            .engine_server(id, action.as_str())
+            .map_err(map_error)
     }
 }
 
@@ -381,6 +479,26 @@ mod tests {
             (ApiErrorKind::Protocol, TransportErrorKind::Protocol),
         ] {
             assert_eq!(map_error(ApiError::new(k.clone(), "m")).kind, want, "{k:?}");
+        }
+    }
+
+    #[test]
+    fn every_optional_verb_is_claimed_and_needs_a_connection() {
+        let t = HttpTransport::new(client_slot(), "http://127.0.0.1:1");
+        assert_eq!(t.capabilities(), TransportCaps::ALL);
+        for e in [
+            t.models_catalog_hub("q", None, false).unwrap_err(),
+            t.download_jobs().unwrap_err(),
+            t.capability_defaults().unwrap_err(),
+            t.set_text_default("ollama", "qwen3:8b").unwrap_err(),
+            t.engine_install_at("ollama", true, InstallLocation::User)
+                .unwrap_err(),
+            t.engine_job_continue("ei_1", None).unwrap_err(),
+            t.engine_server("ollama", ServerAction::Start).unwrap_err(),
+        ] {
+            // Implemented (not the trait's Unsupported default), and
+            // honest about the missing connection.
+            assert_eq!(e.kind, TransportErrorKind::Unavailable, "{e}");
         }
     }
 

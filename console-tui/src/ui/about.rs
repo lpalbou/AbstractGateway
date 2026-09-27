@@ -49,7 +49,7 @@ pub fn open(ctx: &Ctx, cx: Scope) {
     // The gateway lists every installed abstract* package: take the
     // terminal's height (the rows are few dozen at most).
     let vp = abstracttui::app::use_viewport(cx).get_untracked();
-    let size = Size::new(vp.w.min(104).max(1), (vp.h - 2).min(46).max(1));
+    let size = Size::new(vp.w.clamp(1, 104), (vp.h - 2).clamp(1, 46));
     open_form(ctx, cx, size, move |mcx, close| {
         let theme = use_theme(mcx);
         let t0 = theme.get().tokens;

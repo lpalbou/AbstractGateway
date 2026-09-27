@@ -1,5 +1,75 @@
 # Changelog — abstractgateway-console
 
+## [Unreleased] — 0.10.0: parity with the web console
+
+The terminal console now does what the web console (`/console`) does,
+through the same gateway routes, with the same admin rules and
+confirmations. Needs abstractcore-console 0.3 (screens 9 Models and
+0 Engines) and the AbstractGateway release that ships with it.
+
+### Setup guide (headless first run)
+- The guide follows the web console's first-run guide: Connection → Setup
+  → Engines → Providers → Routes → Models → Apps → Review, "Step N/8" on
+  every step, and **Finish** or **Skip setup** recorded on the gateway
+  (`POST /api/gateway/host/first-run`, checked by a read).
+- Without `--wizard`/`--browse` the guide opens by itself only for an
+  admin whose first run is not completed; browse mode otherwise.
+- New **Setup** screen: this computer at a glance (memory, graphics, data
+  folder, sign-in mode, starts at login, first-run state).
+- `Ctrl+G` reopens the guide from browse; in the guide it opens the guide
+  menu: go to any step directly, leave for now, or skip setup.
+- Routes shows the recommended models for this computer with fit
+  warnings: `a` applies them, `D` downloads all of them as one job, `C`
+  cancels, `p` shows the plan. Routes that cannot run on this computer
+  say so, with the reason, and the apply report lists what was cleared.
+- Image and video lanes that inherit from `output.image` /
+  `output.video` (the fresh-install shape) read as ready, labelled
+  "inherited from …", like the gateway resolves them.
+
+### New screens and panels
+- **A Apps**: browser apps, the desktop Assistant and Node.js — open
+  signed in (`Enter`/`o`), install/update, start/stop, log, cancel,
+  terminal apps, copy the address.
+- **F2 docs assistant**: questions answered from the gateway's own
+  documentation (signed in).
+- **F3 gateway host**: pause/resume workflows, restart, quit, check for
+  and install updates, tray; a banner on every screen while workflows are
+  paused.
+
+### More of the web console
+- Review & Test: every sandbox mode (text, image, voice, music, sound
+  effects, video), file attachments, speak a reply, MTP depth when the
+  model supports it.
+- Users & Entities: summon an entity (`n`, template + name, validated
+  before anything is written), spark templates (`s`), talk with an
+  entity (`c`), identity card, voice audition, your own workspace policy
+  (`w`).
+- Workflows: import a `.flow` bundle (`i`), reload from disk (`L`).
+- Runtimes: backlog settings and the curated skills-shelf refresh in the
+  runtime knobs.
+- Connection: look up this computer's public address.
+- Models / Engines: start and stop engine servers, continue paused
+  installs, install location, Hugging Face search, the downloads list;
+  downloads send their expected size so the gateway can check disk space.
+
+### Admin rules, sign-in and keyboard
+- Admin-only actions are refused before anything is sent, with the
+  reason, for a non-admin sign-in; the footer marks them "admin only".
+  The setup guide is admin-only, as on the web.
+- Request bodies match the web console's (route save, route test, own
+  time, timer grants, candidate promotion, workspace defaults). Own-time
+  Start leaves blank fields out so the gateway's defaults apply.
+- `--token-file PATH` signs in with a token read from a file. A 401 says
+  whether no token was sent or the token was rejected, and where the
+  gateway's admin token lives (`<data dir>/auth/bootstrap-admin-token`).
+- `r` reconnects after the gateway comes back.
+- Text fields no longer hold the keyboard by themselves once connected;
+  `Esc` in a text field releases it so screen keys work again. After
+  Finish, screen keys work at once.
+- Layout fits 80×24 and terminals of 32 rows or fewer.
+- Quit on the host panel names the right command to start the gateway
+  again (the login service's own when it runs as one).
+
 ## 0.9.0 (2026-09-26) — About, default agent workflows, skills shelf, stream replies
 
 Needs AbstractGateway 0.5.0 for the default agent workflows, the skills shelf

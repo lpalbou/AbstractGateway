@@ -12,6 +12,37 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
+// One area per file, each an `impl GatewayClient` block plus the pure
+// folds of its payloads. They are CHILD modules (`#[path]`), not siblings,
+// so they reach this file's private transport (`get`, `send`, `with_auth`,
+// the agents, the error mapping) without widening it. Named by area, in
+// alphabetical order; `pub` only where the crate or its tests use their
+// items.
+
+/// Browser apps: `/api/gateway/apps*` (the Apps screen).
+#[path = "api_apps.rs"]
+pub mod apps;
+/// The optional Models/Engines verbs of the shared screens (engine server
+/// start/stop, paused-install continue, install location, hub search,
+/// downloads feed).
+#[path = "api_engines.rs"]
+mod engines;
+/// Entities: summon, templates, card, talk, voice audition.
+#[path = "api_entities.rs"]
+pub mod entities;
+/// Headless first run: first-run state, welcome summary, the recommended
+/// plan and Download all.
+#[path = "api_firstrun.rs"]
+pub mod firstrun;
+/// Operator controls: host controls, workflow import/reload, skills
+/// reseed, WAN lookup, own workspace policy.
+#[path = "api_operator.rs"]
+mod operator;
+/// `POST /sandbox/generate` (the Review sandbox and the Routes Test),
+/// media generation, attachments, the docs assistant.
+#[path = "api_sandbox_docs.rs"]
+pub mod sandbox_docs;
+
 /// What kind of failure this is — drives which honest state the UI shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiErrorKind {
@@ -596,13 +627,13 @@ impl GatewayClient {
         provider: &str,
         artifact: &str,
         dry_run: bool,
+        expected_bytes: Option<u64>,
     ) -> ApiResult<Value> {
-        self.send(
-            "POST",
-            "/models/download",
-            &json!({"provider": provider, "artifact": artifact, "dry_run": dry_run}),
-            false,
-        )
+        let mut body = json!({"provider": provider, "artifact": artifact, "dry_run": dry_run});
+        if let Some(n) = expected_bytes {
+            body["expected_bytes"] = json!(n);
+        }
+        self.send("POST", "/models/download", &body, false)
     }
 
     /// Contract E: delete an installed artifact; answers a `host_job_v1`
@@ -745,8 +776,8 @@ impl GatewayClient {
     }
 
     // ---- entity configuration + state (the web's Manage drawer) ---------
-    // Creation/summon/visits stay deliberately out of scope (rituals);
-    // these are the operator CONFIG controls the web console exposes.
+    // The operator CONFIG controls the web console exposes; summon,
+    // templates, card, talk and the voice audition live in `entities`.
 
     pub fn entity_cognition(&self, name: &str) -> ApiResult<Value> {
         self.get(&entity_path(name, "cognition"), false)
@@ -1200,62 +1231,17 @@ impl GatewayClient {
             true,
         )
     }
-
-    // ---- sandbox ----------------------------------------------------------
-
-    /// A real generation through the gateway — the wizard's "Test" verb.
-    /// `capability` is the route key (output.text, input.text, …); the
-    /// gateway resolves the right engine for it.
-    pub fn sandbox_generate(
-        &self,
-        capability: &str,
-        provider: &str,
-        model: &str,
-        prompt: &str,
-        max_tokens: u32,
-    ) -> ApiResult<Value> {
-        self.sandbox_generate_with_controls(
-            capability,
-            provider,
-            model,
-            prompt,
-            max_tokens,
-            &json!({}),
-        )
-    }
-
-    /// Request controls belong to the current audition, not a separate store.
-    pub fn sandbox_generate_with_controls(
-        &self,
-        capability: &str,
-        provider: &str,
-        model: &str,
-        prompt: &str,
-        max_tokens: u32,
-        controls: &Value,
-    ) -> ApiResult<Value> {
-        let mut body = json!({
-            "capability": capability, "provider": provider, "model": model,
-            "prompt": prompt, "max_tokens": max_tokens,
-        });
-        for key in ["reasoning", "speculation"] {
-            if let Some(value) = controls.get(key).filter(|value| !value.is_null()) {
-                body[key] = value.clone();
-            }
-        }
-        self.send("POST", "/sandbox/generate", &body, true)
-    }
 }
 
-/// Minimal percent-encoding for path/query components (RFC 3986
-/// unreserved set stays literal). Gateway ids are conservative, but ids
-/// are user input — never interpolate them raw.
 /// Per-entity route path: every entity endpoint is `/entities/{name}/<leaf>`
 /// with the name urlencoded — one constructor instead of 20 format! copies.
 fn entity_path(name: &str, leaf: &str) -> String {
     format!("/entities/{}/{}", urlencode(name), leaf)
 }
 
+/// Minimal percent-encoding for path/query components (RFC 3986
+/// unreserved set stays literal). Gateway ids are conservative, but ids
+/// are user input — never interpolate them raw.
 pub fn urlencode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for b in s.bytes() {

@@ -1,4 +1,5 @@
-//! Users & entities: gateway user CRUD (admin) + read-only entity roster.
+//! Users & entities: gateway user CRUD (admin) + the entity roster
+//! (summon `n`, talk `c`, spark templates `s`, manage `m`).
 //!
 //! The token rule: create/rotate responses carry the token EXACTLY
 //! ONCE — it goes to a dedicated modal with a copy affordance and an
@@ -13,6 +14,13 @@ use super::widths;
 use super::{open_form, Ctx};
 use crate::store::{ConnPhase, EntityRow, Loadable, UserRow};
 use crate::worker::Cmd;
+
+/// The footer verbs of this screen that only an admin may use: the users
+/// registry (add / edit / rotate / delete — `/admin/users*`) and the kept
+/// data of deleted users (`/admin/runtime-reservations`). The entity
+/// roster verbs stay open (their own admin-only acts are gated inside the
+/// manage menu).
+pub const ADMIN_KEYS: &[&str] = &["a", "e", "t", "d", "v"];
 
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
@@ -37,6 +45,10 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ctx_manage = ctx.clone();
     let ctx_resv = ctx.clone();
     let ctx_inspect = ctx.clone();
+    let ctx_mypolicy = ctx.clone();
+    let ctx_summon = ctx.clone();
+    let ctx_talk = ctx.clone();
+    let ctx_tpl = ctx.clone();
 
     // Keep the manage snapshot warm for the SELECTED entity: arrowing
     // to a row loads its detail (worker serializes; entity rosters are
@@ -85,19 +97,59 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     }
 
     Element::new()
+        // Focusable + autofocus content root: the screen's keys must live
+        // even when no table exists to take the keyboard — a non-admin
+        // (no users table) on a gateway with no entities yet would
+        // otherwise have dead keys, `n` (summon the first entity)
+        // included. A table that mounts later still takes the focus.
+        .focusable()
+        .autofocus()
         .style(LayoutStyle::column().gap(1))
         .shortcut(KeyChord::plain(Key::Char('m')), move |_| {
             manage_selected_entity(cx, &ctx_manage);
         })
-        .shortcut(KeyChord::plain(Key::Char('v')), move |_| {
+        .shortcut(KeyChord::plain(Key::Char('n')), move |_| {
+            // Summon — the web's "Summon entity" (create is user-level;
+            // Advanced configuration inside is admin-only).
             if store.conn.with_untracked(ConnPhase::is_connected) {
-                open_reservations_modal(cx, &ctx_resv);
+                super::entity_create::open_summon_form(cx, &ctx_summon);
             } else {
                 store.notice.set(Some(
                     "not connected — probe on the Connection screen first".into(),
                 ));
             }
         })
+        .shortcut(KeyChord::plain(Key::Char('c')), move |_| {
+            // Talk first — the web's first row action.
+            if !store.conn.with_untracked(ConnPhase::is_connected) {
+                store.notice.set(Some(
+                    "not connected — probe on the Connection screen first".into(),
+                ));
+            } else if let Some(e) = selected_entity(&ctx_talk) {
+                super::entity_chat::open_talk_modal(cx, &ctx_talk, e.name);
+            } else {
+                store
+                    .notice
+                    .set(Some("no entity selected — nobody to talk to".into()));
+            }
+        })
+        .shortcut(KeyChord::plain(Key::Char('s')), move |_| {
+            if store.conn.with_untracked(ConnPhase::is_connected) {
+                super::entity_create::open_templates_modal(cx, &ctx_tpl);
+            } else {
+                store.notice.set(Some(
+                    "not connected — probe on the Connection screen first".into(),
+                ));
+            }
+        })
+        .shortcut(KeyChord::plain(Key::Char('v')), move |_| {
+            if super::util::admin_gate(&store, "the kept data of deleted users") {
+                open_reservations_modal(cx, &ctx_resv);
+            }
+        })
+        // The caller's OWN workspace policy (web: "My workspace policy"
+        // on the Users tab) — any principal, see ui/my_policy.rs.
+        .shortcut(KeyChord::plain(Key::Char('w')), move |_| super::my_policy::open(cx, &ctx_mypolicy))
         .shortcut(KeyChord::plain(Key::Char('i')), move |_| {
             // Toggle the entity-inspector drawer (passive: the roster
             // keeps the keyboard; i again closes; leaving the screen
@@ -114,18 +166,17 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         })
         .shortcut(KeyChord::plain(Key::Char('a')), move |_| {
             // F2: refusals name their reason — silent keys read as dead.
-            if store.conn.with_untracked(ConnPhase::is_connected) {
+            if super::util::admin_gate(&store, "adding a user") {
                 open_user_form(cx, &ctx_add, None);
-            } else {
-                store.notice.set(Some(
-                    "not connected — probe on the Connection screen first".into(),
-                ));
             }
         })
         .shortcut(KeyChord::plain(Key::Char('e')), move |_| {
             edit_selected_user(cx, &ctx_edit);
         })
         .shortcut(KeyChord::plain(Key::Char('t')), move |_| {
+            if !super::util::admin_gate(&store, "rotating a user's token") {
+                return;
+            }
             if let Some(u) = selected_user(&ctx_rotate) {
                 confirm_rotate(cx, &ctx_rotate, u);
             } else {
@@ -135,6 +186,9 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             }
         })
         .shortcut(KeyChord::plain(Key::Char('d')), move |_| {
+            if !super::util::admin_gate(&store, "deleting a user") {
+                return;
+            }
             if let Some(u) = selected_user(&ctx_del) {
                 confirm_delete(cx, &ctx_del, u);
             } else {
@@ -157,6 +211,18 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 .child(dyn_view_scoped(LayoutStyle::default().grow(1.0).min_h(1), {
                     let ctx_act = ctx.clone();
                     move |gcx| {
+                        // The users registry is an admin surface
+                        // (`/admin/users`; the web hides the section):
+                        // a non-admin gets the reason, never a 403 panel.
+                        if let Some(why) = store.conn.with(|c| {
+                            c.is_known_non_admin().then(|| c.admin_refusal("the users registry"))
+                        }).flatten()
+                        {
+                            return line(vec![span(
+                                format!("{why} — w edits your own workspace policy"),
+                                tt.text_muted,
+                            )]);
+                        }
                         let data = store.users.get();
                         // Empty-state honesty: 0 humans with N hidden
                         // entity principals is NOT an empty registry.
@@ -219,7 +285,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .child(
             Block::new()
                 .border(BorderKind::Rounded)
-                .title("Entities (m = manage — creation/summon/visits stay outside this console)")
+                .title("Entities (n = summon · c = talk · m = manage · s = spark templates)")
                 .fill(t.surface)
                 .layout(
                     LayoutStyle::column()
@@ -245,9 +311,15 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                 || store.tick.get(),
                                 &data,
                                 |d: &Vec<EntityRow>| d.is_empty(),
-                                "no entities on this gateway",
+                                "no entities yet — n summons the first one",
                                 |d| {
-                                    entities_table(gcx, &tt, d, ui.entity_sel, move |_| {
+                                    // The roster takes the keyboard when
+                                    // the users table is absent (a
+                                    // non-admin: the registry is not
+                                    // theirs to list) — else the screen's
+                                    // keys would have nothing focused.
+                                    let focus = store.conn.with_untracked(ConnPhase::is_known_non_admin);
+                                    entities_table(gcx, &tt, d, ui.entity_sel, focus, move |_| {
                                         // Activation = the `m` manage
                                         // path (entities have no "edit";
                                         // the manage menu is the row's
@@ -294,6 +366,9 @@ fn selected_entity(ctx: &Ctx) -> Option<EntityRow> {
 /// table's activation (Enter / Space / double-click): guards and
 /// refusal notices can never drift between the two gestures.
 fn edit_selected_user(cx: Scope, ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "editing a user") {
+        return;
+    }
     if let Some(u) = selected_user(ctx) {
         open_user_form(cx, ctx, Some(u));
     } else {
@@ -612,6 +687,7 @@ fn entities_table(
     t: &TokenSet,
     data: &[EntityRow],
     sel: Signal<usize>,
+    autofocus: bool,
     on_activate: impl FnMut(usize) + 'static,
 ) -> View {
     let vw = abstracttui::app::use_viewport(cx).get().w;
@@ -652,17 +728,16 @@ fn entities_table(
     }
     rules.push(widths::ColRule::head("open drives", 14));
     let cols = widths::columns(&rules, &mut rows, vw - widths::BLOCK_CHROME);
+    let table = Table::new(cols)
+        .rows(rows)
+        .selection(sel)
+        .on_activate(on_activate)
+        .layout(LayoutStyle::default().grow(1.0))
+        .element(cx, t);
+    let table = if autofocus { table.autofocus() } else { table };
     Element::new()
         .style(LayoutStyle::column().gap(0))
-        .child(
-            Table::new(cols)
-                .rows(rows)
-                .selection(sel)
-                .on_activate(on_activate)
-                .layout(LayoutStyle::default().grow(1.0))
-                .element(cx, t)
-                .build(),
-        )
+        .child(table.build())
         .child(legend(t))
         .build()
 }

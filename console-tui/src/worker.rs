@@ -16,12 +16,24 @@ use std::sync::mpsc::{Receiver, Sender};
 use abstracttui::reactive::WakeHandle;
 use serde_json::Value;
 
+use crate::api::firstrun::{first_run_verify, FirstRunState, GroupStatus, WelcomeSummary};
 use crate::api::{ApiError, ApiErrorKind, ApiResult, GatewayClient};
+
+/// The Apps screen's handlers (install/update/start/stop/open, jobs).
+#[path = "worker_apps.rs"]
+mod apps;
+/// Entity parity (summon, templates, card, talk, voice audition).
+#[path = "worker_entities.rs"]
+pub mod entities;
+/// Operator controls (host card, paused-banner poll, restart/quit watcher,
+/// workflow import/reload, skills reseed, WAN lookup, own workspace policy).
+#[path = "worker_operator.rs"]
+pub mod operator;
 use crate::store::{
     entities_from_payload, models_from_payload, runtimes_from_payload, users_from_payload,
     AvailabilityData, ConnPhase, DiscoverOutcome, DownloadStatus, Identity, JournalEntry, Loadable,
     NetworkData, ProbeReport, ProfilesData, ProvidersData, RouteTestOutcome, RoutesData,
-    RuntimeConfigData, SandboxOutcome, Store, VoicesData,
+    RuntimeConfigData, Store, VoicesData,
 };
 
 /// Probe sequence — every probe gets a visible number so repeated
@@ -87,6 +99,32 @@ pub enum Cmd {
         /// final poll -- the operator sees one continuous operation.
         op: u64,
         started_ms: u64,
+    },
+    /// "Download all" (the web guide's model step): `POST /models/download
+    /// {"recommended": true}` → one parent job, then `PollDownloadGroup`.
+    /// Only ever sent from an explicit, confirmed `D` on Routes.
+    DownloadRecommended,
+    /// ONE read of the Download-all parent job, then reschedule itself
+    /// (the `PollDownload` pattern: the wait happens off the lane).
+    PollDownloadGroup {
+        job: String,
+        op: u64,
+        started_ms: u64,
+    },
+    /// Cancel the Download-all parent (every child still running).
+    CancelDownloadGroup {
+        job: String,
+    },
+    /// `GET /host/first-run` (read at connect: decides the boot mode).
+    LoadFirstRun,
+    /// `GET /host/state` folded for the Setup (welcome) step.
+    LoadWelcome,
+    /// Finish / Skip setup: `POST /host/first-run {"outcome"}` + the
+    /// verifying GET. `form_id` routes the verified outcome back to the
+    /// finish row (leave the wizard only when the GET proves it).
+    CompleteFirstRun {
+        outcome: String,
+        form_id: Option<u64>,
     },
     /// ONE `GET /host/state` read (SLOW — GPU probe + residency
     /// listing), then reschedule itself ~4s later — the download-poll
@@ -164,6 +202,40 @@ pub enum Cmd {
         bundle_id: String,
         version: String,
         dest: String,
+        form_id: Option<u64>,
+    },
+    /// Apps screen: `GET /apps?latest=` (latest = also ask npm / the
+    /// terminal app's release for newer versions).
+    LoadApps {
+        latest: bool,
+    },
+    /// One app verb (install, update, start, stop, open, desktop open,
+    /// terminal open/install). `start_first`: Open on a stopped app
+    /// starts it, then mints the sign-in link.
+    AppAct {
+        app_id: String,
+        name: String,
+        verb: crate::store::apps::AppVerb,
+        path: Option<String>,
+        start_first: bool,
+    },
+    /// Cancel an apps job (`key` = app:<id> | tui:<id> | __node__).
+    CancelAppJob {
+        key: String,
+        name: String,
+        job_id: String,
+    },
+    /// `POST /apps/runtime/install`: Node.js for the browser apps.
+    InstallAppsNode,
+    /// `GET /apps/{id}/logs?tail=N`.
+    LoadAppLog {
+        app_id: String,
+        tail: u32,
+    },
+    /// ONE hop of the apps job poll chain (gen-gated on the UI thread).
+    PollAppJobs {
+        gen: u64,
+        jobs: Vec<(String, String)>,
     },
     /// One page of artifact metadata (deliverables).
     LoadArtifacts {
@@ -204,6 +276,8 @@ pub enum Cmd {
     },
     /// `POST /network/restart` (the gateway goes away for a few seconds).
     RestartNetwork,
+    /// Operator controls — see `worker::operator::OpCmd`.
+    Operator(operator::OpCmd),
     /// `POST /network {allowed_origins?, trust_proxy?}` (reverse proxy,
     /// mission Z) then re-read. Only the named fields change; the gateway
     /// validates and its words are shown verbatim.
@@ -283,11 +357,45 @@ pub enum Cmd {
         user_id: String,
         tenant_id: String,
     },
-    /// A real text generation — the wizard's "Test" verb.
+    /// A real text generation — the wizard's "Test" verb. `request` is
+    /// the full web-shaped body (ui::sandbox::text_body: system prompt,
+    /// reasoning, MTP, history).
     SandboxTest {
         provider: String,
         model: String,
         prompt: String,
+        request: Body,
+    },
+    /// A media generation (image / voice / music / SFX / video) on the
+    /// sandbox session run, then the artifact saved to disk.
+    SandboxMedia {
+        request: crate::ui::sandbox::MediaRequest,
+    },
+    /// Upload a local file as a sandbox attachment (`/attachments/upload`).
+    SandboxAttach {
+        path: String,
+        session_id: String,
+    },
+    /// "Speak this message": TTS the reply on the sandbox run, then play.
+    SandboxSpeak {
+        request: crate::ui::sandbox::MediaRequest,
+    },
+    /// MTP depth availability for the picked text pair.
+    SandboxMtpCaps {
+        provider: String,
+        model: String,
+    },
+    /// Docs assistant: start the docs-qa run (`op` = its busy entry).
+    DocsAsk {
+        question: String,
+        history: Vec<Value>,
+        op: u64,
+    },
+    /// Docs assistant: one run poll (re-armed by a timer thread).
+    DocsPoll {
+        run_id: String,
+        attempt: u32,
+        op: u64,
     },
     /// Voice catalog for one (provider, model) — the route editor's
     /// voice picker (output.voice routes only).
@@ -374,13 +482,17 @@ pub enum Cmd {
     LoadCandidates {
         name: String,
     },
-    /// Promote (with optional corroboration) or reject one candidate.
+    /// Promote (with the corroborating record ids) or reject one candidate.
     CandidateAct {
         name: String,
         record_id: String,
         promote: bool,
+        /// Promote only (ignored by reject): the records that corroborate it.
+        corroborating_ids: Vec<String>,
         reason: String,
     },
+    /// Entity parity: summon, templates, card, talk, voice audition.
+    Entity(entities::EntityCmd),
     /// Load the runs of ONE runtime plane (the scope names which — the
     /// Runtimes screen's selection effect owns this slot end-to-end).
     LoadRuns {
@@ -578,7 +690,11 @@ fn cmd_form_id(cmd: &Cmd) -> Option<u64> {
         | Cmd::SaveEntityWorkOrder { form_id, .. }
         | Cmd::SaveToolPolicy { form_id, .. }
         | Cmd::SaveEntityPrompt { form_id, .. }
-        | Cmd::EntityReembed { form_id, .. } => *form_id,
+        | Cmd::EntityReembed { form_id, .. }
+        | Cmd::CompleteFirstRun { form_id, .. }
+        | Cmd::ExportWorkflow { form_id, .. } => *form_id,
+        Cmd::Operator(op) => op.form_id(),
+        Cmd::Entity(e) => e.form_id(),
         _ => None,
     }
 }
@@ -594,6 +710,64 @@ fn route_proof(row: &crate::store::RouteRow) -> String {
         out.push_str(&format!(" (source: {})", row.source));
     }
     out
+}
+
+/// What an `applied_recommended` report leaves for the operator, the web
+/// console's reading (`appliedRecommendedBrokenRows`, the message tone,
+/// the second-pass button):
+/// - attention: configured routes this computer cannot run that the apply
+///   did not change, or recommended routes with nothing runnable here —
+///   never a plain success;
+/// - the forced second pass to offer after a non-forced apply: "Replace
+///   mine too" when routes were kept, else "Clear what cannot run here"
+///   when a broken route stayed.
+pub fn applied_recommended_followup(
+    payload: &Value,
+    forced: bool,
+) -> (Option<String>, Option<&'static str>) {
+    let rows = payload
+        .get("applied_recommended")
+        .and_then(|r| r.get("routes"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let action = |r: &Value| {
+        r.get("action")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    let changed = |r: &Value| r.get("changed").and_then(Value::as_bool).unwrap_or(false);
+    let broken = rows
+        .iter()
+        .filter(|r| r.get("route_unavailable").is_some_and(|u| u.is_object()) && !changed(r))
+        .count();
+    let unavailable = rows.iter().filter(|r| action(r) == "unavailable").count();
+    let kept = rows.iter().filter(|r| action(r) == "kept").count();
+    let mut bits = Vec::new();
+    if broken > 0 {
+        bits.push(format!(
+            "{broken} configured route{} cannot run on this computer",
+            if broken == 1 { "" } else { "s" }
+        ));
+    }
+    if unavailable > 0 {
+        bits.push(format!(
+            "{unavailable} route{} no recommendation this computer can run",
+            if unavailable == 1 { " has" } else { "s have" }
+        ));
+    }
+    let attention = (!bits.is_empty()).then(|| bits.join("; "));
+    let followup = if forced {
+        None
+    } else if kept > 0 {
+        Some("Replace mine too")
+    } else if broken > 0 {
+        Some("Clear what cannot run here")
+    } else {
+        None
+    };
+    (attention, followup)
 }
 
 /// One line summarising an `applied_recommended` report.
@@ -620,30 +794,96 @@ pub fn applied_recommended_summary(payload: &Value) -> String {
         };
         format!("{}/{}", get("provider"), get("model"))
     };
+    // The report's own totals first (each optional: an older Core has no
+    // `cleared`) — the core console's apply report, word for word.
+    let report = payload.get("applied_recommended").unwrap_or(&Value::Null);
+    let totals: Vec<String> = ["changed", "cleared", "kept", "already", "unavailable"]
+        .iter()
+        .filter_map(|k| {
+            report
+                .get(*k)
+                .and_then(Value::as_u64)
+                .filter(|n| *n > 0)
+                .map(|n| format!("{n} {k}"))
+        })
+        .collect();
     let mut changed: Vec<String> = Vec::new();
     let mut kept: Vec<String> = Vec::new();
+    // Host-aware recommendations (AbstractCore): a route whose engine this
+    // host cannot run is never written, and carries its `reason`.
+    let mut unavailable: Vec<String> = Vec::new();
+    // Rows that must be said one by one: a configured route this host
+    // cannot run (`route_unavailable`) is never reported as fine.
+    let mut flagged: Vec<String> = Vec::new();
     for row in rows {
         let key = row.get("key").and_then(Value::as_str).unwrap_or("?");
         let action = row.get("action").and_then(Value::as_str).unwrap_or("");
-        if row.get("changed").and_then(Value::as_bool).unwrap_or(false) {
-            changed.push(format!(
-                "{key}: {} → {}",
-                pair(row.get("before")),
-                pair(row.get("after"))
-            ));
-        } else if action == "kept" {
-            kept.push(format!("{key} ({})", pair(row.get("before"))));
+        let reason = row
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("no reason given");
+        let cannot_run = row
+            .get("route_unavailable")
+            .and_then(|u| u.get("reason"))
+            .and_then(Value::as_str)
+            .map(|why| format!(" — yours cannot run on this computer: {why}"))
+            .unwrap_or_default();
+        match action {
+            // `force`, and nothing on this host runs — neither the stored
+            // route nor any recommendation: removed, whole.
+            "cleared" => flagged.push(format!(
+                "{key}: removed {}{cannot_run}; nothing recommended runs here either — {reason}",
+                pair(row.get("before"))
+            )),
+            "unavailable" if !cannot_run.is_empty() => {
+                let before = pair(row.get("before"));
+                flagged.push(format!(
+                    "{key}: nothing recommended runs on this computer — {reason}; left as {before}{cannot_run}"
+                ));
+            }
+            "unavailable" => match row
+                .get("reason")
+                .and_then(Value::as_str)
+                .filter(|r| !r.is_empty())
+            {
+                Some(r) => unavailable.push(format!("{key} ({r})")),
+                None => unavailable.push(key.to_string()),
+            },
+            "kept" => kept.push(format!("{key} ({}){cannot_run}", pair(row.get("before")))),
+            _ if row.get("changed").and_then(Value::as_bool).unwrap_or(false) => {
+                changed.push(format!(
+                    "{key}: {} → {}{cannot_run}",
+                    pair(row.get("before")),
+                    pair(row.get("after"))
+                ))
+            }
+            _ => {}
         }
     }
     let mut parts: Vec<String> = Vec::new();
     if !changed.is_empty() {
         parts.push(changed.join("; "));
     }
+    if !flagged.is_empty() {
+        parts.push(flagged.join("; "));
+    }
     if !kept.is_empty() {
         parts.push(format!("kept yours on {}", kept.join(", ")));
     }
+    if !unavailable.is_empty() {
+        // Counted here, not from the report's `unavailable`: that total
+        // also holds the configured-but-broken rows said above.
+        parts.push(format!(
+            "{} not available on this host, left unset: {}",
+            unavailable.len(),
+            unavailable.join("; ")
+        ));
+    }
     if parts.is_empty() {
         return "every recommended route already matched".to_string();
+    }
+    if !totals.is_empty() {
+        parts.insert(0, totals.join(" · "));
     }
     parts.join(" · ")
 }
@@ -733,7 +973,10 @@ fn network_write_note(mode: &str, write: &ApiResult<Value>) -> String {
 
 /// The body the TUI sends for a reverse-proxy change: exactly the fields
 /// named (the console and the CLI send the same shape to the same door).
-pub fn network_proxy_body(allowed_origins: &Option<Vec<String>>, trust_proxy: Option<bool>) -> Value {
+pub fn network_proxy_body(
+    allowed_origins: &Option<Vec<String>>,
+    trust_proxy: Option<bool>,
+) -> Value {
     let mut body = serde_json::Map::new();
     if let Some(list) = allowed_origins {
         body.insert("allowed_origins".into(), serde_json::json!(list));
@@ -753,7 +996,11 @@ pub fn network_proxy_note(write: &ApiResult<Value>) -> String {
             let mut parts: Vec<String> = Vec::new();
             for field in ["allowed_origins", "trust_proxy"] {
                 if let Some(ch) = changed.and_then(|c| c.get(field)) {
-                    let label = if field == "trust_proxy" { "trust proxy" } else { "origins" };
+                    let label = if field == "trust_proxy" {
+                        "trust proxy"
+                    } else {
+                        "origins"
+                    };
                     let when = match ch.get("applies").and_then(Value::as_str) {
                         Some("overridden_by_env") => "saved, NOT in effect: the environment the gateway was started with decides",
                         Some("restart") => "saved, applies at the next start",
@@ -942,6 +1189,97 @@ fn handle(
                 started_ms,
             },
         ),
+
+        Cmd::DownloadRecommended => handle_download_recommended(client, store, wake, tx),
+
+        Cmd::PollDownloadGroup {
+            job,
+            op,
+            started_ms,
+        } => handle_poll_download_group(client, store, wake, tx, &job, op, started_ms),
+
+        Cmd::CancelDownloadGroup { job } => {
+            let action = format!("POST cancel Download all {job}");
+            let (write, verify) = with_busy(store, wake, "cancelling Download all", || {
+                let write = require_client(client).and_then(|c| c.cancel_model_download(&job));
+                let verify = require_client(client).and_then(|c| c.model_download_job(&job));
+                (write, verify)
+            });
+            // The job answers `cancel_requested` at once and turns
+            // `cancelled` when the tools have stopped; the running poll
+            // chain reports the end. Verified = the GET shows the request.
+            let verified = verify.as_ref().ok().map(|v| {
+                let g = GroupStatus::from_job(&v.get("job").cloned().unwrap_or(Value::Null));
+                if g.cancel_requested || !g.running() {
+                    Ok(format!(
+                        "GET /models/download/{job}: {} ({})",
+                        g.status, g.message
+                    ))
+                } else {
+                    Err(format!(
+                        "GET /models/download/{job} shows no cancel request ({})",
+                        g.status
+                    ))
+                }
+            });
+            if let Ok(v) = &verify {
+                let g = GroupStatus::from_job(&v.get("job").cloned().unwrap_or(Value::Null));
+                let s = *store;
+                wake.post(move || s.download_group.set(Some(g.clone())));
+            }
+            finish_write(store, wake, action, write, verified, None, on_done);
+        }
+
+        Cmd::LoadFirstRun => load(
+            store,
+            wake,
+            "reading first-run state",
+            store.first_run,
+            || {
+                require_client(client)?
+                    .first_run_state()
+                    .map(|v| FirstRunState::from_value(&v))
+            },
+        ),
+
+        Cmd::LoadWelcome => load(
+            store,
+            wake,
+            "reading this computer's summary",
+            store.welcome,
+            || {
+                require_client(client)?
+                    .host_state()
+                    .map(|v| WelcomeSummary::from_host_state(&v))
+            },
+        ),
+
+        Cmd::CompleteFirstRun { outcome, form_id } => {
+            let action = format!("POST first-run outcome={outcome}");
+            let (write, verify) = with_busy(store, wake, "recording the first-run outcome", || {
+                let write = require_client(client).and_then(|c| c.complete_first_run(&outcome));
+                let verify = require_client(client).and_then(|c| c.first_run_state());
+                (write, verify)
+            });
+            let after = verify.as_ref().ok().map(FirstRunState::from_value);
+            let verified = after.as_ref().map(|a| first_run_verify(&outcome, a));
+            // The finish row leaves the wizard ONLY on a verified write:
+            // a POST that answered but a GET that disagrees keeps the
+            // operator in the guide with the reason on screen.
+            let combined = match (&write, &verified) {
+                (Err(e), _) => Err(refusal_text(e)),
+                (Ok(_), Some(Ok(v))) => Ok(v.clone()),
+                (Ok(_), Some(Err(v))) => Err(format!("VERIFY FAILED: {v}")),
+                (Ok(_), None) => Err("the verifying GET /host/first-run failed".to_string()),
+            };
+            if let Some(a) = after {
+                publish_ready(wake, store.first_run, a);
+            }
+            finish_write(store, wake, action, write, verified, None, on_done);
+            if let Some(fid) = form_id {
+                on_done(fid, combined);
+            }
+        }
 
         Cmd::PollHostState { gen, first } => {
             // The GET runs on the worker lane; the busy label shows only
@@ -1280,6 +1618,7 @@ fn handle(
             bundle_id,
             version,
             dest,
+            form_id,
         } => {
             let label = format!("{bundle_id}@{version}");
             let action = format!("EXPORT workflow '{label}' to {dest}");
@@ -1317,9 +1656,36 @@ fn handle(
                     "ok": true, "path": dest, "bytes": bytes.len(),
                 }))
             });
-            let verified = Some(Ok(format!("wrote {dest}")));
-            finish_write(store, wake, action, write, verified, None, on_done);
+            // Verified only by the file itself: it exists and holds exactly
+            // the bytes the gateway sent. A failed download verifies nothing.
+            let verified = export_verified(&write, std::path::Path::new(&dest));
+            finish_write(store, wake, action, write, verified, form_id, on_done);
         }
+
+        Cmd::LoadApps { latest } => apps::load(client, store, wake, tx, latest),
+        Cmd::AppAct {
+            app_id,
+            name,
+            verb,
+            path,
+            start_first,
+        } => apps::act(
+            client,
+            store,
+            wake,
+            tx,
+            &app_id,
+            &name,
+            verb,
+            path,
+            start_first,
+        ),
+        Cmd::CancelAppJob { key, name, job_id } => {
+            apps::cancel(client, store, wake, tx, &key, &name, &job_id)
+        }
+        Cmd::InstallAppsNode => apps::install_node(client, store, wake, tx),
+        Cmd::LoadAppLog { app_id, tail } => apps::load_log(client, store, wake, &app_id, tail),
+        Cmd::PollAppJobs { gen, jobs } => apps::poll(client, store, wake, tx, gen, jobs),
 
         Cmd::LoadRuntimes => load(store, wake, "loading runtimes", store.runtimes, || {
             require_client(client)?
@@ -1518,9 +1884,15 @@ fn handle(
             wake.post(move || s.notice.set(Some(note.clone())));
         }
 
-        Cmd::LoadAbout => load(store, wake, "reading the gateway's versions", store.about, || {
-            require_client(client)?.about()
-        }),
+        Cmd::Operator(op) => operator::handle(client, store, wake, tx, op, on_done),
+
+        Cmd::LoadAbout => load(
+            store,
+            wake,
+            "reading the gateway's versions",
+            store.about,
+            || require_client(client)?.about(),
+        ),
 
         Cmd::LoadRuntimeConfig => load(
             store,
@@ -1796,7 +2168,18 @@ fn handle(
                     Ok(format!("GET re-read the route grid — {summary}"))
                 }
             });
-            finish_write(store, wake, action, write, verified, None, on_done);
+            let (attention, followup) = write
+                .as_ref()
+                .ok()
+                .map(|v| applied_recommended_followup(v, force))
+                .unwrap_or((None, None));
+            finish_write_attention(
+                store, wake, action, write, verified, attention, None, on_done,
+            );
+            if let Some(label) = followup {
+                let s = *store;
+                wake.post(move || s.apply_followup.set(Some(label.to_string())));
+            }
             if let Ok(v) = verify {
                 publish_ready(wake, store.routes, RoutesData::from_value(&v));
             }
@@ -1914,14 +2297,79 @@ fn handle(
         Cmd::SandboxTest {
             provider,
             model,
-            prompt,
+            prompt: _,
+            request,
         } => {
             let label = format!("sandbox test: {provider}/{model}");
-            load(store, wake, &label, store.sandbox, || {
-                require_client(client)?
-                    .sandbox_generate("output.text", &provider, &model, &prompt, 64)
-                    .map(|v| SandboxOutcome::from_value(&provider, &model, &v))
+            let s = *store;
+            wake.post(move || s.sandbox.set(Loadable::Loading));
+            let started = std::time::Instant::now();
+            let out = with_busy(store, wake, &label, || {
+                require_client(client)?.sandbox_generate(&request.0)
             });
+            let ms = started.elapsed().as_millis() as u64;
+            wake.post(move || crate::ui::sandbox::publish_text(&s, &provider, &model, out, ms));
+        }
+
+        Cmd::SandboxMedia { request } => {
+            let s = *store;
+            let out = with_busy(store, wake, &request.busy_label(), || {
+                require_client(client).and_then(|c| crate::ui::sandbox::perform_media(&c, &request))
+            });
+            wake.post(move || {
+                s.sandbox_ws.media.set(match out {
+                    Ok(o) => Loadable::Ready(o),
+                    Err(e) => Loadable::Failed(e),
+                })
+            });
+        }
+
+        Cmd::SandboxAttach { path, session_id } => {
+            let s = *store;
+            let out = with_busy(store, wake, "uploading attachment", || {
+                require_client(client)
+                    .and_then(|c| crate::ui::sandbox::perform_upload(&c, &path, &session_id))
+            });
+            wake.post(move || crate::ui::sandbox::publish_upload(&s, out));
+        }
+
+        Cmd::SandboxSpeak { request } => {
+            let s = *store;
+            let out = with_busy(store, wake, "speaking the reply", || {
+                require_client(client).and_then(|c| crate::ui::sandbox::perform_media(&c, &request))
+            });
+            wake.post(move || crate::ui::sandbox::publish_speech(&s, out));
+        }
+
+        Cmd::SandboxMtpCaps { provider, model } => {
+            let s = *store;
+            let sup = match require_client(client) {
+                Ok(c) => crate::ui::sandbox::load_mtp(&c, &provider, &model),
+                Err(e) => crate::ui::sandbox::MtpSupport::Unknown {
+                    target: format!("{provider}/{model}"),
+                    reason: format!("MTP support unknown: {}", e.message),
+                },
+            };
+            wake.post(move || crate::ui::sandbox::publish_mtp(&s, sup));
+        }
+
+        Cmd::DocsAsk {
+            question,
+            history,
+            op,
+        } => {
+            let r = require_client(client)
+                .and_then(|c| crate::ui::docs::start_ask(&c, &question, &history));
+            crate::ui::docs::after_start(store, wake, tx, op, r);
+        }
+
+        Cmd::DocsPoll {
+            run_id,
+            attempt,
+            op,
+        } => {
+            let r = require_client(client).and_then(|c| c.run_status(&run_id));
+            crate::ui::docs::after_poll(store, wake, tx, run_id, attempt, op, r);
         }
 
         Cmd::LoadVoices { provider, model } => {
@@ -1967,14 +2415,9 @@ fn handle(
                         }
                         c.run_voice_tts(&voice_run_id, &body)
                     } else {
-                        c.sandbox_generate_with_controls(
-                            &key,
-                            &provider,
-                            &model,
-                            "Reply with the single word: ready.",
-                            16,
-                            &controls,
-                        )
+                        c.sandbox_generate(&crate::api::sandbox_docs::route_test_body(
+                            &key, &provider, &model, &controls,
+                        ))
                     }
                 },
             );
@@ -2388,17 +2831,14 @@ fn handle(
             name,
             record_id,
             promote,
+            corroborating_ids,
             reason,
         } => {
             let verb = if promote { "promote" } else { "reject" };
             let short = suffix_chars(&record_id, 8);
             let action = format!("{verb} candidate …{short} on '{name}'");
             let (write, verify) = with_busy(store, wake, &action, || {
-                let body = if promote {
-                    serde_json::json!({ "corroborating_ids": [], "reason": reason })
-                } else {
-                    serde_json::json!({ "reason": reason })
-                };
+                let body = crate::store::candidate_act_body(promote, &corroborating_ids, &reason);
                 let write = require_client(client)
                     .and_then(|c| c.entity_candidate_act(&name, &record_id, promote, &body));
                 let verify = require_client(client).and_then(|c| c.entity_candidates(&name));
@@ -2422,6 +2862,8 @@ fn handle(
                 publish_ready(wake, store.entity_candidates, folded);
             }
         }
+
+        Cmd::Entity(e) => entities::handle(client, store, wake, e, on_done),
 
         Cmd::LoadRuns {
             scope,
@@ -2998,6 +3440,7 @@ fn finish_download(
     wake.post(move || {
         s.end_busy(op);
         s.push_journal(JournalEntry {
+            attention: None,
             when: crate::store::now_hms(),
             action,
             outcome: journal,
@@ -3008,6 +3451,116 @@ fn finish_download(
         });
         s.notice.set(Some(notice));
     });
+}
+
+/// "Download all": start the recommended group, then hand the lane back
+/// and watch the parent job with `PollDownloadGroup`. A response without
+/// `group` is a gateway that predates the download-group contract — the
+/// web console refuses it with the same sentence, and so does this.
+fn handle_download_recommended(
+    client: &mut Option<GatewayClient>,
+    store: &Store,
+    wake: &WakeHandle,
+    tx: &Sender<Cmd>,
+) {
+    let op = next_op();
+    let s = *store;
+    wake.post(move || s.begin_busy(op, "Download all (recommended models)"));
+    let started = (|| -> ApiResult<GroupStatus> {
+        let v = require_client(client)?.download_recommended(false)?;
+        let group = v
+            .get("group")
+            .filter(|g| g.is_object())
+            .ok_or_else(|| ApiError {
+                kind: ApiErrorKind::Protocol,
+                message: "the gateway started the downloads but returned no parent job (`group`); \
+                      it needs the download-group contract (docs/model-downloads.md)"
+                    .to_string(),
+                body: None,
+                timed_out: false,
+            })?;
+        Ok(GroupStatus::from_job(group))
+    })();
+    match started {
+        Ok(g) => {
+            let s = *store;
+            let first = g.clone();
+            wake.post(move || s.download_group.set(Some(first)));
+            let _ = tx.send(Cmd::PollDownloadGroup {
+                job: g.job,
+                op,
+                started_ms: now_ms(),
+            });
+        }
+        Err(e) => finish_download_group(store, wake, tx, op, Err(e)),
+    }
+}
+
+fn handle_poll_download_group(
+    client: &mut Option<GatewayClient>,
+    store: &Store,
+    wake: &WakeHandle,
+    tx: &Sender<Cmd>,
+    job: &str,
+    op: u64,
+    started_ms: u64,
+) {
+    let polled = require_client(client).and_then(|c| c.model_download_job(job));
+    let g = match polled {
+        Ok(v) => GroupStatus::from_job(&v.get("job").cloned().unwrap_or(Value::Null)),
+        Err(e) => {
+            finish_download_group(store, wake, tx, op, Err(e));
+            return;
+        }
+    };
+    let s = *store;
+    let snapshot = g.clone();
+    wake.post(move || s.download_group.set(Some(snapshot)));
+    if g.running() && now_ms().saturating_sub(started_ms) <= DOWNLOAD_POLL_LIMIT_MS {
+        let cmd = Cmd::PollDownloadGroup {
+            job: job.to_string(),
+            op,
+            started_ms,
+        };
+        let tx = tx.clone();
+        std::thread::Builder::new()
+            .name("download-group-poll-timer".into())
+            .spawn(move || {
+                std::thread::sleep(DOWNLOAD_POLL_INTERVAL);
+                let _ = tx.send(cmd);
+            })
+            .ok();
+    } else {
+        finish_download_group(store, wake, tx, op, Ok(g));
+    }
+}
+
+fn finish_download_group(
+    store: &Store,
+    wake: &WakeHandle,
+    tx: &Sender<Cmd>,
+    op: u64,
+    outcome: ApiResult<GroupStatus>,
+) {
+    let (notice, journal) = match &outcome {
+        Ok(g) => (g.line(), Ok(format!("{} ({})", g.status, g.message))),
+        Err(e) => (format!("Download all: {e}"), Err(e.to_string())),
+    };
+    let s = *store;
+    wake.post(move || {
+        s.end_busy(op);
+        s.push_journal(JournalEntry {
+            attention: None,
+            when: crate::store::now_hms(),
+            action: "POST download recommended (Download all)".to_string(),
+            outcome: journal,
+            // The parent job's own terminal state is the verification;
+            // the availability re-read below refreshes the plan cards.
+            verified: None,
+        });
+        s.notice.set(Some(notice));
+    });
+    let _ = tx.send(Cmd::LoadAvailability);
 }
 
 fn now_ms() -> u64 {
@@ -3071,12 +3624,54 @@ fn write_failure_text(v: &Value) -> String {
     }
 }
 
+/// The export's journal verdict: a failed download verifies nothing
+/// (`None` — the journal shows the failure); a written file is verified
+/// only when it holds exactly the bytes the gateway sent.
+pub fn export_verified(
+    write: &ApiResult<Value>,
+    path: &std::path::Path,
+) -> Option<Result<String, String>> {
+    let v = write.as_ref().ok()?;
+    let want = v.get("bytes").and_then(Value::as_u64).unwrap_or(0);
+    Some(export_verify(path, want))
+}
+
+/// The file on disk holds exactly `want` bytes.
+fn export_verify(path: &std::path::Path, want: u64) -> Result<String, String> {
+    match std::fs::metadata(path) {
+        // The size LEADS: a journal row cut at 80 columns still says it.
+        Ok(m) if m.len() == want => Ok(format!("{want} bytes in {}", path.display())),
+        Ok(m) => Err(format!(
+            "{} holds {} bytes, the gateway sent {want}",
+            path.display(),
+            m.len()
+        )),
+        Err(e) => Err(format!("cannot read back {}: {e}", path.display())),
+    }
+}
+
 fn finish_write(
     store: &Store,
     wake: &WakeHandle,
     action: String,
     write: ApiResult<Value>,
     verified: Option<Result<String, String>>,
+    form_id: Option<u64>,
+    on_done: &(impl Fn(u64, Result<String, String>) + Send + 'static),
+) {
+    finish_write_attention(store, wake, action, write, verified, None, form_id, on_done)
+}
+
+/// [`finish_write`] for a write whose verified result still needs the
+/// operator's attention (journaled and noticed in the warning tone).
+#[allow(clippy::too_many_arguments)]
+fn finish_write_attention(
+    store: &Store,
+    wake: &WakeHandle,
+    action: String,
+    write: ApiResult<Value>,
+    verified: Option<Result<String, String>>,
+    attention: Option<String>,
     form_id: Option<u64>,
     on_done: &(impl Fn(u64, Result<String, String>) + Send + 'static),
 ) {
@@ -3111,6 +3706,7 @@ fn finish_write(
         wake.post(move || s.net_fail_seq.update(|n| *n += 1));
     }
     let entry = JournalEntry {
+        attention: attention.clone(),
         when: crate::store::now_hms(),
         action: action.clone(),
         outcome: outcome.clone(),
@@ -3122,6 +3718,12 @@ fn finish_write(
     wake.post(move || {
         let note = match &entry.outcome {
             Ok(_) => match &entry.verified {
+                Some(Ok(v)) if entry.attention.is_some() => format!(
+                    "{} — applied, NEEDS ATTENTION: {} — {}",
+                    entry.action,
+                    entry.attention.as_deref().unwrap_or_default(),
+                    v
+                ),
                 Some(Ok(v)) => format!("{} — verified: {}", entry.action, v),
                 Some(Err(v)) => format!("{} — VERIFY FAILED: {}", entry.action, v),
                 None => format!("{} — applied (verify unavailable)", entry.action),
@@ -3136,6 +3738,42 @@ fn finish_write(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Export verify (review 2 N3): a failed download (a non-admin's 404)
+    /// verifies nothing; a written file verifies only at the exact size.
+    #[test]
+    fn export_verifies_only_a_written_file_of_the_sent_size() {
+        let dir = std::env::temp_dir().join(format!("agc-export-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("demo@1.0.0.flow");
+        let refused: ApiResult<Value> = Err(ApiError {
+            kind: ApiErrorKind::Http(404),
+            message: "not found".into(),
+            body: None,
+            timed_out: false,
+        });
+        assert!(
+            export_verified(&refused, &path).is_none(),
+            "a 404 verifies nothing"
+        );
+        std::fs::write(&path, b"12345").unwrap();
+        let ok: ApiResult<Value> = Ok(serde_json::json!({"ok": true, "bytes": 5}));
+        assert!(
+            export_verified(&ok, &path).unwrap().is_ok(),
+            "exact size verifies"
+        );
+        let short: ApiResult<Value> = Ok(serde_json::json!({"ok": true, "bytes": 9}));
+        assert!(
+            export_verified(&short, &path).unwrap().is_err(),
+            "a size mismatch fails"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        let gone = dir.join("missing.flow");
+        assert!(
+            export_verified(&ok, &gone).unwrap().is_err(),
+            "no file fails"
+        );
+    }
     use serde_json::json;
 
     /// In-band write refusals journal their ACTIONABLE text: plural `errors`

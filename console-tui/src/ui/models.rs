@@ -14,7 +14,7 @@ use abstracttui::base::Rgba;
 use abstracttui::prelude::*;
 use abstracttui::widgets::{Progress, Table, Tabs, Tone};
 
-use super::util::{badge, field, field_w, line, loadable_view, span, span_bold, wrap_text};
+use super::util::{badge, field, field_w, line, span, span_bold, wrap_text};
 use super::widths;
 use super::widths::BLOCK_CHROME;
 use super::Ctx;
@@ -179,6 +179,14 @@ pub fn totals_line(d: &HostStateData) -> String {
 // The screen
 // ---------------------------------------------------------------------
 
+/// The footer verbs of this screen that only an admin may use: the
+/// residency mutations (`/models/load|unload|lock|unlock`) and the
+/// enumeration-based cache clear (`/sessions/{id}/prompt_cache/clear_all`)
+/// — the web renders them for admins only (renderModelsLoadForm,
+/// renderModelsTable, renderSessionCaches). Reads and the context
+/// estimate stay open to every principal.
+pub const ADMIN_KEYS: &[&str] = &["u", "k", "w", "c"];
+
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
@@ -235,10 +243,10 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ctx_est = ctx.clone();
     let ctx_clear = ctx.clone();
     let detail_top = ui.models_detail_top;
-    // First-mount-only autofocus (the runtimes-table pattern): this
-    // screen's table region regenerates on EVERY ~4s poll — a re-armed
-    // autofocus would yank focus back mid-keystroke each time.
-    let autofocus_armed = std::rc::Rc::new(std::cell::Cell::new(false));
+    // This screen's table region regenerates on EVERY ~4s poll: the
+    // keeper carries the keyboard from one table instance to the next
+    // (and never yanks it back from elsewhere).
+    let keeper = super::util::FocusKeeper::new();
 
     Element::new()
         .style(LayoutStyle::column().gap(0))
@@ -269,9 +277,15 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .child(
             Block::new()
                 .border(BorderKind::Rounded)
+                // The title must fit INSIDE the border: at 80 columns the
+                // long one ran into the corner (no closing run).
                 .title(
-                    "Resources — what is resident on the execution host right now \
-                     · ~ = estimated size, not measured",
+                    if abstracttui::app::use_viewport(cx).get_untracked().w >= 110 {
+                        "Resources — what is resident on the execution host right now \
+                         · ~ = estimated size, not measured"
+                    } else {
+                        "Resources — resident on the execution host · ~ = estimated"
+                    },
                 )
                 .fill(t.surface)
                 .layout(
@@ -295,20 +309,15 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     move |gcx| {
                         let data = store.host_state.get();
                         let _ = &ctx_body;
-                        loadable_view(
+                        super::util::loadable_view_kept(
+                            &keeper,
                             &tt,
                             &store.conn.get(),
                             || store.tick.get(),
                             &data,
                             |_d: &HostStateData| false, // the strip renders even with zero rows
                             "",
-                            |d| {
-                                let first = !autofocus_armed.get();
-                                if first {
-                                    autofocus_armed.set(true);
-                                }
-                                body(gcx, &tt, ui, d, first)
-                            },
+                            |d| body(gcx, &tt, ui, d, &keeper),
                         )
                     }
                 }))
@@ -359,7 +368,13 @@ const PAGE_CHROME_ROWS: usize = 9;
 /// renders whole, exactly as before. Nothing is shrunk and nothing is
 /// reordered: at 80x24 the itemization is one `m` away instead of
 /// unreachable, and the table is on screen instead of past the border.
-fn body(cx: Scope, t: &TokenSet, ui: super::UiState, d: &HostStateData, autofocus: bool) -> View {
+fn body(
+    cx: Scope,
+    t: &TokenSet,
+    ui: super::UiState,
+    d: &HostStateData,
+    keeper: &super::util::FocusKeeper,
+) -> View {
     let tt = *t;
     let models = d.models.clone();
     let caches = d.caches.clone();
@@ -472,11 +487,13 @@ fn body(cx: Scope, t: &TokenSet, ui: super::UiState, d: &HostStateData, autofocu
         .child(strip.build())
         .child(
             Tabs::new()
-                .tab("Loaded", move || {
-                    models_table(cx, &tt, &models, ui.model_sel, autofocus)
+                .tab("Loaded", {
+                    let keeper = keeper.clone();
+                    move || models_table(cx, &tt, &models, ui.model_sel, &keeper)
                 })
-                .tab("Caches", move || {
-                    caches_table(cx, &tt, &caches, ui.cache_sel)
+                .tab("Caches", {
+                    let keeper = keeper.clone();
+                    move || caches_table(cx, &tt, &caches, ui.cache_sel, &keeper)
                 })
                 .active(ui.models_tab)
                 .layout(LayoutStyle::column().grow(1.0))
@@ -784,13 +801,13 @@ fn models_table(
     t: &TokenSet,
     data: &[ModelRow],
     sel: Signal<usize>,
-    autofocus: bool,
+    keeper: &super::util::FocusKeeper,
 ) -> View {
     if data.is_empty() {
-        return line(vec![span(
+        return keeper.anchor(line(vec![span(
             "∅ no models resident — w warms one up",
             t.text_muted,
-        )]);
+        )]));
     }
     let w = abstracttui::app::use_viewport(cx).get().w;
     let mut rows: Vec<Vec<String>> = data.iter().map(model_row_cells).collect();
@@ -809,24 +826,27 @@ fn models_table(
         widths::ColRule::head("default", 7),
     ];
     let cols = widths::columns(&rules, &mut rows, w - BLOCK_CHROME);
-    let el = Table::new(cols)
-        .rows(rows)
-        .selection(sel)
-        .layout(LayoutStyle::default().grow(1.0))
-        .element(cx, t);
-    if autofocus {
-        el.autofocus().build()
-    } else {
-        el.build()
-    }
+    keeper.wire(
+        Table::new(cols)
+            .rows(rows)
+            .selection(sel)
+            .layout(LayoutStyle::default().grow(1.0))
+            .element(cx, t),
+    )
 }
 
-fn caches_table(cx: Scope, t: &TokenSet, data: &[SessionCacheRow], sel: Signal<usize>) -> View {
+fn caches_table(
+    cx: Scope,
+    t: &TokenSet,
+    data: &[SessionCacheRow],
+    sel: Signal<usize>,
+    keeper: &super::util::FocusKeeper,
+) -> View {
     if data.is_empty() {
-        return line(vec![span(
+        return keeper.anchor(line(vec![span(
             "∅ no session prompt caches on the host",
             t.text_muted,
-        )]);
+        )]));
     }
     let w = abstracttui::app::use_viewport(cx).get().w;
     let mut rows: Vec<Vec<String>> = data.iter().map(cache_row_cells).collect();
@@ -838,12 +858,13 @@ fn caches_table(cx: Scope, t: &TokenSet, data: &[SessionCacheRow], sel: Signal<u
         widths::ColRule::head("tokens", 7),
     ];
     let cols = widths::columns(&rules, &mut rows, w - BLOCK_CHROME);
-    Table::new(cols)
-        .rows(rows)
-        .selection(sel)
-        .layout(LayoutStyle::default().grow(1.0))
-        .element(cx, t)
-        .build()
+    keeper.wire(
+        Table::new(cols)
+            .rows(rows)
+            .selection(sel)
+            .layout(LayoutStyle::default().grow(1.0))
+            .element(cx, t),
+    )
 }
 
 // ---------------------------------------------------------------------
@@ -884,6 +905,9 @@ fn model_pair(row: &ModelRow) -> Option<(String, String)> {
 /// confirm (the row's own `locked` may be stale) — the confirm text
 /// forewarns when the row already says locked.
 fn unload_selected(cx: Scope, ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "unloading a model") {
+        return;
+    }
     let Some(row) = selected_model(ctx) else {
         ctx.store
             .notice
@@ -935,6 +959,9 @@ fn unload_selected(cx: Scope, ctx: &Ctx) {
 /// a refusal we invent. [`lock_action`] is the single authority — the
 /// same one the row's hint line reads.
 fn toggle_lock_selected(cx: Scope, ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "locking or unlocking a model") {
+        return;
+    }
     let Some(row) = selected_model(ctx) else {
         ctx.store
             .notice
@@ -1022,6 +1049,9 @@ fn catalog_for(store: &crate::store::Store, provider: &str) -> Loadable<Vec<Stri
 /// highlighted row when there is one. The optional lock-after-load rides
 /// the same POST (`lock: true`).
 fn open_warmup_form(cx: Scope, ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "loading (warming up) a model") {
+        return;
+    }
     let prefill = selected_model(ctx).and_then(|r| model_pair(&r));
     let store = ctx.store;
     // The catalog may never have been fetched (this tab is reachable
@@ -1387,6 +1417,9 @@ fn estimate_selected(ctx: &Ctx) {
 /// `c` — clear every prompt cache of the selected cache row's session
 /// (Caches sub-tab only; danger-confirmed).
 fn clear_caches_selected(cx: Scope, ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "clearing session caches") {
+        return;
+    }
     if ctx.ui.models_tab.get_untracked() != 1 {
         ctx.store.notice.set(Some(
             "switch to the Caches tab — c clears the selected session's caches there".into(),

@@ -13,6 +13,14 @@ use serde_json::Value;
 
 use crate::api::ApiError;
 
+/// The Apps screen's rows, decision rules and signals.
+#[path = "store_apps.rs"]
+pub mod apps;
+/// Operator controls (host card, paused banner, own workspace policy,
+/// backlog settings): state + pure parsing, in its own file.
+#[path = "store_operator.rs"]
+pub mod operator;
+
 /// Remote data honesty: never render a guess.
 #[derive(Clone, Debug, Default)]
 pub enum Loadable<T> {
@@ -131,6 +139,40 @@ pub enum ConnPhase {
 impl ConnPhase {
     pub fn is_connected(&self) -> bool {
         matches!(self, ConnPhase::Connected(_))
+    }
+
+    /// Connected with an admin principal (`/me` said `admin: true`).
+    pub fn is_admin(&self) -> bool {
+        matches!(self, ConnPhase::Connected(id) if id.admin)
+    }
+
+    /// A principal is known and it is NOT an admin. A connection being
+    /// re-verified keeps its identity, so a screen gated on this does not
+    /// flicker while the health authority re-checks.
+    pub fn is_known_non_admin(&self) -> bool {
+        matches!(self, ConnPhase::Connected(id) | ConnPhase::Verifying(id) if !id.admin)
+    }
+
+    /// Why an admin-only act is refused BEFORE anything is sent, or None
+    /// when it may go. `what` names the act ("applying the recommended
+    /// routes"). The admin rule is the gateway's own
+    /// (`security/authorization.py` GATEWAY_ROUTE_POLICIES and the handlers'
+    /// admin checks); the web console hides these controls for the same
+    /// principals — a key here says why instead of earning a 403.
+    pub fn admin_refusal(&self, what: &str) -> Option<String> {
+        match self {
+            ConnPhase::Connected(id) if id.admin => None,
+            // An admin whose connection is being re-checked: not refused
+            // for the ROLE, only for the moment.
+            ConnPhase::Verifying(id) if id.admin => {
+                Some("the connection is being re-verified — try again in a moment".to_string())
+            }
+            ConnPhase::Connected(id) | ConnPhase::Verifying(id) => Some(format!(
+                "{what} is admin-only on the gateway — signed in as {}, not an admin",
+                id.user_id
+            )),
+            _ => Some("not connected — probe on the Connection screen first".to_string()),
+        }
     }
 }
 
@@ -354,6 +396,56 @@ pub struct RouteRow {
     /// writes `output.image` alone). The parent answers it, so it is not
     /// unconfigured in effect and must not be painted as a gap.
     pub inherits_broad: bool,
+    /// AbstractCore's host-aware recommendation for this UNSET row names
+    /// an engine this host cannot run (`recommendation_unavailable`
+    /// {provider, model, reason}): the row stays unset and says why.
+    /// `None` on a row without it (and on an older gateway).
+    pub recommendation_unavailable: Option<RecommendationUnavailable>,
+    /// The mirror for a CONFIGURED row (`route_unavailable`, same shape):
+    /// its provider cannot run on this host (an install seeded before the
+    /// host-aware recommendation still holding `output.image: mlx-gen` on
+    /// Linux). Rendered as a warning, never as a working route.
+    pub route_unavailable: Option<RecommendationUnavailable>,
+}
+
+/// `recommendation_unavailable` on a capability-defaults row.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RecommendationUnavailable {
+    pub provider: String,
+    pub model: String,
+    pub reason: String,
+}
+
+impl RecommendationUnavailable {
+    /// "mlx-gen · model", or "" when Core named neither (the core
+    /// console's `RouteUnavailable::pair_text`).
+    pub fn pair_text(&self) -> String {
+        match (self.provider.is_empty(), self.model.is_empty()) {
+            (true, true) => String::new(),
+            _ => format!(
+                "{} · {}",
+                if self.provider.is_empty() {
+                    "?"
+                } else {
+                    &self.provider
+                },
+                if self.model.is_empty() {
+                    "?"
+                } else {
+                    &self.model
+                }
+            ),
+        }
+    }
+
+    pub fn from_value(v: &Value) -> Option<RecommendationUnavailable> {
+        let reason = s(v, "reason").filter(|r| !r.is_empty())?;
+        Some(RecommendationUnavailable {
+            provider: s(v, "provider").unwrap_or_default(),
+            model: s(v, "model").unwrap_or_default(),
+            reason,
+        })
+    }
 }
 
 impl RouteRow {
@@ -400,6 +492,12 @@ impl RouteRow {
                 .unwrap_or_default(),
             covered_by_tasks: b(v, "covered_by_tasks").unwrap_or(false),
             inherits_broad: b(v, "inherits_broad").unwrap_or(false),
+            recommendation_unavailable: v
+                .get("recommendation_unavailable")
+                .and_then(RecommendationUnavailable::from_value),
+            route_unavailable: v
+                .get("route_unavailable")
+                .and_then(RecommendationUnavailable::from_value),
             key,
         })
     }
@@ -448,6 +546,11 @@ impl RouteRow {
             return format!("covered by {by}");
         }
         if self.configured {
+            // Configured, but this host cannot run it: the reason rides
+            // the selected-row line and the `p` plan.
+            if self.route_unavailable.is_some() {
+                return "cannot run here".to_string();
+            }
             return "configured".to_string();
         }
         // AN UNSET PARENT WHOSE TASK ROWS ARE ALL SET IS NOT A PROBLEM.
@@ -466,6 +569,11 @@ impl RouteRow {
         // parent and read as "image editing is not set up".
         if self.inherits_broad {
             return "inherited".to_string();
+        }
+        // Unset BECAUSE the recommendation cannot run on this host: the
+        // reason rides the selected-row line and the `p` plan.
+        if self.recommendation_unavailable.is_some() {
+            return "unavailable here".to_string();
         }
         "not configured".to_string()
     }
@@ -598,6 +706,10 @@ pub struct AvailabilityData {
     /// _mark_recommended_route_gaps`) so this screen and the web console
     /// cannot disagree about which host is actually short of something.
     pub missing: Vec<(String, String, String)>,
+    /// The whole recommended set for this computer
+    /// (`recommended.recommended[]`), each row with its status and
+    /// AbstractCore's fit `warning` — the web guide's model-step cards.
+    pub plan: Vec<crate::api::firstrun::PlanRow>,
 }
 
 impl AvailabilityData {
@@ -661,6 +773,7 @@ impl AvailabilityData {
             absent: n("absent"),
             unknown: n("unknown"),
             missing,
+            plan: crate::api::firstrun::plan_rows(v),
         }
     }
 }
@@ -1191,6 +1304,8 @@ pub struct NetworkData {
     pub modes: Vec<NetworkMode>,
     pub addresses: Vec<NetworkAddress>,
     pub copy_hint: String,
+    /// `discovery.public_note`: why a requested WAN lookup did not run.
+    pub public_note: Option<String>,
     pub warnings: Vec<String>,
     /// Reverse proxy (`reverse_proxy`, mission Z): the stored origins the
     /// edit line changes, where the winning value comes from
@@ -1229,7 +1344,12 @@ impl ReverseProxyView {
         let strs = |x: &Value, k: &str| -> Vec<String> {
             x.get(k)
                 .and_then(Value::as_array)
-                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
                 .unwrap_or_default()
         };
         let st = |x: &Value, k: &str| x.get(k).and_then(Value::as_str).unwrap_or("").to_string();
@@ -1317,6 +1437,11 @@ impl NetworkData {
             modes,
             addresses,
             copy_hint: s(v, "copy_hint"),
+            public_note: v
+                .get("discovery")
+                .and_then(|d| d.get("public_note"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
             proxy: ReverseProxyView::from_value(v.get("reverse_proxy")),
             warnings: v
                 .get("warnings")
@@ -1375,6 +1500,9 @@ pub struct RuntimeConfigData {
     /// `agents.streaming_default`; None when this gateway's read lacks it
     /// (the knob row then says "not available on this gateway").
     pub streaming_default: Option<StreamingDefault>,
+    /// Backlog settings (triage_repo_root, backlog_exec_runner,
+    /// process_manager) — rendered by their own rows, not as knobs.
+    pub backlog: Vec<operator::BacklogSetting>,
 }
 
 /// `agents.streaming_default`: whether interactive runs that do not ask
@@ -1435,7 +1563,11 @@ pub fn skills_shelf_from(v: &Value) -> Option<SkillsShelf> {
         warnings: r
             .get("warnings")
             .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(|w| w.as_str().map(str::to_string)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|w| w.as_str().map(str::to_string))
+                    .collect()
+            })
             .unwrap_or_default(),
     })
 }
@@ -1480,7 +1612,9 @@ pub fn agent_defaults_from(v: &Value) -> Vec<AgentDefault> {
                 source: s(row, "source").unwrap_or_else(|| "?".into()),
                 available: b(row, "available").unwrap_or(false),
                 reason: s(row, "reason").unwrap_or_default(),
-                workflow_id: resolved.and_then(|r| s(r, "workflow_id")).unwrap_or_default(),
+                workflow_id: resolved
+                    .and_then(|r| s(r, "workflow_id"))
+                    .unwrap_or_default(),
                 name: resolved.and_then(|r| s(r, "name")).unwrap_or_default(),
                 builtin: s(row, "default").unwrap_or_default(),
                 eligible: row
@@ -1534,6 +1668,9 @@ impl RuntimeConfigData {
                 let (Some(value), Some(source)) = (val.get("value"), val.get("source")) else {
                     continue;
                 };
+                if operator::BACKLOG_KEYS.contains(&key.as_str()) {
+                    continue; // their own rows (store::operator)
+                }
                 if key == "workspace_root" {
                     workspace_root = match value {
                         Value::Null => String::new(),
@@ -1700,6 +1837,7 @@ impl RuntimeConfigData {
             agent_defaults: agent_defaults_from(v),
             skills_shelf: skills_shelf_from(v),
             streaming_default: streaming_default_from(v),
+            backlog: operator::backlog_settings_from(v),
         }
     }
 }
@@ -2402,6 +2540,10 @@ pub struct JournalEntry {
     pub outcome: Result<String, String>,
     /// What the follow-up GET showed (verify-after-write law).
     pub verified: Option<Result<String, String>>,
+    /// The write applied and verified, but the result needs the
+    /// operator's attention (e.g. a route this computer cannot run) —
+    /// rendered in the warning tone, never as a plain success.
+    pub attention: Option<String>,
 }
 
 /// An in-flight operation for the busy strip (elapsed rendering).
@@ -2437,6 +2579,19 @@ pub struct Store {
     /// The download job the operator most recently started, polled to
     /// completion by the worker. `None` = no download this session.
     pub download: Signal<Option<DownloadStatus>>,
+    /// The "Download all" parent job (`grp_…`) the operator started,
+    /// polled until it ends. `None` = none this session.
+    pub download_group: Signal<Option<crate::api::firstrun::GroupStatus>>,
+    /// After a non-forced apply-recommended that kept routes or left a
+    /// broken one: the forced second pass the web offers, with its label
+    /// ("Replace mine too" / "Clear what cannot run here").
+    pub apply_followup: Signal<Option<String>>,
+    /// `GET /host/first-run` — whether the setup guide ran for this data
+    /// dir (read at connect; decides the boot mode).
+    pub first_run: Signal<Loadable<crate::api::firstrun::FirstRunState>>,
+    /// The Setup (welcome) step's summary of this computer, folded from
+    /// one `GET /host/state` read.
+    pub welcome: Signal<Loadable<crate::api::firstrun::WelcomeSummary>>,
     /// The `GET /host/state` snapshot behind the Models tab: memory +
     /// GPU gauges, resident models, session prompt caches.
     pub host_state: Signal<Loadable<HostStateData>>,
@@ -2463,11 +2618,16 @@ pub struct Store {
     /// The registered workflow registry: one row per bundle, plus the
     /// versions the gateway refused to serve.
     pub workflows: Signal<Loadable<WorkflowsData>>,
+    /// The Apps screen (browser apps, Node.js, their jobs): store_apps.rs.
+    pub apps: apps::AppsStore,
     pub runtime_config: Signal<Loadable<RuntimeConfigData>>,
     /// `GET /about` of the connected gateway (About modal).
     pub about: Signal<Loadable<Value>>,
     /// Network exposure + reachable addresses (Connection screen).
     pub network: Signal<Loadable<NetworkData>>,
+    /// Operator controls: host runner/tray/update, paused-banner poll,
+    /// the caller's own workspace policy (see `store::operator`).
+    pub op: operator::OperatorStore,
     /// Per-provider model lists (route editor + provider browser).
     pub models: Signal<HashMap<String, Loadable<Vec<String>>>>,
     /// Result of the LAST discover-models call — a single slot, which
@@ -2475,6 +2635,12 @@ pub struct Store {
     /// (open_form closes any predecessor); openers must reset it.
     pub discover: Signal<Loadable<DiscoverOutcome>>,
     pub sandbox: Signal<Loadable<SandboxOutcome>>,
+    /// The sandbox workspace beyond the text outcome: mode, text
+    /// controls + history, the media result (ui/sandbox.rs).
+    pub sandbox_ws: crate::ui::sandbox::SandboxWs,
+    /// The docs assistant conversation (ui/docs.rs) — keep-alive across
+    /// modal close/open, like the web drawer.
+    pub docs: crate::ui::docs::DocsState,
     /// Voice catalog for the route editor's voice picker. The (provider,
     /// model) pair the list was fetched FOR rides with the data, so a
     /// late response for a stale pick can never dress the wrong pair.
@@ -2491,6 +2657,17 @@ pub struct Store {
     pub entity_prompt: Signal<Loadable<PromptData>>,
     /// Candidates review state: (entity, rows).
     pub entity_candidates: Signal<Loadable<(String, Vec<CandidateRow>)>>,
+    /// The summon form's inputs: templates, creation defaults, providers,
+    /// the default capability grid (entity parity — `api::entities`).
+    pub entity_kit: Signal<Loadable<crate::api::entities::CreationKit>>,
+    /// The summon dry-run verdict for the name in the open form.
+    pub entity_check: Signal<Loadable<crate::api::entities::CreateCheck>>,
+    /// The identity card of the entity whose card is open.
+    pub entity_card: Signal<Loadable<crate::api::entities::EntityCard>>,
+    /// The console's one live Talk visit (local transcript, like the web).
+    pub entity_chat: Signal<crate::api::entities::ChatState>,
+    /// The voice audition's result (audio saved to a file).
+    pub entity_audition: Signal<Loadable<crate::api::entities::AuditionOutcome>>,
     /// Recent root runs of ONE runtime plane (follows the Runtimes
     /// screen's selection; scope rides with the rows).
     pub runs: Signal<Loadable<RunsData>>,
@@ -3074,6 +3251,28 @@ pub struct CandidateRow {
     pub kind: String,
 }
 
+/// The corroborating record ids an operator typed, split exactly like the
+/// web's promote prompt (`ids.split(",").map(s => s.trim()).filter(Boolean)`).
+pub fn parse_corroborating_ids(text: &str) -> Vec<String> {
+    text.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// The candidate act body, the web's exact shape (console.py
+/// loadEntityCandidates): promote = `{corroborating_ids, reason}` (the
+/// engine's independence test needs >= 2 distinct origins), reject =
+/// `{reason}`.
+pub fn candidate_act_body(promote: bool, corroborating_ids: &[String], reason: &str) -> Value {
+    if promote {
+        serde_json::json!({ "corroborating_ids": corroborating_ids, "reason": reason })
+    } else {
+        serde_json::json!({ "reason": reason })
+    }
+}
+
 pub fn candidates_from_payload(entity: &str, v: &Value) -> (String, Vec<CandidateRow>) {
     let rows = rows_from(v, &["candidates"], |c| {
         Some(CandidateRow {
@@ -3191,6 +3390,10 @@ impl Store {
             routes: cx.signal(Loadable::default()),
             availability: cx.signal(Loadable::default()),
             download: cx.signal(None),
+            download_group: cx.signal(None),
+            apply_followup: cx.signal(None),
+            first_run: cx.signal(Loadable::default()),
+            welcome: cx.signal(Loadable::default()),
             host_state: cx.signal(Loadable::default()),
             host_poll_gen: cx.signal(0),
             unload_locked: cx.signal(None),
@@ -3198,18 +3401,27 @@ impl Store {
             entities: cx.signal(Loadable::default()),
             runtimes: cx.signal(Loadable::default()),
             workflows: cx.signal(Loadable::default()),
+            apps: apps::AppsStore::create(cx),
             runtime_config: cx.signal(Loadable::default()),
             about: cx.signal(Loadable::default()),
             network: cx.signal(Loadable::default()),
+            op: operator::OperatorStore::create(cx),
             models: cx.signal(HashMap::new()),
             discover: cx.signal(Loadable::default()),
             sandbox: cx.signal(Loadable::default()),
+            sandbox_ws: crate::ui::sandbox::SandboxWs::create(cx),
+            docs: crate::ui::docs::DocsState::create(cx),
             voices: cx.signal(Loadable::default()),
             route_test: cx.signal(Loadable::default()),
             entity_detail: cx.signal(Loadable::default()),
             entity_policy: cx.signal(Loadable::default()),
             entity_prompt: cx.signal(Loadable::default()),
             entity_candidates: cx.signal(Loadable::default()),
+            entity_kit: cx.signal(Loadable::default()),
+            entity_check: cx.signal(Loadable::default()),
+            entity_card: cx.signal(Loadable::default()),
+            entity_chat: cx.signal(Default::default()),
+            entity_audition: cx.signal(Loadable::default()),
             runs: cx.signal(Loadable::default()),
             data_homes: cx.signal(Loadable::default()),
             artifacts: cx.signal(Loadable::default()),
@@ -3254,6 +3466,10 @@ impl Store {
             notice: _,        // transient toast
             download: _,      // survives: the job is on the OLD host, and
             // its status line is the only record of it
+            download_group: _, // survives: same reason as `download`
+            apply_followup,
+            first_run,
+            welcome,
             host_poll_gen, // bumped below: live poll chains must die
             // with the world they were reading
             providers,
@@ -3266,18 +3482,27 @@ impl Store {
             entities,
             runtimes,
             workflows,
+            apps,
             runtime_config,
             about,
             network,
+            op,
             models,
             discover,
             sandbox,
+            sandbox_ws,
+            docs,
             voices,
             route_test,
             entity_detail,
             entity_policy,
             entity_prompt,
             entity_candidates,
+            entity_kit,
+            entity_check,
+            entity_card,
+            entity_chat,
+            entity_audition,
             runs,
             data_homes,
             artifacts,
@@ -3295,6 +3520,11 @@ impl Store {
         // Weights are EXECUTION-HOST state: a different gateway is a
         // different machine, so this domain must never survive a switch.
         availability.set(Loadable::NotAsked);
+        // First-run state and the welcome summary belong to ONE
+        // gateway's data dir and machine.
+        first_run.set(Loadable::NotAsked);
+        apply_followup.set(None);
+        welcome.set(Loadable::NotAsked);
         // Host state is the same class of machine truth — and its poll
         // chain must not keep painting the OLD host under the new
         // header: the generation bump kills any in-flight chain.
@@ -3305,18 +3535,29 @@ impl Store {
         entities.set(Loadable::NotAsked);
         runtimes.set(Loadable::NotAsked);
         workflows.set(Loadable::NotAsked);
+        apps.reset();
         runtime_config.set(Loadable::NotAsked);
         about.set(Loadable::NotAsked);
         network.set(Loadable::NotAsked);
+        op.reset();
         models.update(|m| m.clear());
         discover.set(Loadable::NotAsked);
         sandbox.set(Loadable::NotAsked);
+        sandbox_ws.reset();
+        docs.reset();
         voices.set(Loadable::NotAsked);
         route_test.set(Loadable::NotAsked);
         entity_detail.set(Loadable::NotAsked);
         entity_policy.set(Loadable::NotAsked);
         entity_prompt.set(Loadable::NotAsked);
         entity_candidates.set(Loadable::NotAsked);
+        // Entity parity slots: a visit id or a template list from gateway
+        // A must never be driven against gateway B.
+        entity_kit.set(Loadable::NotAsked);
+        entity_check.set(Loadable::NotAsked);
+        entity_card.set(Loadable::NotAsked);
+        entity_chat.set(Default::default());
+        entity_audition.set(Loadable::NotAsked);
         runs.set(Loadable::NotAsked);
         data_homes.set(Loadable::NotAsked);
         artifacts.set(Loadable::NotAsked);
@@ -4357,5 +4598,68 @@ mod tests {
         let set = json!({"provider": "kokoro", "model": "m1", "voice": "af"});
         let d = EntityDetail::fold("castor", None, Some(&set), None, None);
         assert_eq!(d.voice, Some(("kokoro".into(), "m1".into(), "af".into())));
+    }
+
+    fn identity(admin: bool) -> Identity {
+        Identity::from_me(&json!({
+            "principal": {"user_id": "alice", "tenant_id": "default", "admin": admin}
+        }))
+        .unwrap()
+    }
+
+    /// The admin gate's reason: None for an admin, the principal named for
+    /// a non-admin (connected or being re-verified), "not connected"
+    /// otherwise.
+    #[test]
+    fn admin_refusal_names_the_principal() {
+        assert_eq!(
+            ConnPhase::Connected(identity(true)).admin_refusal("x"),
+            None
+        );
+        let why = ConnPhase::Connected(identity(false))
+            .admin_refusal("deleting a user")
+            .unwrap();
+        assert!(
+            why.contains("deleting a user is admin-only") && why.contains("alice"),
+            "{why}"
+        );
+        assert!(ConnPhase::Verifying(identity(false))
+            .admin_refusal("x")
+            .unwrap()
+            .contains("not an admin"));
+        let busy = ConnPhase::Verifying(identity(true))
+            .admin_refusal("x")
+            .unwrap();
+        assert!(
+            !busy.contains("not an admin") && busy.contains("re-verified"),
+            "{busy}"
+        );
+        assert!(ConnPhase::NotConnected
+            .admin_refusal("x")
+            .unwrap()
+            .contains("not connected"));
+        assert!(ConnPhase::Connected(identity(false)).is_known_non_admin());
+        assert!(ConnPhase::Verifying(identity(false)).is_known_non_admin());
+        assert!(!ConnPhase::Connected(identity(true)).is_known_non_admin());
+        assert!(
+            !ConnPhase::NotConnected.is_known_non_admin(),
+            "unknown is not non-admin"
+        );
+    }
+
+    /// Promote carries the typed ids split like the web's prompt; reject
+    /// carries only the reason.
+    #[test]
+    fn candidate_act_body_is_the_web_shape() {
+        let ids = parse_corroborating_ids(" rec_a, ,rec_b ,");
+        assert_eq!(ids, vec!["rec_a".to_string(), "rec_b".to_string()]);
+        assert_eq!(
+            candidate_act_body(true, &ids, "two sources"),
+            json!({"corroborating_ids": ["rec_a", "rec_b"], "reason": "two sources"})
+        );
+        assert_eq!(
+            candidate_act_body(false, &ids, "no"),
+            json!({"reason": "no"})
+        );
     }
 }

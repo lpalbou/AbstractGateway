@@ -195,7 +195,15 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData) -> View {
     let urls: Vec<String> = d.addresses.iter().map(|a| a.url.clone()).collect();
     let rows: Vec<String> = d.addresses.iter().map(address_row).collect();
     let addr_sel = cx.signal(0usize);
-    let visible = rows.len().clamp(1, 5) as i32;
+    // A tight terminal (the Connection screen's compact layout) lists 3
+    // addresses at a time; the list scrolls to the rest.
+    let max_rows =
+        if abstracttui::app::use_viewport(cx).get_untracked().h <= super::connection::TIGHT_ROWS {
+            3
+        } else {
+            5
+        };
+    let visible = rows.len().clamp(1, max_rows) as i32;
     let urls_c = urls.clone();
     let urls_a = urls.clone();
     let addresses = Element::new()
@@ -229,6 +237,36 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData) -> View {
     )]));
     if d.proxy.present {
         col = col.child(proxy_view(cx, ctx, t, &d));
+    }
+    // After the reverse proxy so the panel's Tab order stays put.
+    // WAN address (web: "Look up my public address" — admin, internet
+    // mode, no public address listed yet). One outbound HTTPS call made
+    // BY THE GATEWAY; the answer lands as a `public` address row.
+    if crate::store::operator::offers_public_lookup(&d) {
+        let ctx_l = ctx.clone();
+        col = col.child(
+            Element::new()
+                .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                .child(
+                    Button::new("Look up my public address")
+                        .on_click(move || {
+                            ctx_l.send(Cmd::Operator(crate::worker::operator::OpCmd::LookupPublic))
+                        })
+                        .element(cx, t)
+                        .build(),
+                )
+                .child(line(vec![span(
+                    "asks a public service which address your network shows the internet",
+                    t.text_faint,
+                )]))
+                .build(),
+        );
+    }
+    if let Some(note) = &d.public_note {
+        col = col.child(line(vec![span(
+            format!("public address: {note}"),
+            t.text_faint,
+        )]));
     }
     col.build()
 }
@@ -322,18 +360,21 @@ fn proxy_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &NetworkData) -> View {
         Element::new()
             .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
             .child(
-                TextInput::new()
-                    .value(origins_text)
-                    .placeholder("https://gateway.example.com (comma-separated)")
-                    .layout(LayoutStyle::default().w(60).h(1).shrink(0.0))
-                    .on_submit(move |text: &str| {
-                        ctx_o.send(Cmd::SetNetworkProxy {
-                            allowed_origins: Some(parse_origins_line(text)),
-                            trust_proxy: None,
+                super::util::esc_releases_focus(
+                    TextInput::new()
+                        .value(origins_text)
+                        .placeholder("https://gateway.example.com (comma-separated)")
+                        .layout(LayoutStyle::default().w(60).h(1).shrink(0.0))
+                        .on_submit(move |text: &str| {
+                            ctx_o.send(Cmd::SetNetworkProxy {
+                                allowed_origins: Some(parse_origins_line(text)),
+                                trust_proxy: None,
+                            })
                         })
-                    })
-                    .element(cx, t)
-                    .build(),
+                        .element(cx, t),
+                    ctx.store.notice,
+                )
+                .build(),
             )
             .child(line(vec![span("Enter saves · empty clears", t.text_faint)]))
             .build(),
