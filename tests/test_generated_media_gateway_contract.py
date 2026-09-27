@@ -67,6 +67,21 @@ def _wait_until(fn, *, timeout_s: float = 5.0, poll_s: float = 0.05) -> None:
     raise AssertionError("condition did not become true before timeout")
 
 
+
+def _configure_image_route(client: TestClient, headers: dict) -> None:
+    """Direct media endpoints are advertised only when an image route is configured.
+
+    The fresh-install seed writes an image route only on hosts that can run it
+    (AbstractCore >= 2.17: none on Linux runners), so these contract tests set one
+    explicitly instead of depending on the host.
+    """
+    resp = client.put(
+        "/api/gateway/config/capability-defaults/output/image",
+        json={"provider": "mflux", "model": "AbstractFramework/flux.2-klein-4b-4bit"},
+        headers=headers,
+    )
+    assert resp.status_code == 200, resp.text
+
 def test_gateway_direct_image_generation_uses_runtime_child_run_contract(tmp_path: Path, monkeypatch) -> None:
     runtime_dir = tmp_path / "runtime"
     bundles_dir = tmp_path / "bundles"
@@ -153,6 +168,7 @@ def test_gateway_direct_image_generation_uses_runtime_child_run_contract(tmp_pat
 
     headers = {"Authorization": f"Bearer {token}"}
     with TestClient(app) as client:
+        _configure_image_route(client, headers)
         start = client.post(
             "/api/gateway/runs/start",
             json={"bundle_id": "image-contract", "bundle_version": "0.0.0", "flow_id": "root", "input_data": {}},
@@ -314,6 +330,7 @@ def test_gateway_direct_image_edit_uses_runtime_child_run_contract(tmp_path: Pat
 
     headers = {"Authorization": f"Bearer {token}"}
     with TestClient(app) as client:
+        _configure_image_route(client, headers)
         start = client.post(
             "/api/gateway/runs/start",
             json={"bundle_id": "image-edit-contract", "bundle_version": "0.0.0", "flow_id": "root", "session_id": "sess-edit", "input_data": {}},
@@ -453,6 +470,7 @@ def test_gateway_direct_image_upscale_uses_runtime_child_run_contract(tmp_path: 
 
     headers = {"Authorization": f"Bearer {token}"}
     with TestClient(app) as client:
+        _configure_image_route(client, headers)
         start = client.post(
             "/api/gateway/runs/start",
             json={"bundle_id": "image-upscale-contract", "bundle_version": "0.0.0", "flow_id": "root", "session_id": "sess-upscale", "input_data": {}},
@@ -598,6 +616,7 @@ def test_gateway_direct_video_generation_uses_runtime_child_run_contract(tmp_pat
 
     headers = {"Authorization": f"Bearer {token}"}
     with TestClient(app) as client:
+        _configure_image_route(client, headers)
         start = client.post(
             "/api/gateway/runs/start",
             json={"bundle_id": "video-contract", "bundle_version": "0.0.0", "flow_id": "root", "input_data": {}},
@@ -750,6 +769,7 @@ def test_gateway_direct_image_to_video_uses_runtime_child_run_contract(tmp_path:
 
     headers = {"Authorization": f"Bearer {token}"}
     with TestClient(app) as client:
+        _configure_image_route(client, headers)
         start = client.post(
             "/api/gateway/runs/start",
             json={"bundle_id": "image-to-video-contract", "bundle_version": "0.0.0", "flow_id": "root", "session_id": "sess-video", "input_data": {}},
