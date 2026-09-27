@@ -413,6 +413,30 @@ def test_claim_url_uses_the_running_gateways_port(
     assert first_run.redeem_claim(code, data_dir=data)["user_id"] == "admin"
 
 
+def test_local_gateway_tiers_running_then_service_then_network_setting_then_8080(tmp_path: Path) -> None:
+    """One rule for every local client: the installer may have moved the gateway
+    off a busy 8080, and each record below knows where it went."""
+    from abstractgateway.os_service import service_record_path
+    from abstractgateway.runtime_config import write_network_setting
+
+    data = tmp_path / "data"
+    assert first_run.local_gateway(data)["url"] == "http://127.0.0.1:8080"
+    assert first_run.local_gateway(data)["source"] == "default"
+    write_network_setting(data, mode="localhost", port=18124, internet_acknowledged=None, actor="test")
+    assert first_run.local_gateway(data)["url"] == "http://127.0.0.1:18124"
+    assert first_run.local_gateway(data)["source"] == "network_setting"
+    service_record_path(data).parent.mkdir(parents=True, exist_ok=True)
+    service_record_path(data).write_text(json.dumps({"url": "http://127.0.0.1:18125", "pinned": False}), encoding="utf-8")
+    assert first_run.local_gateway(data)["url"] == "http://127.0.0.1:18124"  # plain `serve` binds the setting
+    service_record_path(data).write_text(json.dumps({"url": "http://127.0.0.1:18125"}), encoding="utf-8")
+    assert first_run.local_gateway(data)["source"] == "service_record"
+    first_run.write_serve_record(data_dir=data, host="127.0.0.1", port=18126, auth={}, data_dir_source="env")
+    assert first_run.local_gateway(data)["url"] == "http://127.0.0.1:18126"
+    rec = json.loads(first_run.serve_record_path(data).read_text(encoding="utf-8"))
+    first_run.serve_record_path(data).write_text(json.dumps({**rec, "pid": 2**22 + 12345}), encoding="utf-8")
+    assert first_run.local_gateway(data)["source"] == "service_record"  # a dead gateway's record is skipped
+
+
 def test_claim_refuses_a_token_mode_gateway(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     from abstractgateway import cli as gateway_cli
 

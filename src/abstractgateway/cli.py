@@ -639,10 +639,13 @@ def _run_models_command(args: argparse.Namespace) -> int:
     the gateway's JSON answer; exit 0 only when the gateway says it worked."""
     import json as _json
 
+    from .models_engines_cli import _resolve_connection
     from .tray.client import GatewayClient
 
-    token = args.token if args.token is not None else os.environ.get("ABSTRACTGATEWAY_AUTH_TOKEN", "")
-    client = GatewayClient(args.url, token)
+    # Same resolution as the other `models` verbs: the installer may have moved the
+    # gateway off 8080 (port busy), and the serve/service record knows where it is.
+    url, token, _source = _resolve_connection(args)
+    client = GatewayClient(url, token)
     if args.models_cmd == "loaded":
         query = {k: v for k, v in (("provider", args.provider), ("model", args.model)) if v}
         path = "/models/loaded" + (("?" + urllib.parse.urlencode(query)) if query else "")
@@ -838,9 +841,10 @@ def main(argv: list[str] | None = None) -> None:
         ("unload", "Eject a provider/model: in-flight calls on it are cancelled first"),
     ):
         _p = models_sub.add_parser(_name, help=_help)
-        _p.add_argument("--url", default=os.environ.get("ABSTRACTGATEWAY_URL") or "http://127.0.0.1:8080",
-                        help="Gateway base URL (default: $ABSTRACTGATEWAY_URL or http://127.0.0.1:8080)")
-        _p.add_argument("--token", default=None, help="Bearer token (default: $ABSTRACTGATEWAY_AUTH_TOKEN)")
+        _p.add_argument("--url", default=None,
+                        help="Gateway base URL (default: $ABSTRACTGATEWAY_URL, else the gateway running for this data dir, else http://127.0.0.1:8080)")
+        _p.add_argument("--data-dir", default=None, help="Gateway data dir used to find the running gateway and its token (default: same resolution as `serve`)")
+        _p.add_argument("--token", default=None, help="Bearer token (default: $ABSTRACTGATEWAY_AUTH_TOKEN, else this data dir's bootstrap admin token for a loopback URL)")
         _p.add_argument("--provider", required=_name != "loaded", default=None)
         _p.add_argument("--model", required=_name != "loaded", default=None)
         _p.add_argument("--timeout-s", type=float, default={"loaded": 60.0, "load": 1800.0, "unload": 600.0}[_name],

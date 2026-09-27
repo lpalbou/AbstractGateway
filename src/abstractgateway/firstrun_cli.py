@@ -46,7 +46,7 @@ def add_claim_arguments(p: argparse.ArgumentParser) -> None:
         "`--base-url` is the same flag (the bootstrap installers pass it).",
     )
     p.add_argument("--host", default="127.0.0.1", help="Host for the link when --port is given (default: 127.0.0.1)")
-    p.add_argument("--port", type=int, default=None, help="Port for the link (default: the running gateway's port, else the installed service's, else 8080)")
+    p.add_argument("--port", type=int, default=None, help="Port for the link (default: the running gateway's port, else the installed service's, else the Network setting's, else 8080)")
     p.add_argument("--data-dir", default=None, help="Gateway data dir (default: same resolution as `serve`)")
     p.add_argument("--ttl-s", type=int, default=600, help="Link lifetime in seconds (default: 600, max 3600)")
     p.add_argument("--open", action="store_true", help="Open the link in the default browser")
@@ -54,20 +54,13 @@ def add_claim_arguments(p: argparse.ArgumentParser) -> None:
 
 
 def _claim_base_url(args: argparse.Namespace, data_dir: Path) -> Dict[str, Any]:
-    from .first_run import browser_base_url, read_serve_record
-    from .os_service import read_service_record
+    from .first_run import browser_base_url, local_gateway, read_serve_record
 
     if args.url:
         return {"url": str(args.url).rstrip("/"), "source": "flag", "serve": None}
-    rec = read_serve_record(data_dir)
     if args.port:
-        return {"url": browser_base_url(args.host or "127.0.0.1", int(args.port)), "source": "flag", "serve": rec}
-    if rec and rec.get("alive") is not False and rec.get("url"):
-        return {"url": str(rec["url"]), "source": "serve_record", "serve": rec}
-    svc = read_service_record(data_dir)
-    if svc and svc.get("url"):
-        return {"url": str(svc["url"]), "source": "service_record", "serve": rec}
-    return {"url": browser_base_url("127.0.0.1", 8080), "source": "default", "serve": rec}
+        return {"url": browser_base_url(args.host or "127.0.0.1", int(args.port)), "source": "flag", "serve": read_serve_record(data_dir)}
+    return local_gateway(data_dir)
 
 
 def run_claim(args: argparse.Namespace) -> int:

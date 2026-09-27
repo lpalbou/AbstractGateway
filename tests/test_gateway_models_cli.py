@@ -90,3 +90,23 @@ def test_models_cli_exit_code_is_the_gateway_verdict():
     finally:
         srv.shutdown()
         srv.server_close()
+
+
+def test_models_cli_without_url_finds_the_gateway_on_its_real_port(tmp_path, monkeypatch):
+    """No --url, no $ABSTRACTGATEWAY_URL: the installer may have moved the gateway
+    off a busy 8080, so the verbs must follow this data dir's serve record."""
+    import os
+
+    from abstractgateway.first_run import write_serve_record
+
+    monkeypatch.delenv("ABSTRACTGATEWAY_URL", raising=False)
+    monkeypatch.delenv("ABSTRACTGATEWAY_AUTH_TOKEN", raising=False)
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path))
+    srv, seen = _server({"/api/gateway/models/loaded": (200, {"ok": True, "models": []})})
+    try:
+        write_serve_record(data_dir=tmp_path, host="127.0.0.1", port=srv.server_address[1], auth={}, data_dir_source="env")
+        assert _run(["models", "loaded", "--data-dir", str(tmp_path), "--token", "t0k"]) == 0
+    finally:
+        srv.shutdown()
+        srv.server_close()
+    assert [s["path"] for s in seen] == ["/api/gateway/models/loaded"]

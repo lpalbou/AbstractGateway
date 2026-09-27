@@ -469,6 +469,35 @@ def read_serve_record(data_dir: Path) -> Optional[Dict[str, Any]]:
     return rec
 
 
+def local_gateway(data_dir: Optional[Path] = None) -> Dict[str, Any]:
+    """Where this computer's gateway for `data_dir` answers: {url, source, serve}.
+
+    The one rule for every local client (the CLI verbs, the Assistant): the
+    running gateway's serve record, else a pinned OS service's record, else
+    the stored Network setting's port (where `serve` binds next), else
+    127.0.0.1:8080. `source` names the tier. Reads files only: contacts
+    nothing and exports nothing (`data_dir` default: `resolve_data_dir()`)."""
+    from .os_service import read_service_record
+    from .runtime_config import resolve_network_setting
+
+    if data_dir is None:
+        from .host_paths import resolve_data_dir
+
+        data_dir = resolve_data_dir().path
+    rec = read_serve_record(data_dir)
+    if rec and rec.get("alive") is not False and rec.get("url"):
+        return {"url": str(rec["url"]), "source": "serve_record", "serve": rec}
+    svc = read_service_record(data_dir)
+    # Only a pinned registration binds its recorded port; a plain one runs `serve`,
+    # which binds the Network setting (a record without the key predates plain ones).
+    if svc and svc.get("url") and svc.get("pinned", True):
+        return {"url": str(svc["url"]), "source": "service_record", "serve": rec}
+    setting = resolve_network_setting(data_dir)
+    if setting.get("port_source") == "stored":
+        return {"url": browser_base_url(str(setting.get("bind_host") or ""), int(setting["port"])), "source": "network_setting", "serve": rec}
+    return {"url": browser_base_url("127.0.0.1", 8080), "source": "default", "serve": rec}
+
+
 def port_is_free(host: str, port: int) -> bool:
     """Can a server bind `host:port` right now? (A bind probe: nothing is contacted.)"""
     family = socket.AF_INET6 if ":" in str(host) else socket.AF_INET

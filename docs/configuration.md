@@ -1406,7 +1406,7 @@ Most-used:
 - `abstractgateway serve --backlog-root PATH --exec-runner on|off`: the backlog
   folder and the exec runner for this run (they win over the saved settings until the gateway stops)
 - `abstractgateway migrate --from=file --to=sqlite --data-dir <DIR> --db-path <FILE>`
-- `abstractgateway models loaded|load|unload --url <URL> [--provider P --model M] [--force]`
+- `abstractgateway models loaded|load|unload [--url URL | --data-dir DIR] [--token T] [--provider P --model M] [--force]`
   (model residency on a running gateway; see [console.md](./console.md#model-residency-from-a-shell))
 
 ## Related docs

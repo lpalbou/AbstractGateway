@@ -352,12 +352,17 @@ The same model routes the consoles drive are available from the Python CLI
 against a running gateway:
 
 ```bash
-abstractgateway models loaded --url http://127.0.0.1:8080
-abstractgateway models load   --url http://127.0.0.1:8080 --provider ollama --model qwen3:4b
-abstractgateway models unload --url http://127.0.0.1:8080 --provider ollama --model qwen3:4b
+abstractgateway models loaded
+abstractgateway models load   --provider ollama --model qwen3:4b
+abstractgateway models unload --provider ollama --model qwen3:4b
 ```
 
-The token comes from `--token` or `ABSTRACTGATEWAY_AUTH_TOKEN`, and the URL from
-`--url` or `ABSTRACTGATEWAY_URL`. The command prints the gateway's JSON answer
+Without `--url`, the command finds this computer's gateway the same way every
+local client does: the running gateway's address, else the installed service's,
+else the port saved in the Network setting, else `http://127.0.0.1:8080`. Use
+`--data-dir DIR` when the gateway keeps its data somewhere other than the
+default, and `--url` (or `ABSTRACTGATEWAY_URL`) to reach another machine. The
+token comes from `--token` or `ABSTRACTGATEWAY_AUTH_TOKEN`; for a gateway on
+this computer it falls back to the data dir's bootstrap admin token. The command prints the gateway's JSON answer
 and exits non-zero when the gateway reports a failure. `unload --force` unloads
 a locked model; in-flight calls on the model are cancelled first.
