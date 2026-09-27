@@ -662,6 +662,17 @@ def _isolate_gateway_runtime_env(
     (base / "flows").mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(base / "runtime"))
     monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(base / "flows"))
+    # The gateway's DEFAULT workspace root (runtime_config._workspace_root_fallback)
+    # is the monorepo root when the runtime sits in one, else the process cwd:
+    # machine state, not test state. A test asserting "this folder is OUTSIDE
+    # the operator's workspace roots" then passed or failed depending on where
+    # the suite (or an exported copy of it) ran and what earlier tests left
+    # behind (review 56b G-56-1). Every test gets its own empty workspace root
+    # instead; a test that needs another sets it itself.
+    (base / "workspace-root").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(base / "workspace-root"))
+    monkeypatch.delenv("ABSTRACT_WORKSPACE_BASE_DIR", raising=False)
+    monkeypatch.delenv("ABSTRACTFLOW_WORKSPACE_BASE_DIR", raising=False)
     # Isolate the MACHINE-LEVEL data registry (~/.abstractframework/
     # data_registry.json): service boot registers data homes
     # (register_gateway_data_homes), so an unisolated suite run pollutes the

@@ -505,7 +505,9 @@ that occurrence as its history (oldest turns dropped first when it is long).
 - **Nothing flows back.** Nothing a discussion does is written into the
   automation's conversation, state or history.
 - **Tools ask.** The automation's tool grant does not apply; tools ask for
-  approval as in any chat.
+  approval as in any chat. The operator's default tool grant, when one is
+  stored, applies to discussions as to any chat, so the commands it covers
+  run without asking there too.
 - **Errors.** 404 `occurrence_not_found` for an unknown index, 422
   `invalid_request` for an empty `prompt` or `request_id`, 409
   `history_unavailable` when the history cannot be read.
