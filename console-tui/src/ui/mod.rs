@@ -971,10 +971,15 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
                 // was the dead-action class (F3) wearing a live label.
                 // (Screen 5 left this list with the inline sandbox: its
                 // provider picker is live data.)
+                // On Connection the live datum IS the connection: `r`
+                // re-probes it (the Re-probe button's path).
                 if matches!(s, SCREEN_CONNECTION) {
-                    ctx_refresh.store.notice.set(Some(
-                        "nothing to refresh here — r reloads live data on screens 2-9, 0, A (Apps) and Setup".into(),
-                    ));
+                    let (url, _) = ctx_refresh.effective_credentials();
+                    ctx_refresh
+                        .store
+                        .notice
+                        .set(Some(format!("⟳ re-probing {url}…")));
+                    ctx_refresh.connect_now();
                     return;
                 }
                 // The immediate ack: fast domains repaint identically
@@ -1020,14 +1025,22 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         .shortcut(KeyChord::new(Mods::CTRL, Key::Char('g')), move |_| {
             welcome::guide_key(&ctx_guide, cx)
         })
-        .shortcut(KeyChord::plain(Key::F(1)), move |_| about::open(&ctx_about, cx))
-        .shortcut(KeyChord::plain(Key::Char('?')), move |_| about::open(&ctx_about2, cx))
+        .shortcut(KeyChord::plain(Key::F(1)), move |_| {
+            about::open(&ctx_about, cx)
+        })
+        .shortcut(KeyChord::plain(Key::Char('?')), move |_| {
+            about::open(&ctx_about2, cx)
+        })
         // Gateway host panel (pause/resume, restart, quit, update): F3
         // anywhere — a function key survives focused text fields.
-        .shortcut(KeyChord::plain(host::OPEN_KEY), move |_| host::open(&ctx_host, cx))
+        .shortcut(KeyChord::plain(host::OPEN_KEY), move |_| {
+            host::open(&ctx_host, cx)
+        })
         // Docs assistant (the web top bar's ✦ drawer): F2 anywhere — a
         // function key, so it works with the caret in a text field.
-        .shortcut(KeyChord::plain(Key::F(2)), move |_| docs::open(&ctx_docs, cx));
+        .shortcut(KeyChord::plain(Key::F(2)), move |_| {
+            docs::open(&ctx_docs, cx)
+        });
     // Digit keys at the root. Wizard: a REFUSAL with a reason, so a
     // swallowed digit never reads as a dead app (F3). Browse: PageHost
     // owns digit jumps (its number_jump surface), but its shortcut rides

@@ -3863,6 +3863,67 @@ fn health_authority_verifies_then_retries_once() {
     assert_eq!(probes.borrow().len(), 2, "user re-arm allows one more");
 }
 
+/// The gateway dies while the console sits on Connection (a screen that
+/// loads nothing): the paused-banner poll's transport failure reaches the
+/// health authority, so the screen stops saying "● connected" once the
+/// probe settles; `r` there re-probes (review 2 minor f).
+#[test]
+fn a_dead_gateway_under_the_connection_screen_is_noticed() {
+    let mut h = harness();
+    let probes: Rc<RefCell<Vec<u64>>> = Rc::new(RefCell::new(Vec::new()));
+    {
+        let probes = probes.clone();
+        *h.prober.borrow_mut() = Some(Box::new(move |_url, _token, gen| {
+            probes.borrow_mut().push(gen);
+        }));
+    }
+    h.connect_as_admin();
+    h.ui.wizard.set(false);
+    h.ui.screen.set(ui::SCREEN_CONNECTION);
+    let s = h.turns(2);
+    assert!(s.contains("● connected"), "{s}");
+    let _ = h.drain_cmds();
+    // `r` on Connection re-probes the connection itself.
+    h.type_text("r");
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::Connect { .. })).is_some(),
+        "r on Connection re-probes"
+    );
+    h.connect_as_admin();
+    h.turns(2);
+    // The runner poll fails at the transport layer (the gateway died).
+    abstractgateway_console::worker::operator::runner_poll_failed(
+        h.store,
+        abstractgateway_console::api::ApiError {
+            kind: abstractgateway_console::api::ApiErrorKind::Unreachable,
+            message: "GET /host/runner: Connection refused".into(),
+            body: None,
+            timed_out: false,
+        },
+    );
+    h.turns(2);
+    assert_eq!(
+        probes.borrow().len(),
+        1,
+        "the health authority verifies once"
+    );
+    let gen = h.store.probe_gen.get_untracked();
+    abstractgateway_console::health::settle(
+        h.store,
+        &h.tx,
+        gen,
+        Err(abstractgateway_console::api::ApiError {
+            kind: abstractgateway_console::api::ApiErrorKind::Unreachable,
+            message: "GET /ping: Connection refused".into(),
+            body: None,
+            timed_out: false,
+        }),
+    );
+    let s = h.turns(2);
+    assert!(!s.contains("● connected"), "no stale connected dot:\n{s}");
+}
+
 /// settle(Err) settles the ONE story every panel tells.
 #[test]
 fn health_authority_settles_down_with_one_story() {

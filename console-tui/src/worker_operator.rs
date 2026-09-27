@@ -21,6 +21,20 @@ use crate::store::operator::{
 };
 use crate::store::{JournalEntry, Loadable, NetworkData, RuntimeConfigData, Store};
 
+/// A failed `/host/runner` poll (UI thread). It never erases a held
+/// answer (the web's silent catch: the banner keeps its last truth), and a
+/// TRANSPORT failure is handed to the health authority (the write-failure
+/// trigger channel): the gateway died while the console sat on a screen
+/// that loads nothing (Connection) must not keep saying "● connected".
+pub fn runner_poll_failed(s: Store, e: crate::api::ApiError) {
+    if matches!(e.kind, crate::api::ApiErrorKind::Unreachable) {
+        s.net_fail_seq.update(|n| *n += 1);
+    }
+    if s.op.runner.with_untracked(|r| r.ready().is_none()) {
+        s.op.runner.set(Loadable::Failed(e));
+    }
+}
+
 /// The `/host/runner` poll behind the paused banner (web: 15 s).
 pub const RUNNER_POLL_INTERVAL: Duration = Duration::from_secs(15);
 /// Gap between restart/quit watcher probes.
@@ -242,14 +256,7 @@ pub(super) fn handle(
                 }
                 match result {
                     Ok(v) => s.op.runner.set(Loadable::Ready(HostRunner::from_value(&v))),
-                    // A failed poll never erases a held answer (the web's
-                    // silent catch): the banner keeps its last truth and
-                    // the health authority owns transport failures.
-                    Err(e) => {
-                        if s.op.runner.with_untracked(|r| r.ready().is_none()) {
-                            s.op.runner.set(Loadable::Failed(e));
-                        }
-                    }
+                    Err(e) => runner_poll_failed(s, e),
                 }
                 later(
                     &tx2,
