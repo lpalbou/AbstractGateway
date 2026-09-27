@@ -9266,3 +9266,28 @@ fn workflow_export_dialog_fits_at_80x24() {
         "the path field stays inside:\n{row}"
     );
 }
+
+/// Pressing the key of the screen already shown changes nothing — the
+/// screen's keys stay live (review 2 pty proof: `8` then `w` on
+/// Resources went dead when the host re-anchored focus on itself).
+#[test]
+fn the_current_screen_key_keeps_the_screen_keys_live() {
+    let mut h = harness_sized(Size::new(80, 24));
+    h.connect_as_admin();
+    h.goto_screen(1);
+    h.key(b"8");
+    h.turns(2);
+    h.store
+        .host_state
+        .set(Loadable::Ready(host_state_fixture()));
+    h.turns(2);
+    assert_eq!(h.ui.screen.get_untracked(), 7, "8 jumps to Resources");
+    h.key(b"8");
+    h.turns(2);
+    h.type_text("w");
+    let s = h.turns(3);
+    assert!(
+        s.contains("Load (warm up) a model"),
+        "w still reaches the screen:\n{s}"
+    );
+}

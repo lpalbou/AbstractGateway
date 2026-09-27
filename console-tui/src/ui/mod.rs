@@ -1060,13 +1060,13 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         .shortcut(KeyChord::plain(Key::F(2)), move |_| {
             docs::open(&ctx_docs, cx)
         });
-    // Digit keys at the root. Wizard: a REFUSAL with a reason, so a
-    // swallowed digit never reads as a dead app (F3). Browse: PageHost
-    // owns digit jumps (its number_jump surface), but its shortcut rides
-    // the FOCUSED path — on a page where nothing holds focus (a table
-    // still loading) the digit reaches this root handler instead, which
-    // then performs the jump itself. `0` is always ours: PageHost's
-    // number surface is 1-9, and the tenth screen (Engines) needs a key.
+    // Screen keys (1-9, 0, A) at the root — the ONE jump surface. Wizard:
+    // a REFUSAL with a reason, so a swallowed digit never reads as a dead
+    // app (F3). Browse: the jump. PageHost's own number_jump is off: it
+    // re-anchors focus on the host root even when the digit names the
+    // screen already shown, and that left the screen's keys dead (the
+    // page is not on the root→focus path) — review 2 pty proof, `8` then
+    // `w` on Resources. A same-screen key here changes nothing.
     for i in 0..KEYED_SCREENS {
         let ctx_i = ctx.clone();
         let key = screen_key(i);
@@ -1172,7 +1172,7 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
                 welcome::view(gcx, &c11, &theme.get().tokens)
             })
             .active(active)
-            .number_jump(!wizard_now)
+            .number_jump(false)
             .chords(&prev_chords, &next_chords)
             .view(hcx)
     });
