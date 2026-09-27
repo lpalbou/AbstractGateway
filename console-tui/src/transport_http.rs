@@ -21,6 +21,7 @@
 //! | `job(id)` | `GET /jobs/{id}` | E |
 //! | `cancel_job(id)` | `POST /jobs/{id}/cancel {}` | E |
 //! | `host_label()` | `/host/state` → `host.host_name`, else the URL's host | — |
+//! | `cancel_download(id)` | `POST /models/download/{id}/cancel {"via":"console"}` (downloads + `grp_` groups; other kinds keep `/jobs/{id}/cancel`) | E (`{ok, job}`) |
 //! | `capabilities()` | every optional verb below | — |
 //! | `models_catalog_hub(q, engine, fits)` | `GET /models/catalog?q=&hub=true&engine=&fits=` | C |
 //! | `download_jobs()` | `GET /models/downloads` | E (`{ok, jobs}`) |
@@ -334,6 +335,12 @@ impl ConsoleTransport for HttpTransport {
     /// `Refused`, its message shown), never pre-empted here.
     fn capabilities(&self) -> TransportCaps {
         TransportCaps::ALL
+    }
+
+    /// The web console's download cancel route and payload (console_ui.py
+    /// `dlCancel`); engine installs and deletes keep `/jobs/{id}/cancel`.
+    fn cancel_download(&self, id: &str) -> Result<Value, TransportError> {
+        self.client()?.cancel_model_download(id).map_err(map_error)
     }
 
     fn models_catalog_hub(

@@ -178,6 +178,14 @@ fn route(method: &str, path: &str) -> (u16, String) {
         ),
         ("GET", "/jobs/dl_1") => (200, job("dl_1", "completed")),
         ("POST", "/jobs/dl_1/cancel") => (200, job("dl_1", "cancelled")),
+        ("POST", "/models/download/dl_1/cancel") => (
+            200,
+            format!("{{\"ok\": true, \"job\": {}}}", job("dl_1", "cancelled")),
+        ),
+        ("POST", "/models/download/grp_1/cancel") => (
+            200,
+            json!({"ok": true, "job": {"job_id": "grp_1", "kind": "download_group", "status": "cancelled"}}).to_string(),
+        ),
         ("GET", "/jobs/boom") => (500, json!({"detail": "internal error"}).to_string()),
         ("GET", "/jobs/notjson") => (200, "<html>not json</html>".to_string()),
         ("GET", "/jobs/slow") => (0, String::new()),
@@ -386,4 +394,27 @@ fn the_host_label_names_the_gateway_host_once_host_state_answers() {
         .any(|s| s.path.starts_with("/api/gateway/engines")));
     // …and the label follows: the new gateway has not been named yet.
     assert!(!t.host_label().contains("studio"), "{}", t.host_label());
+}
+
+#[test]
+fn download_cancel_uses_the_web_consoles_route_and_payload() {
+    let gw = FakeGateway::start();
+    let t = transport(&gw.url, "good");
+    let j = t.cancel_download("dl_1").unwrap();
+    assert_eq!(j["job"]["status"], "cancelled", "{j}");
+    let seen = gw.last("/api/gateway/models/download/dl_1/cancel");
+    assert_eq!(seen.method, "POST");
+    assert_eq!(seen.body, Some(json!({"via": "console"})));
+    // A "download all" group cancels on the same route.
+    let g = t.cancel_download("grp_1").unwrap();
+    assert_eq!(g["job"]["kind"], "download_group");
+    gw.last("/api/gateway/models/download/grp_1/cancel");
+    // Other job kinds keep the generic route.
+    t.cancel_job("dl_1").unwrap();
+    gw.last("/api/gateway/jobs/dl_1/cancel");
+    assert!(
+        !gw.seen().iter().any(|s| s.path.starts_with("/api/gateway/jobs/grp_1")),
+        "{:?}",
+        gw.seen()
+    );
 }

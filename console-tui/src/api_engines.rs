@@ -64,6 +64,19 @@ impl GatewayClient {
         self.get(&path, true)
     }
 
+    /// `POST /models/download/{id}/cancel {"via":"console"}` (admin): the
+    /// web console's download cancel — a `grp_…` group cancels every
+    /// running child, and `via: console` makes the job's final words
+    /// say a person cancelled it in the console. Answers `{ok, job}`.
+    pub fn cancel_model_download(&self, job_id: &str) -> ApiResult<Value> {
+        self.send(
+            "POST",
+            &format!("/models/download/{}/cancel", urlencode(job_id)),
+            &json!({"via": "console"}),
+            true,
+        )
+    }
+
     /// `GET /models/downloads` — every download job of this gateway
     /// process, newest first (`{ok, jobs}`; groups carry `children`).
     pub fn models_downloads(&self) -> ApiResult<Value> {
