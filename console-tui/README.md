@@ -89,7 +89,8 @@ leave (not recorded, it opens again next start) or skip (recorded).
 6. **Workflows** — every workflow registered on the gateway, with
    published/draft version counts, per-version entrypoints and
    interfaces, and a `Not loaded` block naming versions the gateway is
-   not serving and why. `e` exports a version to a local `.flow` file,
+   not serving and why. `e` exports a version to a local `.flow` file (the destination is shown
+   and editable first; default `~/Downloads/abstractgateway-console/`),
    `d`/`D` delete a version / the whole workflow, `t` toggles draft
    visibility, `i` imports a `.flow` bundle from this machine, `L`
    reloads the registry from disk; import and the other writes follow

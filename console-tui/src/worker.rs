@@ -202,6 +202,7 @@ pub enum Cmd {
         bundle_id: String,
         version: String,
         dest: String,
+        form_id: Option<u64>,
     },
     /// Apps screen: `GET /apps?latest=` (latest = also ask npm / the
     /// terminal app's release for newer versions).
@@ -690,7 +691,8 @@ fn cmd_form_id(cmd: &Cmd) -> Option<u64> {
         | Cmd::SaveToolPolicy { form_id, .. }
         | Cmd::SaveEntityPrompt { form_id, .. }
         | Cmd::EntityReembed { form_id, .. }
-        | Cmd::CompleteFirstRun { form_id, .. } => *form_id,
+        | Cmd::CompleteFirstRun { form_id, .. }
+        | Cmd::ExportWorkflow { form_id, .. } => *form_id,
         Cmd::Operator(op) => op.form_id(),
         Cmd::Entity(e) => e.form_id(),
         _ => None,
@@ -1558,6 +1560,7 @@ fn handle(
             bundle_id,
             version,
             dest,
+            form_id,
         } => {
             let label = format!("{bundle_id}@{version}");
             let action = format!("EXPORT workflow '{label}' to {dest}");
@@ -1595,8 +1598,10 @@ fn handle(
                     "ok": true, "path": dest, "bytes": bytes.len(),
                 }))
             });
-            let verified = Some(Ok(format!("wrote {dest}")));
-            finish_write(store, wake, action, write, verified, None, on_done);
+            // Verified only by the file itself: it exists and holds exactly
+            // the bytes the gateway sent. A failed download verifies nothing.
+            let verified = export_verified(&write, std::path::Path::new(&dest));
+            finish_write(store, wake, action, write, verified, form_id, on_done);
         }
 
         Cmd::LoadApps { latest } => apps::load(client, store, wake, tx, latest),
@@ -3548,6 +3553,31 @@ fn write_failure_text(v: &Value) -> String {
     }
 }
 
+/// The export's journal verdict: a failed download verifies nothing
+/// (`None` — the journal shows the failure); a written file is verified
+/// only when it holds exactly the bytes the gateway sent.
+pub fn export_verified(
+    write: &ApiResult<Value>,
+    path: &std::path::Path,
+) -> Option<Result<String, String>> {
+    let v = write.as_ref().ok()?;
+    let want = v.get("bytes").and_then(Value::as_u64).unwrap_or(0);
+    Some(export_verify(path, want))
+}
+
+/// The file on disk holds exactly `want` bytes.
+fn export_verify(path: &std::path::Path, want: u64) -> Result<String, String> {
+    match std::fs::metadata(path) {
+        Ok(m) if m.len() == want => Ok(format!("{} holds {want} bytes", path.display())),
+        Ok(m) => Err(format!(
+            "{} holds {} bytes, the gateway sent {want}",
+            path.display(),
+            m.len()
+        )),
+        Err(e) => Err(format!("cannot read back {}: {e}", path.display())),
+    }
+}
+
 fn finish_write(
     store: &Store,
     wake: &WakeHandle,
@@ -3613,6 +3643,42 @@ fn finish_write(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Export verify (review 2 N3): a failed download (a non-admin's 404)
+    /// verifies nothing; a written file verifies only at the exact size.
+    #[test]
+    fn export_verifies_only_a_written_file_of_the_sent_size() {
+        let dir = std::env::temp_dir().join(format!("agc-export-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("demo@1.0.0.flow");
+        let refused: ApiResult<Value> = Err(ApiError {
+            kind: ApiErrorKind::Http(404),
+            message: "not found".into(),
+            body: None,
+            timed_out: false,
+        });
+        assert!(
+            export_verified(&refused, &path).is_none(),
+            "a 404 verifies nothing"
+        );
+        std::fs::write(&path, b"12345").unwrap();
+        let ok: ApiResult<Value> = Ok(serde_json::json!({"ok": true, "bytes": 5}));
+        assert!(
+            export_verified(&ok, &path).unwrap().is_ok(),
+            "exact size verifies"
+        );
+        let short: ApiResult<Value> = Ok(serde_json::json!({"ok": true, "bytes": 9}));
+        assert!(
+            export_verified(&short, &path).unwrap().is_err(),
+            "a size mismatch fails"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        let gone = dir.join("missing.flow");
+        assert!(
+            export_verified(&ok, &gone).unwrap().is_err(),
+            "no file fails"
+        );
+    }
     use serde_json::json;
 
     /// In-band write refusals journal their ACTIONABLE text: plural `errors`

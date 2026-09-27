@@ -67,7 +67,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         })
         .shortcut(KeyChord::plain(Key::Char('e')), {
             let c = ctx_export.clone();
-            move |_| export_selected(&c)
+            move |_| export_selected(cx, &c)
         })
         .shortcut(KeyChord::plain(Key::Char('d')), {
             let c = ctx_del_ver.clone();
@@ -175,21 +175,103 @@ fn selected_row(ctx: &Ctx) -> Option<WorkflowRow> {
         .with_untracked(|d| d.ready().and_then(|w| w.rows.get(sel).cloned()))
 }
 
-fn export_selected(ctx: &Ctx) {
-    let Some(row) = selected_row(ctx) else { return };
+/// Where an export lands by default: the console's own downloads folder
+/// (the sandbox's artifacts go there too), never the working directory.
+pub fn export_default_path(bundle_id: &str, version: &str) -> String {
+    super::sandbox::artifact_dir()
+        .join(format!("{bundle_id}@{version}.flow"))
+        .display()
+        .to_string()
+}
+
+/// `e`: export the selected version's ORIGINAL bytes to a LOCAL file. The
+/// TUI is frequently not on the gateway's machine, so the file lands on
+/// THIS one; the destination is shown (editable) and confirmed first.
+fn export_selected(cx: Scope, ctx: &Ctx) {
+    let Some(row) = selected_row(ctx) else {
+        ctx.store
+            .notice
+            .set(Some("no workflow selected — nothing to export".into()));
+        return;
+    };
     let version = row
         .versions
         .first()
         .map(|(v, _, _, _)| v.clone())
         .unwrap_or_default();
-    // A LOCAL path: the TUI is frequently not on the machine running the
-    // gateway, so writing "somewhere on the server" would be an export the
-    // operator cannot find.
-    let dest = format!("./{}@{}.flow", row.bundle_id, version);
-    ctx.send(Cmd::ExportWorkflow {
-        bundle_id: row.bundle_id,
-        version,
-        dest,
+    let label = format!("{}@{}", row.bundle_id, version);
+    let default_dest = export_default_path(&row.bundle_id, &version);
+    let ctx2 = ctx.clone();
+    open_form(ctx, cx, Size::new(96, 11), move |mcx, close| {
+        let theme = use_theme(mcx);
+        let t0 = theme.get().tokens;
+        let dest = mcx.signal(default_dest.clone());
+        let form_error = mcx.signal(Option::<String>::None);
+        let in_flight = mcx.signal(false);
+        let form_id = crate::worker::next_form_id();
+        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
+        let submit = {
+            let ctx_s = ctx2.clone();
+            let bundle_id = row.bundle_id.clone();
+            let version = version.clone();
+            move || {
+                if in_flight.get_untracked() {
+                    return;
+                }
+                let d = dest.get_untracked().trim().to_string();
+                if d.is_empty() {
+                    form_error.set(Some("type where to save the .flow file".into()));
+                    return;
+                }
+                form_error.set(None);
+                in_flight.set(true);
+                ctx_s.send(Cmd::ExportWorkflow {
+                    bundle_id: bundle_id.clone(),
+                    version: version.clone(),
+                    dest: d,
+                    form_id: Some(form_id),
+                });
+            }
+        };
+        let submit2 = submit.clone();
+        let close_cancel = close.clone();
+        Element::new()
+            .style(LayoutStyle::column().gap(0))
+            .child(line(vec![span_bold(format!("Export {label}"), t0.accent)]))
+            .child(line(vec![span(
+                "saved on THIS machine (an existing file is never overwritten) — Enter exports",
+                t0.text_faint,
+            )]))
+            .child(field(
+                &t0,
+                "save to",
+                TextInput::new()
+                    .value(dest)
+                    .layout(LayoutStyle::default().w(70).h(1))
+                    .on_submit(move |_: &str| submit())
+                    .element(mcx, &t0)
+                    .autofocus()
+                    .build(),
+            ))
+            .child(super::message_slot(theme, form_error, in_flight))
+            .child(
+                Element::new()
+                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                    .child(
+                        Button::new("Export")
+                            .on_click(submit2)
+                            .element(mcx, &t0)
+                            .build(),
+                    )
+                    .child(
+                        Button::new("Cancel (Esc)")
+                            .on_click(move || close_cancel())
+                            .element(mcx, &t0)
+                            .build(),
+                    )
+                    .build(),
+            )
+            .build()
     });
 }
 

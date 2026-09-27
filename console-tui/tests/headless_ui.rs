@@ -8279,6 +8279,46 @@ fn restart_and_quit_confirm_first_and_default_to_keep() {
     );
 }
 
+/// `e` shows the destination (the console's downloads folder, never the
+/// working directory) and exports only after Enter (review 2 N3).
+#[test]
+fn workflow_export_confirms_the_destination_first() {
+    use abstractgateway_console::store::workflows_from_payload;
+    let mut h = harness_sized(Size::new(140, 40));
+    h.connect_as_admin();
+    h.goto_screen(5);
+    h.store.workflows.set(Loadable::Ready(workflows_from_payload(&json!({
+        "items": [{"bundle_id": "demo", "bundle_version": "1.0.0", "entrypoints": [{"flow_id": "main"}]}]
+    }))));
+    h.turns(2);
+    let _ = h.drain_cmds();
+    h.type_text("e");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Export demo@1.0.0"),
+        "the export form opens:\n{s}"
+    );
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::ExportWorkflow { .. }))
+            .is_none(),
+        "nothing is written before the confirm"
+    );
+    let want = abstractgateway_console::ui::workflows::export_default_path("demo", "1.0.0");
+    assert!(
+        want.contains("abstractgateway-console") && !want.starts_with("./"),
+        "{want}"
+    );
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::ExportWorkflow { .. })) {
+        Some(Cmd::ExportWorkflow { dest, form_id, .. }) => {
+            assert_eq!(dest, want, "the shown destination is the one written");
+            assert!(form_id.is_some(), "the form waits for the outcome");
+        }
+        other => panic!("expected an export, got {other:?}"),
+    }
+}
+
 #[test]
 fn workflows_import_reload_and_delete_confirm() {
     use abstractgateway_console::store::workflows_from_payload;
