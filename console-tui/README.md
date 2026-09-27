@@ -17,8 +17,23 @@ crate (0.2), the same screens `abstractcore-console` shows over the
 (`src/transport_http.rs`) against the gateway's mirrors of the
 AbstractCore routes. Both crates build on one abstracttui (0.3.6).
 
-Ten screens, shared by a **guided wizard** (gated steps, first-run) and
-a **browse mode** (free tabs):
+Eleven screens, shared by a **setup guide** (the wizard: the web
+console's first-run guide, same steps and routes) and a **browse mode**
+(free tabs).
+
+The guide walks Connection → **Setup** (welcome: this computer at a
+glance, from `GET /api/gateway/host/state`) → Engines → Providers →
+Routes (the default model: the recommended plan for this computer with
+AbstractCore's fit warnings, `a` applies it, `D` downloads all of it in
+one parent job, `C` cancels, `p` shows every word) → Models → Review
+(**Finish** or **Skip setup**: `POST /api/gateway/host/first-run`,
+verified by a GET and journaled). Like the web guide, no step is gated
+except signing in. Without `--wizard`/`--browse`, the console reads
+`GET /api/gateway/host/first-run` at connect and keeps the guide open
+only for an admin whose first run is not completed; browse mode
+otherwise. `Ctrl+G` reopens the guide from browse, and in the guide
+leaves it (not recorded, it opens again next start) or skips it
+(recorded).
 
 1. **Connection** — base URL + admin token (masked; env fallback
    `ABSTRACTGATEWAY_AUTH_TOKEN`), probe via `/ping` + `/me`, honest
@@ -90,6 +105,9 @@ a **browse mode** (free tabs):
    exact command and "runs on gateway host …" (dry run available),
    `o` opens the download page (LM Studio), `r` probes the local
    servers, `c` cancels.
+- **Setup** (no digit; `Ctrl+G`) — the guide's welcome step: computer,
+  memory, graphics, data folder (and why), sign-in mode, whether the
+  gateway starts at login, the first-run state, and the guide's steps.
 
 Screens 9 and 0 read `GET /api/gateway/host/profile`, `/engines`,
 `/models/catalog`, `/models/installed` and `/jobs/{id}`, and write
