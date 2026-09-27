@@ -299,6 +299,11 @@ pub fn reset_screens(s: &abstractcore_console::screens::ScreensStore) {
     s.engines.set(Remote::NotAsked);
     s.catalog.set(Remote::NotAsked);
     s.installed.set(Remote::NotAsked);
+    // Per-gateway reads of the optional verbs (abstractcore-console 0.3).
+    s.text_default.set(Remote::NotAsked);
+    s.feed.set(Remote::NotAsked);
+    s.plans.set(Default::default());
+    s.hub.set(None);
     s.engine_filter.set(None);
     s.providers_seen.set(Vec::new());
     s.catalog_sel.set(0);
