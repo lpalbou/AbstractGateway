@@ -193,6 +193,28 @@ pub fn paused_banner_text(r: &HostRunner) -> Option<String> {
 // Desktop tray (`GET /host/tray`) → the web console's note
 // ---------------------------------------------------------------------
 
+/// How to start the gateway again after a console Quit, from its login
+/// service facts (`GET /host/state` → `gateway.service`: installed,
+/// mechanism — the words of `abstractgateway service status`). `None` =
+/// unread. A clean quit is NOT restarted by the service manager (launchd
+/// `KeepAlive {SuccessfulExit: false}`, systemd `Restart=on-failure`), so
+/// the hint names the manager's own start command where it has one.
+pub fn start_again_hint(installed: Option<bool>, mechanism: Option<&str>) -> String {
+    match (installed, mechanism) {
+        (Some(true), Some("launchd-agent")) => "it is a login service: start it now with \
+             `launchctl kickstart gui/$(id -u)/ai.abstractframework.gateway`, or it starts at the next login"
+            .into(),
+        (Some(true), Some("systemd-user")) => "it is a login service: start it now with \
+             `systemctl --user start abstractgateway.service`, or it starts at the next login"
+            .into(),
+        (Some(true), _) => {
+            "it starts again at the next login (its login service), or now with `abstractgateway serve`".into()
+        }
+        (Some(false), _) => "start it again with `abstractgateway serve`".into(),
+        (None, _) => "start it again with `abstractgateway serve` (or its login service, if installed)".into(),
+    }
+}
+
 pub fn tray_note(v: &Value) -> String {
     let null = Value::Null;
     let sup = v.get("supervisor").unwrap_or(&null);
@@ -586,6 +608,19 @@ pub fn offers_public_lookup(d: &crate::store::NetworkData) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn start_again_hint_follows_the_login_service() {
+        let mac = start_again_hint(Some(true), Some("launchd-agent"));
+        assert!(mac.contains("launchctl kickstart") && mac.contains("ai.abstractframework.gateway"), "{mac}");
+        assert!(!mac.contains("abstractgateway serve"), "service mode never says serve: {mac}");
+        let linux = start_again_hint(Some(true), Some("systemd-user"));
+        assert!(linux.contains("systemctl --user start abstractgateway.service"), "{linux}");
+        let xdg = start_again_hint(Some(true), Some("xdg-autostart"));
+        assert!(xdg.contains("next login"), "{xdg}");
+        assert_eq!(start_again_hint(Some(false), None), "start it again with `abstractgateway serve`");
+        assert!(start_again_hint(None, None).contains("if installed"), "unread says so");
+    }
 
     #[test]
     fn runner_state_and_detail_follow_the_web_wording() {

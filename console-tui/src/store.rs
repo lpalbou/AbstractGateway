@@ -401,6 +401,11 @@ pub struct RouteRow {
     /// {provider, model, reason}): the row stays unset and says why.
     /// `None` on a row without it (and on an older gateway).
     pub recommendation_unavailable: Option<RecommendationUnavailable>,
+    /// The mirror for a CONFIGURED row (`route_unavailable`, same shape):
+    /// its provider cannot run on this host (an install seeded before the
+    /// host-aware recommendation still holding `output.image: mlx-gen` on
+    /// Linux). Rendered as a warning, never as a working route.
+    pub route_unavailable: Option<RecommendationUnavailable>,
 }
 
 /// `recommendation_unavailable` on a capability-defaults row.
@@ -412,6 +417,19 @@ pub struct RecommendationUnavailable {
 }
 
 impl RecommendationUnavailable {
+    /// "mlx-gen · model", or "" when Core named neither (the core
+    /// console's `RouteUnavailable::pair_text`).
+    pub fn pair_text(&self) -> String {
+        match (self.provider.is_empty(), self.model.is_empty()) {
+            (true, true) => String::new(),
+            _ => format!(
+                "{} · {}",
+                if self.provider.is_empty() { "?" } else { &self.provider },
+                if self.model.is_empty() { "?" } else { &self.model }
+            ),
+        }
+    }
+
     pub fn from_value(v: &Value) -> Option<RecommendationUnavailable> {
         let reason = s(v, "reason").filter(|r| !r.is_empty())?;
         Some(RecommendationUnavailable {
@@ -469,6 +487,9 @@ impl RouteRow {
             recommendation_unavailable: v
                 .get("recommendation_unavailable")
                 .and_then(RecommendationUnavailable::from_value),
+            route_unavailable: v
+                .get("route_unavailable")
+                .and_then(RecommendationUnavailable::from_value),
             key,
         })
     }
@@ -517,6 +538,11 @@ impl RouteRow {
             return format!("covered by {by}");
         }
         if self.configured {
+            // Configured, but this host cannot run it: the reason rides
+            // the selected-row line and the `p` plan.
+            if self.route_unavailable.is_some() {
+                return "cannot run here".to_string();
+            }
             return "configured".to_string();
         }
         // AN UNSET PARENT WHOSE TASK ROWS ARE ALL SET IS NOT A PROBLEM.

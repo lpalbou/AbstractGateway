@@ -301,6 +301,7 @@ pub fn route_title(route: &str) -> &'static str {
         "input.audio" => "Transcription",
         "output.image" => "Images",
         "input.image" => "Vision",
+        "output.video" => "Video",
         _ => "Model",
     }
 }

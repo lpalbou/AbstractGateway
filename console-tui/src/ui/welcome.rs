@@ -250,6 +250,9 @@ pub fn refresh(ctx: &Ctx) {
     ctx.send(Cmd::LoadFirstRun);
 }
 
+/// The welcome block's padding, each side (the wrap width subtracts it).
+const WELCOME_PAD: i32 = 1;
+
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
@@ -262,10 +265,14 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 .border(BorderKind::Rounded)
                 .title("Setup — welcome to your gateway")
                 .fill(t.surface)
-                .layout(LayoutStyle::column().gap(0).grow(1.0).padding(Edges::all(1)))
+                .layout(LayoutStyle::column().gap(0).grow(1.0).padding(Edges::all(WELCOME_PAD)))
                 .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), move |gcx| {
                     let t = tt;
-                    let width = (viewport.get().w - BLOCK_CHROME).max(20) as usize;
+                    // The text column: the block's border AND its
+                    // padding (1 a side), and the Scroll's bar column
+                    // (it shows on a short terminal). Wrapping at the
+                    // border alone cut the last word ("Eve…").
+                    let width = (viewport.get().w - BLOCK_CHROME - 2 * WELCOME_PAD - 1).max(20) as usize;
                     let mut rows: Vec<View> = Vec::new();
                     let who = store.conn.with(|c| match c {
                         ConnPhase::Connected(id) => Some((id.user_id.clone(), id.admin)),
@@ -382,14 +389,25 @@ pub fn finish_row(gcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         Some(false) => "not yet",
         None => "unknown",
     });
+    let model = model.unwrap_or_else(|| "not set yet".into());
     let facts = line(vec![
         span("Console ", t.text_muted),
         span(format!("{}/console", ui.conn_url.get()), t.text),
         span("  ·  text model ", t.text_muted),
-        span(model.unwrap_or_else(|| "not set yet".into()), t.text),
+        span(model.clone(), t.text),
         span("  ·  starts at login ", t.text_muted),
         span(login, t.text),
     ]);
+    // The web guide's "From the command line" block, on one line.
+    let service = store.welcome.with(|w| {
+        w.ready()
+            .map(|w| (w.service_installed, w.service_mechanism.clone()))
+    });
+    let cli = line(vec![
+        span("CLI ", t.text_muted),
+        span(done_cli_hints(service), t.text_faint),
+    ]);
+    let tall = abstracttui::app::use_viewport(gcx).get().h >= 30;
     let status: View = if ui.first_run_pending.get().is_some() {
         line(vec![span("⟳ recording… (POST + verify via GET)", t.info)])
     } else if let Some(e) = ui.first_run_error.get() {
@@ -399,6 +417,17 @@ pub fn finish_row(gcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             "recording the first-run outcome is admin-only",
             t.text_faint,
         )])
+    } else if !tall {
+        // Under 30 rows the Review step's arithmetic has ONE row for the
+        // finish controls: the "done" facts ride it (the footer already
+        // teaches Ctrl+G), instead of vanishing (REVIEW-1 minor).
+        line(vec![
+            span("text model ", t.text_muted),
+            span(model, t.text),
+            span(" · starts at login ", t.text_muted),
+            span(login, t.text),
+            span(format!(" · {}/console", ui.conn_url.get()), t.text_muted),
+        ])
     } else {
         line(vec![span("Ctrl+G also leaves or skips", t.text_faint)])
     };
@@ -418,12 +447,27 @@ pub fn finish_row(gcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 .build(),
         );
     }
-    // The facts line only where the rows exist: the Review step's 80x24
-    // arithmetic has exactly one row for the finish controls.
-    let tall = abstracttui::app::use_viewport(gcx).get().h >= 30;
-    let mut col = Element::new().style(LayoutStyle::column());
+    // 30+ rows: the facts and the web's command-line block get their own
+    // lines above the controls. Below that the facts ride the controls'
+    // status slot (above) and the commands wait for a taller terminal.
+    let mut col = Element::new().style(LayoutStyle::column().shrink(0.0));
     if tall {
-        col = col.child(facts);
+        col = col.child(facts).child(cli);
     }
     col.child(buttons.child(status).build()).build()
+}
+
+/// The web guide's done-step commands (`renderFirstRunDone`, "From the
+/// command line"): sign in again, start at login (or how it is already
+/// installed), status. `service` = (installed, mechanism) from
+/// `GET /host/state`, `None` while unread.
+pub fn done_cli_hints(service: Option<(Option<bool>, Option<String>)>) -> String {
+    let login = match service {
+        Some((Some(true), mech)) => format!(
+            "starts at login ({}; remove: abstractgateway service uninstall)",
+            mech.as_deref().unwrap_or("service")
+        ),
+        _ => "abstractgateway service install (start at login)".to_string(),
+    };
+    format!("abstractgateway claim --open (sign in again) · {login} · abstractgateway-config status")
 }

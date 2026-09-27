@@ -18,7 +18,8 @@ crate (0.2), the same screens `abstractcore-console` shows over the
 AbstractCore routes. Both crates build on one abstracttui (0.3.6).
 
 Twelve screens, shared by a **setup guide** (the wizard: the web
-console's first-run guide, same steps and routes) and a **browse mode**
+console's five first-run steps — welcome, engines, model, apps, done —
+on eight screens, through the same gateway routes) and a **browse mode**
 (free tabs).
 
 The guide walks Connection → **Setup** (welcome: this computer at a
@@ -35,9 +36,12 @@ otherwise. `Ctrl+G` reopens the guide from browse, and in the guide
 leaves it (not recorded, it opens again next start) or skips it
 (recorded).
 
-1. **Connection** — base URL + admin token (masked; env fallback
-   `ABSTRACTGATEWAY_AUTH_TOKEN`), probe via `/ping` + `/me`, honest
-   states: unreachable ≠ unauthorized ≠ connected, with identity badges
+1. **Connection** — base URL + admin token (masked; `--token-file PATH`
+   or the env fallback `ABSTRACTGATEWAY_AUTH_TOKEN`), probe via `/ping` +
+   `/me`, honest states: unreachable ≠ sign-in needed (no token sent) ≠
+   token rejected ≠ connected — both 401s name where the admin token
+   lives, `<data dir>/auth/bootstrap-admin-token` on the gateway host —
+   with identity badges
    (admin, auth mode, routing mode), and the network panel (including
    the web console's "Look up my public address").
 2. **Providers** — provider endpoint profiles (create/edit/delete,
@@ -150,8 +154,16 @@ inside a 200 renders as failure (body over transport).
 
 ```sh
 cargo install abstractgateway-console
+# on the gateway host: the admin token file (`abstractgateway serve` prints its data dir)
+abstractgateway-console --url http://127.0.0.1:8081 \
+  --token-file "<data dir>/auth/bootstrap-admin-token"
+# or through the environment
 ABSTRACTGATEWAY_AUTH_TOKEN=... abstractgateway-console --url http://127.0.0.1:8081
 ```
+
+`--token-file PATH` reads the token from a file (whitespace trimmed; an
+unreadable or empty file stops the launch with the reason). Prefer it, or
+the environment variable, over `--token`: argv is visible in `ps`.
 
 The crate is released from the AbstractGateway repository
 (`console-tui/`); see [CHANGELOG.md](CHANGELOG.md). The gateway-side guide is
@@ -170,7 +182,9 @@ cargo run < /dev/null   # headless: prints a skip line, exits 0
 
 Keys: `Tab` focus · `Enter` activate · `Ctrl+N` next step / `Ctrl+P`
 back (always work — `]`/`[` are alternates that text fields swallow) ·
-`Esc` back / close modal · `1-9`, `0`, `A` (Apps) screens (browse; the
+`Esc` back / close modal (in a screen's text field, the first `Esc`
+releases the caret so screen keys work again; page text fields never
+take the caret by themselves once connected) · `1-9`, `0`, `A` (Apps) screens (browse; the
 screen bar is also clickable in browse) · `Ctrl+G` setup guide (browse:
 reopen; guide: leave or Skip setup) · `r` refresh · `F1` / `?` About ·
 `F2` docs assistant (signed in; the web top bar's ✦ drawer) · `F3`

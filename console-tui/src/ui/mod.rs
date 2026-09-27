@@ -37,7 +37,7 @@ use std::rc::Rc;
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
-use abstracttui::app::{ChoiceOutcome, ChoicePrompt, Modal, Overlays, Toast};
+use abstracttui::app::{ChoiceOutcome, ChoicePrompt, Modal, Overlays};
 use abstracttui::prelude::*;
 use abstracttui::reactive::IntervalHandle;
 use abstracttui::widgets::PageHost;
@@ -428,7 +428,7 @@ impl Ctx {
                     );
                     (Some(t), d)
                 }
-                _ => (None, "none — no Authorization header sent".to_string()),
+                _ => (None, connection::NO_TOKEN_SENT.to_string()),
             }
         };
         (url, token, source)
@@ -991,11 +991,23 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
                 ctx_refresh.store.notice.set(Some(
                     "verifying the gateway connection — retrying automatically, one moment".into(),
                 ));
+            } else if matches!(ctx_refresh.store.conn.get_untracked(), ConnPhase::Probing) {
+                ctx_refresh
+                    .store
+                    .notice
+                    .set(Some("already probing the gateway — one moment".into()));
             } else {
-                ctx_refresh.store.notice.set(Some(
-                    "not connected — probe on the Connection screen first (r refreshes live data)"
-                        .into(),
-                ));
+                // Not connected (never probed, unreachable, refused): `r`
+                // means "try again" — re-probe with the same URL and token
+                // the Probe button uses. A gateway that came back (after a
+                // quit, a restart, a reboot) is one keypress away instead
+                // of a trip to the Connection screen.
+                let (url, _) = ctx_refresh.effective_credentials();
+                ctx_refresh
+                    .store
+                    .notice
+                    .set(Some(format!("⟳ not connected — probing {url} again…")));
+                ctx_refresh.connect_now();
             }
         })
         .shortcut(KeyChord::new(Mods::CTRL, Key::Char('l')), |_| {
@@ -1238,7 +1250,7 @@ fn wizard_goal(screen: usize) -> &'static str {
         SCREEN_WORKFLOWS => {
             "nothing to configure — the registered workflows; e exports, d/D delete."
         }
-        SCREEN_REVIEW => "optionally run one real test (Enter in the prompt), then Finish.",
+        SCREEN_REVIEW => "optionally run one real test (Tab to the prompt, Enter), then Finish.",
         SCREEN_WELCOME => "this computer at a glance — every step is optional; Ctrl+G leaves.",
         SCREEN_MODELS => {
             "nothing to configure — live models, memory & caches; Finish lives on Review."
@@ -1428,22 +1440,11 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
         });
     }
 
-    // Notices → toast (and the footer mirrors the latest one).
-    {
-        let overlays = ctx.overlays.clone();
-        cx.effect(move || {
-            if let Some(n) = store.notice.get() {
-                let viewport = abstracttui::app::use_viewport(cx).get_untracked();
-                Toast::show(
-                    &overlays,
-                    cx,
-                    viewport,
-                    util::ellipsize(&n, (viewport.w as usize).saturating_sub(6).max(20)),
-                    Duration::from_secs(4),
-                );
-            }
-        });
-    }
+    // Notices render in ONE place: the footer's status line (below).
+    // They used to ALSO pop an engine Toast, which rests on row 1 and
+    // slides in over row 0 — drawing over the header's connection status
+    // and the paused/restart banner (REVIEW-1 minor). The footer line is
+    // never covered and keeps the notice while an operation is busy.
 
     // Token-once modals: create-user / rotate-token responses queue up
     // and show ONE AT A TIME — never bulldozing an unread token modal
@@ -1661,8 +1662,8 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
             // NAMED in every debug run into a lane nobody read. App
             // notices win the slot (actionable acks); the engine line
             // shows whenever the app lane is idle.
+            let notice = store.notice.get();
             if ops.is_empty() {
-                let notice = store.notice.get();
                 return match notice {
                     Some(n) => line(vec![span(format!(" {n}"), t.text_muted)]),
                     None => {
@@ -1697,6 +1698,12 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 };
             }
             let mut parts = Vec::new();
+            // The latest notice leads (it is the ack of what the operator
+            // just did); the busy ops follow it on the same line.
+            if let Some(n) = notice {
+                parts.push(span(format!(" {n}"), t.text_muted));
+                parts.push(span(" ·", t.text_faint));
+            }
             for (i, op) in ops.iter().enumerate() {
                 if i > 0 {
                     parts.push(span(" · ", t.text_faint));
@@ -1804,7 +1811,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     pairs.push(("r", "refresh"));
                 }
                 SCREEN_REVIEW => {
-                    pairs.push(("Enter", "run the test (REAL generation)"));
+                    pairs.push(("Tab→prompt, Enter", "run the test (REAL generation)"));
                     pairs.push(("r", "refresh providers"));
                 }
                 SCREEN_MODELS => {

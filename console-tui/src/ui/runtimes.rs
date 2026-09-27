@@ -1001,26 +1001,30 @@ fn toolbar_row(
                 .build(),
         )
         .child(
-            TextInput::new()
-                .value(draft)
-                .placeholder(placeholder)
-                // ENTER COMMITS: this worker is one serial lane, so a
-                // request per keystroke would stampede it.
-                .on_submit(move |_| {
-                    let next = draft.get_untracked().trim().to_string();
-                    if query.get_untracked() != next {
-                        query.set(next);
-                        on_change();
-                    }
-                })
-                .layout(
-                    LayoutStyle::default()
-                        .basis(Dimension::Cells(0))
-                        .grow(1.0)
-                        .h(1),
-                )
-                .element(cx, &t0)
-                .build(),
+            // Esc hands the keyboard back to the panel (REVIEW-1 M2).
+            super::util::esc_releases_focus(
+                TextInput::new()
+                    .value(draft)
+                    .placeholder(placeholder)
+                    // ENTER COMMITS: this worker is one serial lane, so a
+                    // request per keystroke would stampede it.
+                    .on_submit(move |_| {
+                        let next = draft.get_untracked().trim().to_string();
+                        if query.get_untracked() != next {
+                            query.set(next);
+                            on_change();
+                        }
+                    })
+                    .layout(
+                        LayoutStyle::default()
+                            .basis(Dimension::Cells(0))
+                            .grow(1.0)
+                            .h(1),
+                    )
+                    .element(cx, &t0),
+                ctx.store.notice,
+            )
+            .build(),
         )
         .build()
 }

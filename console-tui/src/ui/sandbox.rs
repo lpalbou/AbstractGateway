@@ -1367,31 +1367,36 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         let ctx3 = ctx_submit.clone();
                         let st = prompt_state.clone();
                         let st2 = prompt_state.clone();
+                        let prompt = TextArea::new()
+                            .state(&st)
+                            .placeholder(ws.mode.get().placeholder())
+                            .on_change(move |s: &str| {
+                                if ui.sb_prompt.with_untracked(|p| p != s) {
+                                    ui.sb_prompt.set(s.to_string());
+                                }
+                            })
+                            .on_submit(move |_| {
+                                run(&ctx3, prov_ix, model_ix, &st2);
+                            })
+                            .layout(
+                                LayoutStyle::default()
+                                    .basis(Dimension::Cells(0))
+                                    .grow(1.0)
+                                    .min_h(2)
+                                    .max_h(2)
+                                    .shrink(0.0),
+                            )
+                            .element(gcx, &t);
+                        // NO autofocus (REVIEW-1 M1): this slot re-mounts
+                        // on every guide→browse flip, and a caret parked
+                        // here ate the screen keys (`3` typed "3") — in
+                        // the guide, Enter on arrival started a REAL
+                        // generation. Tab reaches the prompt; Esc hands
+                        // the keyboard back.
                         field(
                             &t,
                             "prompt",
-                            TextArea::new()
-                                .state(&st)
-                                .placeholder(ws.mode.get().placeholder())
-                                .on_change(move |s: &str| {
-                                    if ui.sb_prompt.with_untracked(|p| p != s) {
-                                        ui.sb_prompt.set(s.to_string());
-                                    }
-                                })
-                                .on_submit(move |_| {
-                                    run(&ctx3, prov_ix, model_ix, &st2);
-                                })
-                                .layout(
-                                    LayoutStyle::default()
-                                        .basis(Dimension::Cells(0))
-                                        .grow(1.0)
-                                        .min_h(2)
-                                        .max_h(2)
-                                        .shrink(0.0),
-                                )
-                                .element(gcx, &t)
-                                .autofocus()
-                                .build(),
+                            super::util::esc_releases_focus(prompt, ctx_submit.store.notice).build(),
                         )
                     }
                 }))
@@ -1754,13 +1759,16 @@ fn text_controls(
                             .child(field(
                                 &t,
                                 "model",
-                                TextInput::new()
-                                    .value(ui.sb_model_custom)
-                                    .placeholder("discovery failed — type the model id")
-                                    .placeholder_while_focused(true)
-                                    .layout(LayoutStyle::default().w(52).h(1))
-                                    .element(gcx, &t)
-                                    .build(),
+                                super::util::esc_releases_focus(
+                                    TextInput::new()
+                                        .value(ui.sb_model_custom)
+                                        .placeholder("discovery failed — type the model id")
+                                        .placeholder_while_focused(true)
+                                        .layout(LayoutStyle::default().w(52).h(1))
+                                        .element(gcx, &t),
+                                    ctx.store.notice,
+                                )
+                                .build(),
                             ))
                             .child(field(
                                 &t,
@@ -1789,13 +1797,16 @@ fn text_controls(
                     Loadable::Ready(_) => field(
                         &t,
                         "model",
-                        TextInput::new()
-                            .value(ui.sb_model_custom)
-                            .placeholder("no discoverable models — type the model id")
-                            .placeholder_while_focused(true)
-                            .layout(LayoutStyle::default().w(52).h(1))
-                            .element(gcx, &t)
-                            .build(),
+                        super::util::esc_releases_focus(
+                            TextInput::new()
+                                .value(ui.sb_model_custom)
+                                .placeholder("no discoverable models — type the model id")
+                                .placeholder_while_focused(true)
+                                .layout(LayoutStyle::default().w(52).h(1))
+                                .element(gcx, &t),
+                            ctx.store.notice,
+                        )
+                        .build(),
                     ),
                 }
             }

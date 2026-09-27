@@ -38,13 +38,19 @@ const HELP: &str = "\
 abstractgateway-console — configure an AbstractGateway from the terminal
 
 USAGE:
-  abstractgateway-console [--url URL] [--token TOKEN] [--wizard|--browse]
-                          [--theme ID]
+  abstractgateway-console [--url URL] [--token TOKEN | --token-file PATH]
+                          [--wizard|--browse] [--theme ID]
 
 OPTIONS:
   --url URL      gateway base URL (default http://127.0.0.1:8080)
   --token TOKEN  bearer token (default: $ABSTRACTGATEWAY_AUTH_TOKEN;
-                 prefer the env var — argv is visible in `ps`)
+                 prefer --token-file or the env var — argv is visible
+                 in `ps`)
+  --token-file PATH
+                 read the bearer token from a file (surrounding
+                 whitespace trimmed). On the gateway host the admin
+                 token is <data dir>/auth/bootstrap-admin-token
+                 (`abstractgateway serve` prints its data dir)
   --wizard       start in the setup guide (wizard), whatever the
                  gateway's first-run state
   --browse       start in browse mode (tabs, no step gating)
@@ -57,7 +63,8 @@ OPTIONS:
   --about        print About (this console, AbstractFramework, the
                  gateway's versions from GET /api/gateway/about at --url)
 
-KEYS: Tab focus · Enter activate · Ctrl+N next step · Ctrl+P / Esc back ·
+KEYS: Tab focus · Enter activate · Ctrl+N next step · Ctrl+P / Esc back
+      (in a text field Esc first releases the caret) ·
       ] / [ next/back (outside text fields) ·
       1-9,0 screens, A Apps (browse) ·
       Ctrl+G setup guide (browse: reopen; guide: leave or Skip setup) ·
@@ -80,7 +87,9 @@ SCREEN KEYS (the footer lists each screen's keys):
   Apps       Enter/o open · i/u install/update · s/x start/stop · l log ·
              c cancel · t/T terminal · n Node.js · y copy
 
-SETUP GUIDE (the web console's first-run guide, same steps and routes):
+SETUP GUIDE (the web console's first-run guide — its five steps,
+welcome · engines · model · apps · done, on eight screens here, through
+the same gateway routes; the terminal signs in first):
   Connection → Setup → Engines → Providers → Routes (default model:
   recommended plan, a apply, D download all) → Models → Apps → Review
   (Finish or Skip setup: POST /host/first-run, verified by a GET)
@@ -89,6 +98,9 @@ SETUP GUIDE (the web console's first-run guide, same steps and routes):
 struct Args {
     url: String,
     token: String,
+    /// `--token-file PATH`: the path given (the token itself is read
+    /// into `token` by [`parse_args`]).
+    token_file: Option<String>,
     /// `Some` = --wizard / --browse given (forced); `None` = decided by
     /// the gateway's first-run state at connect.
     wizard: Option<bool>,
@@ -99,6 +111,8 @@ struct Args {
 fn parse_args(argv: &[String]) -> Result<Option<Args>, String> {
     let mut url = String::new();
     let mut token = String::new();
+    let mut token_flag = false;
+    let mut token_file: Option<String> = None;
     let mut wizard = None;
     let mut theme = None;
     let mut about = false;
@@ -114,7 +128,13 @@ fn parse_args(argv: &[String]) -> Result<Option<Args>, String> {
                 return Ok(None);
             }
             "--url" => url = it.next().cloned().ok_or("--url needs a value")?,
-            "--token" => token = it.next().cloned().ok_or("--token needs a value")?,
+            "--token" => {
+                token = it.next().cloned().ok_or("--token needs a value")?;
+                token_flag = true;
+            }
+            "--token-file" => {
+                token_file = Some(it.next().cloned().ok_or("--token-file needs a path")?)
+            }
             "--wizard" => wizard = Some(true),
             "--browse" => wizard = Some(false),
             "--about" => about = true,
@@ -122,13 +142,34 @@ fn parse_args(argv: &[String]) -> Result<Option<Args>, String> {
             other => return Err(format!("unknown argument: {other} (see --help)")),
         }
     }
+    if let Some(path) = &token_file {
+        if token_flag {
+            return Err("give --token or --token-file, not both".into());
+        }
+        token = read_token_file(path)?;
+    }
     Ok(Some(Args {
         url,
         token,
+        token_file,
         wizard,
         theme,
         about,
     }))
+}
+
+/// `--token-file PATH`: the token is the file's content, surrounding
+/// whitespace trimmed (a trailing newline is how every editor and
+/// `echo` write it). Unreadable or empty fails LOUDLY at launch — a
+/// silent tokenless connect would surface later as a confusing 401.
+fn read_token_file(path: &str) -> Result<String, String> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| format!("--token-file {path}: cannot read it ({e})"))?;
+    let token = raw.trim();
+    if token.is_empty() {
+        return Err(format!("--token-file {path}: the file is empty"));
+    }
+    Ok(token.to_string())
 }
 
 /// The `--about` text: this console's identity (vendored descriptor) and
@@ -315,7 +356,12 @@ pub fn run_cli(argv: &[String]) -> i32 {
     {
         let url = ui::normalize_url(&ui_state.conn_url.get_untracked());
         ui_state.conn_url.set(url.clone());
-        let (token, source) = if !args.token.is_empty() {
+        let (token, source) = if let Some(path) = &args.token_file {
+            (
+                args.token.clone(),
+                format!("--token-file {path} ({} chars)", args.token.chars().count()),
+            )
+        } else if !args.token.is_empty() {
             (
                 args.token.clone(),
                 format!("--token flag ({} chars)", args.token.chars().count()),
@@ -331,10 +377,7 @@ pub fn run_cli(argv: &[String]) -> i32 {
             );
             (t, d)
         } else {
-            (
-                String::new(),
-                "none — no Authorization header sent".to_string(),
-            )
+            (String::new(), ui::connection::NO_TOKEN_SENT.to_string())
         };
         ui_state.token_source.set(Some(source));
         let _ = tx.send(worker::Cmd::Connect {
@@ -368,6 +411,62 @@ pub fn run_cli(argv: &[String]) -> i32 {
             eprintln!("abstractgateway-console: {e}");
             1
         }
+    }
+}
+
+#[cfg(test)]
+mod token_file_args {
+    use super::parse_args;
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn scratch(name: &str, content: &str) -> String {
+        // Inside the crate's own target dir: tests write nowhere else.
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("test-scratch")
+            .join(format!("token-file-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("bootstrap-admin-token");
+        std::fs::write(&p, content).unwrap();
+        p.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn token_file_reads_and_trims_the_token() {
+        let p = scratch("ok", "  s3cret-token\n");
+        let a = parse_args(&args(&["--token-file", &p])).unwrap().unwrap();
+        assert_eq!(a.token, "s3cret-token");
+        assert_eq!(a.token_file.as_deref(), Some(p.as_str()));
+    }
+
+    #[test]
+    fn token_file_fails_loudly_when_missing_or_empty() {
+        let e = parse_args(&args(&["--token-file", "/nonexistent/agc/token"]))
+            .err()
+            .expect("missing file is an error");
+        assert!(e.contains("/nonexistent/agc/token") && e.contains("cannot read"), "{e}");
+        let p = scratch("empty", " \n");
+        let e = parse_args(&args(&["--token-file", &p])).err().expect("empty is an error");
+        assert!(e.contains("empty"), "{e}");
+        assert!(parse_args(&args(&["--token-file"])).is_err(), "needs a path");
+    }
+
+    #[test]
+    fn token_and_token_file_are_exclusive() {
+        let p = scratch("both", "t");
+        let e = parse_args(&args(&["--token", "x", "--token-file", &p]))
+            .err()
+            .expect("both flags refused");
+        assert!(e.contains("not both"), "{e}");
+    }
+
+    #[test]
+    fn help_documents_the_token_file_and_where_the_admin_token_lives() {
+        assert!(super::HELP.contains("--token-file PATH"));
+        assert!(super::HELP.contains("<data dir>/auth/bootstrap-admin-token"));
     }
 }
 

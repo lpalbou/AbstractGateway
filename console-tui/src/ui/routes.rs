@@ -334,14 +334,32 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     match row {
                         Some(r) => {
                             let mut spans = vec![span_bold(format!(" {} ", r.key), t.accent)];
-                            if let Some(u) = &r.recommendation_unavailable {
-                                // Host-aware recommendation: unset because
-                                // the recommended engine cannot run here.
+                            // The core console's words (abstractcore-console
+                            // ui/routes.rs), so both grids say the same.
+                            if let Some(u) = r.route_unavailable.as_ref().filter(|_| r.configured) {
+                                // Configured, and this host cannot run it
+                                // (REVIEW-1 contract): never shown as fine.
                                 spans.push(span(
                                     format!(
-                                        "unset — the recommended {} {} cannot run on this host: {}",
-                                        u.provider, u.model, u.reason
+                                        "configured but cannot run on this computer: {} — a (replace mine) \
+                                         swaps in what runs here  ",
+                                        u.reason
                                     ),
+                                    t.error,
+                                ));
+                            } else if let Some(u) = &r.recommendation_unavailable {
+                                // Host-aware recommendation: unset because
+                                // the recommended engine cannot run here.
+                                let what = u.pair_text();
+                                spans.push(span(
+                                    if what.is_empty() {
+                                        format!("nothing recommended runs on this computer: {}  ", u.reason)
+                                    } else {
+                                        format!(
+                                            "the recommended {what} cannot run on this computer: {}  ",
+                                            u.reason
+                                        )
+                                    },
                                     t.warn,
                                 ));
                             } else if r.is_task_parent() {
@@ -561,7 +579,7 @@ fn apply_recommended(cx: Scope, ctx: &Ctx) {
     let ctx_keep = ctx.clone();
     let ctx_force = ctx.clone();
     let prompt = abstracttui::app::ChoicePrompt::new(
-        "Apply the framework's recommended routes (text, voice, image) on the execution host?"
+        "Apply the framework's recommended routes (text, voice, images, video — what this computer can run) on the execution host?"
             .to_string(),
     )
     .option("keep", "Apply — keep routes I configured")
@@ -705,6 +723,39 @@ fn open_plan(cx: Scope, ctx: &Ctx) {
                     rows.push(line(vec![span(format!("    {l}"), t.text_muted)]));
                 }
             }
+            rows.push(line(vec![span(String::new(), t.text)]));
+        }
+        // Configured routes this host cannot run (`route_unavailable`): a
+        // plan that listed only the gaps would call these routes fine.
+        let broken: Vec<(String, crate::store::RecommendationUnavailable)> =
+            store.routes.with_untracked(|r| {
+                r.ready()
+                    .map(|d| {
+                        d.rows
+                            .iter()
+                            .filter_map(|row| row.route_unavailable.clone().map(|u| (row.key.clone(), u)))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            });
+        if !broken.is_empty() {
+            rows.push(line(vec![span_bold(
+                "Configured but cannot run on this computer",
+                t.warn,
+            )]));
+            for (key, u) in &broken {
+                rows.push(line(vec![span(
+                    format!("  {key}: {} {}", u.provider, u.model),
+                    t.text,
+                )]));
+                for l in super::util::wrap_text(&u.reason, width.saturating_sub(4)) {
+                    rows.push(line(vec![span(format!("    {l}"), t.text_muted)]));
+                }
+            }
+            rows.push(line(vec![span(
+                "  a (replace mine) swaps in what runs here — or removes them where nothing does",
+                t.text_faint,
+            )]));
             rows.push(line(vec![span(String::new(), t.text)]));
         }
         if let Some(g) = store.download_group.get_untracked() {

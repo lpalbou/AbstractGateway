@@ -734,53 +734,92 @@ pub fn applied_recommended_summary(payload: &Value) -> String {
         };
         format!("{}/{}", get("provider"), get("model"))
     };
+    // The report's own totals first (each optional: an older Core has no
+    // `cleared`) — the core console's apply report, word for word.
+    let report = payload.get("applied_recommended").unwrap_or(&Value::Null);
+    let totals: Vec<String> = ["changed", "cleared", "kept", "already", "unavailable"]
+        .iter()
+        .filter_map(|k| {
+            report
+                .get(*k)
+                .and_then(Value::as_u64)
+                .filter(|n| *n > 0)
+                .map(|n| format!("{n} {k}"))
+        })
+        .collect();
     let mut changed: Vec<String> = Vec::new();
     let mut kept: Vec<String> = Vec::new();
     // Host-aware recommendations (AbstractCore): a route whose engine this
     // host cannot run is never written, and carries its `reason`.
     let mut unavailable: Vec<String> = Vec::new();
+    // Rows that must be said one by one: a configured route this host
+    // cannot run (`route_unavailable`) is never reported as fine.
+    let mut flagged: Vec<String> = Vec::new();
     for row in rows {
         let key = row.get("key").and_then(Value::as_str).unwrap_or("?");
         let action = row.get("action").and_then(Value::as_str).unwrap_or("");
-        if action == "unavailable" {
-            match row.get("reason").and_then(Value::as_str).filter(|r| !r.is_empty()) {
+        let reason = row
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("no reason given");
+        let cannot_run = row
+            .get("route_unavailable")
+            .and_then(|u| u.get("reason"))
+            .and_then(Value::as_str)
+            .map(|why| format!(" — yours cannot run on this computer: {why}"))
+            .unwrap_or_default();
+        match action {
+            // `force`, and nothing on this host runs — neither the stored
+            // route nor any recommendation: removed, whole.
+            "cleared" => flagged.push(format!(
+                "{key}: removed {}{cannot_run}; nothing recommended runs here either — {reason}",
+                pair(row.get("before"))
+            )),
+            "unavailable" if !cannot_run.is_empty() => {
+                let before = pair(row.get("before"));
+                flagged.push(format!(
+                    "{key}: nothing recommended runs on this computer — {reason}; left as {before}{cannot_run}"
+                ));
+            }
+            "unavailable" => match row.get("reason").and_then(Value::as_str).filter(|r| !r.is_empty()) {
                 Some(r) => unavailable.push(format!("{key} ({r})")),
                 None => unavailable.push(key.to_string()),
+            },
+            "kept" => kept.push(format!("{key} ({}){cannot_run}", pair(row.get("before")))),
+            _ if row.get("changed").and_then(Value::as_bool).unwrap_or(false) => {
+                changed.push(format!(
+                    "{key}: {} → {}{cannot_run}",
+                    pair(row.get("before")),
+                    pair(row.get("after"))
+                ))
             }
-            continue;
-        }
-        if row.get("changed").and_then(Value::as_bool).unwrap_or(false) {
-            changed.push(format!(
-                "{key}: {} → {}",
-                pair(row.get("before")),
-                pair(row.get("after"))
-            ));
-        } else if action == "kept" {
-            kept.push(format!("{key} ({})", pair(row.get("before"))));
+            _ => {}
         }
     }
     let mut parts: Vec<String> = Vec::new();
     if !changed.is_empty() {
         parts.push(changed.join("; "));
     }
+    if !flagged.is_empty() {
+        parts.push(flagged.join("; "));
+    }
     if !kept.is_empty() {
         parts.push(format!("kept yours on {}", kept.join(", ")));
     }
     if !unavailable.is_empty() {
-        // The report's own count when it has one (older gateways: none).
-        let n = payload
-            .get("applied_recommended")
-            .and_then(|r| r.get("unavailable"))
-            .and_then(Value::as_u64)
-            .map(|n| n as usize)
-            .unwrap_or(unavailable.len());
+        // Counted here, not from the report's `unavailable`: that total
+        // also holds the configured-but-broken rows said above.
         parts.push(format!(
-            "{n} not available on this host, left unset: {}",
+            "{} not available on this host, left unset: {}",
+            unavailable.len(),
             unavailable.join("; ")
         ));
     }
     if parts.is_empty() {
         return "every recommended route already matched".to_string();
+    }
+    if !totals.is_empty() {
+        parts.insert(0, totals.join(" · "));
     }
     parts.join(" · ")
 }
