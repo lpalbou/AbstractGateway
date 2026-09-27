@@ -423,7 +423,7 @@ def test_list_pages_status_filter_changed_since_and_legacy(live: TestClient) -> 
     assert [s["automation_id"] for s in seen if not s["legacy"]] == list(reversed(ids))
     (leg,) = [s for s in seen if s["legacy"]]
     assert leg["automation_id"] == legacy.run_id and leg["capabilities"] == ["legacy"] and leg["revision"] is None
-    assert leg["trigger"] == {"source_id": "schedule", "source_version": 1, "config": {"every": "2m"}}
+    assert leg["trigger"] == {"binding_id": legacy.run_id, "source_id": "schedule", "source_version": 1, "config": {"every": "2m"}}
     assert leg["session_kind"] == "automation"
     r = live.get("/api/gateway/automations?changed_since=2026-01-01T00:00:00Z", headers=HEADERS)
     assert r.status_code == 422 and _envelope(r)["reason_code"] == "unsupported_feature"
@@ -553,3 +553,89 @@ def test_a_discussion_turn_without_readable_history_is_refused(live: TestClient,
         "bundle_id": live.bundle_ref, "flow_id": ECHO_FLOW_ID, "session_id": out["session_id"], "input_data": {"prompt": "again"}})
     assert r.status_code == 409, r.text
     assert r.json()["detail"]["reason_code"] == "history_unavailable"
+
+
+# ------------------------------------------------ E2E defects D2 / D4 / D5 / D6
+
+
+def _create_flow(c: TestClient, flow_id: str, request_id: str) -> str:
+    r = c.post("/api/gateway/automations", headers=HEADERS, json={
+        "request_id": request_id, "title": request_id, "target": {"bundle_ref": c.bundle_ref, "flow_id": flow_id},
+        "trigger": {"source_id": "manual", "source_version": 1, "config": {}}})
+    assert r.status_code == 200, r.text
+    return r.json()["automation_id"]
+
+
+def test_d2_waiting_only_on_a_person(live: TestClient) -> None:
+    """A root parked on its subworkflow (like an Agent node) is RUNNING; only a
+    wait on a person (typed pending wait) reads `waiting`."""
+    slow = _create_flow(live, "slow", "slow")
+    _command(live, slow, "automation.run_now", "s1")
+    row = wait_until(lambda: (lambda r: r[0] if r and r[0]["status"] not in ("admitted",) else None)(_occurrences(live, slow)), timeout_s=10)
+    from abstractgateway.service import get_gateway_service
+
+    root = get_gateway_service().host.run_store.load(row["run_id"])
+    wait_until(lambda: get_gateway_service().host.run_store.load(row["run_id"]).status.value == "waiting", timeout_s=10)
+    row = _occurrences(live, slow)[0]
+    assert row["status"] == "running" and row["waits"] == [], row
+    assert live.get(f"/api/gateway/automations/{slow}", headers=HEADERS).json()["summary"]["last_occurrence"]["status"] == "running"
+    del root
+
+    ask = _create_flow(live, "ask", "ask")
+    _command(live, ask, "automation.run_now", "a1")
+    row = wait_until(lambda: (lambda r: r[0] if r and r[0]["waits"] else None)(_occurrences(live, ask)), timeout_s=10)
+    assert row["status"] == "waiting" and row["waits"][0]["kind"] == "ask_user"
+    assert live.get(f"/api/gateway/automations/{ask}", headers=HEADERS).json()["summary"]["last_occurrence"]["status"] == "waiting"
+
+
+def test_d4_old_occurrences_keep_the_cadence_they_ran_under(live: TestClient) -> None:
+    aid = _create(live, request_id="cad", trigger={"source_id": "schedule", "source_version": 1, "config": {"every": "1s"}})["automation_id"]
+    wait_until(lambda: (lambda r: r if r and r[-1]["status"] == "completed" else None)(_occurrences(live, aid)), timeout_s=20)
+    r = live.patch(f"/api/gateway/automations/{aid}", headers=HEADERS, json={
+        "command_id": "rev", "changes": {"trigger": {"source_id": "schedule", "source_version": 1, "config": {"every": "3m"}}}})
+    assert r.status_code == 200, r.text
+    wait_until(lambda: live.get(f"/api/gateway/automations/{aid}", headers=HEADERS).json()["definition"]["revision"] == 2)
+    rows = _occurrences(live, aid)
+    assert rows and all(o["trigger"]["summary"].startswith("schedule: every second (UTC)") for o in rows), [o["trigger"] for o in rows]
+
+
+def test_d5_door_refuses_what_the_state_rules_out(live: TestClient) -> None:
+    slow = _create_flow(live, "slow", "busy")
+    _command(live, slow, "automation.run_now", "b1")
+    wait_until(lambda: _occurrences(live, slow))
+    r = live.post(f"/api/gateway/automations/{slow}/commands", headers=HEADERS, json={"command_id": "b2", "type": "automation.run_now"})
+    assert r.status_code == 409 and _envelope(r)["reason_code"] == "automation_busy" and _envelope(r)["command_id"] == "b2"
+    # A retry of a command the runtime already decided is still a duplicate receipt, not a refusal.
+    retry = live.post(f"/api/gateway/automations/{slow}/commands", headers=HEADERS, json={"command_id": "b1", "type": "automation.run_now"})
+    assert retry.status_code == 200 and retry.json()["duplicate"] is True
+
+    aid = _create(live, request_id="states")["automation_id"]
+    r = live.post(f"/api/gateway/automations/{aid}/commands", headers=HEADERS, json={"command_id": "r0", "type": "automation.resume"})
+    assert r.status_code == 409 and _envelope(r)["reason_code"] == "invalid_state"
+    r = live.post(f"/api/gateway/automations/{aid}/commands", headers=HEADERS, json={"command_id": "s0", "type": "automation.stop_current"})
+    assert r.status_code == 409 and _envelope(r)["reason_code"] == "invalid_state"
+    _command(live, aid, "automation.pause", "p1")
+    wait_until(lambda: live.get(f"/api/gateway/automations/{aid}", headers=HEADERS).json()["summary"]["status"] == "paused")
+    r = live.post(f"/api/gateway/automations/{aid}/commands", headers=HEADERS, json={"command_id": "p2", "type": "automation.pause"})
+    assert r.status_code == 409 and _envelope(r)["reason_code"] == "invalid_state"
+    _command(live, aid, "automation.archive", "x1")
+    wait_until(lambda: live.get(f"/api/gateway/automations/{aid}", headers=HEADERS).json()["summary"]["status"] == "archived")
+    for typ in ("automation.run_now", "automation.resume", "automation.pause"):
+        r = live.post(f"/api/gateway/automations/{aid}/commands", headers=HEADERS, json={"command_id": f"after-{typ}", "type": typ})
+        assert r.status_code == 409 and _envelope(r)["reason_code"] == "invalid_state", (typ, r.text)
+    r = live.patch(f"/api/gateway/automations/{aid}", headers=HEADERS, json={"command_id": "rv", "changes": {"title": "late"}})
+    assert r.status_code == 409 and _envelope(r)["reason_code"] == "invalid_state"
+
+
+def test_d6_legacy_rows_have_a_binding_and_a_last_occurrence(live: TestClient) -> None:
+    legacy = legacy_schedule_run(created_at="2026-09-27T07:00:00+00:00")
+    first = chat_run(session_id=legacy.run_id, parent_run_id=legacy.run_id, created_at="2026-09-27T07:01:00+00:00")
+    second = chat_run(session_id=legacy.run_id, parent_run_id=legacy.run_id, created_at="2026-09-27T07:03:00+00:00")
+    second.output = {"success": True, "result": {"response": "legacy answer"}}
+    save_runs(legacy, first, second)
+    (row,) = [s for s in live.get("/api/gateway/automations", headers=HEADERS).json()["items"] if s["legacy"]]
+    assert row["trigger"]["binding_id"] == legacy.run_id
+    last = row["last_occurrence"]
+    assert last["run_id"] == second.run_id and last["index"] == 2 and last["status"] == "completed"
+    assert last["excerpt"] == "legacy answer" and last["notify"] is None and last["fired_at"] == second.created_at
+    assert row["occurrence_count"] == 2

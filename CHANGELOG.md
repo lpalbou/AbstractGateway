@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     is the consent); `ask` makes every tool batch wait for approval. Waits are typed
     (`ask_user`, `tool_approval` with the tool calls, `event`), and an answer of the wrong shape
     for an automation's wait is refused (422) instead of being recorded as a tool result.
+  - Commands the automation's state rules out are refused at once (409 `automation_busy` /
+    `invalid_state`) instead of being accepted and rejected later.
   - Automations run as ordinary durable runs of the gateway's runner: they survive a
     restart, and a restart during a run never starts it twice.
   - `scripts/accept_automations_v1.py` checks the whole feature end to end against a

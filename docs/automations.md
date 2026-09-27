@@ -130,6 +130,13 @@ an error (500 `internal_error`).
  "session_kind": "automation"}
 ```
 
+The door refuses at once (409) what the automation's state already rules
+out: `run_now` while an occurrence is running or queued (`automation_busy`);
+any command but `archive` on an archived, completed or failed automation,
+`pause` when paused, `resume` when not paused, `stop_current` with nothing
+running (`invalid_state`). A retried `command_id` that was already applied is
+still answered as a duplicate.
+
 A command is **accepted** when it is queued (`{command_id, accepted, duplicate, seq}`;
 the same `command_id` again answers `duplicate: true` with the first `seq`). The
 automation's history then records whether it was applied or rejected. The door
@@ -152,7 +159,7 @@ newest first:
 
 ```text
 {"run_id": "…", "index": 7, "attempts": 1, "fired_at": "…", "finished_at": "…",
- "status": "completed",          // admitted | running | waiting | backoff | completed | failed | cancelled
+ "status": "completed",          // admitted | running | waiting (on a person) | backoff | completed | failed | cancelled
  "trigger": {"source_id": "schedule", "summary": "schedule: every 30 minutes (UTC), tick 5"},
  "user_turn": "[Trigger schedule@1 · occurrence 7 · fired …]\nTriage my inbox…",
  "answer": "…", "notify": null,
@@ -162,7 +169,10 @@ newest first:
  "ledger_url": "/api/gateway/runs/…/ledger", "workspace_url": "/api/gateway/runs/…/workspace"}
 ```
 
-`user_turn` and `answer` are the occurrence as a chat turn.
+`user_turn` and `answer` are the occurrence as a chat turn. `status` is
+`waiting` only while the occurrence waits for a person (it has `waits`); an
+occurrence whose agent is still working reads `running`. `trigger.summary`
+describes the trigger the occurrence ran under, also after a revision.
 
 Each wait in `waits` (and in the summary's `attention.waits`) is typed:
 `{run_id, wait_key, kind, reason, prompt?, choices?, details?}` with `kind`
@@ -211,7 +221,9 @@ Schedules created with `POST /api/gateway/runs/schedule` are not converted.
 They appear on the last page of `GET /api/gateway/automations` with
 `legacy: true`, `revision: null` and `capabilities: ["legacy"]`, and keep
 their old controls (`pause`, `resume`, `cancel` through `POST /api/gateway/commands`).
-`GET /api/gateway/automations/{id}` answers 404 for them.
+`GET /api/gateway/automations/{id}` answers 404 for them. Their `trigger.binding_id`
+is the schedule's root run id, and `last_occurrence` is its latest child run
+(`index` = its position among the children).
 
 ## Attention
 

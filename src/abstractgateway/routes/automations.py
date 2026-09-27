@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict
 # without them fails at import, never silently.
 from abstractruntime.automation_queries import ChangedSinceUnsupported, InvalidCursor, automation_summary, list_automations
 from abstractruntime.automations.attention import list_attention, normalize_occurrence_output, pending_waits
+from abstractruntime.automations.ledger import automation_records, find_by_idempotency_key, record_key
 from abstractruntime.automations.models import (
     AutomationError as RuntimeAutomationError,
     automation_id_for,
@@ -241,11 +242,25 @@ def _trigger_summary(envelope: Dict[str, Any], definition_trigger: Dict[str, Any
     return f"{source_id}@{envelope.get('source_version')}"
 
 
-def _live_status(status: str, child: Any) -> str:
-    """The ledger status, refined by the live child (`waiting` on a human)."""
-    if status == "running" and child is not None and child.status == RunStatus.WAITING:
+def _live_status(status: str, has_human_wait: bool) -> str:
+    """The ledger status; a running occurrence reads `waiting` only while it
+    (or a run below it) waits on a PERSON (a typed `pending_waits` entry:
+    ask_user, tool_approval, event). An occurrence root parked on its agent
+    subworkflow is still running."""
+    if status == "running" and has_human_wait:
         return "waiting"
     return status
+
+
+def _triggers_by_revision(ledger_store: Any, automation_id: str) -> Dict[int, Dict[str, Any]]:
+    """{revision: the trigger binding in force at that revision}, from the
+    automation's `created` / `revised` ledger records (the definition each
+    one committed)."""
+    out: Dict[int, Dict[str, Any]] = {}
+    for rec in automation_records(ledger_store, str(automation_id), "automation.created", "automation.revised"):
+        definition = rec["payload"]["definition"]
+        out[int(definition["revision"])] = definition["trigger"]
+    return out
 
 
 def _occurrence_answer(child: Any, artifact_store: Any) -> Dict[str, Any]:
@@ -313,7 +328,7 @@ def automation_summary_row(svc: Any, principal: Any, controller: Any) -> Dict[st
         last = {
             "run_id": occ["run_id"],
             "index": occ["index"],
-            "status": _live_status(str(occ["status"]), child),
+            "status": _live_status(str(occ["status"]), any(w.get("index") == occ["index"] for w in waits)),
             "attempts": occ["attempts"],
             "fired_at": occ["fired_at"],
             "excerpt": (answer.get("answer") or "")[:_EXCERPT_MAX],
@@ -329,13 +344,18 @@ def legacy_summary_row(run: Any, run_store: Any) -> Dict[str, Any]:
     """A legacy `scheduled:*` wrapper root, projected read-only (`legacy: true`)."""
     legacy = adopt_legacy_schedule_projection(run)
     config = dict(legacy["trigger"].get("config") or {})
+    children = sorted(
+        list(run_store.list_children(parent_run_id=str(run.run_id)) or []),
+        key=lambda c: (str(c.created_at or ""), str(c.run_id)),
+    )
     out: Dict[str, Any] = {
         "automation_id": legacy["automation_id"],
         "title": legacy["title"],
         "status": legacy["status"],
-        "trigger": {"source_id": "schedule", "source_version": 1, "config": config},
+        # No binding exists for a legacy schedule: its root run id stands in.
+        "trigger": {"binding_id": str(run.run_id), "source_id": "schedule", "source_version": 1, "config": config},
         "context_mode": legacy["context_mode"],
-        "occurrence_count": len(list(run_store.list_children(parent_run_id=str(run.run_id)) or [])),
+        "occurrence_count": len(children),
         "attention": {"pending_waits": 0, "unread": False, "unseen_count": 0, "cursor": format_attention_cursor(0), "items": [], "waits": []},
         "legacy": True,
         "revision": None,
@@ -345,6 +365,23 @@ def legacy_summary_row(run: Any, run_store: Any) -> Dict[str, Any]:
     }
     if run.status == RunStatus.WAITING and run.waiting is not None and run.waiting.until:
         out["next_fire_at"] = run.waiting.until
+    if children:
+        # The wrapper's latest child is its last occurrence (index = ordinal).
+        child = children[-1]
+        terminal = child.status in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED)
+        answer = normalize_occurrence_output(child) if terminal else {"answer": ""}
+        last: Dict[str, Any] = {
+            "run_id": str(child.run_id),
+            "index": len(children),
+            "status": child.status.value,
+            "attempts": 1,
+            "fired_at": child.created_at,
+            "excerpt": (answer.get("answer") or "")[:_EXCERPT_MAX],
+            "notify": None,
+        }
+        if terminal:
+            last["finished_at"] = child.updated_at
+        out["last_occurrence"] = last
     return out
 
 
@@ -633,6 +670,28 @@ class AutomationCommandBody(BaseModel):
     payload: Dict[str, Any] = {}
 
 
+def _refuse_at_the_door(controller: Any, type_: str, *, command_id: str) -> None:
+    """Refuse synchronously (409) what the persisted state already rules out,
+    instead of a 200 receipt whose rejection only reaches the ledger. The
+    runtime re-checks at application (the state may move in between)."""
+    state = (controller.vars.get("_runtime") or {})["automation"]
+    status = automation_status(controller)
+    if status in ("archived", "completed", "failed") and type_ != "automation.archive":
+        raise AutomationError(409, "invalid_state", f"Automation is {status}; only archive is possible.", command_id=command_id)
+    if type_ == "automation.run_now":
+        if state.get("pending_occurrence") is not None or state.get("manual_pending") is not None:
+            raise AutomationError(409, "automation_busy", "An occurrence is already running or waiting to run.", command_id=command_id)
+        if state.get("exhausted"):
+            raise AutomationError(409, "invalid_state", "The automation's trigger is exhausted.", command_id=command_id)
+    elif type_ == "automation.pause" and state.get("paused"):
+        raise AutomationError(409, "invalid_state", "Automation is already paused.", command_id=command_id)
+    elif type_ == "automation.resume" and not state.get("paused"):
+        raise AutomationError(409, "invalid_state", "Automation is not paused.", command_id=command_id)
+    elif type_ == "automation.stop_current" and state.get("pending_occurrence") is None:
+        raise AutomationError(409, "invalid_state", "No occurrence is running.", command_id=command_id)
+
+
+
 def _command(svc: Any, principal: Any, automation_id: str, command_id: str, type_: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     if type_ not in AUTOMATION_COMMAND_TYPES:
         raise AutomationError(422, "invalid_request", "type must be one of " + "|".join(AUTOMATION_COMMAND_TYPES), field="type", command_id=command_id)
@@ -647,6 +706,13 @@ def _command(svc: Any, principal: Any, automation_id: str, command_id: str, type
         definition = (controller.vars.get("_meta") or {})["automation"]
         if expected is not None and expected != definition["revision"]:
             raise AutomationError(409, "revision_conflict", f"Automation is at revision {definition['revision']}, not {expected}.", field="expected_revision", command_id=command_id)
+    # A retried command_id that the runtime already decided is answered by the
+    # command store as a duplicate: the door checks the state BEFORE it.
+    decided = find_by_idempotency_key(
+        svc.host.ledger_store, str(controller.run_id), record_key("automation.command_result", str(controller.run_id), command_id)
+    )
+    if decided is None:
+        _refuse_at_the_door(controller, type_, command_id=command_id)
     return _append_command(
         svc,
         automation_id=str(controller.run_id),
@@ -697,8 +763,8 @@ def _artifacts(svc: Any, run_id: str) -> List[Dict[str, Any]]:
 
 def _occurrences(svc: Any, principal: Any, automation_id: str, cursor: Optional[str], limit: int) -> Dict[str, Any]:
     controller = load_automation_controller(svc, automation_id)
-    definition = (controller.vars.get("_meta") or {})["automation"]
     runtime = svc.host.runtime
+    triggers = _triggers_by_revision(svc.host.ledger_store, str(controller.run_id))
     try:
         page = list_occurrences(runtime, str(controller.run_id), cursor=cursor, limit=limit)
     except RuntimeAutomationError as e:
@@ -714,14 +780,14 @@ def _occurrences(svc: Any, principal: Any, automation_id: str, cursor: Optional[
         envelope = (occ_meta or {}).get("trigger_envelope") if isinstance(occ_meta, dict) else None
         envelope = envelope if isinstance(envelope, dict) else {"source_id": (occ.get("trigger") or {}).get("source_id")}
         answer = _occurrence_answer(child, svc.host.artifact_store)
-        status = _live_status(str(occ["status"]), child)
+        status = _live_status(str(occ["status"]), bool(waits_by_index.get(occ["index"])))
         row: Dict[str, Any] = {
             "run_id": run_id,
             "index": occ["index"],
             "attempts": occ["attempts"],
             "fired_at": occ["fired_at"],
             "status": status,
-            "trigger": {"source_id": envelope.get("source_id"), "summary": _trigger_summary(envelope, definition["trigger"])},
+            "trigger": {"source_id": envelope.get("source_id"), "summary": _trigger_summary(envelope, triggers[int(occ["revision"])])},
             "user_turn": occ.get("user_turn") or "",
             "answer": answer.get("answer") or "",
             "notify": occ.get("notify"),

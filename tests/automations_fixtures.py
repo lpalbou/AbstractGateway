@@ -190,6 +190,49 @@ def echo_flow() -> dict:
     }
 
 
+_X = {"id": "exec-in", "label": "", "type": "execution"}
+_XO = {"id": "exec-out", "label": "", "type": "execution"}
+
+
+def _nap_flow() -> dict:
+    """A child flow that sleeps (a timer wait: not a wait on a person)."""
+    return {"id": "nap", "name": "nap", "entryNode": "start", "nodes": [
+        {"id": "start", "type": "on_flow_start", "data": {"nodeType": "on_flow_start", "outputs": [_XO]}},
+        {"id": "sleep", "type": "wait_until", "data": {"nodeType": "wait_until", "inputs": [_X, {"id": "duration", "label": "duration", "type": "number"}],
+                                                       "outputs": [_XO], "pinDefaults": {"duration": 4}}},
+        {"id": "end", "type": "on_flow_end", "data": {"nodeType": "on_flow_end", "inputs": [_X]}},
+    ], "edges": [
+        {"source": "start", "sourceHandle": "exec-out", "target": "sleep", "targetHandle": "exec-in"},
+        {"source": "sleep", "sourceHandle": "exec-out", "target": "end", "targetHandle": "exec-in"},
+    ]}
+
+
+def _slow_flow() -> dict:
+    """Parks its root on a SUBWORKFLOW wait (like an Agent node) for a few seconds."""
+    return {"id": "slow", "name": "slow", "entryNode": "start", "nodes": [
+        {"id": "start", "type": "on_flow_start", "data": {"nodeType": "on_flow_start", "outputs": [_XO]}},
+        {"id": "sub", "type": "subflow", "data": {"nodeType": "subflow", "subflowId": "nap", "inputs": [_X], "outputs": [_XO]}},
+        {"id": "end", "type": "on_flow_end", "data": {"nodeType": "on_flow_end", "inputs": [_X]}},
+    ], "edges": [
+        {"source": "start", "sourceHandle": "exec-out", "target": "sub", "targetHandle": "exec-in"},
+        {"source": "sub", "sourceHandle": "exec-out", "target": "end", "targetHandle": "exec-in"},
+    ]}
+
+
+def _ask_flow() -> dict:
+    """Asks a person first (an ask_user wait)."""
+    return {"id": "ask", "name": "ask", "entryNode": "start", "nodes": [
+        {"id": "start", "type": "on_flow_start", "data": {"nodeType": "on_flow_start", "outputs": [_XO]}},
+        {"id": "ask", "type": "ask_user", "data": {"nodeType": "ask_user", "inputs": [_X, {"id": "prompt", "label": "prompt", "type": "string"}],
+                                                  "outputs": [_XO, {"id": "response", "label": "response", "type": "string"}],
+                                                  "pinDefaults": {"prompt": "Go ahead?"}}},
+        {"id": "end", "type": "on_flow_end", "data": {"nodeType": "on_flow_end", "inputs": [_X]}},
+    ], "edges": [
+        {"source": "start", "sourceHandle": "exec-out", "target": "ask", "targetHandle": "exec-in"},
+        {"source": "ask", "sourceHandle": "exec-out", "target": "end", "targetHandle": "exec-in"},
+    ]}
+
+
 def write_echo_bundle(bundles_dir: Path, *, automation_defaults: Optional[dict] = None) -> str:
     import json
     import zipfile
@@ -203,8 +246,8 @@ def write_echo_bundle(bundles_dir: Path, *, automation_defaults: Optional[dict] 
         "bundle_id": ECHO_BUNDLE_ID,
         "bundle_version": "1.0.0",
         "created_at": "2026-09-27T00:00:00+00:00",
-        "entrypoints": [{"flow_id": ECHO_FLOW_ID, "name": "echo", "description": "", "interfaces": []}],
-        "flows": {ECHO_FLOW_ID: f"flows/{ECHO_FLOW_ID}.json"},
+        "entrypoints": [{"flow_id": fid, "name": fid, "description": "", "interfaces": []} for fid in (ECHO_FLOW_ID, "slow", "ask")],
+        "flows": {fid: f"flows/{fid}.json" for fid in (ECHO_FLOW_ID, "slow", "nap", "ask")},
         "artifacts": {},
         "assets": {},
         "metadata": metadata,
@@ -212,6 +255,8 @@ def write_echo_bundle(bundles_dir: Path, *, automation_defaults: Optional[dict] 
     with zipfile.ZipFile(bundles_dir / f"{ECHO_BUNDLE_ID}.flow", "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("manifest.json", json.dumps(manifest, indent=2))
         zf.writestr(f"flows/{ECHO_FLOW_ID}.json", json.dumps(echo_flow(), indent=2))
+        for flow in (_slow_flow(), _nap_flow(), _ask_flow()):
+            zf.writestr(f"flows/{flow['id']}.json", json.dumps(flow, indent=2))
     return f"{ECHO_BUNDLE_ID}@1.0.0"
 
 
