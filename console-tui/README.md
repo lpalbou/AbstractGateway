@@ -32,9 +32,9 @@ verified by a GET and journaled). Like the web guide, no step is gated
 except signing in. Without `--wizard`/`--browse`, the console reads
 `GET /api/gateway/host/first-run` at connect and keeps the guide open
 only for an admin whose first run is not completed; browse mode
-otherwise. `Ctrl+G` reopens the guide from browse, and in the guide
-leaves it (not recorded, it opens again next start) or skips it
-(recorded).
+otherwise. `Ctrl+G` reopens the guide from browse; in the guide it opens
+the guide menu, like the web guide's step list: go to any step directly,
+leave (not recorded, it opens again next start) or skip (recorded).
 
 1. **Connection** — base URL + admin token (masked; `--token-file PATH`
    or the env fallback `ABSTRACTGATEWAY_AUTH_TOKEN`), probe via `/ping` +
@@ -186,7 +186,7 @@ back (always work — `]`/`[` are alternates that text fields swallow) ·
 releases the caret so screen keys work again; page text fields never
 take the caret by themselves once connected) · `1-9`, `0`, `A` (Apps) screens (browse; the
 screen bar is also clickable in browse) · `Ctrl+G` setup guide (browse:
-reopen; guide: leave or Skip setup) · `r` refresh · `F1` / `?` About ·
+reopen; guide: go to any step, leave or Skip setup) · `r` refresh · `F1` / `?` About ·
 `F2` docs assistant (signed in; the web top bar's ✦ drawer) · `F3`
 gateway host panel (pause/resume, restart, quit, update check/install,
 tray; a paused banner shows on every screen) · `Ctrl+L` repaint · `q`

@@ -67,7 +67,8 @@ KEYS: Tab focus · Enter activate · Ctrl+N next step · Ctrl+P / Esc back
       (in a text field Esc first releases the caret) ·
       ] / [ next/back (outside text fields) ·
       1-9,0 screens, A Apps (browse) ·
-      Ctrl+G setup guide (browse: reopen; guide: leave or Skip setup) ·
+      Ctrl+G setup guide (browse: reopen; guide: go to any step, leave,
+      or Skip setup) ·
       r refresh · F1 / ? About · F2 docs assistant (signed in) ·
       F3 gateway host (pause/resume, restart, quit, update) ·
       Ctrl+L repaint · q / Ctrl+C quit

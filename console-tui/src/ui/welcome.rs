@@ -206,26 +206,44 @@ pub fn guide_key(ctx: &Ctx, cx: Scope) {
         ui.wizard.set(true);
         ui.screen.set(super::SCREEN_WELCOME);
         ctx.store.notice.set(Some(
-            "setup guide — Ctrl+N walks it, Ctrl+G leaves or skips it".into(),
+            "setup guide — Ctrl+N walks it, Ctrl+G jumps to a step, leaves or skips it".into(),
         ));
         return;
     }
     let admin = admin_now(ctx);
-    let mut prompt = ChoicePrompt::new("Leave the setup guide?").option_detail(
-        "leave",
-        "Leave for now",
-        "nothing is recorded: the guide opens again at the next start",
-    );
-    prompt = if admin {
-        prompt.option_detail(
+    // The web guide's stepper: every step is a button, any step can be
+    // opened directly (console.py renderFirstRunSteps → firstRunGoto).
+    // Here the same list heads the guide menu.
+    let current = ui.screen.get_untracked();
+    // Stay / leave / skip first (the prompt opens on "stay", at the top),
+    // then the steps.
+    let mut prompt = ChoicePrompt::new("Setup guide — go to a step, or leave")
+        .option("stay", "Stay here")
+        .option_detail(
+            "leave",
+            "Leave for now",
+            "nothing is recorded: the guide opens again at the next start",
+        );
+    if admin {
+        prompt = prompt.option_detail(
             "skip",
             "Skip setup",
             "records it on the gateway (POST /host/first-run): the guide stops opening by itself",
-        )
-    } else {
-        prompt
-    };
-    let prompt = prompt.option("stay", "Stay in the guide").initial("stay");
+        );
+    }
+    for (i, step) in WIZARD_STEPS.iter().enumerate() {
+        let title = step_copy(*step).0;
+        let here = if *step == current {
+            " (you are here)"
+        } else {
+            ""
+        };
+        prompt = prompt.option(
+            format!("step:{i}"),
+            format!("Go to {}. {title}{here}", i + 1),
+        );
+    }
+    let prompt = prompt.initial("stay");
     let ctx2 = ctx.clone();
     super::open_prompt(cx, ui, prompt, move |outcome| {
         if let ChoiceOutcome::Answered(a) = outcome {
@@ -238,10 +256,33 @@ pub fn guide_key(ctx: &Ctx, cx: Scope) {
                     ));
                 }
                 Some("skip") => record_outcome(&ctx2, "skipped"),
-                _ => {}
+                Some(id) => {
+                    if let Some(step) = id
+                        .strip_prefix("step:")
+                        .and_then(|i| i.parse::<usize>().ok())
+                        .and_then(|i| WIZARD_STEPS.get(i).copied())
+                    {
+                        goto_step(&ctx2, step);
+                    }
+                }
+                None => {}
             }
         }
     });
+}
+
+/// Open guide step `step` directly (the web stepper's `firstRunGoto`).
+/// The one gate is the terminal's own: leaving Connection needs a
+/// sign-in (or the explicit offline choice), as with Ctrl+N.
+pub fn goto_step(ctx: &Ctx, step: usize) {
+    let signed_in = ctx.store.conn.with_untracked(ConnPhase::is_connected);
+    if step != super::SCREEN_CONNECTION && !signed_in && !ctx.ui.offline_ok.get_untracked() {
+        ctx.store.notice.set(Some(
+            "sign in on the Connection step first (or choose Continue offline there)".into(),
+        ));
+        return;
+    }
+    ctx.ui.screen.set(step);
 }
 
 /// `r` on the Setup step: the summary and the first-run state again.
@@ -350,7 +391,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                             rows.push(line(vec![span(l, t.text)]));
                         }
                         let keys = if ui.wizard.get() {
-                            "Ctrl+N next step · Ctrl+G leave or skip setup · r refresh"
+                            "Ctrl+N next step · Ctrl+G go to a step, leave or skip setup · r refresh"
                         } else {
                             "Ctrl+G opens the setup guide · r refresh"
                         };
@@ -454,7 +495,10 @@ pub fn finish_row(gcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             span(format!(" · {}/console", ui.conn_url.get()), t.text_muted),
         ])
     } else {
-        line(vec![span("Ctrl+G also leaves or skips", t.text_faint)])
+        line(vec![span(
+            "Ctrl+G also jumps to a step, leaves or skips",
+            t.text_faint,
+        )])
     };
     let c_finish = ctx.clone();
     let c_skip = ctx.clone();

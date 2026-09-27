@@ -948,15 +948,84 @@ fn ctrl_g_reopens_and_skips_the_guide() {
         s.contains("Skip setup") && s.contains("Leave for now"),
         "{s}"
     );
-    // Options: leave, skip, stay (initial) → Up once = skip.
-    h.key(b"\x1b[A");
-    h.turn();
+    // Options: stay (initial), leave, skip, then the steps → Down ×2 = skip.
+    for _ in 0..2 {
+        h.key(b"\x1b[B");
+        h.turn();
+    }
     h.type_text("\r");
     h.turns(2);
     match h.find_cmd(|c| matches!(c, Cmd::CompleteFirstRun { .. })) {
         Some(Cmd::CompleteFirstRun { outcome, .. }) => assert_eq!(outcome, "skipped"),
         other => panic!("expected a skipped CompleteFirstRun, got {other:?}"),
     }
+}
+
+/// The web guide's stepper lets the user open any step directly; here
+/// Ctrl+G in the guide lists every step (current one marked) and picking
+/// one goes there.
+#[test]
+fn ctrl_g_in_the_guide_jumps_to_any_step() {
+    let mut h = harness_sized(Size::new(120, 40));
+    h.connect_as_admin();
+    h.ui.wizard.set(true);
+    h.ui.screen.set(ui::SCREEN_WELCOME);
+    h.turns(2);
+    h.key(b"\x07");
+    let s = h.turns(2);
+    assert!(s.contains("go to a step"), "the guide menu opens:\n{s}");
+    assert!(
+        s.contains("Go to 2. Welcome (you are here)"),
+        "current step marked:\n{s}"
+    );
+    assert!(
+        s.contains("Go to 1. Connection"),
+        "the steps are listed:\n{s}"
+    );
+    // Options: stay (initial), leave, skip, steps 1..8 → Down ×9 = step 7 (Apps).
+    for _ in 0..9 {
+        h.key(b"\x1b[B");
+        h.turn();
+    }
+    h.type_text("\r");
+    h.turns(2);
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_APPS,
+        "jumped to Apps"
+    );
+    assert!(h.ui.wizard.get_untracked(), "still in the guide");
+    let s = h.turns(1);
+    assert!(s.contains("Step 7/8"), "the step kicker follows:\n{s}");
+}
+
+/// Jumping past Connection keeps the terminal's sign-in gate.
+#[test]
+fn guide_step_jump_needs_a_sign_in() {
+    let mut h = harness_sized(Size::new(120, 40));
+    h.turn();
+    h.ui.wizard.set(true);
+    h.ui.screen.set(ui::SCREEN_CONNECTION);
+    h.turns(2);
+    h.key(b"\x07");
+    h.turns(2);
+    // Not signed in: no Skip option → stay, leave, steps → Down ×8 = step 7.
+    for _ in 0..8 {
+        h.key(b"\x1b[B");
+        h.turn();
+    }
+    h.type_text("\r");
+    h.turns(2);
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_CONNECTION,
+        "gate holds"
+    );
+    let notice = h.store.notice.get_untracked().unwrap_or_default();
+    assert!(
+        notice.contains("sign in on the Connection step first"),
+        "{notice}"
+    );
 }
 
 fn availability_with_plan() -> AvailabilityData {

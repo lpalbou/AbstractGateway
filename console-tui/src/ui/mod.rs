@@ -1041,7 +1041,7 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         root_el = root_el.shortcut(KeyChord::plain(Key::Char(key)), move |_| {
             if ctx_i.ui.wizard.get_untracked() {
                 ctx_i.store.notice.set(Some(
-                    "screen jumps (1-9, 0, A) work in browse mode — walk the guide with Ctrl+N, Ctrl+G leaves it"
+                    "screen jumps (1-9, 0, A) work in browse mode — in the guide Ctrl+N walks, Ctrl+G jumps to a step or leaves"
                         .into(),
                 ));
             } else if ctx_i.ui.screen.get_untracked() != i {
@@ -1248,7 +1248,7 @@ fn wizard_goal(screen: usize) -> &'static str {
             "nothing to configure — the registered workflows; e exports, d/D delete."
         }
         SCREEN_REVIEW => "optionally run one real test (Tab to the prompt, Enter), then Finish.",
-        SCREEN_WELCOME => "this computer at a glance — every step is optional; Ctrl+G leaves.",
+        SCREEN_WELCOME => "this computer at a glance — every step is optional; Ctrl+G jumps to a step or leaves.",
         SCREEN_MODELS => {
             "nothing to configure — live models, memory & caches; Finish lives on Review."
         }
@@ -1865,7 +1865,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
             // is an admin surface (its writes are admin routes; the web
             // hides "Setup guide" for a non-admin).
             if wizard {
-                pairs.push(("Ctrl+G", "leave/skip guide"));
+                pairs.push(("Ctrl+G", "steps/leave guide"));
             } else if !non_admin {
                 pairs.push(("Ctrl+G", "setup guide"));
             }
