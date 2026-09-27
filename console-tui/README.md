@@ -211,7 +211,9 @@ ABSTRACTGATEWAY_AUTH_TOKEN=console-dev-secret-0123456789 \
 cargo test                 # headless CaptureTerm suite + the HTTP transport
                            # against a local fake gateway (no real network)
 # live end-to-end (writes + verify-via-GET + cleanup; needs a gateway):
-ABSTRACTGATEWAY_AUTH_TOKEN=... cargo test --test live_e2e -- --ignored --nocapture
+# (live suites need ABSTRACTGATEWAY_URL of a HERMETIC gateway; 8080/8081 are refused)
+ABSTRACTGATEWAY_URL=http://127.0.0.1:18868 ABSTRACTGATEWAY_AUTH_TOKEN=... \
+  cargo test --test live_e2e -- --ignored --nocapture
 # keyboard-driven pty smoke against a live gateway (writes + restores a route):
 ABSTRACTGATEWAY_AUTH_TOKEN=... python3 scripts/pty_smoke.py --url http://127.0.0.1:8080
 ```

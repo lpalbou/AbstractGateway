@@ -14,9 +14,14 @@ use abstractgateway_console::api::GatewayClient;
 use abstractgateway_console::store::operator::{tray_note, HostRunner, HostUpdate, MyPolicy};
 use abstractgateway_console::store::NetworkData;
 
+/// A HERMETIC gateway only: no default URL, and the operator's usual
+/// ports (8080/8081) are refused, like the other live suites.
 fn live_client() -> Option<GatewayClient> {
-    let url =
-        std::env::var("ABSTRACTGATEWAY_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".into());
+    let url = std::env::var("ABSTRACTGATEWAY_URL").ok()?;
+    assert!(
+        !url.ends_with(":8080") && !url.ends_with(":8081"),
+        "refusing {url}: live tests run against a hermetic gateway, never the operator's"
+    );
     let token = std::env::var("ABSTRACTGATEWAY_AUTH_TOKEN").ok()?;
     let client = GatewayClient::new(&url, Some(&token));
     client.ping().ok()?;

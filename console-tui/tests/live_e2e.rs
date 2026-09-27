@@ -1,7 +1,7 @@
 //! Live end-to-end against a REAL gateway — ignored by default.
 //!
 //! Run explicitly:
-//!   ABSTRACTGATEWAY_URL=http://127.0.0.1:8080 \
+//!   ABSTRACTGATEWAY_URL=http://127.0.0.1:18868 \   (a hermetic gateway; 8080/8081 refused)
 //!   ABSTRACTGATEWAY_AUTH_TOKEN=... \
 //!   cargo test --test live_e2e -- --ignored --nocapture --test-threads 1
 //!
@@ -16,9 +16,14 @@ use serde_json::json;
 use abstractgateway_console::api::GatewayClient;
 use abstractgateway_console::store::{users_from_payload, ProfilesData, RoutesData};
 
+/// A HERMETIC gateway only (this suite writes): no default URL, and the
+/// operator's usual ports (8080/8081) are refused.
 fn live_client() -> Option<GatewayClient> {
-    let url =
-        std::env::var("ABSTRACTGATEWAY_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".into());
+    let url = std::env::var("ABSTRACTGATEWAY_URL").ok()?;
+    assert!(
+        !url.ends_with(":8080") && !url.ends_with(":8081"),
+        "refusing {url}: live tests run against a hermetic gateway, never the operator's"
+    );
     let token = std::env::var("ABSTRACTGATEWAY_AUTH_TOKEN").ok()?;
     let client = GatewayClient::new(&url, Some(&token));
     client.ping().ok()?;

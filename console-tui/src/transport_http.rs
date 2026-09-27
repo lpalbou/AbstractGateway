@@ -15,7 +15,8 @@
 //! | `engines_status(probe)` | `GET /engines?probe=0\|1` | B `engines_status_v1` |
 //! | `models_catalog(q, engine, fits)` | `GET /models/catalog?q=&engine=&fits=0\|1` | C `model_catalog_v1` |
 //! | `models_installed(provider)` | `GET /models/installed[?provider=]` | D `models_installed_v1` |
-//! | `start_download(p, a)` | `POST /models/download {provider, artifact, dry_run:false}` | E `host_job_v1` |
+//! | `start_download(p, a, expected_bytes)` | `POST /models/download {provider, artifact, dry_run:false[, expected_bytes]}` (the gateway's disk pre-check) | E `host_job_v1` |
+//! | `download_job(id)` | `GET /models/download/{id}` (knows `grp_` groups) | E (`{ok, job}`) |
 //! | `delete_model(p, a, force)` | `POST /models/delete {provider, artifact, dry_run:false, force}` | E |
 //! | `engine_install(id, dry_run)` | `POST /engines/{id}/install {dry_run}` | E |
 //! | `job(id)` | `GET /jobs/{id}` | E |
@@ -26,7 +27,7 @@
 //! | `models_catalog_hub(q, engine, fits)` | `GET /models/catalog?q=&hub=true&engine=&fits=` | C |
 //! | `download_jobs()` | `GET /models/downloads` | E (`{ok, jobs}`) |
 //! | `capability_defaults()` | `GET /config/capability-defaults` | — |
-//! | `set_text_default(p, m)` | `PUT /config/capability-defaults/output/text {provider, model}` | — |
+//! | `set_text_default(p, m)` | `PUT /config/capability-defaults/output/text {provider, model, base_url:"", reasoning:"", options:{}}` (sets exactly the model) | — |
 //! | `engine_install_at(id, dry_run, loc)` | `POST /engines/{id}/install {dry_run, location}` | E |
 //! | `engine_job_continue(id, action)` | `POST /engines/jobs/{id}/continue {action?}` | E |
 //! | `engine_server(id, start\|stop)` | `POST /engines/{id}/start\|stop` | — |
