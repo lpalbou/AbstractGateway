@@ -1351,6 +1351,33 @@ def network_status(
     eff_host = effective.get("bind_host")
     eff_port = effective.get("port") or port
     eff_mode = mode_for_bind(eff_host, mode if mode != "localhost" else None) if effective.get("known") else "unknown"
+    # A restart is required only when a STORED value differs from what runs:
+    # a default (nothing stored) is not something a restart would apply — the
+    # restart replays the command line, so e.g. a `--port 18882` start with no
+    # stored port keeps 18882, and comparing it to the default 8080 would ask
+    # for a restart that changes nothing.
+    mode_stored = setting["source"] == "stored"
+    port_stored = setting["port_source"] == "stored"
+    if effective.get("known"):
+        same_bind = (
+            (is_loopback_host(eff_host) and is_loopback_host(configured["bind_host"]))
+            or str(eff_host) == str(configured["bind_host"])
+            or (is_wildcard_host(eff_host) and is_wildcard_host(configured["bind_host"]))
+        )
+        host_differs = mode_stored and not same_bind
+        port_differs = port_stored and int(eff_port) != int(port)
+        restart_required = host_differs or port_differs
+        # The command line overrides the setting only where it shadows a
+        # stored value that differs (a restart replays it, so that half never
+        # applies); `--port` with no stored port overrides nothing.
+        effective["overridden_by_cli"] = bool(
+            (host_differs and effective.get("host_source") == "cli")
+            or (port_differs and effective.get("port_source") == "cli")
+        )
+    else:
+        restart_required = False
+    # The port a restart binds: the stored one, else whatever runs now.
+    restart_port = port if port_stored else int(eff_port)
     effective_out = {
         "mode": eff_mode,
         "label": MODE_LABELS.get(eff_mode, "Unknown"),
@@ -1365,16 +1392,6 @@ def network_status(
         if effective.get(k) is not None:
             effective_out[k] = effective[k]
 
-    if effective.get("known"):
-        same_bind = (
-            (is_loopback_host(eff_host) and is_loopback_host(configured["bind_host"]))
-            or str(eff_host) == str(configured["bind_host"])
-            or (is_wildcard_host(eff_host) and is_wildcard_host(configured["bind_host"]))
-        )
-        in_sync = same_bind and int(eff_port) == int(port)
-        restart_required = not in_sync
-    else:
-        restart_required = False
 
     checks = {m: auth_check(m, posture) for m in MODES}
     cur = checks[mode]
@@ -1430,7 +1447,7 @@ def network_status(
     if effective.get("blocked_reason"):
         warnings.insert(0, f"The configured mode could not be applied at start: {effective['blocked_reason']}")
     if restart_required and not effective_out["overridden_by_cli"]:
-        warnings.insert(0, f"Restart the gateway to apply '{mode}' on port {port} (running: {eff_host}:{eff_port}).")
+        warnings.insert(0, f"Restart the gateway to apply '{mode}' on port {restart_port} (running: {eff_host}:{eff_port}).")
 
     modes = []
     for m in MODES:
