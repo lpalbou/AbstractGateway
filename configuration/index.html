@@ -1081,6 +1081,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../automations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../architecture/" class="md-nav__link">
         
   
@@ -1749,8 +1776,8 @@ sentence-transformer embeddings on the Gateway host.</p>
 - <code>abstractgateway[docs]</code>: MkDocs site tooling
 - <code>abstractgateway[dev]</code>: local dev/test deps</p>
 <p>Default dependency floors (see <code>pyproject.toml</code>):
-- <code>AbstractRuntime&gt;=0.5.1</code>
-- <code>abstractcore&gt;=2.16.1</code>
+- <code>AbstractRuntime&gt;=0.6.0</code>
+- <code>abstractcore&gt;=2.17.0</code>
 - <code>abstractagent&gt;=0.3.15</code>
 - <code>AbstractMemory[lancedb]&gt;=0.3.0</code></p>
 <p>Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
@@ -3079,6 +3106,23 @@ modality row, and a modality row that is unset while every task row beneath it
 is configured shows <code>not needed</code> rather than <code>not configured</code> — nothing can
 reach it in that state. It stays editable, because setting it is still the
 one-value-for-everything path.</p>
+<p>Two row states come from AbstractCore's host check:</p>
+<ul>
+<li>An <strong>unset</strong> row whose recommended engine cannot run on this host
+  (<code>recommendation_unavailable</code>, for example MLX-Gen images or video off Apple
+  silicon, or the video model on a Mac without enough memory) stays
+  <code>not configured</code> and says why under the pill.</li>
+<li>A <strong>configured</strong> row whose provider cannot run on this host
+  (<code>route_unavailable</code>, for example an MLX-Gen image route carried over from a
+  Mac to Linux) shows <code>cannot run here</code> instead of <code>configured</code>, with the
+  reason. Calls to it fail until you choose another provider for the route.
+  With user accounts on, a user who inherits such a route from the gateway
+  store sees it flagged in the <em>Apply recommended</em> result as "inherited from
+  the gateway store (admin)": only an admin can change it, and the forced
+  pass never removes it.</li>
+</ul>
+<p>The setup guide's model step shows the same two states as cards with the
+reason and no <strong>Download</strong> button.</p>
 <p><code>input.text</code> is the canonical text LLM route. <code>output.text</code> is reported as a
 read-only derived view of <code>input.text</code>, and CLI/API writes to <code>output.text</code> are
 canonicalized to <code>input.text</code> for compatibility. <code>input.image</code> is a fallback
@@ -3438,7 +3482,7 @@ then the final artifact.</p>
 - <code>abstractgateway serve --backlog-root PATH --exec-runner on|off</code>: the backlog
   folder and the exec runner for this run (they win over the saved settings until the gateway stops)
 - <code>abstractgateway migrate --from=file --to=sqlite --data-dir &lt;DIR&gt; --db-path &lt;FILE&gt;</code>
-- <code>abstractgateway models loaded|load|unload --url &lt;URL&gt; [--provider P --model M] [--force]</code>
+- <code>abstractgateway models loaded|load|unload [--url URL | --data-dir DIR] [--token T] [--provider P --model M] [--force]</code>
   (model residency on a running gateway; see <a href="../console/#model-residency-from-a-shell">console.md</a>)</p>
 <h2 id="related-docs">Related docs<a class="headerlink" href="#related-docs" title="Permanent link">&para;</a></h2>
 <ul>

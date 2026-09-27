@@ -600,6 +600,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../automations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../architecture/" class="md-nav__link">
         
   
@@ -872,6 +899,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-gateway-does-not-start-an-abstractruntime-module-is-missing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The gateway does not start: an AbstractRuntime module is missing
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1043,6 +1081,78 @@
     <span class="md-ellipsis">
       
         Catalog routes return only gateway_static defaults
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#automations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Automations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#an-automation-does-not-fire" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An automation does not fire
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#an-occurrence-reads-waiting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An occurrence reads waiting
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-command-answers-409" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A command answers 409
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-command-was-accepted-but-nothing-changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A command was accepted but nothing changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-discussion-turn-is-refused" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A discussion turn is refused
       
     </span>
   </a>
@@ -1299,6 +1409,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#the-gateway-does-not-start-an-abstractruntime-module-is-missing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The gateway does not start: an AbstractRuntime module is missing
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1470,6 +1591,78 @@
     <span class="md-ellipsis">
       
         Catalog routes return only gateway_static defaults
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#automations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Automations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#an-automation-does-not-fire" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An automation does not fire
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#an-occurrence-reads-waiting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An occurrence reads waiting
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-command-answers-409" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A command answers 409
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-command-was-accepted-but-nothing-changed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A command was accepted but nothing changed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#a-discussion-turn-is-refused" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A discussion turn is refused
       
     </span>
   </a>
@@ -1663,7 +1856,7 @@ or easy to guess, on a non-loopback bind or with public wildcard origins.</p>
 <p>The installed AbstractRuntime lacks live token deltas or the built-in tool
 deny rules the gateway relies on; the message names what is missing. Upgrade
 it in the gateway's Python, then start again:</p>
-<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>-U<span class="w"> </span><span class="s2">"abstractruntime&gt;=0.5.1"</span>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>-U<span class="w"> </span><span class="s2">"abstractruntime&gt;=0.6.0"</span>
 </code></pre></div>
 <h3 id="the-one-time-sign-in-link-does-not-work">The one-time sign-in link does not work<a class="headerlink" href="#the-one-time-sign-in-link-does-not-work" title="Permanent link">&para;</a></h3>
 <p><strong>Checks and fixes.</strong></p>
@@ -1725,6 +1918,11 @@ from the console's <strong>Users &amp; Entities</strong> tab.</p>
 </tr>
 </tbody>
 </table>
+<h3 id="the-gateway-does-not-start-an-abstractruntime-module-is-missing">The gateway does not start: an AbstractRuntime module is missing<a class="headerlink" href="#the-gateway-does-not-start-an-abstractruntime-module-is-missing" title="Permanent link">&para;</a></h3>
+<p><code>serve</code> or <code>runner</code> stops with <code>No module named 'abstractruntime.automation_queries'</code>
+(or <code>abstractruntime.automations</code>): the installed AbstractRuntime predates
+automations. Install AbstractRuntime 0.6.0 or later in the gateway's Python, then start again. See
+<a href="../automations/#before-you-start">automations.md</a>.</p>
 <h2 id="network-access">Network access<a class="headerlink" href="#network-access" title="Permanent link">&para;</a></h2>
 <h3 id="a-change-of-network-mode-needs-a-restart">A change of network mode "needs a restart"<a class="headerlink" href="#a-change-of-network-mode-needs-a-restart" title="Permanent link">&para;</a></h3>
 <p>A listening socket cannot move. After <code>abstractgateway network set …</code>, the
@@ -1838,6 +2036,54 @@ backend (<code>ABSTRACTGATEWAY_VOICE_TTS_ENGINE</code>,
 often another <code>abstractgateway serve</code> still running from another
 environment on the same port. Stop it and start the one from your current
 environment.</p>
+<h2 id="automations">Automations<a class="headerlink" href="#automations" title="Permanent link">&para;</a></h2>
+<h3 id="an-automation-does-not-fire">An automation does not fire<a class="headerlink" href="#an-automation-does-not-fire" title="Permanent link">&para;</a></h3>
+<ul>
+<li>No runner is ticking the data folder: check <code>runner.runners[].status</code> on
+  <code>GET /api/health</code>; with <code>serve --no-runner</code>, start <code>abstractgateway runner</code>
+  on the same data folder.</li>
+<li>The gateway is paused (<code>"paused": true</code> on <code>/api/health</code>).</li>
+<li>The automation is paused, archived or has no ticks left: read <code>status</code> and
+  <code>next_fire_at</code> in its summary (<code>GET /api/gateway/automations/{automation_id}</code>).</li>
+<li>The schedule starts later (<code>start_at</code>) or ended (<code>until</code>, <code>count</code>).</li>
+</ul>
+<p>See <a href="../automations/#operations">automations.md</a>.</p>
+<h3 id="an-occurrence-reads-waiting">An occurrence reads <code>waiting</code><a class="headerlink" href="#an-occurrence-reads-waiting" title="Permanent link">&para;</a></h3>
+<p>It waits for a person: a question from the workflow (<code>ask_user</code>), a tool batch
+to approve (<code>tool_approval</code>, under <code>policy.tool_approval: "ask"</code> or for a
+tool that always asks), or an event. Its <code>waits</code> say which; answer with the
+<code>resume</code> command and the payload shape for that <code>kind</code>
+(<a href="../automations/#waits-on-a-person">automations.md</a>). A 422
+<code>invalid_request</code> on <code>payload</code> means the answer does not fit the wait: a tool
+approval takes <code>{"approved": true}</code>, not <code>{"response": "…"}</code>.</p>
+<h3 id="a-command-answers-409">A command answers 409<a class="headerlink" href="#a-command-answers-409" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>automation_busy</code>: an occurrence is already running or waiting to run;
+  wait for it, or send <code>automation.stop_current</code>.</li>
+<li><code>invalid_state</code>: the state rules the command out (already paused, not
+  paused, nothing running, archived), or a run command such as <code>pause</code> or
+  <code>cancel</code> was sent to an automation id; use the <code>automation.*</code> commands.</li>
+<li><code>revision_conflict</code>: someone revised the automation; read it again and
+  resend with the new <code>revision</code>.</li>
+<li><code>identity_conflict</code>: the <code>command_id</code> or <code>request_id</code> was already used for a
+  different request; generate a new one.</li>
+</ul>
+<p>See <a href="../automations/#errors">automations.md</a>.</p>
+<h3 id="a-command-was-accepted-but-nothing-changed">A command was accepted but nothing changed<a class="headerlink" href="#a-command-was-accepted-but-nothing-changed" title="Permanent link">&para;</a></h3>
+<p>The receipt means queued. AbstractRuntime records whether the command was
+applied or rejected in the automation's ledger
+(<code>GET /api/gateway/runs/{automation_id}/ledger</code>, <code>automation.command_result</code>
+records); a rejected command names its reason there. Check that a runner is
+ticking the data folder.</p>
+<h3 id="a-discussion-turn-is-refused">A discussion turn is refused<a class="headerlink" href="#a-discussion-turn-is-refused" title="Permanent link">&para;</a></h3>
+<ul>
+<li>400 about <code>context.messages</code>: a discussion's history is provided by the
+  gateway; send only the prompt.</li>
+<li>409 <code>session_attribution_failed</code> or <code>history_unavailable</code>: the discussion or
+  the automation's history cannot be read from the store; start a new
+  discussion with <code>POST /api/gateway/automations/{automation_id}/discuss</code>.</li>
+</ul>
+<p>See <a href="../automations/#discuss-an-occurrence">automations.md</a>.</p>
 <h2 id="engines-models-and-apps">Engines, models and apps<a class="headerlink" href="#engines-models-and-apps" title="Permanent link">&para;</a></h2>
 <h3 id="install-buttons-are-disabled-or-answer-403">Install buttons are disabled or answer <code>403</code><a class="headerlink" href="#install-buttons-are-disabled-or-answer-403" title="Permanent link">&para;</a></h3>
 <p>Installs run on the gateway machine, so they follow the
@@ -1960,6 +2206,7 @@ abstractgateway<span class="w"> </span>service<span class="w"> </span>status
 <h2 id="related-docs">Related docs<a class="headerlink" href="#related-docs" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../faq/">faq.md</a>: conceptual questions and limits</li>
+<li><a href="../automations/">automations.md</a>: automations, their routes and operations</li>
 <li><a href="../first-run/">first-run.md</a>, <a href="../getting-started/">getting-started.md</a></li>
 <li><a href="../configuration/">configuration.md</a>, <a href="../security/">security.md</a></li>
 </ul>

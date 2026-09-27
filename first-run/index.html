@@ -330,6 +330,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="2. The first-run guide">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#on-a-headless-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        On a headless server
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -737,6 +754,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../automations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../architecture/" class="md-nav__link">
         
   
@@ -938,6 +982,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="2. The first-run guide">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#on-a-headless-server" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        On a headless server
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1074,7 +1135,7 @@ you in as the admin and opens the <strong>first-run guide</strong>.</p>
 </tr>
 <tr>
 <td>Default model</td>
-<td>The text model currently configured, <strong>Use recommended defaults</strong> (the same action as the Multimodal tab's <em>Apply recommended</em>), a <strong>Download</strong> button for each recommended model that is missing, and the Models tab's catalog cards with <strong>Fits this computer</strong> on (one card per model, every 4-bit and 8-bit build, filters, <strong>Open in the Models tab</strong>). A downloaded text model's <strong>Use as default</strong> makes it the default text model</td>
+<td>The text model currently configured, <strong>Use recommended defaults</strong> (the same action as the Multimodal tab's <em>Apply recommended</em>: text, voice, images and video, where this computer can run them), a <strong>Download</strong> button for each recommended model that is missing, a card with the reason for each route this computer cannot run (<em>Not available here</em> for a recommendation, <em>Cannot run here</em> for a route already configured with a provider that does not run on this computer), and the Models tab's catalog cards with <strong>Fits this computer</strong> on (one card per model, every 4-bit and 8-bit build, filters, <strong>Open in the Models tab</strong>). A downloaded text model's <strong>Use as default</strong> makes it the default text model</td>
 </tr>
 <tr>
 <td>Apps</td>
@@ -1141,14 +1202,28 @@ someone at the gateway machine whatever it listens on.</p>
 records that it ran (<code>POST /api/gateway/host/first-run</code>); clicking outside the
 dialog closes it without recording anything. The <strong>Setup</strong> button (⚑, top
 right, admins only) reopens it at any time.</p>
+<h3 id="on-a-headless-server">On a headless server<a class="headerlink" href="#on-a-headless-server" title="Permanent link">&para;</a></h3>
+<p>On a machine without a browser (for example a Linux server you reach over SSH),
+run the same guide in the terminal console on that machine:</p>
+<div class="highlight"><pre><span></span><code>cargo<span class="w"> </span>install<span class="w"> </span>abstractgateway-console
+abstractgateway-console<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8080<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--token-file<span class="w"> </span><span class="s2">"&lt;data dir&gt;/auth/bootstrap-admin-token"</span>
+</code></pre></div>
+<p>It opens the setup guide for an admin whose first run is not completed, with
+the same steps through the same gateway routes, and records <strong>Finish</strong> or
+<strong>Skip setup</strong> on the gateway. See
+<a href="../console/#terminal-console-abstractgateway-console">console.md</a>.</p>
 <h2 id="3-get-a-new-sign-in-link">3. Get a new sign-in link<a class="headerlink" href="#3-get-a-new-sign-in-link" title="Permanent link">&para;</a></h2>
 <p>A link works once and expires after 10 minutes. To get another one:</p>
 <div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>claim<span class="w">            </span><span class="c1"># prints the link</span>
 abstractgateway<span class="w"> </span>claim<span class="w"> </span>--open<span class="w">     </span><span class="c1"># prints it and opens your browser</span>
 abstractgateway-config<span class="w"> </span>claim-url<span class="w"> </span><span class="c1"># same command, from the config helper</span>
 </code></pre></div>
-<p>The command finds the running gateway's port from the data folder (the gateway
-writes <code>&lt;data dir&gt;/run/gateway-serve.json</code> while it runs). Use <code>--port</code> or
+<p>The command finds the gateway from the data folder: the running gateway's
+address (the gateway writes <code>&lt;data dir&gt;/run/gateway-serve.json</code> while it runs),
+else the installed login service's, else the port saved in the Network setting,
+else <code>http://127.0.0.1:8080</code>. <code>abstractgateway models loaded|load|unload</code> find
+it the same way. Use <code>--port</code> or
 <code>--url</code> to target another gateway, <code>--data-dir</code> for another data folder, and
 <code>--json</code> for machine-readable output. It exits with code <code>2</code> when the running
 gateway does not use user auth (a static <code>ABSTRACTGATEWAY_AUTH_TOKEN</code>

@@ -465,6 +465,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#setup-guide-and-browse-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setup guide and browse mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#screens-and-panels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Screens and panels
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#models-and-engines-in-the-terminal-console" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -749,6 +771,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../automations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../architecture/" class="md-nav__link">
         
   
@@ -1004,6 +1053,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#setup-guide-and-browse-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Setup guide and browse mode
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#screens-and-panels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Screens and panels
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#models-and-engines-in-the-terminal-console" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1071,7 +1142,7 @@ a change made in one is immediately visible in the other.</p>
 <tr>
 <td>Sign-in</td>
 <td>Gateway browser session (user id + token)</td>
-<td>base URL + bearer token (<code>ABSTRACTGATEWAY_AUTH_TOKEN</code> or the Connection screen)</td>
+<td>base URL + bearer token (<code>--token-file PATH</code>, the Connection screen, or <code>ABSTRACTGATEWAY_AUTH_TOKEN</code>)</td>
 </tr>
 <tr>
 <td>Best for</td>
@@ -1222,7 +1293,7 @@ downloads are the gateway's own jobs (see <a href="../model-downloads/">Model do
 <ul>
 <li>The card header: the model's name, organisation, parameter count and
   licence, its capabilities (Text, Thinking, Tools, Vision, Audio, Embedding,
-  Voice, Image) and a <strong>Starter</strong> badge for the models of the recommended
+  Voice, Image, Video) and a <strong>Starter</strong> badge for the models of the recommended
   starter set.</li>
 <li>The card body: one row per downloadable build (artifact) of that model: the
   provider (MLX, Ollama, LM Studio, Hugging Face, ...), the artifact id (long
@@ -1405,35 +1476,76 @@ when switched off:</p>
 <p>Installing, starting, stopping and updating need an admin; other users see the
 buttons disabled with the reason on hover.</p>
 <h2 id="terminal-console-abstractgateway-console">Terminal console (<code>abstractgateway-console</code>)<a class="headerlink" href="#terminal-console-abstractgateway-console" title="Permanent link">&para;</a></h2>
+<p>The terminal console does what the web console does, through the same gateway
+routes, with the same admin rules and confirmations. Use it over SSH on a
+headless server, where it also runs the first-run setup guide.</p>
 <p>Install it from crates.io (Rust 1.87 or newer):</p>
 <div class="highlight"><pre><span></span><code>cargo<span class="w"> </span>install<span class="w"> </span>abstractgateway-console
 </code></pre></div>
-<p>Connect it to a running gateway. Pass the token through the environment rather
-than on the command line:</p>
-<div class="highlight"><pre><span></span><code><span class="nv">ABSTRACTGATEWAY_AUTH_TOKEN</span><span class="o">=</span>...<span class="w"> </span>abstractgateway-console<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8080
+<p>Connect it to a running gateway. On the gateway host, sign in with the admin
+token file (<code>abstractgateway serve</code> prints its data dir):</p>
+<div class="highlight"><pre><span></span><code>abstractgateway-console<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8080<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>--token-file<span class="w"> </span><span class="s2">"&lt;data dir&gt;/auth/bootstrap-admin-token"</span>
 abstractgateway-console<span class="w"> </span>--help
 </code></pre></div>
-<p>It opens as a guided wizard on first run and as free tabs afterwards, with eight
-screens: Connection, Providers, Routes (capability defaults, including the MTP
-selector and a Test verb per route), Users &amp; Entities, Runtimes (runs with
-cancel and steer, data homes), Workflows, Review &amp; Test (the session's change
-journal), Resources, Models and Engines. Every write is verified with a
-follow-up read and recorded in the journal. Keys: <code>Tab</code> focus, <code>Enter</code>
-activate, <code>1</code>-<code>9</code> and <code>0</code> screens, <code>r</code> refresh, <code>F1</code> or <code>?</code> About, <code>q</code> quit;
-each screen lists its actions in the footer.</p>
-<p><strong>About</strong> (<code>F1</code>, or <code>?</code> outside a text field) shows this console and its
-version, that it is part of AbstractFramework, the author, the copyright and
-licence, the links and the contact address, then the connected gateway's
-versions from <code>GET /api/gateway/about</code> (or one "Gateway: unavailable (reason)"
-line). <code>abstractgateway-console --about --url &lt;gateway&gt;</code> prints the same
-text without opening the interface.</p>
-<p>The Runtimes screen's <em>Runtime knobs</em> show <strong>stream replies</strong> (on or off, and
-whether it is saved or the default); <em>Edit stream replies</em> changes it
-(admins). A gateway without the setting shows "not available on this
-gateway".</p>
+<p><code>--token-file PATH</code> reads the token from a file; an unreadable or empty file
+stops the launch with the reason. <code>ABSTRACTGATEWAY_AUTH_TOKEN</code> is also read.
+Avoid <code>--token</code> on shared machines: the command line is visible in <code>ps</code>. When
+sign-in fails, the Connection screen says whether no token was sent or the
+token was rejected, and where the admin token lives.</p>
+<h3 id="setup-guide-and-browse-mode">Setup guide and browse mode<a class="headerlink" href="#setup-guide-and-browse-mode" title="Permanent link">&para;</a></h3>
+<p>The console has twelve screens: <strong>1</strong> Connection, <strong>2</strong> Providers, <strong>3</strong> Routes,
+<strong>4</strong> Users &amp; Entities, <strong>5</strong> Runtimes, <strong>6</strong> Workflows, <strong>7</strong> Review &amp; Test,
+<strong>8</strong> Resources, <strong>9</strong> Models, <strong>0</strong> Engines, <strong>A</strong> Apps, and <strong>Setup</strong>.</p>
+<ul>
+<li><strong>Setup guide.</strong> For an admin whose first run is not completed, the console
+  opens the setup guide: Connection → Setup → Engines → Providers → Routes →
+  Models → Apps → Review, the same steps as the web console's first-run guide.
+  Routes shows the recommended models for this computer with fit warnings
+  (<code>a</code> applies them, <code>D</code> downloads all of them as one job, <code>C</code> cancels, <code>p</code>
+  shows the plan). Review ends with <strong>Finish</strong> or <strong>Skip setup</strong>, recorded on
+  the gateway. No step is gated except signing in.</li>
+<li><strong>Browse mode</strong> (free tabs) opens otherwise. <code>--wizard</code> and <code>--browse</code> choose
+  the mode at launch.</li>
+<li><strong><code>Ctrl+G</code></strong> reopens the guide from browse mode; inside the guide it opens
+  the guide menu: go to any step, leave for now, or skip setup.</li>
+<li><strong>Setup</strong> shows this computer at a glance: memory, graphics, data folder,
+  sign-in mode, whether the gateway starts at login, and the first-run state.</li>
+</ul>
+<h3 id="screens-and-panels">Screens and panels<a class="headerlink" href="#screens-and-panels" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Routes</strong> flags a route this computer cannot run (for example an MLX image
+  route on Linux) with the reason, like the web console.</li>
+<li><strong>Review &amp; Test</strong> holds the session's change journal and the sandbox: every
+  output mode (text, image, voice, music, sound effects, video), file
+  attachments and speak-this-reply.</li>
+<li><strong>Users &amp; Entities</strong> summons entities (<code>n</code>), manages spark templates (<code>s</code>),
+  talks with an entity (<code>c</code>) and edits your own workspace policy (<code>w</code>).</li>
+<li><strong>Workflows</strong> imports a <code>.flow</code> bundle (<code>i</code>) and reloads the registry (<code>L</code>).</li>
+<li><strong>A Apps</strong> is the web console's Apps tab: open browser apps signed in,
+  install or update them, start and stop them, the desktop Assistant and
+  Node.js.</li>
+<li><strong>F2</strong> opens the docs assistant (questions answered from the gateway's own
+  documentation; signed in).</li>
+<li><strong>F3</strong> opens the gateway host panel: pause or resume workflows, restart,
+  quit, check for and install updates, the tray. A banner shows on every
+  screen while workflows are paused.</li>
+<li><strong>About</strong> (<code>F1</code>, or <code>?</code> outside a text field) shows this console, its
+  version, the links and the connected gateway's versions from
+  <code>GET /api/gateway/about</code>. <code>abstractgateway-console --about --url &lt;gateway&gt;</code>
+  prints the same text without opening the interface.</li>
+</ul>
+<p>Keys: <code>Tab</code> focus, <code>Enter</code> activate, <code>Ctrl+N</code> / <code>Ctrl+P</code> next and previous
+step, <code>Esc</code> back (in a text field, the first <code>Esc</code> releases it so screen keys
+work again), <code>1</code>-<code>9</code>, <code>0</code> and <code>A</code> screens, <code>r</code> refresh, <code>q</code> quit. Each screen
+lists its own actions in the footer.</p>
+<p><strong>Admin rules.</strong> Admin-only actions are refused before anything is sent for a
+non-admin sign-in, with the reason, and the footer marks them "admin only".
+The setup guide is admin-only, as on the web. Every write is verified with a
+follow-up read and recorded in the journal.</p>
 <h3 id="models-and-engines-in-the-terminal-console">Models and Engines in the terminal console<a class="headerlink" href="#models-and-engines-in-the-terminal-console" title="Permanent link">&para;</a></h3>
 <p>Screens 9 (<strong>Models</strong>) and 0 (<strong>Engines</strong>) are AbstractCore's own screens,
-taken from the <code>abstractcore-console</code> crate rather than rebuilt, so they look
+taken from the <code>abstractcore-console</code> crate (0.3) rather than rebuilt, so they look
 and behave the same in <code>abstractcore-console</code> and here. In the gateway console
 they act on the gateway's host, through the gateway's
 <code>/api/gateway/host/profile</code>, <code>/engines</code>, <code>/models/catalog</code>,
@@ -1445,7 +1557,8 @@ they act on the gateway's host, through the gateway's
   (<code>/</code>), fits only (<code>f</code>), engine (<code>e</code>), installed view (<code>v</code>), cancel (<code>c</code>).</li>
 <li><strong>Engines:</strong> see which engines are installed and running; install one (<code>i</code>)
   after a confirm that shows the exact command and the host it runs on (a dry
-  run is offered), or open its download page (<code>o</code>).</li>
+  run is offered), or open its download page (<code>o</code>). Engine servers can be
+  started and stopped, and a paused install continued.</li>
 </ul>
 <p>Downloads, deletes and installs are admin-only and run on the gateway host; a
 refusal (for example installs disabled on a remote gateway, or a loaded model)
@@ -1456,12 +1569,17 @@ crate version is independent of the Python package version; see
 <h2 id="model-residency-from-a-shell">Model residency from a shell<a class="headerlink" href="#model-residency-from-a-shell" title="Permanent link">&para;</a></h2>
 <p>The same model routes the consoles drive are available from the Python CLI
 against a running gateway:</p>
-<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>models<span class="w"> </span>loaded<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8080
-abstractgateway<span class="w"> </span>models<span class="w"> </span>load<span class="w">   </span>--url<span class="w"> </span>http://127.0.0.1:8080<span class="w"> </span>--provider<span class="w"> </span>ollama<span class="w"> </span>--model<span class="w"> </span>qwen3:4b
-abstractgateway<span class="w"> </span>models<span class="w"> </span>unload<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8080<span class="w"> </span>--provider<span class="w"> </span>ollama<span class="w"> </span>--model<span class="w"> </span>qwen3:4b
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>models<span class="w"> </span>loaded
+abstractgateway<span class="w"> </span>models<span class="w"> </span>load<span class="w">   </span>--provider<span class="w"> </span>ollama<span class="w"> </span>--model<span class="w"> </span>qwen3:4b
+abstractgateway<span class="w"> </span>models<span class="w"> </span>unload<span class="w"> </span>--provider<span class="w"> </span>ollama<span class="w"> </span>--model<span class="w"> </span>qwen3:4b
 </code></pre></div>
-<p>The token comes from <code>--token</code> or <code>ABSTRACTGATEWAY_AUTH_TOKEN</code>, and the URL from
-<code>--url</code> or <code>ABSTRACTGATEWAY_URL</code>. The command prints the gateway's JSON answer
+<p>Without <code>--url</code>, the command finds this computer's gateway the same way every
+local client does: the running gateway's address, else the installed service's,
+else the port saved in the Network setting, else <code>http://127.0.0.1:8080</code>. Use
+<code>--data-dir DIR</code> when the gateway keeps its data somewhere other than the
+default, and <code>--url</code> (or <code>ABSTRACTGATEWAY_URL</code>) to reach another machine. The
+token comes from <code>--token</code> or <code>ABSTRACTGATEWAY_AUTH_TOKEN</code>; for a gateway on
+this computer it falls back to the data dir's bootstrap admin token. The command prints the gateway's JSON answer
 and exits non-zero when the gateway reports a failure. <code>unload --force</code> unloads
 a locked model; in-flight calls on the model are cancelled first.</p>
 

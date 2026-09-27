@@ -1,0 +1,2286 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Deployable HTTP/SSE gateway for durable AbstractRuntime runs.">
+      
+      
+      
+        <link rel="canonical" href="https://www.lpalbou.info/AbstractGateway/automations/">
+      
+      
+        <link rel="prev" href="../api/">
+      
+      
+        <link rel="next" href="../architecture/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Automations - AbstractGateway</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#automations" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="AbstractGateway" class="md-header__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AbstractGateway
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Automations
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="AbstractGateway" class="md-nav__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    AbstractGateway
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../console/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consoles (web + terminal)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Browser & Terminal Apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Engines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-downloads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Downloads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shipped-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shipped Workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deep-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deep Research Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apple-local-gateway-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apple Silicon Local Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automations
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-automations-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How automations work
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#before-you-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Before you start
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#routes-at-a-glance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Routes at a glance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Errors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trigger-sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trigger sources
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#create-an-automation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create an automation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Create an automation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#automation-defaults-on-workflows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automation defaults on workflows
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tool-approval-and-consent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool approval and consent
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#list-and-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        List and read
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#change-an-automation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Change an automation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Change an automation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#revise" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Revise
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Commands
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#occurrences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Occurrences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#waits-on-a-person" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Waits on a person
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#attention-and-seen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attention and /seen
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Attention and /seen">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-asks-for-attention" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What asks for attention
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reading-and-marking-attention" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading and marking attention
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#discuss-an-occurrence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Discuss an occurrence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#automations-in-run-lists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automations in run lists
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#older-scheduled-runs-legacy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Older scheduled runs (legacy)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limits-in-v1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits in v1
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related docs
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../entities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Summoned Entities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../maintenance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operator Tooling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-automations-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How automations work
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#before-you-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Before you start
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#routes-at-a-glance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Routes at a glance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Errors
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#trigger-sources" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Trigger sources
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#create-an-automation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Create an automation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Create an automation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#automation-defaults-on-workflows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automation defaults on workflows
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tool-approval-and-consent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tool approval and consent
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#list-and-read" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        List and read
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#change-an-automation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Change an automation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Change an automation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#revise" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Revise
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Commands
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#occurrences" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Occurrences
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#waits-on-a-person" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Waits on a person
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#attention-and-seen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attention and /seen
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Attention and /seen">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-asks-for-attention" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What asks for attention
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reading-and-marking-attention" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading and marking attention
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#discuss-an-occurrence" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Discuss an occurrence
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#automations-in-run-lists" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automations in run lists
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#older-scheduled-runs-legacy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Older scheduled runs (legacy)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#operations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Operations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limits-in-v1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limits in v1
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#related-docs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Related docs
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="automations">Automations<a class="headerlink" href="#automations" title="Permanent link">&para;</a></h1>
+<p>An <strong>automation</strong> runs a workflow again and again on a trigger ("every 2
+minutes", or only when you ask), keeps every run as a readable chat turn, and
+tells you only when something needs your attention. This page is the HTTP
+contract for automations on AbstractGateway: every route with its request and
+response shapes, the errors, how waits are answered, and how to operate
+automations on a gateway.</p>
+<p>The automation logic itself (controller, triggers, retries, context modes,
+discussions, read-only workspaces) is AbstractRuntime's and is described in
+AbstractRuntime's <code>docs/automations.md</code>. For the gateway's components see
+<a href="../architecture/#automations">architecture.md</a>; for the rest of the HTTP API
+see <a href="../api/">api.md</a>.</p>
+<h2 id="how-automations-work">How automations work<a class="headerlink" href="#how-automations-work" title="Permanent link">&para;</a></h2>
+<p>An automation is one durable AbstractRuntime <strong>root run</strong>, its <strong>controller</strong>,
+whose run id is the automation id. The controller is a workflow that ships
+with AbstractRuntime; the gateway's runner ticks it like any other run. Each
+time the trigger fires, the controller starts one <strong>occurrence</strong>: an ordinary
+child run of your target workflow, with the inputs frozen at creation. An
+occurrence reads as a chat turn (the prompt it received and its answer). In
+<strong>independent</strong> mode every occurrence starts fresh; in <strong>growing</strong> mode each
+occurrence sees the previous ones as conversation history. Automations are
+<strong>quiet</strong>: an occurrence raises attention only when its output asks for it,
+when it fails after its last retry, or while it waits for a person. The
+gateway projects this runtime state over HTTP and queues your commands; it
+never schedules or runs anything itself.</p>
+<h2 id="before-you-start">Before you start<a class="headerlink" href="#before-you-start" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Sign-in.</strong> Every route lives under <code>/api/gateway</code> and needs the usual
+  bearer token or browser session (<a href="../security/">security.md</a>). Each user
+  sees only their own automations: another user's automation answers 404.</li>
+<li><strong>Detection.</strong> Apps gate their automation UI on the capabilities document:</li>
+</ul>
+<div class="highlight"><pre><span></span><code>GET /api/gateway/discovery/capabilities
+→ capabilities.contracts.common.automations = {
+    "available": true, "version": 1,
+    "endpoint": "/api/gateway/automations",
+    "automations_endpoint": "/api/gateway/automations",
+    "trigger_sources_endpoint": "/api/gateway/trigger-sources",
+    "command_types": ["automation.revise", "automation.pause", "automation.resume",
+                      "automation.run_now", "automation.stop_current", "automation.archive"]
+  }
+</code></pre></div>
+<ul>
+<li><strong>Runtime.</strong> Automations need AbstractRuntime 0.6.0 or later. A gateway installed against an older runtime does
+  not start (<a href="../troubleshooting/#the-gateway-does-not-start-an-abstractruntime-module-is-missing">troubleshooting.md</a>).</li>
+</ul>
+<p>The examples below assume:</p>
+<div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">BASE_URL</span><span class="o">=</span><span class="s2">"http://127.0.0.1:8080"</span>
+<span class="nb">export</span><span class="w"> </span><span class="nv">AUTH</span><span class="o">=</span><span class="s2">"Authorization: Bearer </span><span class="k">$(</span>cat<span class="w"> </span><span class="s2">"</span><span class="nv">$ABSTRACTGATEWAY_DATA_DIR</span><span class="s2">/auth/bootstrap-admin-token"</span><span class="k">)</span><span class="s2">"</span>
+</code></pre></div>
+<h2 id="routes-at-a-glance">Routes at a glance<a class="headerlink" href="#routes-at-a-glance" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /api/gateway/trigger-sources</code></td>
+<td>what can start an automation (<a href="#trigger-sources">Trigger sources</a>)</td>
+</tr>
+<tr>
+<td><code>POST /api/gateway/automations</code></td>
+<td>create an automation (<a href="#create-an-automation">Create</a>)</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/automations</code></td>
+<td>list your automations, older scheduled runs included (<a href="#list-and-read">List and read</a>)</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/automations/{automation_id}</code></td>
+<td>one automation: definition and summary</td>
+</tr>
+<tr>
+<td><code>PATCH /api/gateway/automations/{automation_id}</code></td>
+<td>revise title, target, trigger, context or policy (<a href="#change-an-automation">Change</a>)</td>
+</tr>
+<tr>
+<td><code>POST /api/gateway/automations/{automation_id}/commands</code></td>
+<td>pause, resume, run now, stop the current run, archive</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/automations/{automation_id}/occurrences</code></td>
+<td>every run of the automation as a chat turn (<a href="#occurrences">Occurrences</a>)</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/automations/{automation_id}/attention</code></td>
+<td>the notifications you have not seen (<a href="#attention-and-seen">Attention</a>)</td>
+</tr>
+<tr>
+<td><code>POST /api/gateway/automations/{automation_id}/seen</code></td>
+<td>record what you have seen</td>
+</tr>
+<tr>
+<td><code>POST /api/gateway/automations/{automation_id}/discuss</code></td>
+<td>open a separate conversation about one occurrence (<a href="#discuss-an-occurrence">Discuss</a>)</td>
+</tr>
+<tr>
+<td><code>POST /api/gateway/commands</code></td>
+<td>answer an occurrence's wait (<a href="#waits-on-a-person">Waits</a>); also accepts the <code>automation.*</code> commands</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/runs</code></td>
+<td>run lists with automation attribution (<a href="#automations-in-run-lists">Run lists</a>)</td>
+</tr>
+</tbody>
+</table>
+<h2 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link">&para;</a></h2>
+<p>Every error on <code>/api/gateway/automations…</code> and <code>/api/gateway/trigger-sources</code>
+has one shape, including sign-in failures, request-validation failures and
+malformed JSON:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"detail"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"reason_code"</span><span class="p">:</span><span class="w"> </span><span class="s2">"revision_conflict"</span><span class="p">,</span><span class="w"> </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Automation is at revision 4, not 3."</span><span class="p">,</span><span class="w"> </span><span class="nt">"field"</span><span class="p">:</span><span class="w"> </span><span class="s2">"expected_revision"</span><span class="p">,</span><span class="w"> </span><span class="nt">"command_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"c-17"</span><span class="p">}}</span>
+</code></pre></div>
+<p><code>field</code> names the offending input and <code>command_id</code> echoes the command, when
+they apply.</p>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th><code>reason_code</code></th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>401</td>
+<td><code>unauthorized</code></td>
+<td>no token, a wrong token or an expired session</td>
+</tr>
+<tr>
+<td>403</td>
+<td><code>forbidden</code></td>
+<td>the security layer refused the request (for example an origin outside the allowlist, or a browser-session write without its CSRF token)</td>
+</tr>
+<tr>
+<td>404</td>
+<td><code>automation_not_found</code></td>
+<td>no automation with this id for you (another user's automation included)</td>
+</tr>
+<tr>
+<td>404</td>
+<td><code>occurrence_not_found</code></td>
+<td>the automation has no occurrence with this index</td>
+</tr>
+<tr>
+<td>409</td>
+<td><code>revision_conflict</code></td>
+<td><code>expected_revision</code> is not the automation's revision</td>
+</tr>
+<tr>
+<td>409</td>
+<td><code>automation_busy</code></td>
+<td><code>run_now</code> while an occurrence is running or waiting to run</td>
+</tr>
+<tr>
+<td>409</td>
+<td><code>invalid_state</code></td>
+<td>the automation's state rules the command out (see <a href="#commands">Commands</a>)</td>
+</tr>
+<tr>
+<td>409</td>
+<td><code>identity_conflict</code></td>
+<td>a <code>request_id</code> or <code>command_id</code> reused for a different request</td>
+</tr>
+<tr>
+<td>409</td>
+<td><code>cursor_expired</code>, <code>history_unavailable</code></td>
+<td>a list cursor that has expired; a conversation history that cannot be read</td>
+</tr>
+<tr>
+<td>422</td>
+<td><code>invalid_request</code></td>
+<td>a missing, unknown or malformed field (including malformed JSON)</td>
+</tr>
+<tr>
+<td>422</td>
+<td><code>invalid_definition</code></td>
+<td>a target, trigger, context or policy the gateway or runtime refuses</td>
+</tr>
+<tr>
+<td>422</td>
+<td><code>unsupported_feature</code></td>
+<td>a valid request that v1 does not support (for example <code>changed_since</code>, or a policy value other than the fixed v1 value)</td>
+</tr>
+<tr>
+<td>422</td>
+<td><code>unknown_trigger_source</code></td>
+<td>a trigger <code>source_id</code>/<code>source_version</code> no installed source provides</td>
+</tr>
+</tbody>
+</table>
+<p>Rare transport answers keep the same shape with <code>not_found</code> (unknown path),
+<code>rate_limited</code> (429), <code>unavailable</code> (503) or <code>internal_error</code> (500).</p>
+<h2 id="trigger-sources">Trigger sources<a class="headerlink" href="#trigger-sources" title="Permanent link">&para;</a></h2>
+<p><code>GET /api/gateway/trigger-sources</code> lists what can start an automation:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"items"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">  </span><span class="p">{</span><span class="nt">"id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"schedule"</span><span class="p">,</span><span class="w"> </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Schedule"</span><span class="p">,</span><span class="w"> </span><span class="nt">"capabilities"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"time"</span><span class="p">},</span>
+<span class="w">   </span><span class="nt">"config_schema"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="err">…</span><span class="p">},</span><span class="w"> </span><span class="nt">"event_schema"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="err">…</span><span class="p">},</span><span class="w"> </span><span class="nt">"available"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">},</span>
+<span class="w">  </span><span class="p">{</span><span class="nt">"id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"manual"</span><span class="p">,</span><span class="w"> </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">"label"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Manual"</span><span class="p">,</span><span class="w"> </span><span class="nt">"capabilities"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"manual"</span><span class="p">},</span><span class="w"> </span><span class="err">…</span><span class="p">,</span><span class="w"> </span><span class="nt">"available"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">}</span>
+<span class="p">]}</span>
+</code></pre></div>
+<ul>
+<li><strong><code>schedule@1</code></strong> takes <code>{start_at?, every?, until?, count?}</code>. <code>every</code> is a
+  fixed interval: a number and one of <code>s</code>, <code>m</code>, <code>h</code>, <code>d</code> (<code>"2m"</code>, <code>"8h"</code>,
+  <code>"1d"</code>), at most <code>366d</code>. Intervals are plain UTC durations with no calendar
+  or daylight-saving rules, so interfaces say "every 8 hours", never "daily
+  at 08:00". <code>start_at</code> defaults to the creation time and anchors the grid;
+  <code>until</code> is exclusive and must be after <code>start_at</code>; <code>count</code> (1 to 1,000,000)
+  caps the number of ticks and needs <code>every</code> when above 1. Without <code>every</code>
+  the schedule fires once, at <code>start_at</code>. Ticks missed while the gateway was
+  down coalesce into one occurrence.</li>
+<li><strong><code>manual@1</code></strong> takes <code>{}</code>: the automation runs only when you send
+  <code>automation.run_now</code>.</li>
+</ul>
+<p>A source installed by another package that fails to load is listed with
+<code>"available": false</code> and an <code>unavailable_reason</code>. A missing built-in source is
+an error (500 <code>internal_error</code>).</p>
+<h2 id="create-an-automation">Create an automation<a class="headerlink" href="#create-an-automation" title="Permanent link">&para;</a></h2>
+<p><code>POST /api/gateway/automations</code></p>
+<div class="highlight"><pre><span></span><code>{
+  "request_id": "0b6f…",               // your idempotency key
+  "title": "Memory every 2 minutes",
+  "target": {"bundle_ref": "memory-check@1.2.0", "flow_id": "check",
+             "input_data": {"prompt": "Report the memory use of this computer."}},
+  "trigger": {"source_id": "schedule", "source_version": 1, "config": {"every": "2m"}},
+  "context": {"mode": "independent"},   // or "growing"
+  "policy": {"tool_approval": "auto", "retry": {"max_attempts": 3}}
+}
+→ {"automation_id": "…", "revision": 1, "summary": {…AutomationSummary}}
+</code></pre></div>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"request_id":"'</span><span class="s2">"</span><span class="k">$(</span>python<span class="w"> </span>-c<span class="w"> </span><span class="s1">'import uuid; print(uuid.uuid4())'</span><span class="k">)</span><span class="s2">"</span><span class="s1">'","title":"Memory every 2 minutes","target":{"flow_id":"@default","interface":"abstractcode.agent.v1","input_data":{"prompt":"Report the memory use of this computer."}},"trigger":{"source_id":"schedule","source_version":1,"config":{"every":"2m"}}}'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/automations"</span>
+</code></pre></div>
+<p><strong><code>request_id</code>.</strong> The automation id is derived from your user and the
+<code>request_id</code>, so sending the same request again returns the same automation.
+The same <code>request_id</code> with a different request answers 409
+<code>identity_conflict</code>.</p>
+<p><strong><code>target</code>.</strong> A workflow this gateway serves, in one of two forms:</p>
+<ul>
+<li><code>{bundle_ref, flow_id, input_data?}</code>: <code>bundle_ref</code> is <code>bundle_id</code> or
+  <code>bundle_id@version</code>; a version-less reference pins the version loaded at
+  creation. <code>flow_id</code> must be one of the bundle's entrypoints.</li>
+<li><code>{"flow_id": "@default", "interface": "&lt;agent interface&gt;", "input_data"?}</code>:
+  the gateway default workflow of that agent interface (for example
+  <code>abstractcode.agent.v1</code>), resolved at creation
+  (<a href="../configuration/#default-agent-workflow">configuration.md</a>). Do not send
+  <code>bundle_ref</code> with it. A default that points into the shared workflow catalog
+  is refused (422 <code>unsupported_feature</code>): automations run workflows of the
+  gateway's own registry.</li>
+</ul>
+<p>The concrete workflow (<code>bundle_id@version:flow_id</code>) is stored in the
+definition, so later changes to the default do not move the automation.</p>
+<p><strong><code>target.input_data</code></strong> is your workflow's input. The gateway applies the
+same protections as for any run: your workspace settings are clamped to the
+operator's workspace policy, the automation gets its own folder under the
+gateway's data folder, and the built-in deny rules keep its tools away from
+the data folder and your credential folders (<a href="../security/">security.md</a>).
+Keys the server owns are dropped: <code>_meta</code>, <code>workspace_read_only</code>, and every
+<code>_runtime</code> key except these, which a client may set:</p>
+<table>
+<thead>
+<tr>
+<th><code>_runtime</code> key</th>
+<th>What it sets</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>allowed_tools</code></td>
+<td>narrows the tools the target may call</td>
+</tr>
+<tr>
+<td><code>provider</code>, <code>model</code></td>
+<td>the model the target uses</td>
+</tr>
+<tr>
+<td><code>thinking</code>, <code>speculation</code></td>
+<td>generation settings, as in a chat run</td>
+</tr>
+<tr>
+<td><code>stream</code></td>
+<td>live token streaming (<code>true</code>/<code>false</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>Anything else under <code>_runtime</code> (for example <code>control</code>, <code>tool_policy</code>,
+<code>agora_agent</code>) is runtime or host state and is dropped. Tool approval is set
+by <code>policy.tool_approval</code>. A workflow's <code>automation_defaults</code> may not carry
+server-owned keys at all: saving the workflow answers 422 with the <code>field</code>.</p>
+<p><strong><code>context.mode</code>.</strong></p>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>Each occurrence</th>
+<th>Session</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>independent</code> (default)</td>
+<td>starts fresh, with no history</td>
+<td>a new session per occurrence</td>
+</tr>
+<tr>
+<td><code>growing</code></td>
+<td>receives the previous occurrences as conversation history: whole turns, at most 40 messages and 24,000 characters, not summarized</td>
+<td>the automation's session, <code>automation:&lt;automation_id&gt;</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong><code>policy</code>.</strong> <code>tool_approval</code> is <code>"auto"</code> (default) or <code>"ask"</code>
+(<a href="#tool-approval-and-consent">Tool approval</a>). <code>retry</code> sets how a failed
+occurrence is retried: <code>max_attempts</code> 1 to 10 (default 3) and <code>backoff</code>
+<code>{initial: "30s", factor: 2, max: "10m"}</code> by default. <code>serial: true</code>,
+<code>misfire: "coalesce"</code> and <code>failure: "continue"</code> are the only v1 values;
+anything else answers 422 <code>unsupported_feature</code>.</p>
+<p><strong><code>title</code> and <code>trigger</code> may be left out</strong> when the target publishes
+<code>automation_defaults</code> (<a href="#automation-defaults-on-workflows">below</a>): the
+defaults then fill <code>title</code>, <code>trigger</code>, <code>context</code>, and the <code>input_data</code> keys
+you did not send. Without published defaults, a missing <code>title</code> or <code>trigger</code>
+answers 422 <code>invalid_request</code>.</p>
+<h3 id="automation-defaults-on-workflows">Automation defaults on workflows<a class="headerlink" href="#automation-defaults-on-workflows" title="Permanent link">&para;</a></h3>
+<p>A workflow can suggest how automations created from it should run. The flow
+editor stores the suggestion in the VisualFlow document as
+<code>automation_defaults</code>:</p>
+<div class="highlight"><pre><span></span><code><span class="nt">"automation_defaults"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="nt">"schema_version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"title"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Memory every 2 minutes"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"trigger"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"source_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"schedule"</span><span class="p">,</span><span class="w"> </span><span class="nt">"source_version"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">"config"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"every"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2m"</span><span class="p">}},</span>
+<span class="w">  </span><span class="nt">"context"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"mode"</span><span class="p">:</span><span class="w"> </span><span class="s2">"independent"</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">"input_data"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"prompt"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Report the memory use of this computer."</span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<ul>
+<li><code>POST /api/gateway/visualflows</code> and <code>PUT /api/gateway/visualflows/{id}</code>
+  accept it and check it on save: unknown fields, a <code>binding_id</code>, a title over
+  120 characters, or a trigger config its source refuses answer 422 with
+  <code>reason_code</code> and <code>field</code>. <code>context</code> defaults to <code>{"mode": "independent"}</code>
+  and <code>input_data</code> to <code>{}</code>.</li>
+<li><code>PUT</code> with <code>"automation_defaults": null</code> removes it; leaving the field out
+  keeps it. <code>PUT</code> and <code>GET</code> return the stored value.</li>
+<li>Publishing writes it into the bundle manifest as
+  <code>metadata.automation_defaults[&lt;flow id&gt;]</code>. <code>GET /api/gateway/bundles</code>,
+  <code>GET /api/gateway/bundles/{bundle_id}</code> and the shared catalog records return
+  <code>automation_defaults</code> keyed by entrypoint flow id.</li>
+<li>At creation the defaults are checked again with the same rules; invalid
+  published defaults answer 422 with the offending <code>field</code>.</li>
+</ul>
+<h2 id="tool-approval-and-consent">Tool approval and consent<a class="headerlink" href="#tool-approval-and-consent" title="Permanent link">&para;</a></h2>
+<p>An automation runs unattended, so it cannot stop to ask before every tool call.
+<code>policy.tool_approval</code> decides what happens:</p>
+<ul>
+<li><strong><code>"auto"</code> (default).</strong> Creating the automation is the consent for the tools
+  its target offers: every occurrence runs them without asking. Apps state
+  this on their creation form and list the tools. The grant is limited to the
+  target's <code>_runtime.allowed_tools</code> when it has that list, and to the tools
+  AbstractRuntime classifies otherwise; a tool outside that classification
+  (a third-party MCP tool, for example) still asks.</li>
+<li><strong><code>"ask"</code>.</strong> Every tool batch that needs approval waits on a
+  <code>tool_approval</code> wait, as in an ordinary chat, and someone must answer it
+  (<a href="#waits-on-a-person">Waits</a>).</li>
+</ul>
+<p>Questions the workflow itself asks (Ask User) wait for a person in both modes.
+A change of <code>tool_approval</code> applies from the next occurrence. Discussions
+never inherit the grant: their tools ask as in any chat.</p>
+<h2 id="list-and-read">List and read<a class="headerlink" href="#list-and-read" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Answer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /api/gateway/automations?status=&amp;cursor=&amp;limit=</code></td>
+<td><code>{items: [AutomationSummary], next_cursor}</code>, newest first</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/automations/{automation_id}</code></td>
+<td><code>{definition, active_revision, summary: AutomationSummary}</code></td>
+</tr>
+</tbody>
+</table>
+<ul>
+<li><code>status</code> is a comma-separated subset of <code>active</code>, <code>paused</code>, <code>completed</code>,
+  <code>failed</code>, <code>archived</code>. <code>limit</code> is 1 to 200 (default 50).</li>
+<li>Read every page, following <code>next_cursor</code> until it is <code>null</code>: older
+  scheduled runs (<a href="#older-scheduled-runs-legacy">Legacy</a>) come on the last
+  page. <code>changed_since</code> is refused (422 <code>unsupported_feature</code>); poll complete
+  pages instead.</li>
+</ul>
+<p><code>AutomationSummary</code>:</p>
+<div class="highlight"><pre><span></span><code>{"automation_id": "…", "title": "…",
+ "status": "active",                  // active | paused | completed | failed | archived
+ "trigger": {"binding_id": "…", "source_id": "schedule", "source_version": 1, "config": {…}},
+ "context_mode": "independent", "workspace_root": "/…/workspaces/session-automation-…",
+ "next_fire_at": "…", "occurrence_count": 6,
+ "current_occurrence": {"index": 7, "run_id": "…", "attempt": 1, "status": "running"},   // or null
+ "last_occurrence": {"run_id", "index", "status", "attempts", "fired_at", "finished_at"?, "excerpt", "notify"},
+ "attention": {"pending_waits": 0, "unread": false, "unseen_count": 0, "cursor": "att1:3", "items": [], "waits": []},
+ "legacy": false, "revision": 1, "updated_at": "…",
+ "capabilities": ["revise", "pause", "resume", "run_now", "stop_current", "archive", "discuss"],
+ "session_kind": "automation"}
+</code></pre></div>
+<ul>
+<li><code>workspace_root</code> is the automation's folder, the same value as
+  <code>definition.workspace_root</code> (an older scheduled run shows its own folder
+  when it has one).</li>
+<li><code>next_fire_at</code> is the next scheduled run of an active scheduled
+  automation, also while an occurrence is running (a tick missed meanwhile
+  runs as soon as the current one ends). It is absent for a manual trigger, a
+  finished schedule, and a paused, archived, completed or failed automation.</li>
+<li><code>current_occurrence</code> is the occurrence in progress, <code>status</code> <code>admitted</code>,
+  <code>running</code> or <code>backoff</code> (waiting to retry), or <code>null</code> when none is.</li>
+<li><code>last_occurrence.excerpt</code> holds the first 280 characters of its answer.</li>
+<li><code>attention</code> is described in <a href="#attention-and-seen">Attention</a>; <code>items</code> and
+  <code>waits</code> hold up to 20 entries each.</li>
+<li><code>capabilities</code> lists what the automation accepts. An archived, completed or
+  failed automation lists <code>["discuss"]</code> only.</li>
+</ul>
+<p><code>definition</code> is the stored definition (target, trigger, context, policy,
+revision); <code>active_revision</code> is the revision in force.</p>
+<h2 id="change-an-automation">Change an automation<a class="headerlink" href="#change-an-automation" title="Permanent link">&para;</a></h2>
+<h3 id="revise">Revise<a class="headerlink" href="#revise" title="Permanent link">&para;</a></h3>
+<p><code>PATCH /api/gateway/automations/{automation_id}</code></p>
+<div class="highlight"><pre><span></span><code>{"command_id": "…", "expected_revision": 3, "changes": {"title"?, "target"?, "trigger"?, "context"?, "policy"?}}
+→ CommandReceipt
+</code></pre></div>
+<ul>
+<li><code>changes</code> must be a non-empty object with only those keys. A <code>target</code> is
+  resolved and protected as at creation. A <code>policy</code> change is merged into the
+  current policy, so a retry-only change keeps <code>tool_approval</code>.</li>
+<li>A revision applies from the next occurrence; the running one finishes under
+  the old definition. A new schedule never fires a past tick.</li>
+<li><code>expected_revision</code> is optional; a stale value answers 409
+  <code>revision_conflict</code>. Invalid <code>changes</code> answer 422 before anything is queued.</li>
+</ul>
+<h3 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link">&para;</a></h3>
+<p><code>POST /api/gateway/automations/{automation_id}/commands</code></p>
+<div class="highlight"><pre><span></span><code>{"command_id": "…", "type": "automation.pause", "payload": {}}
+→ {"command_id": "…", "accepted": true, "duplicate": false, "seq": 42}
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>automation.pause</code></td>
+<td>no more scheduled occurrences; a running one finishes; "run now" still works</td>
+</tr>
+<tr>
+<td><code>automation.resume</code></td>
+<td>continues at the next scheduled time; resuming never fires at once</td>
+</tr>
+<tr>
+<td><code>automation.run_now</code></td>
+<td>one occurrence now, also while paused (the automation stays paused)</td>
+</tr>
+<tr>
+<td><code>automation.revise</code></td>
+<td><code>payload: {changes, expected_revision?}</code>; the same as <code>PATCH</code></td>
+</tr>
+<tr>
+<td><code>automation.stop_current</code></td>
+<td>cancels the running occurrence</td>
+</tr>
+<tr>
+<td><code>automation.archive</code></td>
+<td>no more occurrences; the history is kept</td>
+</tr>
+</tbody>
+</table>
+<p><strong>The receipt means queued.</strong> A command is <code>accepted</code> when it is written to
+the gateway's durable command inbox. The runner hands it to AbstractRuntime,
+which records in the automation's ledger whether it was applied or rejected
+(<code>GET /api/gateway/runs/{automation_id}/ledger</code>). The same <code>command_id</code> again
+answers <code>duplicate: true</code> with the first <code>seq</code>; the same <code>command_id</code> for a
+different command answers 409 <code>identity_conflict</code>.</p>
+<p><strong>The route refuses at once what the state already rules out</strong> (409):</p>
+<ul>
+<li>any command but <code>archive</code> on an archived, completed or failed automation
+  (<code>invalid_state</code>);</li>
+<li><code>run_now</code> while an occurrence is running or waiting to run
+  (<code>automation_busy</code>), or when the trigger has no ticks left (<code>invalid_state</code>);</li>
+<li><code>pause</code> when paused, <code>resume</code> when not paused, <code>stop_current</code> with nothing
+  running (<code>invalid_state</code>);</li>
+<li>a stale <code>payload.expected_revision</code> (<code>revision_conflict</code>).</li>
+</ul>
+<p>AbstractRuntime checks again when it applies the command, because the state
+may change in between.</p>
+<p><strong>Through the run command door.</strong> <code>POST /api/gateway/commands</code> also accepts
+the six <code>automation.*</code> types with <code>run_id</code> set to the automation id; it
+answers 404 when <code>run_id</code> is not an automation. Prefer the automation routes
+above, which also refuse invalid states and revisions at once. Run commands
+(<code>pause</code>, <code>resume</code>, <code>cancel</code>, <code>conclude</code>, <code>update_schedule</code>, …) aimed at an
+automation id answer 409 <code>invalid_state</code>: an automation is controlled only
+with the <code>automation.*</code> types.</p>
+<h2 id="occurrences">Occurrences<a class="headerlink" href="#occurrences" title="Permanent link">&para;</a></h2>
+<p><code>GET /api/gateway/automations/{automation_id}/occurrences?cursor=&amp;limit=</code> →
+<code>{items, next_cursor}</code>, newest first, one row per occurrence (its latest
+attempt):</p>
+<div class="highlight"><pre><span></span><code>{"run_id": "…", "index": 7, "attempts": 1, "fired_at": "…", "finished_at": "…",
+ "status": "completed",   // admitted | running | waiting | backoff | completed | failed | cancelled
+ "trigger": {"source_id": "schedule", "summary": "schedule: every 30 minutes (UTC), tick 5"},
+ "user_turn": "[Trigger schedule@1 · occurrence 7 · fired …]\nTriage my inbox…",
+ "answer": "…", "notify": null,
+ "failure": {"reason_code": "occurrence_failed", "message": "…", "attempts": 3},   // failed rows only
+ "artifacts": [{"artifact_id", "name", "mime_type", "url"}],
+ "waits": [{"run_id", "wait_key", "kind", "reason", "prompt"?, "choices"?, "details"?}],
+ "ledger_url": "/api/gateway/runs/…/ledger", "workspace_url": "/api/gateway/runs/…/workspace"}
+</code></pre></div>
+<ul>
+<li><code>user_turn</code> and <code>answer</code> are the occurrence as a chat turn; <code>answer</code> is
+  empty until the occurrence ends.</li>
+<li><code>status</code> is <code>waiting</code> only while the occurrence, or a run below it, waits
+  for a person (it then has <code>waits</code>). An occurrence whose agent is still
+  working reads <code>running</code>. <code>backoff</code> means a retry is scheduled.</li>
+<li><code>trigger.summary</code> describes the trigger the occurrence ran under, also
+  after a revision; a manual occurrence reads <code>manual: run now (&lt;command id&gt;)</code>.</li>
+<li><code>artifacts[].url</code> serves the file; <code>workspace_url</code> browses the occurrence's
+  folder (<a href="../api/#a-runs-workspace-folder-browse-and-preview">api.md</a>).</li>
+</ul>
+<h2 id="waits-on-a-person">Waits on a person<a class="headerlink" href="#waits-on-a-person" title="Permanent link">&para;</a></h2>
+<p>An occurrence (or a run below it) can wait for a person. Each wait, in an
+occurrence row's <code>waits</code> and in the summary's <code>attention.waits</code> (which also
+carries the occurrence <code>index</code>), is typed:</p>
+<div class="highlight"><pre><span></span><code>{"run_id": "…", "wait_key": "…", "kind": "ask_user" | "tool_approval" | "event",
+ "reason": "…", "prompt"?: "…", "choices"?: […], "details"?: …}
+</code></pre></div>
+<p>For <code>tool_approval</code>, <code>details</code> lists the tool calls that approving will run:
+<code>[{name, arguments, call_id?}]</code>.</p>
+<p>Answer a wait with the ordinary resume command on the wait's run:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"command_id":"'</span><span class="s2">"</span><span class="k">$(</span>python<span class="w"> </span>-c<span class="w"> </span><span class="s1">'import uuid; print(uuid.uuid4())'</span><span class="k">)</span><span class="s2">"</span><span class="s1">'","run_id":"&lt;wait run_id&gt;","type":"resume","payload":{"wait_key":"&lt;wait_key&gt;","payload":{"approved":true}}}'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/commands"</span>
+</code></pre></div>
+<p>The answer, <code>payload.payload</code>, depends on <code>kind</code>:</p>
+<table>
+<thead>
+<tr>
+<th><code>kind</code></th>
+<th>What waits</th>
+<th>Answer (<code>payload.payload</code>)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ask_user</code></td>
+<td>a question the workflow asks</td>
+<td><code>{"response": "…"}</code></td>
+</tr>
+<tr>
+<td><code>tool_approval</code></td>
+<td>a tool batch awaiting approval</td>
+<td><code>{"approved": true}</code> or <code>{"approved": false}</code>, optionally with <code>"tool_ids": ["…"]</code></td>
+</tr>
+<tr>
+<td><code>event</code></td>
+<td>an event wait that carries a prompt or choices</td>
+<td><code>{"payload": {…}}</code> (the event payload, wrapped)</td>
+</tr>
+</tbody>
+</table>
+<p>For an automation's runs the gateway refuses an answer of the wrong shape
+(422 <code>invalid_request</code>, field <code>payload</code>, with the expected shape in the
+message): <code>{"response": "approve"}</code> to a tool approval is refused, never
+recorded as the tool result. Waiting occurrences stay counted in
+<code>attention.pending_waits</code> until they are answered.</p>
+<h2 id="attention-and-seen">Attention and <code>/seen</code><a class="headerlink" href="#attention-and-seen" title="Permanent link">&para;</a></h2>
+<h3 id="what-asks-for-attention">What asks for attention<a class="headerlink" href="#what-asks-for-attention" title="Permanent link">&para;</a></h3>
+<p>A workflow asks for attention through its <strong>output</strong>:</p>
+<ul>
+<li><code>notify: true</code>: the title is the automation's title and the body the
+  answer;</li>
+<li><code>notify: {"title": "…", "body": "…"}</code>: your own title and body.</li>
+</ul>
+<p>Anything else stays quiet: quiet occurrences are listed but raise no
+notification. An occurrence that fails after its last retry always raises
+one. A plain agent workflow that must flag its results is wrapped in a small
+flow that returns <code>{response, notify}</code>.</p>
+<h3 id="reading-and-marking-attention">Reading and marking attention<a class="headerlink" href="#reading-and-marking-attention" title="Permanent link">&para;</a></h3>
+<p>Attention items live in the automation's own history; what each user has
+<strong>seen</strong> is kept by the gateway per user, in
+<code>&lt;data dir&gt;/automations/attention/</code>.</p>
+<ul>
+<li>The summary's <code>attention</code> block: <code>unseen_count</code> and <code>unread</code> (items you
+  have not seen), <code>items</code> (up to 20 of them), <code>cursor</code> (the latest item's
+  cursor), <code>pending_waits</code> and <code>waits</code> (live waits, up to 20).</li>
+<li><code>GET /api/gateway/automations/{automation_id}/attention?cursor=&amp;limit=</code>
+  pages your unseen items, oldest first: <code>{items, next_cursor}</code> with items
+  <code>{kind: "notify" | "failure", automation_id, run_id, index, at, title, body?, cursor}</code>.</li>
+<li><code>POST /api/gateway/automations/{automation_id}/seen</code> with
+  <code>{"attention_cursor": "att1:&lt;n&gt;"}</code> records what you have seen and returns
+  <code>{"attention_cursor": "att1:&lt;stored n&gt;"}</code>.</li>
+</ul>
+<p><code>/seen</code> only moves forward: an older cursor is ignored and the stored one is
+returned. Send the cursor of the last item you actually displayed, never the
+summary's latest <code>cursor</code>, so items you did not show stay unseen. A cursor
+beyond the automation's latest item, or one that does not match <code>att1:&lt;n&gt;</code>,
+answers 422 <code>invalid_request</code>. <code>/seen</code> never clears waits: they stay counted
+until they are answered.</p>
+<h2 id="discuss-an-occurrence">Discuss an occurrence<a class="headerlink" href="#discuss-an-occurrence" title="Permanent link">&para;</a></h2>
+<p><code>POST /api/gateway/automations/{automation_id}/discuss</code></p>
+<div class="highlight"><pre><span></span><code>{"request_id": "…", "occurrence_index": 7, "prompt": "Why did memory jump here?"}
+→ {"session_id": "discussion-session:…", "run_id": "…", "session_kind": "discussion",
+   "workspace_root": "&lt;its own folder&gt;", "mounted_workspace": "&lt;the automation's folder&gt;"}
+</code></pre></div>
+<p>A discussion is a separate conversation about one occurrence. It runs the
+occurrence's workflow with its frozen inputs, your <code>prompt</code> as the new user
+turn, and the automation's conversation from occurrence 1 up to and including
+that occurrence as its history (oldest turns dropped first when it is long).</p>
+<ul>
+<li><strong>Identity.</strong> The discussion's run id is
+  <code>uuid5(automation_id, "discuss:" + request_id)</code> and its session id is
+  <code>discussion-session:&lt;that run id&gt;</code>, so request ids are scoped to the
+  automation. The same request returns the same discussion; a different
+  request with the same <code>request_id</code> on that automation answers 409
+  <code>identity_conflict</code>.</li>
+<li><strong>Its own folder, the automation's mounted read-only.</strong> The discussion
+  works in its own folder (<code>workspace_root</code>, a gateway session folder like any
+  chat's), where it can write, edit and run commands. The automation's folder
+  (<code>mounted_workspace</code>) is mounted alongside: the discussion can read it, and
+  every write into it through file tools or workflow writers is refused. Shell
+  commands run in the discussion's own folder; the mount is enforced for file
+  tools and workflow writers, not inside shell commands. Apps can show
+  "own workspace: … · automation files mounted read-only at …".</li>
+<li><strong>Nothing flows back.</strong> Nothing a discussion does is written into the
+  automation's conversation, state or history.</li>
+<li><strong>Tools ask.</strong> The automation's tool grant does not apply; tools ask for
+  approval as in any chat. The operator's default tool grant, when one is
+  stored, applies to discussions as to any chat, so the commands it covers
+  run without asking there too.</li>
+<li><strong>Errors.</strong> 404 <code>occurrence_not_found</code> for an unknown index, 422
+  <code>invalid_request</code> for an empty <code>prompt</code> or <code>request_id</code>, 409
+  <code>history_unavailable</code> when the history cannot be read.</li>
+</ul>
+<p><strong>Continue a discussion</strong> with <code>POST /api/gateway/runs/start</code> and its
+<code>session_id</code>. The gateway re-stamps every later turn from the discussion's
+first run, whatever the request says: the same provenance, the
+discussion's own folder, the automation's folder mounted read-only, and the
+discussion's history (read strictly). The history is
+provided by the gateway, so a request that sends <code>context.messages</code> in a
+discussion session is refused (400); a session whose discussion cannot be
+resolved answers 409 <code>session_attribution_failed</code>. These answers come from
+<code>/runs/start</code> and use its ordinary error shape.</p>
+<h2 id="automations-in-run-lists">Automations in run lists<a class="headerlink" href="#automations-in-run-lists" title="Permanent link">&para;</a></h2>
+<p><code>GET /api/gateway/runs</code> rows carry the fields that say how a run belongs to an
+automation:</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Values</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>session_kind</code></td>
+<td><code>chat</code>, <code>automation</code>, <code>occurrence</code>, <code>discussion</code></td>
+</tr>
+<tr>
+<td><code>automation_id</code></td>
+<td>the automation the run belongs to, or <code>null</code></td>
+</tr>
+<tr>
+<td><code>role</code></td>
+<td><code>controller</code>, <code>occurrence</code>, <code>descendant</code>, <code>discussion</code>, <code>legacy_schedule</code>, or <code>null</code></td>
+</tr>
+<tr>
+<td><code>occurrence_index</code></td>
+<td>the occurrence number, or <code>null</code></td>
+</tr>
+<tr>
+<td><code>legacy</code></td>
+<td><code>true</code> for an older scheduled run</td>
+</tr>
+<tr>
+<td><code>workspace_root</code></td>
+<td>on turn rows only (runs without a parent, and occurrences): the folder the run works in, as it runs (a launch-folder override, a discussion's own folder); absent on sub-runs, controllers and runs without one</td>
+</tr>
+</tbody>
+</table>
+<p>A growing automation's occurrences have <code>session_kind: "automation"</code>; an
+independent automation's occurrences have <code>session_kind: "occurrence"</code>.</p>
+<ul>
+<li><strong><code>session_kind</code> filter.</strong> A comma-separated subset, for example
+  <code>session_kind=chat,discussion</code>. An unknown kind answers 400.</li>
+<li><strong><code>root_only=true</code> returns turns:</strong> runs without a parent, except automation
+  controllers, plus occurrences. A retried occurrence is one turn (its last
+  attempt). A growing automation therefore reads as one chat session with one
+  turn per occurrence, with no client changes.</li>
+<li><strong>A normal chat list</strong> uses <code>root_only=true&amp;session_kind=chat,discussion</code>.</li>
+<li><code>GET /api/gateway/sessions/{session_id}/history/bloc</code> returns the same turns
+  (<a href="../api/#session-history-bloc-get-sessionssession_idhistorybloc">api.md</a>).</li>
+<li>An older scheduled run lists with <code>role: "legacy_schedule"</code>,
+  <code>session_kind: "automation"</code>, <code>is_scheduled: true</code> and <code>legacy: true</code>, so a
+  chat list never shows it as a chat.</li>
+</ul>
+<h2 id="older-scheduled-runs-legacy">Older scheduled runs (legacy)<a class="headerlink" href="#older-scheduled-runs-legacy" title="Permanent link">&para;</a></h2>
+<p>Schedules created with <code>POST /api/gateway/runs/schedule</code>
+(<a href="../api/#2b-schedule-a-run-bundle-mode">api.md</a>) are not converted. They
+appear on the last page of <code>GET /api/gateway/automations</code> with <code>legacy: true</code>,
+<code>revision: null</code> and <code>capabilities: ["legacy"]</code>, and keep their own controls
+(<code>pause</code>, <code>resume</code>, <code>cancel</code> through <code>POST /api/gateway/commands</code>).</p>
+<ul>
+<li><code>GET /api/gateway/automations/{id}</code> and the other per-automation routes
+  answer 404 for them.</li>
+<li><code>trigger.binding_id</code> is the schedule's root run id; <code>last_occurrence</code> is its
+  latest child run, with <code>index</code> its position among the children.</li>
+</ul>
+<h2 id="operations">Operations<a class="headerlink" href="#operations" title="Permanent link">&para;</a></h2>
+<p><strong>One writer process per data folder.</strong> v1 supports one process that ticks
+runs, resumes them and applies commands on a data folder: the runner. Run
+either <code>abstractgateway serve</code> (API and runner in one process) or the split
+shape, <code>abstractgateway runner</code> plus <code>abstractgateway serve --no-runner</code>, on
+one data folder (<a href="../getting-started/#3-split-api-vs-runner-recommended-for-upgrades">getting-started.md</a>).
+In the split shape the API process only creates automations and discussions
+and queues commands; the runner does the rest. The lock that serializes an
+automation's steps and commands works inside one process, so do not point a
+second gateway at the same data folder.</p>
+<p><strong>The runner drives controllers.</strong> Every workflow host registers the
+controller workflow that ships with AbstractRuntime,
+<code>abstractframework.automation-controller@1.0.0:controller</code> (it is not a bundle
+and does not appear in bundle lists), so the runner ticks controllers like any
+run. A controller sleeps on one wait until its next tick or retry; a command
+wakes it for an immediate tick. Nothing fires while no runner is ticking the
+data folder: <code>GET /api/health</code> reports the runner (<code>runner.runners[].status</code>).</p>
+<p><strong>Restart recovery.</strong> Automations are durable runs, so they survive a
+restart:</p>
+<ul>
+<li>After a restart the runner picks up every controller where it stopped.</li>
+<li>Occurrence ids are deterministic and a child run is created only when its id
+  is free, so a restart in the middle of an occurrence continues that
+  occurrence and never starts it twice.</li>
+<li>Commands accepted before the restart are applied from the runner's saved
+  command position; a replayed command is recognized by its <code>command_id</code>.</li>
+<li>Ticks missed while the gateway was down coalesce into one occurrence.</li>
+<li>A command that fails on the host is recorded as rejected
+  (<code>internal_error</code>); if even that record cannot be written, the runner keeps
+  the command and retries it at the next poll.</li>
+</ul>
+<p><strong>Boot warm-up.</strong> With file-backed stores the gateway builds the run store's
+session and children indexes when it starts, so the first chat does not pay
+for that scan. The log line
+<code>run store session index warmed in &lt;seconds&gt;s</code> reports the time (about a
+second for 20,000 runs). SQLite stores keep these indexes in the database.</p>
+<p><strong>Acceptance check.</strong> From a source checkout,
+<code>scripts/accept_automations_v1.py</code> checks the whole feature end to end
+against a gateway it starts and stops itself:</p>
+<div class="highlight"><pre><span></span><code>python<span class="w"> </span>scripts/accept_automations_v1.py<span class="w"> </span>--data-dir<span class="w"> </span>/tmp/automation-acceptance
+</code></pre></div>
+<ul>
+<li><code>--data-dir</code> must be an empty or new folder; the script owns it.</li>
+<li><code>--interval</code> (default <code>20s</code>) is the schedule of its test monitors, short so
+  the run is quick; <code>--port</code> picks the port (default: the first free port from
+  18900).</li>
+<li>It needs no model provider: its workflows are deterministic, and a local
+  spy server checks that no provider call is made.</li>
+<li>It prints one <code>PASS</code> or <code>FAIL</code> line per step (creation, scheduled ticks,
+  quiet versus notable occurrences, pause, run now while paused, resume
+  without firing, revise, independent versus growing context, a restart in
+  the middle of an occurrence, a two-turn discussion with refused writes,
+  attention items, an unattended tool call, tool approval answered by kind,
+  and a replay that makes zero calls) and exits 0 only when every step passes.</li>
+</ul>
+<h2 id="limits-in-v1">Limits in v1<a class="headerlink" href="#limits-in-v1" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Schedules are fixed UTC intervals (<code>s</code>, <code>m</code>, <code>h</code>, <code>d</code>, at most <code>366d</code>):
+  no cron expressions, calendar months, time zones or daylight-saving rules.</li>
+<li>The trigger sources are <code>schedule@1</code> and <code>manual@1</code>; there are no external
+  or event triggers.</li>
+<li>Occurrences run one at a time, missed ticks coalesce, and a failed
+  occurrence never stops the automation. These policies cannot be changed.</li>
+<li>Growing history is bounded (40 messages, 24,000 characters, whole turns)
+  and is not summarized.</li>
+<li>Under <code>tool_approval: "auto"</code>, tools outside AbstractRuntime's
+  classification, such as third-party MCP tools, still ask for approval.</li>
+<li>Retries repeat the external effects of the failed attempt.</li>
+<li>A <code>@default</code> target must resolve to a workflow of the gateway's own
+  registry, not the shared catalog.</li>
+<li><code>GET /api/gateway/automations</code> has no change cursor: poll complete pages.</li>
+<li>The summary's <code>attention.items</code> and <code>attention.waits</code> hold up to 20 entries.</li>
+<li>Older scheduled runs are listed read-only and never converted.</li>
+<li>One writer process per data folder.</li>
+</ul>
+<h2 id="related-docs">Related docs<a class="headerlink" href="#related-docs" title="Permanent link">&para;</a></h2>
+<ul>
+<li><a href="../api/">api.md</a>: the rest of the HTTP contract, durable commands and run lists</li>
+<li><a href="../architecture/#automations">architecture.md</a>: where automations sit in the gateway</li>
+<li><a href="../security/">security.md</a>: sign-in, the workspace guard and the built-in deny list</li>
+<li><a href="../faq/#automations">faq.md</a> and <a href="../troubleshooting/#automations">troubleshooting.md</a></li>
+<li>AbstractRuntime <code>docs/automations.md</code>: the controller, triggers, retries, context modes and discussions</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

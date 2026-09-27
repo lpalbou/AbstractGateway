@@ -16,7 +16,7 @@
         <link rel="prev" href="../apple-local-gateway-flow/">
       
       
-        <link rel="next" href="../architecture/">
+        <link rel="next" href="../automations/">
       
       
         
@@ -917,6 +917,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#automations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#beyond-the-core" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1152,6 +1163,33 @@
   
 </nav>
       
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../automations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -1627,6 +1665,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#automations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automations
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#beyond-the-core" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1965,6 +2014,11 @@ serve:</p>
 <td><code>/api/gateway/entities/*</code></td>
 <td>summoned entities</td>
 <td><a href="../entities/">entities.md</a></td>
+</tr>
+<tr>
+<td><code>/api/gateway/automations*</code>, <code>/api/gateway/trigger-sources</code></td>
+<td>automations: recurring workflows, their occurrences and attention</td>
+<td><a href="../automations/">automations.md</a></td>
 </tr>
 </tbody>
 </table>
@@ -2476,7 +2530,7 @@ and Runtime file nodes.</p>
 <p>Request fields (see <code>SubmitCommandRequest</code> in <code>src/abstractgateway/routes/gateway.py</code>):
 - <code>command_id</code>: client-supplied idempotency key (UUID recommended)
 - <code>run_id</code>: target run id (or session id for some event use-cases)
-- <code>type</code>: <code>pause|resume|cancel|emit_event|update_schedule|compact_memory</code>
+- <code>type</code>: <code>pause|resume|cancel|conclude|emit_event|update_schedule|compact_memory|inject_guidance</code>, or an <code>automation.*</code> type with <code>run_id</code> = the automation id (<a href="../automations/#commands">automations.md</a>). Run commands aimed at an automation id answer 409 <code>invalid_state</code>.
 - <code>payload</code>: command-specific object</p>
 <h3 id="pause-cancel">Pause / cancel<a class="headerlink" href="#pause-cancel" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
@@ -2502,6 +2556,71 @@ and Runtime file nodes.</p>
 <span class="w">  </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/commands"</span>
 </code></pre></div>
 <p>Evidence: <code>src/abstractgateway/runner.py</code> (<code>_apply_emit_event</code>).</p>
+<h2 id="automations">Automations<a class="headerlink" href="#automations" title="Permanent link">&para;</a></h2>
+<p>An automation runs a workflow on a trigger (a fixed UTC interval, or only when
+asked) as a durable controller run whose occurrences are ordinary child runs.
+The full contract, with request and response shapes, the error envelope,
+typed waits, attention and operations, is in <a href="../automations/">automations.md</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Answer</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /api/gateway/trigger-sources</code></td>
+<td><code>{items: [{id, version, label, capabilities, config_schema, event_schema, available, unavailable_reason?}]}</code></td>
+</tr>
+<tr>
+<td><code>POST /api/gateway/automations</code></td>
+<td><code>{request_id, title?, target, trigger?, context?, policy?}</code> → <code>{automation_id, revision, summary}</code></td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/automations?status=&amp;cursor=&amp;limit=</code></td>
+<td><code>{items: [AutomationSummary], next_cursor}</code> (older scheduled runs on the last page, <code>legacy: true</code>)</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/automations/{automation_id}</code></td>
+<td><code>{definition, active_revision, summary}</code></td>
+</tr>
+<tr>
+<td><code>PATCH /api/gateway/automations/{automation_id}</code></td>
+<td><code>{command_id, expected_revision?, changes}</code> → <code>{command_id, accepted, duplicate, seq}</code></td>
+</tr>
+<tr>
+<td><code>POST /api/gateway/automations/{automation_id}/commands</code></td>
+<td><code>{command_id, type: automation.pause|resume|run_now|stop_current|archive|revise, payload?}</code> → the same receipt</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/automations/{automation_id}/occurrences?cursor=&amp;limit=</code></td>
+<td><code>{items: [occurrence], next_cursor}</code>, newest first</td>
+</tr>
+<tr>
+<td><code>GET /api/gateway/automations/{automation_id}/attention?cursor=&amp;limit=</code></td>
+<td><code>{items: [attention item], next_cursor}</code>: your unseen items, oldest first</td>
+</tr>
+<tr>
+<td><code>POST /api/gateway/automations/{automation_id}/seen</code></td>
+<td><code>{attention_cursor}</code> → <code>{attention_cursor}</code> (moves forward only)</td>
+</tr>
+<tr>
+<td><code>POST /api/gateway/automations/{automation_id}/discuss</code></td>
+<td><code>{request_id, occurrence_index, prompt}</code> → <code>{session_id, run_id, session_kind: "discussion"}</code></td>
+</tr>
+</tbody>
+</table>
+<p>Errors on these routes, 401 and 403 included, always have the shape
+<code>{"detail": {"reason_code", "message", "field"?, "command_id"?}}</code>
+(<a href="../automations/#errors">automations.md</a>). An occurrence's wait is answered
+with the <code>resume</code> command above; the answer's shape depends on the wait's
+<code>kind</code> (<a href="../automations/#waits-on-a-person">automations.md</a>).
+<code>GET /api/gateway/runs</code> rows carry <code>session_kind</code>, <code>automation_id</code>, <code>role</code>,
+<code>occurrence_index</code> and <code>legacy</code>, plus <code>workspace_root</code> on turn rows (the folder
+the run works in; absent on sub-runs), accept <code>session_kind=chat,discussion</code>, and
+<code>root_only=true</code> returns conversation turns, one per occurrence
+(<a href="../automations/#automations-in-run-lists">automations.md</a>).</p>
 <h2 id="beyond-the-core">Beyond the core<a class="headerlink" href="#beyond-the-core" title="Permanent link">&para;</a></h2>
 <p><code>/api/gateway/*</code> also includes optional operator/tooling endpoints (reports inbox, triage queue, backlog browsing + exec runner, process manager, file/attachment helpers, embeddings, voice, discovery, …).<br />
 See: <a href="../maintenance/">maintenance.md</a>.</p>
@@ -2728,9 +2847,12 @@ survived instead of failing silently. Each entry is an object with at least
 offloaded input data.</p>
 <h3 id="session-history-bloc-get-sessionssession_idhistorybloc">Session history bloc (<code>GET /sessions/{session_id}/history/bloc</code>)<a class="headerlink" href="#session-history-bloc-get-sessionssession_idhistorybloc" title="Permanent link">&para;</a></h3>
 <p>Returns one cursor-bounded bloc of <strong>root session turns</strong>, each with an inline
-<code>history_bundle</code> export — one round-trip instead of N per-turn bundle fetches
-(laurent c5551). Resume pagination uses an ISO <code>created_at</code> cursor in the
-<code>before</code> query parameter (never turn-count offsets).</p>
+<code>history_bundle</code> export — one round-trip instead of N per-turn bundle fetches. Resume pagination uses an ISO <code>created_at</code> cursor in the
+<code>before</code> query parameter (never turn-count offsets).
+The turns are the ones <code>GET /api/gateway/runs?root_only=true</code> lists for the
+session: parent-less runs plus automation occurrences (a retried occurrence
+once, as its last attempt), never automation controllers
+(<a href="../automations/#automations-in-run-lists">automations.md</a>).</p>
 <p>Query parameters:</p>
 <table>
 <thead>
@@ -3354,8 +3476,8 @@ carries a <code>caches</code> array and <code>clear_all</code> always carries <c
 <code>src/abstractgateway/security/authorization.py</code> (route-family policy).</p>
 <h2 id="about-get-apigatewayabout">About (<code>GET /api/gateway/about</code>)<a class="headerlink" href="#about-get-apigatewayabout" title="Permanent link">&para;</a></h2>
 <p>Public (no sign-in): which versions this gateway runs, for About screens.</p>
-<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"abstractframework"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.4.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"abstractgateway"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.5.1"</span><span class="p">,</span>
-<span class="w"> </span><span class="nt">"packages"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"abstractcore"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2.16.1"</span><span class="p">,</span><span class="w"> </span><span class="nt">"abstractruntime"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.5.1"</span><span class="p">,</span><span class="w"> </span><span class="nt">"abstractskill"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.3.0"</span><span class="p">}}</span>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"abstractframework"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.5.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"abstractgateway"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.6.0"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"packages"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"abstractcore"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2.17.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"abstractruntime"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.6.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"abstractskill"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.3.0"</span><span class="p">}}</span>
 </code></pre></div>
 <p><code>abstractframework</code> is null when the framework meta-package is not installed
 on the gateway computer. Versions only: no paths, host names or settings.</p>

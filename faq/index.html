@@ -602,6 +602,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../automations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../architecture/" class="md-nav__link">
         
   
@@ -980,6 +1007,89 @@
     <span class="md-ellipsis">
       
         Can I schedule a workflow to run periodically?
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#automations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Automations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-is-the-difference-between-an-automation-and-a-scheduled-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is the difference between an automation and a scheduled run?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#do-an-automations-tools-ask-for-approval" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Do an automation's tools ask for approval?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-does-an-automation-not-notify-me-after-every-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why does an automation not notify me after every run?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#can-an-automation-run-daily-at-0800" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can an automation run daily at 08:00?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-does-growing-context-do" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What does growing context do?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#is-an-automation-safe-across-a-gateway-restart" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Is an automation safe across a gateway restart?
       
     </span>
   </a>
@@ -1480,6 +1590,89 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#automations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automations
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Automations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-is-the-difference-between-an-automation-and-a-scheduled-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What is the difference between an automation and a scheduled run?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#do-an-automations-tools-ask-for-approval" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Do an automation's tools ask for approval?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#why-does-an-automation-not-notify-me-after-every-run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why does an automation not notify me after every run?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#can-an-automation-run-daily-at-0800" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Can an automation run daily at 08:00?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-does-growing-context-do" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What does growing context do?
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#is-an-automation-safe-across-a-gateway-restart" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Is an automation safe across a gateway restart?
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#bundles-and-workflow-execution" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1814,16 +2007,53 @@ tools by default, even when a run's folder contains them. See
 <p><code>POST /api/gateway/commands</code> appends a command record to a durable inbox.
 The background runner polls the inbox and applies commands asynchronously.</p>
 <p>Supported command types:
-<code>pause|resume|cancel|emit_event|update_schedule|compact_memory</code></p>
+<code>pause|resume|cancel|conclude|emit_event|update_schedule|compact_memory|inject_guidance</code>,
+plus the six <code>automation.*</code> commands with <code>run_id</code> set to an automation id
+(<a href="../automations/#commands">automations.md</a>).</p>
 <p>Evidence: <code>submit_command</code> in <code>src/abstractgateway/routes/gateway.py</code>, command application in <code>src/abstractgateway/runner.py</code>.</p>
 <h3 id="can-i-schedule-a-workflow-to-run-periodically">Can I schedule a workflow to run periodically?<a class="headerlink" href="#can-i-schedule-a-workflow-to-run-periodically" title="Permanent link">&para;</a></h3>
-<p>Yes (bundle mode).</p>
-<p>Use <code>POST /api/gateway/runs/schedule</code> to start a scheduled parent run that launches the target workflow as child runs over time.</p>
+<p>Yes. Create an <strong>automation</strong> with <code>POST /api/gateway/automations</code>: a
+workflow run on a fixed UTC interval (or only when you ask), each run kept as
+a chat turn, quiet unless a run asks for attention or fails. See
+<a href="../automations/">automations.md</a> and <a href="#automations">Automations</a> below.</p>
+<p><code>POST /api/gateway/runs/schedule</code> starts a scheduled parent run that launches the target workflow as child runs over time. Such schedules are listed with the automations as <code>legacy: true</code> and keep their own controls.</p>
 <p>Notes:
 - <code>interval</code> supports compact durations like <code>15m</code>, <code>1h</code>, <code>2d</code>.
 - If <code>interval</code> is set and <code>repeat_count</code> is omitted, the schedule repeats forever (until you cancel it).
 - To stop the schedule, cancel the scheduled parent run via <code>POST /api/gateway/commands</code> with type <code>cancel</code>.</p>
 <p>Evidence: <code>ScheduleRunRequest</code> + <code>start_scheduled_run</code> in <code>src/abstractgateway/routes/gateway.py</code>.</p>
+<h2 id="automations">Automations<a class="headerlink" href="#automations" title="Permanent link">&para;</a></h2>
+<h3 id="what-is-the-difference-between-an-automation-and-a-scheduled-run">What is the difference between an automation and a scheduled run?<a class="headerlink" href="#what-is-the-difference-between-an-automation-and-a-scheduled-run" title="Permanent link">&para;</a></h3>
+<p>An automation is a durable controller run that AbstractRuntime drives: it
+has revisions, pause, resume, run now, retries, attention, discussions and
+typed waits, and each run reads as a chat turn. A scheduled run
+(<code>POST /api/gateway/runs/schedule</code>) is a parent run that starts children on an
+interval; it is listed read-only among the automations (<code>legacy: true</code>) and is
+never converted. See <a href="../automations/#older-scheduled-runs-legacy">automations.md</a>.</p>
+<h3 id="do-an-automations-tools-ask-for-approval">Do an automation's tools ask for approval?<a class="headerlink" href="#do-an-automations-tools-ask-for-approval" title="Permanent link">&para;</a></h3>
+<p>Not by default. An automation runs unattended, so creating it with
+<code>policy.tool_approval: "auto"</code> (the default) is the consent for its target's
+tools. With <code>"ask"</code>, every tool batch waits for approval. Third-party MCP
+tools still ask under <code>"auto"</code>, and questions the workflow asks a person wait
+in both modes. See <a href="../automations/#tool-approval-and-consent">automations.md</a>.</p>
+<h3 id="why-does-an-automation-not-notify-me-after-every-run">Why does an automation not notify me after every run?<a class="headerlink" href="#why-does-an-automation-not-notify-me-after-every-run" title="Permanent link">&para;</a></h3>
+<p>Automations are quiet. A run raises attention only when its output carries
+<code>notify: true</code> or <code>notify: {title, body}</code>, when it fails after its last retry,
+or while it waits for a person. See <a href="../automations/#attention-and-seen">automations.md</a>.</p>
+<h3 id="can-an-automation-run-daily-at-0800">Can an automation run daily at 08:00?<a class="headerlink" href="#can-an-automation-run-daily-at-0800" title="Permanent link">&para;</a></h3>
+<p>Not in v1. Schedules are fixed UTC intervals ("every 24 hours" from a start
+time), with no cron expressions, time zones or daylight-saving rules. See
+<a href="../automations/#limits-in-v1">automations.md</a>.</p>
+<h3 id="what-does-growing-context-do">What does growing context do?<a class="headerlink" href="#what-does-growing-context-do" title="Permanent link">&para;</a></h3>
+<p>In <code>growing</code> mode each run receives the previous runs as conversation
+history (at most 40 messages and 24,000 characters, whole turns), and the
+automation reads as one chat. In <code>independent</code> mode (the default) every run
+starts fresh. See <a href="../automations/#create-an-automation">automations.md</a>.</p>
+<h3 id="is-an-automation-safe-across-a-gateway-restart">Is an automation safe across a gateway restart?<a class="headerlink" href="#is-an-automation-safe-across-a-gateway-restart" title="Permanent link">&para;</a></h3>
+<p>Yes. Automations are durable runs: after a restart the runner continues each
+one, a run interrupted mid-way continues rather than starting twice, and ticks
+missed while the gateway was down coalesce into one run. Run one gateway (or
+one runner) per data folder. See <a href="../automations/#operations">automations.md</a>.</p>
 <h2 id="bundles-and-workflow-execution">Bundles and workflow execution<a class="headerlink" href="#bundles-and-workflow-execution" title="Permanent link">&para;</a></h2>
 <h3 id="how-do-i-run-a-specific-bundle-version">How do I run a specific bundle version?<a class="headerlink" href="#how-do-i-run-a-specific-bundle-version" title="Permanent link">&para;</a></h3>
 <p>When starting runs in bundle mode you can select versions in two ways:
@@ -1979,6 +2209,7 @@ abstractgateway<span class="w"> </span>serve<span class="w"> </span>--no-runner<
 <li>Troubleshooting: <a href="../troubleshooting/">troubleshooting.md</a></li>
 <li>Getting started: <a href="../getting-started/">getting-started.md</a></li>
 <li>API overview: <a href="../api/">api.md</a></li>
+<li>Automations: <a href="../automations/">automations.md</a></li>
 <li>Security: <a href="../security/">security.md</a></li>
 <li>Configuration: <a href="../configuration/">configuration.md</a></li>
 <li>Architecture: <a href="../architecture/">architecture.md</a></li>
