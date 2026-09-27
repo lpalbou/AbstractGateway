@@ -92,6 +92,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         let mut rows: Vec<View> = Vec::new();
                         for e in entries.iter().rev() {
                             let (mark, ink) = match &e.outcome {
+                                Ok(_) if e.attention.is_some() => ("!", tt.warn),
                                 Ok(_) => ("✓", tt.ok),
                                 Err(_) => ("✗", tt.error),
                             };
@@ -122,10 +123,16 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                     ),
                                 },
                             ]));
+                            if let Some(a) = &e.attention {
+                                rows.push(line(vec![span_bold(
+                                    format!("        needs attention · {a}"),
+                                    tt.warn,
+                                )]));
+                            }
                             match &e.verified {
                                 Some(Ok(v)) => rows.push(line(vec![span(
                                     format!("        verified · {v}"),
-                                    tt.ok,
+                                    if e.attention.is_some() { tt.text_muted } else { tt.ok },
                                 )])),
                                 Some(Err(v)) => rows.push(line(vec![span_bold(
                                     format!("        VERIFY FAILED · {v}"),

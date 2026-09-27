@@ -2540,6 +2540,10 @@ pub struct JournalEntry {
     pub outcome: Result<String, String>,
     /// What the follow-up GET showed (verify-after-write law).
     pub verified: Option<Result<String, String>>,
+    /// The write applied and verified, but the result needs the
+    /// operator's attention (e.g. a route this computer cannot run) —
+    /// rendered in the warning tone, never as a plain success.
+    pub attention: Option<String>,
 }
 
 /// An in-flight operation for the busy strip (elapsed rendering).
@@ -2578,6 +2582,10 @@ pub struct Store {
     /// The "Download all" parent job (`grp_…`) the operator started,
     /// polled until it ends. `None` = none this session.
     pub download_group: Signal<Option<crate::api::firstrun::GroupStatus>>,
+    /// After a non-forced apply-recommended that kept routes or left a
+    /// broken one: the forced second pass the web offers, with its label
+    /// ("Replace mine too" / "Clear what cannot run here").
+    pub apply_followup: Signal<Option<String>>,
     /// `GET /host/first-run` — whether the setup guide ran for this data
     /// dir (read at connect; decides the boot mode).
     pub first_run: Signal<Loadable<crate::api::firstrun::FirstRunState>>,
@@ -3383,6 +3391,7 @@ impl Store {
             availability: cx.signal(Loadable::default()),
             download: cx.signal(None),
             download_group: cx.signal(None),
+            apply_followup: cx.signal(None),
             first_run: cx.signal(Loadable::default()),
             welcome: cx.signal(Loadable::default()),
             host_state: cx.signal(Loadable::default()),
@@ -3458,6 +3467,7 @@ impl Store {
             download: _,      // survives: the job is on the OLD host, and
             // its status line is the only record of it
             download_group: _, // survives: same reason as `download`
+            apply_followup,
             first_run,
             welcome,
             host_poll_gen, // bumped below: live poll chains must die
@@ -3513,6 +3523,7 @@ impl Store {
         // First-run state and the welcome summary belong to ONE
         // gateway's data dir and machine.
         first_run.set(Loadable::NotAsked);
+        apply_followup.set(None);
         welcome.set(Loadable::NotAsked);
         // Host state is the same class of machine truth — and its poll
         // chain must not keep painting the OLD host under the new

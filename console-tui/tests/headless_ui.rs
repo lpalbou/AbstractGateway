@@ -2807,6 +2807,38 @@ fn runtimes_table_renders_sizes_and_states() {
     assert!(s.contains("asleep (alive)"), "entity state cell:\n{s}");
 }
 
+/// A write that applied but left something the operator must see (an
+/// apply-recommended with routes this computer cannot run) is journaled
+/// in the warning tone with its reason — never a plain ✓ (review 2 d).
+#[test]
+fn review_journal_marks_writes_that_need_attention() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.goto_screen(6);
+    h.store.journal.update(|j| {
+        j.push(JournalEntry {
+            attention: Some("1 configured route cannot run on this computer".into()),
+            when: "10:00:00Z".into(),
+            action: "POST apply-recommended routes".into(),
+            outcome: Ok("applied".into()),
+            verified: Some(Ok("GET re-read the route grid".into())),
+        });
+    });
+    let s = h.turns(2);
+    assert!(
+        s.contains("10:00:00Z ! POST apply-recommended routes"),
+        "warning mark:\n{s}"
+    );
+    assert!(
+        s.contains("needs attention · 1 configured route cannot run on this computer"),
+        "the reason is journaled:\n{s}"
+    );
+    assert!(
+        !s.contains("10:00:00Z ✓ POST apply-recommended"),
+        "never a plain success:\n{s}"
+    );
+}
+
 #[test]
 fn review_journal_renders_writes_and_verification() {
     let mut h = harness();
@@ -2814,6 +2846,7 @@ fn review_journal_renders_writes_and_verification() {
     h.goto_screen(6);
     h.store.journal.update(|j| {
         j.push(JournalEntry {
+            attention: None,
             when: "10:00:00Z".into(),
             action: "PUT capability route output.voice".into(),
             outcome: Ok("applied".into()),
@@ -2822,6 +2855,7 @@ fn review_journal_renders_writes_and_verification() {
             )),
         });
         j.push(JournalEntry {
+            attention: None,
             when: "10:01:00Z".into(),
             action: "POST user 'bob'".into(),
             outcome: Err("HTTP 400: user exists".into()),
@@ -3023,6 +3057,7 @@ fn review_screen_renders_whole_at_both_sizes() {
                 h.store.journal.update(|j| {
                     for i in 0..3 {
                         j.push(JournalEntry {
+                            attention: None,
                             when: format!("10:0{i}:00Z"),
                             action: format!("PUT route output.route{i}"),
                             outcome: Ok("applied".into()),
@@ -3916,6 +3951,7 @@ fn first_run_screens_survive_tight_height() {
     // right and saved one thing).
     h.store.journal.update(|j| {
         j.push(abstractgateway_console::store::JournalEntry {
+            attention: None,
             when: "12:00:00Z".into(),
             action: "PUT route output.text".into(),
             outcome: Ok("applied".into()),
@@ -5182,17 +5218,39 @@ fn a_applies_the_recommended_routes() {
         "the default answer never overrules the operator: {dbg}"
     );
 
-    // The second answer is the explicit overrule.
+    // Like the web, the first pass never forces: the prompt has no
+    // overrule answer (keep, cancel).
     h.key(b"a");
+    let s = h.turns(2);
+    assert!(!s.contains("replace mine too"), "no up-front force:\n{s}");
+    h.press_escape();
     h.turns(2);
-    h.key(b"\x1b[B");
+    h.drain_cmds();
+    // The report kept routes: the worker offers the web's second pass,
+    // "Replace mine too", defaulting to leave.
+    h.store.apply_followup.set(Some("Replace mine too".into()));
+    let s = h.turns(3);
+    assert!(
+        s.contains("Replace mine too") && s.contains("Leave them as they are"),
+        "the second pass is offered:\n{s}"
+    );
+    h.key(b"\r");
+    h.turns(2);
+    assert!(
+        !format!("{:?}", h.drain_cmds()).contains("ApplyRecommendedRoutes"),
+        "leave (the default) forces nothing"
+    );
+    h.store.apply_followup.set(Some("Replace mine too".into()));
+    let s = h.turns(3);
+    assert!(s.contains("Leave them as they are"), "offered again:\n{s}");
+    h.key(b"\x1b[A");
     h.turn();
     h.key(b"\r");
     h.turns(2);
     let dbg = format!("{:?}", h.drain_cmds());
     assert!(
         dbg.contains("ApplyRecommendedRoutes") && dbg.contains("force: true"),
-        "the danger answer forces: {dbg}"
+        "the explicit second pass forces: {dbg}"
     );
 }
 

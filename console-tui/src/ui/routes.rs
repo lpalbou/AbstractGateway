@@ -25,11 +25,60 @@ use crate::worker::Cmd;
 /// principal, like the web's Configure / Clear.
 pub const ADMIN_KEYS: &[&str] = &["w", "a", "D", "C"];
 
+/// The route keys apply-recommended plans — AbstractCore's
+/// `RECOMMENDED_SELECTORS` (config/capability_defaults.py: text, voice,
+/// image, video). A task row (`output.image.text_to_image`) is not among
+/// them: `a` never replaces it, only an edit does.
+pub const RECOMMENDED_ROUTE_KEYS: [&str; 4] =
+    ["input.text", "output.voice", "output.image", "output.video"];
+
+/// What fixes a configured route this computer cannot run — the truth
+/// per row and per principal: `a` → "Replace mine too" only for a key the
+/// recommendation plans, an edit for any other row, and nothing a
+/// non-admin could do themselves.
+pub fn broken_route_fix(key: &str, admin: bool) -> &'static str {
+    match (admin, RECOMMENDED_ROUTE_KEYS.contains(&key)) {
+        (false, _) => "an admin can change it",
+        (true, true) => "a, then Replace mine too, swaps in what runs here (or clears it)",
+        (true, false) => "not part of the recommendation: Enter edits it",
+    }
+}
+
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
     let tt = *t;
     let viewport = abstracttui::app::use_viewport(cx);
+
+    // The web's second pass: after a non-forced apply that kept routes or
+    // left one that cannot run here, offer the forced apply under the
+    // web's own label ("Replace mine too" / "Clear what cannot run here").
+    {
+        let ctx_f = ctx.clone();
+        cx.effect(move || {
+            let Some(label) = store.apply_followup.get() else {
+                return;
+            };
+            store.apply_followup.set(None);
+            let ctx_go = ctx_f.clone();
+            let title = if label == "Replace mine too" {
+                "The recommended routes were applied; routes you configured were kept."
+            } else {
+                "The recommended routes were applied; a configured route this computer cannot run was left in place."
+            };
+            let prompt = abstracttui::app::ChoicePrompt::new(title.to_string())
+            .option_with(abstracttui::app::ChoiceOption::new("force", label).danger(true))
+            .option("leave", "Leave them as they are")
+            .initial("leave");
+            super::open_prompt(cx, ctx_f.ui, prompt, move |outcome| {
+                if let abstracttui::app::ChoiceOutcome::Answered(a) = outcome {
+                    if a.selected.first().map(String::as_str) == Some("force") {
+                        ctx_go.send(Cmd::ApplyRecommendedRoutes { force: true });
+                    }
+                }
+            });
+        });
+    }
 
     super::util::clamp_selection(cx, ui.route_sel, move || {
         store
@@ -340,12 +389,14 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                             // ui/routes.rs), so both grids say the same.
                             if let Some(u) = r.route_unavailable.as_ref().filter(|_| r.configured) {
                                 // Configured, and this host cannot run it
-                                // (REVIEW-1 contract): never shown as fine.
+                                // (REVIEW-1 contract): never shown as fine,
+                                // and the fix named is the one that exists.
+                                let admin = store.conn.with(|c| c.is_admin());
                                 spans.push(span(
                                     format!(
-                                        "configured but cannot run on this computer: {} — a (replace mine) \
-                                         swaps in what runs here  ",
-                                        u.reason
+                                        "configured but cannot run on this computer: {} — {}  ",
+                                        u.reason,
+                                        broken_route_fix(&r.key, admin)
                                     ),
                                     t.error,
                                 ));
@@ -580,26 +631,18 @@ fn apply_recommended(cx: Scope, ctx: &Ctx) {
         return;
     }
     let ctx_keep = ctx.clone();
-    let ctx_force = ctx.clone();
     let prompt = abstracttui::app::ChoicePrompt::new(
         "Apply the framework's recommended routes (text, voice, images, video — what this computer can run) on the execution host?"
             .to_string(),
     )
     .option("keep", "Apply — keep routes I configured")
-    .option_with(
-        abstracttui::app::ChoiceOption::new("force", "Apply — replace mine too").danger(true),
-    )
     .option("cancel", "Cancel")
     .initial("keep");
     super::open_prompt(cx, ctx.ui, prompt, move |outcome| {
         if let abstracttui::app::ChoiceOutcome::Answered(a) = outcome {
-            let choice = a.selected.first().cloned().unwrap_or_default();
-            let (ctx2, force) = match choice.as_str() {
-                "keep" => (ctx_keep, false),
-                "force" => (ctx_force, true),
-                _ => return,
-            };
-            ctx2.send(Cmd::ApplyRecommendedRoutes { force });
+            if a.selected.first().map(String::as_str) == Some("keep") {
+                ctx_keep.send(Cmd::ApplyRecommendedRoutes { force: false });
+            }
         }
     });
 }
@@ -746,6 +789,9 @@ fn open_plan(cx: Scope, ctx: &Ctx) {
                     .map(|d| {
                         d.rows
                             .iter()
+                            // A derived row (output.text ← input.text)
+                            // carries its source's flag: listed once.
+                            .filter(|row| row.derived_from.is_none())
                             .filter_map(|row| {
                                 row.route_unavailable.clone().map(|u| (row.key.clone(), u))
                             })
@@ -758,6 +804,7 @@ fn open_plan(cx: Scope, ctx: &Ctx) {
                 "Configured but cannot run on this computer",
                 t.warn,
             )]));
+            let admin = store.conn.with_untracked(|c| c.is_admin());
             for (key, u) in &broken {
                 rows.push(line(vec![span(
                     format!("  {key}: {} {}", u.provider, u.model),
@@ -766,11 +813,11 @@ fn open_plan(cx: Scope, ctx: &Ctx) {
                 for l in super::util::wrap_text(&u.reason, width.saturating_sub(4)) {
                     rows.push(line(vec![span(format!("    {l}"), t.text_muted)]));
                 }
+                rows.push(line(vec![span(
+                    format!("    fix: {}", broken_route_fix(key, admin)),
+                    t.text_faint,
+                )]));
             }
-            rows.push(line(vec![span(
-                "  a (replace mine) swaps in what runs here — or removes them where nothing does",
-                t.text_faint,
-            )]));
             rows.push(line(vec![span(String::new(), t.text)]));
         }
         if let Some(g) = store.download_group.get_untracked() {
@@ -780,7 +827,11 @@ fn open_plan(cx: Scope, ctx: &Ctx) {
             }
         }
         rows.push(line(vec![span(
-            "On Routes: a applies the recommended routes (yours are kept) · D downloads all · C cancels it",
+            if store.conn.with_untracked(|c| c.is_admin()) {
+                "On Routes: a applies the recommended routes (yours are kept) · D downloads all · C cancels it"
+            } else {
+                "Applying the recommended routes and downloading models are admin-only"
+            },
             t.text_faint,
         )]));
         let c = close.clone();

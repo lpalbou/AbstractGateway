@@ -187,6 +187,7 @@ fn post_lifecycle(wake: &WakeHandle, store: &Store, line: String) {
 fn journal(wake: &WakeHandle, store: &Store, action: String, outcome: Result<String, String>) {
     let s = *store;
     let entry = JournalEntry {
+        attention: None,
         when: crate::store::now_hms(),
         action: action.clone(),
         verified: Some(outcome.clone()),

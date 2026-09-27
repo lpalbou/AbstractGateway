@@ -712,6 +712,64 @@ fn route_proof(row: &crate::store::RouteRow) -> String {
     out
 }
 
+/// What an `applied_recommended` report leaves for the operator, the web
+/// console's reading (`appliedRecommendedBrokenRows`, the message tone,
+/// the second-pass button):
+/// - attention: configured routes this computer cannot run that the apply
+///   did not change, or recommended routes with nothing runnable here —
+///   never a plain success;
+/// - the forced second pass to offer after a non-forced apply: "Replace
+///   mine too" when routes were kept, else "Clear what cannot run here"
+///   when a broken route stayed.
+pub fn applied_recommended_followup(
+    payload: &Value,
+    forced: bool,
+) -> (Option<String>, Option<&'static str>) {
+    let rows = payload
+        .get("applied_recommended")
+        .and_then(|r| r.get("routes"))
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let action = |r: &Value| {
+        r.get("action")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    let changed = |r: &Value| r.get("changed").and_then(Value::as_bool).unwrap_or(false);
+    let broken = rows
+        .iter()
+        .filter(|r| r.get("route_unavailable").is_some_and(|u| u.is_object()) && !changed(r))
+        .count();
+    let unavailable = rows.iter().filter(|r| action(r) == "unavailable").count();
+    let kept = rows.iter().filter(|r| action(r) == "kept").count();
+    let mut bits = Vec::new();
+    if broken > 0 {
+        bits.push(format!(
+            "{broken} configured route{} cannot run on this computer",
+            if broken == 1 { "" } else { "s" }
+        ));
+    }
+    if unavailable > 0 {
+        bits.push(format!(
+            "{unavailable} route{} no recommendation this computer can run",
+            if unavailable == 1 { " has" } else { "s have" }
+        ));
+    }
+    let attention = (!bits.is_empty()).then(|| bits.join("; "));
+    let followup = if forced {
+        None
+    } else if kept > 0 {
+        Some("Replace mine too")
+    } else if broken > 0 {
+        Some("Clear what cannot run here")
+    } else {
+        None
+    };
+    (attention, followup)
+}
+
 /// One line summarising an `applied_recommended` report.
 ///
 /// Says BOTH halves: what changed, and what was deliberately kept. A
@@ -2110,7 +2168,18 @@ fn handle(
                     Ok(format!("GET re-read the route grid — {summary}"))
                 }
             });
-            finish_write(store, wake, action, write, verified, None, on_done);
+            let (attention, followup) = write
+                .as_ref()
+                .ok()
+                .map(|v| applied_recommended_followup(v, force))
+                .unwrap_or((None, None));
+            finish_write_attention(
+                store, wake, action, write, verified, attention, None, on_done,
+            );
+            if let Some(label) = followup {
+                let s = *store;
+                wake.post(move || s.apply_followup.set(Some(label.to_string())));
+            }
             if let Ok(v) = verify {
                 publish_ready(wake, store.routes, RoutesData::from_value(&v));
             }
@@ -3371,6 +3440,7 @@ fn finish_download(
     wake.post(move || {
         s.end_busy(op);
         s.push_journal(JournalEntry {
+            attention: None,
             when: crate::store::now_hms(),
             action,
             outcome: journal,
@@ -3480,6 +3550,7 @@ fn finish_download_group(
     wake.post(move || {
         s.end_busy(op);
         s.push_journal(JournalEntry {
+            attention: None,
             when: crate::store::now_hms(),
             action: "POST download recommended (Download all)".to_string(),
             outcome: journal,
@@ -3587,6 +3658,22 @@ fn finish_write(
     form_id: Option<u64>,
     on_done: &(impl Fn(u64, Result<String, String>) + Send + 'static),
 ) {
+    finish_write_attention(store, wake, action, write, verified, None, form_id, on_done)
+}
+
+/// [`finish_write`] for a write whose verified result still needs the
+/// operator's attention (journaled and noticed in the warning tone).
+#[allow(clippy::too_many_arguments)]
+fn finish_write_attention(
+    store: &Store,
+    wake: &WakeHandle,
+    action: String,
+    write: ApiResult<Value>,
+    verified: Option<Result<String, String>>,
+    attention: Option<String>,
+    form_id: Option<u64>,
+    on_done: &(impl Fn(u64, Result<String, String>) + Send + 'static),
+) {
     let s = *store;
     let outcome = match &write {
         Ok(v) => {
@@ -3618,6 +3705,7 @@ fn finish_write(
         wake.post(move || s.net_fail_seq.update(|n| *n += 1));
     }
     let entry = JournalEntry {
+        attention: attention.clone(),
         when: crate::store::now_hms(),
         action: action.clone(),
         outcome: outcome.clone(),
@@ -3629,6 +3717,12 @@ fn finish_write(
     wake.post(move || {
         let note = match &entry.outcome {
             Ok(_) => match &entry.verified {
+                Some(Ok(v)) if entry.attention.is_some() => format!(
+                    "{} — applied, NEEDS ATTENTION: {} — {}",
+                    entry.action,
+                    entry.attention.as_deref().unwrap_or_default(),
+                    v
+                ),
                 Some(Ok(v)) => format!("{} — verified: {}", entry.action, v),
                 Some(Err(v)) => format!("{} — VERIFY FAILED: {}", entry.action, v),
                 None => format!("{} — applied (verify unavailable)", entry.action),

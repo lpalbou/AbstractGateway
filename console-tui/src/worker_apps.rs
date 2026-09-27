@@ -39,6 +39,7 @@ fn journal(
             (Err(e), _) => format!("{action} — FAILED: {e}"),
         };
         s.push_journal(JournalEntry {
+            attention: None,
             when: crate::store::now_hms(),
             action,
             outcome,
@@ -663,6 +664,7 @@ pub(super) fn poll(
                             s.apps.set_note(&key, Some(note));
                         }
                         s.push_journal(JournalEntry {
+                            attention: None,
                             when: crate::store::now_hms(),
                             action: format!(
                                 "apps job {} ({})",

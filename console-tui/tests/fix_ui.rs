@@ -732,6 +732,12 @@ fn routes_flag_a_configured_route_this_host_cannot_run() {
         s.contains("output.image: mlx-gen AbstractFramework/flux.2-klein-4b-8bit"),
         "{s}"
     );
+    // The fix named is the one that exists: `a` → Replace mine too for a
+    // recommended key (review 2 minor c).
+    assert!(
+        s.contains("fix: a, then Replace mine too, swaps in what runs here"),
+        "{s}"
+    );
     // The plan lists the video row under its own title.
     assert!(s.contains("Video  Not downloaded"), "video plan row:\n{s}");
 }
@@ -774,4 +780,94 @@ fn apply_report_names_broken_routes_kept_and_cleared() {
         "{forced}"
     );
     assert!(!forced.contains("left as mlx-gen"), "{forced}");
+}
+
+/// The web's reading of an apply report (review 2 minor d): broken or
+/// unavailable rows need attention (never a plain success), and the
+/// forced second pass is offered under the web's label.
+#[test]
+fn apply_report_needs_attention_and_offers_the_web_second_pass() {
+    use abstractgateway_console::worker::applied_recommended_followup;
+    let noforce = fixture("route_unavailable_apply_noforce.json");
+    let (attention, followup) = applied_recommended_followup(&noforce, false);
+    let attention = attention.expect("broken + unavailable rows need attention");
+    assert!(
+        attention.contains("1 configured route cannot run on this computer"),
+        "{attention}"
+    );
+    assert!(
+        attention.contains("2 routes have no recommendation"),
+        "{attention}"
+    );
+    assert_eq!(
+        followup,
+        Some("Clear what cannot run here"),
+        "nothing kept, one broken"
+    );
+    let (_, again) = applied_recommended_followup(&noforce, true);
+    assert_eq!(again, None, "no second pass after a forced one");
+    let kept = serde_json::json!({"applied_recommended": {"routes": [
+        {"key": "input.text", "action": "kept", "changed": false}
+    ]}});
+    assert_eq!(
+        applied_recommended_followup(&kept, false),
+        (None, Some("Replace mine too"))
+    );
+    let clean = serde_json::json!({"applied_recommended": {"routes": [
+        {"key": "input.text", "action": "apply", "changed": true}
+    ]}});
+    assert_eq!(applied_recommended_followup(&clean, false), (None, None));
+}
+
+/// The broken-route copy names the fix that exists (review 2 minor c):
+/// `a` only for a recommended key and an admin; task rows need an edit.
+#[test]
+fn broken_route_fix_says_the_truth() {
+    use abstractgateway_console::ui::routes::broken_route_fix;
+    assert!(broken_route_fix("output.image", true).contains("Replace mine too"));
+    assert!(broken_route_fix("output.image.text_to_image", true).contains("Enter edits it"));
+    let na = broken_route_fix("output.image", false);
+    assert!(!na.contains("a,") && na.contains("an admin"), "{na}");
+}
+
+/// A derived row (output.text ← input.text) carries its source's
+/// route_unavailable flag: the plan's broken list names the source once,
+/// and a task row's fix is an edit, not `a` (review 2 minor c).
+#[test]
+fn plan_broken_list_skips_derived_rows_and_names_task_row_fixes() {
+    let why = "MLX needs Apple silicon";
+    let flag = json!({"provider": "mlx", "model": "m", "reason": why});
+    let d = RoutesData::from_value(&json!({"ok": true, "writable": true, "routes": [
+        {"key": "input.text", "kind": "input", "modality": "text", "provider": "mlx",
+         "model": "m", "configured": true, "route_unavailable": flag},
+        {"key": "output.text", "kind": "output", "modality": "text", "provider": "mlx",
+         "model": "m", "configured": true, "derived_from": "input.text", "route_unavailable": flag},
+        {"key": "output.image.text_to_image", "kind": "output", "modality": "image",
+         "provider": "mlx", "model": "m", "configured": true, "broad_key": "output.image",
+         "route_unavailable": flag}
+    ]}));
+    let mut h = harness(Size::new(200, 50));
+    h.connect();
+    h.ui.wizard.set(false);
+    h.ui.screen.set(ui::SCREEN_ROUTES);
+    h.turns(2);
+    h.store.routes.set(Loadable::Ready(d));
+    h.store
+        .availability
+        .set(Loadable::Ready(AvailabilityData::from_value(&json!({
+            "routes": [], "recommended": {"recommended": [], "total": 0, "installed": 0,
+                                           "absent": 0, "unknown": 0, "gaps": []}
+        }))));
+    h.turns(2);
+    h.type_text("p");
+    let s = h.turns(3);
+    assert!(s.contains("input.text: mlx m"), "{s}");
+    assert!(
+        !s.contains("output.text: mlx m"),
+        "the derived row is not listed twice:\n{s}"
+    );
+    assert!(
+        s.contains("fix: not part of the recommendation: Enter edits it"),
+        "a task row's fix is an edit:\n{s}"
+    );
 }
