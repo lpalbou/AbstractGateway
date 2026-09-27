@@ -43,18 +43,9 @@ impl GatewayClient {
         self.send("POST", "/models/download", &body, true)
     }
 
-    /// `POST /models/download/{job}/cancel {"via": "console"}` — admin;
-    /// a `grp_…` parent cancels every child still running. `via` is what
-    /// the web console sends when a person clicked Cancel, so the job's
-    /// final state says who asked.
-    pub fn cancel_model_download(&self, job: &str) -> ApiResult<Value> {
-        self.send(
-            "POST",
-            &format!("/models/download/{}/cancel", super::urlencode(job)),
-            &json!({ "via": "console" }),
-            false,
-        )
-    }
+    // `cancel_model_download` (POST /models/download/{job}/cancel
+    // {"via": "console"}) lives in api_engines.rs: one client method for
+    // the Routes "Download all" cancel and the shared screens' cancel.
 }
 
 fn s(v: &Value, key: &str) -> Option<String> {

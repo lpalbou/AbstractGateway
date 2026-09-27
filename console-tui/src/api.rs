@@ -21,6 +21,11 @@ pub mod api_apps;
 /// `impl GatewayClient` block reaches the private `get`/`send`.
 #[path = "api_firstrun.rs"]
 pub mod firstrun;
+// The optional Models/Engines verbs of the shared screens (engine server
+// start/stop, paused-install continue, install location, hub search,
+// downloads feed): a child module so it reaches `get`/`send`.
+#[path = "api_engines.rs"]
+mod api_engines;
 
 /// What kind of failure this is — drives which honest state the UI shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
