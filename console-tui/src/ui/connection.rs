@@ -34,10 +34,14 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let tight = cx.memo(move || vp.get().h <= TIGHT_ROWS);
     // A memo, so the URL slot below re-mounts only when this FLIPS — not
     // on every probe transition (a remount puts the caret back at 0).
+    // The URL field takes the caret only before the first connection of
+    // the session: after one, a dropped gateway leaves the keyboard to the
+    // screen keys (`r` re-probes; Tab reaches the field).
     let live = cx.memo(move || {
-        store
-            .conn
-            .with(|c| matches!(c, ConnPhase::Connected(_) | ConnPhase::Verifying(_)))
+        ui.was_connected.get()
+            || store
+                .conn
+                .with(|c| matches!(c, ConnPhase::Connected(_) | ConnPhase::Verifying(_)))
     });
 
     Block::new()

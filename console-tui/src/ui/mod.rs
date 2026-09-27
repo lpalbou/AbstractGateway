@@ -159,6 +159,10 @@ pub struct UiState {
     pub screen: Signal<usize>,
     /// The user explicitly chose to continue without a connection.
     pub offline_ok: Signal<bool>,
+    /// A connection was established this session: from then on the
+    /// Connection screen's URL field never takes the caret by itself (a
+    /// lost connection must leave `r` a re-probe, not a typed letter).
+    pub was_connected: Signal<bool>,
     /// `--wizard` / `--browse` was given: the first-run read never
     /// changes the mode.
     pub mode_forced: Signal<bool>,
@@ -272,6 +276,7 @@ impl UiState {
             wizard: cx.signal(true),
             screen: cx.signal(0),
             offline_ok: cx.signal(false),
+            was_connected: cx.signal(false),
             mode_forced: cx.signal(false),
             first_run_decided: cx.signal(false),
             first_run_pending: cx.signal(None),
@@ -1298,6 +1303,12 @@ fn wizard_goal(screen: usize) -> &'static str {
 fn install_effects(cx: Scope, ctx: &Ctx) {
     let store = ctx.store;
     let ui = ctx.ui;
+
+    cx.effect(move || {
+        if store.conn.with(ConnPhase::is_connected) && !ui.was_connected.get_untracked() {
+            ui.was_connected.set(true);
+        }
+    });
 
     // The centralized connection authority (health.rs): transport
     // failures anywhere trigger ONE background probe that settles the

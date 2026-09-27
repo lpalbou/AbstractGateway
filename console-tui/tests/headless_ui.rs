@@ -3947,6 +3947,21 @@ fn a_dead_gateway_under_the_connection_screen_is_noticed() {
     );
     let s = h.turns(2);
     assert!(!s.contains("● connected"), "no stale connected dot:\n{s}");
+    // The gateway is back: `r` re-probes — it is not typed into the URL
+    // field (the field takes the caret only before the first connection).
+    let url = h.ui.conn_url.get_untracked();
+    let _ = h.drain_cmds();
+    h.type_text("r");
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::Connect { .. })).is_some(),
+        "r re-probes after the loss"
+    );
+    assert_eq!(
+        h.ui.conn_url.get_untracked(),
+        url,
+        "nothing typed into the URL"
+    );
 }
 
 /// settle(Err) settles the ONE story every panel tells.
