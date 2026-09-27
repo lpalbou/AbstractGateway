@@ -1811,12 +1811,10 @@ fn summon_validates_first_then_confirms_then_creates() {
     // Validate & create.
     h.type_text("Castor");
     h.turn();
-    h.key(b"\t");
-    h.turn();
-    h.key(b"\t");
-    h.turn();
-    h.key(b"\t");
-    h.turn();
+    for _ in 0..3 {
+        h.key(b"\t");
+        h.turn();
+    }
     h.type_text("\r");
     h.turns(2);
     let body = match h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::ValidateEntity { .. }))) {
@@ -1848,12 +1846,10 @@ fn summon_validates_first_then_confirms_then_creates() {
         s.contains("no interests seeded"),
         "dry-run warnings reviewed BEFORE the birth:\n{s}"
     );
-    // The Validate button left with the stage: the next Tab starts at
-    // the name field, then the template, the toggle, "Summon Castor".
-    for _ in 0..4 {
-        h.key(b"\t");
-        h.turn();
-    }
+    // The button row is static, so focus is still on Validate: one Tab
+    // reaches Summon (focus never drops when the stage changes).
+    h.key(b"\t");
+    h.turn();
     h.type_text("\r");
     h.turns(2);
     match h.find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::CreateEntity { .. }))) {
@@ -1921,7 +1917,9 @@ fn talk_opens_a_visit_sends_turns_and_renders_replies() {
     let s = h.turns(2);
     assert!(s.contains("Talk — Testor"), "talk panel:\n{s}");
     assert!(s.contains("no visit open"), "honest empty state:\n{s}");
-    // Input is focused; Tab → Open visit.
+    // Input is focused: draft the first line, then Tab → Open visit.
+    h.type_text("hello Testor");
+    h.turn();
     h.key(b"\t");
     h.turn();
     h.type_text("\r");
@@ -1938,13 +1936,8 @@ fn talk_opens_a_visit_sends_turns_and_renders_replies() {
     let s = h.turns(2);
     assert!(s.contains("visit open (chat_42)"), "open status:\n{s}");
     assert!(s.contains("Close visit"), "close affordance:\n{s}");
-    // The Open button left with the state change: Tab walks the
-    // transcript (scrollable) and then the input.
+    // The static row keeps focus on Open visit: Tab → Send.
     h.key(b"\t");
-    h.turn();
-    h.key(b"\t");
-    h.turn();
-    h.type_text("hello Testor");
     h.turn();
     h.type_text("\r");
     let s = h.turns(2);
@@ -1969,6 +1962,18 @@ fn talk_opens_a_visit_sends_turns_and_renders_replies() {
     let s = h.turns(2);
     assert!(s.contains("Hello — I remember you."), "reply rendered:\n{s}");
     assert!(s.contains("3 memories in context"), "turn status:\n{s}");
+    // Focus law (the pty drive's catch): after open + turn the keyboard
+    // is still inside the panel, so Esc hides IT — never the page's own
+    // Esc (wizard back) behind a panel that stays up.
+    h.press_escape();
+    let s = h.turns(2);
+    assert!(!s.contains("Talk — Testor"), "Esc hides the panel:\n{s}");
+    assert!(s.contains("n = summon"), "still on Users & Entities:\n{s}");
+    assert_eq!(
+        h.store.entity_chat.get_untracked().chat_id.as_deref(),
+        Some("chat_42"),
+        "hiding never abandons the live visit"
+    );
 }
 
 #[test]

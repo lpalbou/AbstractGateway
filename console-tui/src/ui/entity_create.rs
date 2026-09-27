@@ -27,6 +27,9 @@ use crate::worker::Cmd;
 /// menu's tool-policy editor).
 const PHASE_SLOTS: usize = 6;
 
+/// (provider, its text models or the error) — the provider cascade.
+type ModelCascade = Option<(String, Result<Vec<String>, String>)>;
+
 const SUMMON_W: i32 = 100;
 const SUMMON_H: i32 = 40;
 /// Text width inside the summon dialog (modal margin + dress chrome).
@@ -59,7 +62,23 @@ fn reload_kit(ctx: &Ctx) {
     ctx.send(Cmd::Entity(EntityCmd::LoadCreationKit));
 }
 
+/// Load phase of the creation kit, mirrored into the form's own signal
+/// so regions re-render on the PHASE (not on every cascade update — a
+/// region that regenerates drops the keyboard focus of any widget in it).
+fn kit_phase(store: &Store) -> u8 {
+    store.entity_kit.with(|k| match k {
+        Loadable::Ready(_) => 1,
+        Loadable::Failed(_) => 2,
+        _ => 0,
+    })
+}
+
 /// The summon form (`n` on the Users & Entities screen).
+///
+/// FOCUS LAW: every focusable widget lives in a region that re-renders
+/// only when its own options change, and the button row is static — a
+/// regenerated widget loses the keyboard focus (and with it Esc and the
+/// dirty guard), which the first pty drive caught.
 pub fn open_summon_form(cx: Scope, ctx: &Ctx) {
     let store = ctx.store;
     reload_kit(ctx);
@@ -82,6 +101,8 @@ pub fn open_summon_form(cx: Scope, ctx: &Ctx) {
             let phase_sigs: std::rc::Rc<Vec<Signal<Vec<String>>>> =
                 std::rc::Rc::new((0..PHASE_SLOTS).map(|_| mcx.signal(Vec::new())).collect());
             let matrix_filled = mcx.signal(false);
+            let phase = mcx.signal(0u8);
+            let models = mcx.signal(ModelCascade::None);
             // 0 = the form · 1 = validating (dry-run in flight) · 2 = confirm.
             let stage = mcx.signal(0u8);
             // The exact (name, body) the dry-run judged — the birth
@@ -104,21 +125,34 @@ pub fn open_summon_form(cx: Scope, ctx: &Ctx) {
             );
             super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
 
+            // Mirror the kit's phase + the model cascade into form signals
+            // (written only on change).
+            mcx.effect(move || {
+                let p = kit_phase(&store);
+                if phase.get_untracked() != p {
+                    phase.set(p);
+                }
+                let m = store
+                    .entity_kit
+                    .with(|k| k.ready().and_then(|k| k.models.clone()));
+                if models.with_untracked(|cur| *cur != m) {
+                    models.set(m);
+                }
+            });
+
             // One-shot fill of the capability grid with the defaults.
             {
                 let sigs = phase_sigs.clone();
                 mcx.effect(move || {
-                    if matrix_filled.get() {
+                    if matrix_filled.get() || phase.get() != 1 {
                         return;
                     }
-                    if let Loadable::Ready(k) = store.entity_kit.get() {
-                        if let Some(m) = &k.matrix {
-                            for (i, d) in m.defaults.iter().take(PHASE_SLOTS).enumerate() {
-                                sigs[i].set(d.clone());
-                            }
+                    if let Some(m) = kit_now(&store).and_then(|k| k.matrix) {
+                        for (i, d) in m.defaults.iter().take(PHASE_SLOTS).enumerate() {
+                            sigs[i].set(d.clone());
                         }
-                        matrix_filled.set(true);
                     }
+                    matrix_filled.set(true);
                 });
             }
 
@@ -157,8 +191,9 @@ pub fn open_summon_form(cx: Scope, ctx: &Ctx) {
                 }
             });
 
-            let ctx_btn = ctx2.clone();
-            let close_btn = close.clone();
+            let ctx_v = ctx2.clone();
+            let ctx_s = ctx2.clone();
+            let close_c = close.clone();
             let sigs_btn = phase_sigs.clone();
             let sigs_adv = phase_sigs.clone();
             let ctx_adv = ctx2.clone();
@@ -187,11 +222,12 @@ pub fn open_summon_form(cx: Scope, ctx: &Ctx) {
                         .autofocus()
                         .build(),
                 ))
-                // Template picker + its description and locked values.
+                // The template picker (re-renders on the kit's phase only).
                 .child(dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |gcx| {
                     let t = theme.get().tokens;
-                    match store.entity_kit.get() {
-                        Loadable::Ready(k) => {
+                    match phase.get() {
+                        1 => {
+                            let k = kit_now(&store).unwrap_or_default();
                             if k.templates.is_empty() {
                                 return line(vec![span(
                                     "no spark templates served by this gateway — nothing to summon from",
@@ -203,41 +239,53 @@ pub fn open_summon_form(cx: Scope, ctx: &Ctx) {
                                 .iter()
                                 .map(|tp| SelectOption::keyed(tp.id.clone(), tp.name.clone()))
                                 .collect();
-                            let ix = tpl_ix.get().min(k.templates.len() - 1);
-                            let tp = &k.templates[ix];
-                            let mut col = Element::new()
-                                .style(LayoutStyle::column().gap(0))
-                                .child(field(
-                                    &t,
-                                    "template",
-                                    Select::new(opts)
-                                        .value(tpl_ix)
-                                        .layout(LayoutStyle::default().w(40).h(1).shrink(0.0))
-                                        .element(gcx, &t)
-                                        .build(),
-                                ));
-                            let desc = tp.description_line();
-                            if !desc.is_empty() {
-                                col = col.child(line(vec![span(desc, t.text_muted)]));
-                            }
-                            if !tp.core_values.is_empty() {
-                                col = col.child(line(vec![
-                                    span("core values (locked for life): ", t.text_faint),
-                                    span(tp.core_values.join(" · "), t.text),
-                                ]));
-                            }
-                            for w in &k.template_warnings {
-                                col = col.child(line(vec![span(w.clone(), t.warn)]));
-                            }
-                            col.build()
+                            field(
+                                &t,
+                                "template",
+                                Select::new(opts)
+                                    .value(tpl_ix)
+                                    .layout(LayoutStyle::default().w(40).h(1).shrink(0.0))
+                                    .element(gcx, &t)
+                                    .build(),
+                            )
                         }
-                        Loadable::Failed(e) => super::util::error_panel_hint(
-                            &t,
-                            &e,
-                            Some("close and reopen this dialog to retry (opening re-reads)"),
-                        ),
+                        2 => match store.entity_kit.get_untracked() {
+                            Loadable::Failed(e) => super::util::error_panel_hint(
+                                &t,
+                                &e,
+                                Some("close and reopen this dialog to retry (opening re-reads)"),
+                            ),
+                            _ => line(vec![span("templates unavailable", t.error)]),
+                        },
                         _ => line(vec![span("⟳ loading templates…", t.info)]),
                     }
+                }))
+                // The selected template's description + locked values.
+                .child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
+                    let t = theme.get().tokens;
+                    let _ = phase.get();
+                    let ix = tpl_ix.get();
+                    let Some(k) = kit_now(&store) else {
+                        return Element::new().style(LayoutStyle::default().h(0)).build();
+                    };
+                    let Some(tp) = k.templates.get(ix) else {
+                        return Element::new().style(LayoutStyle::default().h(0)).build();
+                    };
+                    let mut col = Element::new().style(LayoutStyle::column().gap(0));
+                    let desc = tp.description_line();
+                    if !desc.is_empty() {
+                        col = col.child(line(vec![span(desc, t.text_muted)]));
+                    }
+                    if !tp.core_values.is_empty() {
+                        col = col.child(line(vec![
+                            span("core values (locked for life): ", t.text_faint),
+                            span(tp.core_values.join(" · "), t.text),
+                        ]));
+                    }
+                    for w in &k.template_warnings {
+                        col = col.child(line(vec![span(w.clone(), t.warn)]));
+                    }
+                    col.build()
                 }))
                 // Advanced configuration — admin only (the web hides it
                 // for everyone else and says why).
@@ -252,35 +300,39 @@ pub fn open_summon_form(cx: Scope, ctx: &Ctx) {
                         )
                         .build();
                     }
-                    Element::new()
-                        .style(LayoutStyle::column().gap(0))
-                        .child(field(
-                            &t,
-                            "",
-                            Checkbox::new("Advanced configuration (optional — defaults are safe)")
-                                .checked(advanced)
-                                .element(gcx, &t)
-                                .build(),
-                        ))
-                        .build()
+                    field(
+                        &t,
+                        "",
+                        Checkbox::new("Advanced configuration (optional — defaults are safe)")
+                            .checked(advanced)
+                            .element(gcx, &t)
+                            .build(),
+                    )
                 }))
                 .child(dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |gcx| {
                     let t = theme.get().tokens;
                     if !advanced.get() || !is_admin(&store) {
                         return Element::new().style(LayoutStyle::default().h(0)).build();
                     }
-                    let Loadable::Ready(k) = store.entity_kit.get() else {
+                    if phase.get() != 1 {
                         return line(vec![span("⟳ loading the gateway defaults…", t.info)]);
-                    };
-                    advanced_section(gcx, &t, &ctx_adv, &k, prov_ix, model_ix, think_ix, emb_ix, &sigs_adv)
+                    }
+                    let k = kit_now(&store).unwrap_or_default();
+                    advanced_section(
+                        gcx, theme, &t, &ctx_adv, &k, prov_ix, model_ix, think_ix, emb_ix, models,
+                        &sigs_adv,
+                    )
                 }))
                 .child(super::message_slot(theme, form_error, in_flight))
                 // The confirm stage: the permanence, named, with the
                 // dry-run's warnings reviewed BEFORE the birth.
-                .child(dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |_gcx| {
+                .child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
                     let t = theme.get().tokens;
                     match stage.get() {
-                        1 => line(vec![span("⟳ validating (dry-run — nothing is written)…", t.info)]),
+                        1 => line(vec![span(
+                            "⟳ validating (dry-run — nothing is written)…",
+                            t.info,
+                        )]),
                         2 => {
                             let nm = pending
                                 .with(|p| p.as_ref().map(|(n, _)| n.clone()))
@@ -307,77 +359,83 @@ pub fn open_summon_form(cx: Scope, ctx: &Ctx) {
                                     col = prose(col, &format!("• {w}"), SUMMON_TEXT_W, t.warn);
                                 }
                             }
+                            col = col.child(line(vec![span(
+                                "Summon creates it · Back to the form edits (nothing is written until Summon)",
+                                t.text_faint,
+                            )]));
                             col.build()
                         }
                         _ => Element::new().style(LayoutStyle::default().h(0)).build(),
                     }
                 }))
-                .child(dyn_view_scoped(
-                    LayoutStyle::default().h(1).shrink(0.0),
-                    move |bcx| {
-                        let t = theme.get().tokens;
-                        let st = stage.get();
-                        let busy = in_flight.get();
-                        let kit_ready = store.entity_kit.with(|k| k.ready().is_some());
-                        let ctx_v = ctx_btn.clone();
-                        let ctx_s = ctx_btn.clone();
-                        let close_c = close_btn.clone();
-                        let sigs = sigs_btn.clone();
-                        let mut row = Element::new().style(LayoutStyle::row().gap(2));
-                        if st == 2 {
-                            let nm = pending
-                                .with(|p| p.as_ref().map(|(n, _)| n.clone()))
-                                .unwrap_or_default();
-                            row = row
-                                .child(
-                                    Button::new(format!("Summon {nm}"))
-                                        .disabled(busy)
-                                        .on_click(move || {
-                                            if in_flight.get_untracked() {
-                                                return;
-                                            }
-                                            summon(&ctx_s, &sigs, pending, advanced, prov_ix, model_ix, think_ix, form_id, in_flight, form_error);
-                                        })
-                                        .element(bcx, &t)
-                                        .build(),
-                                )
-                                .child(
-                                    Button::new("Back to the form")
-                                        .disabled(busy)
-                                        .on_click(move || stage.set(0))
-                                        .element(bcx, &t)
-                                        .build(),
-                                );
-                        } else {
-                            row = row.child(
-                                Button::new("Validate & create")
-                                    .disabled(busy || st == 1 || !kit_ready)
-                                    .on_click(move || {
-                                        validate(&ctx_v, tpl_ix, name, emb_ix, stage, pending, form_error)
-                                    })
-                                    .element(bcx, &t)
-                                    .build(),
-                            );
-                        }
-                        row.child(
-                            Button::new("Cancel (Esc)")
-                                .on_click(move || close_c())
-                                .element(bcx, &t)
+                // STATIC button row (focus law): each verb guards its own
+                // stage instead of the row being rebuilt per stage.
+                .child(
+                    Element::new()
+                        .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                        .child(
+                            Button::new("Validate & create")
+                                .on_click(move || {
+                                    if in_flight.get_untracked() || stage.get_untracked() == 1 {
+                                        return;
+                                    }
+                                    validate(&ctx_v, tpl_ix, name, emb_ix, stage, pending, form_error)
+                                })
+                                .element(mcx, &t0)
                                 .build(),
                         )
-                        .build()
-                    },
-                ))
+                        .child(
+                            Button::new("Summon")
+                                .on_click(move || {
+                                    if in_flight.get_untracked() {
+                                        return;
+                                    }
+                                    if stage.get_untracked() != 2 {
+                                        form_error.set(Some(
+                                            "Validate first — the dry-run must pass before a summon."
+                                                .into(),
+                                        ));
+                                        return;
+                                    }
+                                    summon(
+                                        &ctx_s, &sigs_btn, pending, advanced, prov_ix, model_ix,
+                                        think_ix, form_id, in_flight, form_error,
+                                    );
+                                })
+                                .element(mcx, &t0)
+                                .build(),
+                        )
+                        .child(
+                            Button::new("Back to the form")
+                                .on_click(move || {
+                                    if !in_flight.get_untracked() {
+                                        stage.set(0);
+                                    }
+                                })
+                                .element(mcx, &t0)
+                                .build(),
+                        )
+                        .child(
+                            Button::new("Cancel (Esc)")
+                                .on_click(move || close_c())
+                                .element(mcx, &t0)
+                                .build(),
+                        )
+                        .build(),
+                )
                 .build()
         },
     );
 }
 
 /// The Advanced block: substrate (provider → model cascade, reasoning),
-/// the birth embedder, the per-phase capability grid.
+/// the birth embedder, the per-phase capability grid. The model picker
+/// and the embedder warning live in their own regions, so picking a
+/// provider never rebuilds (and unfocuses) the provider picker.
 #[allow(clippy::too_many_arguments)]
 fn advanced_section(
     gcx: Scope,
+    theme: Signal<&'static abstracttui::theme::Theme>,
     t: &TokenSet,
     ctx: &Ctx,
     k: &CreationKit,
@@ -385,6 +443,7 @@ fn advanced_section(
     model_ix: Signal<usize>,
     think_ix: Signal<usize>,
     emb_ix: Signal<usize>,
+    models: Signal<ModelCascade>,
     sigs: &std::rc::Rc<Vec<Signal<Vec<String>>>>,
 ) -> View {
     let providers = k.providers.clone();
@@ -396,36 +455,6 @@ fn advanced_section(
                     .map(|p| SelectOption::keyed(p.clone(), p.clone())),
             )
             .collect();
-    let chosen_provider = match prov_ix.get() {
-        0 => None,
-        i => providers.get(i - 1).cloned(),
-    };
-    let (model_opts, model_disabled, model_note) = match &chosen_provider {
-        None => (vec![SelectOption::new("Gateway default")], true, None),
-        Some(p) => match &k.models {
-            Some((mp, Ok(models))) if mp == p => (
-                std::iter::once(SelectOption::new("Provider default"))
-                    .chain(
-                        models
-                            .iter()
-                            .map(|m| SelectOption::keyed(m.clone(), m.clone())),
-                    )
-                    .collect(),
-                false,
-                None,
-            ),
-            Some((mp, Err(e))) if mp == p => (
-                vec![SelectOption::new("Provider default")],
-                false,
-                Some(format!("(models unavailable — set on manage): {e}")),
-            ),
-            _ => (
-                vec![SelectOption::new("Provider default")],
-                false,
-                Some("⟳ loading models…".to_string()),
-            ),
-        },
-    };
     let emb_opts: Vec<SelectOption> =
         std::iter::once(SelectOption::new(k.embedding_default_label()))
             .chain(
@@ -439,6 +468,13 @@ fn advanced_section(
         .collect();
     let ctx_p = ctx.clone();
     let providers_cb = providers.clone();
+    let providers_m = providers.clone();
+    let emb_models = k.embedding_models.clone();
+    let default_emb = k
+        .default_embedding
+        .as_ref()
+        .map(|(_, m)| m.clone())
+        .unwrap_or_default();
     let mut col = Element::new()
         .style(LayoutStyle::column().gap(0))
         .child(line(vec![
@@ -467,20 +503,49 @@ fn advanced_section(
                 .element(gcx, t)
                 .build(),
         ))
-        .child(field(
-            t,
-            "model",
-            Select::new(model_opts)
-                .value(model_ix)
-                .disabled(model_disabled)
-                .layout(LayoutStyle::default().w(48).h(1).shrink(0.0))
-                .element(gcx, t)
-                .build(),
-        ));
-    if let Some(n) = model_note {
-        col = col.child(line(vec![span(n, t.text_muted)]));
-    }
-    col = col
+        .child(dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |mcx| {
+            let t = theme.get().tokens;
+            let chosen = prov_ix
+                .get()
+                .checked_sub(1)
+                .and_then(|i| providers_m.get(i).cloned());
+            let (opts, disabled, note) = match &chosen {
+                None => (vec![SelectOption::new("Gateway default")], true, None),
+                Some(p) => match models.get() {
+                    Some((mp, Ok(list))) if mp == *p => (
+                        std::iter::once(SelectOption::new("Provider default"))
+                            .chain(list.iter().map(|m| SelectOption::keyed(m.clone(), m.clone())))
+                            .collect(),
+                        false,
+                        None,
+                    ),
+                    Some((mp, Err(e))) if mp == *p => (
+                        vec![SelectOption::new("Provider default")],
+                        false,
+                        Some(format!("(models unavailable — set on manage): {e}")),
+                    ),
+                    _ => (
+                        vec![SelectOption::new("Provider default")],
+                        false,
+                        Some("⟳ loading models…".to_string()),
+                    ),
+                },
+            };
+            let mut c = Element::new().style(LayoutStyle::column().gap(0)).child(field(
+                &t,
+                "model",
+                Select::new(opts)
+                    .value(model_ix)
+                    .disabled(disabled)
+                    .layout(LayoutStyle::default().w(48).h(1).shrink(0.0))
+                    .element(mcx, &t)
+                    .build(),
+            ));
+            if let Some(n) = note {
+                c = c.child(line(vec![span(n, t.text_muted)]));
+            }
+            c.build()
+        }))
         .child(field(
             t,
             "reasoning",
@@ -498,31 +563,27 @@ fn advanced_section(
                 .layout(LayoutStyle::default().w(48).h(1).shrink(0.0))
                 .element(gcx, t)
                 .build(),
-        ));
-    // A non-default birth embedder refuses unless the door serves it —
-    // warn on selection (validate catches it before the name burns).
-    if let Some(chosen) = emb_ix
-        .get()
-        .checked_sub(1)
-        .and_then(|i| k.embedding_models.get(i))
-    {
-        let default_model = k
-            .default_embedding
-            .as_ref()
-            .map(|(_, m)| m.clone())
-            .unwrap_or_default();
-        if *chosen != default_model {
-            col = prose(
-                col,
-                &format!(
-                    "#FALLBACK embedding {chosen} differs from the gateway's resolved embedder ({}) — set it as the gateway embedding route first, or the home refuses vector ops. Validate will catch this before the name is burned.",
-                    if default_model.is_empty() { "none" } else { default_model.as_str() }
-                ),
-                SUMMON_TEXT_W,
-                t.warn,
-            );
-        }
-    }
+        ))
+        // A non-default birth embedder refuses unless the door serves
+        // it — warn on selection (validate catches it before the name
+        // burns).
+        .child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
+            let t = theme.get().tokens;
+            let chosen = emb_ix.get().checked_sub(1).and_then(|i| emb_models.get(i).cloned());
+            match chosen {
+                Some(c) if c != default_emb => prose(
+                    Element::new().style(LayoutStyle::column().gap(0)),
+                    &format!(
+                        "#FALLBACK embedding {c} differs from the gateway's resolved embedder ({}) — set it as the gateway embedding route first, or the home refuses vector ops. Validate will catch this before the name is burned.",
+                        if default_emb.is_empty() { "none" } else { default_emb.as_str() }
+                    ),
+                    SUMMON_TEXT_W,
+                    t.warn,
+                )
+                .build(),
+                _ => Element::new().style(LayoutStyle::default().h(0)).build(),
+            }
+        }));
     for n in &k.notes {
         col = prose(col, n, SUMMON_TEXT_W, t.text_muted);
     }

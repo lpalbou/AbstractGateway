@@ -246,71 +246,87 @@ pub fn open_talk_modal(cx: Scope, ctx: &Ctx, name: String) {
                     )
                     .build(),
             )
-            .child(dyn_view_scoped(
-                LayoutStyle::default().h(1).shrink(0.0),
-                move |bcx| {
-                    let t = theme.get().tokens;
-                    let chat = store.entity_chat.get();
-                    let open = chat.chat_id.is_some();
-                    let busy = chat.busy;
-                    let ctx_o = ctx_btn.clone();
-                    let n_o = n_btn.clone();
-                    let send_b = send_btn.clone();
-                    let close_x = close_b.clone();
-                    let mut row = Element::new().style(LayoutStyle::row().gap(2));
-                    if open {
-                        let chat_id = chat.chat_id.clone().unwrap_or_default();
-                        row = row
-                            .child(
-                                Button::new("Send")
-                                    .disabled(busy)
-                                    .on_click(move || send_b())
-                                    .element(bcx, &t)
-                                    .build(),
-                            )
-                            .child(
-                                Button::new("Close visit (reflect)")
-                                    .disabled(busy)
-                                    .on_click(move || {
-                                        ctx_o.store.entity_chat.update(|c| {
-                                            c.busy = true;
-                                            c.status = "closing (reflection pass)…".into();
-                                        });
-                                        ctx_o.send(Cmd::Entity(EntityCmd::ChatClose {
-                                            name: n_o.clone(),
-                                            chat_id: chat_id.clone(),
-                                        }));
-                                    })
-                                    .element(bcx, &t)
-                                    .build(),
-                            );
-                    } else {
-                        row = row.child(
-                            Button::new("Open visit")
-                                .disabled(busy)
-                                .on_click(move || {
-                                    ctx_o.store.entity_chat.update(|c| c.busy = true);
-                                    ctx_o.send(Cmd::Entity(EntityCmd::ChatOpen {
-                                        name: n_o.clone(),
-                                    }));
-                                })
-                                .element(bcx, &t)
-                                .build(),
-                        );
-                    }
-                    row.child(
-                        Button::new(if open {
-                            "Hide (Esc — the visit stays open)"
-                        } else {
-                            "Close (Esc)"
-                        })
-                        .on_click(move || close_x())
-                        .element(bcx, &t)
-                        .build(),
+            // Which verbs apply now (the web hides the others; the
+            // terminal keeps ONE static row so focus never drops).
+            .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
+                let t = theme.get().tokens;
+                let chat = store.entity_chat.get();
+                let hint = if chat.busy {
+                    "a request is in flight — wait for its answer"
+                } else if chat.chat_id.is_some() {
+                    "visit open: Send (or Enter in the input) · Close visit runs the reflection · Esc hides this panel, the visit stays open"
+                } else {
+                    "no visit: Open visit starts one · Esc closes this panel"
+                };
+                line(vec![span(hint, t.text_faint)])
+            }))
+            .child({
+                let ctx_o = ctx_btn.clone();
+                let ctx_c = ctx_btn.clone();
+                let n_o = n_btn.clone();
+                let n_c = n_btn.clone();
+                let send_b = send_btn.clone();
+                let close_x = close_b.clone();
+                Element::new()
+                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                    .child(
+                        Button::new("Open visit")
+                            .on_click(move || {
+                                let chat = store.entity_chat.get_untracked();
+                                if chat.busy {
+                                    return;
+                                }
+                                if let Some(id) = &chat.chat_id {
+                                    store.entity_chat.update(|c| {
+                                        c.status = format!("the visit is already open ({id})")
+                                    });
+                                    return;
+                                }
+                                ctx_o.store.entity_chat.update(|c| c.busy = true);
+                                ctx_o.send(Cmd::Entity(EntityCmd::ChatOpen { name: n_o.clone() }));
+                            })
+                            .element(mcx, &t0)
+                            .build(),
+                    )
+                    .child(
+                        Button::new("Send")
+                            .on_click(move || send_b())
+                            .element(mcx, &t0)
+                            .build(),
+                    )
+                    .child(
+                        Button::new("Close visit (reflect)")
+                            .on_click(move || {
+                                let chat = store.entity_chat.get_untracked();
+                                if chat.busy {
+                                    return;
+                                }
+                                let Some(chat_id) = chat.chat_id.clone() else {
+                                    store
+                                        .entity_chat
+                                        .update(|c| c.status = "no visit is open".into());
+                                    return;
+                                };
+                                ctx_c.store.entity_chat.update(|c| {
+                                    c.busy = true;
+                                    c.status = "closing (reflection pass)…".into();
+                                });
+                                ctx_c.send(Cmd::Entity(EntityCmd::ChatClose {
+                                    name: n_c.clone(),
+                                    chat_id,
+                                }));
+                            })
+                            .element(mcx, &t0)
+                            .build(),
+                    )
+                    .child(
+                        Button::new("Close panel (Esc)")
+                            .on_click(move || close_x())
+                            .element(mcx, &t0)
+                            .build(),
                     )
                     .build()
-                },
-            ))
+            })
             .build()
     });
 }

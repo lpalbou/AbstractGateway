@@ -582,7 +582,6 @@ fn open_voice_form(cx: Scope, ctx: &Ctx, name: String) {
                 move |bcx| {
                     let t = theme.get().tokens;
                     let busy = in_flight.get();
-                    let auditioning = store.entity_audition.with(Loadable::is_loading);
                     let ctx_s = ctx_save.clone();
                     let ctx_a = ctx_save.clone();
                     let n = name_save.clone();
@@ -592,10 +591,15 @@ fn open_voice_form(cx: Scope, ctx: &Ctx, name: String) {
                         .style(LayoutStyle::row().gap(2))
                         .child(
                             Button::new("Audition")
-                                .disabled(auditioning)
                                 .on_click(move || {
                                     // The UNSAVED selection, spoken as the
                                     // entity (web parity: Save makes it his).
+                                    // Untracked guard, not a disabled flag: a
+                                    // tracked flag would rebuild this row and
+                                    // drop the keyboard focus mid-form.
+                                    if store.entity_audition.with_untracked(Loadable::is_loading) {
+                                        return;
+                                    }
                                     let p = provider.get_untracked().trim().to_string();
                                     let m = model.get_untracked().trim().to_string();
                                     let v = voice.get_untracked().trim().to_string();
