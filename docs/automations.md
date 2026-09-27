@@ -155,9 +155,18 @@ newest first:
 ```
 
 `user_turn` and `answer` are the occurrence as a chat turn. An occurrence
-waiting for a person is answered with the ordinary resume command on the
-wait's run: `POST /api/gateway/commands` `{"type": "resume", "run_id": <wait run_id>,
-"payload": {"wait_key": …, "payload": {"response": …}}}`.
+that waits is answered with the ordinary resume command on the wait's run,
+`POST /api/gateway/commands` `{"type": "resume", "run_id": <wait run_id>,
+"payload": {"wait_key": <wait_key>, "payload": <answer>}}`. The answer depends
+on what the run is waiting for:
+
+| Wait | Answer (`payload.payload`) |
+|---|---|
+| a question from the workflow (Ask User) | `{"response": "…"}` |
+| approval of tool calls | `{"approved": true}` or `{"approved": false}` |
+| an event | the event payload |
+
+An approval answered with `{"response": …}` does not approve anything.
 
 ### The notify convention
 
