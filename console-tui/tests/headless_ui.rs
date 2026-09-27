@@ -1965,6 +1965,7 @@ fn review_inline_sandbox_runs_and_renders_full_result() {
             provider,
             model,
             prompt,
+            ..
         }) => {
             assert_eq!(provider, "lmstudio");
             assert_eq!(model, "test-model-b");

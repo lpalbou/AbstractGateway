@@ -55,7 +55,8 @@ OPTIONS:
 
 KEYS: Tab focus · Enter activate · Ctrl+N next step · Ctrl+P / Esc back ·
       ] / [ next/back (outside text fields) · 1-9,0 screens (browse) ·
-      r refresh · F1 / ? About · Ctrl+L repaint · q / Ctrl+C quit
+      r refresh · F1 / ? About · F2 docs assistant · Ctrl+L repaint ·
+      q / Ctrl+C quit
 
 SCREENS: 1 Connection · 2 Providers · 3 Routes · 4 Users & Entities ·
          5 Runtimes · 6 Workflows · 7 Review & Test · 8 Resources ·

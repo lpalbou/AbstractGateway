@@ -1202,6 +1202,8 @@ impl GatewayClient {
     }
 
     // ---- sandbox ----------------------------------------------------------
+    // (the multimodal sandbox + docs assistant methods live in
+    // api_sandbox_docs.rs, a child module declared below this impl)
 
     /// A real generation through the gateway — the wizard's "Test" verb.
     /// `capability` is the route key (output.text, input.text, …); the
@@ -1246,6 +1248,11 @@ impl GatewayClient {
         self.send("POST", "/sandbox/generate", &body, true)
     }
 }
+
+// Child module so its `impl GatewayClient` reaches the private request
+// helpers (send/get/with_auth) — the multimodal sandbox + docs assistant.
+#[path = "api_sandbox_docs.rs"]
+mod sandbox_docs;
 
 /// Minimal percent-encoding for path/query components (RFC 3986
 /// unreserved set stays literal). Gateway ids are conservative, but ids

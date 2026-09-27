@@ -8,6 +8,7 @@
 /// The About modal (F1 / ?).
 pub mod about;
 pub mod connection;
+pub mod docs;
 pub mod entity_manage;
 pub mod models;
 pub mod network;
@@ -15,6 +16,7 @@ pub mod providers;
 pub mod review;
 pub mod routes;
 pub mod runtimes;
+pub mod sandbox;
 pub mod users;
 pub mod util;
 pub mod widths;
@@ -822,6 +824,7 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
     let ctx_refresh = ctx.clone();
     let ctx_about = ctx.clone();
     let ctx_about2 = ctx.clone();
+    let ctx_docs = ctx.clone();
 
     let mut root_el = Element::new()
         .style(LayoutStyle::column())
@@ -910,7 +913,10 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         // About: F1 anywhere (function keys survive focused text fields),
         // `?` wherever no text field holds the caret.
         .shortcut(KeyChord::plain(Key::F(1)), move |_| about::open(&ctx_about, cx))
-        .shortcut(KeyChord::plain(Key::Char('?')), move |_| about::open(&ctx_about2, cx));
+        .shortcut(KeyChord::plain(Key::Char('?')), move |_| about::open(&ctx_about2, cx))
+        // Docs assistant (the web top bar's ✦ drawer): F2 anywhere — a
+        // function key, so it works with the caret in a text field.
+        .shortcut(KeyChord::plain(Key::F(2)), move |_| docs::open(&ctx_docs, cx));
     // Digit keys at the root. Wizard: a REFUSAL with a reason, so a
     // swallowed digit never reads as a dead app (F3). Browse: PageHost
     // owns digit jumps (its number_jump surface), but its shortcut rides
@@ -1469,6 +1475,12 @@ fn header(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
             span(format!("· {url} "), t.text_muted),
             span(format!("{dot} "), dot_ink),
             span(label, t.text),
+            // The web's session-only ✦ button, as a hint: last span, so
+            // it is the first thing a narrow terminal truncates.
+            span(
+                if conn.is_connected() { "  · F2 docs assistant" } else { "" },
+                t.text_faint,
+            ),
         ])
     })
 }
