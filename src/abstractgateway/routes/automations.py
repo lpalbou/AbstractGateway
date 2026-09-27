@@ -26,6 +26,7 @@ from abstractruntime.automations.attention import list_attention, normalize_occu
 from abstractruntime.automations.commands import command_digest
 from abstractruntime.automations.ledger import automation_records, find_by_idempotency_key, record_key, record_payload
 from abstractruntime.automations.models import (
+    AUTOMATION_STATUSES,
     AutomationError as RuntimeAutomationError,
     automation_id_for,
     automation_session_id,
@@ -181,7 +182,6 @@ _STATUS_BY_REASON = {
     "cursor_expired": 409,
     "history_unavailable": 409,
 }
-_SUMMARY_STATUSES = ("active", "paused", "completed", "failed", "archived")
 _ITEMS_MAX = 20
 _EXCERPT_MAX = 280
 
@@ -544,9 +544,9 @@ async def create_automation_route(request: Request, body: CreateAutomationBody) 
 def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str], limit: int) -> Dict[str, Any]:
     wanted = filter_values(status) if status else None
     if wanted is not None:
-        unknown = sorted(s for s in wanted if s not in _SUMMARY_STATUSES)
+        unknown = sorted(s for s in wanted if s not in AUTOMATION_STATUSES)
         if unknown or not wanted:
-            raise AutomationError(422, "invalid_request", f"unknown status {unknown or status!r} (expected {'|'.join(_SUMMARY_STATUSES)})", field="status")
+            raise AutomationError(422, "invalid_request", f"unknown status {unknown or status!r} (expected {'|'.join(AUTOMATION_STATUSES)})", field="status")
     run_store = svc.host.run_store
     try:
         page = list_automations(run_store, status=None, cursor=cursor, limit=limit)

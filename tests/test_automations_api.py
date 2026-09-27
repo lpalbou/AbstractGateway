@@ -429,6 +429,8 @@ def test_list_pages_status_filter_changed_since_and_legacy(live: TestClient) -> 
     assert r.status_code == 422 and _envelope(r)["reason_code"] == "unsupported_feature"
     r = live.get("/api/gateway/automations?status=bogus", headers=HEADERS)
     assert r.status_code == 422 and _envelope(r)["field"] == "status"
+    r = live.get("/api/gateway/automations?status=cancelled", headers=HEADERS)   # not an automation status
+    assert r.status_code == 422 and _envelope(r)["field"] == "status"
     r = live.get("/api/gateway/automations?cursor=garbage", headers=HEADERS)
     assert r.status_code == 422 and _envelope(r)["reason_code"] == "invalid_request"
     assert all(s["status"] == "paused" for s in live.get("/api/gateway/automations?status=paused", headers=HEADERS).json()["items"])
