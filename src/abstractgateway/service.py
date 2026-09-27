@@ -1343,6 +1343,12 @@ def run_summary(run: Any) -> Dict[str, Any]:
                 }
     except Exception:
         pass
+    # Automation attribution (automations contract C11): the same four fields
+    # the run index stores, derived by the runtime from the run's inline _meta.
+    from abstractruntime.core.run_attribution import automation_index_fields
+
+    out.update(automation_index_fields(getattr(run, "vars", None), run_id=getattr(run, "run_id", None)))
+    out["legacy"] = out.get("role") == "legacy_schedule"
     if waiting is not None:
         out["waiting"] = {
             "reason": getattr(getattr(waiting, "reason", None), "value", None) or str(getattr(waiting, "reason", "")),

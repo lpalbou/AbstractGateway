@@ -30,6 +30,7 @@ from abstractruntime.core.models import Effect, EffectType, RunStatus, StepRecor
 from abstractruntime.core.vars import is_paused_vars
 from abstractruntime.scheduler.scheduler import utc_now_iso
 from . import host_control
+from .automation_command_types import AUTOMATION_COMMAND_TYPES, COMMAND_TYPES
 from abstractruntime.storage.commands import (
     CommandCursorStore,
     CommandRecord,
@@ -1753,13 +1754,17 @@ class GatewayRunner:
 
     def _apply_command(self, rec: CommandRecord) -> None:
         typ = str(rec.type or "").strip().lower()
-        if typ not in {"pause", "resume", "cancel", "emit_event", "update_schedule", "compact_memory", "inject_guidance", "conclude"}:
+        if typ not in COMMAND_TYPES:
             raise ValueError(f"Unknown command type '{typ}'")
 
         payload = dict(rec.payload or {})
         run_id = str(rec.run_id or "").strip()
         if not run_id:
             raise ValueError("Command.run_id is required")
+
+        if typ in AUTOMATION_COMMAND_TYPES:
+            self._apply_automation_command(rec, typ=typ, automation_id=run_id, payload=payload)
+            return
 
         # COMMAND LANE (backlog 0152): mark this run for a PRIORITY tick so a
         # just-resumed/cancelled/steered run progresses through a starved
@@ -1806,6 +1811,56 @@ class GatewayRunner:
         if typ == "conclude":
             self._apply_conclude(payload, run_id=run_id)
             return
+
+    def _apply_automation_command(self, rec: CommandRecord, *, typ: str, automation_id: str, payload: Dict[str, Any]) -> None:
+        """Apply an `automation.*` command through AbstractRuntime (the only applier).
+
+        The runtime records the decision (`automation.command_result`, applied
+        or rejected) in the automation's ledger and wakes the controller; a
+        domain rejection is a recorded outcome, not an exception. A HOST-side
+        failure is recorded the same way (`record_automation_command_result`)
+        BEFORE `_poll_commands` advances the cursor, so a client never sees
+        `accepted:true` followed by silence. The legacy resume-fires-now path
+        (`_maybe_trigger_scheduled_wait_now`) never applies here: resume
+        re-arms without firing (runtime rule).
+        """
+        from abstractruntime.automations.commands import apply_automation_command, record_automation_command_result
+
+        # The controller progresses on a PRIORITY tick after the command.
+        with self._inflight_lock:
+            self._priority_tick_ids.add(automation_id)
+        command_payload = dict(payload)
+        expected_revision = command_payload.pop("expected_revision", None)
+        runtime, _wf = self._host.runtime_and_workflow_for_run(automation_id)
+        try:
+            result = apply_automation_command(
+                runtime,
+                automation_id=automation_id,
+                command_id=str(rec.command_id),
+                type=typ,
+                payload=command_payload,
+                actor=rec.client_id,
+                expected_revision=expected_revision,
+            )
+        except Exception as exc:
+            logger.exception("GatewayRunner: automation command %s (%s) failed on the host", rec.command_id, typ)
+            record_automation_command_result(
+                runtime,
+                automation_id=automation_id,
+                command_id=str(rec.command_id),
+                type=typ,
+                error={"reason_code": "internal_error", "message": f"{type(exc).__name__}: {exc}"},
+                actor=rec.client_id,
+            )
+            return
+        logger.info(
+            "gateway automation command %s type=%s automation=%s status=%s duplicate=%s",
+            rec.command_id,
+            typ,
+            automation_id,
+            result.get("status"),
+            result.get("duplicate"),
+        )
 
     def _apply_inject_guidance(self, payload: Dict[str, Any], *, run_id: str) -> None:
         """Steer a running agent through the DURABLE steer sidecar (H4, hooks plan).

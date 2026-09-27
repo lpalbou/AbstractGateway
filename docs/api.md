@@ -33,6 +33,7 @@ serve:
 | `/api/gateway/host/*` | host state, pause, restart, update, tray | [Host state](#host-state-and-model-residency), [Host control](#host-control-pause-desktop-tray-restart-update) |
 | `/api/gateway/backlog/*`, `/reports/*`, `/triage/*`, `/processes` | operator tooling | [maintenance.md](./maintenance.md) |
 | `/api/gateway/entities/*` | summoned entities | [entities.md](./entities.md) |
+| `/api/gateway/automations*`, `/api/gateway/trigger-sources` | automations: recurring workflows, their occurrences and attention | [automations.md](./automations.md) |
 
 ## Auth
 
@@ -686,7 +687,7 @@ Commands are appended to a durable inbox and applied asynchronously by the runne
 Request fields (see `SubmitCommandRequest` in `src/abstractgateway/routes/gateway.py`):
 - `command_id`: client-supplied idempotency key (UUID recommended)
 - `run_id`: target run id (or session id for some event use-cases)
-- `type`: `pause|resume|cancel|emit_event|update_schedule|compact_memory`
+- `type`: `pause|resume|cancel|conclude|emit_event|update_schedule|compact_memory|inject_guidance`, or an `automation.*` type with `run_id` = the automation id ([automations.md](./automations.md#commands))
 - `payload`: command-specific object
 
 ### Pause / cancel

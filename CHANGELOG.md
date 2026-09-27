@@ -5,6 +5,34 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- **Automations (groundwork).** The first gateway pieces of Automations v1, documented in
+  [docs/automations.md](docs/automations.md):
+  - Run lists say how each run belongs to an automation: `GET /api/gateway/runs` rows carry
+    `session_kind` (`chat`, `automation`, `occurrence`, `discussion`), `automation_id`, `role`,
+    `occurrence_index` and `legacy`, and accept a `session_kind` filter
+    (`session_kind=chat,discussion`). `root_only=true` returns conversation turns, so each run of
+    an automation reads as a turn of a chat; the session history bloc lists the same turns.
+  - `GET /api/gateway/trigger-sources` lists what can start an automation (`schedule@1`: a fixed
+    interval such as every 2 minutes; `manual@1`: only when asked).
+  - `POST /api/gateway/automations/{id}/seen` remembers, per user, which automation
+    notifications you have seen.
+  - Workflows can carry `automation_defaults` (trigger, context mode, inputs): saved and returned
+    by the flow editor routes, removed by `null`, checked on save, published into the bundle
+    manifest and shown by `/bundles`, `/bundles/{id}` and the shared catalog.
+  - `POST /api/gateway/commands` accepts the six `automation.*` commands (revise, pause, resume,
+    run now, stop current, archive) for an automation id; the capabilities document advertises
+    them under `contracts.common.automations`.
+  - Errors on the automation routes, including sign-in failures and malformed JSON, all have the
+    shape `{"detail": {"reason_code", "message"}}`.
+
+### Fixed
+
+- A scheduled run listed by `GET /api/gateway/runs` said `is_scheduled: false`; it now says `true`.
+
 ## [0.5.1] - 2026-09-26
 
 Requires AbstractRuntime 0.5.1, AbstractCore 2.16.1 and AbstractAgent 0.3.15.

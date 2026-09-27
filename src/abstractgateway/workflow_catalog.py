@@ -16,6 +16,7 @@ from typing import Any, Optional
 from abstractruntime.workflow_bundle import open_workflow_bundle
 from abstractruntime.workflow_bundle.registry import sanitize_bundle_id, sanitize_bundle_version
 
+from .automation_defaults import manifest_automation_defaults
 from .security.principal import GatewayPrincipal, safe_principal_component
 from .users import gateway_data_dir_from_env
 
@@ -350,6 +351,7 @@ def catalog_record_public_dict(record: dict[str, Any], principal: Optional[Gatew
         "run_policy": dict(record.get("run_policy") if isinstance(record.get("run_policy"), dict) else {"run_as": "caller"}),
         "default_entrypoint": str(record.get("default_entrypoint") or "") or None,
         "entrypoints": list(record.get("entrypoints") if isinstance(record.get("entrypoints"), list) else []),
+        "automation_defaults": dict(record.get("automation_defaults") if isinstance(record.get("automation_defaults"), dict) else {}),
         "created_at": str(record.get("created_at") or ""),
         "updated_at": str(record.get("updated_at") or ""),
         "published_at": str(record.get("published_at") or ""),
@@ -579,6 +581,8 @@ class WorkflowCatalogStore:
                     "run_policy": {"run_as": "caller"},
                     "entrypoints": entrypoints,
                     "default_entrypoint": str(getattr(man, "default_entrypoint", "") or "") or None,
+                    # Automations v1 (contract C6): {flow_id: defaults} from the manifest.
+                    "automation_defaults": manifest_automation_defaults(man),
                     "created_at": created_at,
                     "updated_at": now,
                     "published_at": str(existing.get("published_at") or now) if isinstance(existing, dict) else now,

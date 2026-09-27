@@ -10,9 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from abstractruntime.storage.base import QueryableRunIndexStore, QueryableRunStore
-
-from abstractgateway.service import is_draft_run_lifecycle, run_summary
+from abstractgateway.service import run_summary
 
 
 def parse_created_at_cursor(value: Optional[str]) -> Optional[str]:
@@ -36,21 +34,6 @@ def _created_at_key(value: Any) -> str:
     return str(value or "").strip()
 
 
-def _summary_from_index_row(row: Dict[str, Any]) -> Dict[str, Any]:
-    status0 = str(row.get("status") or "").strip()
-    out: Dict[str, Any] = {
-        "run_id": row.get("run_id"),
-        "workflow_id": row.get("workflow_id"),
-        "status": status0,
-        "created_at": row.get("created_at"),
-        "updated_at": row.get("updated_at"),
-        "session_id": row.get("session_id"),
-        "parent_run_id": row.get("parent_run_id"),
-        "is_draft": is_draft_run_lifecycle(row.get("run_lifecycle")),
-    }
-    return out
-
-
 def list_session_root_turns(
     run_store: Any,
     session_id: str,
@@ -58,37 +41,20 @@ def list_session_root_turns(
     scan_limit: int = 500,
     include_drafts: bool = False,
 ) -> List[Dict[str, Any]]:
-    """Return session root runs sorted newest-first by created_at."""
+    """The session's turns, newest first by created_at.
+
+    Turns come from AbstractRuntime's ONE selector (`select_session_turns`,
+    automations contract C3/E): parent-less runs plus automation occurrence
+    runs, never controllers, descendants, internal or legacy wrapper runs —
+    the same turns every other history path (history bundles, session
+    replay, growing-mode seeding) sees. A store without the run index fails
+    loudly there.
+    """
+    from abstractruntime.session_turns import select_session_turns
+
     sid = str(session_id or "").strip()
-    items: List[Dict[str, Any]] = []
-
-    if isinstance(run_store, QueryableRunIndexStore):
-        rows = run_store.list_run_index(session_id=sid, root_only=True, limit=int(scan_limit))
-        for row in rows or []:
-            wf_id = str(row.get("workflow_id") or "").strip()
-            if wf_id.startswith("__"):
-                continue
-            summary = _summary_from_index_row(row)
-            if not include_drafts and bool(summary.get("is_draft") is True):
-                continue
-            items.append(summary)
-    elif isinstance(run_store, QueryableRunStore):
-        runs = list(run_store.list_runs(limit=int(scan_limit)) or [])
-        for run in runs:
-            if str(getattr(run, "session_id", "") or "").strip() != sid:
-                continue
-            if str(getattr(run, "parent_run_id", "") or "").strip():
-                continue
-            wf_id = str(getattr(run, "workflow_id", "") or "").strip()
-            if wf_id.startswith("__"):
-                continue
-            summary = run_summary(run)
-            if not include_drafts and bool(summary.get("is_draft") is True):
-                continue
-            items.append(summary)
-    else:
-        raise TypeError("Run store does not support session turn listing")
-
+    runs = select_session_turns(run_store, sid, include_drafts=bool(include_drafts), limit=int(scan_limit))
+    items = [run_summary(run) for run in runs]
     items.sort(key=lambda row: _created_at_key(row.get("created_at")), reverse=True)
     return items
 

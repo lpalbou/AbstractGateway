@@ -138,6 +138,8 @@ from ..workflow_catalog import (
     verify_workflow_policy_signature,
 )
 from ..workflow_deprecations import WorkflowDeprecatedError
+from ..automation_command_types import AUTOMATION_COMMAND_TYPES, COMMAND_TYPES
+from ..automation_defaults import manifest_automation_defaults
 
 
 router = APIRouter(prefix="/gateway", tags=["gateway"])
@@ -2135,6 +2137,9 @@ class VisualFlowCreateRequest(BaseModel):
     # old model 422 on any save carrying functions — an editor save silently
     # STRIPPED the whole library (persistence adversary P0-1, 2026-07-27).
     functions: List[Dict[str, Any]] = Field(default_factory=list)
+    # Automations v1 (contract C6): defaults for automations created from
+    # this flow; validated on save, exported on publish.
+    automation_defaults: Optional[Dict[str, Any]] = None
 
 
 class VisualFlowUpdateRequest(BaseModel):
@@ -2149,6 +2154,19 @@ class VisualFlowUpdateRequest(BaseModel):
     edges: Optional[List[Dict[str, Any]]] = None
     entryNode: Optional[str] = None
     functions: Optional[List[Dict[str, Any]]] = None
+    # Explicit null REMOVES the flow's automation defaults; absent leaves them
+    # (told apart with `model_fields_set`).
+    automation_defaults: Optional[Dict[str, Any]] = None
+
+
+def _validated_automation_defaults(raw: Any) -> Dict[str, Any]:
+    """The normalized `automation_defaults` or 422 `{reason_code, message, field}`."""
+    from ..automation_defaults import AutomationDefaultsError, validate_flow_automation_defaults
+
+    try:
+        return validate_flow_automation_defaults(raw)
+    except AutomationDefaultsError as e:
+        raise HTTPException(status_code=422, detail={"reason_code": e.reason_code, "message": str(e), "field": e.field})
 
 
 class VisualFlowCodeSimulateRequest(BaseModel):
@@ -2443,7 +2461,7 @@ class SubmitCommandRequest(BaseModel):
     run_id: str = Field(..., description="Target run id (or session id for emit_event).")
     type: str = Field(
         ...,
-        description="pause|resume|cancel|conclude|emit_event|update_schedule|compact_memory|inject_guidance",
+        description="|".join(COMMAND_TYPES) + " (automation.* target an automation: run_id = automation_id)",
     )
     payload: Dict[str, Any] = Field(default_factory=dict)
     ts: Optional[str] = Field(default=None, description="ISO timestamp (optional).")
@@ -6814,6 +6832,8 @@ async def create_visualflow(req: VisualFlowCreateRequest) -> Dict[str, Any]:
     }
     if req.functions:
         raw["functions"] = list(req.functions)
+    if req.automation_defaults is not None:
+        raw["automation_defaults"] = _validated_automation_defaults(req.automation_defaults)
     data = _coerce_visualflow(raw)
     data["id"] = flow_id
     data.setdefault("created_at", now)
@@ -6857,6 +6877,11 @@ async def update_visualflow(flow_id: str, req: VisualFlowUpdateRequest) -> Dict[
         raw["entryNode"] = req.entryNode
     if req.functions is not None:
         raw["functions"] = list(req.functions or [])
+    if "automation_defaults" in req.model_fields_set:
+        if req.automation_defaults is None:
+            raw.pop("automation_defaults", None)
+        else:
+            raw["automation_defaults"] = _validated_automation_defaults(req.automation_defaults)
     raw["id"] = str(flow_id)
     raw["updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
     data = _coerce_visualflow(raw)
@@ -6944,6 +6969,13 @@ async def publish_visualflow(request: Request, flow_id: str, req: PublishVisualF
             **({"previous_bundle_version": str(previous_version)} if previous_version else {}),
         },
     }
+    # Automations v1 (contract C6): the root flow's automation defaults ride
+    # the manifest, keyed by the root entrypoint's flow id. Re-validated here:
+    # a document edited on disk must not publish an invalid default.
+    if flow.get("automation_defaults") is not None:
+        metadata["automation_defaults"] = {
+            str(flow.get("id") or flow_id): _validated_automation_defaults(flow.get("automation_defaults"))
+        }
 
     tmp_dir = (Path(svc.config.data_dir) / "tmp").resolve()
     try:
@@ -7300,6 +7332,7 @@ async def list_bundles(
                     "latest_any_version": latest_any_version or None,
                     "created_at": getattr(man, "created_at", ""),
                     "metadata": metadata_obj,
+                    "automation_defaults": manifest_automation_defaults(man),
                     "default_entrypoint": str(getattr(man, "default_entrypoint", "") or "") or None,
                     "entrypoints": eps,
                     "actions": {
@@ -7677,6 +7710,7 @@ async def get_bundle(bundle_id: str, bundle_version: Optional[str] = Query(defau
         "entrypoints": entrypoints_out,
         "flows": flow_ids,
         "metadata": dict(getattr(man, "metadata", None) or {}),
+        "automation_defaults": manifest_automation_defaults(man),
     }
 
 
@@ -8532,6 +8566,39 @@ def _is_internal_workflow_id(workflow_id: Any) -> bool:
     return is_internal_workflow_id(workflow_id)
 
 
+#: The query parameters `GET /runs` understands; anything else is refused
+#: (flow c5253 P1-2) and the capabilities advertise the set (`runs.list.filters`).
+_LIST_RUNS_KNOWN_PARAMS = frozenset({
+    "limit", "offset", "query", "status", "workflow_id", "session_id", "parent_run_id",
+    "root_only", "include_ledger_len", "include_metrics", "include_drafts", "session_kind",
+})
+
+
+def _parse_session_kind_filter(value: Optional[str]) -> Optional[frozenset]:
+    """`session_kind=chat,discussion` -> {"chat","discussion"}; unknown kinds refused (400)."""
+    from abstractruntime.core.run_attribution import SESSION_KINDS, filter_values
+
+    wanted = filter_values(value) if isinstance(value, str) and value.strip() else None
+    if wanted is None:
+        return None
+    unknown = sorted(k for k in wanted if k not in SESSION_KINDS)
+    if unknown or not wanted:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid session_kind {', '.join(unknown) or value!r} (expected a comma-separated subset of {'|'.join(SESSION_KINDS)})",
+        )
+    return wanted
+
+
+def _is_turn_root_summary(summary: Dict[str, Any]) -> bool:
+    """Turn roots (automations contract E): parent-less runs that are not
+    automation controllers, plus occurrence runs."""
+    role = summary.get("role")
+    if role == "occurrence":
+        return True
+    return not str(summary.get("parent_run_id") or "").strip() and role != "controller"
+
+
 @router.get("/runs")
 async def list_runs(
     request: Request,
@@ -8542,7 +8609,8 @@ async def list_runs(
     workflow_id: Optional[str] = Query(None, description="Optional workflow id filter (e.g. bundle:flow)"),
     session_id: Optional[str] = Query(None, description="Optional session id filter (durable run.session_id)."),
     parent_run_id: Optional[str] = Query(None, description="Optional parent filter: list only direct children of this run."),
-    root_only: bool = Query(False, description="If true, return only root/parent runs (parent_run_id is empty)."),
+    root_only: bool = Query(False, description="If true, return only TURN ROOTS: parent-less runs that are not automation controllers, plus automation occurrence runs (so an automation session reads as a chat)."),
+    session_kind: Optional[str] = Query(None, description="Optional comma-separated session_kind filter: chat|automation|occurrence|discussion (e.g. `chat,discussion` = what a normal chat list shows)."),
     include_ledger_len: bool = Query(True, description="If true, include ledger_len (may be slow for file-backed ledgers)."),
     include_metrics: bool = Query(False, description="If true, include best-effort llm/tool counts (aggregated across child runs)."),
     include_drafts: bool = Query(False, description="If true, include private draft-test runs in the response."),
@@ -8552,10 +8620,7 @@ async def list_runs(
     # filter typo used to return the whole global store while LOOKING
     # filtered — their adversary got burned live by exactly that. Naming the
     # known set makes the refusal self-correcting.
-    _known_params = {
-        "limit", "offset", "query", "status", "workflow_id", "session_id", "parent_run_id",
-        "root_only", "include_ledger_len", "include_metrics", "include_drafts",
-    }
+    _known_params = _LIST_RUNS_KNOWN_PARAMS
     _unknown = [k for k in request.query_params.keys() if k not in _known_params]
     if _unknown:
         raise HTTPException(
@@ -8565,6 +8630,8 @@ async def list_runs(
                 f"known: {', '.join(sorted(_known_params))}"
             ),
         )
+
+    kinds = _parse_session_kind_filter(session_kind)
 
     svc = get_gateway_service()
     rs = svc.host.run_store
@@ -8579,7 +8646,10 @@ async def list_runs(
     qglob = _query_is_glob(qtext) if qtext is not None else False
 
     def _matches_query(summary: Dict[str, Any]) -> bool:
-        """The console query language over the three identity fields shown."""
+        """The console query language over the three identity fields shown
+        (and the session_kind filter, which every branch applies here)."""
+        if kinds is not None and summary.get("session_kind") not in kinds:
+            return False
         if qtext is None:
             return True
         for field in ("run_id", "workflow_id", "session_id"):
@@ -8654,11 +8724,23 @@ async def list_runs(
             "paused_at": None,
             "resumed_at": None,
             "waiting": None,
-            "is_scheduled": False,
+            # The index knows a legacy scheduled wrapper by its attribution
+            # role (it used to hard-code False: a legacy schedule listed
+            # through the index read as not scheduled). The schedule details
+            # live in vars, which index rows never load.
+            "is_scheduled": row.get("role") == "legacy_schedule",
             "schedule": None,
             "limits": None,
             "run_lifecycle": row.get("run_lifecycle") if isinstance(row.get("run_lifecycle"), dict) else None,
             "is_draft": is_draft_run_lifecycle(row.get("run_lifecycle")),
+            # Automation attribution (runtime index columns, contract C11).
+            "session_kind": row.get("session_kind"),
+            "automation_id": row.get("automation_id"),
+            "role": row.get("role"),
+            "occurrence_index": row.get("occurrence_index"),
+            # A pre-automation scheduled wrapper: an automation (session_kind
+            # "automation"), never a chat.
+            "legacy": row.get("role") == "legacy_schedule",
         }
         if status0 == "waiting":
             reason = str(row.get("wait_reason") or "").strip()
@@ -8703,7 +8785,17 @@ async def list_runs(
                 scan_limit = max(200, _want * 5) if (bool(root_only) or sid or filter_internal or not include_drafts or qtext) else _want
                 while True:
                     items = []
-                    rows = rs.list_run_index(status=status_enum, workflow_id=wid, session_id=sid, root_only=bool(root_only), limit=scan_limit)
+                    # root_only = turn roots, computed by the store (occurrence
+                    # runs are children yet ARE turns: never re-filter them
+                    # by parent_run_id here).
+                    rows = rs.list_run_index(
+                        status=status_enum,
+                        workflow_id=wid,
+                        session_id=sid,
+                        root_only=bool(root_only),
+                        limit=scan_limit,
+                        session_kind=",".join(sorted(kinds)) if kinds is not None else None,
+                    )
                     row_count = len(rows or [])
                     for row in rows or []:
                         wf_id = str(row.get("workflow_id") or "").strip()
@@ -8711,8 +8803,6 @@ async def list_runs(
                         # runs under `__catalog__v2__…` and is the opposite of
                         # internal. See `is_internal_workflow_id`.
                         if filter_internal and _is_internal_workflow_id(wf_id):
-                            continue
-                        if bool(root_only) and str(row.get("parent_run_id") or "").strip():
                             continue
                         summary = _summary_from_index_row(row)
                         if not include_drafts and bool(summary.get("is_draft") is True):
@@ -8758,7 +8848,7 @@ async def list_runs(
                         continue
                     if sid and str(getattr(r, "session_id", "") or "").strip() != sid:
                         continue
-                    if bool(root_only) and str(getattr(r, "parent_run_id", "") or "").strip():
+                    if bool(root_only) and not _is_turn_root_summary(s0):
                         continue
                     if not _matches_query(s0):
                         continue
@@ -8774,15 +8864,12 @@ async def list_runs(
             if sid:
                 runs_all = [r for r in runs_all if str(getattr(r, "session_id", "") or "").strip() == sid]
 
-            def _parent_id(run_obj: Any) -> str:
-                return str(getattr(run_obj, "parent_run_id", "") or "").strip()
-
-            runs_root = [r for r in runs_all if not _parent_id(r)] if bool(root_only) else runs_all
-
-            for r in runs_root:
+            for r in runs_all:
                 if filter_internal and _is_internal_workflow_id(getattr(r, "workflow_id", None)):
                     continue
                 summary = run_summary(r)
+                if bool(root_only) and not _is_turn_root_summary(summary):
+                    continue
                 if not include_drafts and bool(summary.get("is_draft") is True):
                     continue
                 if not _matches_query(summary):
@@ -17000,7 +17087,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             },
             "schedule": {"available": True, "endpoint": _api_gateway_path("/runs/schedule")},
             "summary": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}")},
-            "list": {"available": True, "endpoint": _api_gateway_path("/runs")},
+            "list": {"available": True, "endpoint": _api_gateway_path("/runs"), "filters": sorted(_LIST_RUNS_KNOWN_PARAMS)},
             "purge_drafts": {"available": True, "endpoint": _api_gateway_path("/runs/purge_drafts")},
             "input_data": {"available": True, "endpoint": _api_gateway_path("/runs/{run_id}/input_data")},
             "history_bundle": {
@@ -17019,16 +17106,7 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
             "commands": {
                 "available": True,
                 "endpoint": _api_gateway_path("/commands"),
-                "types": [
-                    "pause",
-                    "resume",
-                    "cancel",
-                    "conclude",
-                    "emit_event",
-                    "update_schedule",
-                    "compact_memory",
-                    "inject_guidance",
-                ],
+                "types": list(COMMAND_TYPES),
             },
         },
         "ledger": {
@@ -17247,6 +17325,16 @@ def _build_client_capability_contracts(caps: Dict[str, Any]) -> Dict[str, Any]:
         "execution": {
             "code": common["execution"]["code"],
         },
+    }
+
+    # Automations v1 (contract F): apps gate their Automations UI on this.
+    common["automations"] = {
+        "available": True,
+        "version": 1,
+        "endpoint": _api_gateway_path("/automations"),
+        "automations_endpoint": _api_gateway_path("/automations"),
+        "trigger_sources_endpoint": _api_gateway_path("/trigger-sources"),
+        "command_types": list(AUTOMATION_COMMAND_TYPES),
     }
 
     assistant = {
@@ -28462,32 +28550,35 @@ async def attachments_upload(
     return {**stored, "attachment": stored.get("artifact")}
 
 
+def _require_automation_controller(svc: Any, automation_id: str) -> Any:
+    """The automation root run `automation_id` in this principal's store, or 404.
+
+    An automation IS its controller run: a run carrying `vars._meta.automation`
+    (automations contract A). Another principal's automation is simply absent
+    from this store, so it reads as not found, never as forbidden.
+    """
+    run = svc.runner.run_store.load(str(automation_id))
+    meta = (run.vars or {}).get("_meta") if run is not None and isinstance(run.vars, dict) else None
+    if not (isinstance(meta, dict) and isinstance(meta.get("automation"), dict)):
+        raise HTTPException(status_code=404, detail=f"automation '{automation_id}' not found (automation.* commands target an automation id)")
+    return run
+
+
 @router.post("/commands", response_model=SubmitCommandResponse)
 async def submit_command(req: SubmitCommandRequest) -> SubmitCommandResponse:
     svc = get_gateway_service()
     typ = str(req.type or "").strip()
-    if typ not in {
-        "pause",
-        "resume",
-        "cancel",
-        "emit_event",
-        "update_schedule",
-        "compact_memory",
-        "inject_guidance",
-        # `conclude` (2026-08-21): between pause (freeze) and cancel (throw
-        # away) there was no way to end a long turn WELL. This asks the agent
-        # to stop and answer from what it already has. Same door, same
-        # durable command store, so every client gets the verb — the TUI,
-        # AbstractObserver, the console, a chat bridge.
-        "conclude",
-    }:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "type must be one of pause|resume|cancel|conclude|emit_event|"
-                "update_schedule|compact_memory|inject_guidance"
-            ),
-        )
+    # One source of truth (automation_command_types.py): the runner applies
+    # exactly these, the capabilities advertise exactly these. `conclude`
+    # (2026-08-21) asks an agent to stop and answer from what it already has;
+    # `automation.*` (Automations v1) target an automation root run.
+    if typ not in COMMAND_TYPES:
+        raise HTTPException(status_code=400, detail="type must be one of " + "|".join(COMMAND_TYPES))
+
+    if typ in AUTOMATION_COMMAND_TYPES:
+        # Refuse at the door what the runner could only reject later: the
+        # target must be an automation root in THIS principal's store.
+        _require_automation_controller(svc, str(req.run_id))
 
     # H4 steer door: entity visit runs refuse raw steers SYNCHRONOUSLY (the
     # H5 rite is not built; runtime's Runtime.steer refuses asynchronously as

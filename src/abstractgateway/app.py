@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .console import gateway_console_html
 
-from .routes import engines_router, entities_router, entity_replay_router, gateway_router, triage_router
+from .routes import automations_router, engines_router, entities_router, entity_replay_router, gateway_router, triage_router
 from .security import GatewaySecurityMiddleware, load_gateway_auth_policy_from_env
 
 
@@ -99,6 +99,14 @@ app.add_middleware(ServicePrewarmMiddleware)
 # Gateway security (backlog 309).
 app.add_middleware(GatewaySecurityMiddleware, policy=load_gateway_auth_policy_from_env())
 
+# Automations error envelope (contract C9): OUTSIDE the security layer, so the
+# auth layer's early 401/403 on /api/gateway/automations* and
+# /api/gateway/trigger-sources carry {"detail":{"reason_code","message"}} like
+# every other error there. Scoped by path prefix; no other route changes.
+from .automation_errors import AutomationErrorEnvelopeMiddleware  # noqa: E402
+
+app.add_middleware(AutomationErrorEnvelopeMiddleware)
+
 # CORS for browser clients. In production, prefer configuring exact origins and terminating TLS at a reverse proxy.
 #
 # IMPORTANT: add after GatewaySecurityMiddleware so CORS headers are present even on early security rejections
@@ -151,6 +159,9 @@ app.include_router(apps_handover_router)
 from .routes.network import router as network_router  # noqa: E402
 
 app.include_router(network_router, prefix="/api")
+# Automations v1 façade (routes/automations.py): literal /gateway/automations...
+# and /gateway/trigger-sources paths, before the parametrized gateway router.
+app.include_router(automations_router, prefix="/api")
 app.include_router(gateway_router, prefix="/api")
 app.include_router(triage_router, prefix="/api")
 

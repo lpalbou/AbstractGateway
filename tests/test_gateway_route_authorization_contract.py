@@ -129,6 +129,10 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("POST", "/api/gateway/runs/purge_drafts"),
     ("POST", "/api/gateway/runs/ledger/batch"),
     ("POST", "/api/gateway/commands"),
+    # Automations v1: the caller's OWN seen cursor, in the caller's own plane
+    # (file named by the caller's (tenant, user)); an automation of another
+    # principal is absent from the caller's store (404).
+    ("POST", "/api/gateway/automations/{automation_id}/seen"),
     ("POST", "/api/gateway/runs/{run_id}/chat"),
     ("POST", "/api/gateway/runs/{run_id}/chat_threads"),
     ("POST", "/api/gateway/runs/{run_id}/summary"),
