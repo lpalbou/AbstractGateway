@@ -12,8 +12,9 @@ pub mod apps;
 pub mod connection;
 pub mod entity_chat;
 pub mod entity_create;
+pub mod docs;
 pub mod entity_manage;
-/// Gateway host panel (F2) + the paused / restart banner.
+/// Gateway host panel (F3) + the paused / restart banner.
 pub mod host;
 pub mod models;
 /// The caller's own workspace policy (Users screen, `w`).
@@ -23,6 +24,7 @@ pub mod providers;
 pub mod review;
 pub mod routes;
 pub mod runtimes;
+pub mod sandbox;
 pub mod users;
 pub mod util;
 /// Setup: the first-run guide's welcome step + the first-run lifecycle.
@@ -906,6 +908,7 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
     let ctx_about2 = ctx.clone();
     let ctx_guide = ctx.clone();
     let ctx_host = ctx.clone();
+    let ctx_docs = ctx.clone();
 
     let mut root_el = Element::new()
         .style(LayoutStyle::column())
@@ -963,7 +966,7 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
                 // provider picker is live data.)
                 if matches!(s, SCREEN_CONNECTION) {
                     ctx_refresh.store.notice.set(Some(
-                        "nothing to refresh here — r reloads live data on screens 2-9 and 0".into(),
+                        "nothing to refresh here — r reloads live data on screens 2-9, 0, A (Apps) and Setup".into(),
                     ));
                     return;
                 }
@@ -1000,9 +1003,12 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         })
         .shortcut(KeyChord::plain(Key::F(1)), move |_| about::open(&ctx_about, cx))
         .shortcut(KeyChord::plain(Key::Char('?')), move |_| about::open(&ctx_about2, cx))
-        // Gateway host panel (pause/resume, restart, quit, update): F2
+        // Gateway host panel (pause/resume, restart, quit, update): F3
         // anywhere — a function key survives focused text fields.
-        .shortcut(KeyChord::plain(host::OPEN_KEY), move |_| host::open(&ctx_host, cx));
+        .shortcut(KeyChord::plain(host::OPEN_KEY), move |_| host::open(&ctx_host, cx))
+        // Docs assistant (the web top bar's ✦ drawer): F2 anywhere — a
+        // function key, so it works with the caret in a text field.
+        .shortcut(KeyChord::plain(Key::F(2)), move |_| docs::open(&ctx_docs, cx));
     // Digit keys at the root. Wizard: a REFUSAL with a reason, so a
     // swallowed digit never reads as a dead app (F3). Browse: PageHost
     // owns digit jumps (its number_jump surface), but its shortcut rides
@@ -1016,7 +1022,7 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         root_el = root_el.shortcut(KeyChord::plain(Key::Char(key)), move |_| {
             if ctx_i.ui.wizard.get_untracked() {
                 ctx_i.store.notice.set(Some(
-                    "digit jumps work in browse mode — walk the guide with Ctrl+N, Ctrl+G leaves it"
+                    "screen jumps (1-9, 0, A) work in browse mode — walk the guide with Ctrl+N, Ctrl+G leaves it"
                         .into(),
                 ));
             } else if ctx_i.ui.screen.get_untracked() != i {
@@ -1612,6 +1618,12 @@ fn header(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
             span(format!("· {url} "), t.text_muted),
             span(format!("{dot} "), dot_ink),
             span(label, t.text),
+            // The web's session-only ✦ button, as a hint: last span, so
+            // it is the first thing a narrow terminal truncates.
+            span(
+                if conn.is_connected() { "  · F2 docs assistant" } else { "" },
+                t.text_faint,
+            ),
         ])
     })
 }
@@ -1703,7 +1715,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 pairs.push(("Ctrl+P/Esc", "back"));
                 pairs.push(("Ctrl+C", "quit"));
             } else {
-                pairs.push(("1-9,0", "screens"));
+                pairs.push(("1-9,0,A", "screens"));
                 pairs.push(("Ctrl+N/P", "next/prev"));
                 pairs.push(("q/Ctrl+C", "quit"));
             }

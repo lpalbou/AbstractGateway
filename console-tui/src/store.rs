@@ -2548,6 +2548,12 @@ pub struct Store {
     /// (open_form closes any predecessor); openers must reset it.
     pub discover: Signal<Loadable<DiscoverOutcome>>,
     pub sandbox: Signal<Loadable<SandboxOutcome>>,
+    /// The sandbox workspace beyond the text outcome: mode, text
+    /// controls + history, the media result (ui/sandbox.rs).
+    pub sandbox_ws: crate::ui::sandbox::SandboxWs,
+    /// The docs assistant conversation (ui/docs.rs) — keep-alive across
+    /// modal close/open, like the web drawer.
+    pub docs: crate::ui::docs::DocsState,
     /// Voice catalog for the route editor's voice picker. The (provider,
     /// model) pair the list was fetched FOR rides with the data, so a
     /// late response for a stale pick can never dress the wrong pair.
@@ -3293,6 +3299,8 @@ impl Store {
             models: cx.signal(HashMap::new()),
             discover: cx.signal(Loadable::default()),
             sandbox: cx.signal(Loadable::default()),
+            sandbox_ws: crate::ui::sandbox::SandboxWs::create(cx),
+            docs: crate::ui::docs::DocsState::create(cx),
             voices: cx.signal(Loadable::default()),
             route_test: cx.signal(Loadable::default()),
             entity_detail: cx.signal(Loadable::default()),
@@ -3371,6 +3379,8 @@ impl Store {
             models,
             discover,
             sandbox,
+            sandbox_ws,
+            docs,
             voices,
             route_test,
             entity_detail,
@@ -3421,6 +3431,8 @@ impl Store {
         models.update(|m| m.clear());
         discover.set(Loadable::NotAsked);
         sandbox.set(Loadable::NotAsked);
+        sandbox_ws.reset();
+        docs.reset();
         voices.set(Loadable::NotAsked);
         route_test.set(Loadable::NotAsked);
         entity_detail.set(Loadable::NotAsked);

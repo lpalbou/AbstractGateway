@@ -33,7 +33,7 @@ use crate::store::{
     entities_from_payload, models_from_payload, runtimes_from_payload, users_from_payload,
     AvailabilityData, ConnPhase, DiscoverOutcome, DownloadStatus, Identity, JournalEntry, Loadable,
     NetworkData, ProbeReport, ProfilesData, ProvidersData, RouteTestOutcome, RoutesData,
-    RuntimeConfigData, SandboxOutcome, Store, VoicesData,
+    RuntimeConfigData, Store, VoicesData,
 };
 
 /// Probe sequence — every probe gets a visible number so repeated
@@ -356,11 +356,45 @@ pub enum Cmd {
         user_id: String,
         tenant_id: String,
     },
-    /// A real text generation — the wizard's "Test" verb.
+    /// A real text generation — the wizard's "Test" verb. `request` is
+    /// the full web-shaped body (ui::sandbox::text_body: system prompt,
+    /// reasoning, MTP, history).
     SandboxTest {
         provider: String,
         model: String,
         prompt: String,
+        request: Body,
+    },
+    /// A media generation (image / voice / music / SFX / video) on the
+    /// sandbox session run, then the artifact saved to disk.
+    SandboxMedia {
+        request: crate::ui::sandbox::MediaRequest,
+    },
+    /// Upload a local file as a sandbox attachment (`/attachments/upload`).
+    SandboxAttach {
+        path: String,
+        session_id: String,
+    },
+    /// "Speak this message": TTS the reply on the sandbox run, then play.
+    SandboxSpeak {
+        request: crate::ui::sandbox::MediaRequest,
+    },
+    /// MTP depth availability for the picked text pair.
+    SandboxMtpCaps {
+        provider: String,
+        model: String,
+    },
+    /// Docs assistant: start the docs-qa run (`op` = its busy entry).
+    DocsAsk {
+        question: String,
+        history: Vec<Value>,
+        op: u64,
+    },
+    /// Docs assistant: one run poll (re-armed by a timer thread).
+    DocsPoll {
+        run_id: String,
+        attempt: u32,
+        op: u64,
     },
     /// Voice catalog for one (provider, model) — the route editor's
     /// voice picker (output.voice routes only).
@@ -2105,14 +2139,81 @@ fn handle(
         Cmd::SandboxTest {
             provider,
             model,
-            prompt,
+            prompt: _,
+            request,
         } => {
             let label = format!("sandbox test: {provider}/{model}");
-            load(store, wake, &label, store.sandbox, || {
-                require_client(client)?
-                    .sandbox_generate("output.text", &provider, &model, &prompt, 64)
-                    .map(|v| SandboxOutcome::from_value(&provider, &model, &v))
+            let s = *store;
+            wake.post(move || s.sandbox.set(Loadable::Loading));
+            let started = std::time::Instant::now();
+            let out = with_busy(store, wake, &label, || {
+                require_client(client)?.sandbox_text(&request.0)
             });
+            let ms = started.elapsed().as_millis() as u64;
+            wake.post(move || crate::ui::sandbox::publish_text(&s, &provider, &model, out, ms));
+        }
+
+        Cmd::SandboxMedia { request } => {
+            let s = *store;
+            let out = with_busy(store, wake, &request.busy_label(), || {
+                require_client(client)
+                    .and_then(|c| crate::ui::sandbox::perform_media(&c, &request))
+            });
+            wake.post(move || {
+                s.sandbox_ws.media.set(match out {
+                    Ok(o) => Loadable::Ready(o),
+                    Err(e) => Loadable::Failed(e),
+                })
+            });
+        }
+
+        Cmd::SandboxAttach { path, session_id } => {
+            let s = *store;
+            let out = with_busy(store, wake, "uploading attachment", || {
+                require_client(client)
+                    .and_then(|c| crate::ui::sandbox::perform_upload(&c, &path, &session_id))
+            });
+            wake.post(move || crate::ui::sandbox::publish_upload(&s, out));
+        }
+
+        Cmd::SandboxSpeak { request } => {
+            let s = *store;
+            let out = with_busy(store, wake, "speaking the reply", || {
+                require_client(client)
+                    .and_then(|c| crate::ui::sandbox::perform_media(&c, &request))
+            });
+            wake.post(move || crate::ui::sandbox::publish_speech(&s, out));
+        }
+
+        Cmd::SandboxMtpCaps { provider, model } => {
+            let s = *store;
+            let sup = match require_client(client) {
+                Ok(c) => crate::ui::sandbox::load_mtp(&c, &provider, &model),
+                Err(e) => crate::ui::sandbox::MtpSupport::Unknown {
+                    target: format!("{provider}/{model}"),
+                    reason: format!("MTP support unknown: {}", e.message),
+                },
+            };
+            wake.post(move || crate::ui::sandbox::publish_mtp(&s, sup));
+        }
+
+        Cmd::DocsAsk {
+            question,
+            history,
+            op,
+        } => {
+            let r = require_client(client)
+                .and_then(|c| crate::ui::docs::start_ask(&c, &question, &history));
+            crate::ui::docs::after_start(store, wake, tx, op, r);
+        }
+
+        Cmd::DocsPoll {
+            run_id,
+            attempt,
+            op,
+        } => {
+            let r = require_client(client).and_then(|c| c.run_status(&run_id));
+            crate::ui::docs::after_poll(store, wake, tx, run_id, attempt, op, r);
         }
 
         Cmd::LoadVoices { provider, model } => {

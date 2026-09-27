@@ -1,4 +1,4 @@
-//! Gateway host panel (F2 anywhere) + the "Workflows are paused" banner.
+//! Gateway host panel (F3 anywhere) + the "Workflows are paused" banner.
 //!
 //! Parity with the web console's Gateway card (Resources tab) and its
 //! paused banner (every tab): the workflow runner's state (running /
@@ -31,8 +31,8 @@ use crate::worker::Cmd;
 
 /// The key that opens this panel from any screen (function keys survive
 /// focused text fields — the F1 About precedent).
-pub const OPEN_KEY: Key = Key::F(2);
-pub const OPEN_KEY_LABEL: &str = "F2";
+pub const OPEN_KEY: Key = Key::F(3);
+pub const OPEN_KEY_LABEL: &str = "F3";
 
 /// How long a FINISHED restart/quit line stays in the chrome banner (the
 /// journal keeps it for good).
@@ -211,7 +211,7 @@ fn start_update(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
     );
 }
 
-/// Open the panel (F2). `cx` is the ROOT scope: confirms open there.
+/// Open the panel (F3). `cx` is the ROOT scope: confirms open there.
 pub fn open(ctx: &Ctx, cx: Scope) {
     refresh(ctx);
     let ctx2 = ctx.clone();

@@ -574,7 +574,7 @@ fn pagehost_browse_navigation_digits_and_chords() {
             .notice
             .get_untracked()
             .unwrap_or_default()
-            .contains("digit jumps work in browse mode"),
+            .contains("screen jumps (1-9, 0, A) work in browse mode"),
         "wizard digit refusal carries its reason"
     );
 }
@@ -2709,6 +2709,7 @@ fn review_inline_sandbox_runs_and_renders_full_result() {
             provider,
             model,
             prompt,
+            ..
         }) => {
             assert_eq!(provider, "lmstudio");
             assert_eq!(model, "test-model-b");
@@ -7162,7 +7163,7 @@ fn zero_jumps_to_engines_in_browse_and_is_refused_in_the_wizard() {
     h.key(b"0");
     let s = h.turns(2);
     assert_eq!(h.ui.screen.get_untracked(), 1, "wizard does not jump");
-    assert!(s.contains("digit jumps work in browse mode"), "{s}");
+    assert!(s.contains("screen jumps (1-9, 0, A) work in browse mode"), "{s}");
 }
 
 #[test]
@@ -7788,7 +7789,7 @@ fn network_trust_checkbox_saves_on_toggle() {
 }
 
 // ---------------------------------------------------------------------
-// Operator controls (web parity): host panel (F2), paused banner,
+// Operator controls (web parity): host panel (F3), paused banner,
 // workflow import/reload/delete-confirm, backlog settings + reseed,
 // the caller's own workspace policy.
 // ---------------------------------------------------------------------
@@ -7825,12 +7826,12 @@ fn paused_banner_shows_on_every_screen_and_f2_panel_resumes() {
             s.contains("Workflows are paused since 2026-09-27 10:00:00 +00:00 by default/admin"),
             "banner on screen {screen}:\n{s}"
         );
-        assert!(s.contains("F2 → p resumes"), "admin is told how:\n{s}");
+        assert!(s.contains("F3 → p resumes"), "admin is told how:\n{s}");
     }
     let _ = h.drain_cmds();
-    h.key(b"\x1bOQ"); // F2
+    h.key(b"\x1bOR"); // F3
     let s = h.turns(2);
-    assert!(s.contains("Gateway host"), "F2 opens the host panel:\n{s}");
+    assert!(s.contains("Gateway host"), "F3 opens the host panel:\n{s}");
     assert!(s.contains("Paused — still running"), "state pill:\n{s}");
     assert!(s.contains("Resume workflows"), "the button names its verb:\n{s}");
     assert!(
@@ -7860,8 +7861,8 @@ fn host_panel_refuses_non_admin_verbs_with_a_reason() {
     h.store.op.runner.set(Loadable::Ready(paused_runner()));
     let s = h.turns(2);
     assert!(s.contains("Workflows are paused"), "the banner is for everyone:\n{s}");
-    assert!(!s.contains("F2 → p resumes"), "but only admins are told to resume:\n{s}");
-    h.key(b"\x1bOQ");
+    assert!(!s.contains("F3 → p resumes"), "but only admins are told to resume:\n{s}");
+    h.key(b"\x1bOR"); // F3
     let s = h.turns(2);
     assert!(s.contains("only an admin can pause, restart, quit or update"), "reason shown:\n{s}");
     assert!(!s.contains("Restart…"), "no admin buttons:\n{s}");
@@ -7881,7 +7882,7 @@ fn restart_and_quit_confirm_first_and_default_to_keep() {
     h.connect_as_admin();
     h.store.op.runner.set(Loadable::Ready(paused_runner()));
     h.turns(2);
-    h.key(b"\x1bOQ");
+    h.key(b"\x1bOR"); // F3
     h.turns(2);
     h.type_text("R");
     let s = h.turns(2);
@@ -7892,7 +7893,7 @@ fn restart_and_quit_confirm_first_and_default_to_keep() {
         h.drain_cmds().iter().all(|c| !is_op(c, |o| matches!(o, OpCmd::Restart))),
         "keep does not restart"
     );
-    h.key(b"\x1bOQ");
+    h.key(b"\x1bOR"); // F3
     h.turns(2);
     h.type_text("Q");
     let s = h.turns(2);
@@ -7910,7 +7911,7 @@ fn restart_and_quit_confirm_first_and_default_to_keep() {
     r.cap_restart = false;
     r.cap_reason = "started with --reload".into();
     h.store.op.runner.set(Loadable::Ready(r));
-    h.key(b"\x1bOQ");
+    h.key(b"\x1bOR"); // F3
     h.turns(2);
     h.type_text("R");
     let s = h.turns(2);

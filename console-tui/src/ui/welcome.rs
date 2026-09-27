@@ -137,7 +137,7 @@ pub fn install(cx: Scope, ctx: &Ctx) {
                 ui.first_run_decided.set(true);
                 ui.wizard.set(false);
                 store.notice.set(Some(format!(
-                    "setup {} — recorded on the gateway; browse with 1-9 and 0, Ctrl+G reopens the guide",
+                    "setup {} — recorded on the gateway; browse with 1-9, 0 and A, Ctrl+G reopens the guide",
                     if asked == "skipped" { "skipped" } else { "finished" }
                 )));
             }

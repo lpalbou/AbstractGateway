@@ -58,20 +58,32 @@ OPTIONS:
                  gateway's versions from GET /api/gateway/about at --url)
 
 KEYS: Tab focus · Enter activate · Ctrl+N next step · Ctrl+P / Esc back ·
-      ] / [ next/back (outside text fields) · 1-9,0 screens (browse) ·
+      ] / [ next/back (outside text fields) ·
+      1-9,0 screens, A Apps (browse) ·
       Ctrl+G setup guide (browse: reopen; guide: leave or Skip setup) ·
-      r refresh · F1 / ? About · Ctrl+L repaint · q / Ctrl+C quit
+      r refresh · F1 / ? About · F2 docs assistant (signed in) ·
+      F3 gateway host (pause/resume, restart, quit, update) ·
+      Ctrl+L repaint · q / Ctrl+C quit
 
 SCREENS: 1 Connection · 2 Providers · 3 Routes · 4 Users & Entities ·
          5 Runtimes · 6 Workflows · 7 Review & Test · 8 Resources ·
          9 Models (browse, download, delete models on the gateway host) ·
          0 Engines (detect and install Ollama, LM Studio, MLX, llama.cpp) ·
+         A Apps (browser apps, the desktop Assistant, Node.js) ·
          Setup (the guide's welcome step: this computer at a glance)
+
+SCREEN KEYS (the footer lists each screen's keys):
+  Routes     a apply recommended · D download all · C cancel it · p plan
+  Users      n summon entity · c talk · s spark templates ·
+             w my workspace policy
+  Workflows  i import .flow · L reload from disk
+  Apps       Enter/o open · i/u install/update · s/x start/stop · l log ·
+             c cancel · t/T terminal · n Node.js · y copy
 
 SETUP GUIDE (the web console's first-run guide, same steps and routes):
   Connection → Setup → Engines → Providers → Routes (default model:
-  recommended plan, a apply, D download all) → Models → Review (Finish or
-  Skip setup: POST /host/first-run, verified by a GET)
+  recommended plan, a apply, D download all) → Models → Apps → Review
+  (Finish or Skip setup: POST /host/first-run, verified by a GET)
 ";
 
 struct Args {
