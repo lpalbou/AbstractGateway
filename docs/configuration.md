@@ -1017,6 +1017,24 @@ is configured shows `not needed` rather than `not configured` — nothing can
 reach it in that state. It stays editable, because setting it is still the
 one-value-for-everything path.
 
+Two row states come from AbstractCore's host check:
+
+- An **unset** row whose recommended engine cannot run on this host
+  (`recommendation_unavailable`, for example MLX-Gen images or video off Apple
+  silicon, or the video model on a Mac without enough memory) stays
+  `not configured` and says why under the pill.
+- A **configured** row whose provider cannot run on this host
+  (`route_unavailable`, for example an MLX-Gen image route carried over from a
+  Mac to Linux) shows `cannot run here` instead of `configured`, with the
+  reason. Calls to it fail until you choose another provider for the route.
+  With user accounts on, a user who inherits such a route from the gateway
+  store sees it flagged in the *Apply recommended* result as "inherited from
+  the gateway store (admin)": only an admin can change it, and the forced
+  pass never removes it.
+
+The setup guide's model step shows the same two states as cards with the
+reason and no **Download** button.
+
 `input.text` is the canonical text LLM route. `output.text` is reported as a
 read-only derived view of `input.text`, and CLI/API writes to `output.text` are
 canonicalized to `input.text` for compatibility. `input.image` is a fallback

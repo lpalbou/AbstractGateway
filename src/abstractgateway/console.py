@@ -2102,7 +2102,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                   host just to keep the button reachable — and a banner that
 	                   always renders ends up always saying something. Here it is
 	                   a standing action, and the banner is free to stay silent. -->
-	              <button id="defaults-apply-recommended" class="secondary" title="Set the recommended provider/model on the text, voice and image routes. Routes you configured differently are kept." aria-label="Apply recommended routes"><span class="button-icon" aria-hidden="true">◆</span><span>Apply recommended</span></button>
+	              <button id="defaults-apply-recommended" class="secondary" title="Set the recommended provider/model on the text, voice, image and video routes this computer can run. Routes you configured differently are kept." aria-label="Apply recommended routes"><span class="button-icon" aria-hidden="true">◆</span><span>Apply recommended</span></button>
 	              <button id="refresh-catalog" class="secondary" title="Reload providers and capability defaults" aria-label="Refresh catalog"><span class="button-icon icon-refresh" aria-hidden="true">↻</span><span>Refresh</span></button>
 	            </div>
 	          </div>
@@ -8534,6 +8534,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // the value comes from, which is the question the pill is asked.
 	      if (row?.covered_by === "input.text") return { label: "covered by input.text", cls: "covered" };
 	      if (row?.derived_from === "input.text") return { label: rowHasProviderModel(row) ? "derived \u2190 input.text" : "not configured", cls: rowHasProviderModel(row) ? "covered" : "off" };
+	      // A configured route AbstractCore says cannot run on this host
+	      // (`route_unavailable`) is not "configured" in the sense that matters:
+	      // calls to it fail. Warning tone; the reason sits under the pill.
+	      if (defaultRowConfigured(row) && defaultRowRouteUnavailableReason(row)) return { label: "cannot run here", cls: "off" };
 	      if (defaultRowConfigured(row)) return { label: "configured", cls: "ok" };
 	      // AN UNSET PARENT WHOSE TASK ROWS ARE ALL SET IS NOT A PROBLEM. Core
 	      // proves it (`capability_route_tasks_cover_broad`): the task rows are
@@ -8548,6 +8552,40 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // parent and read as "image editing is not set up".
 	      if (row?.inherits_broad) return { label: `inherited ← ${defaultRowParentKey(row)}`, cls: "covered" };
 	      return { label: "not configured", cls: "off" };
+	    }
+	    // AbstractCore stamps `recommendation_unavailable` {provider, model, reason}
+	    // on an UNSET row whose recommended engine cannot run on this host
+	    // (`manager.list_capability_defaults`), so the row says WHY it is empty
+	    // instead of a bare "not configured". Absent (older Core, or a runnable
+	    // recommendation): no markup at all.
+	    function defaultRowUnavailableReason(row) {
+	      const info = row?.recommendation_unavailable;
+	      if (!info || typeof info !== "object" || defaultRowConfigured(row)) return "";
+	      return String(info.reason || "").trim();
+	    }
+	    function defaultRowUnavailableMarkup(row) {
+	      const reason = defaultRowUnavailableReason(row);
+	      if (!reason) return "";
+	      const info = row.recommendation_unavailable;
+	      const rec = [info.provider, info.model].filter(Boolean).join(" / ");
+	      return `<div class="muted capability-unavailable" title="${esc(rec ? `Recommended: ${rec}` : "")}">No recommended model runs on this computer: ${esc(reason)}</div>`;
+	    }
+	    // ...and the CONFIGURED mirror: AbstractCore stamps `route_unavailable`
+	    // {provider, model, reason} on a configured row whose provider cannot
+	    // run on this host (an MLX-Gen image route carried over to Linux), so
+	    // the grid warns instead of showing a green "configured" that fails at
+	    // the first call. Absent (older Core, or a runnable route): no markup.
+	    function defaultRowRouteUnavailableReason(row) {
+	      const info = row?.route_unavailable;
+	      if (!info || typeof info !== "object" || !defaultRowConfigured(row)) return "";
+	      return String(info.reason || "").trim();
+	    }
+	    function defaultRowRouteUnavailableMarkup(row) {
+	      const reason = defaultRowRouteUnavailableReason(row);
+	      if (!reason) return "";
+	      const info = row.route_unavailable;
+	      const pair = [info.provider, info.model].filter(Boolean).join(" / ");
+	      return `<div class="ui-field-msg tone-warn capability-route-unavailable" role="note" title="${esc(pair)}">Configured but cannot run on this computer: ${esc(reason)}</div>`;
 	    }
 	    function defaultRowActionLabel(row) {
 	      if (row?.covered_by === "input.text") return row?.overrideable ? "Override" : "Covered by input.text";
@@ -8662,14 +8700,46 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      btn.onclick = () => downloadRecommended(btn, gaps);
 	      el.append(btn);
 	    }
+	    // A plan row whose CONFIGURED route cannot run on this host and that
+	    // this apply did not change (AbstractCore `route_unavailable` on the
+	    // entry): `kept` without force, `unavailable` when nothing recommended
+	    // runs here either. Such a route is never reported as fine, and it is
+	    // what the forced pass would replace (`overwrite`) or clear (`cleared`).
+	    // A route a user INHERITS from the gateway store (the gateway stamps
+	    // `route_unavailable.inherited` on a per-user apply) is flagged too, but
+	    // only an admin can change it: the forced pass is not offered for it.
+	    function appliedRecommendedBrokenRows(report) {
+	      return ((report && report.routes) || []).filter((r) => r.route_unavailable && !r.changed);
+	    }
+	    function appliedRecommendedFixableRows(report) {
+	      return appliedRecommendedBrokenRows(report).filter((r) => !r.route_unavailable.inherited);
+	    }
 	    function describeAppliedRecommended(report) {
 	      const rows = (report && report.routes) || [];
 	      const pair = (row) => `${(row || {}).provider || "-"}/${(row || {}).model || "-"}`;
-	      const changed = rows.filter((r) => r.changed);
+	      const brokenWhy = (r) => (r.route_unavailable && r.route_unavailable.reason ? `; cannot run on this computer: ${r.route_unavailable.reason}` : "");
+	      // `cleared` (force, nothing recommended runs here and the configured
+	      // route cannot run either; AbstractCore also counts it, `cleared`):
+	      // the route is now unset, said as such, never as "x -> -/-". Core
+	      // clears only a flagged route, so the entry always carries the flag.
+	      const changed = rows.filter((r) => r.changed && r.action !== "cleared");
+	      const cleared = rows.filter((r) => r.action === "cleared");
 	      const kept = rows.filter((r) => r.action === "kept");
+	      // HOST-AWARE RECOMMENDATIONS (AbstractCore `plan_recommended_capability_defaults`):
+	      // a recommended route whose engine cannot run on this host (MLX-Gen
+	      // images off Apple silicon) comes back as `action: "unavailable"` with
+	      // a `reason`, and is never written. Ignoring it made a Linux host read
+	      // "every recommended route already matched" while output.image stayed
+	      // empty. Absent on an older AbstractCore: nothing changes.
+	      const unavailable = rows.filter((r) => r.action === "unavailable");
 	      const parts = [];
 	      if (changed.length) parts.push(changed.map((r) => `${r.key}: ${pair(r.before)} \u2192 ${pair(r.after)}`).join("; "));
-	      if (kept.length) parts.push(`kept yours on ${kept.map((r) => `${r.key} (${pair(r.before)})`).join(", ")}`);
+	      if (cleared.length) parts.push(cleared.map((r) => `${r.key}: removed ${pair(r.before)} \u2014 cannot run on this computer: ${r.route_unavailable.reason}`).join("; "));
+	      if (kept.length) parts.push(`kept yours on ${kept.map((r) => `${r.key} (${pair(r.before)}${brokenWhy(r)})`).join(", ")}`);
+	      if (unavailable.length) {
+	        parts.push(`${unavailable.length === 1 ? "1 route has" : `${unavailable.length} routes have`} no recommendation this computer can run: `
+	          + unavailable.map((r) => `${r.key}${r.reason ? ` \u2014 ${r.reason}` : ""}${r.route_unavailable ? ` (configured ${pair(r.route_unavailable)} cannot run here either${r.route_unavailable.inherited ? `; ${r.route_unavailable.note}` : ""})` : ""}`).join("; "));
+	      }
 	      if (!parts.length) parts.push("every recommended route already matched");
 	      return parts.join(" \u00b7 ");
 	    }
@@ -8692,12 +8762,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        });
 	        const report = res.applied_recommended || {};
 	        msg.textContent = describeAppliedRecommended(report);
-	        msg.className = "message ok";
+	        // A route left unset because nothing recommended runs here is not a
+	        // success to celebrate: plain, not `ok`, when any row says so.
+	        // ...nor is a configured route left in place that cannot run here.
+	        const broken = appliedRecommendedBrokenRows(report);
+	        msg.className = broken.length || (report.routes || []).some((r) => r.action === "unavailable") ? "message" : "message ok";
 	        const kept = (report.routes || []).filter((r) => r.action === "kept");
-	        if (kept.length && !force) {
+	        // The forced pass replaces what was kept and clears a broken route
+	        // nothing recommended can replace; offered for either.
+	        if ((kept.length || appliedRecommendedFixableRows(report).length) && !force) {
 	          const again = document.createElement("button");
 	          again.className = "secondary";
-	          again.innerHTML = `<span class="button-icon" aria-hidden="true">\u267b</span><span>Replace mine too</span>`;
+	          again.innerHTML = `<span class="button-icon" aria-hidden="true">\u267b</span><span>${kept.length ? "Replace mine too" : "Clear what cannot run here"}</span>`;
 	          again.onclick = () => applyRecommendedDefaults(again, true);
 	          msg.append(document.createTextNode(" "));
 	          msg.append(again);
@@ -10462,7 +10538,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <td>${row.model ? `<span class="ui-ellip" title="${esc(row.model)}">${esc(row.model)}</span>` + reasoningBadge : "-"}</td>
 	          <td>${weightsCellMarkup(row)}</td>
 	          <td>${source ? `<span class="badge">${esc(source)}</span>` : "-"}</td>
-	          <td><span class="state-pill ${esc(status.cls)}">${esc(status.label)}</span></td>
+	          <td><span class="state-pill ${esc(status.cls)}">${esc(status.label)}</span>${defaultRowUnavailableMarkup(row)}${defaultRowRouteUnavailableMarkup(row)}</td>
 	        `;
 	        const actions = document.createElement("td");
 	        actions.className = "actions";
@@ -10560,13 +10636,40 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (sandboxRouteMode(key) === "text") return "Text Chat";
 	      return `${key} - ${defaultRowCapability(row)}`;
 	    }
+	    // THE SERVER'S RESOLUTION, NOT A SECOND ONE. The image/video lanes post
+	    // to /runs/{id}/images|videos/generate, which hand the request to
+	    // AbstractCore's `resolve_capability_default_route`: the exact task row
+	    // (`output.image.text_to_image`) when it is configured, otherwise the
+	    // modality cell (`output.image`), the first of the two that carries any
+	    // field. A fresh install writes `output.image` alone, so reading only the
+	    // task row called a working route "not configured". Rule, mirrored here:
+	    //   task row has provider+model            -> the task row
+	    //   task row has other fields only         -> the task row (Core stops
+	    //                                            there; no provider+model = not ready)
+	    //   task row empty, parent has provider+model -> the parent's values
+	    //   otherwise                              -> not configured
+	    function sandboxEffectiveRow(row) {
+	      if (!row || defaultRowConfigured(row) || row.configured) return row;
+	      const parentKey = defaultRowParentKey(row);
+	      if (!parentKey) return row;
+	      const parent = findDefaultRow(state.defaults, parentKey);
+	      if (!defaultRowConfigured(parent)) return row;
+	      return {
+	        ...row,
+	        provider: parent.provider,
+	        model: parent.model,
+	        base_url: parent.base_url,
+	        options: parent.options || {},
+	        inherited_from: parentKey,
+	      };
+	    }
 	    function sandboxCandidateRows() {
 	      const wanted = new Set(["input.text", "output.text", "output.image.text_to_image", "output.voice", "output.sound", "output.music", "output.video.text_to_video"]);
 	      const byKey = new Map();
 	      for (const row of state.defaults || []) {
 	        if (!visibleCapabilityDefaultRow(row)) continue;
 	        const key = defaultRowKey(row);
-	        if (wanted.has(key) && !byKey.has(key)) byKey.set(key, row);
+	        if (wanted.has(key) && !byKey.has(key)) byKey.set(key, sandboxEffectiveRow(row));
 	      }
 	      const textRow = byKey.get("input.text") || byKey.get("output.text") || { key: "input.text", kind: "input", modality: "text", label: "Text Chat" };
 	      const ordered = [textRow];
@@ -10664,7 +10767,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const configured = defaultRowConfigured(row);
 	      const prov = row.provider ? (state.providerLabels.get(row.provider) || row.provider) : "";
 	      $("sandbox-context").textContent = configured
-	        ? `${sandboxRouteLabel(row)} will use ${prov} / ${row.model}.`
+	        ? `${sandboxRouteLabel(row)} will use ${prov} / ${row.model}${row.inherited_from ? ` (inherited from ${row.inherited_from})` : ""}.`
 	        : `${sandboxRouteLabel(row)} is not configured yet. Configure it in Multimodal Capabilities first.`;
 	      const prompt = $("sandbox-prompt");
 	      if (prompt) {
@@ -10996,11 +11099,27 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      target.scrollTop = target.scrollHeight;
 	      return true;
 	    }
-	    function sandboxRunId() {
+	    // ONE SANDBOX SESSION, ONE OWNER RUN. POST /attachments/upload takes a
+	    // SESSION id and stores under its owner run `session_memory_<session_id>`
+	    // (routes/gateway.py `_session_memory_run_id`); the media routes take
+	    // that owner RUN id. Uploading with the run id as `session_id` filed
+	    // attachments under `session_memory_session_memory_...`, a second owner
+	    // run the sandbox's generations never saw.
+	    // ONE ALPHABET WITH THE SERVER. A session-memory owner run id must match
+	    // routes/gateway.py `_SAFE_RUN_ID_PATTERN` (^[a-zA-Z0-9_-]+$): the media
+	    // and voice routes create `session_memory_<id>` owner runs only for such
+	    // ids (anything else is a 404), and `_session_memory_run_id` hashes a
+	    // session id outside it. Principal ids may carry `:`, so each part is
+	    // folded to that alphabet here, never passed through.
+	    function sessionMemoryIdPart(value, fallback) {
+	      return String(value || fallback).toLowerCase().replace(/[^a-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") || fallback;
+	    }
+	    function sandboxSessionId() {
 	      const p = state.principal || {};
-	      const tenant = String(p.tenant_id || "default").toLowerCase().replace(/[^a-z0-9_:-]+/g, "_").replace(/^_+|_+$/g, "") || "default";
-	      const user = String(p.user_id || p.runtime_id || "user").toLowerCase().replace(/[^a-z0-9_:-]+/g, "_").replace(/^_+|_+$/g, "") || "user";
-	      return `session_memory_gateway_console_sandbox_${tenant}_${user}`;
+	      return `gateway_console_sandbox_${sessionMemoryIdPart(p.tenant_id, "default")}_${sessionMemoryIdPart(p.user_id || p.runtime_id, "user")}`;
+	    }
+	    function sandboxRunId() {
+	      return `session_memory_${sandboxSessionId()}`;
 	    }
 	    function sandboxRequestId() {
 	      return `sandbox_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
@@ -11008,7 +11127,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    async function uploadSandboxFile(file) {
 	      if (typeof FormData === "undefined") throw new Error("This browser does not support file uploads.");
 	      const form = new FormData();
-	      form.append("session_id", sandboxRunId());
+	      form.append("session_id", sandboxSessionId());
 	      form.append("file", file);
 	      form.append("filename", file?.name || "upload.bin");
 	      if (file?.type) form.append("content_type", file.type);
@@ -11820,6 +11939,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function firstRunTiles(tiles) {
       return `<dl class="first-run-tiles">${tiles.map(([k, v, sub]) => `<div class="first-run-tile"><dt>${esc(k)}</dt><dd>${v}${sub ? `<div class="ui-sub">${sub}</div>` : ""}</dd></div>`).join("")}</dl>`;
     }
+    // /host/state's `host` block is AbstractCore's host identity
+    // ({host_id, host_name, kind}: utils/hostinfo.get_host_identity); it has
+    // no OS field. The one OS fact in the payload is the gateway's service
+    // block, `gateway.service.platform` (os_service.service_status ->
+    // host_paths.normalize_platform: darwin | windows | linux, any other
+    // POSIX reported as linux). Unknown value: no sub-line, never a guess.
+    function firstRunOsLabel(platform) {
+      return { darwin: "macOS", windows: "Windows", linux: "Linux" }[String(platform || "").trim().toLowerCase()] || "";
+    }
     async function loadFirstRunWelcome() {
       const box = $("first-run-host-summary");
       box.innerHTML = `<div class="ui-empty">Looking at this computer...</div>`;
@@ -11836,7 +11964,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const svc = gw.service || {};
       const dataDir = String(gw.data_dir || "?");
       box.innerHTML = firstRunTiles([
-        ["Computer", esc(host.hostname || host.name || CORE_CONSOLE.hostName || "This computer"), esc(host.os || host.platform || "")],
+        ["Computer", esc(host.host_name || CORE_CONSOLE.hostName || "This computer"), esc(firstRunOsLabel(svc.platform))],
         ["Memory", esc(typeof ram.total_bytes === "number" ? _fmtBytes(ram.total_bytes) : "Unknown"), "Available to models and apps"],
         ["Graphics", esc(gpus.length ? gpus.join(", ") : "None detected"), gpus.length ? "Used to run local models" : "Models run on the processor"],
         ["Data folder", `<code class="ui-ellip is-block" title="${esc(dataDir)}">${esc(dataDir)}</code>`, `Runs, workflows and settings live here <span class="ui-advanced">(${esc(gw.data_dir_source || "?")})</span>`],
@@ -11881,7 +12009,52 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       "input.audio": { mark: "Mi", title: "Transcription", what: "Turns speech into text" },
       "output.image": { mark: "Im", title: "Images", what: "Creates pictures from a description" },
       "input.image": { mark: "Vi", title: "Vision", what: "Understands pictures" },
+      "output.video": { mark: "Vd", title: "Video", what: "Creates short videos from a description or a picture" },
     };
+    // A route this host cannot run gets a card with AbstractCore's reason and
+    // no Download button (nothing here can fetch a model that cannot run):
+    //   `recommendation_unavailable` an UNSET route whose recommended engine
+    //                                cannot run here (MLX-Gen images on Linux);
+    //                                it has no download, so `plan.recommended`
+    //                                never lists it and the guide stayed silent
+    //   `route_unavailable`          a CONFIGURED route whose provider cannot
+    //                                run here (the same route carried over from
+    //                                a Mac); calls to it fail until it changes
+    // A route the download plan already lists gets no second card: its own
+    // card carries the warning (`firstRunRouteUnavailableAlert`).
+    function firstRunUnavailableCards(recommendedRows) {
+      const listed = new Set((recommendedRows || []).map((r) => r && r.route).filter(Boolean));
+      // A derived row (`output.text` <- `input.text`) carries its source's
+      // flag; the source row has the card.
+      return (state.defaults || []).filter((row) => !row.derived_from && !listed.has(defaultRowKey(row)) && (defaultRowRouteUnavailableReason(row) || defaultRowUnavailableReason(row))).map((row) => {
+        const key = defaultRowKey(row);
+        const broken = Boolean(defaultRowRouteUnavailableReason(row));
+        const info = broken ? row.route_unavailable : row.recommendation_unavailable;
+        const reason = broken ? defaultRowRouteUnavailableReason(row) : defaultRowUnavailableReason(row);
+        const copy = FIRST_RUN_ROUTE_COPY[key] || { mark: "AI", title: key || "Model", what: "" };
+        const provider = state.providerLabels.get(info.provider) || info.provider || "";
+        const pill = broken ? uiPill("Cannot run here", "warn", reason) : uiPill("Not available here", "muted", reason);
+        const factLabel = broken ? "Configured" : "Recommended elsewhere";
+        return `<article class="ui-card ${broken ? "first-run-route-unavailable" : "first-run-unavailable"}"><div class="ui-card__head"><span class="ui-mark" aria-hidden="true">${esc(copy.mark)}</span>`
+          + `<div class="ui-card__titles"><div class="ui-card__title">${esc(copy.title)}</div><span class="ui-card__status">${pill}</span></div></div>`
+          + `<div class="ui-card__blurb">${esc(copy.what)}</div>`
+          + `<div class="ui-card__body">`
+          + (broken ? `<div class="ui-alert tone-warn" role="note"><span>Configured but cannot run on this computer: ${esc(reason)}</span></div>` : `<p class="ui-card__note">${esc(reason)}</p>`)
+          + `<ul class="ui-facts">${provider ? `<li${broken ? "" : ` class="ui-advanced"`}>${factLabel}: <b>${esc(provider)}</b> <code class="ui-ellip" title="${esc(info.model || "")}">${esc(info.model || "")}</code></li>` : ""}<li class="ui-advanced">Route <code>${esc(key)}</code></li></ul></div>`
+          + `<div class="ui-card__actions"></div>`
+          + `<div class="ui-card__tech"></div>`
+          + `</article>`;
+      }).join("");
+    }
+    // The warning a recommended-download card carries when its route is
+    // configured with a provider this host cannot run (`route_unavailable`).
+    function firstRunRouteUnavailableAlert(route) {
+      const row = findDefaultRow(state.defaults, route);
+      const reason = defaultRowRouteUnavailableReason(row);
+      if (!reason) return "";
+      const pair = [row.route_unavailable.provider, row.route_unavailable.model].filter(Boolean).join(" / ");
+      return `<div class="ui-alert tone-warn capability-route-unavailable" role="note"><span>Configured now${pair ? ` (${esc(pair)})` : ""} but cannot run on this computer: ${esc(reason)}</span></div>`;
+    }
     function firstRunCap(text) { const t = String(text || ""); return t ? t.charAt(0).toUpperCase() + t.slice(1) : t; }
     function renderFirstRunModel() {
       if (!firstRun.open || firstRun.step !== "model") return;
@@ -11938,11 +12111,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           // AbstractCore's fit estimate doubts the pick: say so on the card
           // (the recommendation itself never switches model on its own).
           + (r.warning ? `<div class="ui-alert tone-warn" role="note"><span>${esc(r.warning)}</span></div>` : "")
+          + firstRunRouteUnavailableAlert(r.route)
           + body + `</div>`
           + `<div class="ui-card__actions">${cancel}${canDownload ? `<button class="ui-btn is-primary first-run-download" data-provider="${esc(r.provider)}" data-artifact="${esc(r.artifact)}">Download</button>` : ""}</div>`
           + `<div class="ui-card__tech"></div>`
           + `</article>`;
-      }).join("");
+      }).join("") + firstRunUnavailableCards(rows);
       // "Download all" = N's ONE parent job (`grp_…`): its card (overall bar,
       // bytes/ETA, one row per model, Cancel per model + Cancel all) sits
       // above the per-model cards while it runs and after it ends.
@@ -11951,10 +12125,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const canDownloadAll = rows.some((r) => r.status === "absent" && !dlActive(state.downloadJobs.get(downloadJobKey(r.provider, r.artifact)))) && !dlActive(group);
       box.innerHTML = `<div class="ui-section-title"><h3>Recommended for this computer</h3><span class="ui-sub">${current ? `Text model now: <b>${esc(current)}</b>` : "No text model is set yet."}</span></div>`
         + groupBox
-        + (rows.length ? `<div class="ui-card-grid is-fit is-aligned">${cards}</div>` : `<div class="ui-empty">This gateway reported no recommended downloads.</div>`)
+        + (cards ? `<div class="ui-card-grid is-fit is-aligned">${cards}</div>` : `<div class="ui-empty">This gateway reported no recommended downloads.</div>`)
         + `<div class="ui-toolbar"><button id="first-run-apply-recommended" class="ui-btn is-primary">Use recommended defaults</button>`
         + (canDownloadAll ? `<button id="first-run-download-all" class="ui-btn is-ghost">Download all</button>` : "")
-        + `<span>Sets the recommended models for text, voice and images. Choices you already made are kept.</span>`
+        + `<span>Sets the recommended models for text, voice, images and video, where this computer can run them. Choices you already made are kept.</span>`
         + `<span class="ui-advanced">CLI: <code>abstractgateway-config defaults</code>, <code>abstractcore models download --recommended</code></span></div>`;
       $("first-run-apply-recommended").onclick = async () => {
         await applyRecommendedDefaults($("first-run-apply-recommended"), false);
@@ -12274,9 +12448,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     }
 	    function voiceTestRunId() {
 	      const p = state.principal || {};
-	      const tenant = String(p.tenant_id || "default").toLowerCase().replace(/[^a-z0-9_:-]+/g, "_").replace(/^_+|_+$/g, "") || "default";
-	      const user = String(p.user_id || p.runtime_id || "user").toLowerCase().replace(/[^a-z0-9_:-]+/g, "_").replace(/^_+|_+$/g, "") || "user";
-	      return `session_memory_gateway_console_voicetest_${tenant}_${user}`;
+	      return `session_memory_gateway_console_voicetest_${sessionMemoryIdPart(p.tenant_id, "default")}_${sessionMemoryIdPart(p.user_id || p.runtime_id, "user")}`;
 	    }
 	    async function testDefault() {
 	      // Single-flight: the button disables while one test runs — repeated

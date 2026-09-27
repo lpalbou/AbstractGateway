@@ -53,7 +53,7 @@ The guide has five steps. Every step is optional:
 |---|---|
 | Welcome | This machine (memory, GPU), the data folder and why it was chosen, the sign-in mode, whether the gateway starts at login |
 | Local engines | The engines found on this machine (Ollama, LM Studio, MLX, llama.cpp, ...), whether each is installed and running, and an **Install** button. The confirmation shows the exact command before anything runs |
-| Default model | The text model currently configured, **Use recommended defaults** (the same action as the Multimodal tab's *Apply recommended*), a **Download** button for each recommended model that is missing, and the Models tab's catalog cards with **Fits this computer** on (one card per model, every 4-bit and 8-bit build, filters, **Open in the Models tab**). A downloaded text model's **Use as default** makes it the default text model |
+| Default model | The text model currently configured, **Use recommended defaults** (the same action as the Multimodal tab's *Apply recommended*: text, voice, images and video, where this computer can run them), a **Download** button for each recommended model that is missing, a card with the reason for each route this computer cannot run (*Not available here* for a recommendation, *Cannot run here* for a route already configured with a provider that does not run on this computer), and the Models tab's catalog cards with **Fits this computer** on (one card per model, every 4-bit and 8-bit build, filters, **Open in the Models tab**). A downloaded text model's **Use as default** makes it the default text model |
 | Apps | "Apps that work with this gateway": one card per browser app (Observer, Continuum, Code, Entity, Flow Editor), then the desktop **Assistant**: name, status, one line of description and one row of buttons at the same height on every card: **Install** when it is not installed (on Code it installs the terminal app too, when a ready-made download exists for this computer; nothing opens by itself), then **Open** (Open also starts a stopped app), plus **Open in Terminal** on Code when its terminal app is installed. The Assistant opens on the gateway's computer only. Stop, Show log, Update, versions and commands appear with **Technical details** (see [console.md](docs/console.md#apps-tab)) |
 | Done | How to reopen the console, the login-service status, one line saying the console also exists as a terminal app, and (with **Technical details**) the CLI equivalents and the terminal console's install and open commands |
 
@@ -1265,6 +1265,24 @@ modality row, and a modality row that is unset while every task row beneath it
 is configured shows `not needed` rather than `not configured` — nothing can
 reach it in that state. It stays editable, because setting it is still the
 one-value-for-everything path.
+
+Two row states come from AbstractCore's host check:
+
+- An **unset** row whose recommended engine cannot run on this host
+  (`recommendation_unavailable`, for example MLX-Gen images or video off Apple
+  silicon, or the video model on a Mac without enough memory) stays
+  `not configured` and says why under the pill.
+- A **configured** row whose provider cannot run on this host
+  (`route_unavailable`, for example an MLX-Gen image route carried over from a
+  Mac to Linux) shows `cannot run here` instead of `configured`, with the
+  reason. Calls to it fail until you choose another provider for the route.
+  With user accounts on, a user who inherits such a route from the gateway
+  store sees it flagged in the *Apply recommended* result as "inherited from
+  the gateway store (admin)": only an admin can change it, and the forced
+  pass never removes it.
+
+The setup guide's model step shows the same two states as cards with the
+reason and no **Download** button.
 
 `input.text` is the canonical text LLM route. `output.text` is reported as a
 read-only derived view of `input.text`, and CLI/API writes to `output.text` are
@@ -5111,7 +5129,7 @@ downloads are the gateway's own jobs (see [Model downloads](docs/model-downloads
 
 - The card header: the model's name, organisation, parameter count and
   licence, its capabilities (Text, Thinking, Tools, Vision, Audio, Embedding,
-  Voice, Image) and a **Starter** badge for the models of the recommended
+  Voice, Image, Video) and a **Starter** badge for the models of the recommended
   starter set.
 - The card body: one row per downloadable build (artifact) of that model: the
   provider (MLX, Ollama, LM Studio, Hugging Face, ...), the artifact id (long
@@ -7605,6 +7623,25 @@ AbstractRuntime version is raised to that release when this version is published
   save; publishing writes them into the bundle manifest, and `/bundles`, `/bundles/{id}` and
   the shared catalog return them.
 
+- **Web console: video and routes this computer cannot run.**
+  - The Models catalog has a **Video** capability filter, and MLX-Gen is labelled "MLX images &
+    video". The setup guide's model step has a **Video** card, and "Apply recommended" covers
+    text, voice, images and video where this computer can run them.
+  - A route AbstractCore recommends but this computer cannot run (for example MLX-Gen images off
+    Apple silicon, or the video model on a Mac without enough memory) says why on its
+    Multimodal row and gets a *Not available here* card in the setup guide, with no Download.
+  - A route already configured with a provider this computer cannot run (AbstractCore's
+    `route_unavailable`, for example an MLX image route carried over from a Mac to Linux) shows
+    *cannot run here* with the reason on its row, and a warning or a *Cannot run here* card in
+    the setup guide.
+  - The "Apply recommended" result names the routes nothing recommended can run, the configured
+    routes that cannot run, and routes the forced pass removed ("removed … — cannot run on this
+    computer: …"); it is not shown as a success while a broken route remains, and offers the
+    forced pass ("Replace mine too" / "Clear what cannot run here").
+  - Per-user apply: a broken route a user inherits from the gateway store is flagged in the
+    report (`route_unavailable` with `inherited: true` and the note "inherited from the gateway
+    store (admin)"); only an admin can change it, so no forced pass is offered for it.
+
 ### Changed
 
 - Automation list rows carry `workspace_root` (the automation's folder), so apps can open it
@@ -7637,6 +7674,16 @@ AbstractRuntime version is raised to that release when this version is published
 - Run commands (`pause`, `cancel`, …) sent to an automation's id are refused with 409
   `invalid_state` and a pointer to the `automation.*` commands.
 - A scheduled run listed by `GET /api/gateway/runs` reports `is_scheduled: true`.
+- Web console: the catalog's **Use as default** sets exactly the chosen model; the previous text
+  route's server address, reasoning effort and options used to stay, pointing a new provider at
+  the old server's port.
+- Web console: Sandbox generations and the voice test work for accounts whose tenant or user id
+  contains `:` (they answered "Run not found"), and Sandbox uploads are filed with the Sandbox's
+  own conversation (they went to a second, unused one).
+- Web console: the Sandbox image and video lanes use the image or video route when only that is
+  set (a fresh install), as generation does, instead of calling them not configured.
+- Web console: the setup guide's Computer tile shows this computer's name and its operating
+  system.
 
 ## [0.5.1] - 2026-09-26
 

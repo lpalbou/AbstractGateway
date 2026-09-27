@@ -166,8 +166,8 @@ CATALOG_JS = r"""
     const MC_QUANT_LABEL = { "2bit": "2-bit", "3bit": "3-bit", "4bit": "4-bit", "5bit": "5-bit", "6bit": "6-bit", "8bit": "8-bit", "16bit": "16-bit", full: "Full precision", unknown: "Not stated" };
     const MC_QUANT_CHIPS = [["all", "All"], ["4bit", "4-bit"], ["8bit", "8-bit"], ["other", "Other"]];
     const MC_STATUS_CHIPS = [["all", "All"], ["downloaded", "Downloaded"], ["not_downloaded", "Not downloaded"]];
-    const MC_CAPS = [["text", "Text"], ["thinking", "Thinking"], ["tools", "Tools"], ["vision", "Vision"], ["audio", "Audio"], ["embedding", "Embedding"], ["voice", "Voice"], ["image", "Image"]];
-    const MC_PROVIDER_LABEL = { ollama: "Ollama", lmstudio: "LM Studio", mlx: "MLX", "mlx-gen": "MLX images", "mlx-vlm": "MLX vision", huggingface: "Hugging Face", diffusers: "Diffusers", supertonic: "Supertonic", llamacpp: "llama.cpp" };
+    const MC_CAPS = [["text", "Text"], ["thinking", "Thinking"], ["tools", "Tools"], ["vision", "Vision"], ["audio", "Audio"], ["embedding", "Embedding"], ["voice", "Voice"], ["image", "Image"], ["video", "Video"]];
+    const MC_PROVIDER_LABEL = { ollama: "Ollama", lmstudio: "LM Studio", mlx: "MLX", "mlx-gen": "MLX images & video", "mlx-vlm": "MLX vision", huggingface: "Hugging Face", diffusers: "Diffusers", supertonic: "Supertonic", llamacpp: "llama.cpp" };
     const MC_WEIGHTS = { installed: ["Downloaded", "ok"], absent: ["Not downloaded", "muted"], unknown: ["Unknown", "muted"], not_applicable: ["Remote", "muted"] };
     const MC_FIT = { fits: ["Fits", "ok"], tight: ["Tight", "warn"], partial_offload: ["Partial offload", "warn"], too_large: ["Too large", "err"], unknown: ["Fit unknown", "muted"] };
     const MC_ENGINE_PROVIDER = { mlx: "mlx", ollama: "ollama", lmstudio: "lmstudio", huggingface: "huggingface", llamacpp: "huggingface" };
@@ -272,6 +272,7 @@ CATALOG_JS = r"""
       if (c.embedding === true) out.push("embedding");
       if (c.speech_synthesis === true) out.push("voice");
       if (c.image_generation === true) out.push("image");
+      if (c.video_generation === true) out.push("video");
       return out;
     }
     function mcProviderLabel(p) { return MC_PROVIDER_LABEL[p] || String(p || ""); }
@@ -742,7 +743,12 @@ CATALOG_JS = r"""
       const model = servedModelId(provider, artifact);
       if (btn) { btn.disabled = true; btn.textContent = "Saving..."; }
       try {
-        await api("/api/gateway/config/capability-defaults/output/text", { slow: true, method: "PUT", body: JSON.stringify({ provider, model }) });
+        // EXACTLY THE CHOSEN MODEL. The gateway merges a route save field by
+        // field (core_config `_merge_over_stored_route`: an unnamed field keeps
+        // its stored value, "" / {} clear it), so {provider, model} alone kept
+        // the previous route's base_url, reasoning and options: a new provider
+        // pointed at the old server's port. The terminal console sends the same.
+        await api("/api/gateway/config/capability-defaults/output/text", { slow: true, method: "PUT", body: JSON.stringify({ provider, model, base_url: "", reasoning: "", options: {} }) });
         const text = `Default text model: ${mcProviderLabel(provider)} · ${model}.`;
         view.message = { tone: "ok", text };
         if (view.guide) { $("first-run-message").textContent = text; $("first-run-message").className = "message ok"; }

@@ -485,6 +485,9 @@ def apply_recommended_gateway_capability_defaults(
         )
 
     scoped_config_path = _writable_scoped_core_config_path(base_dir)
+    # The routes THIS scope overrides, read before the apply: every other key
+    # is inherited from the gateway store below the overlay.
+    own_keys = set(_load_configured_routes_from_core_config(scoped_config_path)) if scoped_config_path is not None else None
     report = config_facade.apply_recommended_capability_defaults(
         only=list(only) if only else None,
         force=bool(force),
@@ -493,8 +496,44 @@ def apply_recommended_gateway_capability_defaults(
         apply_env=scoped_config_path is None,
     )
     payload = dict(gateway_capability_defaults_payload(base_dir=base_dir))
+    if own_keys is not None:
+        report = _stamp_inherited_route_unavailable(report, own_keys=own_keys, grid=payload.get("routes"))
     payload["applied_recommended"] = report
     return payload
+
+
+INHERITED_ROUTE_NOTE = "inherited from the gateway store (admin)"
+
+
+def _stamp_inherited_route_unavailable(report: Any, *, own_keys: set, grid: Any) -> Any:
+    """Flag the broken routes a per-user apply could not see.
+
+    AbstractCore plans against the file it is given -- here the user's overlay
+    -- so a route the user INHERITS from the gateway store is `before: {}` in
+    the report, even when the merged grid (overlay over store) flags it
+    `route_unavailable`. Without this the grid said "cannot run here" while the
+    apply report called the route empty, and nothing said why `force` left it.
+
+    Only rows this apply did NOT change are stamped: a written recommendation
+    now overrides the inherited route for this user. The stamp carries
+    `inherited: true` and a note, because only an admin can change the store
+    route; the report never offers or claims to clear it (AbstractCore clears
+    only a route it planned as broken, which an inherited one never is).
+    """
+
+    if not isinstance(report, dict) or not isinstance(report.get("routes"), list):
+        return report
+    flags: Dict[str, Dict[str, Any]] = {}
+    for row in grid if isinstance(grid, list) else []:
+        if isinstance(row, dict) and isinstance(row.get("route_unavailable"), dict):
+            flags.setdefault(_row_key(row), row["route_unavailable"])
+    routes = []
+    for entry in report["routes"]:
+        key = entry.get("key") if isinstance(entry, dict) else None
+        if key and key not in own_keys and not entry.get("changed") and key in flags:
+            entry = dict(entry, route_unavailable=dict(flags[key], inherited=True, note=INHERITED_ROUTE_NOTE))
+        routes.append(entry)
+    return dict(report, routes=routes)
 
 
 def capability_default_rows(*, base_dir: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
