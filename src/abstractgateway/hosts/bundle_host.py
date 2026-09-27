@@ -1686,6 +1686,18 @@ class WorkflowBundleGatewayHost:
                 specs[str(spec.workflow_id)] = spec
                 event_listener_specs_by_root.setdefault(flow_id, []).append(str(spec.workflow_id))
 
+        # Automations v1 (contracts C5/D): every host serves the shipped
+        # automation controller under its PINNED versioned workflow id
+        # (`abstractframework.automation-controller@1.0.0:controller`), so the
+        # runner ticks controller runs like any run, also after a restart. It
+        # is registered as a workflow, not loaded as a bundle, so it never
+        # shows in bundle listings. A missing or wrong packaged controller
+        # raises here: a gateway without it must not come up half-working.
+        from abstractruntime.automations.bundle import register_controller_bundle
+
+        controller_spec = register_controller_bundle(wf_reg)
+        specs[str(controller_spec.workflow_id)] = controller_spec
+
         _install_catalog_subworkflow_guard(
             runtime=runtime,
             catalog_root_data_dir=catalog_root,
@@ -2021,6 +2033,34 @@ class WorkflowBundleGatewayHost:
         rec = ((self.skipped_bundles or {}).get(str(bundle_id or "")) or {}).get(str(bundle_version or ""))
         return dict(rec) if isinstance(rec, dict) else None
 
+    def _seed_session_history_strict(
+        self,
+        *,
+        vars0: Dict[str, Any],
+        rt_ns: Dict[str, Any],
+        session_id: str,
+        attribution: Dict[str, Any],
+    ) -> None:
+        """Strict seeding for automation / discussion sessions: no fallback."""
+        from abstractruntime.session_history import session_chat_messages
+
+        ctx0 = vars0.get("context")
+        if ctx0 is not None and not isinstance(ctx0, dict):
+            raise ValueError("client context must be an object in an automation or discussion session")
+        existing = ctx0.get("messages") if isinstance(ctx0, dict) else None
+        if isinstance(existing, list) and existing:
+            raise ValueError("an automation or discussion session is seeded by the gateway; do not send context.messages")
+        messages = session_chat_messages(
+            run_store=self.runtime.run_store,
+            ledger_store=self.runtime.ledger_store,
+            artifact_store=self.runtime.artifact_store,
+            session_id=session_id,
+            automation_id=attribution.get("automation_id") if attribution.get("kind") == "automation" else None,
+            strict=True,
+        )
+        self._normalize_seeded_context(vars0, ctx0, messages=messages)
+        rt_ns["session_history"] = {"seeded": len(messages), "strict": True, "session_kind": attribution.get("kind")}
+
     def _seed_session_history(
         self,
         *,
@@ -2035,7 +2075,19 @@ class WorkflowBundleGatewayHost:
         any failure records a labeled `_runtime.session_history` note and the
         run starts unseeded — replay is a quality-of-answer feature, never a
         start blocker.
+
+        EXCEPT automation and discussion sessions (automations contract C3,
+        amendment 3): their history is read STRICTLY and a failure refuses the
+        start (`SessionHistoryError`) — a discussion turn without its seed, or
+        an automation turn without its prior turns, would answer from the
+        wrong context without saying so.
         """
+        from abstractruntime.core.run_attribution import session_attribution
+
+        attribution = session_attribution(self.runtime.run_store, session_id)
+        if attribution is not None and attribution.get("kind") in ("discussion", "automation"):
+            self._seed_session_history_strict(vars0=vars0, rt_ns=rt_ns, session_id=session_id, attribution=attribution)
+            return
         try:
             ctx0 = vars0.get("context")
             if ctx0 is not None and not isinstance(ctx0, dict):

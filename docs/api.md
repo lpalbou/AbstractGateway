@@ -687,7 +687,7 @@ Commands are appended to a durable inbox and applied asynchronously by the runne
 Request fields (see `SubmitCommandRequest` in `src/abstractgateway/routes/gateway.py`):
 - `command_id`: client-supplied idempotency key (UUID recommended)
 - `run_id`: target run id (or session id for some event use-cases)
-- `type`: `pause|resume|cancel|conclude|emit_event|update_schedule|compact_memory|inject_guidance`, or an `automation.*` type with `run_id` = the automation id ([automations.md](./automations.md#commands))
+- `type`: `pause|resume|cancel|conclude|emit_event|update_schedule|compact_memory|inject_guidance`, or an `automation.*` type with `run_id` = the automation id ([automations.md](./automations.md#commands-through-the-run-command-door))
 - `payload`: command-specific object
 
 ### Pause / cancel

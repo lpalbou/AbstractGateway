@@ -9,8 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Automations (groundwork).** The first gateway pieces of Automations v1, documented in
-  [docs/automations.md](docs/automations.md):
+- **Automations.** Run a workflow again and again on a schedule ("every 2 minutes") or on
+  request, read every run as a chat turn, and get notified only when a run asks for it or
+  fails. Documented in [docs/automations.md](docs/automations.md):
+  - `POST /api/gateway/automations` creates one (a workflow of this gateway or the default
+    agent, a trigger, independent or growing context); `GET /api/gateway/automations` lists
+    them in full pages, older scheduled runs included (`legacy: true`); `GET …/{id}`,
+    `PATCH …/{id}` (revise) and `POST …/{id}/commands` (pause, resume, run now, stop the
+    current run, archive).
+  - `GET …/{id}/occurrences` shows each run with its trigger, the prompt it received, its
+    answer, failures, files and pending questions; `GET …/{id}/attention` pages the
+    notifications you have not seen yet.
+  - `POST …/{id}/discuss` opens a separate conversation about one run, seeded with the
+    automation's conversation so far, that can read but never change the automation's
+    folder; its later turns through `POST /api/gateway/runs/start` stay read-only.
+  - Automations run as ordinary durable runs of the gateway's runner: they survive a
+    restart, and a restart during a run never starts it twice.
+  - `scripts/accept_automations_v1.py` checks the whole feature end to end against a
+    gateway it starts itself.
   - Run lists say how each run belongs to an automation: `GET /api/gateway/runs` rows carry
     `session_kind` (`chat`, `automation`, `occurrence`, `discussion`), `automation_id`, `role`,
     `occurrence_index` and `legacy`, and accept a `session_kind` filter
@@ -23,9 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Workflows can carry `automation_defaults` (trigger, context mode, inputs): saved and returned
     by the flow editor routes, removed by `null`, checked on save, published into the bundle
     manifest and shown by `/bundles`, `/bundles/{id}` and the shared catalog.
-  - `POST /api/gateway/commands` accepts the six `automation.*` commands (revise, pause, resume,
-    run now, stop current, archive) for an automation id; the capabilities document advertises
-    them under `contracts.common.automations`.
+  - `POST /api/gateway/commands` also accepts the six `automation.*` commands for an automation
+    id; the capabilities document advertises the API under `contracts.common.automations`.
   - Errors on the automation routes, including sign-in failures and malformed JSON, all have the
     shape `{"detail": {"reason_code", "message"}}`.
 

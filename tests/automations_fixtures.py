@@ -136,3 +136,93 @@ def save_runs(*runs: Any) -> None:
     store = get_gateway_service().runner.run_store
     for run in runs:
         store.save(run)
+
+
+# --------------------------------------------------------------- live target
+
+
+ECHO_FLOW_ID = "echo"
+ECHO_BUNDLE_ID = "automation-echo"
+
+# Deterministic target (no provider, no tools): answers with the prompt it got
+# and the history it was given, and sets `notify` when its input asks for it.
+_ECHO_CODE = """msgs = (context or {}).get('messages') if isinstance(context, dict) else None
+msgs = msgs if isinstance(msgs, list) else []
+history = [str(m.get('role')) + ':' + str(m.get('content')) for m in msgs if isinstance(m, dict)]
+answer = 'ECHO[' + str(len(history)) + '] ' + str(prompt) + ' || ' + ' | '.join(history)
+out = {'response': answer, 'success': True}
+if notify:
+    out['notify'] = {'title': 'Echo notify', 'body': answer[:200]}
+return out"""
+
+
+def echo_flow() -> dict:
+    return {
+        "id": ECHO_FLOW_ID,
+        "name": "Automation echo",
+        "nodes": [
+            {"id": "start", "type": "on_flow_start", "data": {"nodeType": "on_flow_start", "outputs": [
+                {"id": "exec-out", "label": "", "type": "execution"},
+                {"id": "prompt", "label": "prompt", "type": "string"},
+                {"id": "context", "label": "context", "type": "object"},
+                {"id": "notify", "label": "notify", "type": "boolean"},
+            ]}},
+            {"id": "code", "type": "code", "data": {"nodeType": "code", "codeBody": _ECHO_CODE, "inputs": [
+                {"id": "exec-in", "label": "", "type": "execution"},
+                {"id": "prompt", "label": "prompt", "type": "string"},
+                {"id": "context", "label": "context", "type": "object"},
+                {"id": "notify", "label": "notify", "type": "boolean"},
+            ]}},
+            {"id": "end", "type": "on_flow_end", "data": {"nodeType": "on_flow_end", "inputs": [
+                {"id": "exec-in", "label": "", "type": "execution"},
+                {"id": "result", "label": "result", "type": "object"},
+            ]}},
+        ],
+        "edges": [
+            {"source": "start", "sourceHandle": "exec-out", "target": "code", "targetHandle": "exec-in"},
+            {"source": "code", "sourceHandle": "exec-out", "target": "end", "targetHandle": "exec-in"},
+            {"source": "start", "sourceHandle": "prompt", "target": "code", "targetHandle": "prompt"},
+            {"source": "start", "sourceHandle": "context", "target": "code", "targetHandle": "context"},
+            {"source": "start", "sourceHandle": "notify", "target": "code", "targetHandle": "notify"},
+            {"source": "code", "sourceHandle": "output", "target": "end", "targetHandle": "result"},
+        ],
+        "entryNode": "start",
+    }
+
+
+def write_echo_bundle(bundles_dir: Path, *, automation_defaults: Optional[dict] = None) -> str:
+    import json
+    import zipfile
+
+    bundles_dir.mkdir(parents=True, exist_ok=True)
+    metadata: Dict[str, Any] = {}
+    if automation_defaults is not None:
+        metadata["automation_defaults"] = {ECHO_FLOW_ID: automation_defaults}
+    manifest = {
+        "bundle_format_version": "1",
+        "bundle_id": ECHO_BUNDLE_ID,
+        "bundle_version": "1.0.0",
+        "created_at": "2026-09-27T00:00:00+00:00",
+        "entrypoints": [{"flow_id": ECHO_FLOW_ID, "name": "echo", "description": "", "interfaces": []}],
+        "flows": {ECHO_FLOW_ID: f"flows/{ECHO_FLOW_ID}.json"},
+        "artifacts": {},
+        "assets": {},
+        "metadata": metadata,
+    }
+    with zipfile.ZipFile(bundles_dir / f"{ECHO_BUNDLE_ID}.flow", "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+        zf.writestr(f"flows/{ECHO_FLOW_ID}.json", json.dumps(echo_flow(), indent=2))
+    return f"{ECHO_BUNDLE_ID}@1.0.0"
+
+
+def wait_until(predicate, *, timeout_s: float = 15.0, poll_s: float = 0.1):
+    import time
+
+    end = time.time() + timeout_s
+    last = None
+    while time.time() < end:
+        last = predicate()
+        if last:
+            return last
+        time.sleep(poll_s)
+    raise AssertionError(f"timeout waiting for condition (last={last!r})")

@@ -140,6 +140,7 @@ from ..workflow_catalog import (
 from ..workflow_deprecations import WorkflowDeprecatedError
 from ..automation_command_types import AUTOMATION_COMMAND_TYPES, COMMAND_TYPES
 from ..automation_defaults import manifest_automation_defaults
+from abstractruntime.session_history import SessionHistoryError
 
 
 router = APIRouter(prefix="/gateway", tags=["gateway"])
@@ -8007,6 +8008,55 @@ def _runner_inactive_warning(svc: Any) -> Optional[str]:
     return None
 
 
+def _strip_client_automation_attribution(input_data: Dict[str, Any]) -> None:
+    """A client never sets automation attribution or the read-only mount: those
+    are written by the runtime (controller, discussion) and re-stamped by the
+    gateway for discussion sessions (automations contract C4)."""
+    from abstractruntime.utils.workspace_paths import READ_ONLY_KEY
+
+    input_data.pop(READ_ONLY_KEY, None)
+    runtime_ns = input_data.get("_runtime")
+    if isinstance(runtime_ns, dict):
+        runtime_ns.pop(READ_ONLY_KEY, None)
+    meta = input_data.get("_meta")
+    if isinstance(meta, dict):
+        for key in ("automation", "occurrence", "discussion", "creation_digest"):
+            meta.pop(key, None)
+
+
+def _restamp_discussion_turn(svc: Any, *, session_id: str, input_data: Dict[str, Any]) -> None:
+    """A later turn of a DISCUSSION session (automations contract B/C4): the
+    persisted discussion root is the authority (`session_attribution`; the
+    runtime's `Runtime.start` re-stamps too — this is the entry-point line of
+    defence). The turn gets the root's `_meta.discussion`, the automation's
+    workspace mounted read-only, and strict session history (seed + prior
+    turns). Fails closed: an unresolvable session refuses the start."""
+    from abstractruntime.core.run_attribution import SessionAttributionError, session_attribution
+    from abstractruntime.utils.workspace_paths import READ_ONLY_KEY
+
+    try:
+        attribution = session_attribution(svc.host.run_store, session_id)
+    except SessionAttributionError as e:
+        raise HTTPException(status_code=409, detail={"reason_code": "session_attribution_failed", "message": str(e)})
+    if attribution is None or attribution.get("kind") != "discussion":
+        return
+    workspace_root = attribution.get("workspace_root")
+    if not workspace_root:
+        raise HTTPException(
+            status_code=409,
+            detail={"reason_code": "session_attribution_failed", "message": f"discussion session {session_id} has no workspace root"},
+        )
+    meta = input_data.get("_meta") if isinstance(input_data.get("_meta"), dict) else {}
+    meta["discussion"] = dict(attribution["discussion"])
+    input_data["_meta"] = meta
+    input_data["workspace_root"] = str(workspace_root)
+    input_data.pop("_gateway_workspace", None)
+    input_data[READ_ONLY_KEY] = True
+    runtime_ns = input_data.get("_runtime") if isinstance(input_data.get("_runtime"), dict) else {}
+    input_data["_runtime"] = {**runtime_ns, READ_ONLY_KEY: True}
+    input_data["use_session_history"] = True
+
+
 @router.post("/runs/start", response_model=StartRunResponse)
 async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
     svc = get_gateway_service()
@@ -8052,7 +8102,10 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
         input_data = _strip_client_workflow_policy(dict(req.input_data or {}))
         input_data.pop("_gateway_workspace", None)  # server-written only (below)
         _apply_run_stream_switch(input_data, interactive=True)
+        _strip_client_automation_attribution(input_data)
         input_data = _sanitize_run_workspace_policy(input_data, principal=principal, session_id=session_id)
+        if session_id:
+            _restamp_discussion_turn(svc, session_id=session_id, input_data=input_data)
         input_data = _normalize_run_context_media(input_data)
         thinking = _normalize_gateway_thinking(req.thinking)
         if thinking is not None:
@@ -8159,6 +8212,10 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
         raise
     except WorkflowDeprecatedError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except SessionHistoryError as e:
+        # An automation / discussion session whose history cannot be read
+        # strictly: refused, never started without its context.
+        raise HTTPException(status_code=409, detail={"reason_code": str(getattr(e, "reason_code", "history_unavailable")), "message": str(e)})
     except KeyError as e:
         # Best-effort error message: in bundle mode, KeyError can refer to either a bundle or a flow.
         msg = str(e).strip()

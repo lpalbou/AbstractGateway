@@ -69,6 +69,126 @@ asked. A source installed by another package that fails to load is listed with
 `"available": false` and an `unavailable_reason`; a missing built-in source is
 an error (500 `internal_error`).
 
+## Create an automation
+
+`POST /api/gateway/automations`
+
+```text
+{
+  "request_id": "0b6f…",               // your idempotency key: same request again = same automation
+  "title": "Memory every 2 minutes",
+  "target": {"bundle_ref": "memory-check@1.2.0", "flow_id": "check", "input_data": {"prompt": "Report memory use."}},
+  "trigger": {"source_id": "schedule", "source_version": 1, "config": {"every": "2m"}},
+  "context": {"mode": "independent"},   // or "growing"
+  "policy": {"retry": {"max_attempts": 3}}
+}
+→ {"automation_id": "…", "revision": 1, "summary": {…AutomationSummary}}
+```
+
+- `target` is a workflow this gateway serves: `{bundle_ref, flow_id}` (a
+  version-less `bundle_ref` pins the version loaded now), or
+  `{"flow_id": "@default", "interface": "abstractcode.agent.v1"}` for the
+  gateway's default agent, resolved now. The concrete workflow is stored.
+- `title` and `trigger` may be left out when the target publishes
+  `automation_defaults` (below); the defaults then fill `title`, `trigger`,
+  `context` and the inputs you did not send.
+- `context.mode`: `independent` (default) starts every occurrence fresh;
+  `growing` gives each occurrence the previous occurrences as conversation
+  history (the last 40 messages, 24 000 characters at most).
+- The automation works in its own folder under the gateway's data folder;
+  the gateway's usual protection of the data folder and your credential
+  folders applies to every occurrence.
+- The same `request_id` with a different request → 409 `identity_conflict`.
+
+## List, read, revise, command
+
+| Route | Answer |
+|---|---|
+| `GET /api/gateway/automations?status=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor}`, newest first. Read every page (`next_cursor` until `null`); `changed_since` is refused (422 `unsupported_feature`). |
+| `GET /api/gateway/automations/{id}` | `{definition, active_revision, summary}` |
+| `PATCH /api/gateway/automations/{id}` | `{command_id, expected_revision?, changes: {title?, target?, trigger?, context?, policy?}}` → `CommandReceipt` |
+| `POST /api/gateway/automations/{id}/commands` | `{command_id, type, payload?}` → `CommandReceipt` |
+
+`AutomationSummary`:
+
+```json
+{"automation_id": "…", "title": "…", "status": "active|paused|completed|failed|archived",
+ "trigger": {"binding_id": "…", "source_id": "schedule", "source_version": 1, "config": {…}},
+ "context_mode": "independent", "next_fire_at": "…", "occurrence_count": 6,
+ "last_occurrence": {"run_id", "index", "status", "attempts", "fired_at", "finished_at", "excerpt", "notify"},
+ "attention": {"pending_waits": 0, "unread": false, "unseen_count": 0, "cursor": "att1:3", "items": [], "waits": []},
+ "legacy": false, "revision": 1, "updated_at": "…",
+ "capabilities": ["revise", "pause", "resume", "run_now", "stop_current", "archive", "discuss"],
+ "session_kind": "automation"}
+```
+
+A command is **accepted** when it is queued (`{command_id, accepted, duplicate, seq}`;
+the same `command_id` again answers `duplicate: true` with the first `seq`). The
+automation's history then records whether it was applied or rejected. The door
+already refuses what it can check: a stale `expected_revision` (409
+`revision_conflict`) and invalid `changes` (422).
+
+| Type | Effect |
+|---|---|
+| `automation.pause` | no more scheduled runs; a running occurrence finishes; "run now" still works |
+| `automation.resume` | continues at the next scheduled time; never fires on resume |
+| `automation.run_now` | one run now, even while paused (it stays paused); rejected (`automation_busy`) while one is already running |
+| `automation.revise` | `payload.changes`; used from the next run; a new schedule never fires a past tick |
+| `automation.stop_current` | cancels the running occurrence |
+| `automation.archive` | no more runs; history is kept |
+
+## Occurrences
+
+`GET /api/gateway/automations/{id}/occurrences?cursor=&limit=` → `{items, next_cursor}`,
+newest first:
+
+```text
+{"run_id": "…", "index": 7, "attempts": 1, "fired_at": "…", "finished_at": "…",
+ "status": "completed",          // admitted | running | waiting | backoff | completed | failed | cancelled
+ "trigger": {"source_id": "schedule", "summary": "schedule: every 30 minutes (UTC), tick 5"},
+ "user_turn": "[Trigger schedule@1 · occurrence 7 · fired …]\nTriage my inbox…",
+ "answer": "…", "notify": null,
+ "failure": {"reason_code": "occurrence_failed", "message": "…", "attempts": 3},   // failed rows only
+ "artifacts": [{"artifact_id", "name", "mime_type", "url"}],
+ "waits": [{"run_id", "wait_key", "reason", "prompt", "choices"}],
+ "ledger_url": "/api/gateway/runs/…/ledger", "workspace_url": "/api/gateway/runs/…/workspace"}
+```
+
+`user_turn` and `answer` are the occurrence as a chat turn. An occurrence
+waiting for a person is answered with the ordinary resume command on the
+wait's run: `POST /api/gateway/commands` `{"type": "resume", "run_id": <wait run_id>,
+"payload": {"wait_key": …, "payload": {"response": …}}}`.
+
+### The notify convention
+
+A workflow asks for attention through its OUTPUT: `notify: true` (the title
+is the automation's title, the body the answer) or `notify: {"title": …, "body": …}`.
+Anything else stays quiet: quiet occurrences are listed but raise no
+notification. Failures (after the last retry) always raise one; a person-wait
+is always counted in `attention.pending_waits`. A plain agent workflow that
+must flag results is wrapped in a small flow that returns `{response, notify}`.
+
+## Discuss an occurrence
+
+`POST /api/gateway/automations/{id}/discuss` `{request_id, occurrence_index, prompt}` →
+`{session_id, run_id, session_kind: "discussion"}`.
+
+A discussion is a new conversation (its own session) that starts from the
+automation's conversation up to that occurrence and runs the same workflow.
+It can read the automation's folder but not change it: writes, edits and
+command execution are refused. Continue it with `POST /api/gateway/runs/start`
+and its `session_id`: the gateway marks every later turn the same way
+(read-only folder, the discussion's history), whatever the request says.
+Nothing a discussion does is written back into the automation.
+
+## Older scheduled runs (legacy)
+
+Schedules created with `POST /api/gateway/runs/schedule` are not converted.
+They appear on the last page of `GET /api/gateway/automations` with
+`legacy: true`, `revision: null` and `capabilities: ["legacy"]`, and keep
+their old controls (`pause`, `resume`, `cancel` through `POST /api/gateway/commands`).
+`GET /api/gateway/automations/{id}` answers 404 for them.
+
 ## Attention
 
 An automation is quiet by default. An occurrence asks for attention only when
@@ -76,6 +196,10 @@ its output carries `notify: true` or `notify: {title, body}`, when it has
 failed after its last retry, or while it waits for a person. Attention items
 live in the automation's own run history; each user's "seen" position is kept
 by the gateway per user (`<data dir>/automations/attention/`).
+
+`GET /api/gateway/automations/{automation_id}/attention?cursor=&limit=` pages
+this user's UNSEEN items, oldest first (`{kind: "notify"|"failure",
+automation_id, run_id, index, at, title, body?, cursor}`).
 
 `POST /api/gateway/automations/{automation_id}/seen` with
 `{"attention_cursor": "att1:<n>"}` records what this user has seen and returns
@@ -137,10 +261,10 @@ editor stores the suggestion in the VisualFlow document as
   `GET /api/gateway/bundles/{bundle_id}` and the shared catalog records return
   `automation_defaults` keyed by entrypoint flow id.
 
-## Commands
+## Commands through the run command door
 
-The six `automation.*` command types go through the same durable command door
-as run commands, `POST /api/gateway/commands`, with `run_id` set to the
+The six `automation.*` command types also go through the durable command door
+of run commands, `POST /api/gateway/commands`, with `run_id` set to the
 automation id. The door refuses (404) an `automation.*` command at a run that
 is not an automation. The runner hands each command to AbstractRuntime, which
 records whether it was applied or rejected in the automation's history.
@@ -149,4 +273,6 @@ Evidence: `src/abstractgateway/routes/automations.py`,
 `src/abstractgateway/automation_errors.py`,
 `src/abstractgateway/automation_attention.py`,
 `src/abstractgateway/automation_defaults.py`,
-`src/abstractgateway/automation_command_types.py`.
+`src/abstractgateway/automation_command_types.py`; the automation logic
+itself is AbstractRuntime's (`abstractruntime.automations`). A runnable
+end-to-end check: `python scripts/accept_automations_v1.py --data-dir <empty folder>`.

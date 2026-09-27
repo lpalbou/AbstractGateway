@@ -133,6 +133,12 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # (file named by the caller's (tenant, user)); an automation of another
     # principal is absent from the caller's store (404).
     ("POST", "/api/gateway/automations/{automation_id}/seen"),
+    # Automations v1: the caller's OWN automations in the caller's own run
+    # store (plane selected per principal; another principal's id is 404).
+    ("POST", "/api/gateway/automations"),
+    ("PATCH", "/api/gateway/automations/{automation_id}"),
+    ("POST", "/api/gateway/automations/{automation_id}/commands"),
+    ("POST", "/api/gateway/automations/{automation_id}/discuss"),
     ("POST", "/api/gateway/runs/{run_id}/chat"),
     ("POST", "/api/gateway/runs/{run_id}/chat_threads"),
     ("POST", "/api/gateway/runs/{run_id}/summary"),
