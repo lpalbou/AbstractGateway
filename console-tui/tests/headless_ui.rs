@@ -1892,6 +1892,31 @@ fn text_route_editor_carries_reasoning_and_sends_only_what_changed() {
     }
 }
 
+/// The text route editor's options box hides `speculation` (the MTP
+/// selector owns it, like the web).
+#[test]
+fn text_route_options_box_hides_speculation() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.goto_screen(2);
+    let mut routes = routes_fixture();
+    routes.rows[0].options = Some(json!({"temperature": 0.2, "speculation": false}));
+    h.store.routes.set(Loadable::Ready(routes));
+    h.store.providers.set(Loadable::Ready(providers_fixture()));
+    h.turns(2);
+    h.type_text("e");
+    let s = h.turns(3);
+    assert!(
+        s.contains(r#"{"temperature":0.2}"#),
+        "the box shows the other options:\n{s}"
+    );
+    assert!(
+        !s.contains(r#""speculation""#),
+        "speculation is not in the box:\n{s}"
+    );
+    assert!(s.contains("MTP default"), "the selector owns it:\n{s}");
+}
+
 #[test]
 fn text_route_audition_uses_the_mtp_control_and_preserves_explicit_off() {
     for value in [

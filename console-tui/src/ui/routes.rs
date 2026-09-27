@@ -1287,6 +1287,65 @@ fn options_voice(options_json: &str) -> Option<String> {
         })
 }
 
+/// The web's route-editor split (console.py: the options box hides
+/// `speculation` on a text-generation route; the MTP selector owns it):
+/// (what the options box shows, the `{"speculation": …}` the selector
+/// edits — "" when unset). Other routes show every option.
+pub fn split_route_options(options: Option<&Value>, is_text: bool) -> (String, String) {
+    let Some(Value::Object(map)) = options else {
+        return (
+            options.map(|o| o.to_string()).unwrap_or_default(),
+            String::new(),
+        );
+    };
+    if !is_text {
+        return (Value::Object(map.clone()).to_string(), String::new());
+    }
+    let mut rest = map.clone();
+    let spec = rest.remove("speculation");
+    let shown = if rest.is_empty() {
+        String::new()
+    } else {
+        Value::Object(rest).to_string()
+    };
+    let spec = spec
+        .map(|v| json!({ "speculation": v }).to_string())
+        .unwrap_or_default();
+    (shown, spec)
+}
+
+/// The options a save or test sends: the box, plus the selector's
+/// `speculation` on a text route. `speculation` typed into the box is
+/// refused with the web's words ("Use the MTP selector …"). A box that
+/// does not parse is passed through unchanged (the save's own
+/// validation names that error).
+pub fn compose_route_options(shown: &str, spec: &str, is_text: bool) -> Result<String, String> {
+    if !is_text {
+        return Ok(shown.to_string());
+    }
+    let mut map = if shown.trim().is_empty() {
+        serde_json::Map::new()
+    } else {
+        match serde_json::from_str::<Value>(shown) {
+            Ok(Value::Object(m)) => m,
+            _ => return Ok(shown.to_string()),
+        }
+    };
+    if map.contains_key("speculation") {
+        return Err("Use the MTP selector for speculation; the options box edits the remaining provider settings.".into());
+    }
+    if let Ok(Value::Object(s)) = serde_json::from_str::<Value>(spec) {
+        if let Some(v) = s.get("speculation") {
+            map.insert("speculation".into(), v.clone());
+        }
+    }
+    Ok(if map.is_empty() {
+        String::new()
+    } else {
+        Value::Object(map).to_string()
+    })
+}
+
 /// A selector is an editor for options.speculation, never a second setting.
 fn speculation_index(options: &Value) -> usize {
     match options.get("speculation") {
@@ -1399,22 +1458,14 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
         // choices the web console's select offers, index 0 = "not set".
         let reasoning_init_ix = crate::store::reasoning_index(row.reasoning.as_deref());
         let reasoning_ix = mcx.signal(reasoning_init_ix);
-        let options_json = mcx.signal(
-            row.options
-                .as_ref()
-                .map(|o| o.to_string())
-                .unwrap_or_default(),
-        );
+        // The options box shows everything but a text route's
+        // `speculation`, which the MTP selector owns (web parity).
+        let (shown_init, spec_init) = split_route_options(row.options.as_ref(), is_text);
+        let options_json = mcx.signal(shown_init);
+        let spec_json = mcx.signal(spec_init.clone());
         let speculation_ix = mcx.signal(speculation_index(
-            row.options.as_ref().unwrap_or(&Value::Null),
+            &serde_json::from_str::<Value>(&spec_init).unwrap_or(Value::Null),
         ));
-        mcx.effect(move || {
-            if let Ok(options) = serde_json::from_str::<Value>(&options_json.get()) {
-                speculation_ix.set(speculation_index(&options));
-            } else if options_json.get().trim().is_empty() {
-                speculation_ix.set(0);
-            }
-        });
         let form_error = mcx.signal(Option::<String>::None);
         let in_flight = mcx.signal(false);
         let esc_armed = mcx.signal(false);
@@ -1432,6 +1483,7 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                 model_custom.get_untracked(),
                 base_url.get_untracked(),
                 options_json.get_untracked(),
+                spec_json.get_untracked(),
             );
             super::install_dirty_guard_with(
                 mcx,
@@ -1443,6 +1495,7 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                         || model_custom.get_untracked() != initial.3
                         || base_url.get_untracked() != initial.4
                         || options_json.get_untracked() != initial.5
+                        || spec_json.get_untracked() != initial.6
                         || reasoning_ix.get_untracked() != reasoning_init_ix
                 },
                 move || {
@@ -1453,6 +1506,7 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                         model_custom.get(),
                         base_url.get(),
                         options_json.get(),
+                        spec_json.get(),
                         reasoning_ix.get(),
                     );
                 },
@@ -1949,8 +2003,8 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                     .iter().map(|label| SelectOption::new(*label)).collect::<Vec<_>>())
                                     .value(speculation_ix)
                                     .on_change(move |ix| {
-                                        match speculation_options(&options_json.get_untracked(), ix) {
-                                            Ok(value) => { options_json.set(value); form_error.set(None); }
+                                        match speculation_options(&spec_json.get_untracked(), ix) {
+                                            Ok(value) => { spec_json.set(value); form_error.set(None); }
                                             Err(error) => form_error.set(Some(error)),
                                         }
                                     })
@@ -2082,12 +2136,23 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                             .map(|s| (*s).to_string())
                                             .unwrap_or_default()
                                     });
+                                    let options = match compose_route_options(
+                                        &options_json.get_untracked(),
+                                        &spec_json.get_untracked(),
+                                        is_text,
+                                    ) {
+                                        Ok(o) => o,
+                                        Err(e) => {
+                                            form_error.set(Some(e));
+                                            return;
+                                        }
+                                    };
                                     let body = match route_save_body(
                                         &provider,
                                         &model,
                                         reasoning.as_deref(),
                                         (&base_url.get_untracked(), row3.base_url.as_deref().unwrap_or("")),
-                                        (&options_json.get_untracked(), &shown_options(&row3)),
+                                        (&options, &shown_options(&row3)),
                                     ) {
                                         Ok(body) => body,
                                         Err(e) => {
@@ -2136,7 +2201,14 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                                     };
                                     let mut controls = json!({});
                                     if row_t.is_text_generation() {
-                                        let text = options_json.get_untracked();
+                                        let text = match compose_route_options(
+                                            &options_json.get_untracked(),
+                                            &spec_json.get_untracked(),
+                                            true,
+                                        ) {
+                                            Ok(t) => t,
+                                            Err(e) => { form_error.set(Some(e)); return; }
+                                        };
                                         let parsed = if text.trim().is_empty() { Ok(json!({})) } else { serde_json::from_str::<Value>(&text) };
                                         let options = match parsed {
                                             Ok(value) if value.is_object() => value,
@@ -2209,6 +2281,36 @@ mod speculation_tests {
         assert_eq!(
             super::voice_test_run_id_for("", ""),
             "session_memory_gateway_console_voicetest_default_user"
+        );
+    }
+
+    /// The web's route editor (review 2 minor g): a text route's options
+    /// box hides `speculation` (the MTP selector owns it) and refuses it
+    /// typed there; an untouched editor saves exactly what was stored.
+    #[test]
+    fn options_box_hides_and_refuses_speculation_on_text_routes() {
+        let stored = json!({"temperature": 0.2, "speculation": false});
+        let (shown, spec) = split_route_options(Some(&stored), true);
+        assert_eq!(shown, r#"{"temperature":0.2}"#);
+        assert_eq!(spec, r#"{"speculation":false}"#);
+        assert_eq!(
+            compose_route_options(&shown, &spec, true).unwrap(),
+            stored.to_string(),
+            "unchanged editor = the stored options, so the save omits them"
+        );
+        let err = compose_route_options(r#"{"speculation":true}"#, &spec, true).unwrap_err();
+        assert!(
+            err.starts_with("Use the MTP selector for speculation"),
+            "{err}"
+        );
+        // Other routes show and send every option.
+        let voice = json!({"voice": "M3", "speculation": 1});
+        let (shown, spec) = split_route_options(Some(&voice), false);
+        assert_eq!(shown, voice.to_string());
+        assert_eq!(spec, "");
+        assert_eq!(
+            compose_route_options(&shown, "", false).unwrap(),
+            voice.to_string()
         );
     }
 
