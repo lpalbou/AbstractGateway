@@ -182,21 +182,32 @@ deliberately narrower than what history views display):
 
 - Client-provided non-empty `context.messages` always win; the seed never
   overwrites them. An EMPTY client `context.messages` list does not count as
-  a transcript — the seed still runs (use the cap below to disable).
+  a transcript — the seed still runs (leave out `use_session_history` to
+  start without history).
 - Only COMPLETED root runs of the session contribute, as strictly alternating
   user/assistant pairs. FAILED and CANCELLED turns are invisible to replay by
   design (a promptless answer or answerless prompt would seed a dangling
   message and invite re-answering a stale ask); history views still show them.
-- Steering/operator guidance injected mid-run is not replayed; over-long
-  messages are truncated with a labeled `#TRUNCATION` marker; whole oldest
-  turns are dropped first (`session_history_max_chars` cumulative budget).
-- Caps: `input_data.session_history_max_messages` (1..200; explicit `0`
-  disables replay for the run) > `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_MESSAGES`
-  > default 40. Chars: `session_history_max_chars` >
-  `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS` > default 24000.
+- Steering/operator guidance injected mid-run is not replayed.
+- The history window: replay keeps the most recent turns that fit 50,000
+  estimated tokens (AbstractRuntime `HISTORY_REPLAY_MAX_TOKENS`), as whole
+  messages, newest first. No message is cut, and there is no message-count or
+  character cap. The model can use the rest of its context window. When older
+  turns are dropped, the oldest replayed message starts with a labeled
+  `[#TRUNCATION: ...]` line. A newest turn that alone exceeds 50,000 tokens is
+  kept whole (`oversize_turn_kept: true`).
+- The retired caps `input_data.session_history_max_messages` and
+  `input_data.session_history_max_chars` are ignored and listed in
+  `_runtime.session_history.ignored_inputs`. The environment variables
+  `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_MESSAGES` and
+  `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS` are no longer read.
 - Failures degrade to a labeled `_runtime.session_history` `#FALLBACK` note
-  and an unseeded start — never a blocked run. Success records
-  `_runtime.session_history = {seeded: N, ...}` on the run for observability.
+  and an unseeded start — never a blocked run. Success records the window on
+  the run as `_runtime.session_history`: `{seeded, policy, max_tokens,
+  token_estimator, replayed_messages, replayed_tokens, dropped_messages,
+  dropped_tokens, dropped_counts_complete, oversize_turn_kept}`.
+  `dropped_counts_complete: false` means replay stopped reading once the window
+  was full: older turns were dropped too, and they are not counted.
 - Entity lanes never ride this: their transcript authority is the entity home
   (`_visit.history` / the chat driver), not the run store.
 

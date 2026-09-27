@@ -247,9 +247,6 @@ class TelegramBridgeConfig:
     provider_override: Optional[str] = None
     model_override: Optional[str] = None
 
-    # Conversation context limits (applied via `_limits.max_history_messages`)
-    max_history_messages: int = 30
-
     # /reset behavior
     reset_delete_messages: bool = True
     reset_delete_max: int = 200
@@ -315,12 +312,13 @@ class TelegramBridgeConfig:
         if provider_override and not model_override:
             provider_override = None
 
-        try:
-            max_history_messages = int(float(os.getenv("ABSTRACT_TELEGRAM_MAX_HISTORY_MESSAGES", "30") or "30"))
-        except Exception:
-            max_history_messages = 30
-        if max_history_messages < 0:
-            max_history_messages = 0
+        if os.getenv("ABSTRACT_TELEGRAM_MAX_HISTORY_MESSAGES") is not None:
+            # Retired 2026-09-28 (operator ruling): replayed history is the
+            # gateway's one window — the most recent 50k tokens of whole turns.
+            logging.getLogger(__name__).warning(
+                "Telegram bridge: ABSTRACT_TELEGRAM_MAX_HISTORY_MESSAGES is retired and ignored; "
+                "history replay keeps the most recent 50,000 tokens of whole turns"
+            )
 
         reset_delete_messages = _as_bool(os.getenv("ABSTRACT_TELEGRAM_RESET_DELETE_MESSAGES"), True)
         try:
@@ -392,7 +390,6 @@ class TelegramBridgeConfig:
             pending_media_max_s=max(0.0, float(pending_media_max_s)),
             provider_override=provider_override,
             model_override=model_override,
-            max_history_messages=int(max_history_messages),
             reset_delete_messages=bool(reset_delete_messages),
             reset_delete_max=int(reset_delete_max),
             reset_message=str(reset_message),
@@ -2410,9 +2407,6 @@ class TelegramBridge:
         # private history file is retired. /reset rotates the session_id,
         # which is what clears replayed history.
         input_data["use_session_history"] = True
-        input_data["session_history_max_messages"] = (
-            int(self._cfg.max_history_messages) if isinstance(self._cfg.max_history_messages, int) and self._cfg.max_history_messages >= 0 else 30
-        )
         ctx: Dict[str, Any] = {"task": prompt}
         if media_refs:
             ctx["attachments"] = list(media_refs)
@@ -2433,9 +2427,6 @@ class TelegramBridge:
             input_data["model"] = rt_overrides["model"]
         if rt_overrides:
             input_data["_runtime"] = rt_overrides
-
-        if isinstance(self._cfg.max_history_messages, int) and self._cfg.max_history_messages > 0:
-            input_data["_limits"] = {"max_history_messages": int(self._cfg.max_history_messages)}
 
         # Workspace policy: mimic the gateway HTTP API default — ONE
         # gateway-owned workspace per session (a chat is one session until
@@ -2799,9 +2790,6 @@ class TelegramBridge:
         # private history file is retired. /reset rotates the session_id,
         # which is what clears replayed history.
         input_data["use_session_history"] = True
-        input_data["session_history_max_messages"] = (
-            int(self._cfg.max_history_messages) if isinstance(self._cfg.max_history_messages, int) and self._cfg.max_history_messages >= 0 else 30
-        )
         ctx: Dict[str, Any] = {"task": prompt}
         if media:
             ctx["attachments"] = list(media)
@@ -2822,9 +2810,6 @@ class TelegramBridge:
             input_data["model"] = rt_overrides["model"]
         if rt_overrides:
             input_data["_runtime"] = rt_overrides
-
-        if isinstance(self._cfg.max_history_messages, int) and self._cfg.max_history_messages > 0:
-            input_data["_limits"] = {"max_history_messages": int(self._cfg.max_history_messages)}
 
         # Workspace policy: mimic the gateway HTTP API default — ONE
         # gateway-owned workspace per session (a chat is one session until

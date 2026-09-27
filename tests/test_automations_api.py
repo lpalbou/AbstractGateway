@@ -377,6 +377,13 @@ def test_growing_vs_independent_history(live: TestClient) -> None:
     assert second_ind["answer"].startswith("ECHO[0]")          # fresh every time
     assert second_gro["answer"].startswith("ECHO[2]")          # sees turn 1 + answer 1
     assert "assistant:ECHO[0]" in second_gro["answer"]
+    # The occurrence run records its history window (ADR-0026: explicit and
+    # observable; operator ruling 2026-09-28: the most recent 50k tokens).
+    from abstractgateway.service import get_gateway_service
+
+    note = get_gateway_service().host.run_store.load(second_gro["run_id"]).vars["_runtime"]["session_history"]
+    assert note["max_tokens"] == 50_000 and note["policy"] == "most_recent_whole_turns"
+    assert note["replayed_messages"] == 2 and note["dropped_messages"] == 0 and note["session_kind"] == "automation"
 
 
 def test_commands_door_revision_and_patch(live: TestClient) -> None:

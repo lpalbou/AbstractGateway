@@ -5,6 +5,34 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Requires the next AbstractRuntime release (the session history window; `session_chat_messages` no longer accepts
+the old caps).
+
+### Changed
+
+- **Session history replay is the most recent 50,000 tokens of whole turns.** A run started with
+  `use_session_history` gets the session's newest turns that fit 50,000 estimated tokens (AbstractRuntime's history
+  window). No message is cut, and there is no message-count or character cap. The old defaults (40 messages,
+  24,000 characters, 200-message / 200,000-character ceilings) are removed. Automation (growing) and discussion
+  sessions use the same window. The model can use the rest of its context window (operator ruling 2026-09-28,
+  ADR-0026).
+- **Retired history caps.** `input_data.session_history_max_messages` and `input_data.session_history_max_chars` no
+  longer change what is replayed. A run that still sends them lists them in `_runtime.session_history.ignored_inputs`
+  and the gateway logs a warning. An explicit `0` no longer disables replay; to start without history, leave out
+  `use_session_history`. The environment variables `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_MESSAGES` and
+  `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS` are no longer read and have been removed from the environment registry.
+- **Telegram bridge:** `ABSTRACT_TELEGRAM_MAX_HISTORY_MESSAGES` (default 30) is retired. The bridge no longer sends a
+  message cap or `_limits.max_history_messages`, and it logs a warning when the variable is still set.
+
+### Added
+
+- `_runtime.session_history` records the history window for every seeded run: `seeded`, `policy`, `max_tokens`,
+  `token_estimator`, `replayed_messages`, `replayed_tokens`, `dropped_messages`, `dropped_tokens`,
+  `dropped_counts_complete`, `oversize_turn_kept`. Strict seeding (automation and discussion sessions) also adds
+  `strict` and `session_kind`.
+
 ## [0.6.0] - 2026-09-27
 
 Requires AbstractRuntime 0.6.0 and AbstractCore 2.17.0. The terminal console
