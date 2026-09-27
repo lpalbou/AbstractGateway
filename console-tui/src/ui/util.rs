@@ -179,6 +179,38 @@ pub fn clamp_selection(
     });
 }
 
+/// The ONE admin gate for a verb (key press, menu pick, form save): true
+/// when the caller may send it; otherwise the notice lane says why
+/// ([`crate::store::ConnPhase::admin_refusal`]) and nothing is sent.
+pub fn admin_gate(store: &crate::store::Store, what: &str) -> bool {
+    match store.conn.with_untracked(|c| c.admin_refusal(what)) {
+        Some(why) => {
+            store.notice.set(Some(why));
+            false
+        }
+        None => true,
+    }
+}
+
+/// Footer pairs for a screen. For a principal known NOT to be an admin the
+/// verbs in `admin_keys` leave their slots and come back as ONE compact
+/// disabled-with-the-reason pair — `("w/a/D/C", "admin only")`, the
+/// returned key string — the way the shared Models/Engines screens label
+/// theirs ("download: admin only"). Pressing one still answers with the
+/// full reason.
+pub fn admin_hint_pairs<'a>(
+    pairs: Vec<(&'a str, &'a str)>,
+    admin_keys: &[&str],
+    non_admin: bool,
+) -> (Vec<(&'a str, &'a str)>, Option<String>) {
+    if !non_admin {
+        return (pairs, None);
+    }
+    let (gated, kept): (Vec<_>, Vec<_>) = pairs.into_iter().partition(|(k, _)| admin_keys.contains(k));
+    let keys = gated.iter().map(|(k, _)| *k).collect::<Vec<_>>().join("/");
+    (kept, (!keys.is_empty()).then_some(keys))
+}
+
 /// Status badge for configured / covered / default / error states.
 pub fn badge(t: &TokenSet, label: &str, tone: Tone) -> View {
     Badge::new(label).tone(tone).element(t).build()

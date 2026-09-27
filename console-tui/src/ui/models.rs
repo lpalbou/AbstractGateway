@@ -179,6 +179,14 @@ pub fn totals_line(d: &HostStateData) -> String {
 // The screen
 // ---------------------------------------------------------------------
 
+/// The footer verbs of this screen that only an admin may use: the
+/// residency mutations (`/models/load|unload|lock|unlock`) and the
+/// enumeration-based cache clear (`/sessions/{id}/prompt_cache/clear_all`)
+/// — the web renders them for admins only (renderModelsLoadForm,
+/// renderModelsTable, renderSessionCaches). Reads and the context
+/// estimate stay open to every principal.
+pub const ADMIN_KEYS: &[&str] = &["u", "k", "w", "c"];
+
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
@@ -884,6 +892,9 @@ fn model_pair(row: &ModelRow) -> Option<(String, String)> {
 /// confirm (the row's own `locked` may be stale) — the confirm text
 /// forewarns when the row already says locked.
 fn unload_selected(cx: Scope, ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "unloading a model") {
+        return;
+    }
     let Some(row) = selected_model(ctx) else {
         ctx.store
             .notice
@@ -935,6 +946,9 @@ fn unload_selected(cx: Scope, ctx: &Ctx) {
 /// a refusal we invent. [`lock_action`] is the single authority — the
 /// same one the row's hint line reads.
 fn toggle_lock_selected(cx: Scope, ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "locking or unlocking a model") {
+        return;
+    }
     let Some(row) = selected_model(ctx) else {
         ctx.store
             .notice
@@ -1022,6 +1036,9 @@ fn catalog_for(store: &crate::store::Store, provider: &str) -> Loadable<Vec<Stri
 /// highlighted row when there is one. The optional lock-after-load rides
 /// the same POST (`lock: true`).
 fn open_warmup_form(cx: Scope, ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "loading (warming up) a model") {
+        return;
+    }
     let prefill = selected_model(ctx).and_then(|r| model_pair(&r));
     let store = ctx.store;
     // The catalog may never have been fetched (this tab is reachable
@@ -1387,6 +1404,9 @@ fn estimate_selected(ctx: &Ctx) {
 /// `c` — clear every prompt cache of the selected cache row's session
 /// (Caches sub-tab only; danger-confirmed).
 fn clear_caches_selected(cx: Scope, ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "clearing session caches") {
+        return;
+    }
     if ctx.ui.models_tab.get_untracked() != 1 {
         ctx.store.notice.set(Some(
             "switch to the Caches tab — c clears the selected session's caches there".into(),

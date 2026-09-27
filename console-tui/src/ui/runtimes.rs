@@ -23,7 +23,47 @@ use crate::store::{
 };
 use crate::worker::Cmd;
 
+/// The Runtimes screen is admin-only end to end: every read and write it
+/// makes is an `/admin/*` route, and the web console hides the whole tab
+/// for a non-admin (console.py renderAccount). A principal known NOT to
+/// be an admin gets the reason instead of a screen of 403 panels; the
+/// screen rebuilds when the principal changes.
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
+    let store = ctx.store;
+    let non_admin = cx.memo(move || store.conn.with(ConnPhase::is_known_non_admin));
+    let ctx = ctx.clone();
+    let tt = *t;
+    dyn_view_scoped(LayoutStyle::default().grow(1.0), move |scx| {
+        if non_admin.get() {
+            admin_only_view(&tt, &ctx)
+        } else {
+            admin_view(scx, &ctx, &tt)
+        }
+    })
+}
+
+fn admin_only_view(t: &TokenSet, ctx: &Ctx) -> View {
+    let why = ctx
+        .store
+        .conn
+        .with_untracked(|c| c.admin_refusal("the Runtimes screen"))
+        .unwrap_or_default();
+    Block::new()
+        .border(BorderKind::Rounded)
+        .title("Runtimes")
+        .fill(t.surface)
+        .layout(LayoutStyle::column().grow(1.0).padding(Edges::all(1)))
+        .child(line(vec![span(why, t.text_muted)]))
+        .child(line(vec![span(
+            "data planes, runs, caches and the gateway knobs are admin surfaces — \
+             sign in with an admin token to see them",
+            t.text_faint,
+        )]))
+        .element(t)
+        .build()
+}
+
+fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
     let tt = *t;
@@ -1942,6 +1982,86 @@ fn open_apps_settings_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
     });
 }
 
+/// The gateway-wide workspace defaults form, as the web models it
+/// (console.py renderGatewayPolicyModal / saveWorkspacePolicyModal).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WorkspaceDefaults {
+    pub root: String,
+    pub allowed: String,
+    pub blocked: String,
+    /// "whitelist" | "blacklist".
+    pub mode: String,
+    /// Launch-folder trust: None = inherit (not stored).
+    pub trust: Option<bool>,
+    /// The legacy full bypass: None = inherit (not stored).
+    pub overrides: Option<bool>,
+}
+
+impl WorkspaceDefaults {
+    /// The form's prefill: only STORED choices for the root and the two
+    /// switches (a resolved env/default value written back would become a
+    /// stored setting); the path lists and the posture as served.
+    pub fn prefill(c: &RuntimeConfigData) -> WorkspaceDefaults {
+        let stored = |source: &str| source == "stored";
+        WorkspaceDefaults {
+            root: if stored(&c.workspace_root_source) {
+                c.workspace_root.clone()
+            } else {
+                String::new()
+            },
+            allowed: c.workspace_allowed_paths.clone(),
+            blocked: c.workspace_blocked_paths.clone(),
+            mode: if c.workspace_default_mode == "blacklist" {
+                "blacklist".into()
+            } else {
+                "whitelist".into()
+            },
+            trust: stored(&c.trust_client_launch_folder_source)
+                .then_some(c.trust_client_launch_folder),
+            overrides: stored(&c.client_workspace_scope_overrides_source)
+                .then_some(c.client_workspace_scope_overrides),
+        }
+    }
+
+    /// `POST /admin/runtime-config` body, the web's exact shape: the root
+    /// is null when blank (inherit), trust is null when inherited, the
+    /// bypass is named only when chosen. `user_workspace_policies` is
+    /// DELIBERATELY absent: present-but-empty deletes the whole per-user
+    /// map server-side (per-user edits ride the single-entry PUT).
+    pub fn body(&self) -> Value {
+        let root = self.root.trim();
+        let mode = if self.mode.is_empty() { "whitelist" } else { self.mode.as_str() };
+        let mut body = json!({
+            "workspace_default_mode": mode,
+            "workspace_root": if root.is_empty() { Value::Null } else { Value::String(root.to_string()) },
+            "workspace_allowed_paths": self.allowed.trim(),
+            "workspace_blocked_paths": self.blocked.trim(),
+            "trust_client_launch_folder": self.trust.map(Value::Bool).unwrap_or(Value::Null),
+        });
+        if let Some(on) = self.overrides {
+            body["client_workspace_scope_overrides"] = Value::Bool(on);
+        }
+        body
+    }
+}
+
+/// Tri-state select index: 0 = inherit, 1 = on, 2 = off.
+fn tri_index(v: Option<bool>) -> usize {
+    match v {
+        None => 0,
+        Some(true) => 1,
+        Some(false) => 2,
+    }
+}
+
+fn tri_value(ix: usize) -> Option<bool> {
+    match ix {
+        1 => Some(true),
+        2 => Some(false),
+        _ => None,
+    }
+}
+
 fn open_workspace_policy_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
     if !current.writable {
         ctx.store
@@ -1953,16 +2073,36 @@ fn open_workspace_policy_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) 
     open_form(ctx, cx, Size::new(92, 32), move |mcx, close| {
         let theme = use_theme(mcx);
         let t0 = theme.get().tokens;
-        let workspace_root = mcx.signal(current.workspace_root.clone());
-        let workspace_allowed_paths = mcx.signal(current.workspace_allowed_paths.clone());
-        let workspace_blocked_paths = mcx.signal(current.workspace_blocked_paths.clone());
-        let allow_client_scope = mcx.signal(current.client_workspace_scope_overrides);
-        let trust_launch_folder = mcx.signal(current.trust_client_launch_folder);
-        let default_mode = mcx.signal(current.workspace_default_mode.clone());
+        // Only STORED choices prefill (the web's renderGatewayPolicyModal):
+        // writing a resolved env/default value back would silently promote
+        // it to a stored setting.
+        let pre = WorkspaceDefaults::prefill(&current);
+        let workspace_root = mcx.signal(pre.root.clone());
+        let workspace_allowed_paths = mcx.signal(pre.allowed.clone());
+        let workspace_blocked_paths = mcx.signal(pre.blocked.clone());
+        let allow_client_scope = mcx.signal(tri_index(pre.overrides));
+        let trust_launch_folder = mcx.signal(tri_index(pre.trust));
+        let default_mode = mcx.signal(pre.mode.clone());
         let allowed_state = TextAreaState::new(mcx);
-        allowed_state.set_text(current.workspace_allowed_paths.clone());
+        allowed_state.set_text(pre.allowed.clone());
         let blocked_state = TextAreaState::new(mcx);
-        blocked_state.set_text(current.workspace_blocked_paths.clone());
+        blocked_state.set_text(pre.blocked.clone());
+        let root_placeholder = if current.workspace_root.trim().is_empty() {
+            "blank = inherit (env/default fallback)".to_string()
+        } else {
+            format!("blank = inherit ({})", current.workspace_root.trim())
+        };
+        let inherit_label = |now: bool| SelectOption::new(format!("inherit (now {})", if now { "on" } else { "off" }));
+        let trust_options = vec![
+            inherit_label(current.trust_client_launch_folder),
+            SelectOption::new("on"),
+            SelectOption::new("off"),
+        ];
+        let overrides_options = vec![
+            inherit_label(current.client_workspace_scope_overrides),
+            SelectOption::new("on"),
+            SelectOption::new("off"),
+        ];
         let form_error = mcx.signal(Option::<String>::None);
         let in_flight = mcx.signal(false);
         let form_id = crate::worker::next_form_id();
@@ -1988,7 +2128,7 @@ fn open_workspace_policy_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) 
                 "default workspace",
                 TextInput::new()
                     .value(workspace_root)
-                    .placeholder("blank = env/default fallback")
+                    .placeholder(root_placeholder)
                     .placeholder_while_focused(true)
                     .layout(LayoutStyle::default().w(60).h(1))
                     .element(mcx, &t0)
@@ -1997,11 +2137,16 @@ fn open_workspace_policy_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) 
             .child(field(
                 &t0,
                 "launch folder trust",
-                Checkbox::new("an agent may write in the folder it was started from (default on)")
-                    .checked(trust_launch_folder)
+                Select::new(trust_options)
+                    .value(trust_launch_folder)
+                    .layout(LayoutStyle::default().w(24).h(1).shrink(0.0))
                     .element(mcx, &t0)
                     .build(),
             ))
+            .child(line(vec![span(
+                "  an agent may write in the folder it was started from (gateway default on)",
+                t0.text_faint,
+            )]))
             .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
                 let label = if default_mode.get() == "blacklist" {
                     "allow everything, refuse listed folders (wide grant)"
@@ -2023,11 +2168,16 @@ fn open_workspace_policy_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) 
             .child(field(
                 &t0,
                 "full bypass (legacy)",
-                Checkbox::new("unlike launch-folder trust (one folder), clients may scope ANY server folder — postures stop applying")
-                    .checked(allow_client_scope)
+                Select::new(overrides_options)
+                    .value(allow_client_scope)
+                    .layout(LayoutStyle::default().w(24).h(1).shrink(0.0))
                     .element(mcx, &t0)
                     .build(),
             ))
+            .child(line(vec![span(
+                "  unlike launch-folder trust (one folder), clients may scope ANY server folder — postures stop applying",
+                t0.text_faint,
+            )]))
             .child(field(
                 &t0,
                 "allowed workspaces",
@@ -2076,30 +2226,19 @@ fn open_workspace_policy_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) 
                                 if in_flight.get_untracked() {
                                     return;
                                 }
-                                let root = workspace_root.get_untracked().trim().to_string();
-                                let allowed = workspace_allowed_paths.get_untracked().trim().to_string();
-                                let blocked = workspace_blocked_paths.get_untracked().trim().to_string();
-                                let root_value = if root.is_empty() {
-                                    Value::Null
-                                } else {
-                                    Value::String(root)
-                                };
+                                let body = WorkspaceDefaults {
+                                    root: workspace_root.get_untracked(),
+                                    allowed: workspace_allowed_paths.get_untracked(),
+                                    blocked: workspace_blocked_paths.get_untracked(),
+                                    mode: default_mode.get_untracked(),
+                                    trust: tri_value(trust_launch_folder.get_untracked()),
+                                    overrides: tri_value(allow_client_scope.get_untracked()),
+                                }
+                                .body();
                                 form_error.set(None);
                                 in_flight.set(true);
-                                // user_workspace_policies is DELIBERATELY absent:
-                                // present-but-empty means "delete the whole map"
-                                // server-side — naming it here would wipe every
-                                // per-user policy (design adversary B2).
                                 ctx_save.send(Cmd::SaveRuntimeConfig {
-                                    body: json!({
-                                        "workspace_root": root_value,
-                                        "workspace_allowed_paths": allowed,
-                                        "workspace_blocked_paths": blocked,
-                                        "client_workspace_scope_overrides": allow_client_scope.get_untracked(),
-                                        "trust_client_launch_folder": trust_launch_folder.get_untracked(),
-                                        "workspace_default_mode": default_mode.get_untracked(),
-                                    })
-                                    .into(),
+                                    body: body.into(),
                                     form_id: Some(form_id),
                                 });
                             })
@@ -3810,5 +3949,53 @@ mod tests {
     fn the_note_line_names_the_half_that_answered() {
         assert_eq!(query_bit("*.jpg"), "q=\"*.jpg\" (glob)");
         assert_eq!(query_bit("photo"), "q=\"photo\"");
+    }
+
+    fn config(v: serde_json::Value) -> RuntimeConfigData {
+        RuntimeConfigData::from_value(&v)
+    }
+
+    /// Inherited (non-stored) values never prefill the gateway defaults
+    /// form, so a save cannot promote them to stored settings — the web's
+    /// renderGatewayPolicyModal rule.
+    #[test]
+    fn workspace_defaults_prefill_only_stored_choices() {
+        let inherited = config(json!({
+            "writable": true,
+            "workspace_root": {"value": "/srv/ws", "source": "env"},
+            "trust_client_launch_folder": {"value": true, "source": "default"},
+            "client_workspace_scope_overrides": {"value": false, "source": "default"},
+            "workspace_allowed_paths": {"value": "/a\n/b", "source": "stored"},
+            "workspace_blocked_paths": {"value": "", "source": "default"},
+            "workspace_default_mode": {"value": "whitelist", "source": "default"},
+        }));
+        let pre = WorkspaceDefaults::prefill(&inherited);
+        assert_eq!(pre.root, "", "an env root is not a stored choice");
+        assert_eq!(pre.trust, None);
+        assert_eq!(pre.overrides, None);
+        assert_eq!(pre.allowed, "/a\n/b");
+        assert_eq!(
+            pre.body(),
+            json!({
+                "workspace_default_mode": "whitelist",
+                "workspace_root": null,
+                "workspace_allowed_paths": "/a\n/b",
+                "workspace_blocked_paths": "",
+                "trust_client_launch_folder": null,
+            }),
+            "inherit = null trust, no bypass key (the web's exact body)"
+        );
+        let stored = config(json!({
+            "workspace_root": {"value": "/srv/ws", "source": "stored"},
+            "trust_client_launch_folder": {"value": false, "source": "stored"},
+            "client_workspace_scope_overrides": {"value": true, "source": "stored"},
+            "workspace_default_mode": {"value": "blacklist", "source": "stored"},
+        }));
+        let body = WorkspaceDefaults::prefill(&stored).body();
+        assert_eq!(body["workspace_root"], "/srv/ws");
+        assert_eq!(body["trust_client_launch_folder"], false);
+        assert_eq!(body["client_workspace_scope_overrides"], true);
+        assert_eq!(body["workspace_default_mode"], "blacklist");
+        assert!(body.get("user_workspace_policies").is_none(), "never names the per-user map");
     }
 }

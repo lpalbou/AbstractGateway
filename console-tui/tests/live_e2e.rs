@@ -313,7 +313,13 @@ fn wizard_writes_verify_and_clean_up() {
             text_route.provider.clone().unwrap_or_default(),
             text_route.model.clone().unwrap_or_default(),
         );
-        match c.sandbox_generate("output.text", &p, &m, "Reply with exactly: CONSOLE-OK", 64) {
+        let probe = abstractgateway_console::api::sandbox_docs::route_test_body(
+            "output.text",
+            &p,
+            &m,
+            &serde_json::json!({}),
+        );
+        match c.sandbox_generate(&probe) {
             Ok(v) => println!(
                 "sandbox {} / {}: ok={} routed={} response={:?}",
                 p,

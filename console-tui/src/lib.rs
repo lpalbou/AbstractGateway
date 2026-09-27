@@ -241,10 +241,14 @@ pub fn run_cli(argv: &[String]) -> i32 {
         }
         // ONE ScreensCtx, created in the mount scope, sharing this app's
         // notice signal (its toast effect + footer already render it).
+        // Who may change the gateway host from Models/Engines (the web's
+        // rule: admins only), kept current from the connection.
+        let access = ui::screens_access_signal(cx, store);
         let screens = abstractcore_console::screens::ScreensCtx::new(
             cx,
             screens_transport.clone(),
             overlays_screens.clone(),
+            access,
             abstractcore_console::screens::ScreensOptions {
                 notice: Some(store.notice),
                 ..abstractcore_console::screens::ScreensOptions::default()

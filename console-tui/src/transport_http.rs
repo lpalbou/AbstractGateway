@@ -292,10 +292,22 @@ impl ConsoleTransport for HttpTransport {
         self.client()?.models_installed(provider).map_err(map_error)
     }
 
-    fn start_download(&self, provider: &str, artifact: &str) -> Result<Value, TransportError> {
+    fn start_download(
+        &self,
+        provider: &str,
+        artifact: &str,
+        expected_bytes: Option<u64>,
+    ) -> Result<Value, TransportError> {
         self.client()?
-            .models_download(provider, artifact, false)
+            .models_download(provider, artifact, false, expected_bytes)
             .map_err(map_error)
+    }
+
+    /// `GET /models/download/{id}` — the one route that knows a
+    /// "download all" group (`grp_…`); answers `{"ok", "job"}` (the
+    /// screens accept the envelope).
+    fn download_job(&self, id: &str) -> Result<Value, TransportError> {
+        self.client()?.model_download_job(id).map_err(map_error)
     }
 
     fn delete_model(
@@ -370,7 +382,8 @@ impl ConsoleTransport for HttpTransport {
                 "output",
                 "text",
                 None,
-                &serde_json::json!({"provider": provider, "model": model}),
+                &serde_json::json!({"provider": provider, "model": model,
+                    "base_url": "", "reasoning": "", "options": {}}),
             )
             .map_err(map_error)
     }

@@ -247,13 +247,14 @@ fn every_method_hits_its_gateway_route_with_the_contract_body() {
         "/api/gateway/models/installed"
     );
 
-    let j = t.start_download("ollama", "qwen3:8b").unwrap();
+    let j = t.start_download("ollama", "qwen3:8b", Some(5_200_000_000)).unwrap();
     assert_eq!(j["job_id"], "dl_1");
     let s = gw.last("/api/gateway/models/download");
     assert_eq!(s.method, "POST");
     assert_eq!(
         s.body,
-        Some(json!({"provider": "ollama", "artifact": "qwen3:8b", "dry_run": false}))
+        Some(json!({"provider": "ollama", "artifact": "qwen3:8b", "dry_run": false,
+                    "expected_bytes": 5_200_000_000u64}))
     );
 
     let _ = t.delete_model("ollama", "gemma3:1b", true);

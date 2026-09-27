@@ -192,6 +192,13 @@ pub fn record_outcome(ctx: &Ctx, outcome: &str) {
 pub fn guide_key(ctx: &Ctx, cx: Scope) {
     let ui = ctx.ui;
     if !ui.wizard.get_untracked() {
+        // The guide is an admin surface (its writes — downloads, routes,
+        // the first-run record — are admin routes); the web hides its
+        // "Setup guide" button for a non-admin.
+        if ctx.store.conn.with_untracked(ConnPhase::is_known_non_admin) {
+            super::util::admin_gate(&ctx.store, "the setup guide");
+            return;
+        }
         ui.first_run_decided.set(true);
         ui.wizard.set(true);
         ui.screen.set(super::SCREEN_WELCOME);

@@ -81,6 +81,7 @@ fn harness_sized(size: Size) -> Harness {
             cx,
             transport.clone(),
             overlays.clone(),
+            cx.signal(abstractcore_console::screens::Access::Admin),
             ScreensOptions {
                 // The same wiring as lib.rs: outcomes toast through the
                 // gateway console's own notice lane.
@@ -1693,12 +1694,14 @@ fn route_editor_override_flow_sends_put_with_picked_pair() {
 /// stored value. The control belongs on the text route and on no other,
 /// exactly as the web console's `isTextGenerationDefault` gates it.
 ///
-/// The save also proves the field-preserving contract from the client
-/// side: every field this form OWNS is sent explicitly, `""`/`{}`
-/// included, so a base URL or an options dict the operator emptied is
-/// actually cleared rather than silently restored by the merge.
+/// The save also proves the web's save rule (console.py saveDefault):
+/// base URL and options travel ONLY when the operator changed them from
+/// what the editor showed (the prefill may be minutes old — naming them
+/// unconditionally would roll back a change made meanwhile); reasoning
+/// on the text route is always explicit. `ui::routes::route_save_body`
+/// pins the emptied-field case ("" / {} ARE sent).
 #[test]
-fn text_route_editor_carries_reasoning_and_sends_owned_fields_explicitly() {
+fn text_route_editor_carries_reasoning_and_sends_only_what_changed() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(2);
@@ -1729,10 +1732,16 @@ fn text_route_editor_carries_reasoning_and_sends_owned_fields_explicitly() {
     assert!(s.contains("reasoning"), "the reasoning row renders:\n{s}");
 
     // Tab: mode → provider → model → base URL → reasoning → options → MTP →
-    // [Save]. Nothing is edited: the pair the row already carries is
-    // re-sent (this form's mode radio requires it), and every other
-    // owned field goes out explicitly.
-    for _ in 0..7 {
+    // [Save]. Only the base URL is edited: the pair the row already
+    // carries is re-sent (this form's mode radio requires it), reasoning
+    // is explicit, the untouched options stay unnamed.
+    for _ in 0..3 {
+        h.key(b"\t");
+        h.turn();
+    }
+    h.type_text("http://127.0.0.1:1234/v1");
+    h.turn();
+    for _ in 0..4 {
         h.key(b"\t");
         h.turn();
     }
@@ -1749,11 +1758,13 @@ fn text_route_editor_carries_reasoning_and_sends_owned_fields_explicitly() {
                 "the stored effort survives a save that did not touch it"
             );
             assert_eq!(
-                body["base_url"], "",
-                "an empty owned field is sent EMPTY — omitting it would let \
-                 the field-preserving merge restore a cleared value"
+                body["base_url"], "http://127.0.0.1:1234/v1",
+                "the edited base URL is sent"
             );
-            assert_eq!(body["options"], serde_json::json!({}), "same for options");
+            assert!(
+                body.get("options").is_none(),
+                "untouched options are not named (the store keeps them): {body:?}"
+            );
         }
         other => panic!("expected PutRoute, got {other:?}"),
     }
@@ -6930,7 +6941,7 @@ impl ConsoleTransport for MockTransport {
         self.record(format!("installed provider={}", provider.unwrap_or("-")));
         Ok(fixture("models_installed"))
     }
-    fn start_download(&self, provider: &str, artifact: &str) -> Result<Value, TransportError> {
+    fn start_download(&self, provider: &str, artifact: &str, _expected_bytes: Option<u64>) -> Result<Value, TransportError> {
         self.record(format!("download {provider} {artifact}"));
         self.started(Self::job_doc(
             "download",
@@ -7223,7 +7234,7 @@ fn download_progress_reaches_the_gateway_toast_lane() {
     let s = h.settle_until("the job at 42%", |s| s.contains("42%"));
     assert!(s.contains("download ollama qwen3:8b"), "{s}");
     assert!(s.contains("c cancels"), "{s}");
-    assert!(h.screens.job_active(), "held at running: the job is still active");
+    assert!(h.screens.job_running(), "held at running: the job is still active");
     *h.mock.hold_polls.lock().unwrap() = false;
     // The outcome lands on the GATEWAY's notice signal (shared lane):
     // the footer mirrors it and the toast effect shows it.
@@ -7235,7 +7246,7 @@ fn download_progress_reaches_the_gateway_toast_lane() {
         notice.contains("download ollama qwen3:8b completed"),
         "the gateway notice carries it: {notice}"
     );
-    assert!(!h.screens.job_active());
+    assert!(!h.screens.job_running());
 }
 
 #[test]
@@ -7332,7 +7343,7 @@ fn a_running_install_blocks_q_and_c_cancels_it() {
     h.turns(1);
     h.key(b"\r");
     h.settle_until_contains("Downloading ollama");
-    assert!(h.screens.job_active());
+    assert!(h.screens.job_running());
     // Browse-mode q refuses while the gateway job runs.
     h.key(b"q");
     h.settle_until_contains("models/engines job is running on the gateway");
@@ -7340,7 +7351,7 @@ fn a_running_install_blocks_q_and_c_cancels_it() {
     let s = h.settle_until_contains("⊘ install ollama cancelled");
     assert!(s.contains("cancelled"), "{s}");
     assert!(h.mock.called("cancel engine_install_1"));
-    assert!(!h.screens.job_active());
+    assert!(!h.screens.job_running());
 }
 
 #[test]

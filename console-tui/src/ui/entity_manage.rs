@@ -35,24 +35,43 @@ pub fn open_manage_menu(cx: Scope, ctx: &Ctx, entity: EntityRow) {
     let ctx2 = ctx.clone();
     let name = entity.name.clone();
     let state_now = entity.state.clone();
+    // A non-admin sees the same menu the web shows them: the forms open to
+    // READ, their writes are refused with the reason (the gateway's entity
+    // mutation routes are admin-only), and the two pure acts say so here.
+    let non_admin = store.conn.with_untracked(crate::store::ConnPhase::is_known_non_admin);
+    let label = |text: &str, suffix: &str| -> String {
+        if non_admin {
+            format!("{text} — {suffix}")
+        } else {
+            text.to_string()
+        }
+    };
+    let view_only = "view only (changes are admin-only)";
+    let admin_only = "admin only";
+    let title = if non_admin {
+        format!(
+            "Manage entity '{name}' (currently {state_now}). You are not an admin: \
+             state, substrate, voice, work order, own time, tools, prompt, candidates \
+             and re-embed changes need an admin session."
+        )
+    } else {
+        format!("Manage entity '{name}' (currently {state_now}).")
+    };
     super::open_prompt(
         cx,
         ctx.ui,
-        abstracttui::app::ChoicePrompt::new(format!(
-            "Manage entity '{}' (currently {}).",
-            name, state_now
-        ))
-        .option("state", "State — wake / sleep / pause")
-        .option("substrate", "Mind substrate (provider / model)")
-        .option("voice", "Voice (provider / model / voice)")
-        .option("work", "Work order (set / clear)")
-        .option("owntime", "Own time (grant + loop)")
-        .option("tools", "Tool policy (per-phase grants)")
-        .option("prompt", "Prompt overlay (edit layers)")
-        .option("candidates", "Candidates review (sleep consolidation)")
+        abstracttui::app::ChoicePrompt::new(title)
+        .option("state", label("State — wake / sleep / pause", admin_only))
+        .option("substrate", label("Mind substrate (provider / model)", view_only))
+        .option("voice", label("Voice (provider / model / voice)", view_only))
+        .option("work", label("Work order (set / clear)", view_only))
+        .option("owntime", label("Own time (grant + loop)", view_only))
+        .option("tools", label("Tool policy (per-phase grants)", view_only))
+        .option("prompt", label("Prompt overlay (edit layers)", view_only))
+        .option("candidates", label("Candidates review (sleep consolidation)", view_only))
         .option_detail(
             "reembed",
-            "Re-embed the home (repair)",
+            label("Re-embed the home (repair)", admin_only),
             "vector-index rewrite; takes the home lease — not advised unless repairing",
         )
         .option("verify", "Verify chain / spark / manifest")
@@ -68,7 +87,11 @@ pub fn open_manage_menu(cx: Scope, ctx: &Ctx, entity: EntityRow) {
                 match pick.as_str() {
                     "card" => super::entity_chat::open_card_modal(cx, &ctx2, entity.name.clone()),
                     "talk" => super::entity_chat::open_talk_modal(cx, &ctx2, entity.name.clone()),
-                    "state" => open_state_modal(cx, &ctx2, entity.clone()),
+                    "state" => {
+                        if super::util::admin_gate(&ctx2.store, "changing an entity's state") {
+                            open_state_modal(cx, &ctx2, entity.clone())
+                        }
+                    }
                     "substrate" => open_substrate_form(cx, &ctx2, entity.name.clone()),
                     "voice" => open_voice_form(cx, &ctx2, entity.name.clone()),
                     "work" => open_work_order_form(cx, &ctx2, entity.name.clone()),
@@ -76,7 +99,11 @@ pub fn open_manage_menu(cx: Scope, ctx: &Ctx, entity: EntityRow) {
                     "tools" => open_tool_policy_form(cx, &ctx2, entity.name.clone()),
                     "prompt" => open_prompt_editor(cx, &ctx2, entity.name.clone()),
                     "candidates" => open_candidates_modal(cx, &ctx2, entity.name.clone()),
-                    "reembed" => open_reembed_form(cx, &ctx2, entity.name.clone()),
+                    "reembed" => {
+                        if super::util::admin_gate(&ctx2.store, "re-embedding an entity") {
+                            open_reembed_form(cx, &ctx2, entity.name.clone())
+                        }
+                    }
                     "verify" => ctx2.send(Cmd::EntityVerify {
                         name: entity.name.clone(),
                     }),
@@ -85,6 +112,45 @@ pub fn open_manage_menu(cx: Scope, ctx: &Ctx, entity: EntityRow) {
             }
         },
     );
+}
+
+/// Seconds since the epoch (the timer grant's clock).
+fn now_epoch() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// The own-time timer grant, exactly as the web builds it
+/// (console.py entityOwntimeToggle): `{"mode": "timer", "expires_at":
+/// now + hours}` when "grant hours" holds a number > 0, None when it is
+/// blank or not positive (no timed window), Err when it is not a number.
+/// The gateway refuses a timer without `expires_at` (routes/entities.py).
+pub fn timer_grant_body(hours: &str, now_epoch: u64) -> Result<Option<Value>, String> {
+    let raw = hours.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    let h: f64 = raw
+        .parse()
+        .map_err(|_| format!("grant hours is not a number: '{raw}'"))?;
+    if !h.is_finite() || h <= 0.0 {
+        return Ok(None);
+    }
+    let expires = now_epoch + (h * 3600.0).round() as u64;
+    Ok(Some(json!({
+        "mode": "timer",
+        "expires_at": super::sandbox::utc_iso(expires),
+    })))
+}
+
+/// Why an entity WRITE is refused before it is sent (None = send it).
+/// Every write below is an admin route on the gateway
+/// (`security/authorization.py`: the entities mutation pattern); forms
+/// stay open to read, and their save lands the reason in the form.
+fn write_refusal(ctx: &Ctx, what: &str) -> Option<String> {
+    ctx.store.conn.with_untracked(|c| c.admin_refusal(what))
 }
 
 /// The selected entity's manage snapshot when it matches `name`.
@@ -452,6 +518,10 @@ fn open_substrate_form(cx: Scope, ctx: &Ctx, name: String) {
                                         ));
                                         return;
                                     }
+                                    if let Some(why) = write_refusal(&ctx_s, "saving the mind substrate") {
+                                        form_error.set(Some(why));
+                                        return;
+                                    }
                                     form_error.set(None);
                                     in_flight.set(true);
                                     ctx_s.send(Cmd::SaveEntitySubstrate {
@@ -650,6 +720,10 @@ fn open_voice_form(cx: Scope, ctx: &Ctx, name: String) {
                                         }
                                         b
                                     };
+                                    if let Some(why) = write_refusal(&ctx_s, "saving the voice") {
+                                        form_error.set(Some(why));
+                                        return;
+                                    }
                                     form_error.set(None);
                                     in_flight.set(true);
                                     ctx_s.send(Cmd::SaveEntityVoice {
@@ -837,6 +911,10 @@ fn open_work_order_form(cx: Scope, ctx: &Ctx, name: String) {
                                         }
                                         json!({ "order": o })
                                     };
+                                    if let Some(why) = write_refusal(&ctx_s, "saving the work order") {
+                                        form_error.set(Some(why));
+                                        return;
+                                    }
                                     form_error.set(None);
                                     in_flight.set(true);
                                     ctx_s.send(Cmd::SaveEntityWorkOrder {
@@ -869,9 +947,12 @@ fn open_own_time_modal(cx: Scope, ctx: &Ctx, name: String) {
     let store = ctx.store;
     let ctx2 = ctx.clone();
     let screen_cx = cx;
-    open_form(ctx, cx, Size::new(76, 20), move |mcx, close| {
+    open_form(ctx, cx, Size::new(76, 21), move |mcx, close| {
         let theme = use_theme(mcx);
         let t0 = theme.get().tokens;
+        // The web's "grant hours" (entity-grant-hours): blank = the start
+        // itself arms an until-revoked grant; N > 0 = a timed window.
+        let grant_hours = mcx.signal(String::new());
         let tick_s = mcx.signal("20".to_string());
         let ticks_day = mcx.signal("8".to_string());
         let rest_min = mcx.signal("30".to_string());
@@ -956,6 +1037,17 @@ fn open_own_time_modal(cx: Scope, ctx: &Ctx, name: String) {
                     .element(mcx, &t0)
                     .build(),
             ))
+            .child(field(
+                &t0,
+                "grant hours",
+                TextInput::new()
+                    .value(grant_hours)
+                    .placeholder("blank = until revoked")
+                    .placeholder_while_focused(true)
+                    .layout(LayoutStyle::default().w(24).h(1))
+                    .element(mcx, &t0)
+                    .build(),
+            ))
             .child(line(vec![span(String::new(), t0.text)]))
             .child(dyn_view_scoped(
                 LayoutStyle::default().h(1).shrink(0.0),
@@ -974,10 +1066,22 @@ fn open_own_time_modal(cx: Scope, ctx: &Ctx, name: String) {
                         .child(
                             Button::new("Grant (timer)")
                                 .on_click(move || {
-                                    ctx_grant.send(Cmd::SavePersonalGrant {
-                                        name: n_grant.clone(),
-                                        body: json!({ "mode": "timer" }).into(),
-                                    });
+                                    if !super::util::admin_gate(&ctx_grant.store, "granting own time") {
+                                        return;
+                                    }
+                                    // The gateway refuses a timer without
+                                    // its expiry (routes/entities.py): the
+                                    // window comes from "grant hours".
+                                    match timer_grant_body(&grant_hours.get_untracked(), now_epoch()) {
+                                        Ok(Some(body)) => ctx_grant.send(Cmd::SavePersonalGrant {
+                                            name: n_grant.clone(),
+                                            body: body.into(),
+                                        }),
+                                        Ok(None) => ctx_grant.store.notice.set(Some(
+                                            "type the grant hours first — a timer grant needs its window".into(),
+                                        )),
+                                        Err(e) => ctx_grant.store.notice.set(Some(e)),
+                                    }
                                 })
                                 .element(bcx, &t)
                                 .build(),
@@ -985,6 +1089,9 @@ fn open_own_time_modal(cx: Scope, ctx: &Ctx, name: String) {
                         .child(
                             Button::new("Disable grant")
                                 .on_click(move || {
+                                    if !super::util::admin_gate(&ctx_off.store, "revoking own time") {
+                                        return;
+                                    }
                                     ctx_off.send(Cmd::SavePersonalGrant {
                                         name: n_off.clone(),
                                         body: json!({ "mode": "disabled" }).into(),
@@ -996,6 +1103,9 @@ fn open_own_time_modal(cx: Scope, ctx: &Ctx, name: String) {
                         .child(
                             Button::new("Start loop")
                                 .on_click(move || {
+                                    if !super::util::admin_gate(&ctx_start.store, "starting an entity's own time") {
+                                        return;
+                                    }
                                     // Refuse garbage with the reason instead
                                     // of silently substituting the default
                                     // ("20abc" starting a loop at 20 is the
@@ -1024,6 +1134,24 @@ fn open_own_time_modal(cx: Scope, ctx: &Ctx, name: String) {
                                             return;
                                         }
                                     };
+                                    // A timed window is the one case the
+                                    // start cannot express itself: the web
+                                    // writes the timer grant FIRST (the
+                                    // worker lane is serial, so it lands
+                                    // before the start).
+                                    let timer = match timer_grant_body(&grant_hours.get_untracked(), now_epoch()) {
+                                        Ok(t) => t,
+                                        Err(e) => {
+                                            ctx_start.store.notice.set(Some(e));
+                                            return;
+                                        }
+                                    };
+                                    if let Some(body) = timer {
+                                        ctx_start.send(Cmd::SavePersonalGrant {
+                                            name: n_start.clone(),
+                                            body: body.into(),
+                                        });
+                                    }
                                     ctx_start.send(Cmd::EntityLoop {
                                         name: n_start.clone(),
                                         start: true,
@@ -1040,6 +1168,9 @@ fn open_own_time_modal(cx: Scope, ctx: &Ctx, name: String) {
                         .child(
                             Button::new("Stop (graceful)")
                                 .on_click(move || {
+                                    if !super::util::admin_gate(&ctx_stop.store, "stopping an entity's own time") {
+                                        return;
+                                    }
                                     ctx_stop.send(Cmd::EntityLoop {
                                         name: n_stop.clone(),
                                         start: false,
@@ -1066,6 +1197,9 @@ fn open_own_time_modal(cx: Scope, ctx: &Ctx, name: String) {
                         .child(
                             Button::new("Emergency freeze")
                                 .on_click(move || {
+                                    if !super::util::admin_gate(&ctx_freeze.store, "freezing an entity's own time") {
+                                        return;
+                                    }
                                     // Danger path: close this modal, then
                                     // confirm on the screen scope (the
                                     // prompt-over-modal stacking hazard).
@@ -1372,6 +1506,10 @@ fn open_tool_policy_form(cx: Scope, ctx: &Ctx, name: String) {
                                     if in_flight.get_untracked() {
                                         return;
                                     }
+                                    if let Some(why) = write_refusal(&ctx_s, "saving tool grants") {
+                                        form_error.set(Some(why));
+                                        return;
+                                    }
                                     let Some(d) = ctx_s.store.entity_policy.with_untracked(|p| {
                                         p.ready().filter(|d| d.entity == n).cloned()
                                     }) else {
@@ -1642,6 +1780,10 @@ fn open_prompt_editor(cx: Scope, ctx: &Ctx, name: String) {
                                             Value::String(states_s[i].text()),
                                         );
                                     }
+                                    if let Some(why) = write_refusal(&ctx_s, "saving the prompt overlay") {
+                                        form_error.set(Some(why));
+                                        return;
+                                    }
                                     form_error.set(None);
                                     in_flight.set(true);
                                     ctx_s.send(Cmd::SaveEntityPrompt {
@@ -1681,6 +1823,7 @@ fn open_candidates_modal(cx: Scope, ctx: &Ctx, name: String) {
         let t0 = theme.get().tokens;
         let sel = mcx.signal(0usize);
         let reason = mcx.signal(String::new());
+        let corroborating = mcx.signal(String::new());
         let n = name.clone();
         let n_act = name.clone();
         let ctx3 = ctx2.clone();
@@ -1766,6 +1909,17 @@ fn open_candidates_modal(cx: Scope, ctx: &Ctx, name: String) {
             }))
             .child(field(
                 &t0,
+                "corroborating",
+                TextInput::new()
+                    .value(corroborating)
+                    .placeholder("promote: record ids, comma-separated (>= 2 independent origins)")
+                    .placeholder_while_focused(true)
+                    .layout(LayoutStyle::default().w(66).h(1))
+                    .element(mcx, &t0)
+                    .build(),
+            ))
+            .child(field(
+                &t0,
                 "reason",
                 TextInput::new()
                     .value(reason)
@@ -1783,6 +1937,9 @@ fn open_candidates_modal(cx: Scope, ctx: &Ctx, name: String) {
                         let ctx_a = ctx3.clone();
                         let n2 = n_act.clone();
                         move || {
+                            if !super::util::admin_gate(&ctx_a.store, "promoting or rejecting a candidate") {
+                                return;
+                            }
                             let r = reason.get_untracked().trim().to_string();
                             if r.is_empty() {
                                 ctx_a.store.notice.set(Some(
@@ -1799,13 +1956,24 @@ fn open_candidates_modal(cx: Scope, ctx: &Ctx, name: String) {
                                 ctx_a.store.notice.set(Some("no candidate selected".into()));
                                 return;
                             };
+                            let ids = crate::store::parse_corroborating_ids(
+                                &corroborating.get_untracked(),
+                            );
+                            if promote && ids.is_empty() {
+                                ctx_a.store.notice.set(Some(
+                                    "type the corroborating record ids first — a promote needs >= 2 independent origins".into(),
+                                ));
+                                return;
+                            }
                             ctx_a.send(Cmd::CandidateAct {
                                 name: n2.clone(),
                                 record_id: row.record_id.clone(),
                                 promote,
+                                corroborating_ids: if promote { ids } else { Vec::new() },
                                 reason: r,
                             });
                             reason.set(String::new());
+                            corroborating.set(String::new());
                         }
                     };
                     let ctx_r = ctx3.clone();
@@ -1850,3 +2018,27 @@ fn open_candidates_modal(cx: Scope, ctx: &Ctx, name: String) {
 // The shared form plumbing (dirty-Esc guard, write_done routing, the
 // message slot) lives in `super` (ui/mod.rs) — one implementation of
 // the contract for every write form in the app (F4).
+
+#[cfg(test)]
+mod tests {
+    use super::timer_grant_body;
+    use serde_json::json;
+
+    /// The own-time timer carries the expiry the web computes (now +
+    /// hours) — without it the gateway answers 400.
+    #[test]
+    fn timer_grant_body_carries_expires_at() {
+        // 2026-09-27T10:04:05Z + 2h.
+        assert_eq!(
+            timer_grant_body("2", 1_790_503_445).unwrap(),
+            Some(json!({"mode": "timer", "expires_at": "2026-09-27T12:04:05Z"}))
+        );
+        assert_eq!(
+            timer_grant_body("0.5", 1_790_503_445).unwrap().unwrap()["expires_at"],
+            "2026-09-27T10:34:05Z"
+        );
+        assert_eq!(timer_grant_body("", 1).unwrap(), None, "blank = no timed window");
+        assert_eq!(timer_grant_body("0", 1).unwrap(), None, "not positive = no window");
+        assert!(timer_grant_body("2h", 1).is_err(), "garbage is refused, not guessed");
+    }
+}

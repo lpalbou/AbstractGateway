@@ -524,15 +524,22 @@ impl Ctx {
                 }
             }
             3 => {
-                s.users.set(Loadable::Loading);
+                // The users registry is admin-only (`/admin/users`): a
+                // non-admin is told so on screen, never sent for a 403.
+                if !s.conn.with_untracked(ConnPhase::is_known_non_admin) {
+                    s.users.set(Loadable::Loading);
+                    self.send(Cmd::LoadUsers);
+                }
                 s.entities.set(Loadable::Loading);
                 // The inspector's detail must honor `r`'s "refreshing
                 // live data" promise too (F17): NotAsked here → the
                 // selection effect reloads it when fresh entities land.
                 s.entity_detail.set(Loadable::NotAsked);
-                self.send(Cmd::LoadUsers);
                 self.send(Cmd::LoadEntities);
             }
+            // The whole Runtimes screen is admin-only (`/admin/runtimes`;
+            // the web hides the tab): nothing to load for a non-admin.
+            4 if s.conn.with_untracked(ConnPhase::is_known_non_admin) => {}
             4 => {
                 // ONLY the inventory loads here (operator directive
                 // 2026-07-26: no eager runs/sessions). The detail slots
@@ -919,7 +926,7 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
                 // A Models/Engines job runs ON THE GATEWAY and survives
                 // us, but the console is its only live progress view —
                 // quitting mid-download is a decision, not a keystroke.
-                if ctx_q.screens.store.job_active() {
+                if ctx_q.screens.store.job_running() {
                     ctx_q.store.notice.set(Some(
                         "a models/engines job is running on the gateway — c on Models/Engines \
                          cancels it (Ctrl+C quits anyway; the gateway keeps running it)"
@@ -1283,9 +1290,11 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
                 }
                 2 => matches!(store.routes.get(), Loadable::NotAsked),
                 3 => {
-                    matches!(store.users.get(), Loadable::NotAsked)
+                    (matches!(store.users.get(), Loadable::NotAsked)
+                        && !store.conn.with(ConnPhase::is_known_non_admin))
                         || matches!(store.entities.get(), Loadable::NotAsked)
                 }
+                4 if store.conn.with(ConnPhase::is_known_non_admin) => false,
                 4 => {
                     // ONLY the inventory: runs / data_homes /
                     // runtime_config are owned by their panel effects
@@ -1631,6 +1640,8 @@ fn header(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
 fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Theme>) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
+    let screens_caps = ctx.screens.caps;
+    let screens_access = ctx.screens.store.access;
     let engine_notices = abstracttui::app::use_startup_notices(_cx);
     Element::new()
         // Chrome rows: pinned like the header (finding-0240 class) —
@@ -1704,6 +1715,10 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
             let t = theme.get().tokens;
             let wizard = ui.wizard.get();
             let screen = ui.screen.get();
+            // A principal known NOT to be an admin does not see the admin
+            // verbs (the web hides the same controls); pressing one still
+            // answers with the reason.
+            let non_admin = store.conn.with(ConnPhase::is_known_non_admin);
             let mut pairs: Vec<(&str, &str)> = Vec::new();
             // Universal pairs FIRST (adversary round-3): the hint row
             // truncates right-edge-first, and Ctrl+C used to sit last —
@@ -1758,6 +1773,8 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     pairs.push(("w", "my workspace policy"));
                     pairs.push(("r", "refresh"));
                 }
+                // The whole Runtimes screen is admin-only: no verbs.
+                4 if non_admin => {}
                 4 => {
                     pairs.push(("Enter", "inspect runtime"));
                     pairs.push(("f", "filter"));
@@ -1805,11 +1822,17 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 }
                 // The shared screens publish their own verbs.
                 SCREEN_CATALOG => {
-                    pairs.extend_from_slice(abstractcore_console::screens::catalog::HINTS);
+                    pairs.extend(abstractcore_console::screens::catalog::hints(
+                        screens_caps,
+                        &screens_access.get(),
+                    ));
                     pairs.push(("r", "refresh"));
                 }
                 SCREEN_ENGINES => {
-                    pairs.extend_from_slice(abstractcore_console::screens::engines::HINTS);
+                    pairs.extend(abstractcore_console::screens::engines::hints(
+                        screens_caps,
+                        &screens_access.get(),
+                    ));
                 }
                 SCREEN_APPS => pairs.extend_from_slice(apps::HINTS),
                 SCREEN_WELCOME => {
@@ -1817,20 +1840,65 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 }
                 _ => {}
             }
+            let admin_keys: &[&str] = match screen {
+                SCREEN_ROUTES => routes::ADMIN_KEYS,
+                SCREEN_USERS => users::ADMIN_KEYS,
+                SCREEN_WORKFLOWS => workflows::ADMIN_KEYS,
+                SCREEN_MODELS => models::ADMIN_KEYS,
+                _ => &[],
+            };
+            let (mut pairs, gated) = util::admin_hint_pairs(pairs, admin_keys, non_admin);
+            if let Some(keys) = gated.as_deref() {
+                pairs.push((keys, "admin only"));
+            }
             // The setup guide's chord LAST: every screen has it, so it
             // yields to the screen's own verbs when the row truncates
-            // (the Setup step and the goal line teach it too).
-            pairs.push(if wizard {
-                ("Ctrl+G", "leave/skip guide")
-            } else {
-                ("Ctrl+G", "setup guide")
-            });
+            // (the Setup step and the goal line teach it too). The guide
+            // is an admin surface (its writes are admin routes; the web
+            // hides "Setup guide" for a non-admin).
+            if wizard {
+                pairs.push(("Ctrl+G", "leave/skip guide"));
+            } else if !non_admin {
+                pairs.push(("Ctrl+G", "setup guide"));
+            }
             // LAST: the row truncates right-edge-first, so the host panel
             // key shows wherever the screen's own verbs leave room.
             pairs.push((host::OPEN_KEY_LABEL, "gateway host"));
             hints(&t, &pairs)
         }))
         .build()
+}
+
+/// Who may change the gateway host from AbstractCore's Models/Engines
+/// screens (9 and 0), from the connection: the web console's rule, admins
+/// only. A connection being re-verified keeps its principal (no flicker).
+/// The ReadOnly reason ends every refusal those screens give ("only an
+/// admin can download models — signed in as ana, not an admin").
+pub fn screens_access(conn: &ConnPhase) -> abstractcore_console::screens::Access {
+    use abstractcore_console::screens::Access;
+    match conn {
+        ConnPhase::Connected(id) | ConnPhase::Verifying(id) if id.admin => Access::Admin,
+        ConnPhase::Connected(id) | ConnPhase::Verifying(id) => {
+            Access::ReadOnly(format!("signed in as {}, not an admin", id.user_id))
+        }
+        _ => Access::ReadOnly("not signed in to a gateway".into()),
+    }
+}
+
+/// [`screens_access`] as a signal kept current from `store.conn` — what
+/// `ScreensCtx::new` takes (lib.rs and the headless tests share it).
+pub fn screens_access_signal(
+    cx: Scope,
+    store: Store,
+) -> Signal<abstractcore_console::screens::Access> {
+    let access = cx.signal(store.conn.with_untracked(screens_access));
+    cx.effect(move || {
+        let next = store.conn.with(screens_access);
+        if access.with_untracked(|a| *a != next) {
+            access.set(next);
+        }
+    });
+    access
 }
 
 /// Scheme-default URL normalization, shared by the Probe button and the

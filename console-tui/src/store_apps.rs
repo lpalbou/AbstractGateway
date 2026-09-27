@@ -483,11 +483,11 @@ impl AppLog {
     /// "Show more" is offered while the log may hold more and the route's
     /// ceiling is not reached.
     pub fn can_show_more(&self) -> bool {
-        (self.lines.len() as u32) >= self.tail && self.tail < crate::api::api_apps::APP_LOG_MAX
+        (self.lines.len() as u32) >= self.tail && self.tail < crate::api::apps::APP_LOG_MAX
     }
     /// At the ceiling: older lines are only in the file.
     pub fn capped(&self) -> bool {
-        (self.lines.len() as u32) >= crate::api::api_apps::APP_LOG_MAX
+        (self.lines.len() as u32) >= crate::api::apps::APP_LOG_MAX
     }
 }
 
