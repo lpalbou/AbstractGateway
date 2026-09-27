@@ -33,6 +33,20 @@ from . import host_control
 from .automation_command_types import AUTOMATION_COMMAND_TYPES, COMMAND_TYPES
 
 
+def _paused_while_running(run: Any) -> bool:
+    """A RUNNING run whose vars carry the runtime pause flag.
+
+    `Runtime.tick` on it returns at once without saving (the pause gate), so
+    the run stays RUNNING, and `_submit_tick`'s done-callback re-queues every
+    still-RUNNING run for an immediate direct tick: the runner spun on it
+    (~10k no-op ticks per second, review 52 R52-1) and starved every other
+    run of workers. A real pause (`pause_run`) parks RUNNING runs as WAITING,
+    so only vars that arrived paused reach this state; they are not ticked
+    until a resume clears the flag (the resume's priority tick is not gated).
+    """
+    return getattr(run, "status", None) == RunStatus.RUNNING and is_paused_vars(getattr(run, "vars", None))
+
+
 class CommandNotRecorded(RuntimeError):
     """An automation command failed on the host AND its failure could not be
     recorded in the automation's ledger: the command cursor must not pass it."""
@@ -615,6 +629,8 @@ class GatewayRunner:
             if getattr(run, "status", None) != RunStatus.RUNNING:
                 # WAITING/terminal runs are the scan's business (a due
                 # wait_until arrives through list_due_wait_until).
+                continue
+            if _paused_while_running(run):
                 continue
             self._submit_tick(rid)
 
@@ -1578,6 +1594,8 @@ class GatewayRunner:
             if not isinstance(rid, str) or not rid:
                 continue
             if not _is_gateway_owned(r):
+                continue
+            if _paused_while_running(r):
                 continue
             self._submit_tick(rid)
 

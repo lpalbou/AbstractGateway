@@ -34,6 +34,35 @@ _TRIGGER_KEYS = frozenset({"source_id", "source_version", "config"})
 _CONTEXT_KEYS = frozenset({"mode"})
 
 
+#: The `_runtime` keys a client may set in an automation's target input
+#: (review 52 R52-1): the per-run generation settings `/runs/start` accepts
+#: from chat clients (`thinking`, `speculation`, `stream`, `provider`,
+#: `model`) and `allowed_tools`, which only narrows the target's tools.
+#: Everything else under `_runtime` is runtime/host state (`control` froze an
+#: occurrence, `agora_agent` is an identity, `tool_policy` is set by
+#: `policy.tool_approval`) and is dropped. Workspace knobs are top-level keys,
+#: clamped separately by the gateway's workspace policy.
+CLIENT_RUNTIME_KEYS: frozenset = frozenset({"allowed_tools", "provider", "model", "thinking", "speculation", "stream"})
+#: Top-level input keys only the server writes.
+SERVER_INPUT_KEYS: frozenset = frozenset({"_meta", "workspace_read_only", "_gateway_workspace"})
+
+
+def strip_server_owned_input(input_data: dict) -> list:
+    """Drop server-owned keys from a client input dict IN PLACE; returns the dropped key paths."""
+    dropped = [k for k in SERVER_INPUT_KEYS if k in input_data]
+    for key in dropped:
+        input_data.pop(key, None)
+    runtime_ns = input_data.get("_runtime")
+    if runtime_ns is not None and not isinstance(runtime_ns, dict):
+        input_data.pop("_runtime")
+        dropped.append("_runtime")
+    elif isinstance(runtime_ns, dict):
+        for key in sorted(k for k in runtime_ns if k not in CLIENT_RUNTIME_KEYS):
+            runtime_ns.pop(key)
+            dropped.append(f"_runtime.{key}")
+    return sorted(dropped)
+
+
 class AutomationDefaultsError(ValueError):
     def __init__(self, message: str, *, field: str, reason_code: str = "invalid_definition") -> None:
         super().__init__(message)
@@ -95,6 +124,17 @@ def _structural(raw: Any) -> Dict[str, Any]:
     input_data = raw.get("input_data", {})
     if not isinstance(input_data, Mapping):
         raise AutomationDefaultsError("input_data must be an object", field="automation_defaults.input_data")
+    for key in sorted(k for k in input_data if k in SERVER_INPUT_KEYS):
+        raise AutomationDefaultsError(f"input_data.{key} is set by the server, not by a workflow's defaults", field=f"automation_defaults.input_data.{key}")
+    runtime_ns = input_data.get("_runtime")
+    if runtime_ns is not None:
+        if not isinstance(runtime_ns, Mapping):
+            raise AutomationDefaultsError("input_data._runtime must be an object", field="automation_defaults.input_data._runtime")
+        for key in sorted(k for k in runtime_ns if k not in CLIENT_RUNTIME_KEYS):
+            raise AutomationDefaultsError(
+                f"input_data._runtime.{key} cannot be set by a workflow's defaults (allowed: {', '.join(sorted(CLIENT_RUNTIME_KEYS))})",
+                field=f"automation_defaults.input_data._runtime.{key}",
+            )
     out["input_data"] = dict(input_data)
     return out
 

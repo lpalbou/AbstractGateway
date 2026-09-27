@@ -8,23 +8,6 @@ from pathlib import Path
 import pytest
 
 
-def test_file_stores_warm_the_session_index_at_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from abstractruntime import JsonFileRunStore
-
-    from abstractgateway.stores import build_file_stores
-
-    warmed: list = []
-    real = JsonFileRunStore.warm_session_index
-
-    def spy(self):
-        warmed.append(self)
-        return real(self)
-
-    monkeypatch.setattr(JsonFileRunStore, "warm_session_index", spy)
-    stores = build_file_stores(base_dir=tmp_path / "runtime")
-    assert len(warmed) == 1 and stores.run_store.inner is warmed[0]
-
-
 def test_gateway_boot_warms_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from abstractruntime import JsonFileRunStore
     from fastapi.testclient import TestClient

@@ -42,13 +42,7 @@ def build_file_stores(*, base_dir: Path) -> GatewayStores:
     base.mkdir(parents=True, exist_ok=True)
 
     artifact_store = FileArtifactStore(base)
-    json_run_store = JsonFileRunStore(base)
-    # Build the JSON store's session/children indexes at boot (one scan,
-    # ~0.75-0.9 s at 20k runs) so the first chat does not pay for it.
-    started = time.perf_counter()
-    json_run_store.warm_session_index()
-    logger.info("run store session index warmed in %.2fs (%s)", time.perf_counter() - started, base)
-    run_store = OffloadingRunStore(json_run_store, artifact_store=artifact_store)
+    run_store = OffloadingRunStore(JsonFileRunStore(base), artifact_store=artifact_store)
     ledger_store = OffloadingLedgerStore(ObservableLedgerStore(JsonlLedgerStore(base)), artifact_store=artifact_store)
     command_store = JsonlCommandStore(base)
     command_cursor_store = JsonFileCommandCursorStore(base / "commands_cursor.json")
@@ -113,3 +107,18 @@ def build_sqlite_stores(*, base_dir: Path, db_path: Path | None = None) -> Gatew
         command_store=command_store,
         command_cursor_store=command_cursor_store,
     )
+
+
+def warm_json_run_store(stores: GatewayStores) -> None:
+    """Build a file-backed run store's session/children indexes now (the
+    gateway SERVICE's boot only: one scan, ~0.75-0.9 s at 20k runs), so the
+    first chat does not pay for it. Other `build_file_stores` callers (admin
+    cross-plane views, the backlog log writer) never warm."""
+    from abstractruntime import JsonFileRunStore
+
+    inner = stores.run_store.inner
+    if not isinstance(inner, JsonFileRunStore):
+        raise TypeError(f"warm_json_run_store needs a JSON file run store, got {type(inner).__name__}")
+    started = time.perf_counter()
+    inner.warm_session_index()
+    logger.info("run store session index warmed in %.2fs (%s)", time.perf_counter() - started, stores.base_dir)

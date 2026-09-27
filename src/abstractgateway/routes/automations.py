@@ -53,7 +53,12 @@ from ..automation_attention import (
     parse_attention_cursor,
 )
 from ..automation_command_types import AUTOMATION_COMMAND_TYPES, AUTOMATION_SUMMARY_CAPABILITIES
-from ..automation_defaults import AutomationDefaultsError, manifest_automation_defaults, validate_flow_automation_defaults
+from ..automation_defaults import (
+    AutomationDefaultsError,
+    manifest_automation_defaults,
+    strip_server_owned_input,
+    validate_flow_automation_defaults,
+)
 from ..automation_errors import AutomationError
 from ..run_workspace_guard import guard_run_vars
 from ..service import get_gateway_service
@@ -440,19 +445,12 @@ def _guarded_input_data(svc: Any, principal: Any, input_data: Dict[str, Any], *,
     (occurrences and discussions are started by the runtime, so they carry
     the protection in their inputs rather than through `host.start_run`)."""
     data = _strip_client_workflow_policy(copy.deepcopy(dict(input_data)))
-    data.pop("_gateway_workspace", None)
-    data.pop("workspace_read_only", None)
-    # Server-owned keys never come from a client (review 47 P2-1): every
-    # `_meta.*` (automation / occurrence / discussion attribution, digests;
-    # a client `_meta.automation` made an occurrence index as a controller),
-    # the read-only mount, and the tool grant (`policy.tool_approval` is the
-    # one documented way to set it). `_runtime.allowed_tools` stays: it only
-    # narrows what the target may call.
-    data.pop("_meta", None)
-    runtime_ns = data.get("_runtime")
-    if isinstance(runtime_ns, dict):
-        for key in ("workspace_read_only", "tool_policy"):
-            runtime_ns.pop(key, None)
+    # Server-owned keys never come from a client (reviews 47 P2-1, 52 R52-1):
+    # `_meta.*`, the read-only mount, and every `_runtime` key outside the
+    # client allowlist (`CLIENT_RUNTIME_KEYS`).
+    dropped = strip_server_owned_input(data)
+    if dropped:
+        logger.warning("automation %s: dropped server-owned input keys %s from the client's target input", automation_id, dropped)
     session_id = automation_session_id(automation_id)
     try:
         data = _sanitize_run_workspace_policy(data, principal=principal, session_id=session_id)

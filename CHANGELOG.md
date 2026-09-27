@@ -67,6 +67,13 @@ AbstractRuntime version is raised to that release when this version is published
 
 ### Fixed
 
+- An automation's target input keeps only the `_runtime` keys a client may set (`allowed_tools`,
+  `provider`, `model`, `thinking`, `speculation`, `stream`); every other `_runtime` key is
+  dropped. A client `_runtime.control` used to create an automation whose runs never started.
+- A run whose saved state said "paused" while it was still marked running was re-ticked
+  thousands of times a second, slowing every other run of the gateway; it is now left alone
+  until it is resumed.
+
 - Run commands (`pause`, `cancel`, …) sent to an automation's id are refused with 409
   `invalid_state` and a pointer to the `automation.*` commands.
 - A scheduled run listed by `GET /api/gateway/runs` reports `is_scheduled: true`.

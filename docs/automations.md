@@ -184,9 +184,20 @@ same protections as for any run: your workspace settings are clamped to the
 operator's workspace policy, the automation gets its own folder under the
 gateway's data folder, and the built-in deny rules keep its tools away from
 the data folder and your credential folders ([security.md](./security.md)).
-Keys the server owns are dropped, among them `_meta`, `workspace_read_only`
-and `_runtime.tool_policy` (tool approval is set by `policy.tool_approval`). `_runtime.allowed_tools` is kept, because it
-only narrows the tools the target may call.
+Keys the server owns are dropped: `_meta`, `workspace_read_only`, and every
+`_runtime` key except these, which a client may set:
+
+| `_runtime` key | What it sets |
+|---|---|
+| `allowed_tools` | narrows the tools the target may call |
+| `provider`, `model` | the model the target uses |
+| `thinking`, `speculation` | generation settings, as in a chat run |
+| `stream` | live token streaming (`true`/`false`) |
+
+Anything else under `_runtime` (for example `control`, `tool_policy`,
+`agora_agent`) is runtime or host state and is dropped. Tool approval is set
+by `policy.tool_approval`. A workflow's `automation_defaults` may not carry
+server-owned keys at all: saving the workflow answers 422 with the `field`.
 
 **`context.mode`.**
 

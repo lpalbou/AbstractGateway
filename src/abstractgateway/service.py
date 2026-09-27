@@ -15,7 +15,7 @@ from .embeddings_config import build_embedding_client, resolve_embedding_config
 from .runner import GatewayRunner, GatewayRunnerConfig
 from .security.principal import GatewayPrincipal, current_gateway_principal, safe_principal_component
 from .security import GatewayAuthPolicy, load_gateway_auth_policy_from_env
-from .stores import GatewayStores, build_file_stores, build_sqlite_stores
+from .stores import GatewayStores, build_file_stores, build_sqlite_stores, warm_json_run_store
 from .users import gateway_user_auth_enabled
 from .workflow_catalog import workflow_catalog_bundles_root_from_env
 
@@ -394,6 +394,7 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
     backend = str(getattr(cfg, "store_backend", "file") or "file").strip().lower() or "file"
     if backend == "file":
         stores = build_file_stores(base_dir=cfg.data_dir)
+        warm_json_run_store(stores)
     elif backend == "sqlite":
         stores = build_sqlite_stores(base_dir=cfg.data_dir, db_path=getattr(cfg, "db_path", None))
     else:
