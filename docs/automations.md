@@ -538,6 +538,7 @@ automation:
 | `role` | `controller`, `occurrence`, `descendant`, `discussion`, `legacy_schedule`, or `null` |
 | `occurrence_index` | the occurrence number, or `null` |
 | `legacy` | `true` for an older scheduled run |
+| `workspace_root` | on turn rows only (runs without a parent, and occurrences): the folder the run works in, as it runs (a launch-folder override, a discussion's own folder); absent on sub-runs, controllers and runs without one |
 
 A growing automation's occurrences have `session_kind: "automation"`; an
 independent automation's occurrences have `session_kind: "occurrence"`.

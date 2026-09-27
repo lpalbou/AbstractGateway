@@ -756,7 +756,8 @@ Errors on these routes, 401 and 403 included, always have the shape
 with the `resume` command above; the answer's shape depends on the wait's
 `kind` ([automations.md](./automations.md#waits-on-a-person)).
 `GET /api/gateway/runs` rows carry `session_kind`, `automation_id`, `role`,
-`occurrence_index` and `legacy`, accept `session_kind=chat,discussion`, and
+`occurrence_index` and `legacy`, plus `workspace_root` on turn rows (the folder
+the run works in; absent on sub-runs), accept `session_kind=chat,discussion`, and
 `root_only=true` returns conversation turns, one per occurrence
 ([automations.md](./automations.md#automations-in-run-lists)).
 

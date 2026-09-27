@@ -799,3 +799,40 @@ def test_summary_rows_carry_the_definitions_workspace_root(live: TestClient) -> 
     rows = {s["automation_id"]: s for s in live.get("/api/gateway/automations", headers=HEADERS).json()["items"]}
     assert rows[aid]["workspace_root"] == definition["workspace_root"]
     assert live.get(f"/api/gateway/automations/{aid}", headers=HEADERS).json()["summary"]["workspace_root"] == definition["workspace_root"]
+
+
+def test_runs_rows_carry_the_folder_turns_execute_in(live: TestClient, tmp_path: Path) -> None:
+    import os
+
+    # A chat turn started with a launch-folder override reports THAT folder.
+    project = tmp_path / "project"
+    project.mkdir()
+    r = live.post("/api/gateway/runs/start", headers=HEADERS, json={
+        "bundle_id": live.bundle_ref, "flow_id": ECHO_FLOW_ID, "session_id": "ws-chat", "input_data": {"prompt": "p", "workspace_root": str(project)}})
+    assert r.status_code == 200, r.text
+    chat_id = r.json()["run_id"]
+    rows = _rows(live, "root_only=true&session_id=ws-chat")
+    assert os.path.realpath(rows[chat_id]["workspace_root"]) == os.path.realpath(str(project))
+
+    # A discussion row reports its OWN folder, not the automation's mount.
+    aid = _create(live, request_id="ws-disc", mode="growing")["automation_id"]
+    occ = _run_now_and_wait(live, aid, "c1", index=1)
+    out = live.post(f"/api/gateway/automations/{aid}/discuss", headers=HEADERS,
+                    json={"request_id": "d", "occurrence_index": 1, "prompt": "why?"}).json()
+    rows = _rows(live, f"root_only=true&session_id={out['session_id']}")
+    assert rows[out["run_id"]]["workspace_root"] == out["workspace_root"] != out["mounted_workspace"]
+    # The occurrence (a turn, though a child of the controller) carries its folder, on both paths.
+    automation_ws = live.get(f"/api/gateway/automations/{aid}", headers=HEADERS).json()["definition"]["workspace_root"]
+    assert _rows(live, "root_only=true")[occ["run_id"]]["workspace_root"] == automation_ws
+    children = live.get(f"/api/gateway/runs?parent_run_id={aid}&include_ledger_len=false", headers=HEADERS).json()["items"]
+    assert [c["workspace_root"] for c in children if c["run_id"] == occ["run_id"]] == [automation_ws]
+
+    # A sub-run (child of a turn) does not carry it; neither does the controller.
+    sub = chat_run(session_id="ws-chat", parent_run_id=chat_id, created_at="2026-09-27T12:00:00+00:00")
+    sub.vars["workspace_root"] = str(project)
+    save_runs(sub)
+    everything = _rows(live, "")
+    assert "workspace_root" not in everything[sub.run_id]
+    assert "workspace_root" not in everything[aid]
+    kids = live.get(f"/api/gateway/runs?parent_run_id={chat_id}&include_ledger_len=false", headers=HEADERS).json()["items"]
+    assert kids and all("workspace_root" not in k for k in kids)

@@ -1350,6 +1350,16 @@ def run_summary(run: Any) -> Dict[str, Any]:
 
     out.update(automation_index_fields(getattr(run, "vars", None), run_id=getattr(run, "run_id", None)))
     out["legacy"] = out.get("role") == "legacy_schedule"
+    # The folder the run executes in (its top-level vars["workspace_root"],
+    # the same value the run index carries), on TURN rows only: parent-less
+    # non-controller runs and occurrences. Absent otherwise.
+    vars_obj = getattr(run, "vars", None)
+    ws = vars_obj.get("workspace_root") if isinstance(vars_obj, dict) else None
+    is_turn = out.get("role") == "occurrence" or (
+        not str(out.get("parent_run_id") or "").strip() and out.get("role") != "controller"
+    )
+    if isinstance(ws, str) and ws.strip() and is_turn:
+        out["workspace_root"] = ws.strip()
     if waiting is not None:
         out["waiting"] = {
             "reason": getattr(getattr(waiting, "reason", None), "value", None) or str(getattr(waiting, "reason", "")),

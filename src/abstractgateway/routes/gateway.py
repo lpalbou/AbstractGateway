@@ -8827,6 +8827,11 @@ async def list_runs(
             # "automation"), never a chat.
             "legacy": row.get("role") == "legacy_schedule",
         }
+        # The folder the run executes in (runtime index column), on TURN rows
+        # only: absent (not null) when the run has none or is a sub-run.
+        ws = row.get("workspace_root")
+        if isinstance(ws, str) and ws and _is_turn_root_summary(out):
+            out["workspace_root"] = ws
         if status0 == "waiting":
             reason = str(row.get("wait_reason") or "").strip()
             until = str(row.get("wait_until") or "").strip()

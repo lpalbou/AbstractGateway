@@ -63,6 +63,8 @@ AbstractRuntime version is raised to that release when this version is published
 
 - Automation list rows carry `workspace_root` (the automation's folder), so apps can open it
   from the list.
+- `GET /api/gateway/runs` turn rows carry `workspace_root`: the folder the run works in (a
+  launch-folder override, a discussion's own folder), read from the run index.
 
 - With file-backed stores the gateway builds the run store's session and children indexes at
   startup, so the first chat after a start answers without that scan; the log reports the time

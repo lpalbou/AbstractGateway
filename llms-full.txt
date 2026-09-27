@@ -4090,7 +4090,8 @@ Errors on these routes, 401 and 403 included, always have the shape
 with the `resume` command above; the answer's shape depends on the wait's
 `kind` ([automations.md](docs/automations.md#waits-on-a-person)).
 `GET /api/gateway/runs` rows carry `session_kind`, `automation_id`, `role`,
-`occurrence_index` and `legacy`, accept `session_kind=chat,discussion`, and
+`occurrence_index` and `legacy`, plus `workspace_root` on turn rows (the folder
+the run works in; absent on sub-runs), accept `session_kind=chat,discussion`, and
 `root_only=true` returns conversation turns, one per occurrence
 ([automations.md](docs/automations.md#automations-in-run-lists)).
 
@@ -6023,6 +6024,7 @@ automation:
 | `role` | `controller`, `occurrence`, `descendant`, `discussion`, `legacy_schedule`, or `null` |
 | `occurrence_index` | the occurrence number, or `null` |
 | `legacy` | `true` for an older scheduled run |
+| `workspace_root` | on turn rows only (runs without a parent, and occurrences): the folder the run works in, as it runs (a launch-folder override, a discussion's own folder); absent on sub-runs, controllers and runs without one |
 
 A growing automation's occurrences have `session_kind: "automation"`; an
 independent automation's occurrences have `session_kind: "occurrence"`.
@@ -7601,6 +7603,8 @@ AbstractRuntime version is raised to that release when this version is published
 
 - Automation list rows carry `workspace_root` (the automation's folder), so apps can open it
   from the list.
+- `GET /api/gateway/runs` turn rows carry `workspace_root`: the folder the run works in (a
+  launch-folder override, a discussion's own folder), read from the run index.
 
 - With file-backed stores the gateway builds the run store's session and children indexes at
   startup, so the first chat after a start answers without that scan; the log reports the time
