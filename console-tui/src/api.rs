@@ -12,6 +12,11 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
+/// Operator-control routes (host controls, workflow import/reload, skills
+/// reseed, WAN lookup, own workspace policy) — child module for privacy.
+#[path = "api_operator.rs"]
+mod api_operator;
+
 /// What kind of failure this is — drives which honest state the UI shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiErrorKind {

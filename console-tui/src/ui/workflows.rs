@@ -12,12 +12,13 @@
 //! disk and still needs a decision.
 
 use abstracttui::prelude::*;
-use abstracttui::widgets::Table;
+use abstracttui::widgets::{Table, TextInput};
 
-use super::util::{line, loadable_view, span, span_bold};
+use super::util::{field, line, loadable_view, span, span_bold};
 use super::widths;
-use super::Ctx;
-use crate::store::{WorkflowRow, WorkflowsData};
+use super::{open_form, Ctx};
+use crate::store::{ConnPhase, WorkflowRow, WorkflowsData};
+use crate::worker::operator::OpCmd;
 use crate::worker::Cmd;
 
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
@@ -37,6 +38,8 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ctx_del_all = ctx.clone();
     let ctx_refresh = ctx.clone();
     let ctx_drafts = ctx.clone();
+    let ctx_import = ctx.clone();
+    let ctx_reload = ctx.clone();
 
     Element::new()
         .style(LayoutStyle::column().gap(0))
@@ -63,12 +66,15 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         })
         .shortcut(KeyChord::plain(Key::Char('d')), {
             let c = ctx_del_ver.clone();
-            move |_| delete_selected(&c, false)
+            move |_| delete_selected(cx, &c, false)
         })
         .shortcut(KeyChord::plain(Key::Char('D')), {
             let c = ctx_del_all.clone();
-            move |_| delete_selected(&c, true)
+            move |_| delete_selected(cx, &c, true)
         })
+        // Web parity: "Import…" (a .flow bundle) and a registry reload.
+        .shortcut(KeyChord::plain(Key::Char('i')), move |_| open_import(cx, &ctx_import))
+        .shortcut(KeyChord::plain(Key::Char('L')), move |_| reload(&ctx_reload))
         .child(
             Block::new()
                 .border(BorderKind::Rounded)
@@ -131,6 +137,10 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 span(" delete version  ", tt.text_muted),
                 span("D", tt.accent),
                 span(" delete bundle  ", tt.text_muted),
+                span("i", tt.accent),
+                span(" import .flow  ", tt.text_muted),
+                span("L", tt.accent),
+                span(" reload  ", tt.text_muted),
                 span("t", tt.accent),
                 span(
                     if drafts {
@@ -172,8 +182,15 @@ fn export_selected(ctx: &Ctx) {
     });
 }
 
-fn delete_selected(ctx: &Ctx, whole_bundle: bool) {
-    let Some(row) = selected_row(ctx) else { return };
+/// Delete confirms first (web parity: "This removes … from disk. There is
+/// no undo."), defaulting to keep.
+fn delete_selected(cx: Scope, ctx: &Ctx, whole_bundle: bool) {
+    let Some(row) = selected_row(ctx) else {
+        ctx.store
+            .notice
+            .set(Some("no workflow selected — nothing to delete".into()));
+        return;
+    };
     let version = if whole_bundle {
         String::new()
     } else {
@@ -182,9 +199,120 @@ fn delete_selected(ctx: &Ctx, whole_bundle: bool) {
             .map(|(v, _, _, _)| v.clone())
             .unwrap_or_default()
     };
-    ctx.send(Cmd::DeleteWorkflow {
-        bundle_id: row.bundle_id,
-        version,
+    let (label, scope) = if version.is_empty() {
+        (row.bundle_id.clone(), "EVERY version of this workflow")
+    } else {
+        (format!("{}@{}", row.bundle_id, version), "this version")
+    };
+    let c = ctx.clone();
+    let bundle_id = row.bundle_id;
+    super::confirm_danger(
+        cx,
+        ctx.ui,
+        format!(
+            "Delete {label}? This removes {scope} from disk. There is no undo. \
+             If you may need it again, export it first (e)."
+        ),
+        "Delete",
+        "Keep it",
+        move || {
+            c.send(Cmd::DeleteWorkflow { bundle_id, version });
+        },
+    );
+}
+
+fn is_admin(ctx: &Ctx) -> Result<(), &'static str> {
+    ctx.store.conn.with_untracked(|c| match c {
+        ConnPhase::Connected(id) if id.admin => Ok(()),
+        ConnPhase::Connected(_) => Err("importing and reloading workflows needs an admin token"),
+        _ => Err("not connected — probe on the Connection screen first"),
+    })
+}
+
+/// `L`: re-read the bundles folder on the gateway (POST /bundles/reload),
+/// then re-list — what "fix the cause and reload" below asks for.
+fn reload(ctx: &Ctx) {
+    if let Err(why) = is_admin(ctx) {
+        ctx.store.notice.set(Some(why.into()));
+        return;
+    }
+    ctx.send(Cmd::Operator(OpCmd::ReloadWorkflows {
+        include_drafts: ctx.ui.workflow_drafts.get_untracked(),
+    }));
+}
+
+/// `i`: install a `.flow` from a path on THIS machine (the TUI may run
+/// elsewhere than the gateway — the bytes are uploaded, like the web's
+/// file picker). overwrite=false, reload=true: the web's exact request.
+fn open_import(cx: Scope, ctx: &Ctx) {
+    if let Err(why) = is_admin(ctx) {
+        ctx.store.notice.set(Some(why.into()));
+        return;
+    }
+    let ctx2 = ctx.clone();
+    open_form(ctx, cx, Size::new(96, 11), move |mcx, close| {
+        let theme = use_theme(mcx);
+        let t0 = theme.get().tokens;
+        let path = mcx.signal(String::new());
+        let form_error = mcx.signal(Option::<String>::None);
+        let in_flight = mcx.signal(false);
+        let form_id = crate::worker::next_form_id();
+        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
+        let submit = {
+            let ctx_s = ctx2.clone();
+            move || {
+                if in_flight.get_untracked() {
+                    return;
+                }
+                let p = path.get_untracked();
+                if p.trim().is_empty() {
+                    form_error.set(Some("type the path of a .flow file on this machine".into()));
+                    return;
+                }
+                form_error.set(None);
+                in_flight.set(true);
+                ctx_s.send(Cmd::Operator(OpCmd::ImportWorkflow {
+                    path: p,
+                    include_drafts: ctx_s.ui.workflow_drafts.get_untracked(),
+                    form_id: Some(form_id),
+                }));
+            }
+        };
+        let submit2 = submit.clone();
+        let close_cancel = close.clone();
+        Element::new()
+            .style(LayoutStyle::column().gap(0))
+            .child(line(vec![span_bold("Import a workflow bundle (.flow)", t0.accent)]))
+            .child(line(vec![span(
+                "a file on THIS machine — its bytes are uploaded to the gateway; an existing version is never overwritten",
+                t0.text_faint,
+            )]))
+            .child(field(
+                &t0,
+                "file",
+                TextInput::new()
+                    .value(path)
+                    .placeholder("~/Downloads/my-workflow.flow")
+                    .layout(LayoutStyle::default().w(70).h(1))
+                    .on_submit(move |_: &str| submit())
+                    .element(mcx, &t0)
+                    .autofocus()
+                    .build(),
+            ))
+            .child(super::message_slot(theme, form_error, in_flight))
+            .child(
+                Element::new()
+                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                    .child(Button::new("Import").on_click(move || submit2()).element(mcx, &t0).build())
+                    .child(
+                        Button::new("Cancel (Esc)")
+                            .on_click(move || close_cancel())
+                            .element(mcx, &t0)
+                            .build(),
+                    )
+                    .build(),
+            )
+            .build()
     });
 }
 

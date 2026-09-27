@@ -2658,7 +2658,7 @@ fn runtime_knobs_render_with_provenance() {
         "knob value + provenance:\n{s}"
     );
     assert!(
-        s.contains("process_manager: false  (default)"),
+        s.contains("process_manager: off  (default)"),
         "bool knob rendered:\n{s}"
     );
     assert!(
@@ -7030,6 +7030,252 @@ fn network_trust_checkbox_saves_on_toggle() {
         }
         other => panic!("expected SetNetworkProxy trust, got {other:?}"),
     }
+}
+
+// ---------------------------------------------------------------------
+// Operator controls (web parity): host panel (F2), paused banner,
+// workflow import/reload/delete-confirm, backlog settings + reseed,
+// the caller's own workspace policy.
+// ---------------------------------------------------------------------
+
+fn paused_runner() -> abstractgateway_console::store::operator::HostRunner {
+    abstractgateway_console::store::operator::HostRunner::from_value(&json!({
+        "paused": true, "paused_at": "2026-09-27T10:00:00+00:00", "paused_by": "default/admin",
+        "inflight_ticks": 0, "runner_in_process": true,
+        "capabilities": {"restart": true, "shutdown": true, "reason": null}
+    }))
+}
+
+fn is_op(c: &Cmd, f: impl Fn(&abstractgateway_console::worker::operator::OpCmd) -> bool) -> bool {
+    matches!(c, Cmd::Operator(op) if f(op))
+}
+
+#[test]
+fn paused_banner_shows_on_every_screen_and_f2_panel_resumes() {
+    use abstractgateway_console::worker::operator::OpCmd;
+    let mut h = harness_sized(Size::new(140, 40));
+    h.connect_as_admin();
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::PollRunner { .. }))).is_some(),
+        "connecting starts the /host/runner poll behind the banner"
+    );
+    let s = h.turns(1);
+    assert!(!s.contains("Workflows are paused"), "no banner before an answer:\n{s}");
+    h.store.op.runner.set(Loadable::Ready(paused_runner()));
+    for screen in [1usize, 5] {
+        h.goto_screen(screen);
+        let s = h.turns(2);
+        assert!(
+            s.contains("Workflows are paused since 2026-09-27 10:00:00 +00:00 by default/admin"),
+            "banner on screen {screen}:\n{s}"
+        );
+        assert!(s.contains("F2 → p resumes"), "admin is told how:\n{s}");
+    }
+    let _ = h.drain_cmds();
+    h.key(b"\x1bOQ"); // F2
+    let s = h.turns(2);
+    assert!(s.contains("Gateway host"), "F2 opens the host panel:\n{s}");
+    assert!(s.contains("Paused — still running"), "state pill:\n{s}");
+    assert!(s.contains("Resume workflows"), "the button names its verb:\n{s}");
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::LoadHost { admin: true }))).is_some(),
+        "opening reads runner + tray + update"
+    );
+    h.type_text("p");
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::SetPaused { pause: false }))).is_some(),
+        "p on a paused runner resumes"
+    );
+}
+
+#[test]
+fn host_panel_refuses_non_admin_verbs_with_a_reason() {
+    use abstractgateway_console::worker::operator::OpCmd;
+    let mut h = harness_sized(Size::new(140, 40));
+    let user = Identity::from_me(&json!({
+        "ok": true,
+        "principal": {"user_id": "bob", "tenant_id": "default", "roles": ["user"], "admin": false},
+        "auth": {"mode": "users"}, "routing": {"mode": "per-principal"}
+    }))
+    .expect("identity");
+    h.store.conn.set(ConnPhase::Connected(user));
+    h.turns(2);
+    h.store.op.runner.set(Loadable::Ready(paused_runner()));
+    let s = h.turns(2);
+    assert!(s.contains("Workflows are paused"), "the banner is for everyone:\n{s}");
+    assert!(!s.contains("F2 → p resumes"), "but only admins are told to resume:\n{s}");
+    h.key(b"\x1bOQ");
+    let s = h.turns(2);
+    assert!(s.contains("only an admin can pause, restart, quit or update"), "reason shown:\n{s}");
+    assert!(!s.contains("Restart…"), "no admin buttons:\n{s}");
+    let _ = h.drain_cmds();
+    h.type_text("p");
+    h.turns(2);
+    assert!(
+        h.drain_cmds().iter().all(|c| !is_op(c, |o| matches!(o, OpCmd::SetPaused { .. }))),
+        "a non-admin pause is refused before sending"
+    );
+}
+
+#[test]
+fn restart_and_quit_confirm_first_and_default_to_keep() {
+    use abstractgateway_console::worker::operator::OpCmd;
+    let mut h = harness_sized(Size::new(140, 40));
+    h.connect_as_admin();
+    h.store.op.runner.set(Loadable::Ready(paused_runner()));
+    h.turns(2);
+    h.key(b"\x1bOQ");
+    h.turns(2);
+    h.type_text("R");
+    let s = h.turns(2);
+    assert!(s.contains("Restart AbstractGateway?"), "restart confirm:\n{s}");
+    h.type_text("\r"); // keep is the default
+    h.turns(2);
+    assert!(
+        h.drain_cmds().iter().all(|c| !is_op(c, |o| matches!(o, OpCmd::Restart))),
+        "keep does not restart"
+    );
+    h.key(b"\x1bOQ");
+    h.turns(2);
+    h.type_text("Q");
+    let s = h.turns(2);
+    assert!(s.contains("Quit AbstractGateway?"), "quit confirm:\n{s}");
+    h.key(b"\x1b[A");
+    h.turn();
+    h.type_text("\r");
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::Shutdown))).is_some(),
+        "the danger option quits"
+    );
+    // A process that cannot restart itself says why, and sends nothing.
+    let mut r = paused_runner();
+    r.cap_restart = false;
+    r.cap_reason = "started with --reload".into();
+    h.store.op.runner.set(Loadable::Ready(r));
+    h.key(b"\x1bOQ");
+    h.turns(2);
+    h.type_text("R");
+    let s = h.turns(2);
+    assert!(s.contains("restart is not available: started with --reload"), "reason:\n{s}");
+}
+
+#[test]
+fn workflows_import_reload_and_delete_confirm() {
+    use abstractgateway_console::store::workflows_from_payload;
+    use abstractgateway_console::worker::operator::OpCmd;
+    let mut h = harness_sized(Size::new(140, 40));
+    h.connect_as_admin();
+    h.goto_screen(5);
+    h.store.workflows.set(Loadable::Ready(workflows_from_payload(&json!({
+        "items": [{"bundle_id": "demo", "bundle_version": "1.0.0", "entrypoints": [{"flow_id": "main"}]}]
+    }))));
+    let s = h.turns(2);
+    assert!(s.contains("i import .flow"), "panel hint:\n{s}");
+    let _ = h.drain_cmds();
+    // Delete asks first; keep (default) sends nothing.
+    h.type_text("d");
+    let s = h.turns(2);
+    assert!(s.contains("Delete demo@1.0.0? This removes this version from"), "confirm:\n{s}");
+    h.type_text("\r");
+    h.turns(2);
+    assert!(h.find_cmd(|c| matches!(c, Cmd::DeleteWorkflow { .. })).is_none(), "keep does not delete");
+    // Reload.
+    h.type_text("L");
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::ReloadWorkflows { .. }))).is_some(),
+        "L reloads the registry"
+    );
+    // Import: a local path, Enter submits.
+    h.type_text("i");
+    let s = h.turns(2);
+    assert!(s.contains("Import a workflow bundle (.flow)"), "import form:\n{s}");
+    h.type_text("/tmp/x.flow\r");
+    h.turns(2);
+    match h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::ImportWorkflow { .. }))) {
+        Some(Cmd::Operator(OpCmd::ImportWorkflow { path, form_id, .. })) => {
+            assert_eq!(path, "/tmp/x.flow");
+            assert!(form_id.is_some(), "the form awaits the outcome");
+        }
+        other => panic!("expected ImportWorkflow, got {other:?}"),
+    }
+}
+
+#[test]
+fn backlog_settings_rows_and_skills_reseed_in_the_knobs() {
+    use abstractgateway_console::worker::operator::OpCmd;
+    let mut h = harness_sized(Size::new(160, 70));
+    h.connect_as_admin();
+    h.goto_screen(4);
+    h.store
+        .runtimes
+        .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
+    h.turns(2);
+    h.ui.rt_knobs_folded.set(false);
+    h.turns(2);
+    h.store.runtime_config.set(Loadable::Ready(
+        abstractgateway_console::store::RuntimeConfigData::from_value(&json!({
+            "writable": true,
+            "triage_repo_root": {"source": "default", "value": "/d/backlog", "default_path": "/d/backlog",
+                                 "available": true, "label": "Backlog folder"},
+            "backlog_exec_runner": {"value": false, "source": "default", "label": "Backlog exec runner"},
+            "process_manager": {"value": true, "source": "stored", "label": "Process manager"},
+            "skills": {"shelf": {"value": null, "source": "seeded", "resolved": "/d/skills/registry",
+                                 "available": true, "default_path": "/d/skills/registry", "bundled_version": "2026.09.25"}}
+        })),
+    ));
+    let s = h.turns(2);
+    assert!(s.contains("triage_repo_root: /d/backlog  (default)"), "folder row:\n{s}");
+    assert!(s.contains("backlog_exec_runner: off  (default)"), "runner row:\n{s}");
+    assert!(s.contains("process_manager: on  (saved setting)"), "pm row:\n{s}");
+    assert!(s.contains("Edit backlog settings"), "editor entry point:\n{s}");
+    assert!(s.contains("Refresh the curated skills shelf"), "reseed entry point:\n{s}");
+    let _ = h.drain_cmds();
+    // Click the reseed button: find it on screen and press it by mouse.
+    let (row, col) = s
+        .lines()
+        .enumerate()
+        .find_map(|(i, l)| l.find("Refresh the curated skills shelf").map(|c| (i, l[..c].chars().count())))
+        .expect("button on screen");
+    let click = format!("\x1b[<0;{};{}M\x1b[<0;{};{}m", col + 3, row + 1, col + 3, row + 1);
+    h.key(click.as_bytes());
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::ReseedSkills))).is_some(),
+        "the button posts the reseed"
+    );
+}
+
+#[test]
+fn users_w_opens_my_workspace_policy() {
+    use abstractgateway_console::store::operator::MyPolicy;
+    use abstractgateway_console::worker::operator::OpCmd;
+    let mut h = harness_sized(Size::new(140, 44));
+    h.connect_as_admin();
+    h.goto_screen(3);
+    h.store.users.set(Loadable::Ready(users_from_payload(&users_fixture())));
+    h.store.entities.set(Loadable::Ready(entities_from_payload(&entities_fixture())));
+    h.turns(2);
+    let _ = h.drain_cmds();
+    h.type_text("w");
+    let s = h.turns(2);
+    assert!(s.contains("My workspace policy"), "form opens:\n{s}");
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::LoadMyPolicy))).is_some(),
+        "it reads GET /workspace/policy/self"
+    );
+    h.store.op.my_policy.set(Loadable::Ready(MyPolicy::from_value(&json!({
+        "tenant_id": "default", "user_id": "admin", "policy": {}, "customized": false,
+        "effective": {"mode": "whitelist", "trust_client_launch_folder": true,
+                      "workspace_allowed_paths": [], "workspace_blocked_paths": []}
+    }))));
+    let s = h.turns(2);
+    assert!(s.contains("Effective: whitelist mode · launch-folder trust on · 0 allowed · 0 refused"), "effective:\n{s}");
+    assert!(s.contains("inherits the gateway defaults"), "inherit state:\n{s}");
+    assert!(s.contains("Reset to inherited"), "reset verb:\n{s}");
 }
 
 #[test]

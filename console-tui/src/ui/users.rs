@@ -37,6 +37,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ctx_manage = ctx.clone();
     let ctx_resv = ctx.clone();
     let ctx_inspect = ctx.clone();
+    let ctx_mypolicy = ctx.clone();
 
     // Keep the manage snapshot warm for the SELECTED entity: arrowing
     // to a row loads its detail (worker serializes; entity rosters are
@@ -98,6 +99,9 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 ));
             }
         })
+        // The caller's OWN workspace policy (web: "My workspace policy"
+        // on the Users tab) — any principal, see ui/my_policy.rs.
+        .shortcut(KeyChord::plain(Key::Char('w')), move |_| super::my_policy::open(cx, &ctx_mypolicy))
         .shortcut(KeyChord::plain(Key::Char('i')), move |_| {
             // Toggle the entity-inspector drawer (passive: the roster
             // keeps the keyboard; i again closes; leaving the screen
