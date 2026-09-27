@@ -425,3 +425,22 @@ fn core_screens_follow_the_connection_principal() {
     let s = h.on(ui::SCREEN_CATALOG, true);
     assert!(!s.contains("admin only"), "an admin sees the verbs:\n{s}");
 }
+
+/// A non-admin on a gateway with NO entities yet: no table takes the
+/// keyboard, and the Users screen's keys still answer (summon included).
+#[test]
+fn users_screen_keys_live_without_any_table() {
+    let mut h = harness();
+    h.connect(false);
+    h.ui.wizard.set(false);
+    h.ui.screen.set(ui::SCREEN_USERS);
+    h.turns(2);
+    h.store.entities.set(Loadable::Ready(entities_from_payload(&json!({"entities": []}))));
+    h.turns(3);
+    h.drain();
+    h.store.notice.set(None);
+    h.key(b"a");
+    assert!(h.notice().contains("adding a user is admin-only"), "{:?}", h.notice());
+    let s = h.key(b"n");
+    assert!(s.contains("Summon"), "n opens the summon form:\n{s}");
+}

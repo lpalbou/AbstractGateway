@@ -97,6 +97,13 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     }
 
     Element::new()
+        // Focusable + autofocus content root: the screen's keys must live
+        // even when no table exists to take the keyboard — a non-admin
+        // (no users table) on a gateway with no entities yet would
+        // otherwise have dead keys, `n` (summon the first entity)
+        // included. A table that mounts later still takes the focus.
+        .focusable()
+        .autofocus()
         .style(LayoutStyle::column().gap(1))
         .shortcut(KeyChord::plain(Key::Char('m')), move |_| {
             manage_selected_entity(cx, &ctx_manage);
