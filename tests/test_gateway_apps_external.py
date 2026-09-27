@@ -167,6 +167,7 @@ def test_version_comes_from_the_package_json_above_the_script(tmp_path: Path) ->
 def _manager(tmp_path: Path, found: Dict[str, am.ExternalApp], *, allowed: bool = False) -> am.AppsManager:
     m = am.AppsManager(tmp_path / "data", urlopen=lambda *a, **k: (_ for _ in ()).throw(OSError("offline")), install_allowed=lambda: allowed)
     m.external_probe = lambda **kw: dict(found)
+    m.identity_probe = lambda port, **kw: None  # an app that does not announce /apps/<id>/ (tests never probe real ports)
     return m
 
 
