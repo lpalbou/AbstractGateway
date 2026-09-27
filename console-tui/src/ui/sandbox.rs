@@ -12,7 +12,9 @@
 //! | Video | output.video.text_to_video     | POST /runs/{run}/videos/generate |
 //!
 //! Media modes use the CONFIGURED capability route's provider/model, as
-//! the web does (its pickers are hidden for them); an unconfigured mode
+//! the web does (its pickers are hidden for them), resolved like the
+//! server (`resolve_mode_route`): an empty Image/Video task row inherits
+//! its `output.image` / `output.video` parent; an unconfigured mode
 //! refuses with the web's own reason. Text keeps this console's
 //! provider/model pickers (the Providers `t` prefill lands there) and
 //! gains the web's controls: system prompt, reasoning effort, per-request
@@ -130,6 +132,97 @@ pub fn row_pair(row: &RouteRow) -> Option<(String, String)> {
     let p = row.provider.clone().filter(|p| !p.trim().is_empty())?;
     let m = row.model.clone().filter(|m| !m.trim().is_empty())?;
     Some((p, m))
+}
+
+/// Core's `CapabilityRouteDefault.configured()`: the row carries ANY
+/// field (provider, model, base_url, reasoning, options). The payload's
+/// `configured` flag is that same test; the local fields back it up.
+pub fn row_has_any_field(row: &RouteRow) -> bool {
+    row.configured
+        || row.provider.is_some()
+        || row.model.is_some()
+        || row.base_url.is_some()
+        || row.reasoning.is_some()
+        || row
+            .options
+            .as_ref()
+            .is_some_and(|o| o.as_object().map_or(!o.is_null(), |m| !m.is_empty()))
+}
+
+/// How a media mode's route resolves on the SERVER — AbstractCore
+/// `resolve_capability_default_route` (core/generate_contract.py), which
+/// the media routes hand the request to: the exact task key, then its
+/// parent (`broad_key`, e.g. `output.image` for
+/// `output.image.text_to_image`), and the FIRST of the two carrying any
+/// field wins. A fresh install writes `output.image` alone, so reading
+/// only the task row (the web's old check) called a working route
+/// "not configured". Mirrors the web's `sandboxEffectiveRow`.
+#[derive(Clone, Debug)]
+pub enum ModeRoute {
+    /// Resolved to a provider + model. `row` carries the effective
+    /// provider/model/base_url/options (the parent's when inherited);
+    /// `inherited_from` names the parent key in that case.
+    Ready {
+        row: Box<RouteRow>,
+        provider: String,
+        model: String,
+        inherited_from: Option<String>,
+    },
+    /// The first row carrying any field (`key`) has no provider + model:
+    /// resolution stops there, so the lane cannot run.
+    Incomplete { key: String },
+    /// Neither the task row nor its parent carries anything.
+    NotConfigured,
+}
+
+/// Resolve `mode` against the route rows. `None` = the gateway does not
+/// offer the mode's route at all.
+pub fn resolve_mode_route(rows: &[RouteRow], mode: SbMode) -> Option<ModeRoute> {
+    let row = mode_row(rows, mode)?;
+    if let Some((provider, model)) = row_pair(row) {
+        return Some(ModeRoute::Ready {
+            row: Box::new(row.clone()),
+            provider,
+            model,
+            inherited_from: None,
+        });
+    }
+    if row_has_any_field(row) {
+        return Some(ModeRoute::Incomplete { key: row.key.clone() });
+    }
+    let parent = row
+        .broad_key
+        .as_deref()
+        .filter(|k| *k != row.key)
+        .and_then(|k| rows.iter().find(|r| r.key == k));
+    let Some(parent) = parent else {
+        return Some(ModeRoute::NotConfigured);
+    };
+    if let Some((provider, model)) = row_pair(parent) {
+        let mut eff = row.clone();
+        eff.provider = Some(provider.clone());
+        eff.model = Some(model.clone());
+        eff.base_url = parent.base_url.clone();
+        eff.options = parent.options.clone();
+        return Some(ModeRoute::Ready {
+            row: Box::new(eff),
+            provider,
+            model,
+            inherited_from: Some(parent.key.clone()),
+        });
+    }
+    if row_has_any_field(parent) {
+        return Some(ModeRoute::Incomplete { key: parent.key.clone() });
+    }
+    Some(ModeRoute::NotConfigured)
+}
+
+/// Why an incomplete route cannot run (route line + refusal notice).
+fn incomplete_reason(mode: SbMode, stop_key: &str) -> String {
+    format!(
+        "{} is not ready — {stop_key} has settings but no provider + model, and resolution stops there; complete it on Routes (3)",
+        mode.route_key()
+    )
 }
 
 /// The voice selector the web sends for output.voice
@@ -1454,12 +1547,11 @@ fn mode_option_label(m: SbMode, rows: Option<&[RouteRow]>) -> String {
     }
     match rows {
         None => format!("{} — routes not loaded", m.label()),
-        Some(rows) => match mode_row(rows, m) {
+        Some(rows) => match resolve_mode_route(rows, m) {
             None => format!("{} — not offered", m.label()),
-            Some(r) => match row_pair(r) {
-                Some((_, model)) => format!("{} — {model}", m.label()),
-                None => format!("{} — not configured", m.label()),
-            },
+            Some(ModeRoute::Ready { model, .. }) => format!("{} — {model}", m.label()),
+            Some(ModeRoute::Incomplete { .. }) => format!("{} — not ready", m.label()),
+            Some(ModeRoute::NotConfigured) => format!("{} — not configured", m.label()),
         },
     }
 }
@@ -1475,7 +1567,7 @@ fn route_line(t: &TokenSet, store: &Store, m: SbMode) -> View {
             format!("✗ capability routes unavailable: {}", e.message),
             t.error,
         ),
-        Loadable::Ready(d) => match mode_row(&d.rows, m) {
+        Loadable::Ready(d) => match resolve_mode_route(&d.rows, m) {
             None => (
                 format!(
                     "{} ({}) is not offered by this gateway",
@@ -1484,28 +1576,35 @@ fn route_line(t: &TokenSet, store: &Store, m: SbMode) -> View {
                 ),
                 t.warn,
             ),
-            Some(r) => match row_pair(r) {
-                Some((p, model)) => {
-                    let voice = if m == SbMode::Voice {
-                        row_voice(r)
-                            .map(|v| format!(" · voice {v}"))
-                            .unwrap_or_default()
-                    } else {
-                        String::new()
-                    };
-                    (
-                        format!("{} will use {p} / {model}{voice}", m.route_key()),
-                        t.text,
-                    )
-                }
-                None => (
-                    format!(
-                        "{} is not configured yet — configure it on Routes (3) first",
-                        m.route_key()
-                    ),
-                    t.warn,
+            Some(ModeRoute::Ready {
+                row,
+                provider,
+                model,
+                inherited_from,
+            }) => {
+                let voice = if m == SbMode::Voice {
+                    row_voice(&row)
+                        .map(|v| format!(" · voice {v}"))
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                let from = inherited_from
+                    .map(|k| format!(" (inherited from {k})"))
+                    .unwrap_or_default();
+                (
+                    format!("{} will use {provider} / {model}{voice}{from}", m.route_key()),
+                    t.text,
+                )
+            }
+            Some(ModeRoute::Incomplete { key }) => (incomplete_reason(m, &key), t.warn),
+            Some(ModeRoute::NotConfigured) => (
+                format!(
+                    "{} is not configured yet — configure it on Routes (3) first",
+                    m.route_key()
                 ),
-            },
+                t.warn,
+            ),
         },
     };
     field(t, "route", line(vec![span(msg.0, msg.1)]))
@@ -1964,9 +2063,15 @@ fn attach(ctx: &Ctx) {
 /// The configured output.voice pair + voice (tracked), for Speak.
 fn voice_pair_tracked(store: &Store) -> Option<(String, String, Option<String>)> {
     store.routes.with(|r| {
-        let row = mode_row(&r.ready()?.rows, SbMode::Voice)?;
-        let (p, m) = row_pair(row)?;
-        Some((p, m, row_voice(row)))
+        match resolve_mode_route(&r.ready()?.rows, SbMode::Voice)? {
+            ModeRoute::Ready {
+                row,
+                provider,
+                model,
+                ..
+            } => Some((provider, model, row_voice(&row))),
+            _ => None,
+        }
     })
 }
 
@@ -2209,20 +2314,32 @@ fn run_media(ctx: &Ctx, mode: SbMode, prompt_state: &TextAreaState) {
             return;
         }
     };
-    let Some(row) = mode_row(&rows, mode) else {
-        store.notice.set(Some(format!(
-            "{} ({}) is not offered by this gateway",
-            mode.label(),
-            mode.route_key()
-        )));
-        return;
-    };
-    let Some((provider, model)) = row_pair(row) else {
-        store.notice.set(Some(format!(
-            "{} is not configured — configure it on Routes (3) first",
-            mode.route_key()
-        )));
-        return;
+    let (row, provider, model) = match resolve_mode_route(&rows, mode) {
+        None => {
+            store.notice.set(Some(format!(
+                "{} ({}) is not offered by this gateway",
+                mode.label(),
+                mode.route_key()
+            )));
+            return;
+        }
+        Some(ModeRoute::Ready {
+            row,
+            provider,
+            model,
+            ..
+        }) => (row, provider, model),
+        Some(ModeRoute::Incomplete { key }) => {
+            store.notice.set(Some(incomplete_reason(mode, &key)));
+            return;
+        }
+        Some(ModeRoute::NotConfigured) => {
+            store.notice.set(Some(format!(
+                "{} is not configured — configure it on Routes (3) first",
+                mode.route_key()
+            )));
+            return;
+        }
     };
     let prompt = ctx.ui.sb_prompt.get_untracked().trim().to_string();
     if prompt.is_empty() {
@@ -2239,7 +2356,7 @@ fn run_media(ctx: &Ctx, mode: SbMode, prompt_state: &TextAreaState) {
     let run_id = sandbox_run_id(&tenant, &user);
     let request_id = format!("sandbox_{}", crate::worker::next_op());
     let voice = if mode == SbMode::Voice {
-        row_voice(row)
+        row_voice(&row)
     } else {
         None
     };
@@ -2728,6 +2845,81 @@ mod tests {
             mode_option_label(SbMode::Video, Some(&rows)),
             "Video — not offered"
         );
+    }
+
+    fn parsed(v: Value) -> RouteRow {
+        RouteRow::from_value(&v).expect("row parses")
+    }
+
+    /// The server's rule (Core `resolve_capability_default_route`): task
+    /// row, else its parent, first row carrying ANY field wins.
+    #[test]
+    fn media_routes_resolve_task_then_parent_like_the_server() {
+        let parent = |p: Option<&str>, m: Option<&str>, extra: Value| {
+            let mut v = json!({"key": "output.image", "kind": "output", "modality": "image",
+                               "configured": p.is_some() || m.is_some() || !extra.is_null(),
+                               "task_keys": ["output.image.text_to_image"]});
+            if let Some(p) = p { v["provider"] = json!(p); }
+            if let Some(m) = m { v["model"] = json!(m); }
+            if !extra.is_null() { v["options"] = extra; }
+            parsed(v)
+        };
+        let empty_task = parsed(json!({"key": "output.image.text_to_image", "kind": "output",
+            "modality": "image", "source": "not_configured", "configured": false,
+            "broad_key": "output.image", "inherits_broad": true}));
+
+        // Fresh install: the seed writes output.image alone.
+        let rows = vec![
+            parent(Some("mlx-gen"), Some("flux-schnell"), json!({"steps": 4})),
+            empty_task.clone(),
+        ];
+        match resolve_mode_route(&rows, SbMode::Image) {
+            Some(ModeRoute::Ready { row, provider, model, inherited_from }) => {
+                assert_eq!((provider.as_str(), model.as_str()), ("mlx-gen", "flux-schnell"));
+                assert_eq!(inherited_from.as_deref(), Some("output.image"));
+                assert_eq!(row.options, Some(json!({"steps": 4})), "parent options ride along");
+                assert_eq!(row.key, "output.image.text_to_image");
+            }
+            other => panic!("expected inherited Ready, got {other:?}"),
+        }
+        assert_eq!(mode_option_label(SbMode::Image, Some(&rows)), "Image — flux-schnell");
+
+        // A configured task row wins over the parent.
+        let task = parsed(json!({"key": "output.image.text_to_image", "kind": "output",
+            "modality": "image", "provider": "openai", "model": "gpt-image-1",
+            "configured": true, "broad_key": "output.image"}));
+        let rows = vec![parent(Some("mlx-gen"), Some("flux"), Value::Null), task];
+        match resolve_mode_route(&rows, SbMode::Image) {
+            Some(ModeRoute::Ready { provider, inherited_from, .. }) => {
+                assert_eq!(provider, "openai");
+                assert!(inherited_from.is_none());
+            }
+            other => panic!("expected task Ready, got {other:?}"),
+        }
+
+        // A task row with fields but no provider+model STOPS resolution.
+        let partial = parsed(json!({"key": "output.image.text_to_image", "kind": "output",
+            "modality": "image", "options": {"steps": 8}, "configured": true,
+            "broad_key": "output.image"}));
+        let rows = vec![parent(Some("mlx-gen"), Some("flux"), Value::Null), partial];
+        match resolve_mode_route(&rows, SbMode::Image) {
+            Some(ModeRoute::Incomplete { key }) => assert_eq!(key, "output.image.text_to_image"),
+            other => panic!("expected Incomplete, got {other:?}"),
+        }
+        assert_eq!(mode_option_label(SbMode::Image, Some(&rows)), "Image — not ready");
+
+        // Neither set: not configured.
+        let rows = vec![parent(None, None, Value::Null), empty_task.clone()];
+        assert!(matches!(
+            resolve_mode_route(&rows, SbMode::Image),
+            Some(ModeRoute::NotConfigured)
+        ));
+        // Parent with fields but no pair: resolution stops at the parent.
+        let rows = vec![parent(None, None, json!({"steps": 2})), empty_task];
+        match resolve_mode_route(&rows, SbMode::Image) {
+            Some(ModeRoute::Incomplete { key }) => assert_eq!(key, "output.image"),
+            other => panic!("expected Incomplete at the parent, got {other:?}"),
+        }
     }
 
     #[test]

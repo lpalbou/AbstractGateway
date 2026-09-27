@@ -335,6 +335,86 @@ fn voice_carries_route_voice_and_unconfigured_modes_refuse() {
         .is_none());
 }
 
+/// Fresh-install shape: only `output.video` is set and the task row is
+/// empty. The server resolves the task row to its parent, so the lane
+/// is READY, says where the pair comes from, and sends the parent's pair.
+#[test]
+fn video_task_row_inherits_the_parent_like_the_server() {
+    let mut h = harness(Size::new(130, 34));
+    h.connect();
+    h.store.routes.set(Loadable::Ready(RoutesData::from_value(&json!({
+        "ok": true, "writable": true, "authority": "abstractcore.gateway_runtime", "errors": [],
+        "routes": [
+            {"key": "input.text", "kind": "input", "modality": "text", "label": "Text Input",
+             "provider": "lmstudio", "model": "test-model-a", "configured": true},
+            {"key": "output.video", "kind": "output", "modality": "video", "label": "Video Output",
+             "provider": "mlx-gen", "model": "test-ltx", "configured": true,
+             "task_keys": ["output.video.text_to_video"]},
+            {"key": "output.video.text_to_video", "kind": "output", "modality": "video",
+             "label": "Video Generation", "task": "text_to_video", "source": "not_configured",
+             "configured": false, "broad_key": "output.video", "inherits_broad": true}
+        ]
+    }))));
+    h.store.sandbox_ws.mode.set(SbMode::Video);
+    h.ui.sb_prompt.set("waves at dusk".into());
+    h.review();
+    let s = h.turns(2);
+    assert!(
+        s.contains("output.video.text_to_video will use mlx-gen / test-ltx (inherited from output.video)"),
+        "the route line names the inherited pair and its source:\n{s}"
+    );
+    assert!(s.contains("Video — test-ltx"), "the picker shows it ready:\n{s}");
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::SandboxMedia { .. })) {
+        Some(Cmd::SandboxMedia { request }) => {
+            assert_eq!(request.leaf, "videos/generate");
+            assert_eq!(request.body["video_provider"], "mlx-gen");
+            assert_eq!(request.body["video_model"], "test-ltx");
+        }
+        other => panic!("expected SandboxMedia, got {other:?}"),
+    }
+}
+
+/// A task row carrying settings but no provider+model stops resolution
+/// (Core does not fall through to the parent): NOT ready, says why, and
+/// fires nothing.
+#[test]
+fn partial_task_row_stops_resolution_and_refuses() {
+    let mut h = harness(Size::new(130, 34));
+    h.connect();
+    h.store.routes.set(Loadable::Ready(RoutesData::from_value(&json!({
+        "ok": true, "writable": true, "authority": "abstractcore.gateway_runtime", "errors": [],
+        "routes": [
+            {"key": "output.image", "kind": "output", "modality": "image", "label": "Image Output",
+             "provider": "mlx-gen", "model": "test-flux", "configured": true,
+             "task_keys": ["output.image.text_to_image"]},
+            {"key": "output.image.text_to_image", "kind": "output", "modality": "image",
+             "label": "Image Generation", "task": "text_to_image", "options": {"steps": 8},
+             "configured": true, "broad_key": "output.image"}
+        ]
+    }))));
+    h.store.sandbox_ws.mode.set(SbMode::Image);
+    h.ui.sb_prompt.set("a fox".into());
+    h.review();
+    let s = h.turns(2);
+    assert!(s.contains("Image — not ready"), "picker says not ready:\n{s}");
+    assert!(
+        s.contains("output.image.text_to_image is not ready"),
+        "route line says why:\n{s}"
+    );
+    h.type_text("\r");
+    h.turns(2);
+    let notice = h.store.notice.get_untracked().unwrap_or_default();
+    assert!(
+        notice.contains("has settings but no provider + model"),
+        "refusal names the reason: {notice}"
+    );
+    assert!(h
+        .find_cmd(|c| matches!(c, Cmd::SandboxMedia { .. }))
+        .is_none());
+}
+
 /// Text turns ride the web body (no max_tokens) and the second turn
 /// carries the first answered turn as `messages`.
 #[test]
