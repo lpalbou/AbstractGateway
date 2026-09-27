@@ -1270,6 +1270,37 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
             )]));
         }
     }
+    // The skills-shelf / backlog verbs get their OWN button row under the
+    // first one (that row already overflows 160 columns; a row at the
+    // bottom of the knobs falls off shorter terminals).
+    let tail_row: View = if d.writable && (!d.backlog.is_empty() || d.skills_shelf.is_some()) {
+        let ctx7 = ctx.clone();
+        let current_backlog = d.clone();
+        let ctx8 = ctx.clone();
+        Element::new()
+            .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+            .child(if current_backlog.backlog.is_empty() {
+                Element::new().style(LayoutStyle::default().h(0)).build()
+            } else {
+                // Web: "Advanced: backlog settings" (Continuum).
+                Button::new("Edit backlog settings")
+                    .on_click(move || open_backlog_settings_form(cx, &ctx7, current_backlog.clone()))
+                    .element(cx, t)
+                    .build()
+            })
+            .child(if d.skills_shelf.is_none() {
+                Element::new().style(LayoutStyle::default().h(0)).build()
+            } else {
+                // Web: "Refresh the curated shelf" beside the shelf field.
+                Button::new("Refresh the curated skills shelf")
+                    .on_click(move || ctx8.send(Cmd::Operator(crate::worker::operator::OpCmd::ReseedSkills)))
+                    .element(cx, t)
+                    .build()
+            })
+            .build()
+    } else {
+        Element::new().style(LayoutStyle::default().h(0)).build()
+    };
     Element::new()
         .style(LayoutStyle::column())
         .child(if d.writable {
@@ -1283,10 +1314,7 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
             let current_agents = d.clone();
             let ctx6 = ctx.clone();
             let current_stream = d.clone();
-            let ctx7 = ctx.clone();
-            let current_backlog = d.clone();
-            let ctx8 = ctx.clone();
-            let has_shelf = d.skills_shelf.is_some();
+
             Element::new()
                 .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
                 .child(
@@ -1327,28 +1355,11 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
                         .element(cx, t)
                         .build()
                 })
-                // Backlog settings (web: "Advanced: backlog settings").
-                .child(if current_backlog.backlog.is_empty() {
-                    Element::new().style(LayoutStyle::default().h(0)).build()
-                } else {
-                    Button::new("Edit backlog settings")
-                        .on_click(move || open_backlog_settings_form(cx, &ctx7, current_backlog.clone()))
-                        .element(cx, t)
-                        .build()
-                })
-                // Web: "Refresh the curated shelf" beside the shelf field.
-                .child(if !has_shelf {
-                    Element::new().style(LayoutStyle::default().h(0)).build()
-                } else {
-                    Button::new("Refresh the curated skills shelf")
-                        .on_click(move || ctx8.send(Cmd::Operator(crate::worker::operator::OpCmd::ReseedSkills)))
-                        .element(cx, t)
-                        .build()
-                })
                 .build()
         } else {
             Element::new().style(LayoutStyle::default().h(0)).build()
         })
+        .child(tail_row)
         .children(rows)
         .build()
 }

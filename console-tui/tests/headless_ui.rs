@@ -2600,7 +2600,9 @@ fn dirty_guard_disarms_on_edit_after_warning() {
 /// knob surface with per-knob PROVENANCE (value + which layer set it).
 #[test]
 fn runtime_knobs_render_with_provenance() {
-    let mut h = harness();
+    // Two rows taller than the default harness: the knobs gained a second
+    // button row (backlog settings + skills reseed).
+    let mut h = harness_sized(Size::new(110, 36));
     h.connect_as_admin();
     h.goto_screen(4);
     h.store

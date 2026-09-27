@@ -345,9 +345,11 @@ pub(super) fn handle(
                 // the old one reports true until it exits).
                 let back = match &res {
                     Ok(v) => saw_down || !HostRunner::from_value(v).restart_requested,
-                    // Answering but refusing (auth changed?): the probe
-                    // says what it is — hand over to it.
-                    Err(_) => !down && saw_down,
+                    // Back but refusing this token (auth changed): the
+                    // connection probe says so in its own words.
+                    Err(e) => {
+                        saw_down && matches!(e.kind, ApiErrorKind::Unauthorized | ApiErrorKind::Forbidden)
+                    }
                 };
                 if back {
                     post_lifecycle(wake, store, format!("✓ the gateway restarted and answers again ({secs}s) — reconnected"));
