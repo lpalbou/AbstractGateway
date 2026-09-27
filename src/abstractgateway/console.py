@@ -8705,8 +8705,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // entry): `kept` without force, `unavailable` when nothing recommended
 	    // runs here either. Such a route is never reported as fine, and it is
 	    // what the forced pass would replace (`overwrite`) or clear (`cleared`).
+	    // A route a user INHERITS from the gateway store (the gateway stamps
+	    // `route_unavailable.inherited` on a per-user apply) is flagged too, but
+	    // only an admin can change it: the forced pass is not offered for it.
 	    function appliedRecommendedBrokenRows(report) {
 	      return ((report && report.routes) || []).filter((r) => r.route_unavailable && !r.changed);
+	    }
+	    function appliedRecommendedFixableRows(report) {
+	      return appliedRecommendedBrokenRows(report).filter((r) => !r.route_unavailable.inherited);
 	    }
 	    function describeAppliedRecommended(report) {
 	      const rows = (report && report.routes) || [];
@@ -8732,7 +8738,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (kept.length) parts.push(`kept yours on ${kept.map((r) => `${r.key} (${pair(r.before)}${brokenWhy(r)})`).join(", ")}`);
 	      if (unavailable.length) {
 	        parts.push(`${unavailable.length === 1 ? "1 route has" : `${unavailable.length} routes have`} no recommendation this computer can run: `
-	          + unavailable.map((r) => `${r.key}${r.reason ? ` \u2014 ${r.reason}` : ""}${r.route_unavailable ? ` (configured ${pair(r.before)} cannot run here either)` : ""}`).join("; "));
+	          + unavailable.map((r) => `${r.key}${r.reason ? ` \u2014 ${r.reason}` : ""}${r.route_unavailable ? ` (configured ${pair(r.route_unavailable)} cannot run here either${r.route_unavailable.inherited ? `; ${r.route_unavailable.note}` : ""})` : ""}`).join("; "));
 	      }
 	      if (!parts.length) parts.push("every recommended route already matched");
 	      return parts.join(" \u00b7 ");
@@ -8764,7 +8770,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const kept = (report.routes || []).filter((r) => r.action === "kept");
 	        // The forced pass replaces what was kept and clears a broken route
 	        // nothing recommended can replace; offered for either.
-	        if ((kept.length || broken.length) && !force) {
+	        if ((kept.length || appliedRecommendedFixableRows(report).length) && !force) {
 	          const again = document.createElement("button");
 	          again.className = "secondary";
 	          again.innerHTML = `<span class="button-icon" aria-hidden="true">\u267b</span><span>${kept.length ? "Replace mine too" : "Clear what cannot run here"}</span>`;

@@ -220,7 +220,7 @@ const renderDefaults = async () => {};
 const refreshAvailability = async () => {};
 """
     return _run(
-        ["appliedRecommendedBrokenRows", "describeAppliedRecommended", "applyRecommendedDefaults"],
+        ["appliedRecommendedBrokenRows", "appliedRecommendedFixableRows", "describeAppliedRecommended", "applyRecommendedDefaults"],
         f"REPORT = {json.dumps(report)}; await applyRecommendedDefaults(null, false);"
         "const m = $('defaults-message'); const btn = m.children.find((c) => c.innerHTML !== undefined);"
         "return [m.className, m.textContent, btn ? btn.innerHTML : null];",
@@ -678,3 +678,83 @@ const $ = () => ({});
     assert (row.get("provider"), row.get("model")) == ("ollama", "qwen3.5:9b"), row
     assert not row.get("base_url"), "the LM Studio port must not follow the new provider"
     assert not row.get("reasoning") and not row.get("options"), row
+
+
+# --- per-user apply: a broken route the user INHERITS (review round 2) --------
+# AbstractCore 6c64508 plans against the user's overlay only, so an inherited
+# route is `before: {}` with no flag; `force` never clears it (no `cleared`
+# for a key outside the overlay: verified with core-video's plan, cuda24 host).
+def _user_plan() -> dict:
+    return {
+        "ok": True, "dry_run": False, "force": True, "changed": 1, "kept": 0, "already": 1, "unavailable": 2, "cleared": 0,
+        "routes": [
+            {"key": "input.text", "action": "apply", "changed": True, "before": {}, "after": {"provider": "lmstudio", "model": "qwen/qwen3.5-9b"}},
+            {"key": "output.voice", "action": "already", "changed": False, "before": {"provider": "supertonic", "model": "supertonic-3"}, "after": {"provider": "supertonic", "model": "supertonic-3"}},
+            {"key": "output.image", "action": "unavailable", "changed": False, "before": {}, "after": {}, "reason": _IMAGE_REASON},
+            dict(_VIDEO_UNAVAILABLE),
+        ],
+    }
+
+
+def _user_grid() -> list:
+    flag = dict(_MLXGEN_IMAGE, reason=_IMAGE_REASON)
+    return [
+        # inherited from the gateway store, flagged by Core in the merged grid
+        dict(_MLXGEN_IMAGE, key="output.image", configured=True, route_unavailable=flag),
+        dict(_MLX_TEXT, key="input.text", configured=True, route_unavailable=_MLX_TEXT_BROKEN),
+        # the user's OWN route (flag included to prove own keys are never stamped)
+        {"key": "output.voice", "provider": "supertonic", "model": "supertonic-3", "configured": True,
+         "route_unavailable": {"provider": "supertonic", "model": "supertonic-3", "reason": "x"}},
+        {"key": "output.video", "configured": False},
+    ]
+
+
+def _apply_as_user(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, scoped: bool) -> tuple:
+    from abstractgateway import core_config
+
+    user_file = tmp_path / "user" / "config" / "abstractcore.json"
+    user_file.parent.mkdir(parents=True)
+    user_file.write_text(json.dumps({"capability_defaults": {"routes": {}}}), encoding="utf-8")
+    monkeypatch.setenv("ABSTRACTCORE_CONFIG_FILE", str(tmp_path / "store.json"))
+    monkeypatch.setattr(core_config, "core_server_base_url", lambda: "")
+    core_config._save_core_config_route(user_file, "output", "voice", provider="supertonic", model="supertonic-3", base_url=None, options={})
+    monkeypatch.setattr(core_config, "_writable_scoped_core_config_path", lambda _b: user_file if scoped else None)
+    seen = {}
+    monkeypatch.setattr(core_config.config_facade, "apply_recommended_capability_defaults", lambda **kw: seen.update(kw) or _user_plan())
+    monkeypatch.setattr(core_config, "gateway_capability_defaults_payload", lambda **_kw: {"ok": True, "routes": _user_grid()})
+    payload = core_config.apply_recommended_gateway_capability_defaults(force=True, base_dir=tmp_path / "user")
+    return payload["applied_recommended"], seen, user_file
+
+
+def test_per_user_apply_flags_an_inherited_route_that_cannot_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractgateway.core_config import INHERITED_ROUTE_NOTE
+
+    report, seen, user_file = _apply_as_user(tmp_path, monkeypatch, scoped=True)
+    assert seen["config_file"] == user_file
+    rows = {r["key"]: r for r in report["routes"]}
+    image = rows["output.image"]
+    assert image["route_unavailable"] == dict(_MLXGEN_IMAGE, reason=_IMAGE_REASON, inherited=True, note=INHERITED_ROUTE_NOTE)
+    assert INHERITED_ROUTE_NOTE == "inherited from the gateway store (admin)"
+    # force never claims to have cleared a route it did not touch
+    assert image["action"] == "unavailable" and image["changed"] is False and report["cleared"] == 0
+    # written for this user now -> no longer inherited, not stamped
+    assert "route_unavailable" not in rows["input.text"]
+    # the user's own route: Core's business, never re-stamped as inherited
+    assert "route_unavailable" not in rows["output.voice"]
+    assert "route_unavailable" not in rows["output.video"]
+
+
+def test_install_store_apply_is_not_stamped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    report, seen, _ = _apply_as_user(tmp_path, monkeypatch, scoped=False)
+    assert seen["config_file"] is None
+    assert report == _user_plan(), "no overlay, nothing inherited: Core's report verbatim"
+
+
+def test_apply_summary_for_an_inherited_broken_route_offers_no_clear() -> None:
+    inherited = dict(_MLXGEN_IMAGE, reason=_IMAGE_REASON, inherited=True, note="inherited from the gateway store (admin)")
+    report = {"routes": [_VOICE_APPLY, {"key": "output.image", "action": "unavailable", "changed": False, "before": {}, "after": {},
+                                        "reason": _IMAGE_REASON, "route_unavailable": inherited}]}
+    cls, text, button = _apply_message(report)
+    assert "(configured mlx-gen/AbstractFramework/flux.2-klein-4b-8bit cannot run here either; inherited from the gateway store (admin))" in text, text
+    assert cls == "message", "still not a success"
+    assert button is None, "only an admin can change an inherited route: no forced pass to offer"

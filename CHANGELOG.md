@@ -59,6 +59,25 @@ AbstractRuntime version is raised to that release when this version is published
   save; publishing writes them into the bundle manifest, and `/bundles`, `/bundles/{id}` and
   the shared catalog return them.
 
+- **Web console: video and routes this computer cannot run.**
+  - The Models catalog has a **Video** capability filter, and MLX-Gen is labelled "MLX images &
+    video". The setup guide's model step has a **Video** card, and "Apply recommended" covers
+    text, voice, images and video where this computer can run them.
+  - A route AbstractCore recommends but this computer cannot run (for example MLX-Gen images off
+    Apple silicon, or the video model on a Mac without enough memory) says why on its
+    Multimodal row and gets a *Not available here* card in the setup guide, with no Download.
+  - A route already configured with a provider this computer cannot run (AbstractCore's
+    `route_unavailable`, for example an MLX image route carried over from a Mac to Linux) shows
+    *cannot run here* with the reason on its row, and a warning or a *Cannot run here* card in
+    the setup guide.
+  - The "Apply recommended" result names the routes nothing recommended can run, the configured
+    routes that cannot run, and routes the forced pass removed ("removed … — cannot run on this
+    computer: …"); it is not shown as a success while a broken route remains, and offers the
+    forced pass ("Replace mine too" / "Clear what cannot run here").
+  - Per-user apply: a broken route a user inherits from the gateway store is flagged in the
+    report (`route_unavailable` with `inherited: true` and the note "inherited from the gateway
+    store (admin)"); only an admin can change it, so no forced pass is offered for it.
+
 ### Changed
 
 - Automation list rows carry `workspace_root` (the automation's folder), so apps can open it
@@ -89,6 +108,16 @@ AbstractRuntime version is raised to that release when this version is published
 - Run commands (`pause`, `cancel`, …) sent to an automation's id are refused with 409
   `invalid_state` and a pointer to the `automation.*` commands.
 - A scheduled run listed by `GET /api/gateway/runs` reports `is_scheduled: true`.
+- Web console: the catalog's **Use as default** sets exactly the chosen model; the previous text
+  route's server address, reasoning effort and options used to stay, pointing a new provider at
+  the old server's port.
+- Web console: Sandbox generations and the voice test work for accounts whose tenant or user id
+  contains `:` (they answered "Run not found"), and Sandbox uploads are filed with the Sandbox's
+  own conversation (they went to a second, unused one).
+- Web console: the Sandbox image and video lanes use the image or video route when only that is
+  set (a fresh install), as generation does, instead of calling them not configured.
+- Web console: the setup guide's Computer tile shows this computer's name and its operating
+  system.
 
 ## [0.5.1] - 2026-09-26
 

@@ -1027,6 +1027,10 @@ Two row states come from AbstractCore's host check:
   (`route_unavailable`, for example an MLX-Gen image route carried over from a
   Mac to Linux) shows `cannot run here` instead of `configured`, with the
   reason. Calls to it fail until you choose another provider for the route.
+  With user accounts on, a user who inherits such a route from the gateway
+  store sees it flagged in the *Apply recommended* result as "inherited from
+  the gateway store (admin)": only an admin can change it, and the forced
+  pass never removes it.
 
 The setup guide's model step shows the same two states as cards with the
 reason and no **Download** button.
