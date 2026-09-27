@@ -740,7 +740,9 @@ pub fn secondary_verbs(
     let mut out = Vec::new();
     let active = job.map(AppJob::is_active).unwrap_or(false);
     let not_admin = |what: &str| format!("Only an admin can {what}");
-    if !row.is_desktop() {
+    // A browser app that is not installed shows no secondary verbs (the
+    // web card has only Install then); a desktop app never has them.
+    if !row.is_desktop() && row.installed {
         if let Some(port) = row.external_port {
             let why = format!(
                 "Started outside the gateway on port {port}: stop, start, update and its log belong to whatever started it"

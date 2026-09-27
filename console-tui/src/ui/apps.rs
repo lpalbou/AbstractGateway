@@ -30,16 +30,15 @@ use crate::worker::Cmd;
 
 /// The footer's verbs for this screen (ui/mod.rs footer arm).
 pub const HINTS: &[(&str, &str)] = &[
-    ("Enter/o", "open · install"),
-    ("i", "install"),
-    ("u", "update"),
+    ("Enter/o", "open/install"),
+    ("r", "check again"),
+    ("i/u", "install/update"),
     ("s/x", "start/stop"),
     ("l", "log"),
     ("c", "cancel"),
-    ("t/T", "terminal open/install"),
+    ("t/T", "terminal"),
     ("n", "Node.js"),
-    ("y", "copy…"),
-    ("r", "check again"),
+    ("y", "copy"),
 ];
 
 const LOG_TAIL: u32 = 200;
