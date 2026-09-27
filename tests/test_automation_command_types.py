@@ -125,3 +125,10 @@ def test_runner_dispatches_automation_types_to_the_runtime_applier(monkeypatch: 
     assert seen == list(AUTOMATION_COMMAND_TYPES)
     with pytest.raises(ValueError):
         runner._apply_command(CommandRecord(command_id="z", run_id="a1", type="automation.explode", payload={}, ts="", client_id=None, seq=2))
+
+
+def test_gateway_types_equal_the_runtime_appliers_types() -> None:
+    """The door must accept exactly what abstractruntime's applier applies."""
+    from abstractruntime.automations.commands import AUTOMATION_COMMAND_TYPES as RUNTIME_TYPES
+
+    assert set(AUTOMATION_COMMAND_TYPES) == set(RUNTIME_TYPES)
