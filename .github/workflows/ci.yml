@@ -70,10 +70,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # MSRV = console-tui/Cargo.toml `rust-version` (1.87): the crate must
+      # keep building on it, not only on the latest stable.
+      - uses: dtolnay/rust-toolchain@1.87
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: console-tui
+      - name: Format
+        working-directory: console-tui
+        run: cargo fmt --check
+      - name: Clippy
+        working-directory: console-tui
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: MSRV (1.87) check
+        working-directory: console-tui
+        run: cargo +1.87 check --locked --all-targets
       - name: Test
         working-directory: console-tui
         run: cargo test --locked
