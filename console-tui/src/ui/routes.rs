@@ -15,6 +15,7 @@ use super::util::{field, line, loadable_view, or_dash, span, span_bold};
 use super::widths;
 use super::widths::BLOCK_CHROME;
 use super::Ctx;
+use crate::api::firstrun::{can_download_all, GroupStatus};
 use crate::store::{ConnPhase, Loadable, RouteRow, RoutesData, WeightsRow};
 use crate::worker::Cmd;
 
@@ -63,6 +64,22 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .shortcut(KeyChord::plain(Key::Char('a')), {
             let ctx_apply = ctx.clone();
             move |_| apply_recommended(cx, &ctx_apply)
+        })
+        // The web guide's model step: "Download all" (one parent job for
+        // the whole recommended set), its cancel, and the full plan with
+        // AbstractCore's fit warnings. Capital D/C: `d` deletes two
+        // screens over, and a bulk download must never be a reflex key.
+        .shortcut(KeyChord::plain(Key::Char('D')), {
+            let ctx_all = ctx.clone();
+            move |_| download_all(cx, &ctx_all)
+        })
+        .shortcut(KeyChord::plain(Key::Char('C')), {
+            let ctx_cancel = ctx.clone();
+            move |_| cancel_download_all(cx, &ctx_cancel)
+        })
+        .shortcut(KeyChord::plain(Key::Char('p')), {
+            let ctx_plan = ctx.clone();
+            move |_| open_plan(cx, &ctx_plan)
         })
         .child(
             Block::new()
@@ -212,6 +229,57 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         )]),
                         _ => line(vec![span(String::new(), t.text)]),
                     }
+                }))
+                // RECOMMENDED FOR THIS COMPUTER (the web guide's model
+                // step): the Download-all progress while it exists, and
+                // the plan — one line per model in the wizard, one
+                // summary line in browse; `p` shows every word.
+                .child(dyn_view(LayoutStyle::column().shrink(0.0), move || {
+                    let t = tt;
+                    let avail = (viewport.get().w - BLOCK_CHROME).max(20) as usize;
+                    let wizard = ui.wizard.get();
+                    let mut rows: Vec<View> = Vec::new();
+                    if let Some(g) = store.download_group.get() {
+                        rows.push(line(vec![span_bold(
+                            widths::middle_fit(&g.line(), avail as i32),
+                            group_tone(&t, &g),
+                        )]));
+                    }
+                    let plan = store
+                        .availability
+                        .with(|a| a.ready().map(|a| a.plan.clone()).unwrap_or_default());
+                    if !plan.is_empty() {
+                        let installed = plan.iter().filter(|r| r.status == "installed").count();
+                        let warned = plan.iter().filter(|r| r.warning.is_some()).count();
+                        let mut head = format!(
+                            "recommended for this computer: {installed} of {} installed",
+                            plan.len()
+                        );
+                        if warned > 0 {
+                            head.push_str(&format!(
+                                " · {warned} fit warning{}",
+                                if warned == 1 { "" } else { "s" }
+                            ));
+                        }
+                        rows.push(line(vec![
+                            span_bold(head, if warned > 0 { t.warn } else { t.text }),
+                            span("  ·  p plan · D download all · a apply", t.text_faint),
+                        ]));
+                        if wizard {
+                            for r in &plan {
+                                let mut spans = vec![
+                                    span(format!("  {:<14}", r.title()), t.text_muted),
+                                    span(format!("{:<15}", r.status_label()), status_tone(&t, &r.status)),
+                                    span(format!("{} {}", r.provider, r.artifact), t.text),
+                                ];
+                                if let Some(w) = &r.warning {
+                                    spans.push(span(format!("  ⚠ {w}"), t.warn));
+                                }
+                                rows.push(line(spans));
+                            }
+                        }
+                    }
+                    Element::new().style(LayoutStyle::column()).children(rows).build()
                 }))
                 .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), {
                     let ctx_act = ctx.clone();
@@ -492,6 +560,209 @@ fn apply_recommended(cx: Scope, ctx: &Ctx) {
             ctx2.send(Cmd::ApplyRecommendedRoutes { force });
         }
     });
+}
+
+fn status_tone(t: &TokenSet, status: &str) -> Rgba {
+    match status {
+        "installed" => t.ok,
+        "absent" => t.warn,
+        _ => t.text_muted,
+    }
+}
+
+fn group_tone(t: &TokenSet, g: &GroupStatus) -> Rgba {
+    if g.running() {
+        t.info
+    } else if g.status == "completed" {
+        t.ok
+    } else if g.status == "cancelled" {
+        t.text_muted
+    } else {
+        t.error
+    }
+}
+
+/// `p` — the recommended plan in full: every card of the web guide's
+/// model step (status, provider, artifact, memory tier, the fit warning
+/// verbatim, the evidence and the CLI), plus the Download-all job.
+fn open_plan(cx: Scope, ctx: &Ctx) {
+    let plan = ctx
+        .store
+        .availability
+        .with_untracked(|a| a.ready().map(|a| a.plan.clone()));
+    let Some(plan) = plan else {
+        ctx.store.notice.set(Some(
+            "the recommended plan is not loaded yet (r reloads the weights)".into(),
+        ));
+        return;
+    };
+    let store = ctx.store;
+    let size = super::preview_size(cx);
+    super::open_form(ctx, cx, size, move |mcx, close| {
+        let t = use_theme(mcx).get().tokens;
+        let width = (size.w - 8).max(20) as usize;
+        let mut rows: Vec<View> = Vec::new();
+        let current = store.routes.with_untracked(|r| {
+            r.ready().and_then(|d| {
+                d.rows
+                    .iter()
+                    .find(|row| row.key == "output.text" && row.model.is_some())
+                    .or_else(|| d.rows.iter().find(|row| row.key == "input.text" && row.model.is_some()))
+                    .map(|row| row.pair_text())
+            })
+        });
+        rows.push(line(vec![span(
+            match current {
+                Some(c) => format!("Text model now: {c}"),
+                None => "No text model is set yet.".to_string(),
+            },
+            t.text_muted,
+        )]));
+        rows.push(line(vec![span(String::new(), t.text)]));
+        if plan.is_empty() {
+            rows.push(line(vec![span(
+                "This gateway reported no recommended downloads.",
+                t.text_muted,
+            )]));
+        }
+        for r in &plan {
+            rows.push(line(vec![
+                span_bold(format!("{}  ", r.title()), t.text),
+                span(r.status_label().to_string(), status_tone(&t, &r.status)),
+            ]));
+            rows.push(line(vec![span(
+                format!("  {} {}  (route {})", r.provider, r.artifact, r.route),
+                t.text,
+            )]));
+            if let Some(tier) = &r.tier {
+                rows.push(line(vec![span(format!("  Chosen by memory: {tier}"), t.text_faint)]));
+            }
+            if let Some(w) = &r.warning {
+                for (i, l) in super::util::wrap_text(w, width.saturating_sub(4)).into_iter().enumerate() {
+                    rows.push(line(vec![span(
+                        format!("  {}{l}", if i == 0 { "⚠ " } else { "  " }),
+                        t.warn,
+                    )]));
+                }
+            }
+            if let Some(e) = &r.evidence {
+                rows.push(line(vec![span(format!("  evidence: {e}"), t.text_faint)]));
+            }
+            if let Some(i) = &r.instruction {
+                rows.push(line(vec![span(format!("  CLI: {i}"), t.text_faint)]));
+            }
+            rows.push(line(vec![span(String::new(), t.text)]));
+        }
+        if let Some(g) = store.download_group.get_untracked() {
+            rows.push(line(vec![span_bold(g.line(), group_tone(&t, &g))]));
+            for (name, state) in &g.files {
+                rows.push(line(vec![span(format!("  {name}: {state}"), t.text_muted)]));
+            }
+        }
+        rows.push(line(vec![span(
+            "On Routes: a applies the recommended routes (yours are kept) · D downloads all · C cancels it",
+            t.text_faint,
+        )]));
+        let c = close.clone();
+        Element::new()
+            .style(LayoutStyle::column().grow(1.0))
+            .child(line(vec![span_bold("Recommended for this computer", t.accent)]))
+            .child(
+                Scroll::new(Element::new().style(LayoutStyle::column()).children(rows).build())
+                    .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
+                    .scrollbar_auto_hide(true)
+                    .view(mcx),
+            )
+            .child(
+                Button::new("Close")
+                    .on_click(move || c())
+                    .element(mcx, &t)
+                    .build(),
+            )
+            .build()
+    });
+}
+
+/// `D` — "Download all": the recommended set in ONE parent job, exactly
+/// the web guide's `POST /models/download {"recommended": true}`. Offered
+/// under the web's rule (some recommended model absent, no group
+/// running), always after a confirm that names what will be fetched.
+fn download_all(cx: Scope, ctx: &Ctx) {
+    if !ctx.store.conn.with_untracked(ConnPhase::is_connected) {
+        ctx.store
+            .notice
+            .set(Some("not connected — Download all runs on the gateway host".into()));
+        return;
+    }
+    let plan = ctx
+        .store
+        .availability
+        .with_untracked(|a| a.ready().map(|a| a.plan.clone()));
+    let Some(plan) = plan else {
+        ctx.store.notice.set(Some(
+            "the recommended plan is not loaded yet (r reloads the weights)".into(),
+        ));
+        return;
+    };
+    let group = ctx.store.download_group.get_untracked();
+    if group.as_ref().map(GroupStatus::running).unwrap_or(false) {
+        ctx.store.notice.set(Some(
+            "Download all is already running — C cancels it, p shows its progress".into(),
+        ));
+        return;
+    }
+    if !can_download_all(&plan, group.as_ref()) {
+        ctx.store.notice.set(Some(
+            "nothing to download — no recommended model is reported absent on this host".into(),
+        ));
+        return;
+    }
+    let list = plan
+        .iter()
+        .map(|r| format!("{} {} ({})", r.provider, r.artifact, r.status_label()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let ctx2 = ctx.clone();
+    super::confirm_danger(
+        cx,
+        ctx.ui,
+        format!(
+            "Download the recommended set on the gateway host? {list}. Models already there              finish at once; the rest run the providers' own tools and may fetch many gigabytes."
+        ),
+        "Download all",
+        "Not now",
+        move || ctx2.send(Cmd::DownloadRecommended),
+    );
+}
+
+/// `C` — cancel the running Download all (admin; every child stops).
+fn cancel_download_all(cx: Scope, ctx: &Ctx) {
+    let Some(g) = ctx.store.download_group.get_untracked().filter(GroupStatus::running) else {
+        ctx.store
+            .notice
+            .set(Some("no Download all is running — nothing to cancel".into()));
+        return;
+    };
+    let admin = ctx.store.conn.with_untracked(|c| match c {
+        ConnPhase::Connected(id) => id.admin,
+        _ => false,
+    });
+    if !admin {
+        ctx.store
+            .notice
+            .set(Some("cancelling a download is admin-only on the gateway".into()));
+        return;
+    }
+    let ctx2 = ctx.clone();
+    let job = g.job.clone();
+    super::confirm_danger(
+        cx,
+        ctx.ui,
+        format!("Cancel Download all ({job})? Every model still downloading stops."),
+        "Cancel downloads",
+        "Keep downloading",
+        move || ctx2.send(Cmd::CancelDownloadGroup { job: job.clone() }),
+    );
 }
 
 /// `d` — download the selected route's model weights on the execution

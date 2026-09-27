@@ -12,6 +12,12 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
+/// Headless first-run parity (first-run state, welcome summary, the
+/// recommended plan and Download all). A CHILD module so its
+/// `impl GatewayClient` block reaches the private `get`/`send`.
+#[path = "api_firstrun.rs"]
+pub mod firstrun;
+
 /// What kind of failure this is — drives which honest state the UI shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiErrorKind {
