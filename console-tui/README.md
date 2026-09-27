@@ -17,7 +17,7 @@ crate (0.2), the same screens `abstractcore-console` shows over the
 (`src/transport_http.rs`) against the gateway's mirrors of the
 AbstractCore routes. Both crates build on one abstracttui (0.3.6).
 
-Eleven screens, shared by a **setup guide** (the wizard: the web
+Twelve screens, shared by a **setup guide** (the wizard: the web
 console's first-run guide, same steps and routes) and a **browse mode**
 (free tabs).
 
@@ -25,8 +25,8 @@ The guide walks Connection → **Setup** (welcome: this computer at a
 glance, from `GET /api/gateway/host/state`) → Engines → Providers →
 Routes (the default model: the recommended plan for this computer with
 AbstractCore's fit warnings, `a` applies it, `D` downloads all of it in
-one parent job, `C` cancels, `p` shows every word) → Models → Review
-(**Finish** or **Skip setup**: `POST /api/gateway/host/first-run`,
+one parent job, `C` cancels, `p` shows every word) → Models → Apps →
+Review (**Finish** or **Skip setup**: `POST /api/gateway/host/first-run`,
 verified by a GET and journaled). Like the web guide, no step is gated
 except signing in. Without `--wizard`/`--browse`, the console reads
 `GET /api/gateway/host/first-run` at connect and keeps the guide open
@@ -38,7 +38,8 @@ leaves it (not recorded, it opens again next start) or skips it
 1. **Connection** — base URL + admin token (masked; env fallback
    `ABSTRACTGATEWAY_AUTH_TOKEN`), probe via `/ping` + `/me`, honest
    states: unreachable ≠ unauthorized ≠ connected, with identity badges
-   (admin, auth mode, routing mode).
+   (admin, auth mode, routing mode), and the network panel (including
+   the web console's "Look up my public address").
 2. **Providers** — provider endpoint profiles (create/edit/delete,
    write-only API keys with fingerprint display, model allowlists fed
    by live discovery, scope moves on edit, test-connection via live
@@ -55,7 +56,8 @@ leaves it (not recorded, it opens again next start) or skips it
    `/sandbox/generate` with the route's own capability key).
 4. **Users & Entities** — gateway user CRUD (create shows the token
    exactly once, with clipboard copy; advanced tenant/runtime bindings;
-   user/admin/readonly roles), token rotation, runtime reservations
+   user/admin/readonly roles), token rotation, your own workspace
+   policy (`w`, as the web console's "My workspace"), runtime reservations
    (transfer/purge retained planes of deleted users, `v`), and the
    entity roster with a per-entity **manage menu** (`m`): state
    wake/sleep(+dream)/pause, mind substrate, voice triple, work order,
@@ -76,7 +78,8 @@ leaves it (not recorded, it opens again next start) or skips it
 5. **Runtimes** — the data-plane inventory (default / per-user /
    per-entity) with owners, sizes, liveness, the runtime-knobs
    surface (per-knob value + provenance; API-writable, no UI edits
-   yet), recent root runs with **cancel** (`c`) and **steer** (`s`)
+   yet) with the Continuum backlog settings editor and the curated
+   skills-shelf reseed (admin), recent root runs with **cancel** (`c`) and **steer** (`s`)
    via durable gateway commands, and the data-homes browser (`h`)
    with dry-run-gated purge.
 6. **Workflows** — every workflow registered on the gateway, with
@@ -84,10 +87,13 @@ leaves it (not recorded, it opens again next start) or skips it
    interfaces, and a `Not loaded` block naming versions the gateway is
    not serving and why. `e` exports a version to a local `.flow` file,
    `d`/`D` delete a version / the whole workflow, `t` toggles draft
-   visibility; import and the other writes follow the registry
-   ownership rule (admin on the shared registry).
+   visibility, `i` imports a `.flow` bundle from this machine, `L`
+   reloads the registry from disk; import and the other writes follow
+   the registry ownership rule (admin on the shared registry).
 7. **Review & Test** — the session's change journal (every write +
-   its verify-via-GET result) and a live sandbox generation test.
+   its verify-via-GET result) and the web console's sandbox workspace:
+   every output mode (text, image, voice, music, SFX, video), file
+   attachments, speak-this-reply, and the guide's Finish / Skip setup.
 8. **Resources** — live host residency: RAM/device/GPU gauges with
    degradation notes, the resident-model table (modality, tri-state
    residency, lock marker, context facts with calibration), and
@@ -112,17 +118,25 @@ leaves it (not recorded, it opens again next start) or skips it
    running and reachable. `i` installs after a confirm showing the
    exact command and "runs on gateway host …" (dry run available),
    `o` opens the download page (LM Studio), `r` probes the local
-   servers, `c` cancels.
-- **Setup** (no digit; `Ctrl+G`) — the guide's welcome step: computer,
+   servers, `c` cancels. With a gateway that serves them, the screen
+   also starts/stops engine servers, continues paused installs and
+   shows the install location (abstractcore-console 0.3 verbs).
+- **A Apps** — the web console's Apps tab: browser apps (Flow, Code,
+  Observer…), the desktop Assistant and Node.js. `Enter`/`o` opens an
+  app signed in (a one-time link), `i`/`u` install/update, `s`/`x`
+  start/stop, `l` log, `c` cancel, `t`/`T` terminal apps, `n` Node.js,
+  `y` copy, `r` check again (admin-only writes).
+- **Setup** (no jump key; `Ctrl+G`) — the guide's welcome step: computer,
   memory, graphics, data folder (and why), sign-in mode, whether the
   gateway starts at login, the first-run state, and the guide's steps.
 
 Screens 9 and 0 read `GET /api/gateway/host/profile`, `/engines`,
 `/models/catalog`, `/models/installed` and `/jobs/{id}`, and write
 through `POST /models/download`, `/models/delete`, `/engines/{id}/install`
-and `/jobs/{id}/cancel` (admin-only on the gateway). A gateway without
-those routes shows each read as "not found" on those two screens; the
-other eight are unaffected.
+and `/jobs/{id}/cancel` (a download cancels through the web console's
+`POST /models/download/{id}/cancel`; admin-only on the gateway). A
+gateway without those routes shows each read as "not found" on those
+two screens; the other screens are unaffected.
 
 Parity contract with the web console: every write targets the SAME
 endpoint with the same body shape — changing a parameter here or in
@@ -156,8 +170,12 @@ cargo run < /dev/null   # headless: prints a skip line, exits 0
 
 Keys: `Tab` focus · `Enter` activate · `Ctrl+N` next step / `Ctrl+P`
 back (always work — `]`/`[` are alternates that text fields swallow) ·
-`Esc` back / close modal · `1-9`, `0` screens (browse; the screen bar is
-also clickable in browse) · `r` refresh · `F1` / `?` About · `Ctrl+L` repaint · `q`
+`Esc` back / close modal · `1-9`, `0`, `A` (Apps) screens (browse; the
+screen bar is also clickable in browse) · `Ctrl+G` setup guide (browse:
+reopen; guide: leave or Skip setup) · `r` refresh · `F1` / `?` About ·
+`F2` docs assistant (signed in; the web top bar's ✦ drawer) · `F3`
+gateway host panel (pause/resume, restart, quit, update check/install,
+tray; a paused banner shows on every screen) · `Ctrl+L` repaint · `q`
 (browse) / `Ctrl+C` quit. Per-screen actions sit in the footer, and a
 refused action always SAYS why (toast + footer) instead of doing
 nothing.

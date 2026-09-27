@@ -303,7 +303,7 @@ fn open_import(cx: Scope, ctx: &Ctx) {
             .child(
                 Element::new()
                     .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                    .child(Button::new("Import").on_click(move || submit2()).element(mcx, &t0).build())
+                    .child(Button::new("Import").on_click(submit2).element(mcx, &t0).build())
                     .child(
                         Button::new("Cancel (Esc)")
                             .on_click(move || close_cancel())
