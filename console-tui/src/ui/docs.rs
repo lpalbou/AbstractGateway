@@ -419,10 +419,15 @@ pub fn open(ctx: &Ctx, cx: Scope) {
                     let t = theme.get().tokens;
                     let turns = d.turns.get();
                     if turns.is_empty() {
-                        return line(vec![span(
-                            "ask anything about this gateway — setup, routes, providers, apps",
-                            t.text_muted,
-                        )]);
+                        // Wrapped in a growing column so the composer
+                        // sits at the bottom from the first frame.
+                        return Element::new()
+                            .style(LayoutStyle::column().grow(1.0))
+                            .child(line(vec![span(
+                                "ask anything about this gateway — setup, routes, providers, apps",
+                                t.text_muted,
+                            )]))
+                            .build();
                     }
                     let mut rows: Vec<View> = Vec::new();
                     for turn in turns {
