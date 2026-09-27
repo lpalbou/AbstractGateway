@@ -152,6 +152,17 @@ fn web_exact_payloads_behave_like_the_web_on_the_gateway() {
         }
     }
 
+    // --- Catalog download: expected_bytes rides the request -----------
+    // A DRY RUN (nothing is fetched): the field is accepted by the route's
+    // model (no 422) — the disk pre-check input the web's catalog sends.
+    match a.models_download("mlx", "mlx-community/none-4bit", true, Some(1_000_000)) {
+        Ok(v) => println!("download dry run with expected_bytes: {v}"),
+        Err(e) => {
+            assert_ne!(e.kind, ApiErrorKind::Http(422), "expected_bytes is part of the contract: {e}");
+            println!("download dry run refused on the artifact (not the shape): {e}");
+        }
+    }
+
     // --- Workspace defaults: a save never promotes inherited values ----
     let before = RuntimeConfigData::from_value(&a.runtime_config().expect("GET knobs"));
     println!(
