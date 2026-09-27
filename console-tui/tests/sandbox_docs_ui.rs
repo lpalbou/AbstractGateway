@@ -173,6 +173,20 @@ impl H {
         self.ui.wizard.set(false);
         self.ui.screen.set(6);
         self.turns(3);
+        self.focus_prompt();
+    }
+    /// The prompt never autofocuses (REVIEW-1 M1: a parked caret ate the
+    /// screen keys, and the mode switch re-mounts it): put the caret there
+    /// the way an operator does, with a click on its field column.
+    fn focus_prompt(&mut self) {
+        let s = self.turns(1);
+        let row = s
+            .lines()
+            .position(|l| l.contains("│prompt "))
+            .expect("prompt row on screen")
+            + 1;
+        self.type_text(&format!("\x1b[<0;25;{row}M\x1b[<0;25;{row}m"));
+        self.turns(2);
     }
 }
 
@@ -323,6 +337,7 @@ fn voice_carries_route_voice_and_unconfigured_modes_refuse() {
 
     h.store.sandbox_ws.mode.set(SbMode::Video);
     h.turns(2);
+    h.focus_prompt();
     h.type_text("waves\r");
     h.turns(2);
     let notice = h.store.notice.get_untracked().unwrap_or_default();

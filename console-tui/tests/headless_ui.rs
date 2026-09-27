@@ -635,7 +635,7 @@ fn connection_states_render_distinctly() {
     let s = h.turn();
     assert!(s.contains("unauthorized (401)"), "401 state:\n{s}");
     assert!(s.contains("bad token"), "verbatim detail:\n{s}");
-    assert!(s.contains("rejected that token"), "actionable hint:\n{s}");
+    assert!(s.contains("rejected the token sent"), "actionable hint:\n{s}");
 
     h.store
         .conn
@@ -1051,7 +1051,7 @@ fn routes_show_the_unavailable_reason_and_the_plan_lists_it() {
     let s = h.turns(3);
     assert!(s.contains("unavailable here"), "state column:\n{s}");
     assert!(
-        s.contains("the recommended mlx-gen AbstractFramework/flux.2-klein-4b-8bit cannot run on this host: MLX-Gen image generation needs MLX"),
+        s.contains("the recommended mlx-gen · AbstractFramework/flux.2-klein-4b-8bit cannot run on this computer: MLX-Gen image generation needs MLX"),
         "selected-row reason:\n{s}"
     );
     h.type_text("p");
@@ -2701,7 +2701,9 @@ fn review_inline_sandbox_runs_and_renders_full_result() {
         );
     });
     h.turns(3);
-    // Enter in the (autofocused) prompt runs the test with the picks.
+    // Enter in the prompt runs the test with the picks (the prompt is
+    // focused by the operator, never autofocused — REVIEW-1 M1).
+    click_field(&mut h, "prompt");
     h.type_text("\r");
     h.turns(2);
     match h.find_cmd(|c| matches!(c, Cmd::SandboxTest { .. })) {
@@ -2774,6 +2776,7 @@ fn review_sandbox_refusals_name_reasons() {
     // Not connected: refuse with the connect teaching.
     h.goto_screen(6);
     h.turns(2);
+    click_field(&mut h, "prompt");
     h.type_text("\r");
     h.turns(2);
     let notice = h.store.notice.get_untracked().unwrap_or_default();
@@ -3023,6 +3026,7 @@ fn reprobe_resets_cached_domains() {
     h.goto_screen(0);
     h.ui.wizard.set(true);
     h.turns(2);
+    click_field(&mut h, "Gateway URL");
     h.type_text("\r");
     h.turns(2);
     assert!(
@@ -3909,6 +3913,17 @@ fn double_click_at(h: &mut Harness, x: usize, y: usize) {
     click_at(h, x, y);
 }
 
+/// Put the caret in the text field labelled `label` (the field column
+/// starts after the 18-cell label). Page text fields never autofocus
+/// once connected (REVIEW-1 M1/M2): a test types into one the way an
+/// operator does — by focusing it first.
+fn click_field(h: &mut Harness, label: &str) {
+    let s = h.turns(1);
+    let row = find_row(&s, label);
+    click_at(h, 25, row);
+    h.turns(2);
+}
+
 /// 1-based row of the first rendered line containing `needle`.
 fn find_row(screen: &str, needle: &str) -> usize {
     screen
@@ -4491,6 +4506,7 @@ fn gateway_reset_forgets_the_chosen_runtime() {
     h.goto_screen(0);
     h.ui.wizard.set(true);
     h.turns(2);
+    click_field(&mut h, "Gateway URL");
     h.type_text("\r");
     h.turns(2);
     assert!(
@@ -7418,9 +7434,11 @@ fn set_network(h: &mut Harness, v: Value) -> String {
     h.turns(3)
 }
 
-/// Focus the mode picker: Tab past URL, token and the probe button.
+/// Focus the mode picker: Tab past the tab bar, URL, token and the probe
+/// button. Connected, nothing holds the caret (REVIEW-1 M2: the URL field
+/// autofocuses only while not connected), so the chain starts at the top.
 fn focus_network_modes(h: &mut Harness) {
-    for _ in 0..3 {
+    for _ in 0..5 {
         h.key(b"\t");
         h.turn();
     }
@@ -7641,6 +7659,12 @@ fn network_c_in_the_url_field_still_types() {
     h.store.notice.set(None);
     h.ui.conn_url.set(String::new());
     h.turn();
+    // Connected, the URL field no longer holds the caret (M2): Tab past
+    // the tab bar into it.
+    for _ in 0..2 {
+        h.key(b"\t");
+        h.turn();
+    }
     h.type_text("c");
     h.turns(2);
     assert_eq!(
@@ -7688,10 +7712,10 @@ fn proxy_fixture(origins: &[&str], trust: bool, env_origins: Option<&[&str]>, en
     v
 }
 
-/// Tab from the URL field to the origins edit line (URL, token, probe,
-/// modes, addresses, origins).
+/// Tab to the origins edit line (tab bar, URL, token, probe, modes,
+/// addresses, origins) — connected, nothing holds the caret (M2).
 fn focus_origins_line(h: &mut Harness) {
-    for _ in 0..5 {
+    for _ in 0..7 {
         h.key(b"\t");
         h.turn();
     }

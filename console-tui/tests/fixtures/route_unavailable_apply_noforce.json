@@ -1,0 +1,96 @@
+{
+ "applied_recommended": {
+  "ok": true,
+  "dry_run": false,
+  "force": false,
+  "config_file": "<scratch>/abstractcore.json",
+  "changed": 1,
+  "kept": 0,
+  "already": 1,
+  "unavailable": 2,
+  "cleared": 0,
+  "routes": [
+   {
+    "key": "input.text",
+    "selector": "text",
+    "action": "already",
+    "changed": false,
+    "recommended": {
+     "provider": "lmstudio",
+     "model": "qwen/qwen3.5-9b",
+     "options": {
+      "speculation": {
+       "mode": "native_mtp",
+       "num_draft_tokens": 2,
+       "require_acceleration": false
+      }
+     }
+    },
+    "before": {
+     "provider": "lmstudio",
+     "model": "qwen/qwen3.5-9b"
+    },
+    "after": {
+     "provider": "lmstudio",
+     "model": "qwen/qwen3.5-9b"
+    },
+    "download": {
+     "provider": "lmstudio",
+     "artifact": "qwen/qwen3.5-9b@4bit"
+    }
+   },
+   {
+    "key": "output.voice",
+    "selector": "voice",
+    "action": "apply",
+    "changed": true,
+    "recommended": {
+     "provider": "supertonic",
+     "model": "supertonic-3"
+    },
+    "before": {},
+    "after": {
+     "provider": "supertonic",
+     "model": "supertonic-3"
+    },
+    "download": {
+     "provider": "supertonic",
+     "artifact": "supertonic-3"
+    }
+   },
+   {
+    "key": "output.image",
+    "selector": "image",
+    "action": "unavailable",
+    "changed": false,
+    "recommended": {},
+    "before": {
+     "provider": "mlx-gen",
+     "model": "AbstractFramework/flux.2-klein-4b-8bit"
+    },
+    "after": {
+     "provider": "mlx-gen",
+     "model": "AbstractFramework/flux.2-klein-4b-8bit"
+    },
+    "download": {},
+    "reason": "MLX-Gen image generation needs MLX, and MLX runs only on Apple Silicon Macs (macOS, arm64); set output.image to an image engine this host runs: diffusers (install profile gpu), sdcpp (stable-diffusion.cpp, optional extra) or a cloud image provider",
+    "route_unavailable": {
+     "provider": "mlx-gen",
+     "model": "AbstractFramework/flux.2-klein-4b-8bit",
+     "reason": "MLX-Gen image generation needs MLX, and MLX runs only on Apple Silicon Macs (macOS, arm64); set output.image to an image engine this host runs: diffusers (install profile gpu), sdcpp (stable-diffusion.cpp, optional extra) or a cloud image provider"
+    }
+   },
+   {
+    "key": "output.video",
+    "selector": "video",
+    "action": "unavailable",
+    "changed": false,
+    "recommended": {},
+    "before": {},
+    "after": {},
+    "download": {},
+    "reason": "MLX-Gen video generation needs MLX, and MLX runs only on Apple Silicon Macs (macOS, arm64); no other local engine in AbstractFramework generates video today (abstractvision's Diffusers video path is disabled, stable-diffusion.cpp has none); the remaining option is an OpenAI-compatible video endpoint (abstractvision openai-compatible backend)"
+   }
+  ]
+ }
+}

@@ -17,6 +17,7 @@ use serde_json::Value;
 use super::{finish_write, load, publish_ready, require_client, with_busy, Body, Cmd, Secret};
 use crate::api::{ApiError, ApiErrorKind, GatewayClient};
 use crate::store::operator::{
+    start_again_hint,
     my_policy_body, seed_report_text, tray_note, HostRunner, HostUpdate, MyPolicy,
 };
 use crate::store::{JournalEntry, Loadable, NetworkData, RuntimeConfigData, Store};
@@ -53,6 +54,9 @@ pub enum OpCmd {
         saw_down: bool,
         url: String,
         token: Secret,
+        /// Quit only: how to start this gateway again (its login service
+        /// facts, read before it went away — `start_again_hint`).
+        start_again: String,
     },
     UpdateCheck,
     UpdateStart,
@@ -272,6 +276,20 @@ pub(super) fn handle(
             } else {
                 ("QUIT gateway", "asking the gateway to quit")
             };
+            // Quit: read how this gateway starts again BEFORE it goes away
+            // (its login service, `GET /host/state`); after, nothing answers.
+            let start_again = if restart {
+                String::new()
+            } else {
+                let svc = require_client(client)
+                    .and_then(|c| c.host_state())
+                    .ok()
+                    .map(|v| crate::api::firstrun::WelcomeSummary::from_host_state(&v));
+                start_again_hint(
+                    svc.as_ref().and_then(|w| w.service_installed),
+                    svc.as_ref().and_then(|w| w.service_mechanism.as_deref()),
+                )
+            };
             let write = with_busy(store, wake, label, || {
                 require_client(client).and_then(|c| if restart { c.host_restart() } else { c.host_shutdown() })
             });
@@ -307,6 +325,7 @@ pub(super) fn handle(
                             saw_down: false,
                             url,
                             token: Secret(token.unwrap_or_default()),
+                            start_again,
                         }),
                     );
                 }
@@ -319,6 +338,7 @@ pub(super) fn handle(
             saw_down,
             url,
             token,
+            start_again,
         } => {
             let elapsed = now_ms().saturating_sub(started_ms);
             let secs = elapsed / 1000;
@@ -337,6 +357,7 @@ pub(super) fn handle(
                     saw_down,
                     url: url.clone(),
                     token: token.clone(),
+                    start_again: start_again.clone(),
                 })
             };
             if restart {
@@ -381,7 +402,7 @@ pub(super) fn handle(
                 post_lifecycle(
                     wake,
                     store,
-                    format!("✓ the gateway stopped ({secs}s) — start it again with `abstractgateway serve`"),
+                    format!("✓ the gateway stopped ({secs}s) — {start_again}"),
                 );
                 journal(wake, store, "QUIT gateway".into(), Ok(format!("unreachable after {secs}s")));
                 // The probe settles the honest header (unreachable).

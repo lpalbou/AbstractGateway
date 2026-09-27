@@ -157,6 +157,32 @@ pub fn field_w(t: &TokenSet, label: &str, label_w: i32, child: View) -> View {
         .build()
 }
 
+/// The notice Esc leaves when it hands the keyboard back to the screen.
+pub const FOCUS_RELEASED: &str =
+    "text field released — the screen's keys work again (Esc again goes back)";
+
+/// Esc on a PAGE-level text field (never a modal's: there Esc closes the
+/// modal) releases the keyboard to the screen instead of navigating:
+/// a text field swallows every plain key (digits, verbs, `q`), so without
+/// this a caret parked in a field — the URL box at boot, the sandbox
+/// prompt — turns every screen key into typing with no visible way out
+/// but Tab. The field's own shortcut is the deepest registration, so it
+/// wins over the root's Esc (back); the SECOND Esc, with nothing focused,
+/// reaches the root and goes back as before.
+///
+/// Mechanics: a shortcut runs after the handler walk, whose last bubble
+/// step is the tree root — `current()` is that root, a non-focusable
+/// element. Focusing it is the engine's blur (key dispatch targets
+/// `focus.or(root)`, so the root's shortcuts own the keyboard again).
+pub fn esc_releases_focus(el: Element, notice: Signal<Option<String>>) -> Element {
+    el.shortcut(KeyChord::plain(Key::Escape), move |ecx| {
+        if let Some(root) = ecx.current() {
+            ecx.request_focus(root);
+            notice.set(Some(FOCUS_RELEASED.into()));
+        }
+    })
+}
+
 /// Clamp a table-selection signal when its row count shrinks (deleting
 /// the last row otherwise leaves the highlight past the end: no row
 /// selected, every row action silently dead). Call from the screen's
