@@ -627,13 +627,13 @@ impl GatewayClient {
         provider: &str,
         artifact: &str,
         dry_run: bool,
+        expected_bytes: Option<u64>,
     ) -> ApiResult<Value> {
-        self.send(
-            "POST",
-            "/models/download",
-            &json!({"provider": provider, "artifact": artifact, "dry_run": dry_run}),
-            false,
-        )
+        let mut body = json!({"provider": provider, "artifact": artifact, "dry_run": dry_run});
+        if let Some(n) = expected_bytes {
+            body["expected_bytes"] = json!(n);
+        }
+        self.send("POST", "/models/download", &body, false)
     }
 
     /// Contract E: delete an installed artifact; answers a `host_job_v1`

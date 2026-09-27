@@ -926,7 +926,7 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
                 // A Models/Engines job runs ON THE GATEWAY and survives
                 // us, but the console is its only live progress view —
                 // quitting mid-download is a decision, not a keystroke.
-                if ctx_q.screens.store.job_active() {
+                if ctx_q.screens.store.job_running() {
                     ctx_q.store.notice.set(Some(
                         "a models/engines job is running on the gateway — c on Models/Engines \
                          cancels it (Ctrl+C quits anyway; the gateway keeps running it)"
@@ -1640,6 +1640,8 @@ fn header(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
 fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Theme>) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
+    let screens_caps = ctx.screens.caps;
+    let screens_access = ctx.screens.store.access;
     let engine_notices = abstracttui::app::use_startup_notices(_cx);
     Element::new()
         // Chrome rows: pinned like the header (finding-0240 class) —
@@ -1820,11 +1822,17 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 }
                 // The shared screens publish their own verbs.
                 SCREEN_CATALOG => {
-                    pairs.extend_from_slice(abstractcore_console::screens::catalog::HINTS);
+                    pairs.extend(abstractcore_console::screens::catalog::hints(
+                        screens_caps,
+                        &screens_access.get(),
+                    ));
                     pairs.push(("r", "refresh"));
                 }
                 SCREEN_ENGINES => {
-                    pairs.extend_from_slice(abstractcore_console::screens::engines::HINTS);
+                    pairs.extend(abstractcore_console::screens::engines::hints(
+                        screens_caps,
+                        &screens_access.get(),
+                    ));
                 }
                 SCREEN_APPS => pairs.extend_from_slice(apps::HINTS),
                 SCREEN_WELCOME => {
@@ -1839,7 +1847,10 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 SCREEN_MODELS => models::ADMIN_KEYS,
                 _ => &[],
             };
-            let mut pairs = util::visible_hints(pairs, admin_keys, non_admin);
+            let (mut pairs, gated) = util::admin_hint_pairs(pairs, admin_keys, non_admin);
+            if let Some(keys) = gated.as_deref() {
+                pairs.push((keys, "admin only"));
+            }
             // The setup guide's chord LAST: every screen has it, so it
             // yields to the screen's own verbs when the row truncates
             // (the Setup step and the goal line teach it too). The guide
@@ -1856,6 +1867,38 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
             hints(&t, &pairs)
         }))
         .build()
+}
+
+/// Who may change the gateway host from AbstractCore's Models/Engines
+/// screens (9 and 0), from the connection: the web console's rule, admins
+/// only. A connection being re-verified keeps its principal (no flicker).
+/// The ReadOnly reason ends every refusal those screens give ("only an
+/// admin can download models — signed in as ana, not an admin").
+pub fn screens_access(conn: &ConnPhase) -> abstractcore_console::screens::Access {
+    use abstractcore_console::screens::Access;
+    match conn {
+        ConnPhase::Connected(id) | ConnPhase::Verifying(id) if id.admin => Access::Admin,
+        ConnPhase::Connected(id) | ConnPhase::Verifying(id) => {
+            Access::ReadOnly(format!("signed in as {}, not an admin", id.user_id))
+        }
+        _ => Access::ReadOnly("not signed in to a gateway".into()),
+    }
+}
+
+/// [`screens_access`] as a signal kept current from `store.conn` — what
+/// `ScreensCtx::new` takes (lib.rs and the headless tests share it).
+pub fn screens_access_signal(
+    cx: Scope,
+    store: Store,
+) -> Signal<abstractcore_console::screens::Access> {
+    let access = cx.signal(store.conn.with_untracked(screens_access));
+    cx.effect(move || {
+        let next = store.conn.with(screens_access);
+        if access.with_untracked(|a| *a != next) {
+            access.set(next);
+        }
+    });
+    access
 }
 
 /// Scheme-default URL normalization, shared by the Probe button and the

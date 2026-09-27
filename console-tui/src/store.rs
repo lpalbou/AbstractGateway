@@ -162,6 +162,11 @@ impl ConnPhase {
     pub fn admin_refusal(&self, what: &str) -> Option<String> {
         match self {
             ConnPhase::Connected(id) if id.admin => None,
+            // An admin whose connection is being re-checked: not refused
+            // for the ROLE, only for the moment.
+            ConnPhase::Verifying(id) if id.admin => Some(
+                "the connection is being re-verified — try again in a moment".to_string(),
+            ),
             ConnPhase::Connected(id) | ConnPhase::Verifying(id) => Some(format!(
                 "{what} is admin-only on the gateway — signed in as {}, not an admin",
                 id.user_id
@@ -4554,7 +4559,9 @@ mod tests {
         assert_eq!(ConnPhase::Connected(identity(true)).admin_refusal("x"), None);
         let why = ConnPhase::Connected(identity(false)).admin_refusal("deleting a user").unwrap();
         assert!(why.contains("deleting a user is admin-only") && why.contains("alice"), "{why}");
-        assert!(ConnPhase::Verifying(identity(false)).admin_refusal("x").is_some());
+        assert!(ConnPhase::Verifying(identity(false)).admin_refusal("x").unwrap().contains("not an admin"));
+        let busy = ConnPhase::Verifying(identity(true)).admin_refusal("x").unwrap();
+        assert!(!busy.contains("not an admin") && busy.contains("re-verified"), "{busy}");
         assert!(ConnPhase::NotConnected.admin_refusal("x").unwrap().contains("not connected"));
         assert!(ConnPhase::Connected(identity(false)).is_known_non_admin());
         assert!(ConnPhase::Verifying(identity(false)).is_known_non_admin());

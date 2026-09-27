@@ -45,7 +45,7 @@ fn every_console_gated_verb_is_admin_only_on_the_gateway() {
     assert_eq!(me["principal"]["admin"], false, "the user token must be a non-admin: {me}");
 
     // Routes: w / a / D / C.
-    forbidden("models download (w)", u.models_download("mlx", "none/none-4bit", true));
+    forbidden("models download (w)", u.models_download("mlx", "none/none-4bit", true, None));
     forbidden("apply recommended (a)", u.apply_recommended_routes(false));
     forbidden("Download all (D)", u.download_recommended(true));
     forbidden("cancel a download (C)", u.cancel_model_download("grp_none"));

@@ -44,7 +44,7 @@ impl ConsoleTransport for NoTransport {
     fn models_installed(&self, _p: Option<&str>) -> Result<Value, TransportError> {
         Err(TransportError::unavailable("not under test"))
     }
-    fn start_download(&self, _p: &str, _a: &str) -> Result<Value, TransportError> {
+    fn start_download(&self, _p: &str, _a: &str, _expected_bytes: Option<u64>) -> Result<Value, TransportError> {
         Err(TransportError::unavailable("not under test"))
     }
     fn delete_model(&self, _p: &str, _a: &str, _f: bool) -> Result<Value, TransportError> {
@@ -89,6 +89,9 @@ fn harness() -> Harness {
             cx,
             transport.clone(),
             overlays.clone(),
+            // The production wiring: Models/Engines access follows the
+            // connection (ui::screens_access_signal, used by lib.rs).
+            ui::screens_access_signal(cx, store),
             ScreensOptions {
                 notice: Some(store.notice),
                 opener: Some(Rc::new(|_url: &str| Ok(()))),
@@ -275,9 +278,11 @@ fn footer_hides_admin_verbs_from_a_non_admin() {
     for hidden in ["apply recommended", "download weights", "download all", "Ctrl+G"] {
         assert!(!s.contains(hidden), "non-admin footer shows {hidden:?}:\n{s}");
     }
+    assert!(s.contains("w/a/D/C admin only"), "disabled with the reason:\n{s}");
     let s = h.on(ui::SCREEN_MODELS, false);
     assert!(s.contains("context estimate"), "{s}");
     assert!(!s.contains("load (warm up)") && !s.contains("clear session caches"), "{s}");
+    assert!(s.contains("u/k/w/c admin only"), "{s}");
 }
 
 /// Runtimes is admin-only end to end (every route is /admin/*; the web
@@ -389,4 +394,34 @@ fn entity_manage_refuses_admin_acts_for_a_non_admin() {
     let s = h.turns(2);
     assert!(!s.contains("Apply"), "no state modal opened:\n{s}");
     assert!(only_reads(&h.drain()));
+}
+
+/// Models (9) / Engines (0) — AbstractCore's shared screens — get the
+/// admin concept from the connection: a non-admin's footer labels the
+/// admin verbs and `w` is refused with the gateway's reason.
+#[test]
+fn core_screens_follow_the_connection_principal() {
+    use abstractcore_console::screens::Access;
+    let id = |admin: bool| {
+        Identity::from_me(&json!({"principal": {"user_id": "ana", "tenant_id": "default", "admin": admin}}))
+            .unwrap()
+    };
+    assert_eq!(ui::screens_access(&ConnPhase::Connected(id(true))), Access::Admin);
+    assert_eq!(ui::screens_access(&ConnPhase::Verifying(id(true))), Access::Admin);
+    assert_eq!(
+        ui::screens_access(&ConnPhase::Connected(id(false))),
+        Access::ReadOnly("signed in as ana, not an admin".into())
+    );
+    assert!(!ui::screens_access(&ConnPhase::NotConnected).is_admin());
+
+    let mut h = harness();
+    let s = h.on(ui::SCREEN_CATALOG, false);
+    assert!(s.contains("download: admin only"), "footer labels it:\n{s}");
+    h.store.notice.set(None);
+    h.key(b"w");
+    let n = h.notice();
+    assert!(n.contains("admin") && n.contains("signed in as ana, not an admin"), "{n:?}");
+    let mut h = harness();
+    let s = h.on(ui::SCREEN_CATALOG, true);
+    assert!(!s.contains("admin only"), "an admin sees the verbs:\n{s}");
 }

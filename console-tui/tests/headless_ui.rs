@@ -81,6 +81,7 @@ fn harness_sized(size: Size) -> Harness {
             cx,
             transport.clone(),
             overlays.clone(),
+            cx.signal(abstractcore_console::screens::Access::Admin),
             ScreensOptions {
                 // The same wiring as lib.rs: outcomes toast through the
                 // gateway console's own notice lane.
@@ -6940,7 +6941,7 @@ impl ConsoleTransport for MockTransport {
         self.record(format!("installed provider={}", provider.unwrap_or("-")));
         Ok(fixture("models_installed"))
     }
-    fn start_download(&self, provider: &str, artifact: &str) -> Result<Value, TransportError> {
+    fn start_download(&self, provider: &str, artifact: &str, _expected_bytes: Option<u64>) -> Result<Value, TransportError> {
         self.record(format!("download {provider} {artifact}"));
         self.started(Self::job_doc(
             "download",
@@ -7233,7 +7234,7 @@ fn download_progress_reaches_the_gateway_toast_lane() {
     let s = h.settle_until("the job at 42%", |s| s.contains("42%"));
     assert!(s.contains("download ollama qwen3:8b"), "{s}");
     assert!(s.contains("c cancels"), "{s}");
-    assert!(h.screens.job_active(), "held at running: the job is still active");
+    assert!(h.screens.job_running(), "held at running: the job is still active");
     *h.mock.hold_polls.lock().unwrap() = false;
     // The outcome lands on the GATEWAY's notice signal (shared lane):
     // the footer mirrors it and the toast effect shows it.
@@ -7245,7 +7246,7 @@ fn download_progress_reaches_the_gateway_toast_lane() {
         notice.contains("download ollama qwen3:8b completed"),
         "the gateway notice carries it: {notice}"
     );
-    assert!(!h.screens.job_active());
+    assert!(!h.screens.job_running());
 }
 
 #[test]
@@ -7342,7 +7343,7 @@ fn a_running_install_blocks_q_and_c_cancels_it() {
     h.turns(1);
     h.key(b"\r");
     h.settle_until_contains("Downloading ollama");
-    assert!(h.screens.job_active());
+    assert!(h.screens.job_running());
     // Browse-mode q refuses while the gateway job runs.
     h.key(b"q");
     h.settle_until_contains("models/engines job is running on the gateway");
@@ -7350,7 +7351,7 @@ fn a_running_install_blocks_q_and_c_cancels_it() {
     let s = h.settle_until_contains("⊘ install ollama cancelled");
     assert!(s.contains("cancelled"), "{s}");
     assert!(h.mock.called("cancel engine_install_1"));
-    assert!(!h.screens.job_active());
+    assert!(!h.screens.job_running());
 }
 
 #[test]

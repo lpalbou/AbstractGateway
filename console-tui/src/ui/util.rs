@@ -192,21 +192,23 @@ pub fn admin_gate(store: &crate::store::Store, what: &str) -> bool {
     }
 }
 
-/// Footer pairs for a screen: a principal known NOT to be an admin does
-/// not see the verbs listed in `admin_keys` (the web console hides the
-/// same controls; pressing one still answers with the reason).
-pub fn visible_hints<'a>(
+/// Footer pairs for a screen. For a principal known NOT to be an admin the
+/// verbs in `admin_keys` leave their slots and come back as ONE compact
+/// disabled-with-the-reason pair — `("w/a/D/C", "admin only")`, the
+/// returned key string — the way the shared Models/Engines screens label
+/// theirs ("download: admin only"). Pressing one still answers with the
+/// full reason.
+pub fn admin_hint_pairs<'a>(
     pairs: Vec<(&'a str, &'a str)>,
     admin_keys: &[&str],
     non_admin: bool,
-) -> Vec<(&'a str, &'a str)> {
+) -> (Vec<(&'a str, &'a str)>, Option<String>) {
     if !non_admin {
-        return pairs;
+        return (pairs, None);
     }
-    pairs
-        .into_iter()
-        .filter(|(k, _)| !admin_keys.contains(k))
-        .collect()
+    let (gated, kept): (Vec<_>, Vec<_>) = pairs.into_iter().partition(|(k, _)| admin_keys.contains(k));
+    let keys = gated.iter().map(|(k, _)| *k).collect::<Vec<_>>().join("/");
+    (kept, (!keys.is_empty()).then_some(keys))
 }
 
 /// Status badge for configured / covered / default / error states.

@@ -56,7 +56,7 @@ abstracttui = "0.3.6"
 # `/api/gateway/models/*` + `/engines/*` mirrors. It builds on the same
 # abstracttui 0.3.6: both crates MUST resolve one abstracttui (one
 # reactive runtime, one widget set) — the lockfile pins it.
-abstractcore-console = "0.2.0"
+abstractcore-console = "0.3"
 # HTTP client (blocking, small): fits the background-thread + posted-closure
 # model. "tls" is rustls (remote HTTPS gateways work with zero system
 # OpenSSL), "gzip" matches server defaults — the abstractcode-tui precedent.
