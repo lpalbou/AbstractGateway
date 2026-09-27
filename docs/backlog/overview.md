@@ -23,7 +23,7 @@ can trust without importing local gateway packages.
 
 - Planned: 5
 - Proposed: 40
-- Completed: 22
+- Completed: 23
 - Deprecated: 1
 - Recurrent: 0
 
@@ -36,7 +36,12 @@ can trust without importing local gateway packages.
      are a separate hygiene pass, flagged rather than silently
      backfilled.
      Recomputed again on 2026-09-26 while filing 0928-0930: planned 2→5,
-     proposed 39→40 (drift carried from an earlier untracked addition). -->
+     proposed 39→40 (drift carried from an earlier untracked addition).
+     Recomputed on 2026-09-27 while completing 0928: the directory held 6
+     planned files (0934, the uninstall process-tree item, had been added
+     without a count update); after the 0928 move, planned = 5 and
+     completed = 23. 0934 is still missing from the Planned Items table
+     below (flagged, not backfilled in this pass). -->
 
 ## Priority Bands
 
@@ -95,7 +100,6 @@ relevant.
 | --- | --- |
 | [0846_publish_promote_must_not_rebuild_every_service.md](planned/0846_publish_promote_must_not_rebuild_every_service.md) | Publish/promote reloads only what changed, on the existing runtime, for the affected service only; no model reload, no prompt-cache loss, `/api/health` never misses a supervisor probe. |
 | [0233_real_run_cancellation.md](planned/0233_real_run_cancellation.md) | Cancel aborts the in-flight generation (cross-package; see the framework-root master item). |
-| [0928_automations_v1_gateway_facade_and_acceptance.md](planned/0928_automations_v1_gateway_facade_and_acceptance.md) | Automations v1 gateway slice: every `/automations` route and `GET /trigger-sources` projects runtime truth with the contract shapes and error envelope; `automation.*` commands on the durable command store with ledger-recorded outcomes; resume re-arms without firing; `session_kind`, attention cursors, legacy schedule projection, catalog `automation_defaults`; `scripts/accept_automations_v1.py` passes including restart. Requires the runtime release first. Contracts pass 2026-09-27: see the item's section and root `untracked/design/automations-CONTRACTS.md`. |
 | [0929_automations_v2_external_event_admission.md](planned/0929_automations_v2_external_event_admission.md) | Automations v2: authenticated, idempotent external event admission into the runtime's durable inbox, event-kind trigger sources exposed, terminal-run chaining reconciled across restarts. Requires 0928 and the runtime v2 inbox. |
 | [0930_console_automations_inventory_and_controls.md](planned/0930_console_automations_inventory_and_controls.md) | Phase after v1: console lists automations, pauses/resumes/archives them with visible outcomes, and labels legacy schedules distinctly. Requires 0928. |
 | 0934 | [`service uninstall` waits for the gateway process tree](planned/0934_service_uninstall_waits_for_the_gateway_process_tree.md) | planned · P1 | `bootout` returns before the tree exits; detached children keep writing; the installer stops the tree itself for now |
@@ -140,6 +144,7 @@ relevant.
 
 | Item | Original path | Completed path | Outcome | Validation |
 | --- | --- | --- | --- | --- |
+| Automations v1 façade and acceptance (completed 2026-09-27, **UNRELEASED**) | `planned/0928_automations_v1_gateway_facade_and_acceptance.md` | [completed/0928_automations_v1_gateway_facade_and_acceptance.md](completed/0928_automations_v1_gateway_facade_and_acceptance.md) | The `/api/gateway/automations…` façade and `/trigger-sources` over the runtime's automation objects; `session_kind` / `role` on `/runs` with turn roots; the seen store; the `reason_code` envelope; legacy projection; `automation_defaults`; typed waits and `policy.tool_approval`; the client `_runtime` allowlist. Commits `57f26b9`…`4ece2f5`; reviews 46/47/52 GO after fixes (55 pending); framework E2E 9/9 with a real model. The release needs the runtime floor raised (W1, root 0941). | Full suite 2514 passed; `scripts/accept_automations_v1.py` 16/16 (restart mid-occurrence, discussion read-only, zero-call replay, unattended shell tick, tool approval by kind). |
 | Route authorization contract test + exception-swallowing audit | `proposed/0070_route_authorization_contract_test_and_exception_audit.md` | [completed/0070_route_authorization_contract_test_and_exception_audit.md](completed/0070_route_authorization_contract_test_and_exception_audit.md) | Whole-app authorization invariant pinned in three layers (boundary, per-write decision, served-surface proof); 13 durability-relevant silent exception swallows now log with context and consequence. Accepted by laurent 2026-07-21 ("a route can never ship unprotected"). | `pytest -q tests/test_gateway_route_authorization_contract.py tests/test_gateway_runner_swallow_audit.py`; full suite 857 passed. |
 | Swagger UI bearer auth docs | N/A | [completed/001_openapi_swagger_auth.md](completed/001_openapi_swagger_auth.md) | OpenAPI advertises bearer auth for `/api/gateway/*`. | `PYTHONPATH=src pytest` passed at completion time. |
 | Versioned Gateway client capability contract | `planned/010_versioned_client_capability_contract.md` | [completed/010_versioned_client_capability_contract.md](completed/010_versioned_client_capability_contract.md) | Discovery now exposes `capabilities.contracts.version=1` with common, Flow editor, Assistant, and AbstractCode feature gates. | `PYTHONPATH=src pytest -q tests/test_capabilities_endpoint_contract.py tests/test_abstractflow_editor_gateway_contract.py tests/test_gateway_bundle_llm_tools_agents.py::test_gateway_bundle_metadata_endpoints_expose_entrypoint_inputs`; `PYTHONPATH=src pytest -q -m basic`. |
@@ -169,6 +174,11 @@ relevant.
 | [deprecated/2026-05-20_gateway_runtime_owned_run_truth_and_core_boundary.md](deprecated/2026-05-20_gateway_runtime_owned_run_truth_and_core_boundary.md) | Superseded by completed Runtime-owned media/discovery/control-plane work plus the narrower planned cleanup for workspace, comms, and Telegram. |
 
 ## Planning Notes
+
+- 2026-09-27: 0928 (Automations v1 gateway slice) completed and UNRELEASED. The release raises
+  `AbstractRuntime>=` and `live_deltas.ABSTRACTRUNTIME_FLOOR` to the runtime release carrying automations (review 52 W1;
+  root backlog 0941). 0929 (v2 event admission) and 0930 (console inventory) are unchanged and follow the release.
+  Cross-package follow-ups are in the root backlog (0937–0941).
 
 - Backlog is not authority over code. Each task has a Current code reality
   section based on inspection of `src/abstractgateway/routes/gateway.py`,

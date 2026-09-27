@@ -1,6 +1,6 @@
 # 0928 — Automations v1: `/automations` façade over runtime objects, `automation.*` commands on the existing command store, session_kind projection, attention cursors, legacy schedule projection, catalog automation_defaults, acceptance script
 
-**Status**: planned · **Priority**: P1 · **Created**: 2026-09-26
+**Status**: completed — UNRELEASED (local commits on `main`; ships in the next minor release after the operator's validation) · **Priority**: P1 · **Created**: 2026-09-26 · **Completed**: 2026-09-27
 **Package**: abstractgateway · **Related**: abstractframework backlog 0928 (master item),
 abstractruntime Automations v1 item (runtime objects, controller, queries — lands first),
 abstractgateway 0930 (console inventory, phase after v1), abstractgateway 0929 (v2 external events)
@@ -356,3 +356,81 @@ Final contracts: untracked/design/automations-CONTRACTS.md (root repo; rev 2 wit
 - VisualFlow save models accept `automation_defaults` (else `extra="forbid"` 422s it); publish writes `metadata.automation_defaults[root flow_id]`; `/bundles`, `/bundles/{id}`, catalog records expose it.
 - `@default` targets resolved at create/revise with `resolve_default_agent_workflow`; the concrete target is stored.
 - Acceptance script gains: one-shot exhaustion, kill between decision append and state save, retry (success on attempt 2 = no attention; 3 failures = one item), revise during backoff, EVENT-prompt wait counted, discussion `execute_python` and VisualFlow write refused, `changed_since` → 422.
+
+## Completion report (2026-09-27)
+
+**Status: completed — UNRELEASED.** Local commits on `main`, no version bump (pyproject still `0.5.1`), not pushed. The
+release follows the runtime's in the framework wave (root backlog 0941). Umbrella record: abstractframework backlog 0928
+(completed).
+
+**Commits:** `57f26b9` … `4ece2f5` (14 commits; the tip at completion is `4ece2f5`).
+- **Groundwork, `57f26b9`:** flow `automation_defaults`, one command-type source, `/runs` attribution (`session_kind`,
+  `role`, `automation_id`, `occurrence_index`), the per-principal seen store, the `{"detail":{"reason_code",…}}` envelope,
+  and `/trigger-sources`.
+- **Kit re-vendors:** `6718d3c` (kit `b70db16`); `f9269d9` (kit `2081d6a`); `ea71638` (kit `1eb6d82`).
+- **Façade, `c8963e8`:** create, list, get, revise, commands, occurrences, attention, discuss, seen; controller hosting;
+  the discussion restamp.
+- **Acceptance, `2c8d8b3`:** `scripts/accept_automations_v1.py` and command-type parity with the runtime.
+- **Docs:** `9766e29` (wait answers); `8a8c8d3` (`docs/automations.md`: API, waits, tool approval, operations).
+- **Fixes:**
+  - `2146145`: D1, typed waits, the resume door refusing a wrong-shape answer, two acceptance steps.
+  - `f9269d9`: D2, D4, D5, D6.
+  - `c1e3460`: D3, one turn per retried occurrence.
+  - `5161785`: reviews 46/47/49 — the sanitised target input, malformed rows skipped, run commands refused on
+    automation roots, host-lookup failures recorded, event answers `{payload}`, `actor_id` at creation, the
+    `command_id` digest conflict, `occurrence_not_found`.
+  - `9975276`: JSON index warmed at boot.
+  - `bfddd28`: one status rule.
+  - `4ece2f5`: review 52 — the client `_runtime` allowlist (R52-1); the runner no longer spins on a paused-while-running
+    run; the index is warmed by the service boot only (W2).
+
+**Tests.**
+- Full suite **2514 passed** at `4ece2f5` (2503 / 0 at `8a8c8d3`). Review 52 ran 2488 / 20 skipped on `5161785`; the difference is the node-gated tests.
+- `scripts/accept_automations_v1.py` **16/16**, including `restart-mid-occurrence` (exactly one child), the discussion
+  read-only steps, replay with zero provider/tool calls, `unattended-shell-tick` and `tool-approval-by-kind`.
+- Test files: `test_automations_{api,attention,plane_isolation,tool_approval,review52}.py`,
+  `test_automation_command_types.py`, `test_flow_automation_defaults.py`, `test_run_store_boot_warm.py`.
+
+**Reviews** (root `untracked/missions-2026-09-25/REVIEW/`):
+- 46 GO (G1, G2 → fixed `5161785`).
+- 47 GO for the E2E, conditional for the apps (P2-1 → `5161785`; P2-2 is the runtime floor, see W1; P2-3 → runtime
+  `e690b55` + `5161785`).
+- 52 GO after R52-1 (→ `4ece2f5`).
+- 52 addendum (`9975276`) GO with W1 / W2 (W2 → `4ece2f5`; W1 is open, below).
+- Review 55 (the final delta, `ea71638` + `4ece2f5`) is **pending** at completion.
+
+**Root cause of the review-52 stall** (a `_runtime.control = {paused: true}` occurrence stopped every other automation):
+the runner re-queued a RUNNING-but-paused run for immediate ticks in a tight loop, which starved the other runs. Fixed in
+`4ece2f5`, together with the allowlist that stops a client from planting `_runtime.control`.
+
+**E2E:** root `untracked/missions-2026-09-27/E2E/REPORT.md` passed 9/9 with the operator's MLX model. D1–D6 were
+re-verified on `5161785` (`reverify-5161785/`).
+
+**Definition of Done:**
+- The contract F routes, shapes and envelope are done, including 401/403 on the automation paths.
+- The capabilities advertise `contracts.common.automations {available, trigger_sources_endpoint}` and
+  `runs.list.filters ∋ session_kind`.
+- `automation.*` commands work on both doors, with outcomes in the ledger.
+- Legacy rows are projected (last page, `capabilities: ["legacy"]`) and legacy commands are refused on automation roots.
+- The acceptance script passes, but against the runtime **checkout** (`d02578a`), not a released runtime. That part of
+  the DoD moves to the release (root 0941).
+- The docs are in `docs/automations.md` (`8a8c8d3`), not in `docs/api.md` alone.
+
+**Residuals:**
+- **W1 (release).** `pyproject.toml` still requires `AbstractRuntime>=0.5.1` (`live_deltas.ABSTRACTRUNTIME_FLOOR` matches
+  it). Boot calls `warm_session_index()` and creates send `policy.tool_approval`, so both floors must move to the
+  runtime release that carries `b000036` and `3cc9900` (root 0941).
+- **Failure reason codes.** Every occurrence failure is `occurrence_failed`; structured reason codes wait on the runtime.
+- **Review 46.** G5 (a 500 exposes the seen-file path; a corrupt seen file blocks `/seen`) is not verified as fixed. G6:
+  `not_found`, `invalid_request`, `rate_limited`, `internal_error` and `unavailable` are missing from the contract's
+  code list. The 409 codes `history_unavailable` and `session_attribution_failed` are documented here but not in the
+  root contracts file.
+- **R52-3 (note).** A reused `command_id` still queued reads "duplicate", not "conflict", until it is decided.
+- **Defaults validator.** The flow defaults validator still accepts `_meta` / `_runtime` keys at save; they are
+  stripped at create (review 52 (d)).
+- **Acceptance script.** It omits contract H's one-shot exhaustion, decision/state crash window, retry matrix, EVENT
+  wait and `execute_python` refusal (runtime tests cover them). Adding them is optional.
+- **Code lists (review 46 G3).** Clients that do not send `session_kind=chat,discussion` list one session per
+  independent occurrence (AbstractCode until its 0001 / root 0930).
+- **Console.** The inventory is [0930](../planned/0930_console_automations_inventory_and_controls.md), unchanged. v2
+  event admission is [0929](../planned/0929_automations_v2_external_event_admission.md), unchanged.
