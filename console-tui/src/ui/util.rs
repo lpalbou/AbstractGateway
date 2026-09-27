@@ -509,7 +509,9 @@ pub fn hints(t: &TokenSet, pairs: &[(&str, &str)]) -> View {
     let mut spans = Vec::new();
     for (i, (k, v)) in pairs.iter().enumerate() {
         if i > 0 {
-            spans.push(span("  ·  ", t.text_faint));
+            // One cell of air each side: at 80 columns the wider
+            // separator alone cost a whole screen verb.
+            spans.push(span(" · ", t.text_faint));
         }
         spans.push(span_bold((*k).to_string(), t.accent));
         spans.push(span(format!(" {v}"), t.text_muted));

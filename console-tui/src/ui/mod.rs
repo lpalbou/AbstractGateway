@@ -1741,21 +1741,22 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
             // answers with the reason.
             let non_admin = store.conn.with(ConnPhase::is_known_non_admin);
             let mut pairs: Vec<(&str, &str)> = Vec::new();
-            // Universal pairs FIRST (adversary round-3): the hint row
-            // truncates right-edge-first, and Ctrl+C used to sit last —
-            // on wizard data screens (where q is refused) no quit
-            // affordance survived at ≤120 cols. Per-screen verbs are
-            // the cheaper loss: refusal notices re-teach them.
+            // THE SCREEN'S OWN KEYS LEAD (review 2, 80x24): the row
+            // truncates right-edge-first, and with the universal pairs
+            // first an 80-column footer showed no screen verb at all.
+            // Quit follows them (and the guide's Ctrl+N stays first in
+            // the wizard); the rest of the universal keys come after.
+            let mut globals: Vec<(&str, &str)> = Vec::new();
             if wizard {
-                pairs.push(("Ctrl+N/]", "next step"));
-                pairs.push(("Ctrl+P/Esc", "back"));
-                pairs.push(("Ctrl+C", "quit"));
+                globals.push(("Ctrl+N/]", "next step"));
+                globals.push(("Ctrl+C", "quit"));
+                globals.push(("Ctrl+P/Esc", "back"));
             } else {
-                pairs.push(("1-9,0,A", "screens"));
-                pairs.push(("Ctrl+N/P", "next/prev"));
-                pairs.push(("q/Ctrl+C", "quit"));
+                globals.push(("q/Ctrl+C", "quit"));
+                globals.push(("1-9,0,A", "screens"));
+                globals.push(("Ctrl+N/P", "next/prev"));
             }
-            pairs.push(("Tab", "focus"));
+            globals.push(("Tab", "focus"));
             match screen {
                 1 => {
                     pairs.push(("a", "add connection"));
@@ -1868,10 +1869,16 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 SCREEN_MODELS => models::ADMIN_KEYS,
                 _ => &[],
             };
-            let (mut pairs, gated) = util::admin_hint_pairs(pairs, admin_keys, non_admin);
+            let (screen_pairs, gated) = util::admin_hint_pairs(pairs, admin_keys, non_admin);
+            let mut pairs: Vec<(&str, &str)> = Vec::new();
+            if wizard {
+                pairs.push(globals.remove(0)); // Ctrl+N: the guide's walk
+            }
+            pairs.extend(screen_pairs);
             if let Some(keys) = gated.as_deref() {
                 pairs.push((keys, "admin only"));
             }
+            pairs.extend(globals);
             // The setup guide's chord LAST: every screen has it, so it
             // yields to the screen's own verbs when the row truncates
             // (the Setup step and the goal line teach it too). The guide

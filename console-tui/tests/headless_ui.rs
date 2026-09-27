@@ -3790,6 +3790,31 @@ fn title_bar_and_separator_survive_content_pressure() {
     }
 }
 
+/// 80x24 (review 2 e): every screen's footer leads with the screen's
+/// OWN keys; the universal ones follow and truncate first.
+#[test]
+fn footer_leads_with_the_screen_keys_at_80x24() {
+    let mut h = harness_sized(Size::new(80, 24));
+    h.connect_as_admin();
+    h.ui.wizard.set(false);
+    for (screen, lead) in [
+        (1usize, "a add connection"),
+        (2, "Enter/e edit route"),
+        (3, "a add user"),
+        (4, "Enter inspect runtime"),
+        (5, "t show/hide drafts"),
+        (7, "u unload"),
+    ] {
+        h.ui.screen.set(screen);
+        let s = h.turns(3);
+        let footer = s.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("");
+        assert!(
+            footer.trim_start().starts_with(lead),
+            "screen {screen} footer leads with '{lead}':\n{footer}"
+        );
+    }
+}
+
 /// The centralized connection authority (round-4): a transport-class
 /// domain failure while Connected flips the ONE conn signal to
 /// Verifying and fires the probe exactly once.
@@ -4967,7 +4992,10 @@ fn runtimes_inspector_fits_at_80x24() {
         s.contains("Runtime knobs"),
         "knobs disclosure header survives at 80x24:\n{s}"
     );
-    assert!(s.contains("focus"), "footer hints survive at 80x24:\n{s}");
+    assert!(
+        s.contains("inspect runtime"),
+        "the screen's own keys lead the footer at 80x24:\n{s}"
+    );
 }
 
 /// Honesty pin: a user plane the gateway lists with `data_dir: null`
@@ -7538,8 +7566,8 @@ fn models_tab_9_renders_the_shared_catalog_once() {
         s.contains("ollama: unreachable"),
         "installed errors shown:\n{s}"
     );
-    // The gateway footer: the new digit range + the screen's own verbs.
-    assert!(s.contains("1-9,0"), "{s}");
+    // The gateway footer: the screen's own verbs lead (review 2: at any
+    // width the screen's keys come before the universal ones).
     assert!(s.contains("download") && s.contains("filter"), "{s}");
     // Entering read host, catalog and installed ONCE each — the gateway's
     // connected-entry effect and the screen's mount effect must not
