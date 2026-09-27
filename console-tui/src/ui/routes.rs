@@ -1063,29 +1063,17 @@ fn voice_test_run_id(store: &crate::store::Store) -> String {
         ConnPhase::Connected(id) => (id.tenant_id.clone(), id.user_id.clone()),
         _ => (String::new(), String::new()),
     });
-    fn sanitize(s: &str, fallback: &str) -> String {
-        let out: String = s
-            .to_lowercase()
-            .chars()
-            .map(|c| {
-                if c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, ':' | '-' | '_') {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        let out = out.trim_matches('_').to_string();
-        if out.is_empty() {
-            fallback.to_string()
-        } else {
-            out
-        }
-    }
+    voice_test_run_id_for(&tenant, &user)
+}
+
+/// The web's `voiceTestRunId` for a principal (parts folded like the
+/// sandbox's: one alphabet with the server's run-id pattern).
+pub fn voice_test_run_id_for(tenant: &str, user: &str) -> String {
+    use super::sandbox::session_memory_id_part as part;
     format!(
         "session_memory_gateway_console_voicetest_{}_{}",
-        sanitize(&tenant, "default"),
-        sanitize(&user, "user")
+        part(tenant, "default"),
+        part(user, "user")
     )
 }
 
@@ -2159,6 +2147,19 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
 #[cfg(test)]
 mod speculation_tests {
     use super::*;
+
+    /// The voice test run id folds like the web's `voiceTestRunId`.
+    #[test]
+    fn voice_test_run_id_folds_like_the_web() {
+        assert_eq!(
+            super::voice_test_run_id_for("a:b", "John..Doe"),
+            "session_memory_gateway_console_voicetest_a_b_john_doe"
+        );
+        assert_eq!(
+            super::voice_test_run_id_for("", ""),
+            "session_memory_gateway_console_voicetest_default_user"
+        );
+    }
 
     #[test]
     fn selector_keeps_off_distinct_from_inherit_and_preserves_options() {

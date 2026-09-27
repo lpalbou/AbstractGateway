@@ -388,38 +388,45 @@ pub fn sandbox_run_id(tenant: &str, user: &str) -> String {
     format!("session_memory_{}", sandbox_session_id(tenant, user))
 }
 
+/// One principal part of a session-memory owner run id, folded exactly
+/// like the web's `sessionMemoryIdPart` (console.py): lowercase, every RUN
+/// of characters outside `[a-z0-9_-]` becomes ONE `_`, edge `_` trimmed,
+/// empty = `fallback`. The alphabet is the server's `_SAFE_RUN_ID_PATTERN`
+/// (routes/gateway.py): the media and voice routes create
+/// `session_memory_<id>` owner runs only for such ids, so a principal id
+/// with `:` must never pass through.
+pub fn session_memory_id_part(value: &str, fallback: &str) -> String {
+    let src = if value.is_empty() { fallback } else { value };
+    let mut out = String::with_capacity(src.len());
+    let mut in_run = false;
+    for c in src.to_lowercase().chars() {
+        if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-' {
+            out.push(c);
+            in_run = false;
+        } else if !in_run {
+            out.push('_');
+            in_run = true;
+        }
+    }
+    let out = out.trim_matches('_');
+    if out.is_empty() {
+        fallback.to_string()
+    } else {
+        out.to_string()
+    }
+}
+
 /// The sandbox SESSION id — what `/attachments/upload` takes as
 /// `session_id`. The route stores the upload under
 /// `_session_memory_run_id(session_id)` = `session_memory_<session_id>`
 /// (gateway.py `_session_memory_run_id`, `_store_session_artifact`), so
 /// passing the session id lands the attachment on the SAME run as the
-/// media generations. (The web passes the run id instead — console.py
-/// `uploadSandboxFile`, `form.append("session_id", sandboxRunId())` —
-/// and its uploads land on `session_memory_session_memory_…`.)
+/// media generations — as the web's `sandboxSessionId` does.
 pub fn sandbox_session_id(tenant: &str, user: &str) -> String {
-    fn sanitize(s: &str, fallback: &str) -> String {
-        let out: String = s
-            .to_lowercase()
-            .chars()
-            .map(|c| {
-                if c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, ':' | '-' | '_') {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        let out = out.trim_matches('_').to_string();
-        if out.is_empty() {
-            fallback.to_string()
-        } else {
-            out
-        }
-    }
     format!(
         "gateway_console_sandbox_{}_{}",
-        sanitize(tenant, "default"),
-        sanitize(user, "user")
+        session_memory_id_part(tenant, "default"),
+        session_memory_id_part(user, "user")
     )
 }
 
@@ -2972,6 +2979,22 @@ mod tests {
             Some(ModeRoute::Incomplete { key }) => assert_eq!(key, "output.image"),
             other => panic!("expected Incomplete at the parent, got {other:?}"),
         }
+    }
+
+    /// The web's `sessionMemoryIdPart`: runs of foreign characters fold to
+    /// ONE `_` (`john..doe` → `john_doe`), `:` never passes (server
+    /// run-id alphabet), empty = fallback.
+    #[test]
+    fn session_id_parts_fold_like_the_web() {
+        assert_eq!(session_memory_id_part("John..Doe", "user"), "john_doe");
+        assert_eq!(session_memory_id_part("a:b", "user"), "a_b");
+        assert_eq!(session_memory_id_part("a_:b", "user"), "a__b");
+        assert_eq!(session_memory_id_part("::", "user"), "user");
+        assert_eq!(session_memory_id_part("", "default"), "default");
+        assert_eq!(
+            sandbox_run_id("Acme:EU", "John..Doe"),
+            "session_memory_gateway_console_sandbox_acme_eu_john_doe"
+        );
     }
 
     #[test]
