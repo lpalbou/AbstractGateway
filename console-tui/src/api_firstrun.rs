@@ -122,6 +122,17 @@ pub fn first_run_verify(requested: &str, after: &FirstRunState) -> Result<String
     }
 }
 
+/// `gateway.service.platform` → the web's OS words
+/// (`firstRunOsLabel`); any other value shows nothing, never a guess.
+fn os_label(platform: &str) -> Option<String> {
+    match platform.trim().to_ascii_lowercase().as_str() {
+        "darwin" => Some("macOS".into()),
+        "windows" => Some("Windows".into()),
+        "linux" => Some("Linux".into()),
+        _ => None,
+    }
+}
+
 /// The welcome step's six facts (`loadFirstRunWelcome`), folded from
 /// `GET /host/state`. Absent facts stay `None` — rendered as "unknown",
 /// never guessed.
@@ -153,12 +164,12 @@ impl WelcomeSummary {
             .map(|a| a.iter().filter_map(|g| s(g, "name")).collect())
             .unwrap_or_default();
         WelcomeSummary {
-            // The gateway names the machine `host_name`; the web console
-            // also reads `hostname`/`name` (older snapshots).
-            computer: s(&host, "host_name")
-                .or_else(|| s(&host, "hostname"))
-                .or_else(|| s(&host, "name")),
-            os: s(&host, "os").or_else(|| s(&host, "platform")),
+            // AbstractCore's host identity names the machine `host_name`
+            // (the web's Computer tile reads exactly that).
+            computer: s(&host, "host_name"),
+            // The one OS fact in /host/state is the gateway's service
+            // block (web `firstRunOsLabel(svc.platform)`); `host` has none.
+            os: s(&svc, "platform").and_then(|p| os_label(&p)),
             ram_total_bytes: v
                 .get("memory")
                 .and_then(|m| m.get("ram"))
@@ -478,6 +489,22 @@ mod tests {
         });
         let w = WelcomeSummary::from_host_state(&v);
         assert_eq!(w.computer.as_deref(), Some("forge.local"));
+        assert_eq!(w.os, None, "no service platform: no OS line");
+        // The OS comes from gateway.service.platform, like the web; the
+        // host block has no OS field and older aliases are not read.
+        let with_os = WelcomeSummary::from_host_state(&json!({
+            "host": {"hostname": "alias", "os": "Darwin", "platform": "darwin"},
+            "gateway": {"service": {"platform": "linux"}}
+        }));
+        assert_eq!(with_os.os.as_deref(), Some("Linux"));
+        assert_eq!(
+            with_os.computer, None,
+            "only host.host_name names the computer"
+        );
+        let other = WelcomeSummary::from_host_state(&json!({
+            "gateway": {"service": {"platform": "freebsd"}}
+        }));
+        assert_eq!(other.os, None, "unknown platform: nothing, never a guess");
         assert_eq!(w.ram_total_bytes, Some(137438953472));
         assert_eq!(w.gpus, vec!["Apple M5 Max".to_string()]);
         assert_eq!(w.first_run.as_ref().map(|f| f.completed), Some(false));
