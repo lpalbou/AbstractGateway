@@ -328,7 +328,17 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     match row {
                         Some(r) => {
                             let mut spans = vec![span_bold(format!(" {} ", r.key), t.accent)];
-                            if r.is_task_parent() {
+                            if let Some(u) = &r.recommendation_unavailable {
+                                // Host-aware recommendation: unset because
+                                // the recommended engine cannot run here.
+                                spans.push(span(
+                                    format!(
+                                        "unset — the recommended {} {} cannot run on this host: {}",
+                                        u.provider, u.model, u.reason
+                                    ),
+                                    t.warn,
+                                ));
+                            } else if r.is_task_parent() {
                                 spans.push(span(
                                     format!(
                                         "serves any {} task with no row of its own  ",
@@ -650,6 +660,39 @@ fn open_plan(cx: Scope, ctx: &Ctx) {
             }
             if let Some(i) = &r.instruction {
                 rows.push(line(vec![span(format!("  CLI: {i}"), t.text_faint)]));
+            }
+            rows.push(line(vec![span(String::new(), t.text)]));
+        }
+        // Recommended routes this host cannot run (AbstractCore's
+        // host-aware defaults): left unset, never written, with the reason.
+        let unavailable: Vec<(String, crate::store::RecommendationUnavailable)> =
+            store.routes.with_untracked(|r| {
+                r.ready()
+                    .map(|d| {
+                        d.rows
+                            .iter()
+                            .filter_map(|row| {
+                                row.recommendation_unavailable
+                                    .clone()
+                                    .map(|u| (row.key.clone(), u))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            });
+        if !unavailable.is_empty() {
+            rows.push(line(vec![span_bold(
+                "Not available on this computer (left unset)",
+                t.warn,
+            )]));
+            for (key, u) in &unavailable {
+                rows.push(line(vec![span(
+                    format!("  {key}: recommended {} {}", u.provider, u.model),
+                    t.text,
+                )]));
+                for l in super::util::wrap_text(&u.reason, width.saturating_sub(4)) {
+                    rows.push(line(vec![span(format!("    {l}"), t.text_muted)]));
+                }
             }
             rows.push(line(vec![span(String::new(), t.text)]));
         }

@@ -650,9 +650,19 @@ pub fn applied_recommended_summary(payload: &Value) -> String {
     };
     let mut changed: Vec<String> = Vec::new();
     let mut kept: Vec<String> = Vec::new();
+    // Host-aware recommendations (AbstractCore): a route whose engine this
+    // host cannot run is never written, and carries its `reason`.
+    let mut unavailable: Vec<String> = Vec::new();
     for row in rows {
         let key = row.get("key").and_then(Value::as_str).unwrap_or("?");
         let action = row.get("action").and_then(Value::as_str).unwrap_or("");
+        if action == "unavailable" {
+            match row.get("reason").and_then(Value::as_str).filter(|r| !r.is_empty()) {
+                Some(r) => unavailable.push(format!("{key} ({r})")),
+                None => unavailable.push(key.to_string()),
+            }
+            continue;
+        }
         if row.get("changed").and_then(Value::as_bool).unwrap_or(false) {
             changed.push(format!(
                 "{key}: {} → {}",
@@ -669,6 +679,19 @@ pub fn applied_recommended_summary(payload: &Value) -> String {
     }
     if !kept.is_empty() {
         parts.push(format!("kept yours on {}", kept.join(", ")));
+    }
+    if !unavailable.is_empty() {
+        // The report's own count when it has one (older gateways: none).
+        let n = payload
+            .get("applied_recommended")
+            .and_then(|r| r.get("unavailable"))
+            .and_then(Value::as_u64)
+            .map(|n| n as usize)
+            .unwrap_or(unavailable.len());
+        parts.push(format!(
+            "{n} not available on this host, left unset: {}",
+            unavailable.join("; ")
+        ));
     }
     if parts.is_empty() {
         return "every recommended route already matched".to_string();

@@ -354,6 +354,30 @@ pub struct RouteRow {
     /// writes `output.image` alone). The parent answers it, so it is not
     /// unconfigured in effect and must not be painted as a gap.
     pub inherits_broad: bool,
+    /// AbstractCore's host-aware recommendation for this UNSET row names
+    /// an engine this host cannot run (`recommendation_unavailable`
+    /// {provider, model, reason}): the row stays unset and says why.
+    /// `None` on a row without it (and on an older gateway).
+    pub recommendation_unavailable: Option<RecommendationUnavailable>,
+}
+
+/// `recommendation_unavailable` on a capability-defaults row.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RecommendationUnavailable {
+    pub provider: String,
+    pub model: String,
+    pub reason: String,
+}
+
+impl RecommendationUnavailable {
+    pub fn from_value(v: &Value) -> Option<RecommendationUnavailable> {
+        let reason = s(v, "reason").filter(|r| !r.is_empty())?;
+        Some(RecommendationUnavailable {
+            provider: s(v, "provider").unwrap_or_default(),
+            model: s(v, "model").unwrap_or_default(),
+            reason,
+        })
+    }
 }
 
 impl RouteRow {
@@ -400,6 +424,9 @@ impl RouteRow {
                 .unwrap_or_default(),
             covered_by_tasks: b(v, "covered_by_tasks").unwrap_or(false),
             inherits_broad: b(v, "inherits_broad").unwrap_or(false),
+            recommendation_unavailable: v
+                .get("recommendation_unavailable")
+                .and_then(RecommendationUnavailable::from_value),
             key,
         })
     }
@@ -466,6 +493,11 @@ impl RouteRow {
         // parent and read as "image editing is not set up".
         if self.inherits_broad {
             return "inherited".to_string();
+        }
+        // Unset BECAUSE the recommendation cannot run on this host: the
+        // reason rides the selected-row line and the `p` plan.
+        if self.recommendation_unavailable.is_some() {
+            return "unavailable here".to_string();
         }
         "not configured".to_string()
     }

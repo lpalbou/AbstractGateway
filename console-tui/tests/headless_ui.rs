@@ -992,6 +992,104 @@ fn routes_model_step_shows_the_plan_and_downloads_all() {
     );
 }
 
+// ---- Host-aware "unavailable" recommendations (AbstractCore) -----------
+
+/// The exact reason AbstractCore's `recommended_unavailable_routes`
+/// gives for `output.image` on a Linux/CUDA host (branch parity/defaults).
+const MLXGEN_UNAVAILABLE: &str = "MLX-Gen image generation needs MLX, and MLX runs only on Apple Silicon Macs (macOS, arm64); set output.image to an image engine this host runs: diffusers (install profile gpu), sdcpp (stable-diffusion.cpp, optional extra) or a cloud image provider";
+
+fn routes_with_unavailable_image() -> RoutesData {
+    RoutesData::from_value(&json!({
+        "ok": true, "writable": true,
+        "authority": "abstractcore.gateway_runtime", "source": "abstractcore.gateway_runtime",
+        "errors": [],
+        "routes": [
+            {"key": "input.text", "kind": "input", "modality": "text", "label": "Text Input",
+             "provider": "ollama", "model": "qwen3:8b", "configured": true,
+             "source": "abstractcore.gateway_runtime"},
+            {"key": "output.image", "kind": "output", "modality": "image", "label": "Image Output",
+             "configured": false, "source": "not_configured",
+             "recommendation_unavailable": {
+                 "provider": "mlx-gen",
+                 "model": "AbstractFramework/flux.2-klein-4b-8bit",
+                 "reason": MLXGEN_UNAVAILABLE}},
+            {"key": "output.voice", "kind": "output", "modality": "voice", "label": "Voice Output",
+             "configured": false, "source": "not_configured"}
+        ]
+    }))
+}
+
+#[test]
+fn unset_row_carries_its_unavailable_recommendation() {
+    let d = routes_with_unavailable_image();
+    let image = d.rows.iter().find(|r| r.key == "output.image").unwrap();
+    let u = image.recommendation_unavailable.as_ref().expect("parsed");
+    assert_eq!(u.provider, "mlx-gen");
+    assert_eq!(u.model, "AbstractFramework/flux.2-klein-4b-8bit");
+    assert_eq!(u.reason, MLXGEN_UNAVAILABLE);
+    assert_eq!(image.state_label(), "unavailable here");
+    // Absent field = the old behaviour.
+    let voice = d.rows.iter().find(|r| r.key == "output.voice").unwrap();
+    assert!(voice.recommendation_unavailable.is_none());
+    assert_eq!(voice.state_label(), "not configured");
+}
+
+/// The Routes row for such a capability shows the reason (state column +
+/// selected-row line), and `p` lists it under "Not available".
+#[test]
+fn routes_show_the_unavailable_reason_and_the_plan_lists_it() {
+    let mut h = harness_sized(Size::new(200, 40));
+    h.connect_as_admin();
+    h.goto_screen(ui::SCREEN_ROUTES);
+    h.store.routes.set(Loadable::Ready(routes_with_unavailable_image()));
+    h.store.availability.set(Loadable::Ready(availability_with_plan()));
+    h.ui.route_sel.set(1);
+    let s = h.turns(3);
+    assert!(s.contains("unavailable here"), "state column:\n{s}");
+    assert!(
+        s.contains("the recommended mlx-gen AbstractFramework/flux.2-klein-4b-8bit cannot run on this host: MLX-Gen image generation needs MLX"),
+        "selected-row reason:\n{s}"
+    );
+    h.type_text("p");
+    let s = h.turns(3);
+    assert!(s.contains("Not available on this computer (left unset)"), "plan section:\n{s}");
+    assert!(
+        s.contains("output.image: recommended mlx-gen AbstractFramework/flux.2-klein-4b-8bit"),
+        "{s}"
+    );
+    assert!(s.contains("MLX runs only on Apple Silicon"), "reason in the plan:\n{s}");
+}
+
+/// Apply-recommended's report: `unavailable` rows are counted and named
+/// with their reason, and never read as "every route already matched".
+#[test]
+fn applied_recommended_summary_counts_unavailable_rows() {
+    use abstractgateway_console::worker::applied_recommended_summary;
+    let payload = json!({"applied_recommended": {
+        "ok": true, "dry_run": false, "force": false,
+        "changed": 0, "kept": 0, "already": 2, "unavailable": 1,
+        "routes": [
+            {"key": "input.text", "selector": "text", "action": "already", "changed": false,
+             "recommended": {"provider": "ollama", "model": "qwen3:8b"},
+             "before": {"provider": "ollama", "model": "qwen3:8b"},
+             "after": {"provider": "ollama", "model": "qwen3:8b"}, "download": {}},
+            {"key": "output.voice", "selector": "voice", "action": "already", "changed": false,
+             "recommended": {"provider": "supertonic", "model": "supertonic-3"},
+             "before": {"provider": "supertonic", "model": "supertonic-3"},
+             "after": {"provider": "supertonic", "model": "supertonic-3"}, "download": {}},
+            {"key": "output.image", "selector": "image", "action": "unavailable", "changed": false,
+             "recommended": {}, "before": {}, "after": {}, "download": {},
+             "reason": MLXGEN_UNAVAILABLE}
+        ]
+    }});
+    let summary = applied_recommended_summary(&payload);
+    assert_ne!(summary, "every recommended route already matched");
+    assert!(
+        summary.contains("1 not available on this host, left unset: output.image (MLX-Gen image generation needs MLX"),
+        "{summary}"
+    );
+}
+
 // =======================================================================
 // Providers step
 // =======================================================================
