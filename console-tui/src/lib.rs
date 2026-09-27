@@ -45,8 +45,12 @@ OPTIONS:
   --url URL      gateway base URL (default http://127.0.0.1:8080)
   --token TOKEN  bearer token (default: $ABSTRACTGATEWAY_AUTH_TOKEN;
                  prefer the env var — argv is visible in `ps`)
-  --wizard       start in the guided wizard (default)
+  --wizard       start in the setup guide (wizard), whatever the
+                 gateway's first-run state
   --browse       start in browse mode (tabs, no step gating)
+                 Neither flag: the guide opens while the gateway's first
+                 run is not completed (GET /host/first-run, admins only,
+                 like the web console), browse mode otherwise.
   --theme ID     abstracttui theme id (also $ABSTRACTTUI_THEME)
   -h, --help     this help
   --version      print the version
@@ -55,18 +59,27 @@ OPTIONS:
 
 KEYS: Tab focus · Enter activate · Ctrl+N next step · Ctrl+P / Esc back ·
       ] / [ next/back (outside text fields) · 1-9,0 screens (browse) ·
+      Ctrl+G setup guide (browse: reopen; guide: leave or Skip setup) ·
       r refresh · F1 / ? About · Ctrl+L repaint · q / Ctrl+C quit
 
 SCREENS: 1 Connection · 2 Providers · 3 Routes · 4 Users & Entities ·
          5 Runtimes · 6 Workflows · 7 Review & Test · 8 Resources ·
          9 Models (browse, download, delete models on the gateway host) ·
-         0 Engines (detect and install Ollama, LM Studio, MLX, llama.cpp)
+         0 Engines (detect and install Ollama, LM Studio, MLX, llama.cpp) ·
+         Setup (the guide's welcome step: this computer at a glance)
+
+SETUP GUIDE (the web console's first-run guide, same steps and routes):
+  Connection → Setup → Engines → Providers → Routes (default model:
+  recommended plan, a apply, D download all) → Models → Review (Finish or
+  Skip setup: POST /host/first-run, verified by a GET)
 ";
 
 struct Args {
     url: String,
     token: String,
-    wizard: bool,
+    /// `Some` = --wizard / --browse given (forced); `None` = decided by
+    /// the gateway's first-run state at connect.
+    wizard: Option<bool>,
     theme: Option<String>,
     about: bool,
 }
@@ -74,7 +87,7 @@ struct Args {
 fn parse_args(argv: &[String]) -> Result<Option<Args>, String> {
     let mut url = String::new();
     let mut token = String::new();
-    let mut wizard = true;
+    let mut wizard = None;
     let mut theme = None;
     let mut about = false;
     let mut it = argv.iter();
@@ -90,8 +103,8 @@ fn parse_args(argv: &[String]) -> Result<Option<Args>, String> {
             }
             "--url" => url = it.next().cloned().ok_or("--url needs a value")?,
             "--token" => token = it.next().cloned().ok_or("--token needs a value")?,
-            "--wizard" => wizard = true,
-            "--browse" => wizard = false,
+            "--wizard" => wizard = Some(true),
+            "--browse" => wizard = Some(false),
             "--about" => about = true,
             "--theme" => theme = Some(it.next().cloned().ok_or("--theme needs a value")?),
             other => return Err(format!("unknown argument: {other} (see --help)")),
@@ -187,7 +200,10 @@ pub fn run_cli(argv: &[String]) -> i32 {
         let store = Store::create(cx);
         *store_out.borrow_mut() = Some(store);
         let ui_state = UiState::create(cx, url0.clone(), token0.clone());
-        ui_state.wizard.set(wizard0);
+        // Until the first-run read lands, a boot without a flag starts in
+        // the guide's Connection step (the terminal must sign in first).
+        ui_state.wizard.set(wizard0.unwrap_or(true));
+        ui_state.mode_forced.set(wizard0.is_some());
         *ui_out.borrow_mut() = Some(ui_state);
         let prober: ui::ProberSlot = Rc::new(RefCell::new(None));
         // Production prober: ONE short-lived thread per verification,
@@ -336,5 +352,24 @@ pub fn run_cli(argv: &[String]) -> i32 {
             eprintln!("abstractgateway-console: {e}");
             1
         }
+    }
+}
+
+#[cfg(test)]
+mod first_run_args {
+    use super::parse_args;
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn no_mode_flag_defers_to_the_first_run_state() {
+        let a = parse_args(&args(&[])).unwrap().unwrap();
+        assert_eq!(a.wizard, None, "neither flag: the gateway's first run decides");
+        let a = parse_args(&args(&["--browse"])).unwrap().unwrap();
+        assert_eq!(a.wizard, Some(false));
+        let a = parse_args(&args(&["--wizard"])).unwrap().unwrap();
+        assert_eq!(a.wizard, Some(true));
     }
 }

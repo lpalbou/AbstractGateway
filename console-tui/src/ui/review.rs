@@ -661,21 +661,9 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     t.text_faint,
                 )]);
             }
-            let ctx3 = ctx_finish.clone();
-            Element::new()
-                .style(LayoutStyle::row().gap(2).h(1))
-                .child(
-                    Button::new("Finish — switch to browse mode")
-                        .on_click(move || {
-                            ctx3.ui.wizard.set(false);
-                            ctx3.store.notice.set(Some(
-                                "wizard finished — browse with 1-9 and 0, q quits".into(),
-                            ));
-                        })
-                        .element(gcx, &t)
-                        .build(),
-                )
-                .build()
+            // The guide's last step: Finish / Skip setup record the
+            // first-run outcome on the gateway (ui/welcome.rs).
+            super::welcome::finish_row(gcx, &ctx_finish, &t)
         }))
         .build()
 }

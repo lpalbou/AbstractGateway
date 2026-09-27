@@ -272,7 +272,7 @@ fn status_view(t: &TokenSet, conn: &ConnPhase, token_source: Option<String>) -> 
                 )]))
                 .child(if id.admin {
                     line(vec![span(
-                        "  ready — Ctrl+N continues to Providers (] also works outside text fields)",
+                        "  ready — Ctrl+N continues to the next step (] also works outside text fields)",
                         t.text_muted,
                     )])
                 } else {

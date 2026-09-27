@@ -358,6 +358,30 @@ pub struct RouteRow {
     /// writes `output.image` alone). The parent answers it, so it is not
     /// unconfigured in effect and must not be painted as a gap.
     pub inherits_broad: bool,
+    /// AbstractCore's host-aware recommendation for this UNSET row names
+    /// an engine this host cannot run (`recommendation_unavailable`
+    /// {provider, model, reason}): the row stays unset and says why.
+    /// `None` on a row without it (and on an older gateway).
+    pub recommendation_unavailable: Option<RecommendationUnavailable>,
+}
+
+/// `recommendation_unavailable` on a capability-defaults row.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RecommendationUnavailable {
+    pub provider: String,
+    pub model: String,
+    pub reason: String,
+}
+
+impl RecommendationUnavailable {
+    pub fn from_value(v: &Value) -> Option<RecommendationUnavailable> {
+        let reason = s(v, "reason").filter(|r| !r.is_empty())?;
+        Some(RecommendationUnavailable {
+            provider: s(v, "provider").unwrap_or_default(),
+            model: s(v, "model").unwrap_or_default(),
+            reason,
+        })
+    }
 }
 
 impl RouteRow {
@@ -404,6 +428,9 @@ impl RouteRow {
                 .unwrap_or_default(),
             covered_by_tasks: b(v, "covered_by_tasks").unwrap_or(false),
             inherits_broad: b(v, "inherits_broad").unwrap_or(false),
+            recommendation_unavailable: v
+                .get("recommendation_unavailable")
+                .and_then(RecommendationUnavailable::from_value),
             key,
         })
     }
@@ -470,6 +497,11 @@ impl RouteRow {
         // parent and read as "image editing is not set up".
         if self.inherits_broad {
             return "inherited".to_string();
+        }
+        // Unset BECAUSE the recommendation cannot run on this host: the
+        // reason rides the selected-row line and the `p` plan.
+        if self.recommendation_unavailable.is_some() {
+            return "unavailable here".to_string();
         }
         "not configured".to_string()
     }
@@ -602,6 +634,10 @@ pub struct AvailabilityData {
     /// _mark_recommended_route_gaps`) so this screen and the web console
     /// cannot disagree about which host is actually short of something.
     pub missing: Vec<(String, String, String)>,
+    /// The whole recommended set for this computer
+    /// (`recommended.recommended[]`), each row with its status and
+    /// AbstractCore's fit `warning` — the web guide's model-step cards.
+    pub plan: Vec<crate::api::firstrun::PlanRow>,
 }
 
 impl AvailabilityData {
@@ -665,6 +701,7 @@ impl AvailabilityData {
             absent: n("absent"),
             unknown: n("unknown"),
             missing,
+            plan: crate::api::firstrun::plan_rows(v),
         }
     }
 }
@@ -2441,6 +2478,15 @@ pub struct Store {
     /// The download job the operator most recently started, polled to
     /// completion by the worker. `None` = no download this session.
     pub download: Signal<Option<DownloadStatus>>,
+    /// The "Download all" parent job (`grp_…`) the operator started,
+    /// polled until it ends. `None` = none this session.
+    pub download_group: Signal<Option<crate::api::firstrun::GroupStatus>>,
+    /// `GET /host/first-run` — whether the setup guide ran for this data
+    /// dir (read at connect; decides the boot mode).
+    pub first_run: Signal<Loadable<crate::api::firstrun::FirstRunState>>,
+    /// The Setup (welcome) step's summary of this computer, folded from
+    /// one `GET /host/state` read.
+    pub welcome: Signal<Loadable<crate::api::firstrun::WelcomeSummary>>,
     /// The `GET /host/state` snapshot behind the Models tab: memory +
     /// GPU gauges, resident models, session prompt caches.
     pub host_state: Signal<Loadable<HostStateData>>,
@@ -3197,6 +3243,9 @@ impl Store {
             routes: cx.signal(Loadable::default()),
             availability: cx.signal(Loadable::default()),
             download: cx.signal(None),
+            download_group: cx.signal(None),
+            first_run: cx.signal(Loadable::default()),
+            welcome: cx.signal(Loadable::default()),
             host_state: cx.signal(Loadable::default()),
             host_poll_gen: cx.signal(0),
             unload_locked: cx.signal(None),
@@ -3261,6 +3310,9 @@ impl Store {
             notice: _,        // transient toast
             download: _,      // survives: the job is on the OLD host, and
             // its status line is the only record of it
+            download_group: _, // survives: same reason as `download`
+            first_run,
+            welcome,
             host_poll_gen, // bumped below: live poll chains must die
             // with the world they were reading
             providers,
@@ -3303,6 +3355,10 @@ impl Store {
         // Weights are EXECUTION-HOST state: a different gateway is a
         // different machine, so this domain must never survive a switch.
         availability.set(Loadable::NotAsked);
+        // First-run state and the welcome summary belong to ONE
+        // gateway's data dir and machine.
+        first_run.set(Loadable::NotAsked);
+        welcome.set(Loadable::NotAsked);
         // Host state is the same class of machine truth — and its poll
         // chain must not keep painting the OLD host under the new
         // header: the generation bump kills any in-flight chain.

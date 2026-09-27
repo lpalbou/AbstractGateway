@@ -19,6 +19,8 @@ pub mod routes;
 pub mod runtimes;
 pub mod users;
 pub mod util;
+/// Setup: the first-run guide's welcome step + the first-run lifecycle.
+pub mod welcome;
 pub mod widths;
 pub mod workflows;
 
@@ -37,7 +39,7 @@ use crate::worker::Cmd;
 use abstractcore_console::screens::Remote;
 use util::{hints, line, span, span_bold};
 
-pub const SCREENS: [&str; 11] = [
+pub const SCREENS: [&str; 12] = [
     "Connection",
     "Providers",
     "Routes",
@@ -55,12 +57,17 @@ pub const SCREENS: [&str; 11] = [
     abstractcore_console::screens::ENGINES_TITLE,
     // The web console's Apps tab (ui/apps.rs); key `A`.
     "Apps",
+    // The first-run guide's welcome step (no jump key: 1-9, 0 and A are
+    // taken; Ctrl+G opens the guide on it, Ctrl+N/P reach it in browse).
+    "Setup",
 ];
 
 /// Screens with semantic weight get NAMES (round-4 P3-2): the bare
 /// literals were confined to this module but 3 of them carry meaning
 /// a reader had to reconstruct.
 pub const SCREEN_CONNECTION: usize = 0;
+pub const SCREEN_PROVIDERS: usize = 1;
+pub const SCREEN_ROUTES: usize = 2;
 pub const SCREEN_USERS: usize = 3;
 pub const SCREEN_WORKFLOWS: usize = 5;
 pub const SCREEN_REVIEW: usize = 6;
@@ -72,6 +79,35 @@ pub const SCREEN_ENGINES: usize = 9;
 /// The Apps screen (browser apps, Assistant, Node.js), key `A`. The
 /// first-run wizard references it BY THIS NAME; the number may move.
 pub const SCREEN_APPS: usize = 10;
+/// The setup guide's welcome step (page id `setup`), no jump key.
+pub const SCREEN_WELCOME: usize = 11;
+/// Screens reachable by a digit key (1-9, then 0).
+pub const DIGIT_SCREENS: usize = 10;
+/// Screens reachable by a jump key: the digit screens, then Apps (`A`).
+/// Every screen at or past this index (Setup) has no jump key.
+pub const KEYED_SCREENS: usize = SCREEN_APPS + 1;
+
+/// The first-run wizard, in the web guide's order (`console.py`
+/// `FIRST_RUN_STEPS` = welcome → engines → model → apps → done), mapped
+/// onto this console's screens. Connection comes first because the
+/// terminal must sign in; Providers sits beside Engines because the web
+/// engines step sends cloud users to the Providers tab; the model step
+/// is Routes (the recommended plan, Apply, Download all) then the Models
+/// catalog ("or pick any model that fits"); Review carries Finish.
+/// The web guide gates NO step (every step is optional, Next is always
+/// enabled); the only gate here is the sign-in one on Connection.
+/// The web guide's "apps" step is the Apps screen, between the model
+/// step (Models catalog) and Review.
+pub const WIZARD_STEPS: [usize; 8] = [
+    SCREEN_CONNECTION,
+    SCREEN_WELCOME,
+    SCREEN_ENGINES,
+    SCREEN_PROVIDERS,
+    SCREEN_ROUTES,
+    SCREEN_CATALOG,
+    SCREEN_APPS,
+    SCREEN_REVIEW,
+];
 
 /// The digit that jumps to screen `i` in browse mode: 1-9, then 0 for
 /// the tenth (PageHost's own number jump covers 1-9 only).
@@ -90,7 +126,7 @@ pub fn screen_key(i: usize) -> char {
 /// Stable PageHost page ids, parallel to `SCREENS`. `ui.screen: usize`
 /// stays the source of truth (the wizard gate reads indexes); a two-way
 /// equality-guarded bridge keeps PageHost's string `active` in lockstep.
-pub const SCREEN_IDS: [&str; 11] = [
+pub const SCREEN_IDS: [&str; 12] = [
     "connection",
     "providers",
     "routes",
@@ -104,6 +140,7 @@ pub const SCREEN_IDS: [&str; 11] = [
     abstractcore_console::screens::CATALOG_ID,
     abstractcore_console::screens::ENGINES_ID,
     "apps",
+    "setup",
 ];
 
 /// Durable per-screen UI state (Copy: all signals).
@@ -114,6 +151,15 @@ pub struct UiState {
     pub screen: Signal<usize>,
     /// The user explicitly chose to continue without a connection.
     pub offline_ok: Signal<bool>,
+    /// `--wizard` / `--browse` was given: the first-run read never
+    /// changes the mode.
+    pub mode_forced: Signal<bool>,
+    /// The first-run boot decision was taken (once per session).
+    pub first_run_decided: Signal<bool>,
+    /// (form id, outcome) of a Finish / Skip setup in flight.
+    pub first_run_pending: Signal<Option<(u64, String)>>,
+    /// Why the last Finish / Skip setup did not close the guide.
+    pub first_run_error: Signal<Option<String>>,
 
     pub conn_url: Signal<String>,
     pub conn_token: Signal<String>,
@@ -218,6 +264,10 @@ impl UiState {
             wizard: cx.signal(true),
             screen: cx.signal(0),
             offline_ok: cx.signal(false),
+            mode_forced: cx.signal(false),
+            first_run_decided: cx.signal(false),
+            first_run_pending: cx.signal(None),
+            first_run_error: cx.signal(None),
             conn_url: cx.signal(url),
             conn_token: cx.signal(token),
             token_source: cx.signal(None),
@@ -522,6 +572,7 @@ impl Ctx {
                 }
                 self.send(Cmd::LoadApps { latest: true });
             }
+            SCREEN_WELCOME => welcome::refresh(self),
             _ => {}
         }
     }
@@ -842,6 +893,7 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
     let ctx_refresh = ctx.clone();
     let ctx_about = ctx.clone();
     let ctx_about2 = ctx.clone();
+    let ctx_guide = ctx.clone();
 
     let mut root_el = Element::new()
         .style(LayoutStyle::column())
@@ -929,6 +981,11 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         })
         // About: F1 anywhere (function keys survive focused text fields),
         // `?` wherever no text field holds the caret.
+        // The setup guide: Ctrl+G reopens it from browse, leaves or skips
+        // it from the wizard (a Ctrl chord: works inside text fields).
+        .shortcut(KeyChord::new(Mods::CTRL, Key::Char('g')), move |_| {
+            welcome::guide_key(&ctx_guide, cx)
+        })
         .shortcut(KeyChord::plain(Key::F(1)), move |_| about::open(&ctx_about, cx))
         .shortcut(KeyChord::plain(Key::Char('?')), move |_| about::open(&ctx_about2, cx));
     // Digit keys at the root. Wizard: a REFUSAL with a reason, so a
@@ -938,13 +995,13 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
     // still loading) the digit reaches this root handler instead, which
     // then performs the jump itself. `0` is always ours: PageHost's
     // number surface is 1-9, and the tenth screen (Engines) needs a key.
-    for i in 0..SCREENS.len() {
+    for i in 0..KEYED_SCREENS {
         let ctx_i = ctx.clone();
         let key = screen_key(i);
         root_el = root_el.shortcut(KeyChord::plain(Key::Char(key)), move |_| {
             if ctx_i.ui.wizard.get_untracked() {
                 ctx_i.store.notice.set(Some(
-                    "digit jumps work in browse mode — walk the wizard with Ctrl+N and Finish on the Review step"
+                    "digit jumps work in browse mode — walk the guide with Ctrl+N, Ctrl+G leaves it"
                         .into(),
                 ));
             } else if ctx_i.ui.screen.get_untracked() != i {
@@ -1003,6 +1060,7 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         let c8 = host_ctx.clone();
         let c9 = host_ctx.clone();
         let c10 = host_ctx.clone();
+        let c11 = host_ctx.clone();
         PageHost::new()
             .page(SCREEN_IDS[0], "1 Connection", move |gcx| {
                 connection::view(gcx, &c0, &theme.get().tokens)
@@ -1037,6 +1095,9 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
             })
             .page(SCREEN_IDS[SCREEN_APPS], "A Apps", move |gcx| {
                 apps::view(gcx, &c10, &theme.get().tokens)
+            })
+            .page(SCREEN_IDS[SCREEN_WELCOME], "Setup", move |gcx| {
+                welcome::view(gcx, &c11, &theme.get().tokens)
             })
             .active(active)
             .number_jump(!wizard_now)
@@ -1110,10 +1171,17 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
                 if goal.is_empty() {
                     return Element::new().style(LayoutStyle::default().h(0)).build();
                 }
+                // "Step N of M" (the web guide's kicker) when the screen
+                // is one of the guide's steps.
+                let step = WIZARD_STEPS
+                    .iter()
+                    .position(|s| *s == screen)
+                    .map(|i| format!(" Step {}/{} ", i + 1, WIZARD_STEPS.len()))
+                    .unwrap_or_else(|| " Step goal: ".to_string());
                 Element::new()
                     .style(LayoutStyle::line(1).shrink(0.0))
                     .child(line(vec![
-                        span(" Step goal: ", t.accent),
+                        span(step, t.accent),
                         span(goal, t.text_muted),
                     ]))
                     .build()
@@ -1130,10 +1198,8 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
 /// tightest screen; the goal row is what pushed it over at 80x24).
 fn wizard_goal(screen: usize) -> &'static str {
     match screen {
-        1 => "make one provider usable — a adds a key; e edits or overrides env rows; t tests.",
-        2 => {
-            "optional — the engine picks models by default; override only to pin a provider/model."
-        }
+        1 => "optional — cloud providers only need a key: a adds one; e edits; t tests.",
+        2 => "your default model — a applies the recommended set; D downloads all of it.",
         SCREEN_USERS => {
             "mint a token per app/person that connects (a); skip if the admin token is enough."
         }
@@ -1141,9 +1207,8 @@ fn wizard_goal(screen: usize) -> &'static str {
         SCREEN_WORKFLOWS => {
             "nothing to configure — the registered workflows; e exports, d/D delete."
         }
-        SCREEN_REVIEW => {
-            "run one real test (Enter in the prompt) to prove a provider, then Finish."
-        }
+        SCREEN_REVIEW => "optionally run one real test (Enter in the prompt), then Finish.",
+        SCREEN_WELCOME => "this computer at a glance — every step is optional; Ctrl+G leaves.",
         SCREEN_MODELS => {
             "nothing to configure — live models, memory & caches; Finish lives on Review."
         }
@@ -1166,6 +1231,10 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
     // failures anywhere trigger ONE background probe that settles the
     // story every surface tells.
     crate::health::install(cx, ctx);
+
+    // First run: read the state at connect, take the boot decision,
+    // route Finish / Skip outcomes (ui/welcome.rs).
+    welcome::install(cx, ctx);
 
     // Screen-entry data loading: when connected and a screen's domains
     // were never asked, ask. Loading is set synchronously in
@@ -1221,6 +1290,7 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
                     s.engines.with(Remote::is_not_asked) || s.host.with(Remote::is_not_asked)
                 }
                 SCREEN_APPS => matches!(store.apps.overview.get(), Loadable::NotAsked),
+                SCREEN_WELCOME => matches!(store.welcome.get(), Loadable::NotAsked),
                 // Deliberately NOT keyed here: host-state freshness is
                 // owned end-to-end by the poll-lifecycle effect below
                 // (a second trigger lane would race it into double
@@ -1407,32 +1477,59 @@ fn wizard_next(ctx: &Ctx, cx: Scope) {
                 if let ChoiceOutcome::Answered(a) = outcome {
                     if a.selected.iter().any(|s| s == "offline") {
                         ui.offline_ok.set(true);
-                        ui.screen.update(|s| *s = (*s + 1).min(SCREENS.len() - 1));
+                        if let Some(next) = wizard_step_after(SCREEN_CONNECTION) {
+                            ui.screen.set(next);
+                        }
                     }
                 }
             },
         );
         return;
     }
-    if screen + 1 < SCREENS.len() {
-        ctx.ui.screen.set(screen + 1);
-    } else {
-        ctx.store.notice.set(Some(
-            "already on the last step — Finish on the Review step switches to browse mode".into(),
-        ));
+    match wizard_step_after(screen) {
+        Some(next) => ctx.ui.screen.set(next),
+        None => ctx.store.notice.set(Some(
+            "already on the last step — Finish (or Skip setup) records it and switches to browse mode"
+                .into(),
+        )),
+    }
+}
+
+/// The guide step after `screen` (`None` on the last one). A screen off
+/// the guide's path (reached in browse, then Ctrl+G) resumes at the
+/// first guide step after it in screen order, else at the welcome step.
+pub fn wizard_step_after(screen: usize) -> Option<usize> {
+    match WIZARD_STEPS.iter().position(|s| *s == screen) {
+        Some(i) => WIZARD_STEPS.get(i + 1).copied(),
+        None => Some(SCREEN_WELCOME),
+    }
+}
+
+/// The guide step before `screen` (`None` on the first one).
+pub fn wizard_step_before(screen: usize) -> Option<usize> {
+    match WIZARD_STEPS.iter().position(|s| *s == screen) {
+        Some(0) => None,
+        Some(i) => Some(WIZARD_STEPS[i - 1]),
+        None => Some(SCREEN_WELCOME),
     }
 }
 
 fn wizard_back(ctx: &Ctx) {
-    if ctx.ui.screen.get_untracked() == 0 {
+    let screen = ctx.ui.screen.get_untracked();
+    let prev = if ctx.ui.wizard.get_untracked() {
+        wizard_step_before(screen)
+    } else {
+        screen.checked_sub(1)
+    };
+    match prev {
+        Some(p) => ctx.ui.screen.set(p),
         // Esc/[ at the first screen is a no-op — say so instead of
         // swallowing the key (F3).
-        ctx.store
+        None => ctx
+            .store
             .notice
-            .set(Some("already on the first screen".into()));
-        return;
+            .set(Some("already on the first screen".into())),
     }
-    ctx.ui.screen.update(|s| *s = s.saturating_sub(1));
 }
 
 fn header(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Theme>) -> View {
@@ -1604,11 +1701,15 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     pairs.push(("Enter/e", "edit route"));
                     pairs.push(("x", "clear route"));
                     // `d` is "delete" on Connections/Users and
-                    // "download" here. The three never share a screen,
-                    // the hint row names the verb for the screen you are
-                    // on, and the download confirms with the artifact
-                    // spelled out before it spends a byte.
+                    // "download" nowhere: weights are `w`, the whole
+                    // recommended set `D`, each behind a confirm. (The
+                    // plan line on the screen teaches p / D / a too, for
+                    // rows too narrow to reach them here.)
                     pairs.push(("w", "download weights"));
+                    pairs.push(("a", "apply recommended"));
+                    pairs.push(("D", "download all"));
+                    pairs.push(("C", "cancel download all"));
+                    pairs.push(("p", "recommended plan"));
                     pairs.push(("r", "refresh"));
                 }
                 3 => {
@@ -1673,8 +1774,19 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     pairs.extend_from_slice(abstractcore_console::screens::engines::HINTS);
                 }
                 SCREEN_APPS => pairs.extend_from_slice(apps::HINTS),
+                SCREEN_WELCOME => {
+                    pairs.push(("r", "refresh"));
+                }
                 _ => {}
             }
+            // The setup guide's chord LAST: every screen has it, so it
+            // yields to the screen's own verbs when the row truncates
+            // (the Setup step and the goal line teach it too).
+            pairs.push(if wizard {
+                ("Ctrl+G", "leave/skip guide")
+            } else {
+                ("Ctrl+G", "setup guide")
+            });
             hints(&t, &pairs)
         }))
         .build()

@@ -16,6 +16,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use abstracttui::reactive::WakeHandle;
 use serde_json::Value;
 
+use crate::api::firstrun::{first_run_verify, FirstRunState, GroupStatus, WelcomeSummary};
 use crate::api::{ApiError, ApiErrorKind, ApiResult, GatewayClient};
 
 /// The Apps screen's handlers (install/update/start/stop/open, jobs).
@@ -91,6 +92,32 @@ pub enum Cmd {
         /// final poll -- the operator sees one continuous operation.
         op: u64,
         started_ms: u64,
+    },
+    /// "Download all" (the web guide's model step): `POST /models/download
+    /// {"recommended": true}` → one parent job, then `PollDownloadGroup`.
+    /// Only ever sent from an explicit, confirmed `D` on Routes.
+    DownloadRecommended,
+    /// ONE read of the Download-all parent job, then reschedule itself
+    /// (the `PollDownload` pattern: the wait happens off the lane).
+    PollDownloadGroup {
+        job: String,
+        op: u64,
+        started_ms: u64,
+    },
+    /// Cancel the Download-all parent (every child still running).
+    CancelDownloadGroup {
+        job: String,
+    },
+    /// `GET /host/first-run` (read at connect: decides the boot mode).
+    LoadFirstRun,
+    /// `GET /host/state` folded for the Setup (welcome) step.
+    LoadWelcome,
+    /// Finish / Skip setup: `POST /host/first-run {"outcome"}` + the
+    /// verifying GET. `form_id` routes the verified outcome back to the
+    /// finish row (leave the wizard only when the GET proves it).
+    CompleteFirstRun {
+        outcome: String,
+        form_id: Option<u64>,
     },
     /// ONE `GET /host/state` read (SLOW — GPU probe + residency
     /// listing), then reschedule itself ~4s later — the download-poll
@@ -615,7 +642,8 @@ fn cmd_form_id(cmd: &Cmd) -> Option<u64> {
         | Cmd::SaveEntityWorkOrder { form_id, .. }
         | Cmd::SaveToolPolicy { form_id, .. }
         | Cmd::SaveEntityPrompt { form_id, .. }
-        | Cmd::EntityReembed { form_id, .. } => *form_id,
+        | Cmd::EntityReembed { form_id, .. }
+        | Cmd::CompleteFirstRun { form_id, .. } => *form_id,
         _ => None,
     }
 }
@@ -659,9 +687,19 @@ pub fn applied_recommended_summary(payload: &Value) -> String {
     };
     let mut changed: Vec<String> = Vec::new();
     let mut kept: Vec<String> = Vec::new();
+    // Host-aware recommendations (AbstractCore): a route whose engine this
+    // host cannot run is never written, and carries its `reason`.
+    let mut unavailable: Vec<String> = Vec::new();
     for row in rows {
         let key = row.get("key").and_then(Value::as_str).unwrap_or("?");
         let action = row.get("action").and_then(Value::as_str).unwrap_or("");
+        if action == "unavailable" {
+            match row.get("reason").and_then(Value::as_str).filter(|r| !r.is_empty()) {
+                Some(r) => unavailable.push(format!("{key} ({r})")),
+                None => unavailable.push(key.to_string()),
+            }
+            continue;
+        }
         if row.get("changed").and_then(Value::as_bool).unwrap_or(false) {
             changed.push(format!(
                 "{key}: {} → {}",
@@ -678,6 +716,19 @@ pub fn applied_recommended_summary(payload: &Value) -> String {
     }
     if !kept.is_empty() {
         parts.push(format!("kept yours on {}", kept.join(", ")));
+    }
+    if !unavailable.is_empty() {
+        // The report's own count when it has one (older gateways: none).
+        let n = payload
+            .get("applied_recommended")
+            .and_then(|r| r.get("unavailable"))
+            .and_then(Value::as_u64)
+            .map(|n| n as usize)
+            .unwrap_or(unavailable.len());
+        parts.push(format!(
+            "{n} not available on this host, left unset: {}",
+            unavailable.join("; ")
+        ));
     }
     if parts.is_empty() {
         return "every recommended route already matched".to_string();
@@ -979,6 +1030,79 @@ fn handle(
                 started_ms,
             },
         ),
+
+        Cmd::DownloadRecommended => handle_download_recommended(client, store, wake, tx),
+
+        Cmd::PollDownloadGroup {
+            job,
+            op,
+            started_ms,
+        } => handle_poll_download_group(client, store, wake, tx, &job, op, started_ms),
+
+        Cmd::CancelDownloadGroup { job } => {
+            let action = format!("POST cancel Download all {job}");
+            let (write, verify) = with_busy(store, wake, "cancelling Download all", || {
+                let write = require_client(client).and_then(|c| c.cancel_model_download(&job));
+                let verify = require_client(client).and_then(|c| c.model_download_job(&job));
+                (write, verify)
+            });
+            // The job answers `cancel_requested` at once and turns
+            // `cancelled` when the tools have stopped; the running poll
+            // chain reports the end. Verified = the GET shows the request.
+            let verified = verify.as_ref().ok().map(|v| {
+                let g = GroupStatus::from_job(&v.get("job").cloned().unwrap_or(Value::Null));
+                if g.cancel_requested || !g.running() {
+                    Ok(format!("GET /models/download/{job}: {} ({})", g.status, g.message))
+                } else {
+                    Err(format!("GET /models/download/{job} shows no cancel request ({})", g.status))
+                }
+            });
+            if let Ok(v) = &verify {
+                let g = GroupStatus::from_job(&v.get("job").cloned().unwrap_or(Value::Null));
+                let s = *store;
+                wake.post(move || s.download_group.set(Some(g.clone())));
+            }
+            finish_write(store, wake, action, write, verified, None, on_done);
+        }
+
+        Cmd::LoadFirstRun => load(store, wake, "reading first-run state", store.first_run, || {
+            require_client(client)?
+                .first_run_state()
+                .map(|v| FirstRunState::from_value(&v))
+        }),
+
+        Cmd::LoadWelcome => load(store, wake, "reading this computer's summary", store.welcome, || {
+            require_client(client)?
+                .host_state()
+                .map(|v| WelcomeSummary::from_host_state(&v))
+        }),
+
+        Cmd::CompleteFirstRun { outcome, form_id } => {
+            let action = format!("POST first-run outcome={outcome}");
+            let (write, verify) = with_busy(store, wake, "recording the first-run outcome", || {
+                let write = require_client(client).and_then(|c| c.complete_first_run(&outcome));
+                let verify = require_client(client).and_then(|c| c.first_run_state());
+                (write, verify)
+            });
+            let after = verify.as_ref().ok().map(FirstRunState::from_value);
+            let verified = after.as_ref().map(|a| first_run_verify(&outcome, a));
+            // The finish row leaves the wizard ONLY on a verified write:
+            // a POST that answered but a GET that disagrees keeps the
+            // operator in the guide with the reason on screen.
+            let combined = match (&write, &verified) {
+                (Err(e), _) => Err(refusal_text(e)),
+                (Ok(_), Some(Ok(v))) => Ok(v.clone()),
+                (Ok(_), Some(Err(v))) => Err(format!("VERIFY FAILED: {v}")),
+                (Ok(_), None) => Err("the verifying GET /host/first-run failed".to_string()),
+            };
+            if let Some(a) = after {
+                publish_ready(wake, store.first_run, a);
+            }
+            finish_write(store, wake, action, write, verified, None, on_done);
+            if let Some(fid) = form_id {
+                on_done(fid, combined);
+            }
+        }
 
         Cmd::PollHostState { gen, first } => {
             // The GET runs on the worker lane; the busy label shows only
@@ -3060,6 +3184,112 @@ fn finish_download(
         });
         s.notice.set(Some(notice));
     });
+}
+
+/// "Download all": start the recommended group, then hand the lane back
+/// and watch the parent job with `PollDownloadGroup`. A response without
+/// `group` is a gateway that predates the download-group contract — the
+/// web console refuses it with the same sentence, and so does this.
+fn handle_download_recommended(
+    client: &mut Option<GatewayClient>,
+    store: &Store,
+    wake: &WakeHandle,
+    tx: &Sender<Cmd>,
+) {
+    let op = next_op();
+    let s = *store;
+    wake.post(move || s.begin_busy(op, "Download all (recommended models)"));
+    let started = (|| -> ApiResult<GroupStatus> {
+        let v = require_client(client)?.download_recommended(false)?;
+        let group = v.get("group").filter(|g| g.is_object()).ok_or_else(|| ApiError {
+            kind: ApiErrorKind::Protocol,
+            message: "the gateway started the downloads but returned no parent job (`group`); \
+                      it needs the download-group contract (docs/model-downloads.md)"
+                .to_string(),
+            body: None,
+            timed_out: false,
+        })?;
+        Ok(GroupStatus::from_job(group))
+    })();
+    match started {
+        Ok(g) => {
+            let s = *store;
+            let first = g.clone();
+            wake.post(move || s.download_group.set(Some(first)));
+            let _ = tx.send(Cmd::PollDownloadGroup {
+                job: g.job,
+                op,
+                started_ms: now_ms(),
+            });
+        }
+        Err(e) => finish_download_group(store, wake, tx, op, Err(e)),
+    }
+}
+
+fn handle_poll_download_group(
+    client: &mut Option<GatewayClient>,
+    store: &Store,
+    wake: &WakeHandle,
+    tx: &Sender<Cmd>,
+    job: &str,
+    op: u64,
+    started_ms: u64,
+) {
+    let polled = require_client(client).and_then(|c| c.model_download_job(job));
+    let g = match polled {
+        Ok(v) => GroupStatus::from_job(&v.get("job").cloned().unwrap_or(Value::Null)),
+        Err(e) => {
+            finish_download_group(store, wake, tx, op, Err(e));
+            return;
+        }
+    };
+    let s = *store;
+    let snapshot = g.clone();
+    wake.post(move || s.download_group.set(Some(snapshot)));
+    if g.running() && now_ms().saturating_sub(started_ms) <= DOWNLOAD_POLL_LIMIT_MS {
+        let cmd = Cmd::PollDownloadGroup {
+            job: job.to_string(),
+            op,
+            started_ms,
+        };
+        let tx = tx.clone();
+        std::thread::Builder::new()
+            .name("download-group-poll-timer".into())
+            .spawn(move || {
+                std::thread::sleep(DOWNLOAD_POLL_INTERVAL);
+                let _ = tx.send(cmd);
+            })
+            .ok();
+    } else {
+        finish_download_group(store, wake, tx, op, Ok(g));
+    }
+}
+
+fn finish_download_group(
+    store: &Store,
+    wake: &WakeHandle,
+    tx: &Sender<Cmd>,
+    op: u64,
+    outcome: ApiResult<GroupStatus>,
+) {
+    let (notice, journal) = match &outcome {
+        Ok(g) => (g.line(), Ok(format!("{} ({})", g.status, g.message))),
+        Err(e) => (format!("Download all: {e}"), Err(e.to_string())),
+    };
+    let s = *store;
+    wake.post(move || {
+        s.end_busy(op);
+        s.push_journal(JournalEntry {
+            when: crate::store::now_hms(),
+            action: "POST download recommended (Download all)".to_string(),
+            outcome: journal,
+            // The parent job's own terminal state is the verification;
+            // the availability re-read below refreshes the plan cards.
+            verified: None,
+        });
+        s.notice.set(Some(notice));
+    });
+    let _ = tx.send(Cmd::LoadAvailability);
 }
 
 fn now_ms() -> u64 {

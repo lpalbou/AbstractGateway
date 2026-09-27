@@ -668,11 +668,16 @@ fn wizard_gate_blocks_next_until_connected_or_offline() {
     let _ = h.turns(2);
     assert_eq!(h.ui.screen.get_untracked(), 0, "stay keeps the step");
 
-    // Once connected, Ctrl+N advances.
+    // Once connected, Ctrl+N advances — to the guide's next step, the
+    // Setup (welcome) screen, as in the web guide's order.
     h.connect_as_admin();
     h.key(b"\x0e");
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 1, "advanced to providers");
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_WELCOME,
+        "advanced to the welcome step"
+    );
 }
 
 #[test]
@@ -686,11 +691,406 @@ fn wizard_gate_offline_choice_advances() {
     h.turn();
     h.type_text("\r");
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 1, "offline choice advances");
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_WELCOME,
+        "offline choice advances to the welcome step"
+    );
     let s = h.turn();
     assert!(
         s.contains("not loaded yet"),
-        "providers screen shows honest not-asked state offline:\n{s}"
+        "the welcome step shows an honest not-asked state offline:\n{s}"
+    );
+}
+
+// =======================================================================
+// First run (the web console's setup guide, headless parity)
+// =======================================================================
+
+use abstractgateway_console::api::firstrun::{FirstRunState, GroupStatus, WelcomeSummary};
+
+fn first_run(completed: bool) -> FirstRunState {
+    FirstRunState::from_value(&json!({
+        "completed": completed,
+        "completed_at": if completed { json!("2026-09-27T10:00:00Z") } else { Value::Null },
+        "completed_by": if completed { json!("admin") } else { Value::Null },
+        "outcome": if completed { json!("finished") } else { Value::Null },
+    }))
+}
+
+fn user_identity() -> Identity {
+    Identity::from_me(&json!({
+        "ok": true,
+        "principal": {"user_id": "alice", "tenant_id": "default",
+                      "roles": ["user"], "admin": false},
+        "auth": {"mode": "users"},
+        "routing": {"mode": "per-principal"}
+    }))
+    .expect("identity parses")
+}
+
+/// The connection landing reads `GET /host/first-run` (once per gateway).
+#[test]
+fn connect_reads_the_first_run_state() {
+    let mut h = harness();
+    h.turn();
+    h.drain_cmds();
+    h.connect_as_admin();
+    h.turns(2);
+    let cmds = h.drain_cmds();
+    assert_eq!(
+        cmds.iter().filter(|c| matches!(c, Cmd::LoadFirstRun)).count(),
+        1,
+        "exactly one first-run read at connect: {cmds:?}"
+    );
+    assert!(matches!(h.store.first_run.get_untracked(), Loadable::Loading));
+}
+
+/// Not completed + admin: the guide stays open and continues at the
+/// welcome step (the web guide opens on "welcome").
+#[test]
+fn first_run_open_keeps_the_guide_and_lands_on_welcome() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.store.first_run.set(Loadable::Ready(first_run(false)));
+    h.turns(2);
+    assert!(h.ui.wizard.get_untracked(), "guide stays open");
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_WELCOME);
+}
+
+/// Completed: browse mode, like the web console (no guide).
+#[test]
+fn first_run_completed_starts_in_browse() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.store.first_run.set(Loadable::Ready(first_run(true)));
+    h.turns(2);
+    assert!(!h.ui.wizard.get_untracked(), "completed → browse");
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_CONNECTION);
+}
+
+/// The web guide opens for admins only (its writes are admin routes).
+#[test]
+fn first_run_open_for_a_non_admin_is_browse() {
+    let mut h = harness();
+    h.store.conn.set(ConnPhase::Connected(user_identity()));
+    h.turn();
+    h.store.first_run.set(Loadable::Ready(first_run(false)));
+    h.turns(2);
+    assert!(!h.ui.wizard.get_untracked(), "non-admin → browse");
+}
+
+/// --wizard / --browse force the mode whatever the first-run state.
+#[test]
+fn forced_mode_ignores_the_first_run_state() {
+    let mut h = harness();
+    h.ui.mode_forced.set(true);
+    h.connect_as_admin();
+    h.store.first_run.set(Loadable::Ready(first_run(true)));
+    h.turns(2);
+    assert!(h.ui.wizard.get_untracked(), "--wizard wins over completed");
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_CONNECTION);
+}
+
+/// The wizard walks the web guide's order, with Finish last.
+#[test]
+fn wizard_walks_the_web_guide_order() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.ui.wizard.set(true);
+    h.ui.screen.set(ui::SCREEN_WELCOME);
+    h.turns(2);
+    let mut seen = vec![ui::SCREEN_WELCOME];
+    for _ in 0..8 {
+        h.key(b"\x0e");
+        h.turns(2);
+        let s = h.ui.screen.get_untracked();
+        if seen.last() == Some(&s) {
+            break;
+        }
+        seen.push(s);
+    }
+    assert_eq!(
+        seen,
+        vec![
+            ui::SCREEN_WELCOME,
+            ui::SCREEN_ENGINES,
+            ui::SCREEN_PROVIDERS,
+            ui::SCREEN_ROUTES,
+            ui::SCREEN_CATALOG,
+            ui::SCREEN_APPS,
+            ui::SCREEN_REVIEW,
+        ],
+        "Ctrl+N walks welcome → engines → providers → model (routes, catalog) → apps → done"
+    );
+    // Back walks the same path in reverse.
+    h.key(b"\x10");
+    h.turns(2);
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_APPS);
+    h.key(b"\x10");
+    h.turns(2);
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_CATALOG);
+}
+
+/// The welcome step renders the web tiles from `/host/state`.
+#[test]
+fn welcome_step_shows_this_computer() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.ui.wizard.set(true);
+    h.ui.screen.set(ui::SCREEN_WELCOME);
+    h.turns(2);
+    assert!(
+        h.drain_cmds().iter().any(|c| matches!(c, Cmd::LoadWelcome)),
+        "entering the step reads /host/state"
+    );
+    h.store.first_run.set(Loadable::Ready(first_run(false)));
+    h.store.welcome.set(Loadable::Ready(WelcomeSummary::from_host_state(&json!({
+        "host": {"host_name": "forge.local"},
+        "gateway": {"data_dir": "/srv/gw", "data_dir_source": "env", "auth_mode": "users",
+                    "service": {"installed": false, "mechanism": "launchd-agent"}},
+        "memory": {"ram": {"total_bytes": 137438953472u64}},
+        "gpu": {"gpus": [{"name": "Apple M5 Max"}]}
+    }))));
+    let s = h.turns(2);
+    for needle in [
+        "forge.local",
+        "128.0 GB",
+        "Apple M5 Max",
+        "/srv/gw",
+        "User accounts",
+        "Not yet",
+        "First run:",
+        "not completed",
+        "Local engines",
+    ] {
+        assert!(s.contains(needle), "welcome shows '{needle}':\n{s}");
+    }
+}
+
+/// Finish POSTs the outcome; the guide closes only on the verified
+/// write-done, and a failure keeps it open with the reason.
+#[test]
+fn finish_records_the_outcome_and_closes_only_when_verified() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.ui.wizard.set(true);
+    h.ui.screen.set(ui::SCREEN_REVIEW);
+    let s = h.turns(3);
+    h.drain_cmds();
+    let row = find_row(&s, "Skip setup");
+    let col = s.lines().nth(row - 1).unwrap().find(" Finish ").expect("Finish") + 2;
+    click_at(&mut h, col, row);
+    h.turns(2);
+    let cmd = h.find_cmd(|c| matches!(c, Cmd::CompleteFirstRun { .. }));
+    let fid = match cmd {
+        Some(Cmd::CompleteFirstRun { outcome, form_id }) => {
+            assert_eq!(outcome, "finished");
+            form_id.expect("routed back")
+        }
+        other => panic!("expected CompleteFirstRun, got {other:?}"),
+    };
+    assert!(h.ui.wizard.get_untracked(), "still in the guide until verified");
+    // A failed verify keeps the guide open and says why.
+    h.ui.write_done.set(Some((fid, Err("VERIFY FAILED: completed=false".into()))));
+    let s = h.turns(2);
+    assert!(h.ui.wizard.get_untracked());
+    assert!(s.contains("VERIFY FAILED"), "reason on screen:\n{s}");
+    // Retry, verified this time.
+    click_at(&mut h, col, row);
+    h.turns(2);
+    let fid = match h.find_cmd(|c| matches!(c, Cmd::CompleteFirstRun { .. })) {
+        Some(Cmd::CompleteFirstRun { form_id, .. }) => form_id.unwrap(),
+        other => panic!("expected CompleteFirstRun, got {other:?}"),
+    };
+    h.ui.write_done.set(Some((fid, Ok("GET /host/first-run: completed".into()))));
+    h.turns(2);
+    assert!(!h.ui.wizard.get_untracked(), "verified → browse");
+}
+
+/// Ctrl+G: browse reopens the guide at welcome; in the guide it offers
+/// Skip setup, which records `skipped`.
+#[test]
+fn ctrl_g_reopens_and_skips_the_guide() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.goto_screen(3);
+    h.key(b"\x07");
+    h.turns(2);
+    assert!(h.ui.wizard.get_untracked(), "Ctrl+G reopens the guide");
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_WELCOME);
+    h.drain_cmds();
+    h.key(b"\x07");
+    let s = h.turns(2);
+    assert!(s.contains("Skip setup") && s.contains("Leave for now"), "{s}");
+    // Options: leave, skip, stay (initial) → Up once = skip.
+    h.key(b"\x1b[A");
+    h.turn();
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::CompleteFirstRun { .. })) {
+        Some(Cmd::CompleteFirstRun { outcome, .. }) => assert_eq!(outcome, "skipped"),
+        other => panic!("expected a skipped CompleteFirstRun, got {other:?}"),
+    }
+}
+
+fn availability_with_plan() -> AvailabilityData {
+    AvailabilityData::from_value(&json!({
+        "routes": [],
+        "recommended": {
+            "recommended": [
+                {"route": "input.text", "provider": "mlx", "artifact": "big-4bit",
+                 "status": "unknown", "tier": "memory >= 128 GiB",
+                 "warning": "Big may not fit this computer"},
+                {"route": "output.voice", "provider": "supertonic", "artifact": "supertonic-3",
+                 "status": "absent"}
+            ],
+            "total": 2, "installed": 0, "absent": 1, "unknown": 1, "gaps": []
+        }
+    }))
+}
+
+/// The model step (Routes in the guide) shows the recommended plan with
+/// the fit warning; D confirms, then sends ONE Download all.
+#[test]
+fn routes_model_step_shows_the_plan_and_downloads_all() {
+    let mut h = harness_sized(Size::new(150, 40));
+    h.connect_as_admin();
+    h.ui.wizard.set(true);
+    h.ui.screen.set(ui::SCREEN_ROUTES);
+    h.turns(2);
+    h.store.routes.set(Loadable::Ready(routes_fixture()));
+    h.store.availability.set(Loadable::Ready(availability_with_plan()));
+    let s = h.turns(2);
+    assert!(s.contains("recommended for this computer: 0 of 2 installed"), "{s}");
+    assert!(s.contains("1 fit warning"), "{s}");
+    assert!(s.contains("⚠ Big may not fit this computer"), "warning verbatim:\n{s}");
+    assert!(s.contains("Not downloaded"), "{s}");
+    h.drain_cmds();
+    h.type_text("D");
+    let s = h.turns(2);
+    assert!(s.contains("Download the recommended set"), "confirm first:\n{s}");
+    // Danger confirm defaults to keep → Up to "Download all".
+    h.key(b"\x1b[A");
+    h.turn();
+    h.type_text("\r");
+    h.turns(2);
+    let cmds = h.drain_cmds();
+    assert_eq!(
+        cmds.iter().filter(|c| matches!(c, Cmd::DownloadRecommended)).count(),
+        1,
+        "{cmds:?}"
+    );
+    // Progress: the parent job's line, and D refuses while it runs.
+    h.store.download_group.set(Some(GroupStatus::from_job(&json!({
+        "job_id": "grp_1", "status": "running", "state": "downloading", "percent": 40.2,
+        "message": "Downloading 2 models · 0 of 2 ready"
+    }))));
+    let s = h.turns(2);
+    assert!(s.contains("Download all 40% — Downloading 2 models"), "{s}");
+    h.type_text("D");
+    h.turns(2);
+    assert!(
+        h.store.notice.get_untracked().unwrap_or_default().contains("already running"),
+        "no second group while one runs"
+    );
+}
+
+// ---- Host-aware "unavailable" recommendations (AbstractCore) -----------
+
+/// The exact reason AbstractCore's `recommended_unavailable_routes`
+/// gives for `output.image` on a Linux/CUDA host (branch parity/defaults).
+const MLXGEN_UNAVAILABLE: &str = "MLX-Gen image generation needs MLX, and MLX runs only on Apple Silicon Macs (macOS, arm64); set output.image to an image engine this host runs: diffusers (install profile gpu), sdcpp (stable-diffusion.cpp, optional extra) or a cloud image provider";
+
+fn routes_with_unavailable_image() -> RoutesData {
+    RoutesData::from_value(&json!({
+        "ok": true, "writable": true,
+        "authority": "abstractcore.gateway_runtime", "source": "abstractcore.gateway_runtime",
+        "errors": [],
+        "routes": [
+            {"key": "input.text", "kind": "input", "modality": "text", "label": "Text Input",
+             "provider": "ollama", "model": "qwen3:8b", "configured": true,
+             "source": "abstractcore.gateway_runtime"},
+            {"key": "output.image", "kind": "output", "modality": "image", "label": "Image Output",
+             "configured": false, "source": "not_configured",
+             "recommendation_unavailable": {
+                 "provider": "mlx-gen",
+                 "model": "AbstractFramework/flux.2-klein-4b-8bit",
+                 "reason": MLXGEN_UNAVAILABLE}},
+            {"key": "output.voice", "kind": "output", "modality": "voice", "label": "Voice Output",
+             "configured": false, "source": "not_configured"}
+        ]
+    }))
+}
+
+#[test]
+fn unset_row_carries_its_unavailable_recommendation() {
+    let d = routes_with_unavailable_image();
+    let image = d.rows.iter().find(|r| r.key == "output.image").unwrap();
+    let u = image.recommendation_unavailable.as_ref().expect("parsed");
+    assert_eq!(u.provider, "mlx-gen");
+    assert_eq!(u.model, "AbstractFramework/flux.2-klein-4b-8bit");
+    assert_eq!(u.reason, MLXGEN_UNAVAILABLE);
+    assert_eq!(image.state_label(), "unavailable here");
+    // Absent field = the old behaviour.
+    let voice = d.rows.iter().find(|r| r.key == "output.voice").unwrap();
+    assert!(voice.recommendation_unavailable.is_none());
+    assert_eq!(voice.state_label(), "not configured");
+}
+
+/// The Routes row for such a capability shows the reason (state column +
+/// selected-row line), and `p` lists it under "Not available".
+#[test]
+fn routes_show_the_unavailable_reason_and_the_plan_lists_it() {
+    let mut h = harness_sized(Size::new(200, 40));
+    h.connect_as_admin();
+    h.goto_screen(ui::SCREEN_ROUTES);
+    h.store.routes.set(Loadable::Ready(routes_with_unavailable_image()));
+    h.store.availability.set(Loadable::Ready(availability_with_plan()));
+    h.ui.route_sel.set(1);
+    let s = h.turns(3);
+    assert!(s.contains("unavailable here"), "state column:\n{s}");
+    assert!(
+        s.contains("the recommended mlx-gen AbstractFramework/flux.2-klein-4b-8bit cannot run on this host: MLX-Gen image generation needs MLX"),
+        "selected-row reason:\n{s}"
+    );
+    h.type_text("p");
+    let s = h.turns(3);
+    assert!(s.contains("Not available on this computer (left unset)"), "plan section:\n{s}");
+    assert!(
+        s.contains("output.image: recommended mlx-gen AbstractFramework/flux.2-klein-4b-8bit"),
+        "{s}"
+    );
+    assert!(s.contains("MLX runs only on Apple Silicon"), "reason in the plan:\n{s}");
+}
+
+/// Apply-recommended's report: `unavailable` rows are counted and named
+/// with their reason, and never read as "every route already matched".
+#[test]
+fn applied_recommended_summary_counts_unavailable_rows() {
+    use abstractgateway_console::worker::applied_recommended_summary;
+    let payload = json!({"applied_recommended": {
+        "ok": true, "dry_run": false, "force": false,
+        "changed": 0, "kept": 0, "already": 2, "unavailable": 1,
+        "routes": [
+            {"key": "input.text", "selector": "text", "action": "already", "changed": false,
+             "recommended": {"provider": "ollama", "model": "qwen3:8b"},
+             "before": {"provider": "ollama", "model": "qwen3:8b"},
+             "after": {"provider": "ollama", "model": "qwen3:8b"}, "download": {}},
+            {"key": "output.voice", "selector": "voice", "action": "already", "changed": false,
+             "recommended": {"provider": "supertonic", "model": "supertonic-3"},
+             "before": {"provider": "supertonic", "model": "supertonic-3"},
+             "after": {"provider": "supertonic", "model": "supertonic-3"}, "download": {}},
+            {"key": "output.image", "selector": "image", "action": "unavailable", "changed": false,
+             "recommended": {}, "before": {}, "after": {}, "download": {},
+             "reason": MLXGEN_UNAVAILABLE}
+        ]
+    }});
+    let summary = applied_recommended_summary(&payload);
+    assert_ne!(summary, "every recommended route already matched");
+    assert!(
+        summary.contains("1 not available on this host, left unset: output.image (MLX-Gen image generation needs MLX"),
+        "{summary}"
     );
 }
 
@@ -1916,9 +2316,11 @@ fn review_empty_state_and_finish_button() {
         s.contains("no changes applied this session"),
         "journal empty state:\n{s}"
     );
+    // The guide's last step: Finish AND Skip setup (both recorded on
+    // the gateway, like the web guide's footer).
     assert!(
-        s.contains("Finish — switch to browse mode"),
-        "wizard finish:\n{s}"
+        s.contains(" Finish ") && s.contains("Skip setup"),
+        "wizard finish + skip:\n{s}"
     );
     // The redesign: the sandbox is INLINE — its pickers and prompt live
     // on the screen itself, no modal between the operator and the test.
@@ -2123,8 +2525,8 @@ fn review_screen_renders_whole_at_both_sizes() {
                 "[{label}] Generate button:\n{s}"
             );
             assert!(
-                s.contains("Finish — switch to browse mode"),
-                "[{label}] wizard finish reachable:\n{s}"
+                s.contains(" Finish ") && s.contains("Skip setup"),
+                "[{label}] wizard finish + skip reachable:\n{s}"
             );
             match state {
                 "ready" => {
@@ -2755,6 +3157,12 @@ fn title_bar_and_separator_survive_content_pressure() {
         for screen in 0..ui::SCREENS.len() {
             h.ui.screen.set(screen);
             let scr = h.turns(3);
+            // The Setup step has no jump key: its tab is titled bare.
+            let want = if screen < ui::KEYED_SCREENS {
+                format!("{} {}", ui::screen_key(screen), ui::SCREENS[screen])
+            } else {
+                ui::SCREENS[screen].to_string()
+            };
             let lines: Vec<&str> = scr.lines().collect();
             assert!(
                 lines[0].contains("AbstractGateway Console"),
@@ -2769,7 +3177,6 @@ fn title_bar_and_separator_survive_content_pressure() {
             // "the ACTIVE tab's title sits on row 2", which holds at
             // every screen; "1 Connection" is honestly behind ‹ when
             // the window has slid right.
-            let want = format!("{} {}", ui::screen_key(screen), ui::SCREENS[screen]);
             assert!(
                 lines[2].contains(&want),
                 "tab bar at row 2 shows '{want}' (wizard={wizard} screen={screen}):\n{scr}"
@@ -3010,20 +3417,24 @@ fn wizard_steps_carry_a_goal_line() {
     let mut h = harness();
     h.connect_as_admin();
     h.ui.wizard.set(true);
-    for (screen, needle) in [
-        (1usize, "make one provider usable"),
-        (2, "the engine picks models by default"),
-        (3, "mint a token"),
-        (4, "storage inventory"),
-        (5, "the registered workflows"),
-        (6, "run one real test"),
-        (7, "live models"),
+    // The guide's steps carry "Step N/8" (the web guide's kicker) and
+    // their goal; screens off the guide's path keep "Step goal:".
+    for (screen, step, needle) in [
+        (ui::SCREEN_WELCOME, "Step 2/8", "this computer at a glance"),
+        (1usize, "Step 4/8", "cloud providers only need a key"),
+        (2, "Step 5/8", "a applies the recommended set"),
+        (ui::SCREEN_APPS, "Step 7/8", "i installs a browser app"),
+        (6, "Step 8/8", "run one real test"),
+        (3, "Step goal:", "mint a token"),
+        (4, "Step goal:", "storage inventory"),
+        (5, "Step goal:", "the registered workflows"),
+        (7, "Step goal:", "live models"),
     ] {
         h.ui.screen.set(screen);
         let s = h.turns(2);
         assert!(
-            s.contains("Step goal:") && s.contains(needle),
-            "wizard screen {screen} goal line:\n{s}"
+            s.contains(step) && s.contains(needle),
+            "wizard screen {screen} goal line ({step}):\n{s}"
         );
     }
     // Browse mode: no goal line.
@@ -3031,7 +3442,7 @@ fn wizard_steps_carry_a_goal_line() {
     h.ui.screen.set(1);
     let s = h.turns(2);
     assert!(
-        !s.contains("Step goal:"),
+        !s.contains("Step goal:") && !s.contains("Step 4/8"),
         "browse mode has no goal line:\n{s}"
     );
 }
@@ -6418,7 +6829,7 @@ fn wizard_walks_on_to_models_and_engines_with_their_goals() {
     h.ui.screen.set(ui::SCREEN_CATALOG);
     let s = h.settle_until_contains("Qwen3 8B");
     assert!(
-        s.contains("Step goal:") && s.contains("w downloads a model"),
+        s.contains("Step 6/8") && s.contains("w downloads a model"),
         "{s}"
     );
     h.ui.screen.set(ui::SCREEN_ENGINES);
