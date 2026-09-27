@@ -29,6 +29,7 @@ from abstractruntime.automations.models import (
     AUTOMATION_STATUSES,
     AutomationError as RuntimeAutomationError,
     automation_id_for,
+    discussion_ids,
     automation_session_id,
     automation_status,
     revise_definition,
@@ -60,6 +61,7 @@ from ..automation_defaults import (
     validate_flow_automation_defaults,
 )
 from ..automation_errors import AutomationError
+from ..run_retention import resolve_gateway_run_workspace, write_gateway_workspace_marker
 from ..run_workspace_guard import guard_run_vars
 from ..service import get_gateway_service
 from .gateway import (
@@ -871,6 +873,13 @@ class DiscussBody(BaseModel):
 def _discuss(svc: Any, principal: Any, automation_id: str, body: DiscussBody) -> Dict[str, Any]:
     controller = load_automation_controller(svc, automation_id)
     runtime = svc.host.runtime
+    # The discussion's OWN writable workspace (operator ruling 2026-09-27):
+    # the gateway-owned folder of its session, where every chat session's
+    # folder lives; the automation's workspace is mounted read-only by the
+    # runtime.
+    session_id = discussion_ids(str(controller.run_id), str(body.request_id))["session_id"]
+    tenant, user = _principal_tuple(principal)
+    own_workspace, _scoped = resolve_gateway_run_workspace(svc.config.data_dir, session_id=session_id, tenant_id=tenant, user_id=user)
     try:
         out = start_discussion(
             runtime,
@@ -878,6 +887,7 @@ def _discuss(svc: Any, principal: Any, automation_id: str, body: DiscussBody) ->
             occurrence_index=int(body.occurrence_index),
             request_id=str(body.request_id),
             prompt=str(body.prompt),
+            workspace_root=str(own_workspace),
             actor_id="gateway",
         )
     except RuntimeAutomationError as e:
@@ -886,16 +896,26 @@ def _discuss(svc: Any, principal: Any, automation_id: str, body: DiscussBody) ->
         raise AutomationError(404, "occurrence_not_found", str(e), field="occurrence_index")
     except SessionHistoryError as e:
         raise AutomationError(409, str(getattr(e, "reason_code", "history_unavailable")), str(e))
+    write_gateway_workspace_marker(own_workspace, run_id=out["run_id"], session_id=out["session_id"], session_scoped=True)
     _nudge(svc, out["run_id"])
-    return {"session_id": out["session_id"], "run_id": out["run_id"], "session_kind": "discussion"}
+    root = svc.host.run_store.load(out["run_id"])
+    mounted = ((root.vars or {}).get("_meta") or {})["discussion"]["mounted_workspace"]
+    return {
+        "session_id": out["session_id"],
+        "run_id": out["run_id"],
+        "session_kind": "discussion",
+        "workspace_root": str(own_workspace),
+        "mounted_workspace": mounted,
+    }
 
 
 @router.post("/automations/{automation_id}/discuss")
 async def discuss_route(request: Request, automation_id: str, body: DiscussBody) -> Dict[str, Any]:
     """Fork a discussion from occurrence N: a new root run in its own session,
-    seeded with the automation's conversation through N, on the occurrence's
-    workspace mounted read-only. Later turns go through `POST /runs/start`
-    with that `session_id` (the gateway re-stamps them read-only)."""
+    seeded with the automation's conversation 1..N, working in its OWN
+    writable folder with the automation's folder mounted read-only. Later
+    turns go through `POST /runs/start` with that `session_id` (the gateway
+    re-stamps the own folder and the mount on each)."""
     principal = _principal_from_request(request)
     svc = get_gateway_service()
     return await _off_the_event_loop(_discuss, svc, principal, automation_id, body)

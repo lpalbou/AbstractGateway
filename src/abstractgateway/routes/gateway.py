@@ -8012,6 +8012,9 @@ def _strip_client_automation_attribution(input_data: Dict[str, Any]) -> None:
     """A client never sets automation attribution or the read-only mount: those
     are written by the runtime (controller, discussion) and re-stamped by the
     gateway for discussion sessions (automations contract C4)."""
+    # `workspace_read_only_paths` is NOT stripped: a client may only ADD
+    # read-only mounts (the runtime unions them), and the host guard opens the
+    # data folder only for mounts passed explicitly by the discussion restamp.
     from abstractruntime.utils.workspace_paths import READ_ONLY_KEY
 
     input_data.pop(READ_ONLY_KEY, None)
@@ -8024,37 +8027,46 @@ def _strip_client_automation_attribution(input_data: Dict[str, Any]) -> None:
             meta.pop(key, None)
 
 
-def _restamp_discussion_turn(svc: Any, *, session_id: str, input_data: Dict[str, Any]) -> None:
-    """A later turn of a DISCUSSION session (automations contract B/C4): the
-    persisted discussion root is the authority (`session_attribution`; the
-    runtime's `Runtime.start` re-stamps too — this is the entry-point line of
-    defence). The turn gets the root's `_meta.discussion`, the automation's
-    workspace mounted read-only, and strict session history (seed + prior
-    turns). Fails closed: an unresolvable session refuses the start."""
+def _restamp_discussion_turn(svc: Any, *, session_id: str, input_data: Dict[str, Any]) -> List[str]:
+    """A later turn of a DISCUSSION session (automations contract B/C4, operator
+    ruling 2026-09-27): the persisted discussion root is the authority
+    (`session_attribution`; the runtime's `Runtime.start` re-stamps too; this
+    is the entry-point line of defence). The turn gets the root's
+    `_meta.discussion`, the discussion's OWN writable workspace, the
+    automation's workspace mounted read-only (access mode, allowed paths and
+    `_runtime.workspace_read_only_paths` copied from the root), and strict
+    session history. Returns the read-only mounts the host guard must let the
+    run read. Fails closed: an unresolvable session refuses the start."""
     from abstractruntime.core.run_attribution import SessionAttributionError, session_attribution
-    from abstractruntime.utils.workspace_paths import READ_ONLY_KEY
+    from abstractruntime.utils.workspace_paths import READ_ONLY_PATHS_KEY, read_only_paths
 
     try:
         attribution = session_attribution(svc.host.run_store, session_id)
     except SessionAttributionError as e:
         raise HTTPException(status_code=409, detail={"reason_code": "session_attribution_failed", "message": str(e)})
     if attribution is None or attribution.get("kind") != "discussion":
-        return
-    workspace_root = attribution.get("workspace_root")
-    if not workspace_root:
+        return []
+    root = svc.host.run_store.load(str(attribution["discussion_root_run_id"]))
+    root_vars = root.vars if root is not None and isinstance(root.vars, dict) else {}
+    workspace_root = root_vars.get("workspace_root")
+    mounts = list(read_only_paths(root_vars))
+    if not workspace_root or not mounts:
         raise HTTPException(
             status_code=409,
-            detail={"reason_code": "session_attribution_failed", "message": f"discussion session {session_id} has no workspace root"},
+            detail={"reason_code": "session_attribution_failed", "message": f"discussion session {session_id} has no own workspace or mount"},
         )
     meta = input_data.get("_meta") if isinstance(input_data.get("_meta"), dict) else {}
     meta["discussion"] = dict(attribution["discussion"])
     input_data["_meta"] = meta
     input_data["workspace_root"] = str(workspace_root)
     input_data.pop("_gateway_workspace", None)
-    input_data[READ_ONLY_KEY] = True
+    input_data["workspace_access_mode"] = root_vars.get("workspace_access_mode")
+    input_data["workspace_allowed_paths"] = list(root_vars.get("workspace_allowed_paths") or [])
     runtime_ns = input_data.get("_runtime") if isinstance(input_data.get("_runtime"), dict) else {}
-    input_data["_runtime"] = {**runtime_ns, READ_ONLY_KEY: True}
+    client_mounts = list(read_only_paths({"_runtime": runtime_ns}))
+    input_data["_runtime"] = {**runtime_ns, READ_ONLY_PATHS_KEY: sorted(set(mounts) | set(client_mounts))}
     input_data["use_session_history"] = True
+    return mounts
 
 
 @router.post("/runs/start", response_model=StartRunResponse)
@@ -8104,8 +8116,9 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
         _apply_run_stream_switch(input_data, interactive=True)
         _strip_client_automation_attribution(input_data)
         input_data = _sanitize_run_workspace_policy(input_data, principal=principal, session_id=session_id)
+        read_only_mounts: List[str] = []
         if session_id:
-            _restamp_discussion_turn(svc, session_id=session_id, input_data=input_data)
+            read_only_mounts = _restamp_discussion_turn(svc, session_id=session_id, input_data=input_data)
         input_data = _normalize_run_context_media(input_data)
         thinking = _normalize_gateway_thinking(req.thinking)
         if thinking is not None:
@@ -8193,6 +8206,7 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
             input_data=input_data,
             actor_id="gateway",
             session_id=session_id,
+            read_only_mounts=read_only_mounts,
         )
         try:
             svc.runner.nudge(str(run_id))  # tick this run NOW, not at the next poll

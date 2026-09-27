@@ -65,6 +65,13 @@ AbstractRuntime version is raised to that release when this version is published
   startup, so the first chat after a start answers without that scan; the log reports the time
   it took.
 
+### Changed
+
+- A discussion about an automation run now works in its own folder, where it can write and run
+  commands, with the automation's folder mounted read-only beside it (it used to get only the
+  automation's folder, read-only). `POST …/discuss` answers `workspace_root` and
+  `mounted_workspace`, and later turns of the discussion keep both.
+
 ### Fixed
 
 - An automation's target input keeps only the `_runtime` keys a client may set (`allowed_tools`,

@@ -7,7 +7,7 @@ import re
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 from abstractruntime import EffectType, Runtime, WorkflowRegistry, WorkflowSpec, persist_workflow_snapshot
 from abstractruntime.core.runtime import EffectOutcome
@@ -2239,6 +2239,7 @@ class WorkflowBundleGatewayHost:
         bundle_version: Optional[str] = None,
         session_id: Optional[str] = None,
         interface: Optional[str] = None,
+        read_only_mounts: Sequence[str] = (),
     ) -> str:
         # flow_id "@default": the gateway default workflow for `interface`
         # (agents.default_workflow), for in-process callers (the Telegram
@@ -2555,6 +2556,7 @@ class WorkflowBundleGatewayHost:
             session_id=sid,
             tenant_id=str(self.catalog_tenant_id or ""),
             user_id=str(self.catalog_user_id or ""),
+            read_only_mounts=read_only_mounts,
         )
 
         run_id = str(self.runtime.start(workflow=spec, vars=vars0, actor_id=actor_id, session_id=sid))

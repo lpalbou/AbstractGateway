@@ -245,6 +245,37 @@ def _fail_flow() -> dict:
     ]}
 
 
+def _writer_flow() -> dict:
+    """Writes its `prompt` to the file named by its `path` input (write_file node)."""
+    return {"id": "writer", "name": "writer", "entryNode": "start", "nodes": [
+        {"id": "start", "type": "on_flow_start", "data": {"nodeType": "on_flow_start", "outputs": [
+            _XO, {"id": "prompt", "label": "prompt", "type": "string"}, {"id": "path", "label": "path", "type": "string"}]}},
+        {"id": "write", "type": "write_file", "data": {"nodeType": "write_file"}},
+        {"id": "end", "type": "on_flow_end", "data": {"nodeType": "on_flow_end", "inputs": [_X, {"id": "file_path", "label": "file_path", "type": "string"}]}},
+    ], "edges": [
+        {"source": "start", "sourceHandle": "exec-out", "target": "write", "targetHandle": "exec-in"},
+        {"source": "write", "sourceHandle": "exec-out", "target": "end", "targetHandle": "exec-in"},
+        {"source": "start", "sourceHandle": "prompt", "target": "write", "targetHandle": "content"},
+        {"source": "start", "sourceHandle": "path", "target": "write", "targetHandle": "file_path"},
+        {"source": "write", "sourceHandle": "file_path", "target": "end", "targetHandle": "file_path"},
+    ]}
+
+
+def _pwd_flow() -> dict:
+    """Runs `pwd` through execute_command (a tool_calls node)."""
+    return {"id": "pwd", "name": "pwd", "entryNode": "start", "nodes": [
+        {"id": "start", "type": "on_flow_start", "data": {"nodeType": "on_flow_start", "outputs": [_XO]}},
+        {"id": "tools", "type": "tool_calls", "data": {"nodeType": "tool_calls", "inputs": [_X, {"id": "tool_calls", "label": "tool_calls", "type": "array"}],
+                                                       "outputs": [_XO, {"id": "results", "label": "results", "type": "array"}],
+                                                       "pinDefaults": {"tool_calls": [{"name": "execute_command", "arguments": {"command": "pwd -P"}}]}}},
+        {"id": "end", "type": "on_flow_end", "data": {"nodeType": "on_flow_end", "inputs": [_X, {"id": "results", "label": "results", "type": "array"}]}},
+    ], "edges": [
+        {"source": "start", "sourceHandle": "exec-out", "target": "tools", "targetHandle": "exec-in"},
+        {"source": "tools", "sourceHandle": "exec-out", "target": "end", "targetHandle": "exec-in"},
+        {"source": "tools", "sourceHandle": "results", "target": "end", "targetHandle": "results"},
+    ]}
+
+
 def write_echo_bundle(bundles_dir: Path, *, automation_defaults: Optional[dict] = None) -> str:
     import json
     import zipfile
@@ -258,8 +289,8 @@ def write_echo_bundle(bundles_dir: Path, *, automation_defaults: Optional[dict] 
         "bundle_id": ECHO_BUNDLE_ID,
         "bundle_version": "1.0.0",
         "created_at": "2026-09-27T00:00:00+00:00",
-        "entrypoints": [{"flow_id": fid, "name": fid, "description": "", "interfaces": []} for fid in (ECHO_FLOW_ID, "slow", "ask", "fail")],
-        "flows": {fid: f"flows/{fid}.json" for fid in (ECHO_FLOW_ID, "slow", "nap", "ask", "fail")},
+        "entrypoints": [{"flow_id": fid, "name": fid, "description": "", "interfaces": []} for fid in (ECHO_FLOW_ID, "slow", "ask", "fail", "writer", "pwd")],
+        "flows": {fid: f"flows/{fid}.json" for fid in (ECHO_FLOW_ID, "slow", "nap", "ask", "fail", "writer", "pwd")},
         "artifacts": {},
         "assets": {},
         "metadata": metadata,
@@ -267,7 +298,7 @@ def write_echo_bundle(bundles_dir: Path, *, automation_defaults: Optional[dict] 
     with zipfile.ZipFile(bundles_dir / f"{ECHO_BUNDLE_ID}.flow", "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("manifest.json", json.dumps(manifest, indent=2))
         zf.writestr(f"flows/{ECHO_FLOW_ID}.json", json.dumps(echo_flow(), indent=2))
-        for flow in (_slow_flow(), _nap_flow(), _ask_flow(), _fail_flow()):
+        for flow in (_slow_flow(), _nap_flow(), _ask_flow(), _fail_flow(), _writer_flow(), _pwd_flow()):
             zf.writestr(f"flows/{flow['id']}.json", json.dumps(flow, indent=2))
     return f"{ECHO_BUNDLE_ID}@1.0.0"
 

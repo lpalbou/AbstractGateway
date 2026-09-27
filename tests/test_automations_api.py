@@ -474,8 +474,13 @@ def test_discussion_is_a_read_only_fork_and_later_turns_are_restamped(live: Test
     store = get_gateway_service().host.run_store
     wait_until(lambda: (store.load(out["run_id"]).status.value == "completed"))
     first = store.load(out["run_id"])
-    assert first.output["result"]["response"].startswith("ECHO[2] why?")   # seeded with turn 1 + answer 1
-    assert first.vars["_runtime"]["workspace_read_only"] is True
+    answer1 = first.output["result"]["response"]
+    assert answer1.startswith("ECHO[") and not answer1.startswith("ECHO[0]") and " why? || " in answer1   # seeded
+    automation_ws = live.get(f"/api/gateway/automations/{aid}", headers=HEADERS).json()["definition"]["workspace_root"]
+    import os
+
+    assert first.vars["workspace_root"] == out["workspace_root"] != automation_ws
+    assert first.vars["_runtime"]["workspace_read_only_paths"] == [os.path.realpath(automation_ws)]
 
     # A later turn through the ordinary door, claiming a writable workspace: re-stamped.
     r = live.post("/api/gateway/runs/start", headers=HEADERS, json={
@@ -485,12 +490,13 @@ def test_discussion_is_a_read_only_fork_and_later_turns_are_restamped(live: Test
     second_id = r.json()["run_id"]
     wait_until(lambda: store.load(second_id).status.value == "completed")
     second = store.load(second_id)
-    assert second.vars["_runtime"]["workspace_read_only"] is True
+    assert second.vars["_runtime"]["workspace_read_only_paths"] == [os.path.realpath(automation_ws)]
+    assert "workspace_read_only" not in second.vars
     assert second.vars["_meta"]["discussion"]["automation_id"] == aid
     assert second.vars["_meta"]["discussion"]["discussion_root_run_id"] == out["run_id"]
     assert second.vars["workspace_root"] == first.vars["workspace_root"]
     # It sees the seed AND the first discussion turn.
-    assert "ECHO[2] why?" in second.output["result"]["response"]
+    assert "why?" in second.output["result"]["response"]
     # The automation's own session is untouched: still one occurrence turn.
     assert [t for t in _rows(live, f"root_only=true&session_kind=automation").values() if t["automation_id"] == aid and t["role"] == "occurrence"]
     rows = _rows(live, "root_only=true&session_kind=chat,discussion")

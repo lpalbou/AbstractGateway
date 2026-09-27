@@ -121,14 +121,15 @@ def _writer_flow() -> Dict[str, Any]:
         "id": "writer",
         "name": "Write a note",
         "nodes": [
-            {"id": "start", "type": "on_flow_start", "data": {"nodeType": "on_flow_start", "outputs": [_EXEC_OUT, _pin("prompt", "string")]}},
-            {"id": "write", "type": "write_file", "data": {"nodeType": "write_file", "pinDefaults": {"file_path": "note.txt"}}},
+            {"id": "start", "type": "on_flow_start", "data": {"nodeType": "on_flow_start", "outputs": [_EXEC_OUT, _pin("prompt", "string"), _pin("path", "string")]}},
+            {"id": "write", "type": "write_file", "data": {"nodeType": "write_file"}},
             {"id": "end", "type": "on_flow_end", "data": {"nodeType": "on_flow_end", "inputs": [_EXEC, _pin("file_path", "string")]}},
         ],
         "edges": [
             {"source": "start", "sourceHandle": "exec-out", "target": "write", "targetHandle": "exec-in"},
             {"source": "write", "sourceHandle": "exec-out", "target": "end", "targetHandle": "exec-in"},
             {"source": "start", "sourceHandle": "prompt", "target": "write", "targetHandle": "content"},
+            {"source": "start", "sourceHandle": "path", "target": "write", "targetHandle": "file_path"},
             {"source": "write", "sourceHandle": "file_path", "target": "end", "targetHandle": "file_path"},
         ],
         "entryNode": "start",
@@ -374,11 +375,11 @@ def main() -> int:
             print(f"FAIL  {name}  {type(e).__name__}: {e}", flush=True)
 
     def create(request_id: str, flow_id: str, *, prompt: str, mode: str = "independent", notify: bool = False,
-               trigger: Optional[Dict[str, Any]] = None) -> str:
+               trigger: Optional[Dict[str, Any]] = None, extra_input: Optional[Dict[str, Any]] = None) -> str:
         body = {
             "request_id": request_id,
             "title": f"Acceptance {request_id}",
-            "target": {"bundle_ref": BUNDLE_REF, "flow_id": flow_id, "input_data": {"prompt": prompt, "notify": notify}},
+            "target": {"bundle_ref": BUNDLE_REF, "flow_id": flow_id, "input_data": {"prompt": prompt, "notify": notify, **(extra_input or {})}},
             "trigger": trigger or {"source_id": "schedule", "source_version": 1, "config": {"every": every}},
             "context": {"mode": mode},
         }
@@ -533,7 +534,8 @@ def main() -> int:
         step("discussion-two-turns", s_discussion)
 
         def s_blocked_writes() -> str:
-            aid = create("writer", "writer", prompt="written by the occurrence", trigger={"source_id": "manual", "source_version": 1, "config": {}})
+            aid = create("writer", "writer", prompt="written by the occurrence", trigger={"source_id": "manual", "source_version": 1, "config": {}},
+                         extra_input={"path": "note.txt"})
             command(aid, "automation.run_now")
             rows = wait_for("the writer occurrence", lambda: done_rows(aid, 1), 60)
             check(rows[0]["status"] == "completed", f"writer occurrence {rows[0]['status']}")
@@ -542,16 +544,20 @@ def main() -> int:
             written = note.read_text() if note.exists() else ""
             # The occurrence's prompt is its user turn: the trigger line, then the prompt.
             check(written.endswith("\nwritten by the occurrence"), f"occurrence did not write its note ({written!r})")
-            out = gw.ok("POST", f"/api/gateway/automations/{aid}/discuss", {"request_id": f"acc-{uuid.uuid4()}", "occurrence_index": 1, "prompt": "overwritten by the discussion"})
-            run = wait_for("the discussion to end", lambda: (lambda r: r if r["status"] in ("completed", "failed") else None)(run_record(out["run_id"])), 60)
-            check(note.read_text() == written, "the discussion wrote into the automation's workspace")
-            output = run.get("output") if isinstance(run.get("output"), dict) else {}
-            # The write node reports the refusal in its output (success: false)
-            # or the run fails; either way nothing was written.
-            refused = run["status"] == "failed" or output.get("success") is False
-            check(refused, f"the discussion's write was not refused (run {run['status']}, output {output})")
-            reason = run.get("error") or output.get("error") or ""
-            return f"discussion write refused ({str(reason)[:80]}); note.txt unchanged"
+            out = gw.ok("POST", f"/api/gateway/automations/{aid}/discuss", {"request_id": f"acc-{uuid.uuid4()}", "occurrence_index": 1, "prompt": "written by the discussion"})
+            own = Path(out["workspace_root"])
+            check(os.path.realpath(out["mounted_workspace"]) == os.path.realpath(str(ws)) and own != ws, f"discuss answered {out}")
+            run = wait_for("discussion turn 1", lambda: (lambda r: r if r["status"] in ("completed", "failed") else None)(run_record(out["run_id"])), 60)
+            check(run["status"] == "completed" and (own / "note.txt").read_text() == "written by the discussion",
+                  "the discussion could not write in its own folder")
+            # A later turn writing INTO the automation's folder is refused.
+            start = gw.ok("POST", "/api/gateway/runs/start", {"bundle_id": BUNDLE_REF, "flow_id": "writer", "session_id": out["session_id"],
+                                                               "input_data": {"prompt": "overwrite", "path": str(note)}})
+            later = wait_for("discussion turn 2", lambda: (lambda r: r if r["status"] in ("completed", "failed") else None)(run_record(start["run_id"])), 60)
+            output = later.get("output") if isinstance(later.get("output"), dict) else {}
+            check(later["status"] == "failed" or output.get("success") is False, f"the write into the mount was not refused ({later['status']}, {output})")
+            check(note.read_text() == written, "the discussion wrote into the automation's folder")
+            return "own folder writable; the automation's folder mounted read-only (write refused, note.txt unchanged)"
 
         step("discussion-blocked-writes", s_blocked_writes)
 

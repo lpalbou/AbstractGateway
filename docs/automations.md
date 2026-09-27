@@ -479,14 +479,14 @@ until they are answered.
 
 ```text
 {"request_id": "…", "occurrence_index": 7, "prompt": "Why did memory jump here?"}
-→ {"session_id": "discussion-session:…", "run_id": "…", "session_kind": "discussion"}
+→ {"session_id": "discussion-session:…", "run_id": "…", "session_kind": "discussion",
+   "workspace_root": "<its own folder>", "mounted_workspace": "<the automation's folder>"}
 ```
 
 A discussion is a separate conversation about one occurrence. It runs the
 occurrence's workflow with its frozen inputs, your `prompt` as the new user
-turn, and the conversation up to and including that occurrence as its history
-(the automation's session in growing mode, the occurrence's own session in
-independent mode).
+turn, and the automation's conversation from occurrence 1 up to and including
+that occurrence as its history (oldest turns dropped first when it is long).
 
 - **Identity.** The discussion's run id is
   `uuid5(automation_id, "discuss:" + request_id)` and its session id is
@@ -494,8 +494,14 @@ independent mode).
   automation. The same request returns the same discussion; a different
   request with the same `request_id` on that automation answers 409
   `identity_conflict`.
-- **Read-only folder.** The discussion can read the occurrence's folder but
-  not change it: writes, edits and command execution are refused.
+- **Its own folder, the automation's mounted read-only.** The discussion
+  works in its own folder (`workspace_root`, a gateway session folder like any
+  chat's), where it can write, edit and run commands. The automation's folder
+  (`mounted_workspace`) is mounted alongside: the discussion can read it, and
+  every write into it through file tools or workflow writers is refused. Shell
+  commands run in the discussion's own folder; the mount is enforced for file
+  tools and workflow writers, not inside shell commands. Apps can show
+  "own workspace: … · automation files mounted read-only at …".
 - **Nothing flows back.** Nothing a discussion does is written into the
   automation's conversation, state or history.
 - **Tools ask.** The automation's tool grant does not apply; tools ask for
@@ -506,8 +512,9 @@ independent mode).
 
 **Continue a discussion** with `POST /api/gateway/runs/start` and its
 `session_id`. The gateway re-stamps every later turn from the discussion's
-first run, whatever the request says: the same provenance, the occurrence's
-folder mounted read-only, and the discussion's history. The history is
+first run, whatever the request says: the same provenance, the
+discussion's own folder, the automation's folder mounted read-only, and the
+discussion's history (read strictly). The history is
 provided by the gateway, so a request that sends `context.messages` in a
 discussion session is refused (400); a session whose discussion cannot be
 resolved answers 409 `session_attribution_failed`. These answers come from
