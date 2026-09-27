@@ -309,7 +309,11 @@ def automation_summary_row(svc: Any, principal: Any, controller: Any) -> Dict[st
         # The automation's folder (= definition.workspace_root): apps open it
         # from the row without fetching the definition.
         "workspace_root": base["workspace_root"],
-        "next_fire_at": base.get("next_fire_at"),
+        # The runtime's one projection: the next scheduled fire time of an
+        # active scheduled automation (also while an occurrence runs), and the
+        # occurrence in progress `{index, run_id, attempt, status}` or null.
+        "next_fire_at": base["next_fire_at"],
+        "current_occurrence": base["current_occurrence"],
         "occurrence_count": base["occurrence_count"],
         "attention": _attention_block(svc, principal, controller, waits),
         "legacy": False,

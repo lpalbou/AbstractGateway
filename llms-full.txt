@@ -5776,6 +5776,7 @@ never inherit the grant: their tools ask as in any chat.
  "trigger": {"binding_id": "…", "source_id": "schedule", "source_version": 1, "config": {…}},
  "context_mode": "independent", "workspace_root": "/…/workspaces/session-automation-…",
  "next_fire_at": "…", "occurrence_count": 6,
+ "current_occurrence": {"index": 7, "run_id": "…", "attempt": 1, "status": "running"},   // or null
  "last_occurrence": {"run_id", "index", "status", "attempts", "fired_at", "finished_at"?, "excerpt", "notify"},
  "attention": {"pending_waits": 0, "unread": false, "unseen_count": 0, "cursor": "att1:3", "items": [], "waits": []},
  "legacy": false, "revision": 1, "updated_at": "…",
@@ -5786,7 +5787,12 @@ never inherit the grant: their tools ask as in any chat.
 - `workspace_root` is the automation's folder, the same value as
   `definition.workspace_root` (an older scheduled run shows its own folder
   when it has one).
-- `next_fire_at` is present only while a tick is scheduled.
+- `next_fire_at` is the next scheduled run of an active scheduled
+  automation, also while an occurrence is running (a tick missed meanwhile
+  runs as soon as the current one ends). It is absent for a manual trigger, a
+  finished schedule, and a paused, archived, completed or failed automation.
+- `current_occurrence` is the occurrence in progress, `status` `admitted`,
+  `running` or `backoff` (waiting to retry), or `null` when none is.
 - `last_occurrence.excerpt` holds the first 280 characters of its answer.
 - `attention` is described in [Attention](#attention-and-seen); `items` and
   `waits` hold up to 20 entries each.
@@ -7603,6 +7609,8 @@ AbstractRuntime version is raised to that release when this version is published
 
 - Automation list rows carry `workspace_root` (the automation's folder), so apps can open it
   from the list.
+- Automation summaries show the next scheduled run also while an occurrence is running, and
+  the occurrence in progress (`current_occurrence`: index, run, attempt, status).
 - `GET /api/gateway/runs` turn rows carry `workspace_root`: the folder the run works in (a
   launch-folder override, a discussion's own folder), read from the run index.
 

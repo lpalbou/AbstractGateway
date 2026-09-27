@@ -836,3 +836,33 @@ def test_runs_rows_carry_the_folder_turns_execute_in(live: TestClient, tmp_path:
     assert "workspace_root" not in everything[aid]
     kids = live.get(f"/api/gateway/runs?parent_run_id={chat_id}&include_ledger_len=false", headers=HEADERS).json()["items"]
     assert kids and all("workspace_root" not in k for k in kids)
+
+
+def test_summary_passes_next_fire_at_and_current_occurrence_through(live: TestClient) -> None:
+    from abstractruntime.automation_queries import automation_summary
+
+    from abstractgateway.service import get_gateway_service
+
+    r = live.post("/api/gateway/automations", headers=HEADERS, json={
+        "request_id": "nfa", "title": "nfa", "target": {"bundle_ref": live.bundle_ref, "flow_id": "slow"},
+        "trigger": {"source_id": "schedule", "source_version": 1, "config": {"every": "1h"}}})
+    aid = r.json()["automation_id"]
+
+    def running():
+        s = live.get(f"/api/gateway/automations/{aid}", headers=HEADERS).json()["summary"]
+        return s if (s.get("current_occurrence") or {}).get("status") == "running" else None
+
+    summary = wait_until(running, timeout_s=15)             # the first tick (start_at = now) is running
+    base = automation_summary(get_gateway_service().host.run_store.load(aid))
+    assert summary["current_occurrence"] == base["current_occurrence"] and summary["current_occurrence"]["index"] == 1
+    assert summary["next_fire_at"] and summary["next_fire_at"] == base["next_fire_at"]   # present while running
+    listed = {s["automation_id"]: s for s in live.get("/api/gateway/automations", headers=HEADERS).json()["items"]}[aid]
+    assert listed["current_occurrence"] == summary["current_occurrence"] and listed["next_fire_at"] == summary["next_fire_at"]
+
+    _command(live, aid, "automation.pause", "p")
+    paused = wait_until(lambda: (lambda s: s if s["status"] == "paused" else None)(
+        live.get(f"/api/gateway/automations/{aid}", headers=HEADERS).json()["summary"]), timeout_s=10)
+    assert "next_fire_at" not in paused
+
+    idle = _create(live, request_id="idle")["summary"]        # manual trigger, nothing running
+    assert idle["current_occurrence"] is None and "next_fire_at" not in idle

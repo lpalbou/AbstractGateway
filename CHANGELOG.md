@@ -63,6 +63,8 @@ AbstractRuntime version is raised to that release when this version is published
 
 - Automation list rows carry `workspace_root` (the automation's folder), so apps can open it
   from the list.
+- Automation summaries show the next scheduled run also while an occurrence is running, and
+  the occurrence in progress (`current_occurrence`: index, run, attempt, status).
 - `GET /api/gateway/runs` turn rows carry `workspace_root`: the folder the run works in (a
   launch-folder override, a discussion's own folder), read from the run index.
 
