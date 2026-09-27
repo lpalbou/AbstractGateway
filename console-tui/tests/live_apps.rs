@@ -14,16 +14,19 @@ use std::time::{Duration, Instant};
 
 use abstractgateway_console::api::GatewayClient;
 use abstractgateway_console::store::apps::{
-    app_error_note, primary_verb, secondary_verbs, AppJob, AppLog, AppOpenLink, AppVerb, AppsOverview,
+    app_error_note, primary_verb, secondary_verbs, AppJob, AppLog, AppOpenLink, AppVerb,
+    AppsOverview,
 };
 
 fn client() -> GatewayClient {
-    let url = std::env::var("ABSTRACTGATEWAY_URL").expect("set ABSTRACTGATEWAY_URL (a hermetic gateway)");
+    let url =
+        std::env::var("ABSTRACTGATEWAY_URL").expect("set ABSTRACTGATEWAY_URL (a hermetic gateway)");
     assert!(
         !url.ends_with(":8080") && !url.ends_with(":8081"),
         "refusing {url}: the live apps tests install and start apps — hermetic gateways only"
     );
-    let token = std::env::var("ABSTRACTGATEWAY_AUTH_TOKEN").expect("set ABSTRACTGATEWAY_AUTH_TOKEN");
+    let token =
+        std::env::var("ABSTRACTGATEWAY_AUTH_TOKEN").expect("set ABSTRACTGATEWAY_AUTH_TOKEN");
     let c = GatewayClient::new(&url, Some(&token));
     c.ping().expect("gateway answers /ping");
     c
@@ -36,12 +39,22 @@ fn overview(c: &GatewayClient, latest: bool) -> AppsOverview {
 fn wait_job(c: &GatewayClient, id: &str, limit: Duration) -> AppJob {
     let t0 = Instant::now();
     loop {
-        let j = AppJob::from_value(c.apps_job(id).expect("GET /apps/jobs/{id}").get("job").unwrap()).unwrap();
+        let j = AppJob::from_value(
+            c.apps_job(id)
+                .expect("GET /apps/jobs/{id}")
+                .get("job")
+                .unwrap(),
+        )
+        .unwrap();
         println!("  job {id}: {}", j.progress_line("job"));
         if !j.is_active() {
             return j;
         }
-        assert!(t0.elapsed() < limit, "job {id} still {} after {limit:?}", j.state);
+        assert!(
+            t0.elapsed() < limit,
+            "job {id} still {} after {limit:?}",
+            j.state
+        );
         std::thread::sleep(Duration::from_secs(1));
     }
 }
@@ -52,8 +65,14 @@ fn wait_job(c: &GatewayClient, id: &str, limit: Duration) -> AppJob {
 fn live_apps_list_states_and_verbs() {
     let c = client();
     let o = overview(&c, true);
-    println!("node: available={} version={:?} source={}", o.node.available, o.node.version, o.node.source);
-    println!("registry reachable={:?} install_allowed={} apps_host={:?}", o.registry_reachable, o.install_allowed, o.apps_host);
+    println!(
+        "node: available={} version={:?} source={}",
+        o.node.available, o.node.version, o.node.source
+    );
+    println!(
+        "registry reachable={:?} install_allowed={} apps_host={:?}",
+        o.registry_reachable, o.install_allowed, o.apps_host
+    );
     assert!(!o.apps.is_empty(), "the gateway lists apps");
     for a in &o.apps {
         let p = primary_verb(a, a.active_job.as_ref(), true);
@@ -75,11 +94,19 @@ fn live_apps_list_states_and_verbs() {
     // An app started outside the gateway: the screen offers no Stop, and
     // the route itself refuses — the screen's note keeps its words.
     if let Some(ext) = o.apps.iter().find(|a| a.is_external()) {
-        let e = c.apps_stop(&ext.id).expect_err("stop of an external app is refused");
+        let e = c
+            .apps_stop(&ext.id)
+            .expect_err("stop of an external app is refused");
         let note = app_error_note(&format!("stop {}", ext.name), &e);
         println!("refusal note: {} | hint: {:?}", note.text, note.hint);
         assert_eq!(e.status(), Some(409));
-        assert_eq!(e.body.as_ref().and_then(|b| b.get("reason")).and_then(|r| r.as_str()), Some("started_outside_gateway"));
+        assert_eq!(
+            e.body
+                .as_ref()
+                .and_then(|b| b.get("reason"))
+                .and_then(|r| r.as_str()),
+            Some("started_outside_gateway")
+        );
     }
 }
 
@@ -90,18 +117,35 @@ fn live_apps_install_then_cancel() {
     let c = client();
     let app = "observer".to_string();
     let before = overview(&c, false);
-    let row = before.apps.iter().find(|a| a.id == app).expect("app listed");
-    assert!(!row.installed, "{app} must not be installed on this hermetic gateway");
+    let row = before
+        .apps
+        .iter()
+        .find(|a| a.id == app)
+        .expect("app listed");
+    assert!(
+        !row.installed,
+        "{app} must not be installed on this hermetic gateway"
+    );
     let v = c.apps_install(&app).expect("POST /apps/{id}/install");
     let job = AppJob::from_value(v.get("job").unwrap()).unwrap();
-    println!("install job {} started (created={:?})", job.id, v.get("created"));
+    println!(
+        "install job {} started (created={:?})",
+        job.id,
+        v.get("created")
+    );
     let v = c.apps_job_cancel(&job.id).expect("POST cancel");
-    println!("cancel answered: {}", AppJob::from_value(v.get("job").unwrap()).unwrap().state);
+    println!(
+        "cancel answered: {}",
+        AppJob::from_value(v.get("job").unwrap()).unwrap().state
+    );
     let end = wait_job(&c, &job.id, Duration::from_secs(120));
     println!("job {} ended: {} parts={:?}", end.id, end.state, end.parts);
     assert_eq!(end.state, "cancelled");
     let after = overview(&c, false);
-    assert!(!after.apps.iter().find(|a| a.id == app).unwrap().installed, "cancelled: not installed");
+    assert!(
+        !after.apps.iter().find(|a| a.id == app).unwrap().installed,
+        "cancelled: not installed"
+    );
 }
 
 /// Install → start → open (one-time link) → log → stop, each verified by
@@ -112,29 +156,70 @@ fn live_apps_lifecycle() {
     let c = client();
     let app = "code".to_string();
     let o = overview(&c, true);
-    let row = o.apps.iter().find(|a| a.id == app).expect("app listed").clone();
-    assert!(!row.installed && !row.is_external(), "{app} must be absent on this hermetic gateway: {row:?}");
-    assert_eq!(primary_verb(&row, None, true).unwrap().verb, AppVerb::Install);
+    let row = o
+        .apps
+        .iter()
+        .find(|a| a.id == app)
+        .expect("app listed")
+        .clone();
+    assert!(
+        !row.installed && !row.is_external(),
+        "{app} must be absent on this hermetic gateway: {row:?}"
+    );
+    assert_eq!(
+        primary_verb(&row, None, true).unwrap().verb,
+        AppVerb::Install
+    );
 
     let v = c.apps_install(&app).expect("install");
     let job = AppJob::from_value(v.get("job").unwrap()).unwrap();
     let end = wait_job(&c, &job.id, Duration::from_secs(600));
-    println!("install ended {} result_version={:?} terminal={} parts={:?}", end.state, end.result_version, end.result_terminal, end.parts);
-    assert_eq!(end.state, "succeeded", "error={:?} log={}", end.error, end.log_text());
-    let row = overview(&c, false).apps.into_iter().find(|a| a.id == app).unwrap();
-    println!("after install: status={} version={:?} actions={:?}", row.status, row.version, row.actions);
+    println!(
+        "install ended {} result_version={:?} terminal={} parts={:?}",
+        end.state, end.result_version, end.result_terminal, end.parts
+    );
+    assert_eq!(
+        end.state,
+        "succeeded",
+        "error={:?} log={}",
+        end.error,
+        end.log_text()
+    );
+    let row = overview(&c, false)
+        .apps
+        .into_iter()
+        .find(|a| a.id == app)
+        .unwrap();
+    println!(
+        "after install: status={} version={:?} actions={:?}",
+        row.status, row.version, row.actions
+    );
     assert!(row.installed && !row.running);
     let p = primary_verb(&row, None, true).unwrap();
-    assert_eq!((p.verb, p.available.is_ok()), (AppVerb::Open, true), "Open starts it first");
+    assert_eq!(
+        (p.verb, p.available.is_ok()),
+        (AppVerb::Open, true),
+        "Open starts it first"
+    );
 
     let v = c.apps_launch(&app).expect("launch");
-    println!("launch answered running={:?} url={:?}", v["app"]["running"], v["app"]["url"]);
-    let row = overview(&c, false).apps.into_iter().find(|a| a.id == app).unwrap();
+    println!(
+        "launch answered running={:?} url={:?}",
+        v["app"]["running"], v["app"]["url"]
+    );
+    let row = overview(&c, false)
+        .apps
+        .into_iter()
+        .find(|a| a.id == app)
+        .unwrap();
     assert!(row.running, "GET /apps says running: {row:?}");
 
     let v = c.apps_open(&app, None).expect("open");
     let link = AppOpenLink::from_value(c.base_url(), &app, &row.name, false, &v).expect("open_url");
-    println!("one-time link: {} (app {:?}, {:?}s)\n  hint: {:?}", link.link, link.app_url, link.expires_in_s, link.tunnel_hint);
+    println!(
+        "one-time link: {} (app {:?}, {:?}s)\n  hint: {:?}",
+        link.link, link.app_url, link.expires_in_s, link.tunnel_hint
+    );
     assert!(link.link.contains("/apps/handover/"));
 
     let v = c.apps_logs(&app, 200).expect("logs");
@@ -143,7 +228,11 @@ fn live_apps_lifecycle() {
 
     let v = c.apps_stop(&app).expect("stop");
     println!("stop answered running={:?}", v["app"]["running"]);
-    let row = overview(&c, false).apps.into_iter().find(|a| a.id == app).unwrap();
+    let row = overview(&c, false)
+        .apps
+        .into_iter()
+        .find(|a| a.id == app)
+        .unwrap();
     assert!(!row.running, "GET /apps says stopped: {row:?}");
     // Open of a stopped app without starting it: the route's own refusal.
     let e = c.apps_open(&app, None).expect_err("not running");

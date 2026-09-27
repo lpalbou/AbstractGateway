@@ -71,7 +71,8 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let tt = *t;
 
     super::util::clamp_selection(cx, apps.sel, move || {
-        apps.overview.with(|o| o.ready().map(|d| d.apps.len()).unwrap_or(0))
+        apps.overview
+            .with(|o| o.ready().map(|d| d.apps.len()).unwrap_or(0))
     });
 
     // A minted sign-in link opens its modal (here, where the operator is:
@@ -127,31 +128,48 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             .border(BorderKind::Rounded)
             .title("Apps — open in your browser, already signed in to this gateway")
             .fill(t.surface)
-            .layout(LayoutStyle::column().gap(0).grow(1.0).min_h(6).padding(Edges::all(1)))
-            .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), move |gcx| {
-                let conn = store.conn.get();
-                let data = apps.overview.get();
-                let admin = is_admin(&conn);
-                match &data {
-                    // The web's "This gateway cannot manage apps right now":
-                    // the honest failure kind, never a guessed list.
-                    Loadable::Failed(e) => Element::new()
-                        .style(LayoutStyle::column())
-                        .child(line(vec![span_bold("This gateway cannot manage apps right now.", tt.warn)]))
-                        .child(super::util::error_panel_conn(&tt, e, &conn, Some("r checks again")))
-                        .build(),
-                    Loadable::NotAsked => line(vec![span(
-                        "— not loaded yet (connect first, or press r to check)",
-                        tt.text_muted,
-                    )]),
-                    Loadable::Loading => abstracttui::widgets::Spinner::new()
-                        .frame(store.tick.get())
-                        .label("looking for the apps…")
-                        .element(&tt)
-                        .build(),
-                    Loadable::Ready(d) => ready_view(gcx, &ctx_body, &tt, d, admin),
-                }
-            }))
+            .layout(
+                LayoutStyle::column()
+                    .gap(0)
+                    .grow(1.0)
+                    .min_h(6)
+                    .padding(Edges::all(1)),
+            )
+            .child(dyn_view_scoped(
+                LayoutStyle::default().grow(1.0),
+                move |gcx| {
+                    let conn = store.conn.get();
+                    let data = apps.overview.get();
+                    let admin = is_admin(&conn);
+                    match &data {
+                        // The web's "This gateway cannot manage apps right now":
+                        // the honest failure kind, never a guessed list.
+                        Loadable::Failed(e) => Element::new()
+                            .style(LayoutStyle::column())
+                            .child(line(vec![span_bold(
+                                "This gateway cannot manage apps right now.",
+                                tt.warn,
+                            )]))
+                            .child(super::util::error_panel_conn(
+                                &tt,
+                                e,
+                                &conn,
+                                Some("r checks again"),
+                            ))
+                            .build(),
+                        Loadable::NotAsked => line(vec![span(
+                            "— not loaded yet (connect first, or press r to check)",
+                            tt.text_muted,
+                        )]),
+                        Loadable::Loading => abstracttui::widgets::Spinner::new()
+                            .frame(store.tick.get())
+                            .label("looking for the apps…")
+                            .element(&tt)
+                            .build(),
+                        Loadable::Ready(d) => ready_view(gcx, &ctx_body, &tt, d, admin),
+                    }
+                },
+            ))
             .element(t)
             .build(),
     )
@@ -171,7 +189,10 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &AppsOverview, admin: bool)
             .or_else(|| fallback.cloned())
     };
     let mut col = Element::new().style(LayoutStyle::column().gap(0).grow(1.0));
-    let gw = d.gateway_url.clone().unwrap_or_else(|| "this gateway".into());
+    let gw = d
+        .gateway_url
+        .clone()
+        .unwrap_or_else(|| "this gateway".into());
     let mut intro = vec![
         span("Apps talk to ", t.text_muted),
         span(gw, t.text),
@@ -188,28 +209,61 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &AppsOverview, admin: bool)
         ));
     }
     col = col.child(line(intro));
-    col = col.child(node_view(t, d, job_of(NODE_KEY, d.node.active_job.as_ref()), apps.note_for(NODE_KEY), apps.is_pending(NODE_KEY), admin));
+    col = col.child(node_view(
+        t,
+        d,
+        job_of(NODE_KEY, d.node.active_job.as_ref()),
+        apps.note_for(NODE_KEY),
+        apps.is_pending(NODE_KEY),
+        admin,
+    ));
     if d.registry_reachable == Some(false) {
         col = col.child(line(vec![
             span_bold("The app store (npm) is not reachable. ", t.warn),
-            span("Installed apps keep working; installing needs the internet.", t.text_muted),
+            span(
+                "Installed apps keep working; installing needs the internet.",
+                t.text_muted,
+            ),
         ]));
     }
     if d.apps.is_empty() {
         return col
-            .child(line(vec![span("∅ this gateway lists no apps", t.text_muted)]))
+            .child(line(vec![span(
+                "∅ this gateway lists no apps",
+                t.text_muted,
+            )]))
             .build();
     }
     col = col.child(apps_table(cx, ctx, t, d, admin, &job_of));
     if let Some(row) = d.apps.get(apps.sel.get()) {
         let job = job_of(&app_key(&row.id), row.active_job.as_ref());
-        let tjob = job_of(&tui_key(&row.id), row.tui.as_ref().and_then(|x| x.active_job.as_ref()));
-        col = col.child(detail_view(cx, t, row, job.as_ref(), tjob.as_ref(), apps.note_for(&app_key(&row.id)), apps.note_for(&tui_key(&row.id)), apps.is_pending(&app_key(&row.id)) || apps.is_pending(&tui_key(&row.id)), admin));
+        let tjob = job_of(
+            &tui_key(&row.id),
+            row.tui.as_ref().and_then(|x| x.active_job.as_ref()),
+        );
+        col = col.child(detail_view(
+            cx,
+            t,
+            row,
+            job.as_ref(),
+            tjob.as_ref(),
+            apps.note_for(&app_key(&row.id)),
+            apps.note_for(&tui_key(&row.id)),
+            apps.is_pending(&app_key(&row.id)) || apps.is_pending(&tui_key(&row.id)),
+            admin,
+        ));
     }
     col.build()
 }
 
-fn node_view(t: &TokenSet, d: &AppsOverview, job: Option<AppJob>, note: Option<AppNote>, pending: bool, admin: bool) -> View {
+fn node_view(
+    t: &TokenSet,
+    d: &AppsOverview,
+    job: Option<AppJob>,
+    note: Option<AppNote>,
+    pending: bool,
+    admin: bool,
+) -> View {
     let n = &d.node;
     let mut spans = vec![span_bold("Node.js  ", t.text)];
     let active = job.as_ref().map(AppJob::is_active).unwrap_or(false);
@@ -229,11 +283,20 @@ fn node_view(t: &TokenSet, d: &AppsOverview, job: Option<AppJob>, note: Option<A
         _ => {}
     }
     spans.push(span("  — the engine the browser apps run on", t.text_faint));
-    let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0)).child(line(spans));
+    let mut col = Element::new()
+        .style(LayoutStyle::column().gap(0).shrink(0.0))
+        .child(line(spans));
     if let Some(j) = job.as_ref().filter(|j| j.is_active()) {
-        col = col.child(line(vec![span(format!("  ⟳ {}", j.progress_line("Installing Node.js")), t.info)]));
         col = col.child(line(vec![span(
-            if admin { "  n cancels" } else { "  only an admin can cancel" },
+            format!("  ⟳ {}", j.progress_line("Installing Node.js")),
+            t.info,
+        )]));
+        col = col.child(line(vec![span(
+            if admin {
+                "  n cancels"
+            } else {
+                "  only an admin can cancel"
+            },
             t.text_faint,
         )]));
     } else if !n.available {
@@ -244,7 +307,13 @@ fn node_view(t: &TokenSet, d: &AppsOverview, job: Option<AppJob>, note: Option<A
         let action = if pending {
             "  starting…".to_string()
         } else if !n.install_available {
-            format!("  Install is not available here{}", n.message.as_ref().map(|m| format!(": {m}")).unwrap_or_default())
+            format!(
+                "  Install is not available here{}",
+                n.message
+                    .as_ref()
+                    .map(|m| format!(": {m}"))
+                    .unwrap_or_default()
+            )
         } else if admin {
             "  n installs Node.js now".to_string()
         } else {
@@ -274,9 +343,17 @@ fn apps_table(
             let job = job_of(&app_key(&a.id), a.active_job.as_ref());
             let active = job.as_ref().map(AppJob::is_active).unwrap_or(false);
             let (label, _) = status_label(a, active);
-            let status = if a.is_external() { format!("{label} (outside)") } else { label };
+            let status = if a.is_external() {
+                format!("{label} (outside)")
+            } else {
+                label
+            };
             let action = match primary_verb(a, job.as_ref(), admin) {
-                Some(v) if v.available.is_ok() => format!("{} {}", if v.verb == AppVerb::Cancel { "c" } else { "o" }, v.label),
+                Some(v) if v.available.is_ok() => format!(
+                    "{} {}",
+                    if v.verb == AppVerb::Cancel { "c" } else { "o" },
+                    v.label
+                ),
                 Some(v) => format!("({} — unavailable)", v.label),
                 None => "—".into(),
             };
@@ -319,7 +396,10 @@ fn apps_table(
 fn note_lines(mut col: Element, t: &TokenSet, note: &AppNote, indent: usize) -> Element {
     let pad = " ".repeat(indent);
     let tone = note.tone.unwrap_or(Tone::Info);
-    col = col.child(line(vec![span_bold(format!("{pad}{}", note.text), ink(t, tone))]));
+    col = col.child(line(vec![span_bold(
+        format!("{pad}{}", note.text),
+        ink(t, tone),
+    )]));
     if let Some(h) = &note.hint {
         col = col.child(line(vec![span(format!("{pad}{h}"), t.text_muted)]));
     }
@@ -330,7 +410,10 @@ fn note_lines(mut col: Element, t: &TokenSet, note: &AppNote, indent: usize) -> 
         ]));
     }
     if note.details.is_some() {
-        col = col.child(line(vec![span(format!("{pad}(y copies the details)"), t.text_faint)]));
+        col = col.child(line(vec![span(
+            format!("{pad}(y copies the details)"),
+            t.text_faint,
+        )]));
     }
     col
 }
@@ -360,21 +443,34 @@ fn detail_view(
     ]));
     // The body: only what the operator must see now (web card body).
     if let Some(j) = job.filter(|j| j.is_active()) {
-        col = col.child(line(vec![span(format!("⟳ {}", j.progress_line(&format!("Installing {}", row.name))), t.info)]));
+        col = col.child(line(vec![span(
+            format!("⟳ {}", j.progress_line(&format!("Installing {}", row.name))),
+            t.info,
+        )]));
         for p in &j.parts {
-            col = col.child(line(vec![span(format!("  {} · {}", p.label, part_word(&p.state)), t.text_muted)]));
+            col = col.child(line(vec![span(
+                format!("  {} · {}", p.label, part_word(&p.state)),
+                t.text_muted,
+            )]));
         }
     } else if let Some(j) = job.filter(|j| j.state == "failed") {
         let err = j.error.clone().unwrap_or_default();
         col = col.child(line(vec![span_bold(
-            if err.message.is_empty() { "The install did not finish.".to_string() } else { err.message },
+            if err.message.is_empty() {
+                "The install did not finish.".to_string()
+            } else {
+                err.message
+            },
             t.error,
         )]));
         if let Some(h) = err.hint {
             col = col.child(line(vec![span(h, t.text_muted)]));
         }
         for p in &j.parts {
-            col = col.child(line(vec![span(format!("  {} · {}", p.label, part_word(&p.state)), t.text_muted)]));
+            col = col.child(line(vec![span(
+                format!("  {} · {}", p.label, part_word(&p.state)),
+                t.text_muted,
+            )]));
         }
         col = col.child(line(vec![span("(y copies the install log)", t.text_faint)]));
     } else if matches!(row.status.as_str(), "crashed" | "crash_loop") {
@@ -395,15 +491,28 @@ fn detail_view(
     }
     if let Some(desk) = &row.desktop {
         if row.installed && desk.launch_blocked.as_deref() == Some("other_computer") {
-            col = col.child(line(vec![span(desk.launch_blocked_reason.clone().unwrap_or_default(), t.text_muted)]));
+            col = col.child(line(vec![span(
+                desk.launch_blocked_reason.clone().unwrap_or_default(),
+                t.text_muted,
+            )]));
         }
     }
     if let Some(j) = tjob.filter(|j| j.is_active()) {
-        col = col.child(line(vec![span(format!("⟳ {}", j.progress_line(&format!("Installing {} for the terminal", row.name))), t.info)]));
+        col = col.child(line(vec![span(
+            format!(
+                "⟳ {}",
+                j.progress_line(&format!("Installing {} for the terminal", row.name))
+            ),
+            t.info,
+        )]));
     } else if let Some(j) = tjob.filter(|j| j.state == "failed") {
         let err = j.error.clone().unwrap_or_default();
         col = col.child(line(vec![span_bold(
-            if err.message.is_empty() { format!("{}'s terminal app did not install.", row.name) } else { err.message },
+            if err.message.is_empty() {
+                format!("{}'s terminal app did not install.", row.name)
+            } else {
+                err.message
+            },
             t.error,
         )]));
     }
@@ -429,7 +538,9 @@ fn detail_view(
                 if !on.is_empty() {
                     on.push(span("  ·  ", t.text_faint));
                 }
-                let k = if v.verb == AppVerb::Cancel && primary_verb(row, job, admin).map(|p| p.verb) == Some(AppVerb::Cancel) {
+                let k = if v.verb == AppVerb::Cancel
+                    && primary_verb(row, job, admin).map(|p| p.verb) == Some(AppVerb::Cancel)
+                {
                     "c"
                 } else {
                     v.verb.key()
@@ -475,7 +586,10 @@ fn detail_view(
     }
     if let Some(t2) = &row.tui {
         if t2.installed {
-            facts.push(format!("terminal {}", t2.version.clone().unwrap_or_else(|| "installed".into())));
+            facts.push(format!(
+                "terminal {}",
+                t2.version.clone().unwrap_or_else(|| "installed".into())
+            ));
         }
     }
     if let Some(dk) = &row.desktop {
@@ -489,28 +603,46 @@ fn detail_view(
     if let Some(t2) = &row.tui {
         if t2.installed && t2.launch_available {
             if let Some(c) = &t2.command {
-                col = col.child(line(vec![span("terminal: ", t.text_faint), span(c.clone(), t.text_muted)]));
+                col = col.child(line(vec![
+                    span("terminal: ", t.text_faint),
+                    span(c.clone(), t.text_muted),
+                ]));
             }
         } else if t2.installed {
             if let Some(c) = &t2.command {
-                col = col.child(line(vec![span("terminal, on the other computer: ", t.text_faint), span(c.clone(), t.text_muted)]));
+                col = col.child(line(vec![
+                    span("terminal, on the other computer: ", t.text_faint),
+                    span(c.clone(), t.text_muted),
+                ]));
             }
             if let Some(c) = &t2.signin_command {
-                col = col.child(line(vec![span("first time there, sign in once: ", t.text_faint), span(c.clone(), t.text_muted)]));
+                col = col.child(line(vec![
+                    span("first time there, sign in once: ", t.text_faint),
+                    span(c.clone(), t.text_muted),
+                ]));
             }
         } else if !t2.install_available && t2.install_method == "cargo" {
             if let Some(c) = &t2.install_command {
-                col = col.child(line(vec![span("terminal version needs the Rust toolchain: ", t.text_faint), span(c.clone(), t.text_muted)]));
+                col = col.child(line(vec![
+                    span("terminal version needs the Rust toolchain: ", t.text_faint),
+                    span(c.clone(), t.text_muted),
+                ]));
             }
         }
     }
     if let Some(dk) = &row.desktop {
         if let Some(c) = &dk.launch_command {
-            col = col.child(line(vec![span("launch command: ", t.text_faint), span(c.clone(), t.text_muted)]));
+            col = col.child(line(vec![
+                span("launch command: ", t.text_faint),
+                span(c.clone(), t.text_muted),
+            ]));
         }
         if !row.installed {
             if let Some(c) = &dk.install_command {
-                col = col.child(line(vec![span("install command: ", t.text_faint), span(c.clone(), t.text_muted)]));
+                col = col.child(line(vec![
+                    span("install command: ", t.text_faint),
+                    span(c.clone(), t.text_muted),
+                ]));
             }
         }
     }
@@ -524,15 +656,22 @@ fn detail_view(
 fn run_key(cx: Scope, ctx: &Ctx, verb: Option<AppVerb>) {
     let store = ctx.store;
     let Some(row) = selected(ctx) else {
-        store.notice.set(Some(match store.apps.overview.get_untracked() {
-            Loadable::Ready(_) => "no app selected".into(),
-            _ => "the apps are not loaded — r checks".into(),
-        }));
+        store
+            .notice
+            .set(Some(match store.apps.overview.get_untracked() {
+                Loadable::Ready(_) => "no app selected".into(),
+                _ => "the apps are not loaded — r checks".into(),
+            }));
         return;
     };
     let admin = store.conn.with_untracked(is_admin);
-    let job = store.apps.job_for(&app_key(&row.id), row.active_job.as_ref());
-    let tjob = store.apps.job_for(&tui_key(&row.id), row.tui.as_ref().and_then(|t| t.active_job.as_ref()));
+    let job = store
+        .apps
+        .job_for(&app_key(&row.id), row.active_job.as_ref());
+    let tjob = store.apps.job_for(
+        &tui_key(&row.id),
+        row.tui.as_ref().and_then(|t| t.active_job.as_ref()),
+    );
     let state = match verb {
         None => primary_verb(&row, job.as_ref(), admin),
         Some(v) => primary_verb(&row, job.as_ref(), admin)
@@ -543,8 +682,12 @@ fn run_key(cx: Scope, ctx: &Ctx, verb: Option<AppVerb>) {
     let Some(state) = state else {
         store.notice.set(Some(match verb {
             Some(AppVerb::Cancel) => format!("{}: no install is running", row.name),
-            Some(AppVerb::CancelTerminal) => format!("{}: no terminal install is running", row.name),
-            Some(AppVerb::OpenTerminal | AppVerb::InstallTerminal) => format!("{} has no terminal version", row.name),
+            Some(AppVerb::CancelTerminal) => {
+                format!("{}: no terminal install is running", row.name)
+            }
+            Some(AppVerb::OpenTerminal | AppVerb::InstallTerminal) => {
+                format!("{} has no terminal version", row.name)
+            }
             Some(AppVerb::Install) => format!("{} is already installed", row.name),
             Some(v) => format!("{}: {v:?} is not offered for this app", row.name),
             None => format!("{}: nothing to do", row.name),
@@ -552,15 +695,21 @@ fn run_key(cx: Scope, ctx: &Ctx, verb: Option<AppVerb>) {
         return;
     };
     if let Err(why) = &state.available {
-        store.notice.set(Some(format!("{} — {}: {why}", row.name, state.label)));
+        store
+            .notice
+            .set(Some(format!("{} — {}: {why}", row.name, state.label)));
         return;
     }
     let pending_key = match state.verb {
-        AppVerb::OpenTerminal | AppVerb::InstallTerminal | AppVerb::CancelTerminal => tui_key(&row.id),
+        AppVerb::OpenTerminal | AppVerb::InstallTerminal | AppVerb::CancelTerminal => {
+            tui_key(&row.id)
+        }
         _ => app_key(&row.id),
     };
     if store.apps.is_pending(&pending_key) {
-        store.notice.set(Some(format!("{}: already working on it", row.name)));
+        store
+            .notice
+            .set(Some(format!("{}: already working on it", row.name)));
         return;
     }
     let act = |c: &Ctx, verb: AppVerb, path: Option<String>, start_first: bool| {
@@ -573,14 +722,31 @@ fn run_key(cx: Scope, ctx: &Ctx, verb: Option<AppVerb>) {
         })
     };
     match state.verb {
-        AppVerb::Open => act(ctx, AppVerb::Open, state.path.clone(), row.installed && !row.running),
-        AppVerb::DesktopOpen | AppVerb::Start | AppVerb::OpenTerminal => act(ctx, state.verb, None, false),
+        AppVerb::Open => act(
+            ctx,
+            AppVerb::Open,
+            state.path.clone(),
+            row.installed && !row.running,
+        ),
+        AppVerb::DesktopOpen | AppVerb::Start | AppVerb::OpenTerminal => {
+            act(ctx, state.verb, None, false)
+        }
         AppVerb::Log => open_log_modal(cx, ctx, &row),
         AppVerb::Cancel | AppVerb::CancelTerminal => {
-            let (key, j) = if state.verb == AppVerb::Cancel { (app_key(&row.id), job) } else { (tui_key(&row.id), tjob) };
+            let (key, j) = if state.verb == AppVerb::Cancel {
+                (app_key(&row.id), job)
+            } else {
+                (tui_key(&row.id), tjob)
+            };
             match j.filter(AppJob::is_active) {
-                Some(j) => ctx.send(Cmd::CancelAppJob { key, name: row.name.clone(), job_id: j.id }),
-                None => store.notice.set(Some(format!("{}: no install is running", row.name))),
+                Some(j) => ctx.send(Cmd::CancelAppJob {
+                    key,
+                    name: row.name.clone(),
+                    job_id: j.id,
+                }),
+                None => store
+                    .notice
+                    .set(Some(format!("{}: no install is running", row.name))),
             }
         }
         AppVerb::Stop => {
@@ -589,11 +755,20 @@ fn run_key(cx: Scope, ctx: &Ctx, verb: Option<AppVerb>) {
             confirm_danger(
                 cx,
                 ctx.ui,
-                format!("Stop {}? Browser tabs open on it lose their connection until it starts again.", row.name),
+                format!(
+                    "Stop {}? Browser tabs open on it lose their connection until it starts again.",
+                    row.name
+                ),
                 &format!("Stop {}", row.name),
                 "Keep it running",
                 move || {
-                    c.send(Cmd::AppAct { app_id: r.id.clone(), name: r.name.clone(), verb: AppVerb::Stop, path: None, start_first: false })
+                    c.send(Cmd::AppAct {
+                        app_id: r.id.clone(),
+                        name: r.name.clone(),
+                        verb: AppVerb::Stop,
+                        path: None,
+                        start_first: false,
+                    })
                 },
             );
         }
@@ -634,7 +809,13 @@ fn run_key(cx: Scope, ctx: &Ctx, verb: Option<AppVerb>) {
                 move |outcome| {
                     if let ChoiceOutcome::Answered(a) = outcome {
                         if a.selected.iter().any(|s| s == "go") {
-                            c.send(Cmd::AppAct { app_id: r.id.clone(), name: r.name.clone(), verb, path: None, start_first: false });
+                            c.send(Cmd::AppAct {
+                                app_id: r.id.clone(),
+                                name: r.name.clone(),
+                                verb,
+                                path: None,
+                                start_first: false,
+                            });
                         }
                     }
                 },
@@ -647,23 +828,34 @@ fn run_key(cx: Scope, ctx: &Ctx, verb: Option<AppVerb>) {
 fn node_key(cx: Scope, ctx: &Ctx) {
     let store = ctx.store;
     let Some(d) = store.apps.overview.with_untracked(|o| o.ready().cloned()) else {
-        store.notice.set(Some("the apps are not loaded — r checks".into()));
+        store
+            .notice
+            .set(Some("the apps are not loaded — r checks".into()));
         return;
     };
     let admin = store.conn.with_untracked(is_admin);
     let job = store.apps.job_for(NODE_KEY, d.node.active_job.as_ref());
     if let Some(j) = job.filter(AppJob::is_active) {
         if !admin {
-            store.notice.set(Some("Node.js install: only an admin can cancel".into()));
+            store
+                .notice
+                .set(Some("Node.js install: only an admin can cancel".into()));
             return;
         }
-        ctx.send(Cmd::CancelAppJob { key: NODE_KEY.into(), name: "Node.js".into(), job_id: j.id });
+        ctx.send(Cmd::CancelAppJob {
+            key: NODE_KEY.into(),
+            name: "Node.js".into(),
+            job_id: j.id,
+        });
         return;
     }
     if d.node.available {
         store.notice.set(Some(format!(
             "Node.js is ready{} — nothing to install",
-            d.node.version.map(|v| format!(" ({v})")).unwrap_or_default()
+            d.node
+                .version
+                .map(|v| format!(" ({v})"))
+                .unwrap_or_default()
         )));
         return;
     }
@@ -675,21 +867,27 @@ fn node_key(cx: Scope, ctx: &Ctx) {
         return;
     }
     if !admin {
-        store.notice.set(Some("Install Node.js: only an admin can install Node.js".into()));
+        store.notice.set(Some(
+            "Install Node.js: only an admin can install Node.js".into(),
+        ));
         return;
     }
     if store.apps.is_pending(NODE_KEY) {
-        store.notice.set(Some("Node.js: already working on it".into()));
+        store
+            .notice
+            .set(Some("Node.js: already working on it".into()));
         return;
     }
     let c = ctx.clone();
     open_prompt(
         cx,
         ctx.ui,
-        ChoicePrompt::new("Install Node.js into the gateway's own folder? About 56 MB, no password, no terminal.")
-            .option("go", "Install Node.js")
-            .option("keep", "Not now")
-            .initial("go"),
+        ChoicePrompt::new(
+            "Install Node.js into the gateway's own folder? About 56 MB, no password, no terminal.",
+        )
+        .option("go", "Install Node.js")
+        .option("keep", "Not now")
+        .initial("go"),
         move |outcome| {
             if let ChoiceOutcome::Answered(a) = outcome {
                 if a.selected.iter().any(|s| s == "go") {
@@ -705,7 +903,9 @@ fn node_key(cx: Scope, ctx: &Ctx) {
 fn copy_menu(cx: Scope, ctx: &Ctx) {
     let store = ctx.store;
     let Some(row) = selected(ctx) else {
-        store.notice.set(Some("no app selected — nothing to copy".into()));
+        store
+            .notice
+            .set(Some("no app selected — nothing to copy".into()));
         return;
     };
     let note = store.apps.note_for(&app_key(&row.id));
@@ -718,7 +918,9 @@ fn copy_menu(cx: Scope, ctx: &Ctx) {
             }
         }
     }
-    let job = store.apps.job_for(&app_key(&row.id), row.active_job.as_ref());
+    let job = store
+        .apps
+        .job_for(&app_key(&row.id), row.active_job.as_ref());
     if let Some(j) = job.filter(|j| !j.is_active()) {
         let log = j.log_text();
         if !log.is_empty() {
@@ -731,13 +933,19 @@ fn copy_menu(cx: Scope, ctx: &Ctx) {
         }
     }
     if items.is_empty() {
-        store.notice.set(Some(format!("{}: nothing to copy", row.name)));
+        store
+            .notice
+            .set(Some(format!("{}: nothing to copy", row.name)));
         return;
     }
     let mut prompt = ChoicePrompt::new(format!("Copy from {}", row.name));
     for (i, (label, value)) in items.iter().enumerate() {
         let first = value.lines().next().unwrap_or("");
-        prompt = prompt.option_detail(i.to_string(), label.clone(), super::util::ellipsize(first, 90));
+        prompt = prompt.option_detail(
+            i.to_string(),
+            label.clone(),
+            super::util::ellipsize(first, 90),
+        );
     }
     prompt = prompt.option("keep", "Nothing");
     open_prompt(cx, ctx.ui, prompt, move |outcome| {
@@ -764,7 +972,11 @@ fn open_link_modal(cx: Scope, ctx: &Ctx, link: AppOpenLink) {
         let wrap_w = 88usize;
         let mut col = Element::new().style(LayoutStyle::column().gap(0));
         col = col.child(line(vec![span_bold(
-            format!("{}{} — signed-in link", link.name, if link.started { " started" } else { "" }),
+            format!(
+                "{}{} — signed-in link",
+                link.name,
+                if link.started { " started" } else { "" }
+            ),
             t.accent,
         )]));
         col = col.child(line(vec![span(link.link.clone(), t.text)]));
@@ -777,7 +989,10 @@ fn open_link_modal(cx: Scope, ctx: &Ctx, link: AppOpenLink) {
             t.text_muted,
         )]));
         if let Some(u) = &link.app_url {
-            col = col.child(line(vec![span("The app itself: ", t.text_faint), span(u.clone(), t.text_muted)]));
+            col = col.child(line(vec![
+                span("The app itself: ", t.text_faint),
+                span(u.clone(), t.text_muted),
+            ]));
         }
         if let Some(h) = &link.tunnel_hint {
             for l in wrap_text(h, wrap_w) {
@@ -813,7 +1028,12 @@ fn open_link_modal(cx: Scope, ctx: &Ctx, link: AppOpenLink) {
                         .element(mcx, &t)
                         .build(),
                 )
-                .child(Button::new("Close (Esc)").on_click(move || close_btn()).element(mcx, &t).build())
+                .child(
+                    Button::new("Close (Esc)")
+                        .on_click(move || close_btn())
+                        .element(mcx, &t)
+                        .build(),
+                )
                 .build(),
         );
         let l_y = link.link.clone();
@@ -838,7 +1058,10 @@ fn open_link_modal(cx: Scope, ctx: &Ctx, link: AppOpenLink) {
 fn open_log_modal(cx: Scope, ctx: &Ctx, row: &AppRow) {
     let apps = ctx.store.apps;
     apps.log.set(Loadable::Loading);
-    ctx.send(Cmd::LoadAppLog { app_id: row.id.clone(), tail: LOG_TAIL });
+    ctx.send(Cmd::LoadAppLog {
+        app_id: row.id.clone(),
+        tail: LOG_TAIL,
+    });
     let size = super::preview_size(cx);
     // The pane's rows: the modal minus its title, head, footer, keys and
     // button lines and the border — so the newest lines fill the pane.
@@ -854,77 +1077,114 @@ fn open_log_modal(cx: Scope, ctx: &Ctx, row: &AppRow) {
         let (id_ref, id_more) = (id.clone(), id.clone());
         let reload = move |c: &Ctx, app_id: &str, tail: u32| {
             c.store.apps.log.set(Loadable::Loading);
-            c.send(Cmd::LoadAppLog { app_id: app_id.to_string(), tail });
+            c.send(Cmd::LoadAppLog {
+                app_id: app_id.to_string(),
+                tail,
+            });
         };
         let close_btn = close.clone();
         Element::new()
             .style(LayoutStyle::column().gap(0))
             .shortcut(KeyChord::plain(Key::Char('r')), move |_| {
-                let tail = c_ref.store.apps.log.with_untracked(|l| l.ready().map(|x| x.tail)).unwrap_or(LOG_TAIL);
+                let tail = c_ref
+                    .store
+                    .apps
+                    .log
+                    .with_untracked(|l| l.ready().map(|x| x.tail))
+                    .unwrap_or(LOG_TAIL);
                 reload(&c_ref, &id_ref, tail);
             })
             .shortcut(KeyChord::plain(Key::Char('m')), move |_| {
                 let cur = c_more.store.apps.log.with_untracked(|l| l.ready().cloned());
                 match cur {
-                    Some(l) if l.can_show_more() => {
-                        reload(&c_more, &id_more, (l.tail * 4).min(crate::api::apps::APP_LOG_MAX))
-                    }
-                    Some(_) => c_more.store.notice.set(Some("the whole log is shown (or the 5000-line ceiling is reached)".into())),
+                    Some(l) if l.can_show_more() => reload(
+                        &c_more,
+                        &id_more,
+                        (l.tail * 4).min(crate::api::apps::APP_LOG_MAX),
+                    ),
+                    Some(_) => c_more.store.notice.set(Some(
+                        "the whole log is shown (or the 5000-line ceiling is reached)".into(),
+                    )),
                     None => {}
                 }
             })
             .shortcut(KeyChord::plain(Key::Char('y')), move |_| {
-                let text = c_copy.store.apps.log.with_untracked(|l| l.ready().map(|x| x.lines.join("\n")));
+                let text = c_copy
+                    .store
+                    .apps
+                    .log
+                    .with_untracked(|l| l.ready().map(|x| x.lines.join("\n")));
                 match text {
                     Some(t) if !t.is_empty() => {
                         copy_to_clipboard(t);
                         c_copy.store.notice.set(Some("copied the log lines".into()));
                     }
-                    _ => c_copy.store.notice.set(Some("the log is empty — nothing to copy".into())),
+                    _ => c_copy
+                        .store
+                        .notice
+                        .set(Some("the log is empty — nothing to copy".into())),
                 }
             })
             .child(line(vec![span_bold(format!("{name} — log"), t0.accent)]))
-            .child(dyn_view_scoped(LayoutStyle::default().grow(1.0).min_h(3), move |pcx| {
-                let log = apps.log.get();
-                match &log {
-                    Loadable::Ready(l) => {
-                        let mut col = Element::new().style(LayoutStyle::column().gap(0).grow(1.0));
-                        col = col.child(line(vec![span_bold(l.head(), t0.text)]));
-                        if !l.lines.is_empty() {
-                            col = col.child(scroll_lines(pcx, &t0, l.lines.join("\n"), top, page));
+            .child(dyn_view_scoped(
+                LayoutStyle::default().grow(1.0).min_h(3),
+                move |pcx| {
+                    let log = apps.log.get();
+                    match &log {
+                        Loadable::Ready(l) => {
+                            let mut col =
+                                Element::new().style(LayoutStyle::column().gap(0).grow(1.0));
+                            col = col.child(line(vec![span_bold(l.head(), t0.text)]));
+                            if !l.lines.is_empty() {
+                                col = col.child(scroll_lines(
+                                    pcx,
+                                    &t0,
+                                    l.lines.join("\n"),
+                                    top,
+                                    page,
+                                ));
+                            }
+                            let mut foot = Vec::new();
+                            if l.capped() {
+                                foot.push(span(
+                                    "Older lines are in the log file.  ",
+                                    t0.text_muted,
+                                ));
+                            }
+                            if let Some(p) = &l.path {
+                                foot.push(span("Log file ", t0.text_faint));
+                                foot.push(span(p.clone(), t0.text_muted));
+                            }
+                            if !foot.is_empty() {
+                                col = col.child(line(foot));
+                            }
+                            let mut keys = vec![span("r refresh", t0.text_faint)];
+                            if l.can_show_more() {
+                                keys.push(span("  ·  m show more", t0.text_faint));
+                            }
+                            if !l.lines.is_empty() {
+                                keys.push(span("  ·  y copy", t0.text_faint));
+                            }
+                            col.child(line(keys)).build()
                         }
-                        let mut foot = Vec::new();
-                        if l.capped() {
-                            foot.push(span("Older lines are in the log file.  ", t0.text_muted));
-                        }
-                        if let Some(p) = &l.path {
-                            foot.push(span("Log file ", t0.text_faint));
-                            foot.push(span(p.clone(), t0.text_muted));
-                        }
-                        if !foot.is_empty() {
-                            col = col.child(line(foot));
-                        }
-                        let mut keys = vec![span("r refresh", t0.text_faint)];
-                        if l.can_show_more() {
-                            keys.push(span("  ·  m show more", t0.text_faint));
-                        }
-                        if !l.lines.is_empty() {
-                            keys.push(span("  ·  y copy", t0.text_faint));
-                        }
-                        col.child(line(keys)).build()
+                        Loadable::Failed(e) => Element::new()
+                            .style(LayoutStyle::column())
+                            .child(line(vec![span_bold("Could not read the log", t0.error)]))
+                            .child(super::util::error_panel(&t0, e))
+                            .build(),
+                        _ => line(vec![span("Reading the log...", t0.text_muted)]),
                     }
-                    Loadable::Failed(e) => Element::new()
-                        .style(LayoutStyle::column())
-                        .child(line(vec![span_bold("Could not read the log", t0.error)]))
-                        .child(super::util::error_panel(&t0, e))
-                        .build(),
-                    _ => line(vec![span("Reading the log...", t0.text_muted)]),
-                }
-            }))
+                },
+            ))
             .child(
                 Element::new()
                     .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                    .child(Button::new("Close (Esc)").on_click(move || close_btn()).element(mcx, &t0).build())
+                    .child(
+                        Button::new("Close (Esc)")
+                            .on_click(move || close_btn())
+                            .element(mcx, &t0)
+                            .build(),
+                    )
                     .build(),
             )
             .build()
@@ -945,10 +1205,18 @@ fn scroll_lines(_cx: Scope, t: &TokenSet, text: String, top: Signal<i32>, page: 
         .focusable()
         .autofocus()
         .style(LayoutStyle::column().grow(1.0))
-        .shortcut(KeyChord::plain(Key::Down), move |_| top.set((top.get_untracked() + 1).min(max_top)))
-        .shortcut(KeyChord::plain(Key::Up), move |_| top.set((top.get_untracked() - 1).max(0)))
-        .shortcut(KeyChord::plain(Key::PageDown), move |_| top.set((top.get_untracked() + page).min(max_top)))
-        .shortcut(KeyChord::plain(Key::PageUp), move |_| top.set((top.get_untracked() - page).max(0)))
+        .shortcut(KeyChord::plain(Key::Down), move |_| {
+            top.set((top.get_untracked() + 1).min(max_top))
+        })
+        .shortcut(KeyChord::plain(Key::Up), move |_| {
+            top.set((top.get_untracked() - 1).max(0))
+        })
+        .shortcut(KeyChord::plain(Key::PageDown), move |_| {
+            top.set((top.get_untracked() + page).min(max_top))
+        })
+        .shortcut(KeyChord::plain(Key::PageUp), move |_| {
+            top.set((top.get_untracked() - page).max(0))
+        })
         .shortcut(KeyChord::plain(Key::Home), move |_| top.set(0))
         .shortcut(KeyChord::plain(Key::End), move |_| top.set(max_top))
         .child(

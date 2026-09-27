@@ -1234,7 +1234,14 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
         rows.push(line(vec![
             span(format!("{:>20}: ", a.key), t.text_muted),
             span(
-                ellipsize(if a.value.is_empty() { "—" } else { a.value.as_str() }, 48),
+                ellipsize(
+                    if a.value.is_empty() {
+                        "—"
+                    } else {
+                        a.value.as_str()
+                    },
+                    48,
+                ),
                 t.text,
             ),
             span(format!("  ({})", a.source), t.text_faint),
@@ -1267,18 +1274,32 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
     match &d.streaming_default {
         Some(sd) => rows.push(line(vec![
             span(format!("{:>20}: ", "stream replies"), t.text_muted),
-            span(if sd.value { "on — interactive replies stream live" } else { "off — replies arrive whole" }, t.text),
+            span(
+                if sd.value {
+                    "on — interactive replies stream live"
+                } else {
+                    "off — replies arrive whole"
+                },
+                t.text,
+            ),
             span(format!("  ({})", sd.source), t.text_faint),
         ])),
         None => rows.push(line(vec![
             span(format!("{:>20}: ", "stream replies"), t.text_muted),
-            span("not available on this gateway (its settings read has no agents.streaming_default)", t.warn),
+            span(
+                "not available on this gateway (its settings read has no agents.streaming_default)",
+                t.warn,
+            ),
         ])),
     }
     // The skills shelf (skills.shelf): which folder, from which source.
     if let Some(sh) = &d.skills_shelf {
         let (now, tone) = if sh.available {
-            let v = if sh.bundled_version.is_empty() { String::new() } else { format!(" (curated {})", sh.bundled_version) };
+            let v = if sh.bundled_version.is_empty() {
+                String::new()
+            } else {
+                format!(" (curated {})", sh.bundled_version)
+            };
             (format!("{}{v}", sh.resolved), t.text)
         } else {
             (format!("unavailable: {}", sh.reason), t.warn)
@@ -1289,7 +1310,10 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
             span(format!("  ({})", sh.source), t.text_faint),
         ]));
         for w in &sh.warnings {
-            rows.push(line(vec![span(format!("{:>20}  ⚠ {}", "", ellipsize(w, 96)), t.warn)]));
+            rows.push(line(vec![span(
+                format!("{:>20}  ⚠ {}", "", ellipsize(w, 96)),
+                t.warn,
+            )]));
         }
     }
     // Backlog settings (Continuum): folder, exec runner, process manager —
@@ -1305,7 +1329,13 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
         rows.push(line(vec![
             span(format!("{:>20}: ", b.key), t.text_muted),
             span(ellipsize(&now, 72), t.text),
-            span(format!("  ({})", crate::store::operator::backlog_source_word(&b.source)), t.text_faint),
+            span(
+                format!(
+                    "  ({})",
+                    crate::store::operator::backlog_source_word(&b.source)
+                ),
+                t.text_faint,
+            ),
         ]));
         if b.available == Some(false) {
             rows.push(line(vec![span(
@@ -1328,7 +1358,9 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
             } else {
                 // Web: "Advanced: backlog settings" (Continuum).
                 Button::new("Edit backlog settings")
-                    .on_click(move || open_backlog_settings_form(cx, &ctx7, current_backlog.clone()))
+                    .on_click(move || {
+                        open_backlog_settings_form(cx, &ctx7, current_backlog.clone())
+                    })
                     .element(cx, t)
                     .build()
             })
@@ -1337,7 +1369,9 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
             } else {
                 // Web: "Refresh the curated shelf" beside the shelf field.
                 Button::new("Refresh the curated skills shelf")
-                    .on_click(move || ctx8.send(Cmd::Operator(crate::worker::operator::OpCmd::ReseedSkills)))
+                    .on_click(move || {
+                        ctx8.send(Cmd::Operator(crate::worker::operator::OpCmd::ReseedSkills))
+                    })
                     .element(cx, t)
                     .build()
             })
@@ -1387,7 +1421,9 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
                     Element::new().style(LayoutStyle::default().h(0)).build()
                 } else {
                     Button::new("Edit default agent workflows")
-                        .on_click(move || open_agent_defaults_form(cx, &ctx4, current_agents.clone()))
+                        .on_click(move || {
+                            open_agent_defaults_form(cx, &ctx4, current_agents.clone())
+                        })
                         .element(cx, t)
                         .build()
                 })
@@ -1395,7 +1431,9 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
                     Element::new().style(LayoutStyle::default().h(0)).build()
                 } else {
                     Button::new("Edit stream replies")
-                        .on_click(move || open_streaming_default_form(cx, &ctx6, current_stream.clone()))
+                        .on_click(move || {
+                            open_streaming_default_form(cx, &ctx6, current_stream.clone())
+                        })
                         .element(cx, t)
                         .build()
                 })
@@ -1448,9 +1486,16 @@ fn open_backlog_settings_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) 
             let sig = *sig;
             col = col.child(line(vec![
                 span_bold(b.label.clone(), t0.text),
-                span(format!("  ({})", backlog_source_word(&b.source)), t0.text_faint),
                 span(
-                    if b.flag.is_empty() { String::new() } else { format!("  · launch flag: serve {}", b.flag) },
+                    format!("  ({})", backlog_source_word(&b.source)),
+                    t0.text_faint,
+                ),
+                span(
+                    if b.flag.is_empty() {
+                        String::new()
+                    } else {
+                        format!("  · launch flag: serve {}", b.flag)
+                    },
                     t0.text_faint,
                 ),
             ]));
@@ -1460,17 +1505,34 @@ fn open_backlog_settings_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) 
                     "folder",
                     TextInput::new()
                         .value(sig)
-                        .placeholder(if b.value.is_empty() { b.default_path.clone() } else { b.value.clone() })
+                        .placeholder(if b.value.is_empty() {
+                            b.default_path.clone()
+                        } else {
+                            b.value.clone()
+                        })
                         .layout(LayoutStyle::default().w(80).h(1))
                         .element(mcx, &t0)
                         .build(),
                 ));
                 col = col.child(line(vec![span(
-                    ellipsize(&format!("in use: {}", if b.value.is_empty() { "(hidden)" } else { b.value.as_str() }), 104),
+                    ellipsize(
+                        &format!(
+                            "in use: {}",
+                            if b.value.is_empty() {
+                                "(hidden)"
+                            } else {
+                                b.value.as_str()
+                            }
+                        ),
+                        104,
+                    ),
                     t0.text_faint,
                 )]));
                 if b.available == Some(false) {
-                    col = col.child(line(vec![span(ellipsize(&format!("⚠ not available: {}", b.reason), 104), t0.warn)]));
+                    col = col.child(line(vec![span(
+                        ellipsize(&format!("⚠ not available: {}", b.reason), 104),
+                        t0.warn,
+                    )]));
                 }
                 if !b.default_path.is_empty() && b.value != b.default_path {
                     let def = b.default_path.clone();
@@ -1501,7 +1563,10 @@ fn open_backlog_settings_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) 
                         "off" => "Off".to_string(),
                         _ => format!("Not saved (now {now})"),
                     };
-                    line(vec![span(format!("{:>18} ", "saved:"), t0.text_muted), span(label, t0.text)])
+                    line(vec![
+                        span(format!("{:>18} ", "saved:"), t0.text_muted),
+                        span(label, t0.text),
+                    ])
                 }));
                 col = col.child(
                     Button::new(format!("change {}", b.label.to_lowercase()))
@@ -1566,13 +1631,20 @@ fn open_backlog_settings_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) 
 /// The body the apps form sends: only the settings whose text changed,
 /// as flat `apps.<name>` keys; an emptied field sends "" (= clear back to
 /// env/default), exactly like `abstractgateway apps config set <name> ""`.
-pub fn apps_settings_body(current: &[crate::store::AppsSetting], typed: &[(String, String)]) -> Value {
+pub fn apps_settings_body(
+    current: &[crate::store::AppsSetting],
+    typed: &[(String, String)],
+) -> Value {
     let mut body = serde_json::Map::new();
     for (name, text) in typed {
         let Some(cur) = current.iter().find(|a| &a.name == name) else {
             continue;
         };
-        let was = if cur.source == "stored" { cur.value.as_str() } else { "" };
+        let was = if cur.source == "stored" {
+            cur.value.as_str()
+        } else {
+            ""
+        };
         let now = text.trim();
         if now != was {
             body.insert(cur.key.clone(), Value::String(now.to_string()));
@@ -1585,13 +1657,20 @@ pub fn apps_settings_body(current: &[crate::store::AppsSetting], typed: &[(Strin
 /// changed, as {"agents": {"default_workflow": {interface: value}}}; an
 /// emptied field sends "" (= back to the built-in default). `{}` when
 /// nothing changed.
-pub fn agent_defaults_body(current: &[crate::store::AgentDefault], typed: &[(String, String)]) -> Value {
+pub fn agent_defaults_body(
+    current: &[crate::store::AgentDefault],
+    typed: &[(String, String)],
+) -> Value {
     let mut changed = serde_json::Map::new();
     for (iface, text) in typed {
         let Some(cur) = current.iter().find(|a| &a.interface == iface) else {
             continue;
         };
-        let was = if cur.source == "stored" { cur.value.as_str() } else { "" };
+        let was = if cur.source == "stored" {
+            cur.value.as_str()
+        } else {
+            ""
+        };
         let now = text.trim();
         if now != was {
             changed.insert(iface.clone(), Value::String(now.to_string()));
@@ -1620,7 +1699,9 @@ fn open_streaming_default_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData)
             .set(Some("this needs an admin token".into()));
         return;
     }
-    let Some(sd) = current.streaming_default.clone() else { return };
+    let Some(sd) = current.streaming_default.clone() else {
+        return;
+    };
     let ctx2 = ctx.clone();
     open_form(ctx, cx, Size::new(100, 12), move |mcx, close| {
         let theme = use_theme(mcx);
@@ -1642,12 +1723,21 @@ fn open_streaming_default_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData)
             .child(field(
                 &t0,
                 "stream replies",
-                Checkbox::new("interactive runs that do not ask either way stream their replies live")
-                    .checked(on)
-                    .element(mcx, &t0)
-                    .build(),
+                Checkbox::new(
+                    "interactive runs that do not ask either way stream their replies live",
+                )
+                .checked(on)
+                .element(mcx, &t0)
+                .build(),
             ))
-            .child(line(vec![span(format!("now: {} ({})", if sd.value { "on" } else { "off" }, sd.source), t0.text_faint)]))
+            .child(line(vec![span(
+                format!(
+                    "now: {} ({})",
+                    if sd.value { "on" } else { "off" },
+                    sd.source
+                ),
+                t0.text_faint,
+            )]))
             .child(super::message_slot(theme, form_error, in_flight))
             .child(
                 Element::new()
@@ -1712,7 +1802,11 @@ fn open_agent_defaults_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
             .map(|a| {
                 (
                     a.interface.clone(),
-                    mcx.signal(if a.source == "stored" { a.value.clone() } else { String::new() }),
+                    mcx.signal(if a.source == "stored" {
+                        a.value.clone()
+                    } else {
+                        String::new()
+                    }),
                 )
             })
             .collect();
@@ -1726,14 +1820,25 @@ fn open_agent_defaults_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
                 t0.text_faint,
             )]));
         for (a, (_, sig)) in current.agent_defaults.iter().zip(fields.iter()) {
-            let builtin = if a.builtin.is_empty() { "none".to_string() } else { a.builtin.clone() };
+            let builtin = if a.builtin.is_empty() {
+                "none".to_string()
+            } else {
+                a.builtin.clone()
+            };
             col = col
                 .child(field(
                     &t0,
                     &a.interface,
                     TextInput::new()
                         .value(*sig)
-                        .placeholder(format!("built-in: {builtin} · now: {}", if a.available { a.workflow_id.as_str() } else { "unavailable" }))
+                        .placeholder(format!(
+                            "built-in: {builtin} · now: {}",
+                            if a.available {
+                                a.workflow_id.as_str()
+                            } else {
+                                "unavailable"
+                            }
+                        ))
                         .layout(LayoutStyle::default().w(64).h(1))
                         .element(mcx, &t0)
                         .build(),
@@ -1750,7 +1855,10 @@ fn open_agent_defaults_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
                     t0.text_faint,
                 )]));
             if !a.available {
-                col = col.child(line(vec![span(ellipsize(&format!("⚠ {}", a.reason), 106), t0.warn)]));
+                col = col.child(line(vec![span(
+                    ellipsize(&format!("⚠ {}", a.reason), 106),
+                    t0.warn,
+                )]));
             }
         }
         let ctx_save = ctx2.clone();
@@ -1801,7 +1909,11 @@ fn open_agent_defaults_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
 /// differs from the SAVED value ("" = back to the gateway's own copy); `{}`
 /// when nothing changed.
 pub fn skills_shelf_body(current: &crate::store::SkillsShelf, typed: &str) -> Value {
-    let was = if current.source == "stored" { current.value.as_str() } else { "" };
+    let was = if current.source == "stored" {
+        current.value.as_str()
+    } else {
+        ""
+    };
     let now = typed.trim();
     if now == was {
         return Value::Object(serde_json::Map::new());
@@ -1816,7 +1928,9 @@ fn open_skills_shelf_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
             .set(Some("this needs an admin token".into()));
         return;
     }
-    let Some(shelf) = current.skills_shelf.clone() else { return };
+    let Some(shelf) = current.skills_shelf.clone() else {
+        return;
+    };
     let ctx2 = ctx.clone();
     open_form(ctx, cx, Size::new(110, 14), move |mcx, close| {
         let theme = use_theme(mcx);
@@ -1825,7 +1939,11 @@ fn open_skills_shelf_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
         let in_flight = mcx.signal(false);
         let form_id = crate::worker::next_form_id();
         super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
-        let sig = mcx.signal(if shelf.source == "stored" { shelf.value.clone() } else { String::new() });
+        let sig = mcx.signal(if shelf.source == "stored" {
+            shelf.value.clone()
+        } else {
+            String::new()
+        });
         let ctx_save = ctx2.clone();
         let close_cancel = close.clone();
         let shelf_now = shelf.clone();
@@ -1897,24 +2015,32 @@ fn open_apps_settings_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
         return;
     }
     let ctx2 = ctx.clone();
-    open_form(ctx, cx, Size::new(96, 12 + 2 * current.apps.len() as i32), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        let form_error = mcx.signal(Option::<String>::None);
-        let in_flight = mcx.signal(false);
-        let form_id = crate::worker::next_form_id();
-        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
-        let fields: Vec<(String, Signal<String>)> = current
-            .apps
-            .iter()
-            .map(|a| {
-                (
-                    a.name.clone(),
-                    mcx.signal(if a.source == "stored" { a.value.clone() } else { String::new() }),
-                )
-            })
-            .collect();
-        let mut col = Element::new()
+    open_form(
+        ctx,
+        cx,
+        Size::new(96, 12 + 2 * current.apps.len() as i32),
+        move |mcx, close| {
+            let theme = use_theme(mcx);
+            let t0 = theme.get().tokens;
+            let form_error = mcx.signal(Option::<String>::None);
+            let in_flight = mcx.signal(false);
+            let form_id = crate::worker::next_form_id();
+            super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
+            let fields: Vec<(String, Signal<String>)> = current
+                .apps
+                .iter()
+                .map(|a| {
+                    (
+                        a.name.clone(),
+                        mcx.signal(if a.source == "stored" {
+                            a.value.clone()
+                        } else {
+                            String::new()
+                        }),
+                    )
+                })
+                .collect();
+            let mut col = Element::new()
             .focusable()
             .autofocus()
             .style(LayoutStyle::column().gap(0))
@@ -1923,67 +2049,72 @@ fn open_apps_settings_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
                 "empty = the default (or the value this gateway's environment gives); applies at the next app start or download",
                 t0.text_faint,
             )]));
-        for (a, (_, sig)) in current.apps.iter().zip(fields.iter()) {
-            col = col
-                .child(field(
-                    &t0,
-                    &a.label,
-                    TextInput::new()
-                        .value(*sig)
-                        .placeholder(format!(
-                            "{} (now: {} · {})",
-                            a.placeholder,
-                            if a.value.is_empty() { "—" } else { a.value.as_str() },
-                            a.source
-                        ))
-                        .layout(LayoutStyle::default().w(60).h(1))
-                        .element(mcx, &t0)
+            for (a, (_, sig)) in current.apps.iter().zip(fields.iter()) {
+                col = col
+                    .child(field(
+                        &t0,
+                        &a.label,
+                        TextInput::new()
+                            .value(*sig)
+                            .placeholder(format!(
+                                "{} (now: {} · {})",
+                                a.placeholder,
+                                if a.value.is_empty() {
+                                    "—"
+                                } else {
+                                    a.value.as_str()
+                                },
+                                a.source
+                            ))
+                            .layout(LayoutStyle::default().w(60).h(1))
+                            .element(mcx, &t0)
+                            .build(),
+                    ))
+                    .child(line(vec![span(ellipsize(&a.help, 92), t0.text_faint)]));
+            }
+            let ctx_save = ctx2.clone();
+            let close_cancel = close.clone();
+            let apps_now = current.apps.clone();
+            col.child(super::message_slot(theme, form_error, in_flight))
+                .child(
+                    Element::new()
+                        .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                        .child(
+                            Button::new("Save")
+                                .on_click(move || {
+                                    if in_flight.get_untracked() {
+                                        return;
+                                    }
+                                    let typed: Vec<(String, String)> = fields
+                                        .iter()
+                                        .map(|(n, sig)| (n.clone(), sig.get_untracked()))
+                                        .collect();
+                                    let body = apps_settings_body(&apps_now, &typed);
+                                    if body.as_object().map(|m| m.is_empty()).unwrap_or(true) {
+                                        form_error.set(Some("nothing changed".into()));
+                                        return;
+                                    }
+                                    form_error.set(None);
+                                    in_flight.set(true);
+                                    ctx_save.send(Cmd::SaveRuntimeConfig {
+                                        body: body.into(),
+                                        form_id: Some(form_id),
+                                    });
+                                })
+                                .element(mcx, &t0)
+                                .build(),
+                        )
+                        .child(
+                            Button::new("Cancel (Esc)")
+                                .on_click(move || close_cancel())
+                                .element(mcx, &t0)
+                                .build(),
+                        )
                         .build(),
-                ))
-                .child(line(vec![span(ellipsize(&a.help, 92), t0.text_faint)]));
-        }
-        let ctx_save = ctx2.clone();
-        let close_cancel = close.clone();
-        let apps_now = current.apps.clone();
-        col.child(super::message_slot(theme, form_error, in_flight))
-            .child(
-                Element::new()
-                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                    .child(
-                        Button::new("Save")
-                            .on_click(move || {
-                                if in_flight.get_untracked() {
-                                    return;
-                                }
-                                let typed: Vec<(String, String)> = fields
-                                    .iter()
-                                    .map(|(n, sig)| (n.clone(), sig.get_untracked()))
-                                    .collect();
-                                let body = apps_settings_body(&apps_now, &typed);
-                                if body.as_object().map(|m| m.is_empty()).unwrap_or(true) {
-                                    form_error.set(Some("nothing changed".into()));
-                                    return;
-                                }
-                                form_error.set(None);
-                                in_flight.set(true);
-                                ctx_save.send(Cmd::SaveRuntimeConfig {
-                                    body: body.into(),
-                                    form_id: Some(form_id),
-                                });
-                            })
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .child(
-                        Button::new("Cancel (Esc)")
-                            .on_click(move || close_cancel())
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .build(),
-            )
-            .build()
-    });
+                )
+                .build()
+        },
+    );
 }
 
 /// The gateway-wide workspace defaults form, as the web models it
@@ -2034,7 +2165,11 @@ impl WorkspaceDefaults {
     /// map server-side (per-user edits ride the single-entry PUT).
     pub fn body(&self) -> Value {
         let root = self.root.trim();
-        let mode = if self.mode.is_empty() { "whitelist" } else { self.mode.as_str() };
+        let mode = if self.mode.is_empty() {
+            "whitelist"
+        } else {
+            self.mode.as_str()
+        };
         let mut body = json!({
             "workspace_default_mode": mode,
             "workspace_root": if root.is_empty() { Value::Null } else { Value::String(root.to_string()) },
@@ -2096,7 +2231,9 @@ fn open_workspace_policy_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) 
         } else {
             format!("blank = inherit ({})", current.workspace_root.trim())
         };
-        let inherit_label = |now: bool| SelectOption::new(format!("inherit (now {})", if now { "on" } else { "off" }));
+        let inherit_label = |now: bool| {
+            SelectOption::new(format!("inherit (now {})", if now { "on" } else { "off" }))
+        };
         let trust_options = vec![
             inherit_label(current.trust_client_launch_folder),
             SelectOption::new("on"),
@@ -4000,6 +4137,9 @@ mod tests {
         assert_eq!(body["trust_client_launch_folder"], false);
         assert_eq!(body["client_workspace_scope_overrides"], true);
         assert_eq!(body["workspace_default_mode"], "blacklist");
-        assert!(body.get("user_workspace_policies").is_none(), "never names the per-user map");
+        assert!(
+            body.get("user_workspace_policies").is_none(),
+            "never names the per-user map"
+        );
     }
 }

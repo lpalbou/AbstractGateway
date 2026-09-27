@@ -32,13 +32,23 @@ impl ConsoleTransport for NoTransport {
     fn engines_status(&self, _probe: bool) -> Result<Value, TransportError> {
         Err(TransportError::unavailable("not under test"))
     }
-    fn models_catalog(&self, _q: &str, _e: Option<&str>, _f: bool) -> Result<Value, TransportError> {
+    fn models_catalog(
+        &self,
+        _q: &str,
+        _e: Option<&str>,
+        _f: bool,
+    ) -> Result<Value, TransportError> {
         Err(TransportError::unavailable("not under test"))
     }
     fn models_installed(&self, _p: Option<&str>) -> Result<Value, TransportError> {
         Err(TransportError::unavailable("not under test"))
     }
-    fn start_download(&self, _p: &str, _a: &str, _expected_bytes: Option<u64>) -> Result<Value, TransportError> {
+    fn start_download(
+        &self,
+        _p: &str,
+        _a: &str,
+        _expected_bytes: Option<u64>,
+    ) -> Result<Value, TransportError> {
         Err(TransportError::unavailable("not under test"))
     }
     fn delete_model(&self, _p: &str, _a: &str, _f: bool) -> Result<Value, TransportError> {
@@ -119,14 +129,23 @@ fn harness() -> Harness {
     };
     let driver = Driver::new(&mut app, &mut term, cfg).expect("driver");
     let (store, ui) = slot.borrow().expect("created");
-    Harness { app, term, driver, store, ui, rx }
+    Harness {
+        app,
+        term,
+        driver,
+        store,
+        ui,
+        rx,
+    }
 }
 
 impl Harness {
     fn turns(&mut self, n: usize) -> String {
         let mut last = String::new();
         for _ in 0..n {
-            self.driver.turn(&mut self.app, &mut self.term).expect("turn");
+            self.driver
+                .turn(&mut self.app, &mut self.term)
+                .expect("turn");
             last = self.term.screen().to_text();
         }
         last
@@ -157,7 +176,10 @@ impl Harness {
         self.connect(admin);
         self.ui.wizard.set(false);
         self.ui.screen.set(ui::SCREEN_APPS);
-        self.store.apps.overview.set(Loadable::Ready(AppsOverview::from_value(&fixture())));
+        self.store
+            .apps
+            .overview
+            .set(Loadable::Ready(AppsOverview::from_value(&fixture())));
         let s = self.turns(3);
         self.drain();
         s
@@ -237,7 +259,13 @@ fn fixture() -> Value {
 fn app_acts(cmds: &[Cmd]) -> Vec<(String, AppVerb, Option<String>, bool)> {
     cmds.iter()
         .filter_map(|c| match c {
-            Cmd::AppAct { app_id, verb, path, start_first, .. } => Some((app_id.clone(), *verb, path.clone(), *start_first)),
+            Cmd::AppAct {
+                app_id,
+                verb,
+                path,
+                start_first,
+                ..
+            } => Some((app_id.clone(), *verb, path.clone(), *start_first)),
             _ => None,
         })
         .collect()
@@ -249,26 +277,41 @@ fn every_web_card_state_renders() {
     let s = h.on_apps(true);
     assert!(s.contains("A Apps"), "tab A:\n{s}");
     for want in [
-        "Observer", "Not installed", "o Install",
-        "Flow Editor", "Running",
+        "Observer",
+        "Not installed",
+        "o Install",
+        "Flow Editor",
+        "Running",
         "Running (outside)",
         "Stopped unexpectedly",
         "Create your first entity",
-        "Assistant", "desktop",
-        "Node.js", "Ready", "24.14.0",
+        "Assistant",
+        "desktop",
+        "Node.js",
+        "Ready",
+        "24.14.0",
         "browser + terminal",
         "this machine only",
     ] {
         assert!(s.contains(want), "'{want}' on the Apps screen:\n{s}");
     }
     // Footer: the screen's verbs.
-    assert!(s.contains("check again") && s.contains("open/install"), "{s}");
+    assert!(
+        s.contains("check again") && s.contains("open/install"),
+        "{s}"
+    );
     // Detail of the external app says why it cannot be stopped.
     let s = h.select("continuum");
-    assert!(s.contains("Started outside the gateway on port 3002"), "{s}");
+    assert!(
+        s.contains("Started outside the gateway on port 3002"),
+        "{s}"
+    );
     // A crashed app says so and how to recover.
     let s = h.select("code");
-    assert!(s.contains("Code stopped unexpectedly.") && s.contains("Open starts it again."), "{s}");
+    assert!(
+        s.contains("Code stopped unexpectedly.") && s.contains("Open starts it again."),
+        "{s}"
+    );
     assert!(s.contains("EADDRINUSE"), "last error shown:\n{s}");
     assert!(s.contains("Open in Terminal"), "terminal verb:\n{s}");
     // Desktop from another computer: the reason, no action.
@@ -283,15 +326,28 @@ fn entering_the_screen_loads_the_overview_once() {
     h.ui.wizard.set(false);
     h.ui.screen.set(ui::SCREEN_APPS);
     h.turns(4);
-    let loads = h.drain().into_iter().filter(|c| matches!(c, Cmd::LoadApps { latest: true })).count();
+    let loads = h
+        .drain()
+        .into_iter()
+        .filter(|c| matches!(c, Cmd::LoadApps { latest: true }))
+        .count();
     assert_eq!(loads, 1);
     assert!(h.store.apps.overview.with_untracked(|o| o.is_loading()));
-    h.store.apps.overview.set(Loadable::Ready(AppsOverview::from_value(&fixture())));
+    h.store
+        .apps
+        .overview
+        .set(Loadable::Ready(AppsOverview::from_value(&fixture())));
     h.turns(3);
-    assert!(h.drain().iter().all(|c| !matches!(c, Cmd::LoadApps { .. })), "no reload storm");
+    assert!(
+        h.drain().iter().all(|c| !matches!(c, Cmd::LoadApps { .. })),
+        "no reload storm"
+    );
     // r = the web's "Check again".
     h.key(b"r");
-    assert!(h.drain().iter().any(|c| matches!(c, Cmd::LoadApps { latest: true })));
+    assert!(h
+        .drain()
+        .iter()
+        .any(|c| matches!(c, Cmd::LoadApps { latest: true })));
 }
 
 #[test]
@@ -311,10 +367,16 @@ fn install_confirms_then_sends_the_install_verb() {
     h.on_apps(true);
     h.select("observer");
     let s = h.key(b"o");
-    assert!(s.contains("Install Observer?") && s.contains("starts nothing"), "confirm:\n{s}");
+    assert!(
+        s.contains("Install Observer?") && s.contains("starts nothing"),
+        "confirm:\n{s}"
+    );
     h.key(b"\r");
     let acts = app_acts(&h.drain());
-    assert_eq!(acts, vec![("observer".to_string(), AppVerb::Install, None, false)]);
+    assert_eq!(
+        acts,
+        vec![("observer".to_string(), AppVerb::Install, None, false)]
+    );
 }
 
 #[test]
@@ -323,12 +385,20 @@ fn open_starts_a_stopped_app_first_and_entity_lands_on_new() {
     h.on_apps(true);
     h.select("code");
     h.key(b"o");
-    assert_eq!(app_acts(&h.drain()), vec![("code".to_string(), AppVerb::Open, None, true)]);
+    assert_eq!(
+        app_acts(&h.drain()),
+        vec![("code".to_string(), AppVerb::Open, None, true)]
+    );
     h.select("entity");
     h.key(b"\r"); // Enter on the table = the primary action
     assert_eq!(
         app_acts(&h.drain()),
-        vec![("entity".to_string(), AppVerb::Open, Some("/#new".to_string()), false)]
+        vec![(
+            "entity".to_string(),
+            AppVerb::Open,
+            Some("/#new".to_string()),
+            false
+        )]
     );
 }
 
@@ -344,7 +414,10 @@ fn stop_is_a_danger_confirm_defaulting_to_keep() {
     h.key(b"x");
     h.key(b"\x1b[A");
     h.key(b"\r");
-    assert_eq!(app_acts(&h.drain()), vec![("flow".to_string(), AppVerb::Stop, None, false)]);
+    assert_eq!(
+        app_acts(&h.drain()),
+        vec![("flow".to_string(), AppVerb::Stop, None, false)]
+    );
 }
 
 #[test]
@@ -353,21 +426,36 @@ fn update_and_log_and_terminal_keys() {
     h.on_apps(true);
     h.select("flow");
     let s = h.key(b"u");
-    assert!(s.contains("0.3.21") && s.contains("restarts on the new version"), "{s}");
+    assert!(
+        s.contains("0.3.21") && s.contains("restarts on the new version"),
+        "{s}"
+    );
     h.key(b"\r");
-    assert_eq!(app_acts(&h.drain()), vec![("flow".to_string(), AppVerb::Update, None, false)]);
+    assert_eq!(
+        app_acts(&h.drain()),
+        vec![("flow".to_string(), AppVerb::Update, None, false)]
+    );
     h.key(b"l");
     let cmds = h.drain();
-    assert!(cmds.iter().any(|c| matches!(c, Cmd::LoadAppLog { app_id, tail: 200 } if app_id == "flow")), "{cmds:?}");
+    assert!(
+        cmds.iter()
+            .any(|c| matches!(c, Cmd::LoadAppLog { app_id, tail: 200 } if app_id == "flow")),
+        "{cmds:?}"
+    );
     // The log modal renders the head line honestly.
-    h.store.apps.log.set(Loadable::Ready(abstractgateway_console::store::apps::AppLog {
-        app_id: "flow".into(),
-        path: Some("/data/logs/apps/flow.log".into()),
-        lines: vec!["listening on 3003".into(); 3],
-        tail: 200,
-    }));
+    h.store.apps.log.set(Loadable::Ready(
+        abstractgateway_console::store::apps::AppLog {
+            app_id: "flow".into(),
+            path: Some("/data/logs/apps/flow.log".into()),
+            lines: vec!["listening on 3003".into(); 3],
+            tail: 200,
+        },
+    ));
     let s = h.turns(3);
-    assert!(s.contains("The whole log · 3 lines") && s.contains("flow.log"), "{s}");
+    assert!(
+        s.contains("The whole log · 3 lines") && s.contains("flow.log"),
+        "{s}"
+    );
 }
 
 #[test]
@@ -376,17 +464,33 @@ fn non_admin_gets_the_reason_not_the_action() {
     h.on_apps(false);
     h.select("observer");
     h.key(b"o");
-    assert!(h.notice().contains("Only an admin can install apps"), "{}", h.notice());
+    assert!(
+        h.notice().contains("Only an admin can install apps"),
+        "{}",
+        h.notice()
+    );
     h.select("flow");
     h.key(b"x");
-    assert!(h.notice().contains("Only an admin can stop apps"), "{}", h.notice());
+    assert!(
+        h.notice().contains("Only an admin can stop apps"),
+        "{}",
+        h.notice()
+    );
     // Opening a running app is for any signed-in principal.
     h.key(b"o");
-    assert_eq!(app_acts(&h.drain()), vec![("flow".to_string(), AppVerb::Open, None, false)]);
+    assert_eq!(
+        app_acts(&h.drain()),
+        vec![("flow".to_string(), AppVerb::Open, None, false)]
+    );
     // An external app cannot be stopped even by an admin — and says why.
     h.select("continuum");
     h.key(b"x");
-    assert!(h.notice().contains("Started outside the gateway on port 3002"), "{}", h.notice());
+    assert!(
+        h.notice()
+            .contains("Started outside the gateway on port 3002"),
+        "{}",
+        h.notice()
+    );
 }
 
 #[test]
@@ -403,9 +507,15 @@ fn a_minted_link_opens_its_modal_with_the_tunnel_hint() {
     .unwrap();
     h.store.apps.open_link.set(Some(link));
     let s = h.turns(4);
-    assert!(s.contains("http://127.0.0.1:8080/apps/handover/abc123"), "{s}");
+    assert!(
+        s.contains("http://127.0.0.1:8080/apps/handover/abc123"),
+        "{s}"
+    );
     assert!(s.contains("within 120 seconds"), "{s}");
-    assert!(s.contains("ssh -L 8080:127.0.0.1:8080 -L 3003:127.0.0.1:3003"), "{s}");
+    assert!(
+        s.contains("ssh -L 8080:127.0.0.1:8080 -L 3003:127.0.0.1:3003"),
+        "{s}"
+    );
     assert!(h.store.apps.open_link.get_untracked().is_none(), "consumed");
 }
 
@@ -423,7 +533,10 @@ fn a_running_job_shows_progress_and_c_cancels_it() {
         .unwrap(),
     );
     let s = h.turns(3);
-    assert!(s.contains("Installing Observer · 40% · Downloading the app"), "{s}");
+    assert!(
+        s.contains("Installing Observer · 40% · Downloading the app"),
+        "{s}"
+    );
     assert!(s.contains("Installing"), "pill:\n{s}");
     h.key(b"c");
     let cmds = h.drain();
@@ -439,6 +552,15 @@ fn a_gateway_reset_forgets_the_apps() {
     h.on_apps(true);
     let gen = h.store.apps.poll_gen.get_untracked();
     h.store.reset_domains();
-    assert!(h.store.apps.overview.with_untracked(|o| o.ready().is_none()), "the old rows are gone");
-    assert!(h.store.apps.poll_gen.get_untracked() > gen, "live poll chains die");
+    assert!(
+        h.store
+            .apps
+            .overview
+            .with_untracked(|o| o.ready().is_none()),
+        "the old rows are gone"
+    );
+    assert!(
+        h.store.apps.poll_gen.get_untracked() > gen,
+        "live poll chains die"
+    );
 }

@@ -83,7 +83,11 @@ fn name_for(store: &Store, key: &str) -> String {
     if key == NODE_KEY {
         return "Node.js".into();
     }
-    let id = key.split_once(':').map(|(_, id)| id).unwrap_or(key).to_string();
+    let id = key
+        .split_once(':')
+        .map(|(_, id)| id)
+        .unwrap_or(key)
+        .to_string();
     store
         .apps
         .overview
@@ -94,7 +98,13 @@ fn name_for(store: &Store, key: &str) -> String {
         .unwrap_or(id)
 }
 
-pub(super) fn load(client: &Option<GatewayClient>, store: &Store, wake: &WakeHandle, tx: &Sender<Cmd>, latest: bool) {
+pub(super) fn load(
+    client: &Option<GatewayClient>,
+    store: &Store,
+    wake: &WakeHandle,
+    tx: &Sender<Cmd>,
+    latest: bool,
+) {
     // Keep the rows on screen while re-checking (the web's "Checking...");
     // only a first read shows the loading state.
     let s = *store;
@@ -103,8 +113,14 @@ pub(super) fn load(client: &Option<GatewayClient>, store: &Store, wake: &WakeHan
             s.apps.overview.set(Loadable::Loading);
         }
     });
-    let label = if latest { "checking the apps (and newer versions)" } else { "reading the apps" };
-    let res = with_busy(store, wake, label, || require_client(client)?.apps_overview(latest));
+    let label = if latest {
+        "checking the apps (and newer versions)"
+    } else {
+        "reading the apps"
+    };
+    let res = with_busy(store, wake, label, || {
+        require_client(client)?.apps_overview(latest)
+    });
     match res {
         Ok(v) => publish_overview(store, wake, tx, AppsOverview::from_value(&v)),
         Err(e) => {
@@ -116,7 +132,9 @@ pub(super) fn load(client: &Option<GatewayClient>, store: &Store, wake: &WakeHan
 
 /// The verify read after a write: the overview, as the web re-reads it.
 fn verify_overview(client: &Option<GatewayClient>) -> ApiResult<AppsOverview> {
-    require_client(client)?.apps_overview(true).map(|v| AppsOverview::from_value(&v))
+    require_client(client)?
+        .apps_overview(true)
+        .map(|v| AppsOverview::from_value(&v))
 }
 
 fn job_of(v: &Value) -> Option<AppJob> {
@@ -136,7 +154,9 @@ pub(super) fn act(
     start_first: bool,
 ) {
     let key = match verb {
-        AppVerb::OpenTerminal | AppVerb::InstallTerminal | AppVerb::CancelTerminal => tui_key(app_id),
+        AppVerb::OpenTerminal | AppVerb::InstallTerminal | AppVerb::CancelTerminal => {
+            tui_key(app_id)
+        }
         _ => app_key(app_id),
     };
     {
@@ -178,7 +198,11 @@ pub(super) fn act(
                     let Some(job) = job_of(&v) else {
                         let e = "the gateway started no job".to_string();
                         journal(store, wake, action, Err(e.clone()), None);
-                        done(Some(AppNote { tone: Some(crate::store::apps::Tone::Err), text: format!("Could not {what}: {e}"), ..AppNote::default() }));
+                        done(Some(AppNote {
+                            tone: Some(crate::store::apps::Tone::Err),
+                            text: format!("Could not {what}: {e}"),
+                            ..AppNote::default()
+                        }));
                         return;
                     };
                     let created = v.get("created").and_then(Value::as_bool).unwrap_or(true);
@@ -203,7 +227,12 @@ pub(super) fn act(
                     wake.post(move || {
                         s.apps.set_job(&k, job);
                         if !created {
-                            s.apps.set_note(&k, Some(AppNote::info(format!("{nm}: already in progress; showing that job."))));
+                            s.apps.set_note(
+                                &k,
+                                Some(AppNote::info(format!(
+                                    "{nm}: already in progress; showing that job."
+                                ))),
+                            );
                         }
                         ensure_poll(&s, &tx2);
                     });
@@ -224,7 +253,13 @@ pub(super) fn act(
             let action = format!("POST /apps/{app_id}/{route}");
             let (res, verify) = with_busy(store, wake, &what, || {
                 let c = require_client(client);
-                let res = c.clone().and_then(|c| if verb == AppVerb::Stop { c.apps_stop(app_id) } else { c.apps_launch(app_id) });
+                let res = c.clone().and_then(|c| {
+                    if verb == AppVerb::Stop {
+                        c.apps_stop(app_id)
+                    } else {
+                        c.apps_launch(app_id)
+                    }
+                });
                 let verify = res.as_ref().ok().map(|_| verify_overview(client));
                 (res, verify)
             });
@@ -238,21 +273,40 @@ pub(super) fn act(
                         (Some(Err(e)), _) => Some(Err(e.to_string())),
                         (_, None) => Some(Err(format!("GET /apps no longer lists {app_id}"))),
                         (_, Some(r)) => {
-                            let ok = if verb == AppVerb::Stop { !r.running } else { r.running || r.status == "starting" };
-                            let said = format!("GET /apps: {} is {}", r.name, r.status.replace('_', " "));
-                            Some(if ok || verb == AppVerb::DesktopOpen { Ok(said) } else { Err(said) })
+                            let ok = if verb == AppVerb::Stop {
+                                !r.running
+                            } else {
+                                r.running || r.status == "starting"
+                            };
+                            let said =
+                                format!("GET /apps: {} is {}", r.name, r.status.replace('_', " "));
+                            Some(if ok || verb == AppVerb::DesktopOpen {
+                                Ok(said)
+                            } else {
+                                Err(said)
+                            })
                         }
                     };
                     let note = match verb {
                         AppVerb::Stop => AppNote::ok(format!("{name} is stopped.")),
                         AppVerb::DesktopOpen => AppNote::ok(
-                            v.get("message").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| format!("{name} is starting.")),
+                            v.get("message")
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                                .unwrap_or_else(|| format!("{name} is starting.")),
                         ),
                         _ => {
                             let app = v.get("app").cloned().unwrap_or(Value::Null);
-                            let running = app.get("running").and_then(Value::as_bool).unwrap_or(false);
-                            let status = app.get("status").and_then(Value::as_str).unwrap_or("starting");
-                            AppNote::ok(format!("{name} is {}.", if running { "running" } else { status }))
+                            let running =
+                                app.get("running").and_then(Value::as_bool).unwrap_or(false);
+                            let status = app
+                                .get("status")
+                                .and_then(Value::as_str)
+                                .unwrap_or("starting");
+                            AppNote::ok(format!(
+                                "{name} is {}.",
+                                if running { "running" } else { status }
+                            ))
                         }
                     };
                     journal(store, wake, action, Ok("applied".into()), verified);
@@ -271,51 +325,98 @@ pub(super) fn act(
             // A stopped (or crashed) app is started first — Open is the one
             // action a plain user needs (POST /launch, then POST /open).
             let what = format!("open {name}");
-            let base = require_client(client).map(|c| c.base_url().to_string()).unwrap_or_default();
-            let res: Result<(Value, Option<AppsOverview>), crate::api::ApiError> = with_busy(store, wake, &if start_first { format!("starting {name}") } else { format!("opening {name}") }, || {
-                let c = require_client(client)?;
-                if start_first {
-                    let st = c.apps_launch(app_id)?;
-                    let app = st.get("app").cloned().unwrap_or(Value::Null);
-                    if app.get("running").and_then(Value::as_bool) == Some(false) {
-                        let status = app.get("status").and_then(Value::as_str).unwrap_or("unknown").replace('_', " ");
-                        let mut body = serde_json::json!({"message": format!("{name} did not start ({status}).")});
-                        if let Some(le) = app.get("last_error").and_then(Value::as_str) {
-                            body["hint"] = Value::String(le.to_string());
+            let base = require_client(client)
+                .map(|c| c.base_url().to_string())
+                .unwrap_or_default();
+            let res: Result<(Value, Option<AppsOverview>), crate::api::ApiError> = with_busy(
+                store,
+                wake,
+                &if start_first {
+                    format!("starting {name}")
+                } else {
+                    format!("opening {name}")
+                },
+                || {
+                    let c = require_client(client)?;
+                    if start_first {
+                        let st = c.apps_launch(app_id)?;
+                        let app = st.get("app").cloned().unwrap_or(Value::Null);
+                        if app.get("running").and_then(Value::as_bool) == Some(false) {
+                            let status = app
+                                .get("status")
+                                .and_then(Value::as_str)
+                                .unwrap_or("unknown")
+                                .replace('_', " ");
+                            let mut body = serde_json::json!({"message": format!("{name} did not start ({status}).")});
+                            if let Some(le) = app.get("last_error").and_then(Value::as_str) {
+                                body["hint"] = Value::String(le.to_string());
+                            }
+                            return Err(crate::api::ApiError {
+                                kind: ApiErrorKind::Protocol,
+                                message: format!("{name} did not start ({status})"),
+                                body: Some(body),
+                                timed_out: false,
+                            });
                         }
-                        return Err(crate::api::ApiError { kind: ApiErrorKind::Protocol, message: format!("{name} did not start ({status})"), body: Some(body), timed_out: false });
+                    }
+                    let r = c.apps_open(app_id, path.as_deref())?;
+                    let after = if start_first {
+                        verify_overview(client).ok()
+                    } else {
+                        None
+                    };
+                    Ok((r, after))
+                },
+            );
+            let action = if start_first {
+                format!("POST /apps/{app_id}/launch + /open")
+            } else {
+                format!("POST /apps/{app_id}/open")
+            };
+            match res {
+                Ok((v, after)) => {
+                    match AppOpenLink::from_value(&base, app_id, name, start_first, &v) {
+                        Some(link) => {
+                            let exp = link
+                                .expires_in_s
+                                .map(|n| format!(" (works once, {n} s)"))
+                                .unwrap_or_default();
+                            let verified = after.as_ref().map(|o| {
+                                match o.apps.iter().find(|a| a.id == app_id) {
+                                    Some(r) if r.running => {
+                                        Ok(format!("GET /apps: {} is running", r.name))
+                                    }
+                                    Some(r) => {
+                                        Err(format!("GET /apps: {} is {}", r.name, r.status))
+                                    }
+                                    None => Err(format!("GET /apps no longer lists {app_id}")),
+                                }
+                            });
+                            journal(
+                                store,
+                                wake,
+                                action,
+                                Ok(format!("one-time sign-in link minted{exp}")),
+                                verified,
+                            );
+                            if let Some(o) = after {
+                                publish_overview(store, wake, tx, o);
+                            }
+                            let s = *store;
+                            wake.post(move || s.apps.open_link.set(Some(link)));
+                            done(Some(AppNote::ok(format!("{name}: sign-in link ready."))));
+                        }
+                        None => {
+                            let e = "the answer carried no open_url".to_string();
+                            journal(store, wake, action, Err(e.clone()), None);
+                            done(Some(AppNote {
+                                tone: Some(crate::store::apps::Tone::Err),
+                                text: format!("Could not {what}: {e}"),
+                                ..AppNote::default()
+                            }));
+                        }
                     }
                 }
-                let r = c.apps_open(app_id, path.as_deref())?;
-                let after = if start_first { verify_overview(client).ok() } else { None };
-                Ok((r, after))
-            });
-            let action = if start_first { format!("POST /apps/{app_id}/launch + /open") } else { format!("POST /apps/{app_id}/open") };
-            match res {
-                Ok((v, after)) => match AppOpenLink::from_value(&base, app_id, name, start_first, &v) {
-                    Some(link) => {
-                        let exp = link.expires_in_s.map(|n| format!(" (works once, {n} s)")).unwrap_or_default();
-                        let verified = after.as_ref().map(|o| {
-                            match o.apps.iter().find(|a| a.id == app_id) {
-                                Some(r) if r.running => Ok(format!("GET /apps: {} is running", r.name)),
-                                Some(r) => Err(format!("GET /apps: {} is {}", r.name, r.status)),
-                                None => Err(format!("GET /apps no longer lists {app_id}")),
-                            }
-                        });
-                        journal(store, wake, action, Ok(format!("one-time sign-in link minted{exp}")), verified);
-                        if let Some(o) = after {
-                            publish_overview(store, wake, tx, o);
-                        }
-                        let s = *store;
-                        wake.post(move || s.apps.open_link.set(Some(link)));
-                        done(Some(AppNote::ok(format!("{name}: sign-in link ready."))));
-                    }
-                    None => {
-                        let e = "the answer carried no open_url".to_string();
-                        journal(store, wake, action, Err(e.clone()), None);
-                        done(Some(AppNote { tone: Some(crate::store::apps::Tone::Err), text: format!("Could not {what}: {e}"), ..AppNote::default() }));
-                    }
-                },
                 Err(e) => {
                     journal(store, wake, action, Err(e.to_string()), None);
                     done(Some(app_error_note(&what, &e)));
@@ -328,7 +429,12 @@ pub(super) fn act(
         AppVerb::OpenTerminal => {
             let what = format!("open {name} for the terminal");
             let action = format!("POST /apps/{app_id}/launch-tui");
-            let res = with_busy(store, wake, &format!("opening {name} in a terminal"), || require_client(client)?.apps_launch_tui(app_id));
+            let res = with_busy(
+                store,
+                wake,
+                &format!("opening {name} in a terminal"),
+                || require_client(client)?.apps_launch_tui(app_id),
+            );
             match res {
                 Ok(v) => {
                     let msg = v
@@ -338,7 +444,13 @@ pub(super) fn act(
                         .unwrap_or_else(|| format!("{name} is opening in a terminal window on the gateway machine's screen."));
                     // No read-back exists for a window on another screen:
                     // the journal says so instead of claiming a verify.
-                    journal(store, wake, action, Ok("applied (a terminal window opens on the gateway machine)".into()), None);
+                    journal(
+                        store,
+                        wake,
+                        action,
+                        Ok("applied (a terminal window opens on the gateway machine)".into()),
+                        None,
+                    );
                     done(Some(AppNote::ok(msg)));
                 }
                 Err(e) => {
@@ -350,16 +462,31 @@ pub(super) fn act(
         // Cancels and the log have their own commands (they need a job id
         // or a tail); reaching here is a wiring bug, said out loud.
         AppVerb::Cancel | AppVerb::CancelTerminal | AppVerb::Log => {
-            done(Some(AppNote { tone: Some(crate::store::apps::Tone::Err), text: format!("internal: {verb:?} is not an AppAct verb"), ..AppNote::default() }));
+            done(Some(AppNote {
+                tone: Some(crate::store::apps::Tone::Err),
+                text: format!("internal: {verb:?} is not an AppAct verb"),
+                ..AppNote::default()
+            }));
         }
     }
 }
 
-pub(super) fn cancel(client: &Option<GatewayClient>, store: &Store, wake: &WakeHandle, tx: &Sender<Cmd>, key: &str, name: &str, job_id: &str) {
+pub(super) fn cancel(
+    client: &Option<GatewayClient>,
+    store: &Store,
+    wake: &WakeHandle,
+    tx: &Sender<Cmd>,
+    key: &str,
+    name: &str,
+    job_id: &str,
+) {
     let action = format!("POST /apps/jobs/{job_id}/cancel");
     let (res, verify) = with_busy(store, wake, &format!("cancelling: {name}"), || {
         let res = require_client(client).and_then(|c| c.apps_job_cancel(job_id));
-        let verify = res.as_ref().ok().map(|_| require_client(client).and_then(|c| c.apps_job(job_id)));
+        let verify = res
+            .as_ref()
+            .ok()
+            .map(|_| require_client(client).and_then(|c| c.apps_job(job_id)));
         (res, verify)
     });
     match res {
@@ -372,8 +499,13 @@ pub(super) fn cancel(client: &Option<GatewayClient>, store: &Store, wake: &WakeH
                 .and_then(job_of)
                 .or_else(|| job_of(&v));
             let verified = verify.map(|r| {
-                r.map(|j| format!("GET /apps/jobs/{job_id} is {} (it stops at its next step)", job_of(&j).map(|x| x.state).unwrap_or_default()))
-                    .map_err(|e| e.to_string())
+                r.map(|j| {
+                    format!(
+                        "GET /apps/jobs/{job_id} is {} (it stops at its next step)",
+                        job_of(&j).map(|x| x.state).unwrap_or_default()
+                    )
+                })
+                .map_err(|e| e.to_string())
             });
             journal(store, wake, action, Ok("cancel requested".into()), verified);
             let s = *store;
@@ -396,22 +528,41 @@ pub(super) fn cancel(client: &Option<GatewayClient>, store: &Store, wake: &WakeH
     }
 }
 
-pub(super) fn install_node(client: &Option<GatewayClient>, store: &Store, wake: &WakeHandle, tx: &Sender<Cmd>) {
+pub(super) fn install_node(
+    client: &Option<GatewayClient>,
+    store: &Store,
+    wake: &WakeHandle,
+    tx: &Sender<Cmd>,
+) {
     let action = "POST /apps/runtime/install".to_string();
     let s = *store;
     wake.post(move || {
         s.apps.set_pending(NODE_KEY, true);
         s.apps.set_note(NODE_KEY, None);
     });
-    let res = with_busy(store, wake, "starting: install Node.js", || require_client(client)?.apps_runtime_install());
+    let res = with_busy(store, wake, "starting: install Node.js", || {
+        require_client(client)?.apps_runtime_install()
+    });
     let note = match res {
         Ok(v) => match job_of(&v) {
             Some(job) => {
                 let verified = require_client(client)
                     .and_then(|c| c.apps_job(&job.id))
-                    .map(|r| format!("GET /apps/jobs/{} is {}", job.id, job_of(&r).map(|j| j.state).unwrap_or_default()))
+                    .map(|r| {
+                        format!(
+                            "GET /apps/jobs/{} is {}",
+                            job.id,
+                            job_of(&r).map(|j| j.state).unwrap_or_default()
+                        )
+                    })
                     .map_err(|e| e.to_string());
-                journal(store, wake, action, Ok(format!("job {} started", job.id)), Some(verified));
+                journal(
+                    store,
+                    wake,
+                    action,
+                    Ok(format!("job {} started", job.id)),
+                    Some(verified),
+                );
                 let s = *store;
                 let tx2 = tx.clone();
                 wake.post(move || {
@@ -422,7 +573,11 @@ pub(super) fn install_node(client: &Option<GatewayClient>, store: &Store, wake: 
             }
             None => {
                 // Already there: the gateway says so (`job: null` + message).
-                let msg = v.get("message").and_then(Value::as_str).unwrap_or("Node.js is already available.").to_string();
+                let msg = v
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Node.js is already available.")
+                    .to_string();
                 journal(store, wake, action, Ok(msg.clone()), None);
                 let _ = tx.send(Cmd::LoadApps { latest: false });
                 Some(AppNote::ok(msg))
@@ -442,10 +597,18 @@ pub(super) fn install_node(client: &Option<GatewayClient>, store: &Store, wake: 
     });
 }
 
-pub(super) fn load_log(client: &Option<GatewayClient>, store: &Store, wake: &WakeHandle, app_id: &str, tail: u32) {
+pub(super) fn load_log(
+    client: &Option<GatewayClient>,
+    store: &Store,
+    wake: &WakeHandle,
+    app_id: &str,
+    tail: u32,
+) {
     let s = *store;
     wake.post(move || s.apps.log.set(Loadable::Loading));
-    let res = with_busy(store, wake, &format!("reading the {app_id} log"), || require_client(client)?.apps_logs(app_id, tail));
+    let res = with_busy(store, wake, &format!("reading the {app_id} log"), || {
+        require_client(client)?.apps_logs(app_id, tail)
+    });
     let id = app_id.to_string();
     let s = *store;
     wake.post(move || {
@@ -457,7 +620,14 @@ pub(super) fn load_log(client: &Option<GatewayClient>, store: &Store, wake: &Wak
 }
 
 /// One hop of the job poll chain.
-pub(super) fn poll(client: &Option<GatewayClient>, store: &Store, wake: &WakeHandle, tx: &Sender<Cmd>, gen: u64, jobs: Vec<(String, String)>) {
+pub(super) fn poll(
+    client: &Option<GatewayClient>,
+    store: &Store,
+    wake: &WakeHandle,
+    tx: &Sender<Cmd>,
+    gen: u64,
+    jobs: Vec<(String, String)>,
+) {
     // (key, Ok(job) | Err(gone?, error))
     let mut results: Vec<(String, Result<AppJob, bool>)> = Vec::new();
     for (key, id) in jobs {
@@ -482,7 +652,10 @@ pub(super) fn poll(client: &Option<GatewayClient>, store: &Store, wake: &WakeHan
         for (key, r) in results {
             match r {
                 Ok(job) => {
-                    let was_active = s.apps.jobs.with_untracked(|j| j.iter().any(|(k, x)| *k == key && x.is_active()));
+                    let was_active = s
+                        .apps
+                        .jobs
+                        .with_untracked(|j| j.iter().any(|(k, x)| *k == key && x.is_active()));
                     if was_active && !job.is_active() {
                         finished = true;
                         let name = name_for(&s, &key);
@@ -491,9 +664,24 @@ pub(super) fn poll(client: &Option<GatewayClient>, store: &Store, wake: &WakeHan
                         }
                         s.push_journal(JournalEntry {
                             when: crate::store::now_hms(),
-                            action: format!("apps job {} ({})", job.id, if job.title.is_empty() { name.clone() } else { job.title.clone() }),
-                            outcome: if job.state == "succeeded" { Ok(job.state.clone()) } else { Err(job.state.clone()) },
-                            verified: Some(Ok(format!("GET /apps/jobs/{} is {}", job.id, job.state))),
+                            action: format!(
+                                "apps job {} ({})",
+                                job.id,
+                                if job.title.is_empty() {
+                                    name.clone()
+                                } else {
+                                    job.title.clone()
+                                }
+                            ),
+                            outcome: if job.state == "succeeded" {
+                                Ok(job.state.clone())
+                            } else {
+                                Err(job.state.clone())
+                            },
+                            verified: Some(Ok(format!(
+                                "GET /apps/jobs/{} is {}",
+                                job.id, job.state
+                            ))),
                         });
                     }
                     s.apps.set_job(&key, job);
@@ -515,7 +703,9 @@ pub(super) fn poll(client: &Option<GatewayClient>, store: &Store, wake: &WakeHan
             // re-reads the overview, which restarts it for active jobs.
             s.apps.polling.set(false);
             if failed_read {
-                s.notice.set(Some("lost track of an apps job (the read failed) — r checks again".into()));
+                s.notice.set(Some(
+                    "lost track of an apps job (the read failed) — r checks again".into(),
+                ));
             }
             return;
         }

@@ -38,7 +38,9 @@ pub fn open_manage_menu(cx: Scope, ctx: &Ctx, entity: EntityRow) {
     // A non-admin sees the same menu the web shows them: the forms open to
     // READ, their writes are refused with the reason (the gateway's entity
     // mutation routes are admin-only), and the two pure acts say so here.
-    let non_admin = store.conn.with_untracked(crate::store::ConnPhase::is_known_non_admin);
+    let non_admin = store
+        .conn
+        .with_untracked(crate::store::ConnPhase::is_known_non_admin);
     let label = |text: &str, suffix: &str| -> String {
         if non_admin {
             format!("{text} — {suffix}")
@@ -61,26 +63,35 @@ pub fn open_manage_menu(cx: Scope, ctx: &Ctx, entity: EntityRow) {
         cx,
         ctx.ui,
         abstracttui::app::ChoicePrompt::new(title)
-        .option("state", label("State — wake / sleep / pause", admin_only))
-        .option("substrate", label("Mind substrate (provider / model)", view_only))
-        .option("voice", label("Voice (provider / model / voice)", view_only))
-        .option("work", label("Work order (set / clear)", view_only))
-        .option("owntime", label("Own time (grant + loop)", view_only))
-        .option("tools", label("Tool policy (per-phase grants)", view_only))
-        .option("prompt", label("Prompt overlay (edit layers)", view_only))
-        .option("candidates", label("Candidates review (sleep consolidation)", view_only))
-        .option_detail(
-            "reembed",
-            label("Re-embed the home (repair)", admin_only),
-            "vector-index rewrite; takes the home lease — not advised unless repairing",
-        )
-        .option("verify", "Verify chain / spark / manifest")
-        .option("card", "Identity card (overview)")
-        .option(
-            "talk",
-            "Talk — open a visit and chat (also c on the roster)",
-        )
-        .initial("state"),
+            .option("state", label("State — wake / sleep / pause", admin_only))
+            .option(
+                "substrate",
+                label("Mind substrate (provider / model)", view_only),
+            )
+            .option(
+                "voice",
+                label("Voice (provider / model / voice)", view_only),
+            )
+            .option("work", label("Work order (set / clear)", view_only))
+            .option("owntime", label("Own time (grant + loop)", view_only))
+            .option("tools", label("Tool policy (per-phase grants)", view_only))
+            .option("prompt", label("Prompt overlay (edit layers)", view_only))
+            .option(
+                "candidates",
+                label("Candidates review (sleep consolidation)", view_only),
+            )
+            .option_detail(
+                "reembed",
+                label("Re-embed the home (repair)", admin_only),
+                "vector-index rewrite; takes the home lease — not advised unless repairing",
+            )
+            .option("verify", "Verify chain / spark / manifest")
+            .option("card", "Identity card (overview)")
+            .option(
+                "talk",
+                "Talk — open a visit and chat (also c on the roster)",
+            )
+            .initial("state"),
         move |outcome| {
             if let abstracttui::app::ChoiceOutcome::Answered(a) = outcome {
                 let pick = a.selected.first().cloned().unwrap_or_default();
@@ -911,7 +922,9 @@ fn open_work_order_form(cx: Scope, ctx: &Ctx, name: String) {
                                         }
                                         json!({ "order": o })
                                     };
-                                    if let Some(why) = write_refusal(&ctx_s, "saving the work order") {
+                                    if let Some(why) =
+                                        write_refusal(&ctx_s, "saving the work order")
+                                    {
                                         form_error.set(Some(why));
                                         return;
                                     }
@@ -2037,8 +2050,19 @@ mod tests {
             timer_grant_body("0.5", 1_790_503_445).unwrap().unwrap()["expires_at"],
             "2026-09-27T10:34:05Z"
         );
-        assert_eq!(timer_grant_body("", 1).unwrap(), None, "blank = no timed window");
-        assert_eq!(timer_grant_body("0", 1).unwrap(), None, "not positive = no window");
-        assert!(timer_grant_body("2h", 1).is_err(), "garbage is refused, not guessed");
+        assert_eq!(
+            timer_grant_body("", 1).unwrap(),
+            None,
+            "blank = no timed window"
+        );
+        assert_eq!(
+            timer_grant_body("0", 1).unwrap(),
+            None,
+            "not positive = no window"
+        );
+        assert!(
+            timer_grant_body("2h", 1).is_err(),
+            "garbage is refused, not guessed"
+        );
     }
 }

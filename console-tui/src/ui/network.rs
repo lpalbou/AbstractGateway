@@ -197,11 +197,12 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData) -> View {
     let addr_sel = cx.signal(0usize);
     // A tight terminal (the Connection screen's compact layout) lists 3
     // addresses at a time; the list scrolls to the rest.
-    let max_rows = if abstracttui::app::use_viewport(cx).get_untracked().h <= super::connection::TIGHT_ROWS {
-        3
-    } else {
-        5
-    };
+    let max_rows =
+        if abstracttui::app::use_viewport(cx).get_untracked().h <= super::connection::TIGHT_ROWS {
+            3
+        } else {
+            5
+        };
     let visible = rows.len().clamp(1, max_rows) as i32;
     let urls_c = urls.clone();
     let urls_a = urls.clone();
@@ -262,7 +263,10 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData) -> View {
         );
     }
     if let Some(note) = &d.public_note {
-        col = col.child(line(vec![span(format!("public address: {note}"), t.text_faint)]));
+        col = col.child(line(vec![span(
+            format!("public address: {note}"),
+            t.text_faint,
+        )]));
     }
     col.build()
 }

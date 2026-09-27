@@ -212,9 +212,17 @@ pub const TIGHT_ROWS: i32 = 32;
 /// never painted over the block's bottom border.
 fn roomy_or_tight(tight: bool) -> LayoutStyle {
     if tight {
-        LayoutStyle::column().gap(0).grow(1.0).padding(Edges::hv(1, 0)).clip()
+        LayoutStyle::column()
+            .gap(0)
+            .grow(1.0)
+            .padding(Edges::hv(1, 0))
+            .clip()
     } else {
-        LayoutStyle::column().gap(1).grow(1.0).padding(Edges::all(1)).clip()
+        LayoutStyle::column()
+            .gap(1)
+            .grow(1.0)
+            .padding(Edges::all(1))
+            .clip()
     }
 }
 

@@ -490,7 +490,8 @@ mod tests {
             t.download_jobs().unwrap_err(),
             t.capability_defaults().unwrap_err(),
             t.set_text_default("ollama", "qwen3:8b").unwrap_err(),
-            t.engine_install_at("ollama", true, InstallLocation::User).unwrap_err(),
+            t.engine_install_at("ollama", true, InstallLocation::User)
+                .unwrap_err(),
             t.engine_job_continue("ei_1", None).unwrap_err(),
             t.engine_server("ollama", ServerAction::Start).unwrap_err(),
         ] {

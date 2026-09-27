@@ -218,7 +218,8 @@ mod tests {
                 "prompt": "Reply with the single word: ready."
             })
         );
-        let spec = json!({"mode": "native_mtp", "num_draft_tokens": 3, "require_acceleration": true});
+        let spec =
+            json!({"mode": "native_mtp", "num_draft_tokens": 3, "require_acceleration": true});
         let with = route_test_body(
             "output.text",
             "mlx",
@@ -229,7 +230,10 @@ mod tests {
         assert_eq!(with["reasoning"], "high");
         assert!(with.get("max_tokens").is_none(), "no cap: {with}");
         let nulls = route_test_body("output.text", "p", "m", &json!({"reasoning": null}));
-        assert!(nulls.get("reasoning").is_none(), "null controls stay unnamed");
+        assert!(
+            nulls.get("reasoning").is_none(),
+            "null controls stay unnamed"
+        );
     }
 
     #[test]

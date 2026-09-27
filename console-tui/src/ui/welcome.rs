@@ -157,14 +157,15 @@ fn admin_now(ctx: &Ctx) -> bool {
 /// non-admin cannot record it — the guide just closes, and says so.
 pub fn record_outcome(ctx: &Ctx, outcome: &str) {
     if ctx.ui.first_run_pending.get_untracked().is_some() {
-        ctx.store
-            .notice
-            .set(Some("already recording the first-run outcome — one moment".into()));
+        ctx.store.notice.set(Some(
+            "already recording the first-run outcome — one moment".into(),
+        ));
         return;
     }
     if !ctx.store.conn.with_untracked(ConnPhase::is_connected) {
         ctx.store.notice.set(Some(
-            "not connected — the first-run outcome is recorded on the gateway; connect first".into(),
+            "not connected — the first-run outcome is recorded on the gateway; connect first"
+                .into(),
         ));
         return;
     }
@@ -179,7 +180,9 @@ pub fn record_outcome(ctx: &Ctx, outcome: &str) {
     }
     let fid = crate::worker::next_form_id();
     ctx.ui.first_run_error.set(None);
-    ctx.ui.first_run_pending.set(Some((fid, outcome.to_string())));
+    ctx.ui
+        .first_run_pending
+        .set(Some((fid, outcome.to_string())));
     ctx.send(Cmd::CompleteFirstRun {
         outcome: outcome.to_string(),
         form_id: Some(fid),
@@ -208,12 +211,11 @@ pub fn guide_key(ctx: &Ctx, cx: Scope) {
         return;
     }
     let admin = admin_now(ctx);
-    let mut prompt = ChoicePrompt::new("Leave the setup guide?")
-        .option_detail(
-            "leave",
-            "Leave for now",
-            "nothing is recorded: the guide opens again at the next start",
-        );
+    let mut prompt = ChoicePrompt::new("Leave the setup guide?").option_detail(
+        "leave",
+        "Leave for now",
+        "nothing is recorded: the guide opens again at the next start",
+    );
     prompt = if admin {
         prompt.option_detail(
             "skip",
@@ -265,88 +267,105 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 .border(BorderKind::Rounded)
                 .title("Setup — welcome to your gateway")
                 .fill(t.surface)
-                .layout(LayoutStyle::column().gap(0).grow(1.0).padding(Edges::all(WELCOME_PAD)))
-                .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), move |gcx| {
-                    let t = tt;
-                    // The text column: the block's border AND its
-                    // padding (1 a side), and the Scroll's bar column
-                    // (it shows on a short terminal). Wrapping at the
-                    // border alone cut the last word ("Eve…").
-                    let width = (viewport.get().w - BLOCK_CHROME - 2 * WELCOME_PAD - 1).max(20) as usize;
-                    let mut rows: Vec<View> = Vec::new();
-                    let who = store.conn.with(|c| match c {
-                        ConnPhase::Connected(id) => Some((id.user_id.clone(), id.admin)),
-                        _ => None,
-                    });
-                    let lede = match &who {
-                        Some((_, true)) => "Your gateway is running and you are signed in as its admin. \
+                .layout(
+                    LayoutStyle::column()
+                        .gap(0)
+                        .grow(1.0)
+                        .padding(Edges::all(WELCOME_PAD)),
+                )
+                .child(dyn_view_scoped(
+                    LayoutStyle::default().grow(1.0),
+                    move |gcx| {
+                        let t = tt;
+                        // The text column: the block's border AND its
+                        // padding (1 a side), and the Scroll's bar column
+                        // (it shows on a short terminal). Wrapping at the
+                        // border alone cut the last word ("Eve…").
+                        let width = (viewport.get().w - BLOCK_CHROME - 2 * WELCOME_PAD - 1).max(20)
+                            as usize;
+                        let mut rows: Vec<View> = Vec::new();
+                        let who = store.conn.with(|c| match c {
+                            ConnPhase::Connected(id) => Some((id.user_id.clone(), id.admin)),
+                            _ => None,
+                        });
+                        let lede = match &who {
+                            Some((_, true)) => {
+                                "Your gateway is running and you are signed in as its admin. \
                              The next steps get you to a working model. Every step is optional."
-                            .to_string(),
-                        Some((user, false)) => format!(
-                            "Signed in as {user}, not an admin: the guide's writes (engines, \
+                                    .to_string()
+                            }
+                            Some((user, false)) => format!(
+                                "Signed in as {user}, not an admin: the guide's writes (engines, \
                              downloads, routes, the first-run record) are admin-only."
-                        ),
-                        None => "Not connected — the summary below needs a live gateway \
+                            ),
+                            None => "Not connected — the summary below needs a live gateway \
                                  (Connection screen)."
-                            .to_string(),
-                    };
-                    for l in wrap_text(&lede, width) {
-                        rows.push(line(vec![span(l, t.text)]));
-                    }
-                    let fr = match store.first_run.get() {
-                        Loadable::Ready(st) => (st.line(), if st.completed { t.ok } else { t.warn }),
-                        Loadable::Loading => ("reading…".to_string(), t.info),
-                        Loadable::Failed(e) => (format!("unreadable: {e}"), t.error),
-                        Loadable::NotAsked => ("not read yet".to_string(), t.text_muted),
-                    };
-                    rows.push(line(vec![
-                        span_bold("First run: ", t.text_muted),
-                        span(fr.0, fr.1),
-                    ]));
-                    rows.push(line(vec![span(String::new(), t.text)]));
-                    match store.welcome.get() {
-                        Loadable::Ready(w) => rows.extend(summary_rows(&t, &w)),
-                        Loadable::Loading => rows.push(line(vec![span(
-                            "Looking at this computer…",
-                            t.info,
-                        )])),
-                        Loadable::Failed(e) => {
-                            rows.push(line(vec![span_bold(
-                                "This computer's summary is not available right now.",
-                                t.warn,
-                            )]));
-                            rows.push(line(vec![span(e.to_string(), t.text_muted)]));
+                                .to_string(),
+                        };
+                        for l in wrap_text(&lede, width) {
+                            rows.push(line(vec![span(l, t.text)]));
                         }
-                        Loadable::NotAsked => rows.push(line(vec![span(
-                            "— not loaded yet (connect first, or press r to refresh)",
+                        let fr = match store.first_run.get() {
+                            Loadable::Ready(st) => {
+                                (st.line(), if st.completed { t.ok } else { t.warn })
+                            }
+                            Loadable::Loading => ("reading…".to_string(), t.info),
+                            Loadable::Failed(e) => (format!("unreadable: {e}"), t.error),
+                            Loadable::NotAsked => ("not read yet".to_string(), t.text_muted),
+                        };
+                        rows.push(line(vec![
+                            span_bold("First run: ", t.text_muted),
+                            span(fr.0, fr.1),
+                        ]));
+                        rows.push(line(vec![span(String::new(), t.text)]));
+                        match store.welcome.get() {
+                            Loadable::Ready(w) => rows.extend(summary_rows(&t, &w)),
+                            Loadable::Loading => {
+                                rows.push(line(vec![span("Looking at this computer…", t.info)]))
+                            }
+                            Loadable::Failed(e) => {
+                                rows.push(line(vec![span_bold(
+                                    "This computer's summary is not available right now.",
+                                    t.warn,
+                                )]));
+                                rows.push(line(vec![span(e.to_string(), t.text_muted)]));
+                            }
+                            Loadable::NotAsked => rows.push(line(vec![span(
+                                "— not loaded yet (connect first, or press r to refresh)",
+                                t.text_muted,
+                            )])),
+                        }
+                        rows.push(line(vec![span(String::new(), t.text)]));
+                        rows.push(line(vec![span_bold(
+                            "What this guide sets up — each step is optional:",
                             t.text_muted,
-                        )])),
-                    }
-                    rows.push(line(vec![span(String::new(), t.text)]));
-                    rows.push(line(vec![span_bold(
-                        "What this guide sets up — each step is optional:",
-                        t.text_muted,
-                    )]));
-                    let steps = WIZARD_STEPS
-                        .iter()
-                        .enumerate()
-                        .map(|(i, s)| format!("{} {}", i + 1, step_copy(*s).0))
-                        .collect::<Vec<_>>()
-                        .join(" · ");
-                    for l in wrap_text(&steps, width) {
-                        rows.push(line(vec![span(l, t.text)]));
-                    }
-                    let keys = if ui.wizard.get() {
-                        "Ctrl+N next step · Ctrl+G leave or skip setup · r refresh"
-                    } else {
-                        "Ctrl+G opens the setup guide · r refresh"
-                    };
-                    rows.push(line(vec![span(keys, t.text_faint)]));
-                    Scroll::new(Element::new().style(LayoutStyle::column()).children(rows).build())
+                        )]));
+                        let steps = WIZARD_STEPS
+                            .iter()
+                            .enumerate()
+                            .map(|(i, s)| format!("{} {}", i + 1, step_copy(*s).0))
+                            .collect::<Vec<_>>()
+                            .join(" · ");
+                        for l in wrap_text(&steps, width) {
+                            rows.push(line(vec![span(l, t.text)]));
+                        }
+                        let keys = if ui.wizard.get() {
+                            "Ctrl+N next step · Ctrl+G leave or skip setup · r refresh"
+                        } else {
+                            "Ctrl+G opens the setup guide · r refresh"
+                        };
+                        rows.push(line(vec![span(keys, t.text_faint)]));
+                        Scroll::new(
+                            Element::new()
+                                .style(LayoutStyle::column())
+                                .children(rows)
+                                .build(),
+                        )
                         .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
                         .scrollbar_auto_hide(true)
                         .view(gcx)
-                }))
+                    },
+                ))
                 .element(t)
                 .build(),
         )
@@ -380,15 +399,21 @@ pub fn finish_row(gcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             d.rows
                 .iter()
                 .find(|row| row.key == "output.text" && row.model.is_some())
-                .or_else(|| d.rows.iter().find(|row| row.key == "input.text" && row.model.is_some()))
+                .or_else(|| {
+                    d.rows
+                        .iter()
+                        .find(|row| row.key == "input.text" && row.model.is_some())
+                })
                 .map(|row| row.pair_text())
         })
     });
-    let login = store.welcome.with(|w| match w.ready().and_then(|w| w.service_installed) {
-        Some(true) => "yes",
-        Some(false) => "not yet",
-        None => "unknown",
-    });
+    let login = store
+        .welcome
+        .with(|w| match w.ready().and_then(|w| w.service_installed) {
+            Some(true) => "yes",
+            Some(false) => "not yet",
+            None => "unknown",
+        });
     let model = model.unwrap_or_else(|| "not set yet".into());
     let facts = line(vec![
         span("Console ", t.text_muted),
@@ -469,5 +494,7 @@ pub fn done_cli_hints(service: Option<(Option<bool>, Option<String>)>) -> String
         ),
         _ => "abstractgateway service install (start at login)".to_string(),
     };
-    format!("abstractgateway claim --open (sign in again) · {login} · abstractgateway-config status")
+    format!(
+        "abstractgateway claim --open (sign in again) · {login} · abstractgateway-config status"
+    )
 }

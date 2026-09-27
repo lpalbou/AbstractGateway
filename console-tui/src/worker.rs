@@ -22,13 +22,13 @@ use crate::api::{ApiError, ApiErrorKind, ApiResult, GatewayClient};
 /// The Apps screen's handlers (install/update/start/stop/open, jobs).
 #[path = "worker_apps.rs"]
 mod apps;
+/// Entity parity (summon, templates, card, talk, voice audition).
+#[path = "worker_entities.rs"]
+pub mod entities;
 /// Operator controls (host card, paused-banner poll, restart/quit watcher,
 /// workflow import/reload, skills reseed, WAN lookup, own workspace policy).
 #[path = "worker_operator.rs"]
 pub mod operator;
-/// Entity parity (summon, templates, card, talk, voice audition).
-#[path = "worker_entities.rs"]
-pub mod entities;
 use crate::store::{
     entities_from_payload, models_from_payload, runtimes_from_payload, users_from_payload,
     AvailabilityData, ConnPhase, DiscoverOutcome, DownloadStatus, Identity, JournalEntry, Loadable,
@@ -781,7 +781,11 @@ pub fn applied_recommended_summary(payload: &Value) -> String {
                     "{key}: nothing recommended runs on this computer — {reason}; left as {before}{cannot_run}"
                 ));
             }
-            "unavailable" => match row.get("reason").and_then(Value::as_str).filter(|r| !r.is_empty()) {
+            "unavailable" => match row
+                .get("reason")
+                .and_then(Value::as_str)
+                .filter(|r| !r.is_empty())
+            {
                 Some(r) => unavailable.push(format!("{key} ({r})")),
                 None => unavailable.push(key.to_string()),
             },
@@ -909,7 +913,10 @@ fn network_write_note(mode: &str, write: &ApiResult<Value>) -> String {
 
 /// The body the TUI sends for a reverse-proxy change: exactly the fields
 /// named (the console and the CLI send the same shape to the same door).
-pub fn network_proxy_body(allowed_origins: &Option<Vec<String>>, trust_proxy: Option<bool>) -> Value {
+pub fn network_proxy_body(
+    allowed_origins: &Option<Vec<String>>,
+    trust_proxy: Option<bool>,
+) -> Value {
     let mut body = serde_json::Map::new();
     if let Some(list) = allowed_origins {
         body.insert("allowed_origins".into(), serde_json::json!(list));
@@ -929,7 +936,11 @@ pub fn network_proxy_note(write: &ApiResult<Value>) -> String {
             let mut parts: Vec<String> = Vec::new();
             for field in ["allowed_origins", "trust_proxy"] {
                 if let Some(ch) = changed.and_then(|c| c.get(field)) {
-                    let label = if field == "trust_proxy" { "trust proxy" } else { "origins" };
+                    let label = if field == "trust_proxy" {
+                        "trust proxy"
+                    } else {
+                        "origins"
+                    };
                     let when = match ch.get("applies").and_then(Value::as_str) {
                         Some("overridden_by_env") => "saved, NOT in effect: the environment the gateway was started with decides",
                         Some("restart") => "saved, applies at the next start",
@@ -1140,9 +1151,15 @@ fn handle(
             let verified = verify.as_ref().ok().map(|v| {
                 let g = GroupStatus::from_job(&v.get("job").cloned().unwrap_or(Value::Null));
                 if g.cancel_requested || !g.running() {
-                    Ok(format!("GET /models/download/{job}: {} ({})", g.status, g.message))
+                    Ok(format!(
+                        "GET /models/download/{job}: {} ({})",
+                        g.status, g.message
+                    ))
                 } else {
-                    Err(format!("GET /models/download/{job} shows no cancel request ({})", g.status))
+                    Err(format!(
+                        "GET /models/download/{job} shows no cancel request ({})",
+                        g.status
+                    ))
                 }
             });
             if let Ok(v) = &verify {
@@ -1153,17 +1170,29 @@ fn handle(
             finish_write(store, wake, action, write, verified, None, on_done);
         }
 
-        Cmd::LoadFirstRun => load(store, wake, "reading first-run state", store.first_run, || {
-            require_client(client)?
-                .first_run_state()
-                .map(|v| FirstRunState::from_value(&v))
-        }),
+        Cmd::LoadFirstRun => load(
+            store,
+            wake,
+            "reading first-run state",
+            store.first_run,
+            || {
+                require_client(client)?
+                    .first_run_state()
+                    .map(|v| FirstRunState::from_value(&v))
+            },
+        ),
 
-        Cmd::LoadWelcome => load(store, wake, "reading this computer's summary", store.welcome, || {
-            require_client(client)?
-                .host_state()
-                .map(|v| WelcomeSummary::from_host_state(&v))
-        }),
+        Cmd::LoadWelcome => load(
+            store,
+            wake,
+            "reading this computer's summary",
+            store.welcome,
+            || {
+                require_client(client)?
+                    .host_state()
+                    .map(|v| WelcomeSummary::from_host_state(&v))
+            },
+        ),
 
         Cmd::CompleteFirstRun { outcome, form_id } => {
             let action = format!("POST first-run outcome={outcome}");
@@ -1577,7 +1606,17 @@ fn handle(
             verb,
             path,
             start_first,
-        } => apps::act(client, store, wake, tx, &app_id, &name, verb, path, start_first),
+        } => apps::act(
+            client,
+            store,
+            wake,
+            tx,
+            &app_id,
+            &name,
+            verb,
+            path,
+            start_first,
+        ),
         Cmd::CancelAppJob { key, name, job_id } => {
             apps::cancel(client, store, wake, tx, &key, &name, &job_id)
         }
@@ -1784,9 +1823,13 @@ fn handle(
 
         Cmd::Operator(op) => operator::handle(client, store, wake, tx, op, on_done),
 
-        Cmd::LoadAbout => load(store, wake, "reading the gateway's versions", store.about, || {
-            require_client(client)?.about()
-        }),
+        Cmd::LoadAbout => load(
+            store,
+            wake,
+            "reading the gateway's versions",
+            store.about,
+            || require_client(client)?.about(),
+        ),
 
         Cmd::LoadRuntimeConfig => load(
             store,
@@ -2197,8 +2240,7 @@ fn handle(
         Cmd::SandboxMedia { request } => {
             let s = *store;
             let out = with_busy(store, wake, &request.busy_label(), || {
-                require_client(client)
-                    .and_then(|c| crate::ui::sandbox::perform_media(&c, &request))
+                require_client(client).and_then(|c| crate::ui::sandbox::perform_media(&c, &request))
             });
             wake.post(move || {
                 s.sandbox_ws.media.set(match out {
@@ -2220,8 +2262,7 @@ fn handle(
         Cmd::SandboxSpeak { request } => {
             let s = *store;
             let out = with_busy(store, wake, "speaking the reply", || {
-                require_client(client)
-                    .and_then(|c| crate::ui::sandbox::perform_media(&c, &request))
+                require_client(client).and_then(|c| crate::ui::sandbox::perform_media(&c, &request))
             });
             wake.post(move || crate::ui::sandbox::publish_speech(&s, out));
         }
@@ -3352,14 +3393,17 @@ fn handle_download_recommended(
     wake.post(move || s.begin_busy(op, "Download all (recommended models)"));
     let started = (|| -> ApiResult<GroupStatus> {
         let v = require_client(client)?.download_recommended(false)?;
-        let group = v.get("group").filter(|g| g.is_object()).ok_or_else(|| ApiError {
-            kind: ApiErrorKind::Protocol,
-            message: "the gateway started the downloads but returned no parent job (`group`); \
+        let group = v
+            .get("group")
+            .filter(|g| g.is_object())
+            .ok_or_else(|| ApiError {
+                kind: ApiErrorKind::Protocol,
+                message: "the gateway started the downloads but returned no parent job (`group`); \
                       it needs the download-group contract (docs/model-downloads.md)"
-                .to_string(),
-            body: None,
-            timed_out: false,
-        })?;
+                    .to_string(),
+                body: None,
+                timed_out: false,
+            })?;
         Ok(GroupStatus::from_job(group))
     })();
     match started {

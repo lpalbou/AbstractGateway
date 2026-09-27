@@ -38,13 +38,23 @@ impl ConsoleTransport for NoTransport {
     fn engines_status(&self, _probe: bool) -> Result<Value, TransportError> {
         Err(TransportError::unavailable("not under test"))
     }
-    fn models_catalog(&self, _q: &str, _e: Option<&str>, _f: bool) -> Result<Value, TransportError> {
+    fn models_catalog(
+        &self,
+        _q: &str,
+        _e: Option<&str>,
+        _f: bool,
+    ) -> Result<Value, TransportError> {
         Err(TransportError::unavailable("not under test"))
     }
     fn models_installed(&self, _p: Option<&str>) -> Result<Value, TransportError> {
         Err(TransportError::unavailable("not under test"))
     }
-    fn start_download(&self, _p: &str, _a: &str, _expected_bytes: Option<u64>) -> Result<Value, TransportError> {
+    fn start_download(
+        &self,
+        _p: &str,
+        _a: &str,
+        _expected_bytes: Option<u64>,
+    ) -> Result<Value, TransportError> {
         Err(TransportError::unavailable("not under test"))
     }
     fn delete_model(&self, _p: &str, _a: &str, _f: bool) -> Result<Value, TransportError> {
@@ -127,14 +137,23 @@ fn harness() -> Harness {
     };
     let driver = Driver::new(&mut app, &mut term, cfg).expect("driver");
     let (store, ui) = slot.borrow().expect("created");
-    Harness { app, term, driver, store, ui, rx }
+    Harness {
+        app,
+        term,
+        driver,
+        store,
+        ui,
+        rx,
+    }
 }
 
 impl Harness {
     fn turns(&mut self, n: usize) -> String {
         let mut last = String::new();
         for _ in 0..n {
-            self.driver.turn(&mut self.app, &mut self.term).expect("turn");
+            self.driver
+                .turn(&mut self.app, &mut self.term)
+                .expect("turn");
             last = self.term.screen().to_text();
         }
         last
@@ -173,31 +192,39 @@ impl Harness {
         s
     }
     fn seed(&mut self) {
-        self.store.routes.set(Loadable::Ready(RoutesData::from_value(&json!({
-            "ok": true, "writable": true, "errors": [],
-            "routes": [{"key": "input.text", "kind": "input", "modality": "text",
-                        "label": "Text Input", "provider": "lmstudio", "model": "m",
-                        "source": "abstractcore.gateway_runtime", "configured": true}]
-        }))));
+        self.store
+            .routes
+            .set(Loadable::Ready(RoutesData::from_value(&json!({
+                "ok": true, "writable": true, "errors": [],
+                "routes": [{"key": "input.text", "kind": "input", "modality": "text",
+                            "label": "Text Input", "provider": "lmstudio", "model": "m",
+                            "source": "abstractcore.gateway_runtime", "configured": true}]
+            }))));
         self.store
             .entities
             .set(Loadable::Ready(entities_from_payload(&entities())));
         // (A non-admin never reads the registry; seeding it anyway proves
         // the screen still refuses on the principal, not on missing data.)
-        self.store.users.set(Loadable::Ready(users_from_payload(&json!({"users": [
-            {"user_id": "bob", "tenant_id": "default", "roles": ["user"], "enabled": true,
-             "runtime_id": "bob"}
-        ]}))));
-        self.store.workflows.set(Loadable::Ready(workflows_from_payload(&json!({
-            "items": [{"bundle_id": "demo", "bundle_version": "1.0.0",
-                       "entrypoints": [{"flow_id": "main"}]}]
-        }))));
-        self.store.host_state.set(Loadable::Ready(host_state_from_payload(&json!({
-            "ok": true,
-            "models": [{"task": "text_generation", "provider": "mlx", "model": "q",
-                        "resident": true, "locked": false, "lockable": true}],
-            "session_caches": [{"provider": "mlx", "model": "q", "session_id": "s1"}]
-        }))));
+        self.store
+            .users
+            .set(Loadable::Ready(users_from_payload(&json!({"users": [
+                {"user_id": "bob", "tenant_id": "default", "roles": ["user"], "enabled": true,
+                 "runtime_id": "bob"}
+            ]}))));
+        self.store
+            .workflows
+            .set(Loadable::Ready(workflows_from_payload(&json!({
+                "items": [{"bundle_id": "demo", "bundle_version": "1.0.0",
+                           "entrypoints": [{"flow_id": "main"}]}]
+            }))));
+        self.store
+            .host_state
+            .set(Loadable::Ready(host_state_from_payload(&json!({
+                "ok": true,
+                "models": [{"task": "text_generation", "provider": "mlx", "model": "q",
+                            "resident": true, "locked": false, "lockable": true}],
+                "session_caches": [{"provider": "mlx", "model": "q", "session_id": "s1"}]
+            }))));
     }
     fn notice(&self) -> String {
         self.store.notice.get_untracked().unwrap_or_default()
@@ -252,7 +279,10 @@ fn admin_reaches_the_gated_verbs() {
     let mut h = harness();
     h.on(ui::SCREEN_ROUTES, true);
     let s = h.key(b"a");
-    assert!(s.contains("Apply the framework's recommended routes"), "{s}");
+    assert!(
+        s.contains("Apply the framework's recommended routes"),
+        "{s}"
+    );
     let mut h = harness();
     h.on(ui::SCREEN_MODELS, true);
     let s = h.key(b"w");
@@ -270,18 +300,35 @@ fn admin_reaches_the_gated_verbs() {
 fn footer_hides_admin_verbs_from_a_non_admin() {
     let mut h = harness();
     let s = h.on(ui::SCREEN_ROUTES, true);
-    assert!(s.contains("apply recommended") && s.contains("download weights"), "{s}");
+    assert!(
+        s.contains("apply recommended") && s.contains("download weights"),
+        "{s}"
+    );
     assert!(s.contains("Ctrl+G setup guide"), "{s}");
     let mut h = harness();
     let s = h.on(ui::SCREEN_ROUTES, false);
     assert!(s.contains("edit route") && s.contains("clear route"), "{s}");
-    for hidden in ["apply recommended", "download weights", "download all", "Ctrl+G"] {
-        assert!(!s.contains(hidden), "non-admin footer shows {hidden:?}:\n{s}");
+    for hidden in [
+        "apply recommended",
+        "download weights",
+        "download all",
+        "Ctrl+G",
+    ] {
+        assert!(
+            !s.contains(hidden),
+            "non-admin footer shows {hidden:?}:\n{s}"
+        );
     }
-    assert!(s.contains("w/a/D/C admin only"), "disabled with the reason:\n{s}");
+    assert!(
+        s.contains("w/a/D/C admin only"),
+        "disabled with the reason:\n{s}"
+    );
     let s = h.on(ui::SCREEN_MODELS, false);
     assert!(s.contains("context estimate"), "{s}");
-    assert!(!s.contains("load (warm up)") && !s.contains("clear session caches"), "{s}");
+    assert!(
+        !s.contains("load (warm up)") && !s.contains("clear session caches"),
+        "{s}"
+    );
     assert!(s.contains("u/k/w/c admin only"), "{s}");
 }
 
@@ -294,7 +341,10 @@ fn runtimes_screen_is_admin_only() {
     h.ui.wizard.set(false);
     h.ui.screen.set(4);
     let s = h.turns(3);
-    assert!(s.contains("the Runtimes screen is admin-only on the gateway"), "{s}");
+    assert!(
+        s.contains("the Runtimes screen is admin-only on the gateway"),
+        "{s}"
+    );
     let cmds = h.drain();
     assert!(
         !cmds.iter().any(|c| matches!(c, Cmd::LoadRuntimes)),
@@ -303,7 +353,10 @@ fn runtimes_screen_is_admin_only() {
     // `r` (the root refresh) does not read it either.
     h.key(b"r");
     let cmds = h.drain();
-    assert!(!cmds.iter().any(|c| matches!(c, Cmd::LoadRuntimes)), "r: {cmds:?}");
+    assert!(
+        !cmds.iter().any(|c| matches!(c, Cmd::LoadRuntimes)),
+        "r: {cmds:?}"
+    );
     let mut h = harness();
     h.connect(true);
     h.ui.wizard.set(false);
@@ -323,9 +376,18 @@ fn users_registry_is_not_read_for_a_non_admin() {
     h.ui.screen.set(ui::SCREEN_USERS);
     let s = h.turns(3);
     let cmds = h.drain();
-    assert!(!cmds.iter().any(|c| matches!(c, Cmd::LoadUsers)), "{cmds:?}");
-    assert!(cmds.iter().any(|c| matches!(c, Cmd::LoadEntities)), "{cmds:?}");
-    assert!(s.contains("the users registry is admin-only on the gateway"), "{s}");
+    assert!(
+        !cmds.iter().any(|c| matches!(c, Cmd::LoadUsers)),
+        "{cmds:?}"
+    );
+    assert!(
+        cmds.iter().any(|c| matches!(c, Cmd::LoadEntities)),
+        "{cmds:?}"
+    );
+    assert!(
+        s.contains("the users registry is admin-only on the gateway"),
+        "{s}"
+    );
     // The roster landing settles the screen: the never-read registry must
     // not keep the entry effect re-refreshing the screen (a load storm).
     h.store
@@ -334,10 +396,15 @@ fn users_registry_is_not_read_for_a_non_admin() {
     h.turns(4);
     let cmds = h.drain();
     assert!(
-        !cmds.iter().any(|c| matches!(c, Cmd::LoadEntities | Cmd::LoadUsers)),
+        !cmds
+            .iter()
+            .any(|c| matches!(c, Cmd::LoadEntities | Cmd::LoadUsers)),
         "the screen settled, nothing re-sent: {cmds:?}"
     );
-    assert!(matches!(h.store.entities.get_untracked(), Loadable::Ready(_)));
+    assert!(matches!(
+        h.store.entities.get_untracked(),
+        Loadable::Ready(_)
+    ));
     // Re-entering the screen loads nothing: the registry a non-admin never
     // reads does not count as "never asked".
     h.ui.screen.set(ui::SCREEN_ROUTES);
@@ -347,13 +414,21 @@ fn users_registry_is_not_read_for_a_non_admin() {
     h.turns(3);
     let cmds = h.drain();
     assert!(
-        !cmds.iter().any(|c| matches!(c, Cmd::LoadEntities | Cmd::LoadUsers)),
+        !cmds
+            .iter()
+            .any(|c| matches!(c, Cmd::LoadEntities | Cmd::LoadUsers)),
         "re-entry: {cmds:?}"
     );
     h.key(b"r");
     let cmds = h.drain();
-    assert!(!cmds.iter().any(|c| matches!(c, Cmd::LoadUsers)), "r: {cmds:?}");
-    assert!(cmds.iter().any(|c| matches!(c, Cmd::LoadEntities)), "r reloads the roster: {cmds:?}");
+    assert!(
+        !cmds.iter().any(|c| matches!(c, Cmd::LoadUsers)),
+        "r: {cmds:?}"
+    );
+    assert!(
+        cmds.iter().any(|c| matches!(c, Cmd::LoadEntities)),
+        "r reloads the roster: {cmds:?}"
+    );
 }
 
 /// Ctrl+G: the setup guide is an admin surface (the web hides its button).
@@ -363,7 +438,11 @@ fn ctrl_g_is_refused_for_a_non_admin() {
     h.on(ui::SCREEN_ROUTES, false);
     h.key(b"\x07");
     assert!(!h.ui.wizard.get_untracked(), "the guide stays closed");
-    assert!(h.notice().contains("the setup guide is admin-only"), "{}", h.notice());
+    assert!(
+        h.notice().contains("the setup guide is admin-only"),
+        "{}",
+        h.notice()
+    );
     let mut h = harness();
     h.on(ui::SCREEN_ROUTES, true);
     h.key(b"\x07");
@@ -390,7 +469,12 @@ fn entity_manage_refuses_admin_acts_for_a_non_admin() {
     h.drain();
     // The menu opens on "state".
     h.key(b"\r");
-    assert!(h.notice().contains("changing an entity's state is admin-only"), "{}", h.notice());
+    assert!(
+        h.notice()
+            .contains("changing an entity's state is admin-only"),
+        "{}",
+        h.notice()
+    );
     let s = h.turns(2);
     assert!(!s.contains("Apply"), "no state modal opened:\n{s}");
     assert!(only_reads(&h.drain()));
@@ -403,11 +487,19 @@ fn entity_manage_refuses_admin_acts_for_a_non_admin() {
 fn core_screens_follow_the_connection_principal() {
     use abstractcore_console::screens::Access;
     let id = |admin: bool| {
-        Identity::from_me(&json!({"principal": {"user_id": "ana", "tenant_id": "default", "admin": admin}}))
-            .unwrap()
+        Identity::from_me(
+            &json!({"principal": {"user_id": "ana", "tenant_id": "default", "admin": admin}}),
+        )
+        .unwrap()
     };
-    assert_eq!(ui::screens_access(&ConnPhase::Connected(id(true))), Access::Admin);
-    assert_eq!(ui::screens_access(&ConnPhase::Verifying(id(true))), Access::Admin);
+    assert_eq!(
+        ui::screens_access(&ConnPhase::Connected(id(true))),
+        Access::Admin
+    );
+    assert_eq!(
+        ui::screens_access(&ConnPhase::Verifying(id(true))),
+        Access::Admin
+    );
     assert_eq!(
         ui::screens_access(&ConnPhase::Connected(id(false))),
         Access::ReadOnly("signed in as ana, not an admin".into())
@@ -420,7 +512,10 @@ fn core_screens_follow_the_connection_principal() {
     h.store.notice.set(None);
     h.key(b"w");
     let n = h.notice();
-    assert!(n.contains("admin") && n.contains("signed in as ana, not an admin"), "{n:?}");
+    assert!(
+        n.contains("admin") && n.contains("signed in as ana, not an admin"),
+        "{n:?}"
+    );
     let mut h = harness();
     let s = h.on(ui::SCREEN_CATALOG, true);
     assert!(!s.contains("admin only"), "an admin sees the verbs:\n{s}");
@@ -435,12 +530,18 @@ fn users_screen_keys_live_without_any_table() {
     h.ui.wizard.set(false);
     h.ui.screen.set(ui::SCREEN_USERS);
     h.turns(2);
-    h.store.entities.set(Loadable::Ready(entities_from_payload(&json!({"entities": []}))));
+    h.store.entities.set(Loadable::Ready(entities_from_payload(
+        &json!({"entities": []}),
+    )));
     h.turns(3);
     h.drain();
     h.store.notice.set(None);
     h.key(b"a");
-    assert!(h.notice().contains("adding a user is admin-only"), "{:?}", h.notice());
+    assert!(
+        h.notice().contains("adding a user is admin-only"),
+        "{:?}",
+        h.notice()
+    );
     let s = h.key(b"n");
     assert!(s.contains("Summon"), "n opens the summon form:\n{s}");
 }

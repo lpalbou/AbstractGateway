@@ -45,7 +45,12 @@ impl ConsoleTransport for NoTransport {
     fn models_installed(&self, _p: Option<&str>) -> Result<Value, TransportError> {
         Err(TransportError::unavailable("test"))
     }
-    fn start_download(&self, _p: &str, _a: &str, _expected_bytes: Option<u64>) -> Result<Value, TransportError> {
+    fn start_download(
+        &self,
+        _p: &str,
+        _a: &str,
+        _expected_bytes: Option<u64>,
+    ) -> Result<Value, TransportError> {
         Err(TransportError::unavailable("test"))
     }
     fn delete_model(&self, _p: &str, _a: &str, _f: bool) -> Result<Value, TransportError> {
@@ -376,10 +381,15 @@ fn video_task_row_inherits_the_parent_like_the_server() {
     h.review();
     let s = h.turns(2);
     assert!(
-        s.contains("output.video.text_to_video will use mlx-gen / test-ltx (inherited from output.video)"),
+        s.contains(
+            "output.video.text_to_video will use mlx-gen / test-ltx (inherited from output.video)"
+        ),
         "the route line names the inherited pair and its source:\n{s}"
     );
-    assert!(s.contains("Video — test-ltx"), "the picker shows it ready:\n{s}");
+    assert!(
+        s.contains("Video — test-ltx"),
+        "the picker shows it ready:\n{s}"
+    );
     h.type_text("\r");
     h.turns(2);
     match h.find_cmd(|c| matches!(c, Cmd::SandboxMedia { .. })) {
@@ -414,7 +424,10 @@ fn partial_task_row_stops_resolution_and_refuses() {
     h.ui.sb_prompt.set("a fox".into());
     h.review();
     let s = h.turns(2);
-    assert!(s.contains("Image — not ready"), "picker says not ready:\n{s}");
+    assert!(
+        s.contains("Image — not ready"),
+        "picker says not ready:\n{s}"
+    );
     assert!(
         s.contains("output.image.text_to_image is not ready"),
         "route line says why:\n{s}"

@@ -55,7 +55,12 @@ impl GatewayClient {
     /// `GET /models/catalog?q=&hub=true` — contract C enriched from the
     /// Hugging Face API, with hub search rows for `q` (slow: a network
     /// call on the gateway host, cached 24 h there).
-    pub fn models_catalog_hub(&self, q: &str, engine: Option<&str>, fits: bool) -> ApiResult<Value> {
+    pub fn models_catalog_hub(
+        &self,
+        q: &str,
+        engine: Option<&str>,
+        fits: bool,
+    ) -> ApiResult<Value> {
         let mut path = format!("/models/catalog?q={}&hub=true", urlencode(q));
         if let Some(e) = engine.filter(|e| !e.is_empty()) {
             path.push_str(&format!("&engine={}", urlencode(e)));

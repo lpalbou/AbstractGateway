@@ -20,9 +20,9 @@ use crate::worker::Cmd;
 /// Open the form; it reads the policy first and fills in when it lands.
 pub fn open(cx: Scope, ctx: &Ctx) {
     if !ctx.store.conn.with_untracked(ConnPhase::is_connected) {
-        ctx.store
-            .notice
-            .set(Some("not connected — probe on the Connection screen first".into()));
+        ctx.store.notice.set(Some(
+            "not connected — probe on the Connection screen first".into(),
+        ));
         return;
     }
     ctx.store.op.my_policy.set(Loadable::Loading);
@@ -93,13 +93,20 @@ fn form_body(
         .style(LayoutStyle::column().gap(0).grow(1.0))
         // Pinned rows: who this is and what applies must survive height
         // pressure from the two text areas below.
-        .child(line_styled(LayoutStyle::line(1).shrink(0.0), vec![
-            span(format!("{}:{} · ", p.tenant_id, p.user_id), t0.text_muted),
-            span(
-                if p.customized { "customized" } else { "inherits the gateway defaults" },
-                t0.text,
-            ),
-        ]))
+        .child(line_styled(
+            LayoutStyle::line(1).shrink(0.0),
+            vec![
+                span(format!("{}:{} · ", p.tenant_id, p.user_id), t0.text_muted),
+                span(
+                    if p.customized {
+                        "customized"
+                    } else {
+                        "inherits the gateway defaults"
+                    },
+                    t0.text,
+                ),
+            ],
+        ))
         .child(line_styled(
             LayoutStyle::line(1).shrink(0.0),
             vec![span(ellipsize(&p.effective_text(), 92), t0.text_faint)],
@@ -110,7 +117,10 @@ fn form_body(
                 "off" => "off — launch folders are not trusted",
                 _ => "inherit gateway default",
             };
-            line(vec![span("launch-folder trust: ", t0.text_muted), span(label, t0.text)])
+            line(vec![
+                span("launch-folder trust: ", t0.text_muted),
+                span(label, t0.text),
+            ])
         }))
         .child(
             Button::new("change launch-folder trust")
@@ -132,7 +142,10 @@ fn form_body(
                 "blacklist" => "blacklist — allow everything, refuse my list",
                 _ => "whitelist (default) — deny everything, allow my list",
             };
-            line(vec![span("access mode: ", t0.text_muted), span(label, t0.text)])
+            line(vec![
+                span("access mode: ", t0.text_muted),
+                span(label, t0.text),
+            ])
         }))
         .child(
             Button::new("change access mode")

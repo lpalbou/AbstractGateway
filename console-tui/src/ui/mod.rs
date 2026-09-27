@@ -10,9 +10,9 @@ pub mod about;
 /// The Apps screen (browser apps, the desktop Assistant, Node.js).
 pub mod apps;
 pub mod connection;
+pub mod docs;
 pub mod entity_chat;
 pub mod entity_create;
-pub mod docs;
 pub mod entity_manage;
 /// Gateway host panel (F3) + the paused / restart banner.
 pub mod host;
@@ -1223,10 +1223,7 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
                     .unwrap_or_else(|| " Step goal: ".to_string());
                 Element::new()
                     .style(LayoutStyle::line(1).shrink(0.0))
-                    .child(line(vec![
-                        span(step, t.accent),
-                        span(goal, t.text_muted),
-                    ]))
+                    .child(line(vec![span(step, t.accent), span(goal, t.text_muted)]))
                     .build()
             }
         }))
@@ -1631,7 +1628,11 @@ fn header(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
             // The web's session-only ✦ button, as a hint: last span, so
             // it is the first thing a narrow terminal truncates.
             span(
-                if conn.is_connected() { "  · F2 docs assistant" } else { "" },
+                if conn.is_connected() {
+                    "  · F2 docs assistant"
+                } else {
+                    ""
+                },
                 t.text_faint,
             ),
         ])

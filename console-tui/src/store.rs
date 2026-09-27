@@ -164,9 +164,9 @@ impl ConnPhase {
             ConnPhase::Connected(id) if id.admin => None,
             // An admin whose connection is being re-checked: not refused
             // for the ROLE, only for the moment.
-            ConnPhase::Verifying(id) if id.admin => Some(
-                "the connection is being re-verified — try again in a moment".to_string(),
-            ),
+            ConnPhase::Verifying(id) if id.admin => {
+                Some("the connection is being re-verified — try again in a moment".to_string())
+            }
             ConnPhase::Connected(id) | ConnPhase::Verifying(id) => Some(format!(
                 "{what} is admin-only on the gateway — signed in as {}, not an admin",
                 id.user_id
@@ -424,8 +424,16 @@ impl RecommendationUnavailable {
             (true, true) => String::new(),
             _ => format!(
                 "{} · {}",
-                if self.provider.is_empty() { "?" } else { &self.provider },
-                if self.model.is_empty() { "?" } else { &self.model }
+                if self.provider.is_empty() {
+                    "?"
+                } else {
+                    &self.provider
+                },
+                if self.model.is_empty() {
+                    "?"
+                } else {
+                    &self.model
+                }
             ),
         }
     }
@@ -1336,7 +1344,12 @@ impl ReverseProxyView {
         let strs = |x: &Value, k: &str| -> Vec<String> {
             x.get(k)
                 .and_then(Value::as_array)
-                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
                 .unwrap_or_default()
         };
         let st = |x: &Value, k: &str| x.get(k).and_then(Value::as_str).unwrap_or("").to_string();
@@ -1550,7 +1563,11 @@ pub fn skills_shelf_from(v: &Value) -> Option<SkillsShelf> {
         warnings: r
             .get("warnings")
             .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(|w| w.as_str().map(str::to_string)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|w| w.as_str().map(str::to_string))
+                    .collect()
+            })
             .unwrap_or_default(),
     })
 }
@@ -1595,7 +1612,9 @@ pub fn agent_defaults_from(v: &Value) -> Vec<AgentDefault> {
                 source: s(row, "source").unwrap_or_else(|| "?".into()),
                 available: b(row, "available").unwrap_or(false),
                 reason: s(row, "reason").unwrap_or_default(),
-                workflow_id: resolved.and_then(|r| s(r, "workflow_id")).unwrap_or_default(),
+                workflow_id: resolved
+                    .and_then(|r| s(r, "workflow_id"))
+                    .unwrap_or_default(),
                 name: resolved.and_then(|r| s(r, "name")).unwrap_or_default(),
                 builtin: s(row, "default").unwrap_or_default(),
                 eligible: row
@@ -4582,17 +4601,39 @@ mod tests {
     /// otherwise.
     #[test]
     fn admin_refusal_names_the_principal() {
-        assert_eq!(ConnPhase::Connected(identity(true)).admin_refusal("x"), None);
-        let why = ConnPhase::Connected(identity(false)).admin_refusal("deleting a user").unwrap();
-        assert!(why.contains("deleting a user is admin-only") && why.contains("alice"), "{why}");
-        assert!(ConnPhase::Verifying(identity(false)).admin_refusal("x").unwrap().contains("not an admin"));
-        let busy = ConnPhase::Verifying(identity(true)).admin_refusal("x").unwrap();
-        assert!(!busy.contains("not an admin") && busy.contains("re-verified"), "{busy}");
-        assert!(ConnPhase::NotConnected.admin_refusal("x").unwrap().contains("not connected"));
+        assert_eq!(
+            ConnPhase::Connected(identity(true)).admin_refusal("x"),
+            None
+        );
+        let why = ConnPhase::Connected(identity(false))
+            .admin_refusal("deleting a user")
+            .unwrap();
+        assert!(
+            why.contains("deleting a user is admin-only") && why.contains("alice"),
+            "{why}"
+        );
+        assert!(ConnPhase::Verifying(identity(false))
+            .admin_refusal("x")
+            .unwrap()
+            .contains("not an admin"));
+        let busy = ConnPhase::Verifying(identity(true))
+            .admin_refusal("x")
+            .unwrap();
+        assert!(
+            !busy.contains("not an admin") && busy.contains("re-verified"),
+            "{busy}"
+        );
+        assert!(ConnPhase::NotConnected
+            .admin_refusal("x")
+            .unwrap()
+            .contains("not connected"));
         assert!(ConnPhase::Connected(identity(false)).is_known_non_admin());
         assert!(ConnPhase::Verifying(identity(false)).is_known_non_admin());
         assert!(!ConnPhase::Connected(identity(true)).is_known_non_admin());
-        assert!(!ConnPhase::NotConnected.is_known_non_admin(), "unknown is not non-admin");
+        assert!(
+            !ConnPhase::NotConnected.is_known_non_admin(),
+            "unknown is not non-admin"
+        );
     }
 
     /// Promote carries the typed ids split like the web's prompt; reject
@@ -4605,6 +4646,9 @@ mod tests {
             candidate_act_body(true, &ids, "two sources"),
             json!({"corroborating_ids": ["rec_a", "rec_b"], "reason": "two sources"})
         );
-        assert_eq!(candidate_act_body(false, &ids, "no"), json!({"reason": "no"}));
+        assert_eq!(
+            candidate_act_body(false, &ids, "no"),
+            json!({"reason": "no"})
+        );
     }
 }

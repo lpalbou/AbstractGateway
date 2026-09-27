@@ -646,7 +646,11 @@ fn open_plan(cx: Scope, ctx: &Ctx) {
                 d.rows
                     .iter()
                     .find(|row| row.key == "output.text" && row.model.is_some())
-                    .or_else(|| d.rows.iter().find(|row| row.key == "input.text" && row.model.is_some()))
+                    .or_else(|| {
+                        d.rows
+                            .iter()
+                            .find(|row| row.key == "input.text" && row.model.is_some())
+                    })
                     .map(|row| row.pair_text())
             })
         });
@@ -674,10 +678,16 @@ fn open_plan(cx: Scope, ctx: &Ctx) {
                 t.text,
             )]));
             if let Some(tier) = &r.tier {
-                rows.push(line(vec![span(format!("  Chosen by memory: {tier}"), t.text_faint)]));
+                rows.push(line(vec![span(
+                    format!("  Chosen by memory: {tier}"),
+                    t.text_faint,
+                )]));
             }
             if let Some(w) = &r.warning {
-                for (i, l) in super::util::wrap_text(w, width.saturating_sub(4)).into_iter().enumerate() {
+                for (i, l) in super::util::wrap_text(w, width.saturating_sub(4))
+                    .into_iter()
+                    .enumerate()
+                {
                     rows.push(line(vec![span(
                         format!("  {}{l}", if i == 0 { "⚠ " } else { "  " }),
                         t.warn,
@@ -733,7 +743,9 @@ fn open_plan(cx: Scope, ctx: &Ctx) {
                     .map(|d| {
                         d.rows
                             .iter()
-                            .filter_map(|row| row.route_unavailable.clone().map(|u| (row.key.clone(), u)))
+                            .filter_map(|row| {
+                                row.route_unavailable.clone().map(|u| (row.key.clone(), u))
+                            })
                             .collect()
                     })
                     .unwrap_or_default()
@@ -771,12 +783,20 @@ fn open_plan(cx: Scope, ctx: &Ctx) {
         let c = close.clone();
         Element::new()
             .style(LayoutStyle::column().grow(1.0))
-            .child(line(vec![span_bold("Recommended for this computer", t.accent)]))
+            .child(line(vec![span_bold(
+                "Recommended for this computer",
+                t.accent,
+            )]))
             .child(
-                Scroll::new(Element::new().style(LayoutStyle::column()).children(rows).build())
-                    .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
-                    .scrollbar_auto_hide(true)
-                    .view(mcx),
+                Scroll::new(
+                    Element::new()
+                        .style(LayoutStyle::column())
+                        .children(rows)
+                        .build(),
+                )
+                .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
+                .scrollbar_auto_hide(true)
+                .view(mcx),
             )
             .child(
                 Button::new("Close")
@@ -842,10 +862,15 @@ fn cancel_download_all(cx: Scope, ctx: &Ctx) {
     if !super::util::admin_gate(&ctx.store, "cancelling a download") {
         return;
     }
-    let Some(g) = ctx.store.download_group.get_untracked().filter(GroupStatus::running) else {
-        ctx.store
-            .notice
-            .set(Some("no Download all is running — nothing to cancel".into()));
+    let Some(g) = ctx
+        .store
+        .download_group
+        .get_untracked()
+        .filter(GroupStatus::running)
+    else {
+        ctx.store.notice.set(Some(
+            "no Download all is running — nothing to cancel".into(),
+        ));
         return;
     };
     let ctx2 = ctx.clone();
@@ -1127,7 +1152,10 @@ fn picked_pair(
 /// The options text the editor showed at open (its prefill) — what a save
 /// compares against to know whether the operator edited the options.
 fn shown_options(row: &RouteRow) -> String {
-    row.options.as_ref().map(|o| o.to_string()).unwrap_or_default()
+    row.options
+        .as_ref()
+        .map(|o| o.to_string())
+        .unwrap_or_default()
 }
 
 /// The route save body, the web's exact rule (console.py saveDefault):
@@ -2179,17 +2207,33 @@ mod speculation_tests {
     #[test]
     fn route_save_body_sends_what_the_operator_changed() {
         let opts = r#"{"temperature":0.7}"#;
-        let untouched = route_save_body("lmstudio", "m", None, ("http://h/v1", "http://h/v1"), (opts, opts)).unwrap();
+        let untouched = route_save_body(
+            "lmstudio",
+            "m",
+            None,
+            ("http://h/v1", "http://h/v1"),
+            (opts, opts),
+        )
+        .unwrap();
         assert_eq!(untouched, json!({"provider": "lmstudio", "model": "m"}));
-        let cleared = route_save_body("lmstudio", "m", None, ("", "http://h/v1"), ("", opts)).unwrap();
+        let cleared =
+            route_save_body("lmstudio", "m", None, ("", "http://h/v1"), ("", opts)).unwrap();
         assert_eq!(cleared["base_url"], "", "an emptied base URL is sent empty");
-        assert_eq!(cleared["options"], json!({}), "emptied options are sent as {{}}");
-        let edited = route_save_body("p", "m", Some(""), (" http://x ", ""), (r#"{"a":1}"#, "")).unwrap();
+        assert_eq!(
+            cleared["options"],
+            json!({}),
+            "emptied options are sent as {{}}"
+        );
+        let edited =
+            route_save_body("p", "m", Some(""), (" http://x ", ""), (r#"{"a":1}"#, "")).unwrap();
         assert_eq!(edited["base_url"], "http://x", "trimmed");
         assert_eq!(edited["options"], json!({"a": 1}));
         assert_eq!(edited["reasoning"], "", "text route: explicit, \"\" clears");
         let with_reasoning = route_save_body("p", "m", Some("high"), ("", ""), ("", "")).unwrap();
-        assert_eq!(with_reasoning, json!({"provider": "p", "model": "m", "reasoning": "high"}));
+        assert_eq!(
+            with_reasoning,
+            json!({"provider": "p", "model": "m", "reasoning": "high"})
+        );
         // Validated even when untouched: a stored typo never rides along.
         assert!(route_save_body("p", "m", None, ("", ""), ("[1]", "[1]")).is_err());
         assert!(route_save_body("p", "m", None, ("", ""), ("{nope", "")).is_err());

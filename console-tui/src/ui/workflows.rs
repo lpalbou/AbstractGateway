@@ -78,8 +78,12 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             move |_| delete_selected(cx, &c, true)
         })
         // Web parity: "Import…" (a .flow bundle) and a registry reload.
-        .shortcut(KeyChord::plain(Key::Char('i')), move |_| open_import(cx, &ctx_import))
-        .shortcut(KeyChord::plain(Key::Char('L')), move |_| reload(&ctx_reload))
+        .shortcut(KeyChord::plain(Key::Char('i')), move |_| {
+            open_import(cx, &ctx_import)
+        })
+        .shortcut(KeyChord::plain(Key::Char('L')), move |_| {
+            reload(&ctx_reload)
+        })
         .child(
             Block::new()
                 .border(BorderKind::Rounded)
@@ -388,7 +392,10 @@ fn master_table(cx: Scope, t: &TokenSet, d: &WorkflowsData, sel: Signal<usize>) 
 
 /// The gateway default agent workflows (interface, workflow_id) that run
 /// an entrypoint of `bundle_id` (any version).
-pub fn agent_default_marks(bundle_id: &str, agent_defaults: &[(String, String)]) -> Vec<(String, String)> {
+pub fn agent_default_marks(
+    bundle_id: &str,
+    agent_defaults: &[(String, String)],
+) -> Vec<(String, String)> {
     let prefix = format!("{bundle_id}@");
     agent_defaults
         .iter()

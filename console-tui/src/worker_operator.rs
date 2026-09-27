@@ -17,8 +17,7 @@ use serde_json::Value;
 use super::{finish_write, load, publish_ready, require_client, with_busy, Body, Cmd, Secret};
 use crate::api::{ApiError, ApiErrorKind, GatewayClient};
 use crate::store::operator::{
-    start_again_hint,
-    my_policy_body, seed_report_text, tray_note, HostRunner, HostUpdate, MyPolicy,
+    my_policy_body, seed_report_text, start_again_hint, tray_note, HostRunner, HostUpdate, MyPolicy,
 };
 use crate::store::{JournalEntry, Loadable, NetworkData, RuntimeConfigData, Store};
 
@@ -37,12 +36,18 @@ const UPDATE_POLL_INTERVAL: Duration = Duration::from_secs(3);
 #[derive(Clone, Debug)]
 pub enum OpCmd {
     /// Runner + tray, plus the update overview when `admin`.
-    LoadHost { admin: bool },
+    LoadHost {
+        admin: bool,
+    },
     /// ONE silent `/host/runner` read for the paused banner, then
     /// reschedule — generation-gated on `store.op.runner_poll_gen`.
-    PollRunner { gen: u64 },
+    PollRunner {
+        gen: u64,
+    },
     /// `pause: true` → POST /host/pause, false → /host/resume.
-    SetPaused { pause: bool },
+    SetPaused {
+        pause: bool,
+    },
     /// POST /host/restart, then watch it go down and come back.
     Restart,
     /// POST /host/shutdown, then watch it go down.
@@ -68,7 +73,9 @@ pub enum OpCmd {
         form_id: Option<u64>,
     },
     /// POST /bundles/reload, then re-list.
-    ReloadWorkflows { include_drafts: bool },
+    ReloadWorkflows {
+        include_drafts: bool,
+    },
     /// POST /admin/skills/reseed, then re-read the knobs.
     ReseedSkills,
     /// GET /network?lookup_public=1.
@@ -208,14 +215,18 @@ pub(super) fn handle(
     match cmd {
         OpCmd::LoadHost { admin } => {
             reload(store, wake, "reading the gateway host", op.runner, || {
-                require_client(client)?.host_runner().map(|v| HostRunner::from_value(&v))
+                require_client(client)?
+                    .host_runner()
+                    .map(|v| HostRunner::from_value(&v))
             });
             reload(store, wake, "reading the desktop tray", op.tray, || {
                 require_client(client)?.host_tray().map(|v| tray_note(&v))
             });
             if admin {
                 reload(store, wake, "reading the update state", op.update, || {
-                    require_client(client)?.host_update().map(|v| HostUpdate::from_value(&v))
+                    require_client(client)?
+                        .host_update()
+                        .map(|v| HostUpdate::from_value(&v))
                 });
             }
         }
@@ -239,7 +250,11 @@ pub(super) fn handle(
                         }
                     }
                 }
-                later(&tx2, RUNNER_POLL_INTERVAL, Cmd::Operator(OpCmd::PollRunner { gen }));
+                later(
+                    &tx2,
+                    RUNNER_POLL_INTERVAL,
+                    Cmd::Operator(OpCmd::PollRunner { gen }),
+                );
             });
         }
 
@@ -250,8 +265,13 @@ pub(super) fn handle(
                 ("RESUME", "resuming workflows")
             };
             let (write, verify) = with_busy(store, wake, label, || {
-                let write = require_client(client)
-                    .and_then(|c| if pause { c.host_pause() } else { c.host_resume() });
+                let write = require_client(client).and_then(|c| {
+                    if pause {
+                        c.host_pause()
+                    } else {
+                        c.host_resume()
+                    }
+                });
                 let verify = require_client(client).and_then(|c| c.host_runner());
                 (write, verify)
             });
@@ -263,7 +283,15 @@ pub(super) fn handle(
                     Err(format!("GET /host/runner still says {}", r.state_text()))
                 }
             });
-            finish_write(store, wake, format!("{verb} workflows (gateway host)"), write, verified, None, on_done);
+            finish_write(
+                store,
+                wake,
+                format!("{verb} workflows (gateway host)"),
+                write,
+                verified,
+                None,
+                on_done,
+            );
             if let Ok(v) = verify {
                 publish_ready(wake, op.runner, HostRunner::from_value(&v));
             }
@@ -291,7 +319,13 @@ pub(super) fn handle(
                 )
             };
             let write = with_busy(store, wake, label, || {
-                require_client(client).and_then(|c| if restart { c.host_restart() } else { c.host_shutdown() })
+                require_client(client).and_then(|c| {
+                    if restart {
+                        c.host_restart()
+                    } else {
+                        c.host_shutdown()
+                    }
+                })
             });
             let accepted = write.is_ok();
             // The real verification is the watcher's: the connection is
@@ -303,7 +337,15 @@ pub(super) fn handle(
                     "accepted — watching it go down".to_string()
                 })
             });
-            finish_write(store, wake, verb.to_string(), write, verified, None, on_done);
+            finish_write(
+                store,
+                wake,
+                verb.to_string(),
+                write,
+                verified,
+                None,
+                on_done,
+            );
             if accepted {
                 if let Ok(c) = require_client(client) {
                     let (url, token) = c.credentials();
@@ -311,7 +353,8 @@ pub(super) fn handle(
                         wake,
                         store,
                         if restart {
-                            "⟳ restarting — waiting for the gateway to go down and come back…".into()
+                            "⟳ restarting — waiting for the gateway to go down and come back…"
+                                .into()
                         } else {
                             "⟳ quitting — waiting for the gateway to stop…".into()
                         },
@@ -343,7 +386,8 @@ pub(super) fn handle(
             let elapsed = now_ms().saturating_sub(started_ms);
             let secs = elapsed / 1000;
             // A throwaway short-deadline client: never the pooled one.
-            let probe = GatewayClient::new(&url, Some(&token.0)).with_read_timeout(Duration::from_secs(3));
+            let probe =
+                GatewayClient::new(&url, Some(&token.0)).with_read_timeout(Duration::from_secs(3));
             let res = probe.host_runner();
             let down = matches!(&res, Err(e) if e.kind == ApiErrorKind::Unreachable);
             let reconnect = Cmd::Connect {
@@ -369,12 +413,27 @@ pub(super) fn handle(
                     // Back but refusing this token (auth changed): the
                     // connection probe says so in its own words.
                     Err(e) => {
-                        saw_down && matches!(e.kind, ApiErrorKind::Unauthorized | ApiErrorKind::Forbidden)
+                        saw_down
+                            && matches!(
+                                e.kind,
+                                ApiErrorKind::Unauthorized | ApiErrorKind::Forbidden
+                            )
                     }
                 };
                 if back {
-                    post_lifecycle(wake, store, format!("✓ the gateway restarted and answers again ({secs}s) — reconnected"));
-                    journal(wake, store, "RESTART gateway".into(), Ok(format!("down then back after {secs}s; re-probed")));
+                    post_lifecycle(
+                        wake,
+                        store,
+                        format!(
+                            "✓ the gateway restarted and answers again ({secs}s) — reconnected"
+                        ),
+                    );
+                    journal(
+                        wake,
+                        store,
+                        "RESTART gateway".into(),
+                        Ok(format!("down then back after {secs}s; re-probed")),
+                    );
                     let _ = tx.send(reconnect);
                 } else if elapsed >= RESTART_DEADLINE_MS {
                     let why = if saw_down {
@@ -383,7 +442,12 @@ pub(super) fn handle(
                         "still answering as the OLD process — the restart did not happen"
                     };
                     post_lifecycle(wake, store, format!("✗ the gateway {why} ({secs}s)"));
-                    journal(wake, store, "RESTART gateway".into(), Err(format!("{why} ({secs}s)")));
+                    journal(
+                        wake,
+                        store,
+                        "RESTART gateway".into(),
+                        Err(format!("{why} ({secs}s)")),
+                    );
                     let _ = tx.send(reconnect);
                 } else {
                     let saw = saw_down || down;
@@ -404,15 +468,33 @@ pub(super) fn handle(
                     store,
                     format!("✓ the gateway stopped ({secs}s) — {start_again}"),
                 );
-                journal(wake, store, "QUIT gateway".into(), Ok(format!("unreachable after {secs}s")));
+                journal(
+                    wake,
+                    store,
+                    "QUIT gateway".into(),
+                    Ok(format!("unreachable after {secs}s")),
+                );
                 // The probe settles the honest header (unreachable).
                 let _ = tx.send(reconnect);
             } else if elapsed >= SHUTDOWN_DEADLINE_MS {
-                post_lifecycle(wake, store, format!("✗ the gateway still answers {secs}s after quitting was accepted"));
-                journal(wake, store, "QUIT gateway".into(), Err(format!("still answering after {secs}s")));
+                post_lifecycle(
+                    wake,
+                    store,
+                    format!("✗ the gateway still answers {secs}s after quitting was accepted"),
+                );
+                journal(
+                    wake,
+                    store,
+                    "QUIT gateway".into(),
+                    Err(format!("still answering after {secs}s")),
+                );
                 let _ = tx.send(reconnect);
             } else {
-                post_lifecycle(wake, store, format!("⟳ quitting — the gateway is finishing its work ({secs}s)…"));
+                post_lifecycle(
+                    wake,
+                    store,
+                    format!("⟳ quitting — the gateway is finishing its work ({secs}s)…"),
+                );
                 later(tx, LIFECYCLE_PROBE_INTERVAL, next(false));
             }
         }
@@ -423,11 +505,21 @@ pub(super) fn handle(
                 let verify = require_client(client).and_then(|c| c.host_update());
                 (write, verify)
             });
-            let verified = verify
-                .as_ref()
-                .ok()
-                .map(|v| Ok(format!("GET /host/update: {}", HostUpdate::from_value(v).version_text())));
-            finish_write(store, wake, "CHECK for a gateway update".into(), write, verified, None, on_done);
+            let verified = verify.as_ref().ok().map(|v| {
+                Ok(format!(
+                    "GET /host/update: {}",
+                    HostUpdate::from_value(v).version_text()
+                ))
+            });
+            finish_write(
+                store,
+                wake,
+                "CHECK for a gateway update".into(),
+                write,
+                verified,
+                None,
+                on_done,
+            );
             if let Ok(v) = verify {
                 publish_ready(wake, op.update, HostUpdate::from_value(&v));
             }
@@ -444,11 +536,21 @@ pub(super) fn handle(
                 .ok()
                 .map(|v| HostUpdate::from_value(v).job_state == "running")
                 .unwrap_or(false);
-            let verified = verify
-                .as_ref()
-                .ok()
-                .map(|v| Ok(format!("GET /host/update: {}", HostUpdate::from_value(v).version_text())));
-            finish_write(store, wake, "START the gateway update".into(), write, verified, None, on_done);
+            let verified = verify.as_ref().ok().map(|v| {
+                Ok(format!(
+                    "GET /host/update: {}",
+                    HostUpdate::from_value(v).version_text()
+                ))
+            });
+            finish_write(
+                store,
+                wake,
+                "START the gateway update".into(),
+                write,
+                verified,
+                None,
+                on_done,
+            );
             if let Ok(v) = verify {
                 publish_ready(wake, op.update, HostUpdate::from_value(&v));
             }
@@ -498,11 +600,13 @@ pub(super) fn handle(
                 (Ok(w), Some(Ok(listing))) => {
                     let data = crate::store::workflows_from_payload(listing);
                     let bid = w.get("bundle_id").and_then(Value::as_str).unwrap_or("");
-                    let ver = w.get("bundle_version").and_then(Value::as_str).unwrap_or("");
-                    let listed = data
-                        .rows
-                        .iter()
-                        .any(|r| r.bundle_id == bid && r.versions.iter().any(|(x, _, _, _)| x == ver));
+                    let ver = w
+                        .get("bundle_version")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    let listed = data.rows.iter().any(|r| {
+                        r.bundle_id == bid && r.versions.iter().any(|(x, _, _, _)| x == ver)
+                    });
                     let skipped = data
                         .skipped
                         .iter()
@@ -510,7 +614,9 @@ pub(super) fn handle(
                         .map(|s| s.reason.clone());
                     Some(match (listed, skipped) {
                         (true, _) => Ok(format!("GET lists {bid}@{ver}")),
-                        (false, Some(why)) => Err(format!("GET lists {bid}@{ver} as NOT runnable: {why}")),
+                        (false, Some(why)) => {
+                            Err(format!("GET lists {bid}@{ver} as NOT runnable: {why}"))
+                        }
                         (false, None) => Err(format!("GET does not list {bid}@{ver}")),
                     })
                 }
@@ -524,7 +630,11 @@ pub(super) fn handle(
                     require_client(client).and_then(|c| c.bundles(false))
                 };
                 if let Ok(v) = listing {
-                    publish_ready(wake, store.workflows, crate::store::workflows_from_payload(&v));
+                    publish_ready(
+                        wake,
+                        store.workflows,
+                        crate::store::workflows_from_payload(&v),
+                    );
                 }
             }
         }
@@ -543,18 +653,31 @@ pub(super) fn handle(
                     d.skipped.len()
                 ))
             });
-            finish_write(store, wake, "RELOAD workflows".into(), write, verified, None, on_done);
+            finish_write(
+                store,
+                wake,
+                "RELOAD workflows".into(),
+                write,
+                verified,
+                None,
+                on_done,
+            );
             if let Ok(v) = verify {
-                publish_ready(wake, store.workflows, crate::store::workflows_from_payload(&v));
+                publish_ready(
+                    wake,
+                    store.workflows,
+                    crate::store::workflows_from_payload(&v),
+                );
             }
         }
 
         OpCmd::ReseedSkills => {
-            let (write, verify) = with_busy(store, wake, "refreshing the curated skills shelf", || {
-                let write = require_client(client).and_then(|c| c.reseed_skills());
-                let verify = require_client(client).and_then(|c| c.runtime_config());
-                (write, verify)
-            });
+            let (write, verify) =
+                with_busy(store, wake, "refreshing the curated skills shelf", || {
+                    let write = require_client(client).and_then(|c| c.reseed_skills());
+                    let verify = require_client(client).and_then(|c| c.runtime_config());
+                    (write, verify)
+                });
             let report = write.as_ref().ok().map(seed_report_text);
             let verified = verify.as_ref().ok().map(|v| {
                 let d = RuntimeConfigData::from_value(v);
@@ -567,9 +690,21 @@ pub(super) fn handle(
                     None => shelf,
                 })
             });
-            finish_write(store, wake, "REFRESH curated skills shelf".into(), write, verified, None, on_done);
+            finish_write(
+                store,
+                wake,
+                "REFRESH curated skills shelf".into(),
+                write,
+                verified,
+                None,
+                on_done,
+            );
             if let Ok(v) = verify {
-                publish_ready(wake, store.runtime_config, RuntimeConfigData::from_value(&v));
+                publish_ready(
+                    wake,
+                    store.runtime_config,
+                    RuntimeConfigData::from_value(&v),
+                );
             }
         }
 
@@ -586,23 +721,37 @@ pub(super) fn handle(
                         Some(a) => format!("public address lookup: {}", a.note),
                         None => format!(
                             "public address not looked up: {}",
-                            d.public_note.clone().unwrap_or_else(|| "the gateway gave no reason".into())
+                            d.public_note
+                                .clone()
+                                .unwrap_or_else(|| "the gateway gave no reason".into())
                         ),
                     };
                     s.network.set(Loadable::Ready(d));
                     s.notice.set(Some(note));
                 }
-                Err(e) => s.notice.set(Some(format!("public address lookup failed: {e}"))),
+                Err(e) => s
+                    .notice
+                    .set(Some(format!("public address lookup failed: {e}"))),
             });
         }
 
-        OpCmd::LoadMyPolicy => load(store, wake, "reading my workspace policy", op.my_policy, || {
-            require_client(client)?
-                .my_workspace_policy()
-                .map(|v| MyPolicy::from_value(&v))
-        }),
+        OpCmd::LoadMyPolicy => load(
+            store,
+            wake,
+            "reading my workspace policy",
+            op.my_policy,
+            || {
+                require_client(client)?
+                    .my_workspace_policy()
+                    .map(|v| MyPolicy::from_value(&v))
+            },
+        ),
 
-        OpCmd::SaveMyPolicy { body, clear, form_id } => {
+        OpCmd::SaveMyPolicy {
+            body,
+            clear,
+            form_id,
+        } => {
             let action = if clear {
                 "RESET my workspace policy to inherited".to_string()
             } else {
@@ -617,11 +766,22 @@ pub(super) fn handle(
                 let got = MyPolicy::from_value(v);
                 // Read back what the store holds and compare it to what
                 // was asked, field by field (the body builder's shape).
-                let now = my_policy_body(&got.mode, &got.trust, &got.allowed.join("\n"), &got.blocked.join("\n"));
+                let now = my_policy_body(
+                    &got.mode,
+                    &got.trust,
+                    &got.allowed.join("\n"),
+                    &got.blocked.join("\n"),
+                );
                 if now == body.0 {
-                    Ok(format!("GET /workspace/policy/self — {}", got.effective_text()))
+                    Ok(format!(
+                        "GET /workspace/policy/self — {}",
+                        got.effective_text()
+                    ))
                 } else {
-                    Err(format!("GET /workspace/policy/self holds {now}, not {}", body.0))
+                    Err(format!(
+                        "GET /workspace/policy/self holds {now}, not {}",
+                        body.0
+                    ))
                 }
             });
             // A refused save keeps the form's edits: only a landed write
@@ -657,7 +817,10 @@ mod tests {
     fn expand_home_only_touches_a_leading_tilde() {
         let home = std::env::var("HOME").expect("HOME in the test env");
         let home = home.trim_end_matches('/');
-        assert_eq!(expand_home(" ~/flows/x.flow "), format!("{home}/flows/x.flow"));
+        assert_eq!(
+            expand_home(" ~/flows/x.flow "),
+            format!("{home}/flows/x.flow")
+        );
         assert_eq!(expand_home("/abs/~/x.flow"), "/abs/~/x.flow");
     }
 }

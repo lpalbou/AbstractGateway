@@ -26,7 +26,12 @@ impl GatewayClient {
     /// `POST /host/first-run {"outcome": "finished"|"skipped"}` — admin
     /// only; the same body the web guide's Finish / Skip setup send.
     pub fn complete_first_run(&self, outcome: &str) -> ApiResult<Value> {
-        self.send("POST", "/host/first-run", &json!({ "outcome": outcome }), false)
+        self.send(
+            "POST",
+            "/host/first-run",
+            &json!({ "outcome": outcome }),
+            false,
+        )
     }
 
     /// `POST /models/download {"recommended": true}` — the web guide's
@@ -166,7 +171,10 @@ impl WelcomeSummary {
             service_installed: svc.get("installed").and_then(Value::as_bool),
             service_mechanism: s(&svc, "mechanism"),
             console_url: s(&gw, "console_url"),
-            first_run: gw.get("first_run").filter(|f| f.is_object()).map(FirstRunState::from_value),
+            first_run: gw
+                .get("first_run")
+                .filter(|f| f.is_object())
+                .map(FirstRunState::from_value),
         }
     }
 
@@ -181,7 +189,9 @@ impl WelcomeSummary {
         vec![
             (
                 "Computer",
-                self.computer.clone().unwrap_or_else(|| "This computer".into()),
+                self.computer
+                    .clone()
+                    .unwrap_or_else(|| "This computer".into()),
                 self.os.clone().unwrap_or_default(),
             ),
             (
@@ -420,8 +430,14 @@ mod tests {
             "completed_at": null, "completed_by": null, "outcome": null
         }));
         assert!(!open.completed);
-        assert!(first_run_auto_wizard(&open, true), "admin + not completed → wizard");
-        assert!(!first_run_auto_wizard(&open, false), "non-admin never gets the guide");
+        assert!(
+            first_run_auto_wizard(&open, true),
+            "admin + not completed → wizard"
+        );
+        assert!(
+            !first_run_auto_wizard(&open, false),
+            "non-admin never gets the guide"
+        );
         let done = FirstRunState::from_value(&json!({
             "completed": true, "completed_at": "2026-09-27T10:00:00Z",
             "completed_by": "admin", "outcome": "skipped"
@@ -440,7 +456,10 @@ mod tests {
             ..FirstRunState::default()
         };
         assert!(first_run_verify("finished", &done).is_ok());
-        assert!(first_run_verify("skipped", &done).is_err(), "outcome mismatch fails");
+        assert!(
+            first_run_verify("skipped", &done).is_err(),
+            "outcome mismatch fails"
+        );
         assert!(first_run_verify("finished", &FirstRunState::default()).is_err());
     }
 
@@ -467,13 +486,18 @@ mod tests {
         assert_eq!(get("Memory").1, "128.0 GB");
         assert_eq!(get("Sign-in").1, "User accounts");
         assert_eq!(get("Starts at login").1, "Not yet");
-        assert!(get("Starts at login").2.contains("abstractgateway service install"));
+        assert!(get("Starts at login")
+            .2
+            .contains("abstractgateway service install"));
         assert!(get("Data folder").2.contains("(env)"));
         // Absent facts say unknown — never a guess.
         let empty = WelcomeSummary::from_host_state(&json!({}));
         let rows = empty.rows();
         assert_eq!(rows.iter().find(|r| r.0 == "Memory").unwrap().1, "Unknown");
-        assert_eq!(rows.iter().find(|r| r.0 == "Starts at login").unwrap().1, "Unknown");
+        assert_eq!(
+            rows.iter().find(|r| r.0 == "Starts at login").unwrap().1,
+            "Unknown"
+        );
     }
 
     #[test]
@@ -490,13 +514,22 @@ mod tests {
         assert_eq!(plan[0].warning.as_deref(), Some("may not fit"));
         assert_eq!(plan[0].title(), "Chat and text");
         assert_eq!(plan[1].status_label(), "Not downloaded");
-        assert!(can_download_all(&plan, None), "an absent row offers Download all");
+        assert!(
+            can_download_all(&plan, None),
+            "an absent row offers Download all"
+        );
         let running = GroupStatus {
             status: "running".into(),
             ..GroupStatus::default()
         };
-        assert!(!can_download_all(&plan, Some(&running)), "not while a group runs");
-        assert!(!can_download_all(&plan[..1], None), "unknown alone is not absent");
+        assert!(
+            !can_download_all(&plan, Some(&running)),
+            "not while a group runs"
+        );
+        assert!(
+            !can_download_all(&plan[..1], None),
+            "unknown alone is not absent"
+        );
     }
 
     #[test]

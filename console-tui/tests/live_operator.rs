@@ -30,7 +30,13 @@ fn host_reads_parse_into_what_the_panel_shows() {
         panic!("no live gateway (ABSTRACTGATEWAY_URL / ABSTRACTGATEWAY_AUTH_TOKEN)");
     };
     let r = HostRunner::from_value(&c.host_runner().expect("GET /host/runner"));
-    println!("runner: {} · restart={} shutdown={} {}", r.state_text(), r.cap_restart, r.cap_shutdown, r.cap_reason);
+    println!(
+        "runner: {} · restart={} shutdown={} {}",
+        r.state_text(),
+        r.cap_restart,
+        r.cap_shutdown,
+        r.cap_reason
+    );
     let tray = tray_note(&c.host_tray().expect("GET /host/tray"));
     println!("tray: {tray}");
     assert!(!tray.is_empty());
@@ -38,7 +44,12 @@ fn host_reads_parse_into_what_the_panel_shows() {
     println!("version: {} · {}", u.version_text(), u.hint_text());
     assert!(!u.current.is_empty());
     let p = MyPolicy::from_value(&c.my_workspace_policy().expect("GET /workspace/policy/self"));
-    println!("my policy: {}:{} · {}", p.tenant_id, p.user_id, p.effective_text());
+    println!(
+        "my policy: {}:{} · {}",
+        p.tenant_id,
+        p.user_id,
+        p.effective_text()
+    );
     assert!(!p.user_id.is_empty());
 }
 
@@ -48,7 +59,9 @@ fn public_lookup_reaches_the_gateway_and_says_why_when_it_does_not_run() {
     let Some(c) = live_client() else {
         panic!("no live gateway (ABSTRACTGATEWAY_URL / ABSTRACTGATEWAY_AUTH_TOKEN)");
     };
-    let v = c.network_lookup_public().expect("GET /network?lookup_public=1");
+    let v = c
+        .network_lookup_public()
+        .expect("GET /network?lookup_public=1");
     let d = NetworkData::from_value(&v);
     let public = d.addresses.iter().find(|a| a.kind == "public");
     println!(

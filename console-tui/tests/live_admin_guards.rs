@@ -32,7 +32,9 @@ fn client(var: &str) -> GatewayClient {
 
 fn forbidden(what: &str, r: ApiResult<Value>) {
     match r {
-        Err(e) if e.kind == ApiErrorKind::Forbidden => println!("403 as expected: {what} — {}", e.message),
+        Err(e) if e.kind == ApiErrorKind::Forbidden => {
+            println!("403 as expected: {what} — {}", e.message)
+        }
         other => panic!("{what}: expected 403 for a non-admin, got {other:?}"),
     }
 }
@@ -42,10 +44,16 @@ fn forbidden(what: &str, r: ApiResult<Value>) {
 fn every_console_gated_verb_is_admin_only_on_the_gateway() {
     let u = client("ABSTRACTGATEWAY_USER_TOKEN");
     let me = u.me().expect("GET /me");
-    assert_eq!(me["principal"]["admin"], false, "the user token must be a non-admin: {me}");
+    assert_eq!(
+        me["principal"]["admin"], false,
+        "the user token must be a non-admin: {me}"
+    );
 
     // Routes: w / a / D / C.
-    forbidden("models download (w)", u.models_download("mlx", "none/none-4bit", true, None));
+    forbidden(
+        "models download (w)",
+        u.models_download("mlx", "none/none-4bit", true, None),
+    );
     forbidden("apply recommended (a)", u.apply_recommended_routes(false));
     forbidden("Download all (D)", u.download_recommended(true));
     forbidden("cancel a download (C)", u.cancel_model_download("grp_none"));
@@ -55,11 +63,20 @@ fn every_console_gated_verb_is_admin_only_on_the_gateway() {
     forbidden("unload (u)", u.unload_model(&pair));
     forbidden("lock (k)", u.lock_model(&pair));
     forbidden("unlock (k)", u.unlock_model(&pair));
-    forbidden("clear session caches (c)", u.clear_session_prompt_caches("s-none"));
+    forbidden(
+        "clear session caches (c)",
+        u.clear_session_prompt_caches("s-none"),
+    );
     // Users: the registry and the retained runtimes.
     forbidden("list users", u.users());
-    forbidden("add user (a)", u.create_user(&json!({"user_id": "mallory"})));
-    forbidden("edit user (e)", u.patch_user("ana", "default", &json!({"enabled": true})));
+    forbidden(
+        "add user (a)",
+        u.create_user(&json!({"user_id": "mallory"})),
+    );
+    forbidden(
+        "edit user (e)",
+        u.patch_user("ana", "default", &json!({"enabled": true})),
+    );
     forbidden("delete user (d)", u.delete_user("nobody", "default"));
     forbidden("retained runtimes (v)", u.runtime_reservations());
     // Runtimes: the whole screen.
@@ -68,27 +85,43 @@ fn every_console_gated_verb_is_admin_only_on_the_gateway() {
     forbidden("save workspace defaults", u.save_runtime_config(&json!({})));
     // Entity manage writes (checked before the entity is looked up).
     let body = json!({});
-    forbidden("entity state", u.entity_state("nobody", &json!({"state": "awake"})));
+    forbidden(
+        "entity state",
+        u.entity_state("nobody", &json!({"state": "awake"})),
+    );
     forbidden("entity substrate", u.put_entity_substrate("nobody", &body));
-    forbidden("entity personal grant", u.put_entity_personal_grant("nobody", &json!({"mode": "disabled"})));
+    forbidden(
+        "entity personal grant",
+        u.put_entity_personal_grant("nobody", &json!({"mode": "disabled"})),
+    );
     forbidden("entity loop start", u.entity_loop_start("nobody", &body));
     forbidden("entity loop stop", u.entity_loop_stop("nobody", &body));
     forbidden("entity reembed", u.entity_reembed("nobody", &body));
-    forbidden("entity tool policy", u.put_entity_tool_policy("nobody", &body));
+    forbidden(
+        "entity tool policy",
+        u.put_entity_tool_policy("nobody", &body),
+    );
     forbidden("entity prompt", u.put_entity_prompt("nobody", &body));
     forbidden(
         "candidate promote",
-        u.entity_candidate_act("nobody", "rec", true, &json!({"corroborating_ids": ["a", "b"], "reason": "r"})),
+        u.entity_candidate_act(
+            "nobody",
+            "rec",
+            true,
+            &json!({"corroborating_ids": ["a", "b"], "reason": "r"}),
+        ),
     );
     // The setup guide's record (Ctrl+G's Finish / Skip).
     forbidden("first-run record", u.complete_first_run("skipped"));
 
     // What the console leaves open answers a non-admin.
-    u.capability_defaults().expect("routes grid (read) is user-level");
+    u.capability_defaults()
+        .expect("routes grid (read) is user-level");
     u.entities().expect("entity roster is user-level");
     u.bundles(false).expect("workflow list is user-level");
     u.host_state().expect("resources snapshot is user-level");
-    u.my_workspace_policy().expect("own workspace policy is user-level");
+    u.my_workspace_policy()
+        .expect("own workspace policy is user-level");
     println!("user-level reads answered");
 }
 
@@ -119,10 +152,20 @@ fn web_exact_payloads_behave_like_the_web_on_the_gateway() {
     let shown_url = shown.base_url.clone().unwrap_or_default();
     assert_eq!(shown_url, "http://127.0.0.1:1234/v1", "seeded: {row}");
     // The editor saves a new model; base URL and options untouched.
-    let body = route_save_body("lmstudio", "tiny-test-2", Some(""), (&shown_url, &shown_url), ("", ""))
-        .unwrap();
-    assert!(body.get("base_url").is_none() && body.get("options").is_none(), "{body}");
-    a.put_route("input", "text", None, &body).expect("PUT route (web body)");
+    let body = route_save_body(
+        "lmstudio",
+        "tiny-test-2",
+        Some(""),
+        (&shown_url, &shown_url),
+        ("", ""),
+    )
+    .unwrap();
+    assert!(
+        body.get("base_url").is_none() && body.get("options").is_none(),
+        "{body}"
+    );
+    a.put_route("input", "text", None, &body)
+        .expect("PUT route (web body)");
     let after = text_route(&a);
     println!("route after the web-shaped save: {after}");
     assert_eq!(after["model"], "tiny-test-2");
@@ -131,14 +174,23 @@ fn web_exact_payloads_behave_like_the_web_on_the_gateway() {
         "the untouched base URL is kept by the store"
     );
     // Emptying the field IS sent, and clears it.
-    let body = route_save_body("lmstudio", "tiny-test-2", Some(""), ("", &shown_url), ("", "")).unwrap();
-    a.put_route("input", "text", None, &body).expect("PUT route (cleared URL)");
+    let body = route_save_body(
+        "lmstudio",
+        "tiny-test-2",
+        Some(""),
+        ("", &shown_url),
+        ("", ""),
+    )
+    .unwrap();
+    a.put_route("input", "text", None, &body)
+        .expect("PUT route (cleared URL)");
     let cleared = text_route(&a);
     assert!(
         cleared["base_url"].is_null() || cleared["base_url"] == "",
         "an emptied base URL clears: {cleared}"
     );
-    a.clear_route("input", "text", None).expect("restore: clear the route");
+    a.clear_route("input", "text", None)
+        .expect("restore: clear the route");
 
     // --- Route Test: the web probe (no max_tokens) is accepted ---------
     // No provider key is set on this hermetic host, so the call fails — on
@@ -147,7 +199,11 @@ fn web_exact_payloads_behave_like_the_web_on_the_gateway() {
     match a.sandbox_generate(&probe) {
         Ok(v) => println!("route test answered: ok={} error={}", v["ok"], v["error"]),
         Err(e) => {
-            assert_ne!(e.kind, ApiErrorKind::Http(422), "the probe shape is valid: {e}");
+            assert_ne!(
+                e.kind,
+                ApiErrorKind::Http(422),
+                "the probe shape is valid: {e}"
+            );
             println!("route test refused by the provider (expected here): {e}");
         }
     }
@@ -158,7 +214,11 @@ fn web_exact_payloads_behave_like_the_web_on_the_gateway() {
     match a.models_download("mlx", "mlx-community/none-4bit", true, Some(1_000_000)) {
         Ok(v) => println!("download dry run with expected_bytes: {v}"),
         Err(e) => {
-            assert_ne!(e.kind, ApiErrorKind::Http(422), "expected_bytes is part of the contract: {e}");
+            assert_ne!(
+                e.kind,
+                ApiErrorKind::Http(422),
+                "expected_bytes is part of the contract: {e}"
+            );
             println!("download dry run refused on the artifact (not the shape): {e}");
         }
     }
@@ -188,14 +248,35 @@ fn web_exact_payloads_behave_like_the_web_on_the_gateway() {
         after.workspace_root_source
     );
     for (name, was, now) in [
-        ("trust_client_launch_folder", &before.trust_client_launch_folder_source, &after.trust_client_launch_folder_source),
-        ("client_workspace_scope_overrides", &before.client_workspace_scope_overrides_source, &after.client_workspace_scope_overrides_source),
-        ("workspace_root", &before.workspace_root_source, &after.workspace_root_source),
+        (
+            "trust_client_launch_folder",
+            &before.trust_client_launch_folder_source,
+            &after.trust_client_launch_folder_source,
+        ),
+        (
+            "client_workspace_scope_overrides",
+            &before.client_workspace_scope_overrides_source,
+            &after.client_workspace_scope_overrides_source,
+        ),
+        (
+            "workspace_root",
+            &before.workspace_root_source,
+            &after.workspace_root_source,
+        ),
     ] {
         if was != "stored" {
-            assert_ne!(now, "stored", "{name}: an inherited value was promoted to a stored setting");
+            assert_ne!(
+                now, "stored",
+                "{name}: an inherited value was promoted to a stored setting"
+            );
         }
     }
-    assert_eq!(after.trust_client_launch_folder, before.trust_client_launch_folder);
-    assert_eq!(after.client_workspace_scope_overrides, before.client_workspace_scope_overrides);
+    assert_eq!(
+        after.trust_client_launch_folder,
+        before.trust_client_launch_folder
+    );
+    assert_eq!(
+        after.client_workspace_scope_overrides,
+        before.client_workspace_scope_overrides
+    );
 }

@@ -36,12 +36,22 @@ impl GatewayClient {
 
     /// `POST /host/restart` (admin). 409 = cannot relaunch here (reason).
     pub fn host_restart(&self) -> ApiResult<Value> {
-        self.send("POST", "/host/restart", &json!({"reason": "console"}), false)
+        self.send(
+            "POST",
+            "/host/restart",
+            &json!({"reason": "console"}),
+            false,
+        )
     }
 
     /// `POST /host/shutdown` (admin).
     pub fn host_shutdown(&self) -> ApiResult<Value> {
-        self.send("POST", "/host/shutdown", &json!({"reason": "console"}), false)
+        self.send(
+            "POST",
+            "/host/shutdown",
+            &json!({"reason": "console"}),
+            false,
+        )
     }
 
     /// `GET /host/update` (admin) — install kind, last check, job state.
@@ -157,12 +167,19 @@ pub fn multipart_body(
     // A quote or CR/LF in a file name would break the header line.
     let safe: String = filename
         .chars()
-        .map(|c| if matches!(c, '"' | '\r' | '\n') { '_' } else { c })
+        .map(|c| {
+            if matches!(c, '"' | '\r' | '\n') {
+                '_'
+            } else {
+                c
+            }
+        })
         .collect();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len() + 512);
     out.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
     out.extend_from_slice(
-        format!("Content-Disposition: form-data; name=\"file\"; filename=\"{safe}\"\r\n").as_bytes(),
+        format!("Content-Disposition: form-data; name=\"file\"; filename=\"{safe}\"\r\n")
+            .as_bytes(),
     );
     out.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
     out.extend_from_slice(bytes);
@@ -170,7 +187,8 @@ pub fn multipart_body(
     for (name, value) in fields {
         out.extend_from_slice(format!("--{boundary}\r\n").as_bytes());
         out.extend_from_slice(
-            format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n").as_bytes(),
+            format!("Content-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n")
+                .as_bytes(),
         );
     }
     out.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
@@ -183,10 +201,20 @@ mod tests {
 
     #[test]
     fn multipart_body_carries_the_file_and_fields() {
-        let body = multipart_body("B", "a\"b.flow", b"\x00PK", &[("overwrite", "false"), ("reload", "true")]);
+        let body = multipart_body(
+            "B",
+            "a\"b.flow",
+            b"\x00PK",
+            &[("overwrite", "false"), ("reload", "true")],
+        );
         let text = String::from_utf8_lossy(&body);
-        assert!(text.starts_with("--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a_b.flow\"\r\n"));
-        assert!(body.windows(3).any(|w| w == b"\x00PK"), "the bytes ride verbatim");
+        assert!(text.starts_with(
+            "--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"a_b.flow\"\r\n"
+        ));
+        assert!(
+            body.windows(3).any(|w| w == b"\x00PK"),
+            "the bytes ride verbatim"
+        );
         assert!(text.contains("name=\"overwrite\"\r\n\r\nfalse\r\n"));
         assert!(text.contains("name=\"reload\"\r\n\r\ntrue\r\n"));
         assert!(text.ends_with("--B--\r\n"));

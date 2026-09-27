@@ -19,7 +19,12 @@ fn s(v: &Value, key: &str) -> Option<String> {
 fn strs(v: &Value, key: &str) -> Vec<String> {
     v.get(key)
         .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -119,7 +124,10 @@ impl HostRunner {
                 "Paused — still running".into()
             }
         } else if n > 0 {
-            format!("Running · working on {n} step{}", if n == 1 { "" } else { "s" })
+            format!(
+                "Running · working on {n} step{}",
+                if n == 1 { "" } else { "s" }
+            )
         } else {
             "Running".into()
         }
@@ -224,7 +232,10 @@ pub fn tray_note(v: &Value) -> String {
     let reason = s(dec, "reason").unwrap_or_default();
     let failure = sup.get("failure").filter(|f| f.is_object());
     if running && ready != Some(false) {
-        let pid = sup.get("pid").map(|p| p.to_string()).unwrap_or_else(|| "?".into());
+        let pid = sup
+            .get("pid")
+            .map(|p| p.to_string())
+            .unwrap_or_else(|| "?".into());
         return format!("shown (pid {pid})");
     }
     if running {
@@ -232,21 +243,28 @@ pub fn tray_note(v: &Value) -> String {
     }
     match reason.as_str() {
         "missing_dependency" => {
-            return format!("not installed — {}", s(v, "install_hint").unwrap_or_default())
+            return format!(
+                "not installed — {}",
+                s(v, "install_hint").unwrap_or_default()
+            )
         }
         "headless" => {
             return format!(
                 "not available here — {}",
-                s(dec, "hint").filter(|h| !h.is_empty()).unwrap_or_else(|| "no display".into())
+                s(dec, "hint")
+                    .filter(|h| !h.is_empty())
+                    .unwrap_or_else(|| "no display".into())
             )
         }
         "dev_reload" => return "not available while running with --reload".into(),
         "not_serving" => {
-            return "not available (this process was not started with `abstractgateway serve`)".into()
+            return "not available (this process was not started with `abstractgateway serve`)"
+                .into()
         }
         _ => {}
     }
-    if let Some(f) = failure.and_then(|f| s(f, "reason").filter(|r| !r.is_empty()).map(|r| (r, f))) {
+    if let Some(f) = failure.and_then(|f| s(f, "reason").filter(|r| !r.is_empty()).map(|r| (r, f)))
+    {
         let (r, f) = f;
         return match s(f, "hint").filter(|h| !h.is_empty()) {
             Some(h) => format!("not running — {r} ({h})"),
@@ -293,12 +311,19 @@ impl HostUpdate {
         let inst = v.get("install").unwrap_or(&null);
         let chk = v.get("check").filter(|c| c.is_object());
         let job = v.get("job").unwrap_or(&null);
-        let cb = |k: &str| chk.and_then(|c| c.get(k)).and_then(Value::as_bool).unwrap_or(false);
+        let cb = |k: &str| {
+            chk.and_then(|c| c.get(k))
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        };
         let cs = |k: &str| chk.and_then(|c| s(c, k)).unwrap_or_default();
         HostUpdate {
             current: s(v, "current").unwrap_or_else(|| "?".into()),
             install_kind: s(inst, "kind").unwrap_or_default(),
-            upgradable: inst.get("upgradable").and_then(Value::as_bool).unwrap_or(false),
+            upgradable: inst
+                .get("upgradable")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             install_reason: s(inst, "reason").unwrap_or_default(),
             checked: chk.is_some(),
             offline: cb("offline"),
@@ -309,7 +334,10 @@ impl HostUpdate {
             job_error: s(job, "error").unwrap_or_default(),
             job_last_log: strs(job, "log_tail").last().cloned().unwrap_or_default(),
             job_version_after: s(job, "version_after").unwrap_or_default(),
-            restart_pending: v.get("restart_pending").and_then(Value::as_bool).unwrap_or(false),
+            restart_pending: v
+                .get("restart_pending")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         }
     }
 
@@ -329,17 +357,28 @@ impl HostUpdate {
             };
             text.push_str(&format!(" · {what} is installed — restart to finish"));
         } else if self.job_state == "failed" {
-            let why = if self.job_error.is_empty() { "see logs" } else { self.job_error.as_str() };
+            let why = if self.job_error.is_empty() {
+                "see logs"
+            } else {
+                self.job_error.as_str()
+            };
             text.push_str(&format!(" · the update didn't finish ({why})"));
         } else if self.job_state == "succeeded_no_change" {
-            let why = if self.job_error.is_empty() { "nothing changed" } else { self.job_error.as_str() };
+            let why = if self.job_error.is_empty() {
+                "nothing changed"
+            } else {
+                self.job_error.as_str()
+            };
             text.push_str(&format!(" · {why}"));
         } else if self.checked && self.offline {
             text.push_str(" · couldn't reach the update server (offline?)");
         } else if self.checked && self.update_available {
             text.push_str(&format!(" · {} available", self.latest));
         } else if self.checked && !self.latest.is_empty() {
-            text.push_str(&format!(" · up to date, checked {}", when_text(&self.checked_at)));
+            text.push_str(&format!(
+                " · up to date, checked {}",
+                when_text(&self.checked_at)
+            ));
         } else if !self.checked {
             text.push_str(" · not checked yet");
         }
@@ -393,16 +432,25 @@ impl MyPolicy {
             tenant_id: s(v, "tenant_id").unwrap_or_default(),
             user_id: s(v, "user_id").unwrap_or_default(),
             mode: s(entry, "mode").unwrap_or_default(),
-            trust: match entry.get("trust_client_launch_folder").and_then(Value::as_bool) {
+            trust: match entry
+                .get("trust_client_launch_folder")
+                .and_then(Value::as_bool)
+            {
                 Some(true) => "on".into(),
                 Some(false) => "off".into(),
                 None => String::new(),
             },
             allowed: strs(entry, "workspace_allowed_paths"),
             blocked: strs(entry, "workspace_blocked_paths"),
-            customized: v.get("customized").and_then(Value::as_bool).unwrap_or(false),
+            customized: v
+                .get("customized")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             eff_mode: s(eff, "mode").unwrap_or_else(|| "whitelist".into()),
-            eff_trust: eff.get("trust_client_launch_folder").and_then(Value::as_bool) == Some(true),
+            eff_trust: eff
+                .get("trust_client_launch_folder")
+                .and_then(Value::as_bool)
+                == Some(true),
             eff_allowed: strs(eff, "workspace_allowed_paths").len(),
             eff_blocked: strs(eff, "workspace_blocked_paths").len(),
         }
@@ -429,7 +477,10 @@ pub fn my_policy_body(mode: &str, trust: &str, allowed: &str, blocked: &str) -> 
         body.insert("mode".into(), Value::String(mode.to_string()));
     }
     if !trust.is_empty() {
-        body.insert("trust_client_launch_folder".into(), Value::Bool(trust == "on"));
+        body.insert(
+            "trust_client_launch_folder".into(),
+            Value::Bool(trust == "on"),
+        );
     }
     let list = |raw: &str| -> Vec<Value> {
         raw.lines()
@@ -583,8 +634,17 @@ pub fn backlog_settings_body(current: &[BacklogSetting], typed: &[(String, Strin
 
 /// The skills reseed report in the web console's words (`seedReportText`).
 pub fn seed_report_text(rep: &Value) -> String {
-    let n = |k: &str| rep.get(k).and_then(Value::as_array).map(Vec::len).unwrap_or(0);
-    let kept = rep.get("kept").and_then(Value::as_object).map(|m| m.len()).unwrap_or(0);
+    let n = |k: &str| {
+        rep.get(k)
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0)
+    };
+    let kept = rep
+        .get("kept")
+        .and_then(Value::as_object)
+        .map(|m| m.len())
+        .unwrap_or(0);
     format!(
         "Curated shelf {}: {} added, {} updated, {} unchanged, {} kept as they are (your edits are never overwritten).",
         s(rep, "bundled_version").unwrap_or_else(|| "?".into()),
@@ -612,14 +672,29 @@ mod tests {
     #[test]
     fn start_again_hint_follows_the_login_service() {
         let mac = start_again_hint(Some(true), Some("launchd-agent"));
-        assert!(mac.contains("launchctl kickstart") && mac.contains("ai.abstractframework.gateway"), "{mac}");
-        assert!(!mac.contains("abstractgateway serve"), "service mode never says serve: {mac}");
+        assert!(
+            mac.contains("launchctl kickstart") && mac.contains("ai.abstractframework.gateway"),
+            "{mac}"
+        );
+        assert!(
+            !mac.contains("abstractgateway serve"),
+            "service mode never says serve: {mac}"
+        );
         let linux = start_again_hint(Some(true), Some("systemd-user"));
-        assert!(linux.contains("systemctl --user start abstractgateway.service"), "{linux}");
+        assert!(
+            linux.contains("systemctl --user start abstractgateway.service"),
+            "{linux}"
+        );
         let xdg = start_again_hint(Some(true), Some("xdg-autostart"));
         assert!(xdg.contains("next login"), "{xdg}");
-        assert_eq!(start_again_hint(Some(false), None), "start it again with `abstractgateway serve`");
-        assert!(start_again_hint(None, None).contains("if installed"), "unread says so");
+        assert_eq!(
+            start_again_hint(Some(false), None),
+            "start it again with `abstractgateway serve`"
+        );
+        assert!(
+            start_again_hint(None, None).contains("if installed"),
+            "unread says so"
+        );
     }
 
     #[test]
@@ -637,7 +712,10 @@ mod tests {
             "capabilities": {"restart": false, "shutdown": true, "reason": "serve --reload"}
         }));
         assert_eq!(p.state_text(), "Paused — still running");
-        assert_eq!(p.detail_text(), "2026-09-27 15:36:02 +00:00 · by default/admin · maintenance");
+        assert_eq!(
+            p.detail_text(),
+            "2026-09-27 15:36:02 +00:00 · by default/admin · maintenance"
+        );
         assert!(!p.cap_restart);
         assert_eq!(p.cap_reason, "serve --reload");
         let split = HostRunner::from_value(&json!({"paused": false, "runner_in_process": false}));
@@ -661,7 +739,10 @@ mod tests {
     fn tray_note_names_why_it_is_not_running() {
         let v = json!({"decision": {"start": false, "reason": "no_tray_flag", "hint": "started with --no-tray"},
                        "supervisor": {"running": false}});
-        assert_eq!(tray_note(&v), "not running (no_tray_flag: started with --no-tray)");
+        assert_eq!(
+            tray_note(&v),
+            "not running (no_tray_flag: started with --no-tray)"
+        );
         let v = json!({"decision": {"reason": "missing_dependency"}, "install_hint": "pip install x",
                        "supervisor": {"running": false}});
         assert_eq!(tray_note(&v), "not installed — pip install x");
@@ -685,14 +766,25 @@ mod tests {
         }));
         assert_eq!(avail.version_text(), "0.5.1 · 0.6.0 available");
         assert!(avail.can_start());
-        let blocked = HostUpdate { upgradable: false, install_reason: "editable".into(), ..avail.clone() };
+        let blocked = HostUpdate {
+            upgradable: false,
+            install_reason: "editable".into(),
+            ..avail.clone()
+        };
         assert!(!blocked.can_start());
         assert_eq!(blocked.hint_text(), "editable");
-        let running = HostUpdate { job_state: "running".into(), job_last_log: "Collecting".into(), ..avail };
+        let running = HostUpdate {
+            job_state: "running".into(),
+            job_last_log: "Collecting".into(),
+            ..avail
+        };
         assert_eq!(running.version_text(), "0.5.1 · installing… (Collecting)");
         assert!(!running.can_start());
         let offline = HostUpdate::from_value(&json!({"current": "1", "check": {"offline": true}}));
-        assert_eq!(offline.version_text(), "1 · couldn't reach the update server (offline?)");
+        assert_eq!(
+            offline.version_text(),
+            "1 · couldn't reach the update server (offline?)"
+        );
     }
 
     #[test]
@@ -708,7 +800,10 @@ mod tests {
         assert_eq!(p.mode, "blacklist");
         assert_eq!(p.trust, "off");
         assert_eq!(p.blocked, vec!["/a", "/b"]);
-        assert_eq!(p.effective_text(), "Effective: blacklist mode · launch-folder trust off · 0 allowed · 2 refused");
+        assert_eq!(
+            p.effective_text(),
+            "Effective: blacklist mode · launch-folder trust off · 0 allowed · 2 refused"
+        );
         assert_eq!(my_policy_body("", "", "", ""), json!({}));
         assert_eq!(
             my_policy_body("whitelist", "on", " /x \n\n/y", ""),
@@ -738,7 +833,9 @@ mod tests {
         assert_eq!(rows[1].saved, "");
         assert_eq!(rows[2].saved, "on");
         // Non-admin: the folder path is redacted.
-        let red = backlog_settings_from(&json!({"triage_repo_root": {"source": "default", "configured": true}}));
+        let red = backlog_settings_from(
+            &json!({"triage_repo_root": {"source": "default", "configured": true}}),
+        );
         assert!(red[0].redacted);
         assert!(backlog_settings_from(&json!({"writable": true})).is_empty());
     }
@@ -753,7 +850,10 @@ mod tests {
                 ("process_manager".to_string(), p.to_string()),
             ]
         };
-        assert_eq!(backlog_settings_body(&rows, &typed("", "", "on")), json!({}));
+        assert_eq!(
+            backlog_settings_body(&rows, &typed("", "", "on")),
+            json!({})
+        );
         assert_eq!(
             backlog_settings_body(&rows, &typed("/repo", "on", "")),
             json!({"triage_repo_root": "/repo", "backlog_exec_runner": true, "process_manager": null})
@@ -785,13 +885,22 @@ mod tests {
         d.configured_mode = "lan".into();
         assert!(!offers_public_lookup(&d), "internet mode only");
         d.effective_mode = "internet".into();
-        d.addresses.push(crate::store::NetworkAddress { kind: "public".into(), ..Default::default() });
-        assert!(!offers_public_lookup(&d), "not when a public address is listed");
+        d.addresses.push(crate::store::NetworkAddress {
+            kind: "public".into(),
+            ..Default::default()
+        });
+        assert!(
+            !offers_public_lookup(&d),
+            "not when a public address is listed"
+        );
     }
 
     #[test]
     fn when_text_trims_fraction_keeps_offset() {
-        assert_eq!(when_text("2026-09-27T15:36:02.442111+00:00"), "2026-09-27 15:36:02 +00:00");
+        assert_eq!(
+            when_text("2026-09-27T15:36:02.442111+00:00"),
+            "2026-09-27 15:36:02 +00:00"
+        );
         assert_eq!(when_text("2026-09-27T15:36:02"), "2026-09-27 15:36:02");
         assert_eq!(when_text("garbage"), "garbage");
     }

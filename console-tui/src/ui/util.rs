@@ -232,7 +232,8 @@ pub fn admin_hint_pairs<'a>(
     if !non_admin {
         return (pairs, None);
     }
-    let (gated, kept): (Vec<_>, Vec<_>) = pairs.into_iter().partition(|(k, _)| admin_keys.contains(k));
+    let (gated, kept): (Vec<_>, Vec<_>) =
+        pairs.into_iter().partition(|(k, _)| admin_keys.contains(k));
     let keys = gated.iter().map(|(k, _)| *k).collect::<Vec<_>>().join("/");
     (kept, (!keys.is_empty()).then_some(keys))
 }

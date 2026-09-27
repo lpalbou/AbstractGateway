@@ -636,7 +636,10 @@ fn connection_states_render_distinctly() {
     let s = h.turn();
     assert!(s.contains("unauthorized (401)"), "401 state:\n{s}");
     assert!(s.contains("bad token"), "verbatim detail:\n{s}");
-    assert!(s.contains("rejected the token sent"), "actionable hint:\n{s}");
+    assert!(
+        s.contains("rejected the token sent"),
+        "actionable hint:\n{s}"
+    );
 
     h.store
         .conn
@@ -740,11 +743,16 @@ fn connect_reads_the_first_run_state() {
     h.turns(2);
     let cmds = h.drain_cmds();
     assert_eq!(
-        cmds.iter().filter(|c| matches!(c, Cmd::LoadFirstRun)).count(),
+        cmds.iter()
+            .filter(|c| matches!(c, Cmd::LoadFirstRun))
+            .count(),
         1,
         "exactly one first-run read at connect: {cmds:?}"
     );
-    assert!(matches!(h.store.first_run.get_untracked(), Loadable::Loading));
+    assert!(matches!(
+        h.store.first_run.get_untracked(),
+        Loadable::Loading
+    ));
 }
 
 /// Not completed + admin: the guide stays open and continues at the
@@ -846,13 +854,15 @@ fn welcome_step_shows_this_computer() {
         "entering the step reads /host/state"
     );
     h.store.first_run.set(Loadable::Ready(first_run(false)));
-    h.store.welcome.set(Loadable::Ready(WelcomeSummary::from_host_state(&json!({
-        "host": {"host_name": "forge.local"},
-        "gateway": {"data_dir": "/srv/gw", "data_dir_source": "env", "auth_mode": "users",
-                    "service": {"installed": false, "mechanism": "launchd-agent"}},
-        "memory": {"ram": {"total_bytes": 137438953472u64}},
-        "gpu": {"gpus": [{"name": "Apple M5 Max"}]}
-    }))));
+    h.store
+        .welcome
+        .set(Loadable::Ready(WelcomeSummary::from_host_state(&json!({
+            "host": {"host_name": "forge.local"},
+            "gateway": {"data_dir": "/srv/gw", "data_dir_source": "env", "auth_mode": "users",
+                        "service": {"installed": false, "mechanism": "launchd-agent"}},
+            "memory": {"ram": {"total_bytes": 137438953472u64}},
+            "gpu": {"gpus": [{"name": "Apple M5 Max"}]}
+        }))));
     let s = h.turns(2);
     for needle in [
         "forge.local",
@@ -880,7 +890,13 @@ fn finish_records_the_outcome_and_closes_only_when_verified() {
     let s = h.turns(3);
     h.drain_cmds();
     let row = find_row(&s, "Skip setup");
-    let col = s.lines().nth(row - 1).unwrap().find(" Finish ").expect("Finish") + 2;
+    let col = s
+        .lines()
+        .nth(row - 1)
+        .unwrap()
+        .find(" Finish ")
+        .expect("Finish")
+        + 2;
     click_at(&mut h, col, row);
     h.turns(2);
     let cmd = h.find_cmd(|c| matches!(c, Cmd::CompleteFirstRun { .. }));
@@ -891,9 +907,13 @@ fn finish_records_the_outcome_and_closes_only_when_verified() {
         }
         other => panic!("expected CompleteFirstRun, got {other:?}"),
     };
-    assert!(h.ui.wizard.get_untracked(), "still in the guide until verified");
+    assert!(
+        h.ui.wizard.get_untracked(),
+        "still in the guide until verified"
+    );
     // A failed verify keeps the guide open and says why.
-    h.ui.write_done.set(Some((fid, Err("VERIFY FAILED: completed=false".into()))));
+    h.ui.write_done
+        .set(Some((fid, Err("VERIFY FAILED: completed=false".into()))));
     let s = h.turns(2);
     assert!(h.ui.wizard.get_untracked());
     assert!(s.contains("VERIFY FAILED"), "reason on screen:\n{s}");
@@ -904,7 +924,8 @@ fn finish_records_the_outcome_and_closes_only_when_verified() {
         Some(Cmd::CompleteFirstRun { form_id, .. }) => form_id.unwrap(),
         other => panic!("expected CompleteFirstRun, got {other:?}"),
     };
-    h.ui.write_done.set(Some((fid, Ok("GET /host/first-run: completed".into()))));
+    h.ui.write_done
+        .set(Some((fid, Ok("GET /host/first-run: completed".into()))));
     h.turns(2);
     assert!(!h.ui.wizard.get_untracked(), "verified → browse");
 }
@@ -923,7 +944,10 @@ fn ctrl_g_reopens_and_skips_the_guide() {
     h.drain_cmds();
     h.key(b"\x07");
     let s = h.turns(2);
-    assert!(s.contains("Skip setup") && s.contains("Leave for now"), "{s}");
+    assert!(
+        s.contains("Skip setup") && s.contains("Leave for now"),
+        "{s}"
+    );
     // Options: leave, skip, stay (initial) → Up once = skip.
     h.key(b"\x1b[A");
     h.turn();
@@ -961,16 +985,27 @@ fn routes_model_step_shows_the_plan_and_downloads_all() {
     h.ui.screen.set(ui::SCREEN_ROUTES);
     h.turns(2);
     h.store.routes.set(Loadable::Ready(routes_fixture()));
-    h.store.availability.set(Loadable::Ready(availability_with_plan()));
+    h.store
+        .availability
+        .set(Loadable::Ready(availability_with_plan()));
     let s = h.turns(2);
-    assert!(s.contains("recommended for this computer: 0 of 2 installed"), "{s}");
+    assert!(
+        s.contains("recommended for this computer: 0 of 2 installed"),
+        "{s}"
+    );
     assert!(s.contains("1 fit warning"), "{s}");
-    assert!(s.contains("⚠ Big may not fit this computer"), "warning verbatim:\n{s}");
+    assert!(
+        s.contains("⚠ Big may not fit this computer"),
+        "warning verbatim:\n{s}"
+    );
     assert!(s.contains("Not downloaded"), "{s}");
     h.drain_cmds();
     h.type_text("D");
     let s = h.turns(2);
-    assert!(s.contains("Download the recommended set"), "confirm first:\n{s}");
+    assert!(
+        s.contains("Download the recommended set"),
+        "confirm first:\n{s}"
+    );
     // Danger confirm defaults to keep → Up to "Download all".
     h.key(b"\x1b[A");
     h.turn();
@@ -978,21 +1013,29 @@ fn routes_model_step_shows_the_plan_and_downloads_all() {
     h.turns(2);
     let cmds = h.drain_cmds();
     assert_eq!(
-        cmds.iter().filter(|c| matches!(c, Cmd::DownloadRecommended)).count(),
+        cmds.iter()
+            .filter(|c| matches!(c, Cmd::DownloadRecommended))
+            .count(),
         1,
         "{cmds:?}"
     );
     // Progress: the parent job's line, and D refuses while it runs.
-    h.store.download_group.set(Some(GroupStatus::from_job(&json!({
-        "job_id": "grp_1", "status": "running", "state": "downloading", "percent": 40.2,
-        "message": "Downloading 2 models · 0 of 2 ready"
-    }))));
+    h.store
+        .download_group
+        .set(Some(GroupStatus::from_job(&json!({
+            "job_id": "grp_1", "status": "running", "state": "downloading", "percent": 40.2,
+            "message": "Downloading 2 models · 0 of 2 ready"
+        }))));
     let s = h.turns(2);
     assert!(s.contains("Download all 40% — Downloading 2 models"), "{s}");
     h.type_text("D");
     h.turns(2);
     assert!(
-        h.store.notice.get_untracked().unwrap_or_default().contains("already running"),
+        h.store
+            .notice
+            .get_untracked()
+            .unwrap_or_default()
+            .contains("already running"),
         "no second group while one runs"
     );
 }
@@ -1046,8 +1089,12 @@ fn routes_show_the_unavailable_reason_and_the_plan_lists_it() {
     let mut h = harness_sized(Size::new(200, 40));
     h.connect_as_admin();
     h.goto_screen(ui::SCREEN_ROUTES);
-    h.store.routes.set(Loadable::Ready(routes_with_unavailable_image()));
-    h.store.availability.set(Loadable::Ready(availability_with_plan()));
+    h.store
+        .routes
+        .set(Loadable::Ready(routes_with_unavailable_image()));
+    h.store
+        .availability
+        .set(Loadable::Ready(availability_with_plan()));
     h.ui.route_sel.set(1);
     let s = h.turns(3);
     assert!(s.contains("unavailable here"), "state column:\n{s}");
@@ -1057,12 +1104,18 @@ fn routes_show_the_unavailable_reason_and_the_plan_lists_it() {
     );
     h.type_text("p");
     let s = h.turns(3);
-    assert!(s.contains("Not available on this computer (left unset)"), "plan section:\n{s}");
+    assert!(
+        s.contains("Not available on this computer (left unset)"),
+        "plan section:\n{s}"
+    );
     assert!(
         s.contains("output.image: recommended mlx-gen AbstractFramework/flux.2-klein-4b-8bit"),
         "{s}"
     );
-    assert!(s.contains("MLX runs only on Apple Silicon"), "reason in the plan:\n{s}");
+    assert!(
+        s.contains("MLX runs only on Apple Silicon"),
+        "reason in the plan:\n{s}"
+    );
 }
 
 /// Apply-recommended's report: `unavailable` rows are counted and named
@@ -2216,7 +2269,10 @@ fn summon_validates_first_then_confirms_then_creates() {
         .set(Loadable::Ready(creation_kit_fixture()));
     let s = h.turns(2);
     assert!(s.contains("Framework default"), "template picker:\n{s}");
-    assert!(s.contains("shared_vulnerability"), "locked core values:\n{s}");
+    assert!(
+        s.contains("shared_vulnerability"),
+        "locked core values:\n{s}"
+    );
 
     // Name (autofocused) → Tab to the template → the Advanced toggle →
     // Validate & create.
@@ -2235,7 +2291,10 @@ fn summon_validates_first_then_confirms_then_creates() {
         }
         other => panic!("expected the dry-run first, got {other:?}"),
     };
-    assert_eq!(body.0["spark"]["name"], "Castor", "the name fills the spark");
+    assert_eq!(
+        body.0["spark"]["name"], "Castor",
+        "the name fills the spark"
+    );
     assert_eq!(body.0["spark"]["core_values"][0], "shared_vulnerability");
     // Nothing irreversible before the confirm.
     assert!(
@@ -2246,10 +2305,12 @@ fn summon_validates_first_then_confirms_then_creates() {
     );
 
     // Green dry-run with a warning → the confirm names the permanence.
-    h.store.entity_check.set(Loadable::Ready(ent::CreateCheck::from_value(
-        "Castor",
-        &json!({"ok": true, "warnings": ["spark lint: no interests seeded"]}),
-    )));
+    h.store
+        .entity_check
+        .set(Loadable::Ready(ent::CreateCheck::from_value(
+            "Castor",
+            &json!({"ok": true, "warnings": ["spark lint: no interests seeded"]}),
+        )));
     let s = h.turns(3);
     assert!(s.contains("Summon Castor?"), "confirm stage:\n{s}");
     assert!(s.contains("There is no delete"), "permanence named:\n{s}");
@@ -2274,7 +2335,10 @@ fn summon_validates_first_then_confirms_then_creates() {
         })) => {
             assert_eq!(name, "Castor");
             assert_eq!(body.0["spark"]["name"], "Castor");
-            assert!(substrate.is_none(), "Advanced untouched: no substrate write");
+            assert!(
+                substrate.is_none(),
+                "Advanced untouched: no substrate write"
+            );
             assert!(policy.is_none(), "Advanced untouched: no policy write");
             assert_eq!(warnings, vec!["spark lint: no interests seeded"]);
         }
@@ -2303,16 +2367,21 @@ fn summon_refusal_shows_the_web_sentence_and_writes_nothing() {
     assert!(h
         .find_cmd(|c| matches!(c, Cmd::Entity(EntityCmd::ValidateEntity { .. })))
         .is_some());
-    h.store.entity_check.set(Loadable::Ready(ent::CreateCheck::from_value(
-        "Testor",
-        &json!({"ok": false, "would_conflict": true, "errors": []}),
-    )));
+    h.store
+        .entity_check
+        .set(Loadable::Ready(ent::CreateCheck::from_value(
+            "Testor",
+            &json!({"ok": false, "would_conflict": true, "errors": []}),
+        )));
     let s = h.turns(3);
     assert!(
         s.contains("Cannot create: an entity with this name already exists"),
         "refusal:\n{s}"
     );
-    assert!(!s.contains("Summon Testor?"), "no confirm on a red dry-run:\n{s}");
+    assert!(
+        !s.contains("Summon Testor?"),
+        "no confirm on a red dry-run:\n{s}"
+    );
     assert!(!h
         .drain_cmds()
         .iter()
@@ -2371,7 +2440,10 @@ fn talk_opens_a_visit_sends_turns_and_renders_replies() {
         c.apply_turn(&json!({"reply": "Hello — I remember you.", "memories_in_context": 3}));
     });
     let s = h.turns(2);
-    assert!(s.contains("Hello — I remember you."), "reply rendered:\n{s}");
+    assert!(
+        s.contains("Hello — I remember you."),
+        "reply rendered:\n{s}"
+    );
     assert!(s.contains("3 memories in context"), "turn status:\n{s}");
     // Focus law (the pty drive's catch): after open + turn the keyboard
     // is still inside the panel, so Esc hides IT — never the page's own
@@ -2497,7 +2569,10 @@ fn voice_audition_sends_the_unsaved_selection_and_shows_the_file() {
     let s = h.turns(2);
     assert!(s.contains("audio saved:"), "file path shown:\n{s}");
     assert!(s.contains("Testor-audition-a1.wav"), "path:\n{s}");
-    assert!(s.contains("no command-line audio player"), "honest no-player line:\n{s}");
+    assert!(
+        s.contains("no command-line audio player"),
+        "honest no-player line:\n{s}"
+    );
 }
 
 #[test]
@@ -6957,7 +7032,12 @@ impl ConsoleTransport for MockTransport {
         self.record(format!("installed provider={}", provider.unwrap_or("-")));
         Ok(fixture("models_installed"))
     }
-    fn start_download(&self, provider: &str, artifact: &str, _expected_bytes: Option<u64>) -> Result<Value, TransportError> {
+    fn start_download(
+        &self,
+        provider: &str,
+        artifact: &str,
+        _expected_bytes: Option<u64>,
+    ) -> Result<Value, TransportError> {
         self.record(format!("download {provider} {artifact}"));
         self.started(Self::job_doc(
             "download",
@@ -7190,7 +7270,10 @@ fn zero_jumps_to_engines_in_browse_and_is_refused_in_the_wizard() {
     h.key(b"0");
     let s = h.turns(2);
     assert_eq!(h.ui.screen.get_untracked(), 1, "wizard does not jump");
-    assert!(s.contains("screen jumps (1-9, 0, A) work in browse mode"), "{s}");
+    assert!(
+        s.contains("screen jumps (1-9, 0, A) work in browse mode"),
+        "{s}"
+    );
 }
 
 #[test]
@@ -7250,7 +7333,10 @@ fn download_progress_reaches_the_gateway_toast_lane() {
     let s = h.settle_until("the job at 42%", |s| s.contains("42%"));
     assert!(s.contains("download ollama qwen3:8b"), "{s}");
     assert!(s.contains("c cancels"), "{s}");
-    assert!(h.screens.job_running(), "held at running: the job is still active");
+    assert!(
+        h.screens.job_running(),
+        "held at running: the job is still active"
+    );
     *h.mock.hold_polls.lock().unwrap() = false;
     // The outcome lands on the GATEWAY's notice signal (shared lane):
     // the footer mirrors it and the toast effect shows it.
@@ -7624,7 +7710,10 @@ fn network_refused_mode_says_the_fix_and_posts_nothing() {
             .is_none(),
         "a refused mode posts nothing"
     );
-    assert!(s.contains("fix: started with accounts off"), "fix shown:\n{s}");
+    assert!(
+        s.contains("fix: started with accounts off"),
+        "fix shown:\n{s}"
+    );
 }
 
 #[test]
@@ -7693,13 +7782,17 @@ fn network_c_in_the_url_field_still_types() {
     );
 }
 
-
 // =======================================================================
 // Reverse proxy (mission Z): allowed origins + trust proxy, same door as
 // the mode (POST /network), the gateway's words on refusal.
 // =======================================================================
 
-fn proxy_fixture(origins: &[&str], trust: bool, env_origins: Option<&[&str]>, env_trust: Option<bool>) -> Value {
+fn proxy_fixture(
+    origins: &[&str],
+    trust: bool,
+    env_origins: Option<&[&str]>,
+    env_trust: Option<bool>,
+) -> Value {
     let mut v = network_fixture("internet", "0.0.0.0", false, true);
     let mut o = json!({
         "value": origins, "source": if origins.is_empty() {"default"} else {"setting"},
@@ -7738,7 +7831,10 @@ fn network_reverse_proxy_shows_values_and_where_they_come_from() {
     h.connect_as_admin();
     h.ui.screen.set(0);
     h.turns(2);
-    let s = set_network(&mut h, proxy_fixture(&["https://gateway.example.com"], false, None, None));
+    let s = set_network(
+        &mut h,
+        proxy_fixture(&["https://gateway.example.com"], false, None, None),
+    );
     for needle in [
         "Reverse proxy",
         "origins: https://gateway.example.com [saved setting]",
@@ -7756,7 +7852,12 @@ fn network_reverse_proxy_shows_values_and_where_they_come_from() {
     // The environment override is said in words, per field.
     let s = set_network(
         &mut h,
-        proxy_fixture(&["https://gateway.example.com"], false, Some(&["https://pinned.example"]), Some(true)),
+        proxy_fixture(
+            &["https://gateway.example.com"],
+            false,
+            Some(&["https://pinned.example"]),
+            Some(true),
+        ),
     );
     assert!(s.contains("[environment override]"), "override tag:\n{s}");
     assert!(
@@ -7767,9 +7868,16 @@ fn network_reverse_proxy_shows_values_and_where_they_come_from() {
         s.contains("this gateway was started with ABSTRACTGATEWAY_TRUST_PROXY in its environment: trust proxy is on"),
         "trust override line:\n{s}"
     );
-    assert!(!s.contains("set ABSTRACTGATEWAY"), "never an env instruction:\n{s}");
+    assert!(
+        !s.contains("set ABSTRACTGATEWAY"),
+        "never an env instruction:\n{s}"
+    );
     if let Ok(dir) = std::env::var("MISSION_Z_RENDER_DIR") {
-        std::fs::write(format!("{dir}/tui_network_reverse_proxy_env_override.txt"), &s).expect("write render");
+        std::fs::write(
+            format!("{dir}/tui_network_reverse_proxy_env_override.txt"),
+            &s,
+        )
+        .expect("write render");
     }
 }
 
@@ -7779,7 +7887,10 @@ fn network_origins_line_enter_saves_the_whole_list() {
     h.connect_as_admin();
     h.ui.screen.set(0);
     h.turns(2);
-    set_network(&mut h, proxy_fixture(&["https://a.example"], false, None, None));
+    set_network(
+        &mut h,
+        proxy_fixture(&["https://a.example"], false, None, None),
+    );
     h.drain_cmds();
     focus_origins_line(&mut h);
     h.key(b"\x1b[F"); // End
@@ -7789,16 +7900,26 @@ fn network_origins_line_enter_saves_the_whole_list() {
     h.type_text("\r");
     h.turns(2);
     match h.find_cmd(|c| matches!(c, Cmd::SetNetworkProxy { .. })) {
-        Some(Cmd::SetNetworkProxy { allowed_origins, trust_proxy }) => {
+        Some(Cmd::SetNetworkProxy {
+            allowed_origins,
+            trust_proxy,
+        }) => {
             assert_eq!(
                 allowed_origins,
-                Some(vec!["https://a.example".to_string(), "https://b.example:8443".to_string()])
+                Some(vec![
+                    "https://a.example".to_string(),
+                    "https://b.example:8443".to_string()
+                ])
             );
             assert_eq!(trust_proxy, None, "only the origins change");
         }
         other => panic!("expected SetNetworkProxy origins, got {other:?}"),
     }
-    assert!(h.find_cmd(|c| matches!(c, Cmd::SetNetwork { .. })).is_none(), "the mode is untouched");
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::SetNetwork { .. }))
+            .is_none(),
+        "the mode is untouched"
+    );
 }
 
 #[test]
@@ -7815,7 +7936,10 @@ fn network_trust_checkbox_saves_on_toggle() {
     h.type_text(" ");
     h.turns(2);
     match h.find_cmd(|c| matches!(c, Cmd::SetNetworkProxy { .. })) {
-        Some(Cmd::SetNetworkProxy { allowed_origins, trust_proxy }) => {
+        Some(Cmd::SetNetworkProxy {
+            allowed_origins,
+            trust_proxy,
+        }) => {
             assert_eq!(trust_proxy, Some(true));
             assert_eq!(allowed_origins, None, "only trust changes");
         }
@@ -7848,11 +7972,15 @@ fn paused_banner_shows_on_every_screen_and_f2_panel_resumes() {
     h.connect_as_admin();
     h.turns(2);
     assert!(
-        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::PollRunner { .. }))).is_some(),
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::PollRunner { .. })))
+            .is_some(),
         "connecting starts the /host/runner poll behind the banner"
     );
     let s = h.turns(1);
-    assert!(!s.contains("Workflows are paused"), "no banner before an answer:\n{s}");
+    assert!(
+        !s.contains("Workflows are paused"),
+        "no banner before an answer:\n{s}"
+    );
     h.store.op.runner.set(Loadable::Ready(paused_runner()));
     for screen in [1usize, 5] {
         h.goto_screen(screen);
@@ -7868,15 +7996,20 @@ fn paused_banner_shows_on_every_screen_and_f2_panel_resumes() {
     let s = h.turns(2);
     assert!(s.contains("Gateway host"), "F3 opens the host panel:\n{s}");
     assert!(s.contains("Paused — still running"), "state pill:\n{s}");
-    assert!(s.contains("Resume workflows"), "the button names its verb:\n{s}");
     assert!(
-        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::LoadHost { admin: true }))).is_some(),
+        s.contains("Resume workflows"),
+        "the button names its verb:\n{s}"
+    );
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::LoadHost { admin: true })))
+            .is_some(),
         "opening reads runner + tray + update"
     );
     h.type_text("p");
     h.turns(2);
     assert!(
-        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::SetPaused { pause: false }))).is_some(),
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::SetPaused { pause: false })))
+            .is_some(),
         "p on a paused runner resumes"
     );
 }
@@ -7895,17 +8028,28 @@ fn host_panel_refuses_non_admin_verbs_with_a_reason() {
     h.turns(2);
     h.store.op.runner.set(Loadable::Ready(paused_runner()));
     let s = h.turns(2);
-    assert!(s.contains("Workflows are paused"), "the banner is for everyone:\n{s}");
-    assert!(!s.contains("F3 → p resumes"), "but only admins are told to resume:\n{s}");
+    assert!(
+        s.contains("Workflows are paused"),
+        "the banner is for everyone:\n{s}"
+    );
+    assert!(
+        !s.contains("F3 → p resumes"),
+        "but only admins are told to resume:\n{s}"
+    );
     h.key(b"\x1bOR"); // F3
     let s = h.turns(2);
-    assert!(s.contains("only an admin can pause, restart, quit or update"), "reason shown:\n{s}");
+    assert!(
+        s.contains("only an admin can pause, restart, quit or update"),
+        "reason shown:\n{s}"
+    );
     assert!(!s.contains("Restart…"), "no admin buttons:\n{s}");
     let _ = h.drain_cmds();
     h.type_text("p");
     h.turns(2);
     assert!(
-        h.drain_cmds().iter().all(|c| !is_op(c, |o| matches!(o, OpCmd::SetPaused { .. }))),
+        h.drain_cmds()
+            .iter()
+            .all(|c| !is_op(c, |o| matches!(o, OpCmd::SetPaused { .. }))),
         "a non-admin pause is refused before sending"
     );
 }
@@ -7921,11 +8065,16 @@ fn restart_and_quit_confirm_first_and_default_to_keep() {
     h.turns(2);
     h.type_text("R");
     let s = h.turns(2);
-    assert!(s.contains("Restart AbstractGateway?"), "restart confirm:\n{s}");
+    assert!(
+        s.contains("Restart AbstractGateway?"),
+        "restart confirm:\n{s}"
+    );
     h.type_text("\r"); // keep is the default
     h.turns(2);
     assert!(
-        h.drain_cmds().iter().all(|c| !is_op(c, |o| matches!(o, OpCmd::Restart))),
+        h.drain_cmds()
+            .iter()
+            .all(|c| !is_op(c, |o| matches!(o, OpCmd::Restart))),
         "keep does not restart"
     );
     h.key(b"\x1bOR"); // F3
@@ -7938,7 +8087,8 @@ fn restart_and_quit_confirm_first_and_default_to_keep() {
     h.type_text("\r");
     h.turns(2);
     assert!(
-        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::Shutdown))).is_some(),
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::Shutdown)))
+            .is_some(),
         "the danger option quits"
     );
     // A process that cannot restart itself says why, and sends nothing.
@@ -7950,7 +8100,10 @@ fn restart_and_quit_confirm_first_and_default_to_keep() {
     h.turns(2);
     h.type_text("R");
     let s = h.turns(2);
-    assert!(s.contains("restart is not available: started with --reload"), "reason:\n{s}");
+    assert!(
+        s.contains("restart is not available: started with --reload"),
+        "reason:\n{s}"
+    );
 }
 
 #[test]
@@ -7969,21 +8122,32 @@ fn workflows_import_reload_and_delete_confirm() {
     // Delete asks first; keep (default) sends nothing.
     h.type_text("d");
     let s = h.turns(2);
-    assert!(s.contains("Delete demo@1.0.0? This removes this version from"), "confirm:\n{s}");
+    assert!(
+        s.contains("Delete demo@1.0.0? This removes this version from"),
+        "confirm:\n{s}"
+    );
     h.type_text("\r");
     h.turns(2);
-    assert!(h.find_cmd(|c| matches!(c, Cmd::DeleteWorkflow { .. })).is_none(), "keep does not delete");
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::DeleteWorkflow { .. }))
+            .is_none(),
+        "keep does not delete"
+    );
     // Reload.
     h.type_text("L");
     h.turns(2);
     assert!(
-        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::ReloadWorkflows { .. }))).is_some(),
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::ReloadWorkflows { .. })))
+            .is_some(),
         "L reloads the registry"
     );
     // Import: a local path, Enter submits.
     h.type_text("i");
     let s = h.turns(2);
-    assert!(s.contains("Import a workflow bundle (.flow)"), "import form:\n{s}");
+    assert!(
+        s.contains("Import a workflow bundle (.flow)"),
+        "import form:\n{s}"
+    );
     h.type_text("/tmp/x.flow\r");
     h.turns(2);
     match h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::ImportWorkflow { .. }))) {
@@ -8019,23 +8183,48 @@ fn backlog_settings_rows_and_skills_reseed_in_the_knobs() {
         })),
     ));
     let s = h.turns(2);
-    assert!(s.contains("triage_repo_root: /d/backlog  (default)"), "folder row:\n{s}");
-    assert!(s.contains("backlog_exec_runner: off  (default)"), "runner row:\n{s}");
-    assert!(s.contains("process_manager: on  (saved setting)"), "pm row:\n{s}");
-    assert!(s.contains("Edit backlog settings"), "editor entry point:\n{s}");
-    assert!(s.contains("Refresh the curated skills shelf"), "reseed entry point:\n{s}");
+    assert!(
+        s.contains("triage_repo_root: /d/backlog  (default)"),
+        "folder row:\n{s}"
+    );
+    assert!(
+        s.contains("backlog_exec_runner: off  (default)"),
+        "runner row:\n{s}"
+    );
+    assert!(
+        s.contains("process_manager: on  (saved setting)"),
+        "pm row:\n{s}"
+    );
+    assert!(
+        s.contains("Edit backlog settings"),
+        "editor entry point:\n{s}"
+    );
+    assert!(
+        s.contains("Refresh the curated skills shelf"),
+        "reseed entry point:\n{s}"
+    );
     let _ = h.drain_cmds();
     // Click the reseed button: find it on screen and press it by mouse.
     let (row, col) = s
         .lines()
         .enumerate()
-        .find_map(|(i, l)| l.find("Refresh the curated skills shelf").map(|c| (i, l[..c].chars().count())))
+        .find_map(|(i, l)| {
+            l.find("Refresh the curated skills shelf")
+                .map(|c| (i, l[..c].chars().count()))
+        })
         .expect("button on screen");
-    let click = format!("\x1b[<0;{};{}M\x1b[<0;{};{}m", col + 3, row + 1, col + 3, row + 1);
+    let click = format!(
+        "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+        col + 3,
+        row + 1,
+        col + 3,
+        row + 1
+    );
     h.key(click.as_bytes());
     h.turns(2);
     assert!(
-        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::ReseedSkills))).is_some(),
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::ReseedSkills)))
+            .is_some(),
         "the button posts the reseed"
     );
 }
@@ -8047,25 +8236,39 @@ fn users_w_opens_my_workspace_policy() {
     let mut h = harness_sized(Size::new(140, 44));
     h.connect_as_admin();
     h.goto_screen(3);
-    h.store.users.set(Loadable::Ready(users_from_payload(&users_fixture())));
-    h.store.entities.set(Loadable::Ready(entities_from_payload(&entities_fixture())));
+    h.store
+        .users
+        .set(Loadable::Ready(users_from_payload(&users_fixture())));
+    h.store
+        .entities
+        .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
     h.turns(2);
     let _ = h.drain_cmds();
     h.type_text("w");
     let s = h.turns(2);
     assert!(s.contains("My workspace policy"), "form opens:\n{s}");
     assert!(
-        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::LoadMyPolicy))).is_some(),
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::LoadMyPolicy)))
+            .is_some(),
         "it reads GET /workspace/policy/self"
     );
-    h.store.op.my_policy.set(Loadable::Ready(MyPolicy::from_value(&json!({
-        "tenant_id": "default", "user_id": "admin", "policy": {}, "customized": false,
-        "effective": {"mode": "whitelist", "trust_client_launch_folder": true,
-                      "workspace_allowed_paths": [], "workspace_blocked_paths": []}
-    }))));
+    h.store
+        .op
+        .my_policy
+        .set(Loadable::Ready(MyPolicy::from_value(&json!({
+            "tenant_id": "default", "user_id": "admin", "policy": {}, "customized": false,
+            "effective": {"mode": "whitelist", "trust_client_launch_folder": true,
+                          "workspace_allowed_paths": [], "workspace_blocked_paths": []}
+        }))));
     let s = h.turns(2);
-    assert!(s.contains("Effective: whitelist mode · launch-folder trust on · 0 allowed · 0 refused"), "effective:\n{s}");
-    assert!(s.contains("inherits the gateway defaults"), "inherit state:\n{s}");
+    assert!(
+        s.contains("Effective: whitelist mode · launch-folder trust on · 0 allowed · 0 refused"),
+        "effective:\n{s}"
+    );
+    assert!(
+        s.contains("inherits the gateway defaults"),
+        "inherit state:\n{s}"
+    );
     assert!(s.contains("Reset to inherited"), "reset verb:\n{s}");
 }
 
@@ -8078,7 +8281,10 @@ fn network_reverse_proxy_is_read_only_without_admin() {
     let mut v = proxy_fixture(&["https://a.example"], true, None, None);
     v["writable"] = json!(false);
     let s = set_network(&mut h, v);
-    assert!(s.contains("changing the reverse proxy needs an admin token"), "read-only:\n{s}");
+    assert!(
+        s.contains("changing the reverse proxy needs an admin token"),
+        "read-only:\n{s}"
+    );
     assert!(!s.contains("Enter saves"), "no edit line:\n{s}");
 }
 
@@ -8088,23 +8294,40 @@ fn network_proxy_body_and_notes_use_the_gateways_words() {
     use abstractgateway_console::ui::network::parse_origins_line;
     use abstractgateway_console::worker::{network_proxy_body, network_proxy_note};
 
-    assert_eq!(parse_origins_line(" https://a.example, ,https://b.example "), vec!["https://a.example", "https://b.example"]);
+    assert_eq!(
+        parse_origins_line(" https://a.example, ,https://b.example "),
+        vec!["https://a.example", "https://b.example"]
+    );
     assert_eq!(parse_origins_line(""), Vec::<String>::new());
-    assert_eq!(network_proxy_body(&Some(vec![]), None), json!({"allowed_origins": []}));
-    assert_eq!(network_proxy_body(&None, Some(false)), json!({"trust_proxy": false}));
+    assert_eq!(
+        network_proxy_body(&Some(vec![]), None),
+        json!({"allowed_origins": []})
+    );
+    assert_eq!(
+        network_proxy_body(&None, Some(false)),
+        json!({"trust_proxy": false})
+    );
     let refused = "1 origin is not valid (nothing was saved): https://x.example/: no trailing slash: an origin is scheme://host[:port] (write https://x.example)";
     let err = ApiError {
         kind: ApiErrorKind::Http(400),
         message: "bad".into(),
-        body: Some(json!({"ok": false, "reason_code": "invalid_origins", "refused_reason": refused})),
+        body: Some(
+            json!({"ok": false, "reason_code": "invalid_origins", "refused_reason": refused}),
+        ),
         timed_out: false,
     };
-    assert_eq!(network_proxy_note(&Err(err)), format!("✗ reverse proxy refused: {refused}"));
+    assert_eq!(
+        network_proxy_note(&Err(err)),
+        format!("✗ reverse proxy refused: {refused}")
+    );
     let ok = json!({"changed": {"allowed_origins": {"applies": "live"}, "trust_proxy": {"applies": "overridden_by_env"}}});
     let note = network_proxy_note(&Ok(ok));
     assert!(note.contains("origins saved, applies now"), "{note}");
     assert!(note.contains("trust proxy saved, NOT in effect"), "{note}");
-    assert_eq!(network_proxy_note(&Ok(json!({"changed": {}}))), "✓ reverse proxy: no change");
+    assert_eq!(
+        network_proxy_note(&Ok(json!({"changed": {}}))),
+        "✓ reverse proxy: no change"
+    );
 }
 
 fn apps_runtime_config() -> Value {
@@ -8138,7 +8361,10 @@ fn apps_settings_render_in_runtime_knobs_with_their_source() {
     ));
     let s = h.turns(2);
     assert!(s.contains("apps.host: 0.0.0.0  (stored)"), "host row:\n{s}");
-    assert!(s.contains("apps.node: system  (env)"), "env-sourced row:\n{s}");
+    assert!(
+        s.contains("apps.node: system  (env)"),
+        "env-sourced row:\n{s}"
+    );
     assert!(s.contains("apps.ports: —  (default)"), "default row:\n{s}");
     assert!(s.contains("Edit apps settings"), "editor entry point:\n{s}");
     if let Ok(dir) = std::env::var("MISSION_Z_RENDER_DIR") {
@@ -8153,14 +8379,21 @@ fn apps_settings_body_sends_only_changed_keys_and_clears_with_empty() {
     let d = abstractgateway_console::store::RuntimeConfigData::from_value(&apps_runtime_config());
     assert_eq!(d.apps.len(), 3);
     // Unchanged (stored host kept, env/default fields left empty) -> nothing.
-    let same = vec![("host".to_string(), "0.0.0.0".to_string()), ("ports".to_string(), String::new()), ("node".to_string(), String::new())];
+    let same = vec![
+        ("host".to_string(), "0.0.0.0".to_string()),
+        ("ports".to_string(), String::new()),
+        ("node".to_string(), String::new()),
+    ];
     assert_eq!(apps_settings_body(&d.apps, &same), json!({}));
     let typed = vec![
-        ("host".to_string(), String::new()),              // clear the stored value
-        ("ports".to_string(), " 3200-3299 ".to_string()),  // new
-        ("node".to_string(), String::new()),              // env value never promoted to stored
+        ("host".to_string(), String::new()), // clear the stored value
+        ("ports".to_string(), " 3200-3299 ".to_string()), // new
+        ("node".to_string(), String::new()), // env value never promoted to stored
     ];
-    assert_eq!(apps_settings_body(&d.apps, &typed), json!({"apps.host": "", "apps.ports": "3200-3299"}));
+    assert_eq!(
+        apps_settings_body(&d.apps, &typed),
+        json!({"apps.host": "", "apps.ports": "3200-3299"})
+    );
 }
 
 fn agents_runtime_config() -> Value {
@@ -8193,15 +8426,29 @@ fn agent_defaults_parse_render_and_body() {
 
     let d = abstractgateway_console::store::RuntimeConfigData::from_value(&agents_runtime_config());
     assert_eq!(d.agent_defaults.len(), 2);
-    let code = d.agent_defaults.iter().find(|a| a.interface == "abstractcode.agent.v1").unwrap();
+    let code = d
+        .agent_defaults
+        .iter()
+        .find(|a| a.interface == "abstractcode.agent.v1")
+        .unwrap();
     assert!(code.available && code.workflow_id == "coder@1.1.0:code" && code.source == "stored");
-    assert_eq!(code.eligible, vec!["basic-agent:ba".to_string(), "coder:code".to_string()]);
-    let assist = d.agent_defaults.iter().find(|a| a.interface == "abstractassistant.agent.v1").unwrap();
+    assert_eq!(
+        code.eligible,
+        vec!["basic-agent:ba".to_string(), "coder:code".to_string()]
+    );
+    let assist = d
+        .agent_defaults
+        .iter()
+        .find(|a| a.interface == "abstractassistant.agent.v1")
+        .unwrap();
     assert!(!assist.available && assist.reason.contains("built-in orchestrator"));
 
     // Body: only changed rows; "" clears; a default-sourced row left empty sends nothing.
     let same = vec![
-        ("abstractcode.agent.v1".to_string(), "coder:code".to_string()),
+        (
+            "abstractcode.agent.v1".to_string(),
+            "coder:code".to_string(),
+        ),
         ("abstractassistant.agent.v1".to_string(), String::new()),
     ];
     assert_eq!(agent_defaults_body(&d.agent_defaults, &same), json!({}));
@@ -8223,9 +8470,18 @@ fn agent_defaults_parse_render_and_body() {
     h.turns(2);
     h.store.runtime_config.set(Loadable::Ready(d));
     let s = h.turns(2);
-    assert!(s.contains("abstractcode.agent.v1 → coder@1.1.0:code (Coder)  (stored)"), "code row:\n{s}");
-    assert!(s.contains("abstractassistant.agent.v1 → unavailable: no host workflow"), "assistant row:\n{s}");
-    assert!(s.contains("Edit default agent workflows"), "editor entry point:\n{s}");
+    assert!(
+        s.contains("abstractcode.agent.v1 → coder@1.1.0:code (Coder)  (stored)"),
+        "code row:\n{s}"
+    );
+    assert!(
+        s.contains("abstractassistant.agent.v1 → unavailable: no host workflow"),
+        "assistant row:\n{s}"
+    );
+    assert!(
+        s.contains("Edit default agent workflows"),
+        "editor entry point:\n{s}"
+    );
 }
 
 #[test]
@@ -8240,11 +8496,19 @@ fn workflows_payload_carries_agent_default_marks() {
             "abstractcode.agent.v1": {"workflow_id": "coder@1.1.0:code", "bundle_id": "coder", "source": "stored"}
         }
     }));
-    assert_eq!(d.agent_defaults, vec![("abstractcode.agent.v1".to_string(), "coder@1.1.0:code".to_string())]);
+    assert_eq!(
+        d.agent_defaults,
+        vec![(
+            "abstractcode.agent.v1".to_string(),
+            "coder@1.1.0:code".to_string()
+        )]
+    );
     assert_eq!(agent_default_marks("coder", &d.agent_defaults).len(), 1);
-    assert!(agent_default_marks("code", &d.agent_defaults).is_empty(), "a prefix of another bundle id must not match");
+    assert!(
+        agent_default_marks("code", &d.agent_defaults).is_empty(),
+        "a prefix of another bundle id must not match"
+    );
 }
-
 
 #[test]
 fn skills_shelf_parse_render_and_body() {
@@ -8257,8 +8521,15 @@ fn skills_shelf_parse_render_and_body() {
     let sh = d.skills_shelf.clone().expect("shelf parsed");
     assert!(sh.available && sh.source == "seeded" && sh.bundled_version == "2026.09.25");
     assert_eq!(skills_shelf_body(&sh, ""), json!({}));
-    assert_eq!(skills_shelf_body(&sh, " /x/reg "), json!({"skills.shelf": "/x/reg"}));
-    let stored = abstractgateway_console::store::SkillsShelf { value: "/x".into(), source: "stored".into(), ..Default::default() };
+    assert_eq!(
+        skills_shelf_body(&sh, " /x/reg "),
+        json!({"skills.shelf": "/x/reg"})
+    );
+    let stored = abstractgateway_console::store::SkillsShelf {
+        value: "/x".into(),
+        source: "stored".into(),
+        ..Default::default()
+    };
     assert_eq!(skills_shelf_body(&stored, ""), json!({"skills.shelf": ""}));
 
     let mut h = harness_sized(Size::new(140, 70));
@@ -8272,7 +8543,10 @@ fn skills_shelf_parse_render_and_body() {
     h.turns(2);
     h.store.runtime_config.set(Loadable::Ready(d));
     let s = h.turns(2);
-    assert!(s.contains("skills.shelf: /d/skills/registry (curated 2026.09.25)  (seeded)"), "shelf row:\n{s}");
+    assert!(
+        s.contains("skills.shelf: /d/skills/registry (curated 2026.09.25)  (seeded)"),
+        "shelf row:\n{s}"
+    );
     assert!(s.contains("Edit skills shelf"), "editor entry point:\n{s}");
 }
 
@@ -8289,10 +8563,16 @@ fn about_modal_lists_the_identity_and_the_gateway_versions() {
     h.key(b"\x1bOP");
     let s = h.turns(2);
     assert!(
-        matches!(h.find_cmd(|c| matches!(c, Cmd::LoadAbout)), Some(Cmd::LoadAbout)),
+        matches!(
+            h.find_cmd(|c| matches!(c, Cmd::LoadAbout)),
+            Some(Cmd::LoadAbout)
+        ),
         "opening About (connected) reads GET /about"
     );
-    assert!(s.contains("reading GET /api/gateway/about"), "loading row:\n{s}");
+    assert!(
+        s.contains("reading GET /api/gateway/about"),
+        "loading row:\n{s}"
+    );
     h.store.about.set(Loadable::Ready(json!({
         "abstractgateway": "0.4.4", "abstractframework": "0.3.4",
         "packages": {"abstractcore": "2.15.3", "abstractgateway": "0.4.4", "abstractruntime": "0.4.35"}
@@ -8316,7 +8596,10 @@ fn about_modal_lists_the_identity_and_the_gateway_versions() {
     ] {
         assert!(s.contains(needle), "missing {needle:?}:\n{s}");
     }
-    assert!(!s.contains("Gateway package abstractgateway"), "the gateway itself is not a package row");
+    assert!(
+        !s.contains("Gateway package abstractgateway"),
+        "the gateway itself is not a package row"
+    );
     h.press_escape();
     let s = h.turns(2);
     assert!(!s.contains("Report an issue:"), "Esc closes About:\n{s}");
@@ -8332,15 +8615,28 @@ fn about_modal_says_why_the_gateway_rows_are_missing() {
     h.goto_screen(0);
     h.key(b"\x1bOP");
     let s = h.turns(2);
-    assert!(h.find_cmd(|c| matches!(c, Cmd::LoadAbout)).is_none(), "no read while not connected");
-    assert!(s.contains("Gateway: unavailable (not connected to a gateway"), "not-connected row:\n{s}");
-    assert!(s.contains("AbstractGateway console"), "identity still shown:\n{s}");
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::LoadAbout)).is_none(),
+        "no read while not connected"
+    );
+    assert!(
+        s.contains("Gateway: unavailable (not connected to a gateway"),
+        "not-connected row:\n{s}"
+    );
+    assert!(
+        s.contains("AbstractGateway console"),
+        "identity still shown:\n{s}"
+    );
     // A failed read is one visible row.
-    let failed: Loadable<Value> = Loadable::Failed(ApiError::new(ApiErrorKind::Unreachable, "HTTP 404"));
+    let failed: Loadable<Value> =
+        Loadable::Failed(ApiError::new(ApiErrorKind::Unreachable, "HTTP 404"));
     let rows = gateway_rows(true, &failed);
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].0, "Gateway");
-    assert!(rows[0].1.starts_with("unavailable (") && rows[0].1.contains("HTTP 404"), "{rows:?}");
+    assert!(
+        rows[0].1.starts_with("unavailable (") && rows[0].1.contains("HTTP 404"),
+        "{rows:?}"
+    );
 }
 
 #[test]
@@ -8348,21 +8644,39 @@ fn about_is_on_the_connection_screen_and_question_mark() {
     let mut h = harness_sized(Size::new(120, 50));
     h.goto_screen(0);
     let s = h.turns(2);
-    assert!(s.contains("About: F1 (or ?)"), "Connection screen names the About key:\n{s}");
+    assert!(
+        s.contains("About: F1 (or ?)"),
+        "Connection screen names the About key:\n{s}"
+    );
     h.connect_as_admin();
     h.goto_screen(3);
     h.key(b"?");
     let s = h.turns(2);
-    assert!(s.contains("Contact: contact@abstractframework.ai"), "? opens About:\n{s}");
+    assert!(
+        s.contains("Contact: contact@abstractframework.ai"),
+        "? opens About:\n{s}"
+    );
 }
 
 #[test]
 fn about_flag_text_carries_every_line() {
     let ok = abstractgateway_console::about_text(Ok(json!({"abstractgateway": "0.4.4"})));
-    assert!(ok.starts_with(&format!("AbstractGateway console {}\n", env!("CARGO_PKG_VERSION"))), "{ok}");
-    assert!(ok.contains("Gateway: AbstractGateway 0.4.4") && ok.contains("Gateway framework: not installed on the gateway host"));
+    assert!(
+        ok.starts_with(&format!(
+            "AbstractGateway console {}\n",
+            env!("CARGO_PKG_VERSION")
+        )),
+        "{ok}"
+    );
+    assert!(
+        ok.contains("Gateway: AbstractGateway 0.4.4")
+            && ok.contains("Gateway framework: not installed on the gateway host")
+    );
     let down = abstractgateway_console::about_text(Err("network failure: refused".into()));
-    assert!(down.ends_with("Gateway: unavailable (network failure: refused)"), "{down}");
+    assert!(
+        down.ends_with("Gateway: unavailable (network failure: refused)"),
+        "{down}"
+    );
     assert!(down.contains("Contact: contact@abstractframework.ai"));
 }
 
@@ -8377,12 +8691,22 @@ fn streaming_default_knob_reads_edits_and_never_hides() {
     let sd = streaming_default_from(&on).expect("parsed");
     assert!(sd.value && sd.source == "stored");
     assert_eq!(streaming_default_body(&sd, true), json!({}));
-    assert_eq!(streaming_default_body(&sd, false), json!({"agents": {"streaming_default": false}}));
+    assert_eq!(
+        streaming_default_body(&sd, false),
+        json!({"agents": {"streaming_default": false}})
+    );
     assert!(streaming_default_from(&json!({"agents": {"default_workflow": {}}})).is_none());
-    assert!(streaming_default_from(&json!({"agents": {"streaming_default": {"value": "yes", "source": "stored"}}})).is_none());
+    assert!(streaming_default_from(
+        &json!({"agents": {"streaming_default": {"value": "yes", "source": "stored"}}})
+    )
+    .is_none());
 
     for (payload, want, button) in [
-        (on.clone(), "stream replies: on — interactive replies stream live  (stored)", true),
+        (
+            on.clone(),
+            "stream replies: on — interactive replies stream live  (stored)",
+            true,
+        ),
         (
             json!({"writable": true, "agents": {"streaming_default": {"value": false, "source": "default"}}}),
             "stream replies: off — replies arrive whole  (default)",
@@ -8410,6 +8734,10 @@ fn streaming_default_knob_reads_edits_and_never_hides() {
         h.store.runtime_config.set(Loadable::Ready(d));
         let s = h.turns(2);
         assert!(s.contains(want), "row {want:?}:\n{s}");
-        assert_eq!(s.contains("Edit stream replies"), button, "edit entry point:\n{s}");
+        assert_eq!(
+            s.contains("Edit stream replies"),
+            button,
+            "edit entry point:\n{s}"
+        );
     }
 }

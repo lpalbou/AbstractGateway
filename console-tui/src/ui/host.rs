@@ -96,9 +96,9 @@ fn toggle_pause(ctx: &Ctx) {
         return;
     }
     let Some(r) = runner_now(ctx) else {
-        ctx.store
-            .notice
-            .set(Some("the runner state is not loaded yet — r reloads it".into()));
+        ctx.store.notice.set(Some(
+            "the runner state is not loaded yet — r reloads it".into(),
+        ));
         return;
     };
     ctx.send(Cmd::Operator(OpCmd::SetPaused { pause: !r.paused }));
@@ -115,12 +115,18 @@ fn restart(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
         Some(r) => {
             ctx.store.notice.set(Some(format!(
                 "restart is not available: {}",
-                if r.cap_reason.is_empty() { "not available for this launch" } else { r.cap_reason.as_str() }
+                if r.cap_reason.is_empty() {
+                    "not available for this launch"
+                } else {
+                    r.cap_reason.as_str()
+                }
             )));
             return;
         }
         None => {
-            ctx.store.notice.set(Some("the runner state is not loaded yet — r reloads it".into()));
+            ctx.store.notice.set(Some(
+                "the runner state is not loaded yet — r reloads it".into(),
+            ));
             return;
         }
     }
@@ -147,12 +153,18 @@ fn quit(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
         Some(r) => {
             ctx.store.notice.set(Some(format!(
                 "quit is not available: {}",
-                if r.cap_reason.is_empty() { "not available for this launch" } else { r.cap_reason.as_str() }
+                if r.cap_reason.is_empty() {
+                    "not available for this launch"
+                } else {
+                    r.cap_reason.as_str()
+                }
             )));
             return;
         }
         None => {
-            ctx.store.notice.set(Some("the runner state is not loaded yet — r reloads it".into()));
+            ctx.store.notice.set(Some(
+                "the runner state is not loaded yet — r reloads it".into(),
+            ));
             return;
         }
     }
@@ -181,7 +193,9 @@ fn start_update(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
         return;
     }
     let Some(u) = ctx.store.op.update.with_untracked(|u| u.ready().cloned()) else {
-        ctx.store.notice.set(Some("check for an update first (u)".into()));
+        ctx.store
+            .notice
+            .set(Some("check for an update first (u)".into()));
         return;
     };
     if !u.can_start() {
@@ -235,7 +249,10 @@ pub fn open(ctx: &Ctx, cx: Scope) {
             let mut rows: Vec<View> = Vec::new();
             let conn = store.conn.get();
             if !conn.is_connected() {
-                rows.push(line(vec![span("not connected — the host state needs a live gateway", t.warn)]));
+                rows.push(line(vec![span(
+                    "not connected — the host state needs a live gateway",
+                    t.warn,
+                )]));
             }
             match op.runner.get() {
                 Loadable::Ready(r) => {
@@ -246,12 +263,19 @@ pub fn open(ctx: &Ctx, cx: Scope) {
                     ]));
                     let detail = r.detail_text();
                     if !detail.is_empty() {
-                        rows.push(line(vec![span(format!("{:>14}  {}", "", ellipsize(&detail, 86)), t.text_faint)]));
+                        rows.push(line(vec![span(
+                            format!("{:>14}  {}", "", ellipsize(&detail, 86)),
+                            t.text_faint,
+                        )]));
                     }
                     let caps = match (r.cap_restart, r.cap_shutdown) {
                         (true, true) => "restart and quit available".to_string(),
-                        (false, true) => format!("quit available · restart unavailable: {}", r.cap_reason),
-                        (true, false) => format!("restart available · quit unavailable: {}", r.cap_reason),
+                        (false, true) => {
+                            format!("quit available · restart unavailable: {}", r.cap_reason)
+                        }
+                        (true, false) => {
+                            format!("restart available · quit unavailable: {}", r.cap_reason)
+                        }
                         (false, false) => format!("restart/quit unavailable: {}", r.cap_reason),
                     };
                     rows.push(line(vec![
@@ -263,8 +287,12 @@ pub fn open(ctx: &Ctx, cx: Scope) {
                     span(format!("{:>14}: ", "workflows"), t.text_muted),
                     span(format!("gateway state unavailable: {e}"), t.error),
                 ])),
-                Loadable::Loading => rows.push(line(vec![span("◌ reading the gateway host…", t.info)])),
-                Loadable::NotAsked => rows.push(line(vec![span("— not read yet (r)", t.text_muted)])),
+                Loadable::Loading => {
+                    rows.push(line(vec![span("◌ reading the gateway host…", t.info)]))
+                }
+                Loadable::NotAsked => {
+                    rows.push(line(vec![span("— not read yet (r)", t.text_muted)]))
+                }
             }
             match op.tray.get() {
                 Loadable::Ready(note) => rows.push(line(vec![
@@ -282,18 +310,26 @@ pub fn open(ctx: &Ctx, cx: Scope) {
                     Loadable::Ready(u) => {
                         rows.push(line(vec![
                             span(format!("{:>14}: ", "version"), t.text_muted),
-                            span(ellipsize(&u.version_text(), 86), if u.update_available { t.accent } else { t.text }),
+                            span(
+                                ellipsize(&u.version_text(), 86),
+                                if u.update_available { t.accent } else { t.text },
+                            ),
                         ]));
                         let hint = u.hint_text();
                         if !hint.is_empty() {
-                            rows.push(line(vec![span(format!("{:>14}  {}", "", ellipsize(&hint, 86)), t.text_faint)]));
+                            rows.push(line(vec![span(
+                                format!("{:>14}  {}", "", ellipsize(&hint, 86)),
+                                t.text_faint,
+                            )]));
                         }
                     }
                     Loadable::Failed(e) => rows.push(line(vec![
                         span(format!("{:>14}: ", "version"), t.text_muted),
                         span(format!("update state unavailable: {e}"), t.warn),
                     ])),
-                    Loadable::Loading => rows.push(line(vec![span("◌ reading the update state…", t.info)])),
+                    Loadable::Loading => {
+                        rows.push(line(vec![span("◌ reading the update state…", t.info)]))
+                    }
                     Loadable::NotAsked => {}
                 }
             }
@@ -317,7 +353,13 @@ pub fn open(ctx: &Ctx, cx: Scope) {
 
         let t0 = theme.get().tokens;
         let buttons: View = if is_admin {
-            let (b_p, b_r, b_q, b_u, b_s) = (c_p.clone(), c_r.clone(), c_q.clone(), c_u.clone(), c_s.clone());
+            let (b_p, b_r, b_q, b_u, b_s) = (
+                c_p.clone(),
+                c_r.clone(),
+                c_q.clone(),
+                c_u.clone(),
+                c_s.clone(),
+            );
             let (kb_r, kb_q, kb_s) = (k_r.clone(), k_q.clone(), k_s.clone());
             // Rebuilt when the runner answer changes: the pause button
             // names the verb it will perform (web parity).
@@ -327,15 +369,46 @@ pub fn open(ctx: &Ctx, cx: Scope) {
                     Loadable::Ready(r) if r.paused => "Resume workflows",
                     _ => "Pause workflows",
                 };
-                let (b_p, b_r, b_q, b_u, b_s) = (b_p.clone(), b_r.clone(), b_q.clone(), b_u.clone(), b_s.clone());
+                let (b_p, b_r, b_q, b_u, b_s) = (
+                    b_p.clone(),
+                    b_r.clone(),
+                    b_q.clone(),
+                    b_u.clone(),
+                    b_s.clone(),
+                );
                 let (kb_r, kb_q, kb_s) = (kb_r.clone(), kb_q.clone(), kb_s.clone());
                 Element::new()
                     .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                    .child(Button::new(label).on_click(move || toggle_pause(&b_p)).element(bcx, &t).build())
-                    .child(Button::new("Restart…").on_click(move || restart(cx, &b_r, &*kb_r)).element(bcx, &t).build())
-                    .child(Button::new("Quit…").on_click(move || quit(cx, &b_q, &*kb_q)).element(bcx, &t).build())
-                    .child(Button::new("Check for update").on_click(move || check_update(&b_u)).element(bcx, &t).build())
-                    .child(Button::new("Install update…").on_click(move || start_update(cx, &b_s, &*kb_s)).element(bcx, &t).build())
+                    .child(
+                        Button::new(label)
+                            .on_click(move || toggle_pause(&b_p))
+                            .element(bcx, &t)
+                            .build(),
+                    )
+                    .child(
+                        Button::new("Restart…")
+                            .on_click(move || restart(cx, &b_r, &*kb_r))
+                            .element(bcx, &t)
+                            .build(),
+                    )
+                    .child(
+                        Button::new("Quit…")
+                            .on_click(move || quit(cx, &b_q, &*kb_q))
+                            .element(bcx, &t)
+                            .build(),
+                    )
+                    .child(
+                        Button::new("Check for update")
+                            .on_click(move || check_update(&b_u))
+                            .element(bcx, &t)
+                            .build(),
+                    )
+                    .child(
+                        Button::new("Install update…")
+                            .on_click(move || start_update(cx, &b_s, &*kb_s))
+                            .element(bcx, &t)
+                            .build(),
+                    )
                     .build()
             })
         } else {
@@ -348,12 +421,24 @@ pub fn open(ctx: &Ctx, cx: Scope) {
             .autofocus()
             .style(LayoutStyle::column().gap(0))
             .shortcut(KeyChord::plain(Key::Char('p')), move |_| toggle_pause(&c_p))
-            .shortcut(KeyChord::plain(Key::Char('R')), move |_| restart(cx, &c_r, &*k_r))
-            .shortcut(KeyChord::plain(Key::Char('Q')), move |_| quit(cx, &c_q, &*k_q))
+            .shortcut(KeyChord::plain(Key::Char('R')), move |_| {
+                restart(cx, &c_r, &*k_r)
+            })
+            .shortcut(KeyChord::plain(Key::Char('Q')), move |_| {
+                quit(cx, &c_q, &*k_q)
+            })
             .shortcut(KeyChord::plain(Key::Char('u')), move |_| check_update(&c_u))
-            .shortcut(KeyChord::plain(Key::Char('U')), move |_| start_update(cx, &c_s, &*k_s))
+            .shortcut(KeyChord::plain(Key::Char('U')), move |_| {
+                start_update(cx, &c_s, &*k_s)
+            })
             .shortcut(KeyChord::plain(Key::Char('r')), move |_| refresh(&c_ref))
-            .child(line(vec![span_bold("Gateway host", t0.accent), span("  — this gateway process, as the web console's Gateway card shows it", t0.text_faint)]))
+            .child(line(vec![
+                span_bold("Gateway host", t0.accent),
+                span(
+                    "  — this gateway process, as the web console's Gateway card shows it",
+                    t0.text_faint,
+                ),
+            ]))
             .child(body)
             .child(buttons)
             .child(
@@ -376,7 +461,10 @@ pub fn banner(ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Theme>) -> V
         let t = theme.get().tokens;
         let connected = store.conn.with(ConnPhase::is_connected);
         let paused = if connected {
-            store.op.runner.with(|r| r.ready().and_then(paused_banner_text))
+            store
+                .op
+                .runner
+                .with(|r| r.ready().and_then(paused_banner_text))
         } else {
             None
         };
@@ -441,7 +529,11 @@ pub fn install(cx: Scope, ctx: &Ctx) {
                 return; // in flight: the watcher owns it
             }
             let handle = abstracttui::reactive::interval(cx, LIFECYCLE_LINGER, move || {
-                if store.op.lifecycle.with_untracked(|cur| cur.as_deref() == Some(l.as_str())) {
+                if store
+                    .op
+                    .lifecycle
+                    .with_untracked(|cur| cur.as_deref() == Some(l.as_str()))
+                {
                     store.op.lifecycle.set(None);
                 }
             });

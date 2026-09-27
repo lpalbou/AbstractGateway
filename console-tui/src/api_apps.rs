@@ -43,26 +43,46 @@ impl GatewayClient {
     /// browser app and, when the row's `install_parts` has "tui", its
     /// terminal app, as ONE job; it starts nothing.
     pub fn apps_install(&self, app_id: &str) -> ApiResult<Value> {
-        self.send("POST", &format!("/apps/{}/install", urlencode(app_id)), &json!({}), true)
+        self.send(
+            "POST",
+            &format!("/apps/{}/install", urlencode(app_id)),
+            &json!({}),
+            true,
+        )
     }
 
     /// `POST /apps/{id}/update {}` (admin) — a job; a running app restarts
     /// on the new version.
     pub fn apps_update(&self, app_id: &str) -> ApiResult<Value> {
-        self.send("POST", &format!("/apps/{}/update", urlencode(app_id)), &json!({}), true)
+        self.send(
+            "POST",
+            &format!("/apps/{}/update", urlencode(app_id)),
+            &json!({}),
+            true,
+        )
     }
 
     /// `POST /apps/{id}/launch {}` (admin) — start a browser app (answer
     /// `{app: row}`), or open a desktop app on the gateway computer's
     /// screen (answer `{message}`).
     pub fn apps_launch(&self, app_id: &str) -> ApiResult<Value> {
-        self.send("POST", &format!("/apps/{}/launch", urlencode(app_id)), &json!({}), true)
+        self.send(
+            "POST",
+            &format!("/apps/{}/launch", urlencode(app_id)),
+            &json!({}),
+            true,
+        )
     }
 
     /// `POST /apps/{id}/stop {}` (admin). 409 `started_outside_gateway`
     /// for an app the gateway did not start.
     pub fn apps_stop(&self, app_id: &str) -> ApiResult<Value> {
-        self.send("POST", &format!("/apps/{}/stop", urlencode(app_id)), &json!({}), true)
+        self.send(
+            "POST",
+            &format!("/apps/{}/stop", urlencode(app_id)),
+            &json!({}),
+            true,
+        )
     }
 
     /// `POST /apps/{id}/open {path?}` — a one-time signed-in link
@@ -72,13 +92,21 @@ impl GatewayClient {
             Some(p) => json!({ "path": p }),
             None => json!({}),
         };
-        self.send("POST", &format!("/apps/{}/open", urlencode(app_id)), &body, false)
+        self.send(
+            "POST",
+            &format!("/apps/{}/open", urlencode(app_id)),
+            &body,
+            false,
+        )
     }
 
     /// `GET /apps/{id}/logs?tail=N` (admin) → `{path, lines}`.
     pub fn apps_logs(&self, app_id: &str, tail: u32) -> ApiResult<Value> {
         let tail = tail.clamp(1, APP_LOG_MAX);
-        self.get(&format!("/apps/{}/logs?tail={tail}", urlencode(app_id)), false)
+        self.get(
+            &format!("/apps/{}/logs?tail={tail}", urlencode(app_id)),
+            false,
+        )
     }
 
     /// `POST /apps/runtime/install {}` (admin) — Node.js into the gateway's
@@ -90,13 +118,23 @@ impl GatewayClient {
     /// `POST /apps/{id}/install-tui {}` (admin) — install or update the
     /// prebuilt terminal app, as a job. 409 `toolchain_required` + `command`.
     pub fn apps_install_tui(&self, app_id: &str) -> ApiResult<Value> {
-        self.send("POST", &format!("/apps/{}/install-tui", urlencode(app_id)), &json!({}), true)
+        self.send(
+            "POST",
+            &format!("/apps/{}/install-tui", urlencode(app_id)),
+            &json!({}),
+            true,
+        )
     }
 
     /// `POST /apps/{id}/launch-tui {}` (admin) — a new terminal window ON
     /// THE GATEWAY MACHINE, signed in. From anywhere else: 409
     /// `not_on_gateway_machine` with `command` + `signin_command` to copy.
     pub fn apps_launch_tui(&self, app_id: &str) -> ApiResult<Value> {
-        self.send("POST", &format!("/apps/{}/launch-tui", urlencode(app_id)), &json!({}), false)
+        self.send(
+            "POST",
+            &format!("/apps/{}/launch-tui", urlencode(app_id)),
+            &json!({}),
+            false,
+        )
     }
 }

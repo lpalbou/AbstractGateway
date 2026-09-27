@@ -247,14 +247,18 @@ fn every_method_hits_its_gateway_route_with_the_contract_body() {
         "/api/gateway/models/installed"
     );
 
-    let j = t.start_download("ollama", "qwen3:8b", Some(5_200_000_000)).unwrap();
+    let j = t
+        .start_download("ollama", "qwen3:8b", Some(5_200_000_000))
+        .unwrap();
     assert_eq!(j["job_id"], "dl_1");
     let s = gw.last("/api/gateway/models/download");
     assert_eq!(s.method, "POST");
     assert_eq!(
         s.body,
-        Some(json!({"provider": "ollama", "artifact": "qwen3:8b", "dry_run": false,
-                    "expected_bytes": 5_200_000_000u64}))
+        Some(
+            json!({"provider": "ollama", "artifact": "qwen3:8b", "dry_run": false,
+                    "expected_bytes": 5_200_000_000u64})
+        )
     );
 
     let _ = t.delete_model("ollama", "gemma3:1b", true);
@@ -414,7 +418,9 @@ fn download_cancel_uses_the_web_consoles_route_and_payload() {
     t.cancel_job("dl_1").unwrap();
     gw.last("/api/gateway/jobs/dl_1/cancel");
     assert!(
-        !gw.seen().iter().any(|s| s.path.starts_with("/api/gateway/jobs/grp_1")),
+        !gw.seen()
+            .iter()
+            .any(|s| s.path.starts_with("/api/gateway/jobs/grp_1")),
         "{:?}",
         gw.seen()
     );

@@ -188,7 +188,9 @@ pub fn resolve_mode_route(rows: &[RouteRow], mode: SbMode) -> Option<ModeRoute> 
         });
     }
     if row_has_any_field(row) {
-        return Some(ModeRoute::Incomplete { key: row.key.clone() });
+        return Some(ModeRoute::Incomplete {
+            key: row.key.clone(),
+        });
     }
     let parent = row
         .broad_key
@@ -212,7 +214,9 @@ pub fn resolve_mode_route(rows: &[RouteRow], mode: SbMode) -> Option<ModeRoute> 
         });
     }
     if row_has_any_field(parent) {
-        return Some(ModeRoute::Incomplete { key: parent.key.clone() });
+        return Some(ModeRoute::Incomplete {
+            key: parent.key.clone(),
+        });
     }
     Some(ModeRoute::NotConfigured)
 }
@@ -1598,7 +1602,10 @@ fn route_line(t: &TokenSet, store: &Store, m: SbMode) -> View {
                     .map(|k| format!(" (inherited from {k})"))
                     .unwrap_or_default();
                 (
-                    format!("{} will use {provider} / {model}{voice}{from}", m.route_key()),
+                    format!(
+                        "{} will use {provider} / {model}{voice}{from}",
+                        m.route_key()
+                    ),
                     t.text,
                 )
             }
@@ -2073,8 +2080,8 @@ fn attach(ctx: &Ctx) {
 
 /// The configured output.voice pair + voice (tracked), for Speak.
 fn voice_pair_tracked(store: &Store) -> Option<(String, String, Option<String>)> {
-    store.routes.with(|r| {
-        match resolve_mode_route(&r.ready()?.rows, SbMode::Voice)? {
+    store.routes.with(
+        |r| match resolve_mode_route(&r.ready()?.rows, SbMode::Voice)? {
             ModeRoute::Ready {
                 row,
                 provider,
@@ -2082,8 +2089,8 @@ fn voice_pair_tracked(store: &Store) -> Option<(String, String, Option<String>)>
                 ..
             } => Some((provider, model, row_voice(&row))),
             _ => None,
-        }
-    })
+        },
+    )
 }
 
 /// "Speak this message" (the web's `speakSandboxText`): synthesize the
@@ -2870,14 +2877,22 @@ mod tests {
             let mut v = json!({"key": "output.image", "kind": "output", "modality": "image",
                                "configured": p.is_some() || m.is_some() || !extra.is_null(),
                                "task_keys": ["output.image.text_to_image"]});
-            if let Some(p) = p { v["provider"] = json!(p); }
-            if let Some(m) = m { v["model"] = json!(m); }
-            if !extra.is_null() { v["options"] = extra; }
+            if let Some(p) = p {
+                v["provider"] = json!(p);
+            }
+            if let Some(m) = m {
+                v["model"] = json!(m);
+            }
+            if !extra.is_null() {
+                v["options"] = extra;
+            }
             parsed(v)
         };
-        let empty_task = parsed(json!({"key": "output.image.text_to_image", "kind": "output",
+        let empty_task = parsed(
+            json!({"key": "output.image.text_to_image", "kind": "output",
             "modality": "image", "source": "not_configured", "configured": false,
-            "broad_key": "output.image", "inherits_broad": true}));
+            "broad_key": "output.image", "inherits_broad": true}),
+        );
 
         // Fresh install: the seed writes output.image alone.
         let rows = vec![
@@ -2885,23 +2900,44 @@ mod tests {
             empty_task.clone(),
         ];
         match resolve_mode_route(&rows, SbMode::Image) {
-            Some(ModeRoute::Ready { row, provider, model, inherited_from }) => {
-                assert_eq!((provider.as_str(), model.as_str()), ("mlx-gen", "flux-schnell"));
+            Some(ModeRoute::Ready {
+                row,
+                provider,
+                model,
+                inherited_from,
+            }) => {
+                assert_eq!(
+                    (provider.as_str(), model.as_str()),
+                    ("mlx-gen", "flux-schnell")
+                );
                 assert_eq!(inherited_from.as_deref(), Some("output.image"));
-                assert_eq!(row.options, Some(json!({"steps": 4})), "parent options ride along");
+                assert_eq!(
+                    row.options,
+                    Some(json!({"steps": 4})),
+                    "parent options ride along"
+                );
                 assert_eq!(row.key, "output.image.text_to_image");
             }
             other => panic!("expected inherited Ready, got {other:?}"),
         }
-        assert_eq!(mode_option_label(SbMode::Image, Some(&rows)), "Image — flux-schnell");
+        assert_eq!(
+            mode_option_label(SbMode::Image, Some(&rows)),
+            "Image — flux-schnell"
+        );
 
         // A configured task row wins over the parent.
-        let task = parsed(json!({"key": "output.image.text_to_image", "kind": "output",
+        let task = parsed(
+            json!({"key": "output.image.text_to_image", "kind": "output",
             "modality": "image", "provider": "openai", "model": "gpt-image-1",
-            "configured": true, "broad_key": "output.image"}));
+            "configured": true, "broad_key": "output.image"}),
+        );
         let rows = vec![parent(Some("mlx-gen"), Some("flux"), Value::Null), task];
         match resolve_mode_route(&rows, SbMode::Image) {
-            Some(ModeRoute::Ready { provider, inherited_from, .. }) => {
+            Some(ModeRoute::Ready {
+                provider,
+                inherited_from,
+                ..
+            }) => {
                 assert_eq!(provider, "openai");
                 assert!(inherited_from.is_none());
             }
@@ -2909,15 +2945,20 @@ mod tests {
         }
 
         // A task row with fields but no provider+model STOPS resolution.
-        let partial = parsed(json!({"key": "output.image.text_to_image", "kind": "output",
+        let partial = parsed(
+            json!({"key": "output.image.text_to_image", "kind": "output",
             "modality": "image", "options": {"steps": 8}, "configured": true,
-            "broad_key": "output.image"}));
+            "broad_key": "output.image"}),
+        );
         let rows = vec![parent(Some("mlx-gen"), Some("flux"), Value::Null), partial];
         match resolve_mode_route(&rows, SbMode::Image) {
             Some(ModeRoute::Incomplete { key }) => assert_eq!(key, "output.image.text_to_image"),
             other => panic!("expected Incomplete, got {other:?}"),
         }
-        assert_eq!(mode_option_label(SbMode::Image, Some(&rows)), "Image — not ready");
+        assert_eq!(
+            mode_option_label(SbMode::Image, Some(&rows)),
+            "Image — not ready"
+        );
 
         // Neither set: not configured.
         let rows = vec![parent(None, None, Value::Null), empty_task.clone()];

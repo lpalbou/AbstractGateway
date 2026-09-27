@@ -196,8 +196,14 @@ pub fn run_cli(argv: &[String]) -> i32 {
 
     if args.about {
         // Works without a terminal and without a token (the route is public).
-        let url = ui::normalize_url(if args.url.is_empty() { "http://127.0.0.1:8080" } else { &args.url });
-        let read = api::GatewayClient::new(&url, None).about().map_err(|e| e.to_string());
+        let url = ui::normalize_url(if args.url.is_empty() {
+            "http://127.0.0.1:8080"
+        } else {
+            &args.url
+        });
+        let read = api::GatewayClient::new(&url, None)
+            .about()
+            .map_err(|e| e.to_string());
         println!("{}", about_text(read));
         return 0;
     }
@@ -447,11 +453,19 @@ mod token_file_args {
         let e = parse_args(&args(&["--token-file", "/nonexistent/agc/token"]))
             .err()
             .expect("missing file is an error");
-        assert!(e.contains("/nonexistent/agc/token") && e.contains("cannot read"), "{e}");
+        assert!(
+            e.contains("/nonexistent/agc/token") && e.contains("cannot read"),
+            "{e}"
+        );
         let p = scratch("empty", " \n");
-        let e = parse_args(&args(&["--token-file", &p])).err().expect("empty is an error");
+        let e = parse_args(&args(&["--token-file", &p]))
+            .err()
+            .expect("empty is an error");
         assert!(e.contains("empty"), "{e}");
-        assert!(parse_args(&args(&["--token-file"])).is_err(), "needs a path");
+        assert!(
+            parse_args(&args(&["--token-file"])).is_err(),
+            "needs a path"
+        );
     }
 
     #[test]
@@ -481,7 +495,10 @@ mod first_run_args {
     #[test]
     fn no_mode_flag_defers_to_the_first_run_state() {
         let a = parse_args(&args(&[])).unwrap().unwrap();
-        assert_eq!(a.wizard, None, "neither flag: the gateway's first run decides");
+        assert_eq!(
+            a.wizard, None,
+            "neither flag: the gateway's first run decides"
+        );
         let a = parse_args(&args(&["--browse"])).unwrap().unwrap();
         assert_eq!(a.wizard, Some(false));
         let a = parse_args(&args(&["--wizard"])).unwrap().unwrap();

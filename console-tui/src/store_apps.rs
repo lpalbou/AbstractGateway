@@ -30,7 +30,12 @@ fn u(v: &Value, key: &str) -> Option<u64> {
 fn strs(v: &Value, key: &str) -> Vec<String> {
     v.get(key)
         .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
         .unwrap_or_default()
 }
 
@@ -136,7 +141,10 @@ impl AppJob {
                 .unwrap_or_default(),
             result_version: s(&result, "version"),
             result_url: s(&result, "url"),
-            result_terminal: result.get("terminal").map(|t| !t.is_null() && t != &Value::Bool(false)).unwrap_or(false),
+            result_terminal: result
+                .get("terminal")
+                .map(|t| !t.is_null() && t != &Value::Bool(false))
+                .unwrap_or(false),
             log_tail: strs(v, "log_tail"),
             log_path: s(v, "log_path"),
         })
@@ -170,7 +178,11 @@ impl AppJob {
             out.push_str(&format!(" · {:.0}%", self.percent));
         }
         if let Some(total) = self.bytes_total {
-            out.push_str(&format!(" · {} / {}", human_bytes(self.bytes_done), human_bytes(total)));
+            out.push_str(&format!(
+                " · {} / {}",
+                human_bytes(self.bytes_done),
+                human_bytes(total)
+            ));
         }
         if !self.message.is_empty() {
             out.push_str(&format!(" · {}", self.message));
@@ -306,16 +318,22 @@ impl AppRow {
         let tui = v
             .get("interfaces")
             .and_then(Value::as_array)
-            .and_then(|a| a.iter().find(|i| i.get("kind").and_then(Value::as_str) == Some("tui")))
+            .and_then(|a| {
+                a.iter()
+                    .find(|i| i.get("kind").and_then(Value::as_str) == Some("tui"))
+            })
             .map(TuiIface::from_value);
-        let desktop = v.get("desktop").filter(|d| d.is_object()).map(|d| DesktopInfo {
-            location: s(d, "location"),
-            launch_command: s(d, "launch_command"),
-            install_command: s(d, "install_command"),
-            launch_available: b(d, "launch_available"),
-            launch_blocked: s(d, "launch_blocked"),
-            launch_blocked_reason: s(d, "launch_blocked_reason"),
-        });
+        let desktop = v
+            .get("desktop")
+            .filter(|d| d.is_object())
+            .map(|d| DesktopInfo {
+                location: s(d, "location"),
+                launch_command: s(d, "launch_command"),
+                install_command: s(d, "install_command"),
+                launch_available: b(d, "launch_available"),
+                launch_blocked: s(d, "launch_blocked"),
+                launch_blocked_reason: s(d, "launch_blocked_reason"),
+            });
         let external = v.get("external").filter(|e| e.is_object());
         Some(AppRow {
             name: s(v, "name").unwrap_or_else(|| id.clone()),
@@ -509,7 +527,13 @@ pub struct AppOpenLink {
 }
 
 impl AppOpenLink {
-    pub fn from_value(base_url: &str, app_id: &str, name: &str, started: bool, v: &Value) -> Option<AppOpenLink> {
+    pub fn from_value(
+        base_url: &str,
+        app_id: &str,
+        name: &str,
+        started: bool,
+        v: &Value,
+    ) -> Option<AppOpenLink> {
         let open_url = s(v, "open_url")?;
         let link = format!("{}{}", base_url.trim_end_matches('/'), open_url);
         let app_url = s(v, "app_url");
@@ -530,10 +554,17 @@ fn host_port(url: &str) -> Option<(String, u16)> {
     let (scheme, rest) = url.split_once("://")?;
     let authority = rest.split('/').next().unwrap_or("");
     let authority = authority.rsplit('@').next().unwrap_or(authority);
-    let default = if scheme.eq_ignore_ascii_case("https") { 443 } else { 80 };
+    let default = if scheme.eq_ignore_ascii_case("https") {
+        443
+    } else {
+        80
+    };
     if let Some(stripped) = authority.strip_prefix('[') {
         let (h, tail) = stripped.split_once(']')?;
-        let port = tail.strip_prefix(':').and_then(|p| p.parse().ok()).unwrap_or(default);
+        let port = tail
+            .strip_prefix(':')
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(default);
         return Some((h.to_string(), port));
     }
     match authority.rsplit_once(':') {
@@ -654,10 +685,20 @@ pub struct VerbState {
 
 impl VerbState {
     fn on(verb: AppVerb, label: impl Into<String>) -> VerbState {
-        VerbState { verb, label: label.into(), available: Ok(()), path: None }
+        VerbState {
+            verb,
+            label: label.into(),
+            available: Ok(()),
+            path: None,
+        }
     }
     fn off(verb: AppVerb, label: impl Into<String>, why: impl Into<String>) -> VerbState {
-        VerbState { verb, label: label.into(), available: Err(why.into()), path: None }
+        VerbState {
+            verb,
+            label: label.into(),
+            available: Err(why.into()),
+            path: None,
+        }
     }
 }
 
@@ -679,7 +720,11 @@ pub fn primary_verb(row: &AppRow, job: Option<&AppJob>, admin: bool) -> Option<V
         return if admin {
             Some(VerbState::on(AppVerb::Cancel, "Cancel"))
         } else {
-            Some(VerbState::off(AppVerb::Cancel, "Cancel", "Only an admin can cancel an install"))
+            Some(VerbState::off(
+                AppVerb::Cancel,
+                "Cancel",
+                "Only an admin can cancel an install",
+            ))
         };
     }
     if !row.installed {
@@ -702,7 +747,9 @@ pub fn primary_verb(row: &AppRow, job: Option<&AppJob>, admin: bool) -> Option<V
             VerbState::off(
                 AppVerb::DesktopOpen,
                 "Open",
-                desk.launch_blocked_reason.clone().unwrap_or_else(|| "Only an admin can start apps".into()),
+                desk.launch_blocked_reason
+                    .clone()
+                    .unwrap_or_else(|| "Only an admin can start apps".into()),
             )
         });
     }
@@ -750,7 +797,11 @@ pub fn secondary_verbs(
             out.push(VerbState::off(AppVerb::Stop, "Stop", why));
         } else {
             out.push(if !row.running {
-                VerbState::off(AppVerb::Stop, "Stop", format!("{} is not running", row.name))
+                VerbState::off(
+                    AppVerb::Stop,
+                    "Stop",
+                    format!("{} is not running", row.name),
+                )
             } else if !row.has("stop") {
                 VerbState::off(AppVerb::Stop, "Stop", "Stopping is not available right now")
             } else if !admin {
@@ -759,13 +810,25 @@ pub fn secondary_verbs(
                 VerbState::on(AppVerb::Stop, "Stop")
             });
             out.push(if !row.installed {
-                VerbState::off(AppVerb::Start, "Start", format!("{} is not installed", row.name))
+                VerbState::off(
+                    AppVerb::Start,
+                    "Start",
+                    format!("{} is not installed", row.name),
+                )
             } else if row.running {
-                VerbState::off(AppVerb::Start, "Start", format!("{} is already running", row.name))
+                VerbState::off(
+                    AppVerb::Start,
+                    "Start",
+                    format!("{} is already running", row.name),
+                )
             } else if active {
                 VerbState::off(AppVerb::Start, "Start", "An install is running")
             } else if !row.has("launch") {
-                VerbState::off(AppVerb::Start, "Start", "Starting is not available right now")
+                VerbState::off(
+                    AppVerb::Start,
+                    "Start",
+                    "Starting is not available right now",
+                )
             } else if !admin {
                 VerbState::off(AppVerb::Start, "Start", not_admin("start apps"))
             } else {
@@ -791,11 +854,19 @@ pub fn secondary_verbs(
                 _ => "Update".to_string(),
             };
             out.push(if !row.update_available {
-                VerbState::off(AppVerb::Update, upd_label, "No newer version is published (or it was not checked: r checks again)")
+                VerbState::off(
+                    AppVerb::Update,
+                    upd_label,
+                    "No newer version is published (or it was not checked: r checks again)",
+                )
             } else if active {
                 VerbState::off(AppVerb::Update, upd_label, "An install is running")
             } else if !row.has("update") {
-                VerbState::off(AppVerb::Update, upd_label, "Updating is not available right now (installs are off for this caller)")
+                VerbState::off(
+                    AppVerb::Update,
+                    upd_label,
+                    "Updating is not available right now (installs are off for this caller)",
+                )
             } else if !admin {
                 VerbState::off(AppVerb::Update, upd_label, not_admin("update apps"))
             } else {
@@ -809,24 +880,42 @@ pub fn secondary_verbs(
             out.push(if admin {
                 VerbState::on(AppVerb::CancelTerminal, "Cancel terminal install")
             } else {
-                VerbState::off(AppVerb::CancelTerminal, "Cancel terminal install", not_admin("cancel an install"))
+                VerbState::off(
+                    AppVerb::CancelTerminal,
+                    "Cancel terminal install",
+                    not_admin("cancel an install"),
+                )
             });
         }
         out.push(if !t.installed {
-            VerbState::off(AppVerb::OpenTerminal, "Open in Terminal", "The terminal version is not installed")
+            VerbState::off(
+                AppVerb::OpenTerminal,
+                "Open in Terminal",
+                "The terminal version is not installed",
+            )
         } else if !row.installed {
-            VerbState::off(AppVerb::OpenTerminal, "Open in Terminal", format!("{} is not installed", row.name))
+            VerbState::off(
+                AppVerb::OpenTerminal,
+                "Open in Terminal",
+                format!("{} is not installed", row.name),
+            )
         } else if !t.launch_available {
             VerbState::off(
                 AppVerb::OpenTerminal,
                 "Open in Terminal",
                 format!(
                     "{} — y copies the command to run where it is installed",
-                    t.launch_blocked_reason.clone().unwrap_or_else(|| "Not available from here".into())
+                    t.launch_blocked_reason
+                        .clone()
+                        .unwrap_or_else(|| "Not available from here".into())
                 ),
             )
         } else if t_active {
-            VerbState::off(AppVerb::OpenTerminal, "Open in Terminal", "Its install is running")
+            VerbState::off(
+                AppVerb::OpenTerminal,
+                "Open in Terminal",
+                "Its install is running",
+            )
         } else {
             VerbState::on(AppVerb::OpenTerminal, "Open in Terminal")
         });
@@ -857,7 +946,11 @@ pub fn secondary_verbs(
             }
             VerbState::off(AppVerb::InstallTerminal, label, why)
         } else if !t.installed && !row.installed {
-            VerbState::off(AppVerb::InstallTerminal, label, format!("Install {} first: its Install installs both", row.name))
+            VerbState::off(
+                AppVerb::InstallTerminal,
+                label,
+                format!("Install {} first: its Install installs both", row.name),
+            )
         } else if !admin {
             VerbState::off(AppVerb::InstallTerminal, label, not_admin("install apps"))
         } else {
@@ -880,10 +973,18 @@ pub struct AppNote {
 
 impl AppNote {
     pub fn ok(text: impl Into<String>) -> AppNote {
-        AppNote { tone: Some(Tone::Ok), text: text.into(), ..AppNote::default() }
+        AppNote {
+            tone: Some(Tone::Ok),
+            text: text.into(),
+            ..AppNote::default()
+        }
     }
     pub fn info(text: impl Into<String>) -> AppNote {
-        AppNote { tone: Some(Tone::Info), text: text.into(), ..AppNote::default() }
+        AppNote {
+            tone: Some(Tone::Info),
+            text: text.into(),
+            ..AppNote::default()
+        }
     }
     pub fn is_err(&self) -> bool {
         self.tone == Some(Tone::Err)
@@ -900,7 +1001,10 @@ pub fn app_error_note(attempt: &str, e: &ApiError) -> AppNote {
         .and_then(Value::as_str)
         .map(str::to_string)
         .unwrap_or_else(|| e.to_string());
-    let status = e.status().map(|c| format!(" (HTTP {c})")).unwrap_or_default();
+    let status = e
+        .status()
+        .map(|c| format!(" (HTTP {c})"))
+        .unwrap_or_default();
     let mut commands = Vec::new();
     if let Some(c) = body.and_then(|b| s(b, "command")) {
         commands.push(("Command".to_string(), c));
@@ -919,14 +1023,22 @@ pub fn app_error_note(attempt: &str, e: &ApiError) -> AppNote {
 
 /// What a FINISHED job leaves on its app (web `appJobResult`).
 pub fn job_result_note(key: &str, name: &str, job: &AppJob) -> Option<AppNote> {
-    let ver = job.result_version.clone().map(|v| format!(" {v}")).unwrap_or_default();
+    let ver = job
+        .result_version
+        .clone()
+        .map(|v| format!(" {v}"))
+        .unwrap_or_default();
     match job.state.as_str() {
-        "succeeded" if key.starts_with("tui:") => {
-            Some(AppNote::ok(format!("{name}'s terminal app{ver} is installed.")))
-        }
+        "succeeded" if key.starts_with("tui:") => Some(AppNote::ok(format!(
+            "{name}'s terminal app{ver} is installed."
+        ))),
         "succeeded" if key == NODE_KEY => Some(AppNote::ok(format!("Node.js{ver} is installed."))),
         "succeeded" => {
-            let verb = if job.kind == "update" { "updated" } else { "installed" };
+            let verb = if job.kind == "update" {
+                "updated"
+            } else {
+                "installed"
+            };
             Some(AppNote::ok(if job.result_url.is_some() {
                 format!("{name}{ver} is {verb} and running.")
             } else if job.result_terminal {
@@ -944,7 +1056,11 @@ pub fn job_result_note(key: &str, name: &str, job: &AppJob) -> Option<AppNote> {
             } else {
                 "The install did not finish.".to_string()
             };
-            let text = if err.message.is_empty() { fallback } else { err.message };
+            let text = if err.message.is_empty() {
+                fallback
+            } else {
+                err.message
+            };
             let log = job.log_text();
             Some(AppNote {
                 tone: Some(Tone::Err),
@@ -954,7 +1070,9 @@ pub fn job_result_note(key: &str, name: &str, job: &AppJob) -> Option<AppNote> {
                 details: (!log.is_empty()).then_some(log),
             })
         }
-        "cancelled" => Some(AppNote::info(format!("{name}: cancelled. Nothing was changed."))),
+        "cancelled" => Some(AppNote::info(format!(
+            "{name}: cancelled. Nothing was changed."
+        ))),
         _ => None,
     }
 }
@@ -1066,7 +1184,8 @@ impl AppsStore {
     }
 
     pub fn note_for(&self, key: &str) -> Option<AppNote> {
-        self.notes.with(|n| n.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()))
+        self.notes
+            .with(|n| n.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()))
     }
 
     pub fn set_job(&self, key: &str, job: AppJob) {
@@ -1145,7 +1264,10 @@ mod tests {
     #[test]
     fn primary_follows_the_web_card_for_every_state() {
         let r = not_installed();
-        assert_eq!(primary_verb(&r, None, true).unwrap(), VerbState::on(AppVerb::Install, "Install"));
+        assert_eq!(
+            primary_verb(&r, None, true).unwrap(),
+            VerbState::on(AppVerb::Install, "Install")
+        );
         let off = primary_verb(&r, None, false).unwrap();
         assert_eq!(off.available, Err("Only an admin can install apps".into()));
 
@@ -1157,18 +1279,34 @@ mod tests {
             Err("Installing apps is off on this gateway.".into())
         );
 
-        let job = AppJob { id: "j1".into(), state: "running".into(), ..AppJob::default() };
-        assert_eq!(primary_verb(&r, Some(&job), true).unwrap().verb, AppVerb::Cancel);
-        assert!(primary_verb(&r, Some(&job), false).unwrap().available.is_err());
+        let job = AppJob {
+            id: "j1".into(),
+            state: "running".into(),
+            ..AppJob::default()
+        };
+        assert_eq!(
+            primary_verb(&r, Some(&job), true).unwrap().verb,
+            AppVerb::Cancel
+        );
+        assert!(primary_verb(&r, Some(&job), false)
+            .unwrap()
+            .available
+            .is_err());
 
         let run = running_managed();
-        assert_eq!(primary_verb(&run, None, false).unwrap(), VerbState::on(AppVerb::Open, "Open"));
+        assert_eq!(
+            primary_verb(&run, None, false).unwrap(),
+            VerbState::on(AppVerb::Open, "Open")
+        );
 
         let mut stopped = running_managed();
         stopped.running = false;
         stopped.status = "crashed".into();
         stopped.actions = vec!["launch".into(), "logs".into()];
-        assert_eq!(primary_verb(&stopped, None, true).unwrap().available, Ok(()));
+        assert_eq!(
+            primary_verb(&stopped, None, true).unwrap().available,
+            Ok(())
+        );
         assert_eq!(
             primary_verb(&stopped, None, false).unwrap().available,
             Err("Only an admin can start apps".into())
@@ -1215,9 +1353,18 @@ mod tests {
         assert_eq!(find(&admin, AppVerb::Log).available, Ok(()));
         assert!(find(&admin, AppVerb::Start).available.is_err());
         let user = secondary_verbs(&run, None, None, false);
-        assert_eq!(find(&user, AppVerb::Stop).available, Err("Only an admin can stop apps".into()));
-        assert_eq!(find(&user, AppVerb::Log).available, Err("Only an admin can read app logs".into()));
-        assert!(!admin.iter().any(|v| v.verb == AppVerb::OpenTerminal), "browser-only app");
+        assert_eq!(
+            find(&user, AppVerb::Stop).available,
+            Err("Only an admin can stop apps".into())
+        );
+        assert_eq!(
+            find(&user, AppVerb::Log).available,
+            Err("Only an admin can read app logs".into())
+        );
+        assert!(
+            !admin.iter().any(|v| v.verb == AppVerb::OpenTerminal),
+            "browser-only app"
+        );
     }
 
     #[test]
@@ -1235,14 +1382,33 @@ mod tests {
             }]
         }));
         let sec = secondary_verbs(&code, None, None, true);
-        let open = sec.iter().find(|v| v.verb == AppVerb::OpenTerminal).unwrap();
-        assert!(open.available.as_ref().unwrap_err().contains("another computer"));
+        let open = sec
+            .iter()
+            .find(|v| v.verb == AppVerb::OpenTerminal)
+            .unwrap();
+        assert!(open
+            .available
+            .as_ref()
+            .unwrap_err()
+            .contains("another computer"));
         let cp = copyables(&code, None);
-        assert!(cp.iter().any(|(_, c)| c.starts_with("abstractcode login")), "{cp:?}");
-        assert!(!cp.iter().any(|(_, c)| c == "cargo install abstractcode"), "installed: no install line");
-        let tjob = AppJob { id: "t".into(), state: "queued".into(), ..AppJob::default() };
+        assert!(
+            cp.iter().any(|(_, c)| c.starts_with("abstractcode login")),
+            "{cp:?}"
+        );
+        assert!(
+            !cp.iter().any(|(_, c)| c == "cargo install abstractcode"),
+            "installed: no install line"
+        );
+        let tjob = AppJob {
+            id: "t".into(),
+            state: "queued".into(),
+            ..AppJob::default()
+        };
         let sec = secondary_verbs(&code, None, Some(&tjob), true);
-        assert!(sec.iter().any(|v| v.verb == AppVerb::CancelTerminal && v.available.is_ok()));
+        assert!(sec
+            .iter()
+            .any(|v| v.verb == AppVerb::CancelTerminal && v.available.is_ok()));
     }
 
     #[test]
@@ -1271,9 +1437,17 @@ mod tests {
         }))
         .unwrap();
         assert!(j.is_active());
-        assert_eq!(j.progress_line("x"), "Installing Code · 42% · 1.0 MB / 3.0 MB · Downloading");
+        assert_eq!(
+            j.progress_line("x"),
+            "Installing Code · 42% · 1.0 MB / 3.0 MB · Downloading"
+        );
         assert_eq!(part_word(&j.parts[1].state), "Installing...");
-        let done = AppJob { state: "succeeded".into(), result_version: Some("0.5.0".into()), result_terminal: true, ..j.clone() };
+        let done = AppJob {
+            state: "succeeded".into(),
+            result_version: Some("0.5.0".into()),
+            result_terminal: true,
+            ..j.clone()
+        };
         assert_eq!(
             job_result_note("app:code", "Code", &done).unwrap().text,
             "Code 0.5.0 is installed, for the browser and the terminal."
@@ -1288,8 +1462,14 @@ mod tests {
         assert!(n.is_err());
         assert_eq!(n.hint.as_deref(), Some("Check the internet"));
         assert_eq!(n.details.as_deref(), Some("full log"));
-        let c = AppJob { state: "cancelled".into(), ..j };
-        assert_eq!(job_result_note(NODE_KEY, "Node.js", &c).unwrap().text, "Node.js: cancelled. Nothing was changed.");
+        let c = AppJob {
+            state: "cancelled".into(),
+            ..j
+        };
+        assert_eq!(
+            job_result_note(NODE_KEY, "Node.js", &c).unwrap().text,
+            "Node.js: cancelled. Nothing was changed."
+        );
     }
 
     #[test]
@@ -1316,7 +1496,12 @@ mod tests {
 
     #[test]
     fn log_head_is_never_a_silent_cut() {
-        let mut l = AppLog { app_id: "flow".into(), path: None, lines: vec!["x".into(); 37], tail: 200 };
+        let mut l = AppLog {
+            app_id: "flow".into(),
+            path: None,
+            lines: vec!["x".into(); 37],
+            tail: 200,
+        };
         assert_eq!(l.head(), "The whole log · 37 lines");
         assert!(!l.can_show_more());
         l.lines = vec!["x".into(); 200];
@@ -1339,8 +1524,14 @@ mod tests {
         .unwrap();
         assert_eq!(l.link, "http://127.0.0.1:8080/apps/handover/abc");
         let hint = l.tunnel_hint.unwrap();
-        assert!(hint.contains("-L 8080:127.0.0.1:8080 -L 3003:127.0.0.1:3003"), "{hint}");
-        assert_eq!(tunnel_hint("http://gw.lan:8080", Some("http://gw.lan:3003/")), None);
+        assert!(
+            hint.contains("-L 8080:127.0.0.1:8080 -L 3003:127.0.0.1:3003"),
+            "{hint}"
+        );
+        assert_eq!(
+            tunnel_hint("http://gw.lan:8080", Some("http://gw.lan:3003/")),
+            None
+        );
     }
 
     #[test]
