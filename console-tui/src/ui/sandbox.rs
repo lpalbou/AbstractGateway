@@ -33,7 +33,7 @@ use std::sync::Arc;
 
 use serde_json::{json, Value};
 
-use super::util::{error_panel_hint, field, line, line_styled, span, span_bold, wrap_text};
+use super::util::{error_panel_hint, field, line, span, span_bold, wrap_text};
 use super::Ctx;
 use crate::api::{ApiError, ApiErrorKind, ApiResult, GatewayClient};
 use crate::store::{ConnPhase, Loadable, RouteRow, SandboxOutcome, Store};
@@ -206,6 +206,9 @@ pub struct TextControls {
     pub mtp_ix: usize,
     /// Completed (user, assistant) turns — the web's `state.sandboxMessages`.
     pub history: Vec<(String, String)>,
+    /// Uploaded attachment refs (the upload's `attachment || artifact`),
+    /// sent as `attachments` — the web's `attachments.map(i => i.artifact)`.
+    pub attachments: Vec<Value>,
 }
 
 /// The web text payload (`runSandbox`, mode === "text"). No max_tokens:
@@ -230,7 +233,7 @@ pub fn text_body(
         "prompt": prompt,
         "system_prompt": if system.is_empty() { Value::Null } else { Value::String(system.to_string()) },
         "messages": messages,
-        "attachments": [],
+        "attachments": c.attachments,
         "client_context": {"utc_datetime": utc_now, "source": "terminal"},
     });
     if c.reasoning_ix > 0 {
@@ -282,9 +285,21 @@ pub fn media_body(
     })
 }
 
-/// The sandbox session run id — the web's `sandboxRunId` shape, so both
-/// consoles share ONE sandbox run on the gateway.
+/// The sandbox run id — the web's `sandboxRunId` shape, so both consoles
+/// share ONE sandbox run on the gateway: `session_memory_` + the session id.
 pub fn sandbox_run_id(tenant: &str, user: &str) -> String {
+    format!("session_memory_{}", sandbox_session_id(tenant, user))
+}
+
+/// The sandbox SESSION id — what `/attachments/upload` takes as
+/// `session_id`. The route stores the upload under
+/// `_session_memory_run_id(session_id)` = `session_memory_<session_id>`
+/// (gateway.py `_session_memory_run_id`, `_store_session_artifact`), so
+/// passing the session id lands the attachment on the SAME run as the
+/// media generations. (The web passes the run id instead — console.py
+/// `uploadSandboxFile`, `form.append("session_id", sandboxRunId())` —
+/// and its uploads land on `session_memory_session_memory_…`.)
+pub fn sandbox_session_id(tenant: &str, user: &str) -> String {
     fn sanitize(s: &str, fallback: &str) -> String {
         let out: String = s
             .to_lowercase()
@@ -305,10 +320,178 @@ pub fn sandbox_run_id(tenant: &str, user: &str) -> String {
         }
     }
     format!(
-        "session_memory_gateway_console_sandbox_{}_{}",
+        "gateway_console_sandbox_{}_{}",
         sanitize(tenant, "default"),
         sanitize(user, "user")
     )
+}
+
+/// The web's default prompt when only files are sent.
+pub const ATTACH_ONLY_PROMPT: &str = "Please analyze the attached file(s).";
+
+/// One uploaded attachment (the web's `state.sandboxAttachments` item).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Attachment {
+    pub name: String,
+    pub size: u64,
+    pub content_type: String,
+    /// The upload response's `attachment || artifact` ref, verbatim.
+    pub artifact: Value,
+}
+
+/// Parse an `/attachments/upload` response (`{ok, run_id, artifact,
+/// attachment, metadata}`): the ref is `attachment || artifact`, and it
+/// must carry an artifact id — a ref-less "success" is an error.
+pub fn parse_upload(v: &Value, name: &str, size: u64) -> Result<Attachment, String> {
+    let r = ["attachment", "artifact"]
+        .iter()
+        .find_map(|k| v.get(*k).filter(|x| x.is_object()))
+        .ok_or_else(|| format!("upload answered without an artifact reference: {v}"))?;
+    if !["$artifact", "artifact_id"].iter().any(|k| {
+        r.get(*k)
+            .and_then(Value::as_str)
+            .is_some_and(|s| !s.trim().is_empty())
+    }) {
+        return Err(format!("upload reference without an artifact id: {r}"));
+    }
+    Ok(Attachment {
+        name: name.to_string(),
+        size,
+        content_type: r
+            .get("content_type")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        artifact: r.clone(),
+    })
+}
+
+/// The browser's `file.type` stand-in: a content type by extension, or
+/// None (the route then guesses from the filename itself).
+pub fn guess_content_type(name: &str) -> Option<&'static str> {
+    let ext = Path::new(name).extension()?.to_str()?.to_ascii_lowercase();
+    Some(match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "wav" => "audio/wav",
+        "mp3" => "audio/mpeg",
+        "flac" => "audio/flac",
+        "ogg" => "audio/ogg",
+        "m4a" => "audio/mp4",
+        "mp4" => "video/mp4",
+        "mov" => "video/quicktime",
+        "webm" => "video/webm",
+        "pdf" => "application/pdf",
+        "md" | "markdown" => "text/markdown",
+        "txt" | "log" => "text/plain",
+        "csv" => "text/csv",
+        "json" => "application/json",
+        "html" | "htm" => "text/html",
+        _ => return None,
+    })
+}
+
+/// `~/…` → `$HOME/…` (a typed path, not a shell).
+pub fn expand_home(raw: &str) -> PathBuf {
+    let t = raw.trim();
+    if let Some(rest) = t.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(rest);
+        }
+    }
+    PathBuf::from(t)
+}
+
+/// What `/discovery/models/capabilities` says about per-request MTP for
+/// one pair — the web's `refreshSandboxSpeculationSupport`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MtpSupport {
+    /// No pair resolved: explicit depths stay disabled.
+    NoPair,
+    Checking {
+        target: String,
+    },
+    Known {
+        target: String,
+        depths: Vec<u64>,
+        reason: String,
+    },
+    Unknown {
+        target: String,
+        reason: String,
+    },
+}
+
+impl MtpSupport {
+    pub fn target(&self) -> Option<&str> {
+        match self {
+            MtpSupport::NoPair => None,
+            MtpSupport::Checking { target }
+            | MtpSupport::Known { target, .. }
+            | MtpSupport::Unknown { target, .. } => Some(target),
+        }
+    }
+    /// Depths the Select may offer (inherit/off are always available).
+    pub fn depths(&self) -> &[u64] {
+        match self {
+            MtpSupport::Known { depths, .. } => depths,
+            _ => &[],
+        }
+    }
+    /// The web's label title for this state.
+    pub fn reason(&self) -> String {
+        match self {
+            MtpSupport::NoPair => "choose a provider and model to check MTP support".into(),
+            MtpSupport::Checking { .. } => {
+                "Checking this execution host's MTP support. Off and inherit remain available."
+                    .into()
+            }
+            MtpSupport::Known { reason, .. } | MtpSupport::Unknown { reason, .. } => reason.clone(),
+        }
+    }
+}
+
+/// Parse the capabilities payload exactly as the web does: depths only
+/// when `execution.speculation.supported === true`; the reason is
+/// `message || reason || (ready ? … : …)`.
+pub fn mtp_support_from(target: &str, v: &Value) -> MtpSupport {
+    let caps = v.get("execution").and_then(|e| e.get("speculation"));
+    let depths: Vec<u64> = match caps {
+        Some(c) if c.get("supported").and_then(Value::as_bool) == Some(true) => c
+            .get("supported_depths")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|d| {
+                        d.as_u64()
+                            .or_else(|| d.as_str().and_then(|s| s.parse().ok()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+    let text = |k: &str| {
+        caps.and_then(|c| c.get(k))
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let reason = text("message").or_else(|| text("reason")).unwrap_or_else(|| {
+        if caps.and_then(|c| c.get("ready")).and_then(Value::as_bool) == Some(true) {
+            "MTP ready. An explicit depth requires MTP execution; inherit uses the Core default.".into()
+        } else {
+            "MTP support is unavailable or requires model loading; inspect model capabilities before overriding.".into()
+        }
+    });
+    MtpSupport::Known {
+        target: target.to_string(),
+        depths,
+        reason,
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -644,6 +827,93 @@ pub fn publish_text(
     }
 }
 
+/// Read a local file and upload it (worker thread) — the web's
+/// `uploadSandboxFile`, from a typed path instead of a file picker.
+pub fn perform_upload(
+    c: &GatewayClient,
+    raw_path: &str,
+    session_id: &str,
+) -> ApiResult<Attachment> {
+    let local = |m: String| ApiError {
+        kind: ApiErrorKind::Protocol,
+        message: m,
+        body: None,
+        timed_out: false,
+    };
+    let path = expand_home(raw_path);
+    let bytes =
+        std::fs::read(&path).map_err(|e| local(format!("cannot read {}: {e}", path.display())))?;
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("upload.bin")
+        .to_string();
+    let v = c.upload_attachment(session_id, &name, guess_content_type(&name), &bytes)?;
+    parse_upload(&v, &name, bytes.len() as u64).map_err(local)
+}
+
+/// Publish an upload (UI thread): a success joins the pending
+/// attachments and clears the path field for the next file.
+pub fn publish_upload(store: &Store, r: ApiResult<Attachment>) {
+    let ws = store.sandbox_ws;
+    match r {
+        Ok(a) => {
+            let msg = format!("attached {} ({})", a.name, human_bytes(a.size));
+            ws.attachments.update(|v| v.push(a));
+            ws.attach_path.set(String::new());
+            ws.attach_state.set(Loadable::Ready(msg));
+        }
+        Err(e) => ws.attach_state.set(Loadable::Failed(e)),
+    }
+}
+
+/// Publish a spoken reply (UI thread) and play it at once — the web's
+/// `speakSandboxText` plays as soon as the audio lands.
+pub fn publish_speech(store: &Store, r: ApiResult<MediaOutcome>) {
+    let ws = store.sandbox_ws;
+    let note = match &r {
+        Ok(o) => match &o.saved {
+            Ok((path, n)) => {
+                let play = play_file(path).unwrap_or_else(|e| e);
+                format!(
+                    "{play} — reply saved {} ({})",
+                    path.display(),
+                    human_bytes(*n)
+                )
+            }
+            Err(e) => format!("speech generated, but saving it failed: {e}"),
+        },
+        Err(e) => format!("speech failed: {}", e.message),
+    };
+    ws.speech.set(match r {
+        Ok(o) => Loadable::Ready(o),
+        Err(e) => Loadable::Failed(e),
+    });
+    store.notice.set(Some(note));
+}
+
+/// Ask the gateway which MTP depths the pair can run (worker thread);
+/// a failed probe is `Unknown` with the web's "MTP support unknown" text.
+pub fn load_mtp(c: &GatewayClient, provider: &str, model: &str) -> MtpSupport {
+    let target = format!("{provider}/{model}");
+    match c.model_capabilities(provider, model) {
+        Ok(v) => mtp_support_from(&target, &v),
+        Err(e) => MtpSupport::Unknown {
+            target,
+            reason: format!("MTP support unknown: {}", e.message),
+        },
+    }
+}
+
+/// Publish an MTP probe (UI thread) — only if it is still for the pair
+/// the operator has picked (a late answer never dresses another pair).
+pub fn publish_mtp(store: &Store, sup: MtpSupport) {
+    let ws = store.sandbox_ws;
+    if ws.mtp.with_untracked(|m| m.target() == sup.target()) {
+        ws.mtp.set(sup);
+    }
+}
+
 // ---------------------------------------------------------------------
 // State (one Copy bundle of signals, held by the Store)
 // ---------------------------------------------------------------------
@@ -661,6 +931,18 @@ pub struct SandboxWs {
     pub last_prompt: Signal<String>,
     pub text_meta: Signal<Option<TextMeta>>,
     pub media: Signal<Loadable<MediaOutcome>>,
+    /// Uploaded, not-yet-sent attachments (sent with the next text turn).
+    pub attachments: Signal<Vec<Attachment>>,
+    /// The Attach dialog's path field and its upload state.
+    pub attach_path: Signal<String>,
+    pub attach_state: Signal<Loadable<String>>,
+    /// Names of the files sent with the latest turn (transcript chips).
+    pub last_attach_names: Signal<Vec<String>>,
+    /// "Speak this message": the synthesized reply and the text it is for.
+    pub speech: Signal<Loadable<MediaOutcome>>,
+    pub speech_for: Signal<String>,
+    /// MTP depth availability for the picked text pair.
+    pub mtp: Signal<MtpSupport>,
 }
 
 impl SandboxWs {
@@ -674,6 +956,13 @@ impl SandboxWs {
             last_prompt: cx.signal(String::new()),
             text_meta: cx.signal(None),
             media: cx.signal(Loadable::NotAsked),
+            attachments: cx.signal(Vec::new()),
+            attach_path: cx.signal(String::new()),
+            attach_state: cx.signal(Loadable::NotAsked),
+            last_attach_names: cx.signal(Vec::new()),
+            speech: cx.signal(Loadable::NotAsked),
+            speech_for: cx.signal(String::new()),
+            mtp: cx.signal(MtpSupport::NoPair),
         }
     }
 
@@ -685,6 +974,11 @@ impl SandboxWs {
         self.last_prompt.set(String::new());
         self.text_meta.set(None);
         self.media.set(Loadable::NotAsked);
+        self.attachments.set(Vec::new());
+        self.attach_state.set(Loadable::NotAsked);
+        self.last_attach_names.set(Vec::new());
+        self.speech.set(Loadable::NotAsked);
+        self.speech_for.set(String::new());
     }
 }
 
@@ -715,6 +1009,14 @@ pub fn find_player() -> Option<(PathBuf, Vec<&'static str>)> {
 thread_local! {
     static PLAYER: std::cell::RefCell<Option<std::process::Child>> =
         const { std::cell::RefCell::new(None) };
+}
+
+fn player_running() -> bool {
+    PLAYER.with(|p| {
+        p.borrow_mut()
+            .as_mut()
+            .is_some_and(|c| matches!(c.try_wait(), Ok(None)))
+    })
 }
 
 fn stop_player() -> bool {
@@ -862,6 +1164,33 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             }
         });
     }
+    // MTP depth availability follows the picked text pair (the web's
+    // refreshSandboxSpeculationSupport): a NEW pair resets the choice to
+    // inherit, marks the depths as being checked, and asks the gateway.
+    {
+        let ctx2 = ctx.clone();
+        cx.effect(move || {
+            let pair = picked_pair_tracked(&store, &ui, prov_ix, model_ix);
+            let target = pair.as_ref().map(|(p, m)| format!("{p}/{m}"));
+            if ws.mtp.with_untracked(|s| s.target().map(str::to_string)) == target {
+                return;
+            }
+            if ws.mtp_ix.get_untracked() != 0 {
+                ws.mtp_ix.set(0);
+            }
+            match pair {
+                None => ws.mtp.set(MtpSupport::NoPair),
+                Some((provider, model)) => {
+                    ws.mtp.set(MtpSupport::Checking {
+                        target: format!("{provider}/{model}"),
+                    });
+                    if store.conn.with_untracked(ConnPhase::is_connected) {
+                        ctx2.send(Cmd::SandboxMtpCaps { provider, model });
+                    }
+                }
+            }
+        });
+    }
     // Mode select ⇄ durable mode (both equality-guarded: one hop).
     cx.effect(move || {
         let m = SbMode::from_index(mode_ix.get());
@@ -973,6 +1302,19 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         )
                     }
                 }))
+                // Pending attachments (the web's chips under the composer):
+                // a row only while there are some.
+                .child(dyn_view(LayoutStyle::default().shrink(0.0), move || {
+                    let atts = ws.attachments.get();
+                    if atts.is_empty() || ws.mode.get() != SbMode::Text {
+                        return Element::new().style(LayoutStyle::default().h(0)).build();
+                    }
+                    let names: Vec<String> = atts
+                        .iter()
+                        .map(|a| format!("📎 {} ({})", a.name, human_bytes(a.size)))
+                        .collect();
+                    field(&tt, "attached", line(vec![span(names.join("  "), tt.text)]))
+                }))
                 .child(dyn_view_scoped(LayoutStyle::default().h(1).shrink(0.0), {
                     let ctx_btn = ctx.clone();
                     let ps_btn = prompt_state.clone();
@@ -999,55 +1341,56 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                     .element(gcx, &t)
                                     .build(),
                             );
-                        // Text mode: the web's system / reasoning / MTP
-                        // controls, on the button row (the 80x24 budget
-                        // has no spare row). The system prompt edits in
-                        // a small dialog; its label says whether one is set.
+                        // (Dialogs open on the PAGE scope `cx`, never this
+                        // row's `gcx`: the row re-renders when a label
+                        // changes — "Attach (1)", "Options ✓" — and a
+                        // modal owned by the disposed scope would vanish.)
+                        // Text mode: Options (the web's system prompt,
+                        // reasoning and MTP — in a dialog, the 80x24 row
+                        // budget has no room inline), Attach (the web's ＋
+                        // / drop zone, from a local path) and Speak (the
+                        // web's 🔊 on a reply, when output.voice is set).
                         if ws.mode.get() == SbMode::Text {
                             let ctx5 = ctx_btn.clone();
-                            let sys_label = if ws.system.with(|s| s.trim().is_empty()) {
-                                "System…"
-                            } else {
-                                "System ✓"
-                            };
-                            let reasoning_opts: Vec<SelectOption> =
-                                REASONING_CHOICES.iter().map(|r| SelectOption::new(*r)).collect();
-                            let mtp_opts: Vec<SelectOption> =
-                                MTP_CHOICES.iter().map(|r| SelectOption::new(*r)).collect();
+                            let ctx6 = ctx_btn.clone();
+                            let customized = ws.system.with(|s| !s.trim().is_empty())
+                                || ws.reasoning_ix.get() > 0
+                                || ws.mtp_ix.get() > 0;
+                            let n_att = ws.attachments.with(Vec::len);
                             row = row
                                 .child(
-                                    Button::new(sys_label)
-                                        .on_click(move || open_system_prompt(&ctx5, gcx))
+                                    Button::new(if customized { "Options ✓" } else { "Options…" })
+                                        .on_click(move || open_options(&ctx5, cx))
                                         .element(gcx, &t)
                                         .build(),
                                 )
                                 .child(
-                                    Element::new()
-                                        .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
-                                        .child(line_styled(
-                                            LayoutStyle::default().w(6).h(1).shrink(0.0),
-                                            vec![span("reason", t.text_muted)],
-                                        ))
-                                        .child(
-                                            Select::new(reasoning_opts)
-                                                .value(ws.reasoning_ix)
-                                                .layout(LayoutStyle::default().w(11).h(1).shrink(0.0))
-                                                .element(gcx, &t)
-                                                .build(),
-                                        )
-                                        .child(line_styled(
-                                            LayoutStyle::default().w(3).h(1).shrink(0.0),
-                                            vec![span("MTP", t.text_muted)],
-                                        ))
-                                        .child(
-                                            Select::new(mtp_opts)
-                                                .value(ws.mtp_ix)
-                                                .layout(LayoutStyle::default().w(11).h(1).shrink(0.0))
-                                                .element(gcx, &t)
-                                                .build(),
-                                        )
+                                    Button::new(if n_att == 0 {
+                                        "Attach…".to_string()
+                                    } else {
+                                        format!("Attach ({n_att})")
+                                    })
+                                    .on_click(move || open_attach(&ctx6, cx))
+                                    .element(gcx, &t)
+                                    .build(),
+                                );
+                            let reply = store.sandbox.with(|s| match s {
+                                Loadable::Ready(o) if o.ok && !o.response.trim().is_empty() => {
+                                    Some(o.response.clone())
+                                }
+                                _ => None,
+                            });
+                            if let (Some(reply), true) = (reply, voice_pair_tracked(&store).is_some()) {
+                                let ctx7 = ctx_btn.clone();
+                                let busy = ws.speech.with(Loadable::is_loading);
+                                row = row.child(
+                                    Button::new(if busy { "Speaking…" } else { "Speak" })
+                                        .disabled(busy)
+                                        .on_click(move || speak(&ctx7, &reply))
+                                        .element(gcx, &t)
                                         .build(),
                                 );
+                            }
                         }
                         // Play/Stop for a saved AUDIO result (the web's
                         // <audio controls>), shown only in its mode.
@@ -1367,44 +1710,116 @@ fn text_controls(
         .build()
 }
 
-/// The system-prompt dialog (the web's inline "System prompt" input).
-fn open_system_prompt(ctx: &Ctx, cx: Scope) {
+/// The MTP Select's options: inherit/off always; a depth only when the
+/// gateway reported it supported for the picked pair (the web disables
+/// the rest; the reason rides as each disabled option's hint).
+pub fn mtp_options(sup: &MtpSupport) -> Vec<SelectOption> {
+    MTP_CHOICES
+        .iter()
+        .enumerate()
+        .map(|(i, label)| {
+            let o = SelectOption::new(*label);
+            if i < 2 {
+                o
+            } else {
+                o.disabled(!sup.depths().contains(&(i as u64)))
+            }
+        })
+        .collect()
+}
+
+/// The Options dialog: the web Sandbox's System prompt, Reasoning and
+/// MTP controls (one dialog — the terminal's row budget has no room
+/// inline). MTP depths follow `/discovery/models/capabilities`.
+fn open_options(ctx: &Ctx, cx: Scope) {
     let ws = ctx.store.sandbox_ws;
     let vp = abstracttui::app::use_viewport(cx).get_untracked();
-    let size = Size::new(vp.w.clamp(1, 90), 9);
+    let size = Size::new(vp.w.clamp(1, 96), 13);
     super::open_form(ctx, cx, size, move |mcx, close| {
         let t0 = use_theme(mcx).get().tokens;
         let c1 = close.clone();
         let c2 = close.clone();
+        let reasoning_opts: Vec<SelectOption> = REASONING_CHOICES
+            .iter()
+            .map(|r| SelectOption::new(*r))
+            .collect();
         Element::new()
             .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold("Sandbox system prompt", t0.accent)]))
-            .child(line(vec![span(
-                "sent with every text turn; empty = the gateway's default test-assistant prompt",
-                t0.text_faint,
-            )]))
-            .child(
+            .child(line(vec![span_bold("Sandbox text options", t0.accent)]))
+            .child(field(
+                &t0,
+                "system prompt",
                 TextInput::new()
                     .value(ws.system)
-                    .placeholder("optional")
+                    .placeholder("optional — empty = the gateway's default")
                     .on_submit(move |_| c1())
                     .layout(LayoutStyle::default().grow(1.0).h(1).shrink(0.0))
                     .element(mcx, &t0)
                     .autofocus()
                     .build(),
-            )
+            ))
+            .child(field(
+                &t0,
+                "reasoning",
+                Select::new(reasoning_opts)
+                    .value(ws.reasoning_ix)
+                    .layout(LayoutStyle::default().w(14).h(1).shrink(0.0))
+                    .element(mcx, &t0)
+                    .build(),
+            ))
+            .child(line(vec![span(
+                "reasoning effort for reasoning models — default sends nothing",
+                t0.text_faint,
+            )]))
+            .child(dyn_view_scoped(
+                LayoutStyle::default().shrink(0.0),
+                move |dcx| {
+                    let t = use_theme(dcx).get().tokens;
+                    let sup = ws.mtp.get();
+                    field(
+                        &t,
+                        "MTP",
+                        Select::new(mtp_options(&sup))
+                            .value(ws.mtp_ix)
+                            .layout(LayoutStyle::default().w(14).h(1).shrink(0.0))
+                            .element(dcx, &t)
+                            .build(),
+                    )
+                },
+            ))
+            .child(dyn_view(LayoutStyle::default().shrink(0.0), move || {
+                let sup = ws.mtp.get();
+                let depths = sup.depths();
+                let head = match &sup {
+                    MtpSupport::Known { .. } if !depths.is_empty() => format!(
+                        "depths {} available · ",
+                        depths
+                            .iter()
+                            .map(u64::to_string)
+                            .collect::<Vec<_>>()
+                            .join("/")
+                    ),
+                    MtpSupport::Known { .. } => "no explicit depth available · ".to_string(),
+                    _ => String::new(),
+                };
+                line(vec![span(format!("{head}{}", sup.reason()), t0.text_faint)])
+            }))
             .child(
                 Element::new()
                     .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
                     .child(
-                        Button::new("Done (Enter/Esc)")
+                        Button::new("Done (Esc)")
                             .on_click(move || c2())
                             .element(mcx, &t0)
                             .build(),
                     )
                     .child(
-                        Button::new("Clear")
-                            .on_click(move || ws.system.set(String::new()))
+                        Button::new("Reset")
+                            .on_click(move || {
+                                ws.system.set(String::new());
+                                ws.reasoning_ix.set(0);
+                                ws.mtp_ix.set(0);
+                            })
                             .element(mcx, &t0)
                             .build(),
                     )
@@ -1412,6 +1827,223 @@ fn open_system_prompt(ctx: &Ctx, cx: Scope) {
             )
             .build()
     });
+}
+
+/// The Attach dialog: a local path, uploaded through `/attachments/upload`
+/// on the sandbox session; attachments ride the NEXT text turn.
+fn open_attach(ctx: &Ctx, cx: Scope) {
+    let store = ctx.store;
+    let ws = store.sandbox_ws;
+    ws.attach_state.set(Loadable::NotAsked);
+    let vp = abstracttui::app::use_viewport(cx).get_untracked();
+    let size = Size::new(vp.w.clamp(1, 96), 12);
+    let ctx_up = ctx.clone();
+    let ctx_btn = ctx.clone();
+    super::open_form(ctx, cx, size, move |mcx, close| {
+        let t0 = use_theme(mcx).get().tokens;
+        let c2 = close.clone();
+        Element::new()
+            .style(LayoutStyle::column().gap(0))
+            .child(line(vec![span_bold(
+                "Attach a file to the next text turn",
+                t0.accent,
+            )]))
+            .child(line(vec![span(
+                "images, audio, video, PDFs, markdown or text — uploaded to the gateway now",
+                t0.text_faint,
+            )]))
+            .child(field(
+                &t0,
+                "local path",
+                TextInput::new()
+                    .value(ws.attach_path)
+                    .placeholder("~/Pictures/photo.png — Enter uploads")
+                    .on_submit({
+                        let c = ctx_up.clone();
+                        move |_| attach(&c)
+                    })
+                    .layout(LayoutStyle::default().grow(1.0).h(1).shrink(0.0))
+                    .element(mcx, &t0)
+                    .autofocus()
+                    .build(),
+            ))
+            .child(dyn_view(LayoutStyle::default().shrink(0.0), move || {
+                let t = t0;
+                match ws.attach_state.get() {
+                    Loadable::NotAsked => line(vec![]),
+                    Loadable::Loading => line(vec![span("⟳ uploading…", t.info)]),
+                    Loadable::Ready(m) => line(vec![span(format!("✓ {m}"), t.ok)]),
+                    Loadable::Failed(e) => line(vec![span(format!("✗ {}", e.message), t.error)]),
+                }
+            }))
+            .child(dyn_view(LayoutStyle::default().shrink(0.0), move || {
+                let atts = ws.attachments.get();
+                let text = if atts.is_empty() {
+                    "nothing attached yet".to_string()
+                } else {
+                    atts.iter()
+                        .map(|a| format!("📎 {} ({})", a.name, human_bytes(a.size)))
+                        .collect::<Vec<_>>()
+                        .join("  ")
+                };
+                line(vec![span(text, t0.text_muted)])
+            }))
+            .child(dyn_view_scoped(
+                LayoutStyle::default().h(1).shrink(0.0),
+                move |bcx| {
+                    let t = use_theme(bcx).get().tokens;
+                    let busy = ws.attach_state.with(Loadable::is_loading);
+                    let c = ctx_btn.clone();
+                    let c3 = c2.clone();
+                    Element::new()
+                        .style(LayoutStyle::row().gap(2).h(1))
+                        .child(
+                            Button::new("Upload")
+                                .disabled(busy)
+                                .on_click(move || attach(&c))
+                                .element(bcx, &t)
+                                .build(),
+                        )
+                        .child(
+                            Button::new("Remove all")
+                                .disabled(busy)
+                                .on_click(move || ws.attachments.set(Vec::new()))
+                                .element(bcx, &t)
+                                .build(),
+                        )
+                        .child(
+                            Button::new("Done (Esc)")
+                                .on_click(move || c3())
+                                .element(bcx, &t)
+                                .build(),
+                        )
+                        .build()
+                },
+            ))
+            .build()
+    });
+}
+
+fn principal(store: &Store) -> (String, String) {
+    store.conn.with_untracked(|c| match c {
+        ConnPhase::Connected(id) => (id.tenant_id.clone(), id.user_id.clone()),
+        _ => (String::new(), String::new()),
+    })
+}
+
+/// Upload the typed path (Enter / Upload). Refusals name their reason.
+fn attach(ctx: &Ctx) {
+    let store = ctx.store;
+    let ws = store.sandbox_ws;
+    if !store.conn.with_untracked(ConnPhase::is_connected) {
+        ws.attach_state.set(Loadable::Failed(ApiError::new(
+            ApiErrorKind::NotConnected,
+            "connect to the gateway first — attachments upload to it",
+        )));
+        return;
+    }
+    if ws.attach_state.with_untracked(Loadable::is_loading) {
+        return;
+    }
+    let path = ws.attach_path.get_untracked().trim().to_string();
+    if path.is_empty() {
+        ws.attach_state.set(Loadable::Failed(ApiError::new(
+            ApiErrorKind::Protocol,
+            "type the path of a local file first",
+        )));
+        return;
+    }
+    let (tenant, user) = principal(&store);
+    ws.attach_state.set(Loadable::Loading);
+    ctx.send(Cmd::SandboxAttach {
+        path,
+        session_id: sandbox_session_id(&tenant, &user),
+    });
+}
+
+/// The configured output.voice pair + voice (tracked), for Speak.
+fn voice_pair_tracked(store: &Store) -> Option<(String, String, Option<String>)> {
+    store.routes.with(|r| {
+        let row = mode_row(&r.ready()?.rows, SbMode::Voice)?;
+        let (p, m) = row_pair(row)?;
+        Some((p, m, row_voice(row)))
+    })
+}
+
+/// "Speak this message" (the web's `speakSandboxText`): synthesize the
+/// reply once through the voice/tts lane, then play/stop toggles it.
+fn speak(ctx: &Ctx, reply: &str) {
+    let store = ctx.store;
+    let ws = store.sandbox_ws;
+    if ws.speech.with_untracked(Loadable::is_loading) {
+        return;
+    }
+    if ws.speech_for.with_untracked(|f| f == reply) {
+        if let Loadable::Ready(o) = ws.speech.get_untracked() {
+            if let Ok((path, _)) = &o.saved {
+                let msg = if player_running() {
+                    stop_player();
+                    "■ speech stopped".to_string()
+                } else {
+                    play_file(path).unwrap_or_else(|e| e)
+                };
+                store.notice.set(Some(msg));
+                return;
+            }
+        }
+    }
+    let Some((provider, model, voice)) = voice_pair_tracked(&store) else {
+        store.notice.set(Some(
+            "output.voice is not configured — set it on Routes (3) to speak replies".into(),
+        ));
+        return;
+    };
+    let (tenant, user) = principal(&store);
+    let request_id = format!("sandbox_speak_{}", crate::worker::next_op());
+    let Some((leaf, body)) = media_body(
+        SbMode::Voice,
+        &provider,
+        &model,
+        voice.as_deref(),
+        reply,
+        &request_id,
+    ) else {
+        return;
+    };
+    ws.speech_for.set(reply.to_string());
+    ws.speech.set(Loadable::Loading);
+    ctx.send(Cmd::SandboxSpeak {
+        request: MediaRequest {
+            mode: SbMode::Voice,
+            provider,
+            model,
+            run_id: sandbox_run_id(&tenant, &user),
+            leaf: leaf.to_string(),
+            body,
+            dest_dir: artifact_dir(),
+        },
+    });
+}
+
+/// The picked text pair (tracked): provider pick + model pick, or the
+/// hand-typed model id when discovery failed / was empty.
+fn picked_pair_tracked(
+    store: &Store,
+    ui: &super::UiState,
+    prov_ix: Signal<usize>,
+    model_ix: Signal<usize>,
+) -> Option<(String, String)> {
+    let ix = prov_ix.get();
+    let names = provider_names_tracked(store);
+    let name = names.get(ix.checked_sub(1)?)?.clone();
+    let list = store
+        .models
+        .with(|m| m.get(&name).and_then(|l| l.ready().cloned()));
+    let model = match list {
+        Some(models) if !models.is_empty() => models.get(model_ix.get().checked_sub(1)?)?.clone(),
+        _ => ui.sb_model_custom.get().trim().to_string(),
+    };
+    (!model.is_empty()).then_some((name, model))
 }
 
 /// Tracked provider-name read (the picker's reactive source).
@@ -1491,11 +2123,33 @@ fn run(ctx: &Ctx, prov_ix: Signal<usize>, model_ix: Signal<usize>, prompt_state:
             custom
         }
     };
-    let prompt = ctx.ui.sb_prompt.get_untracked();
+    let attachments = ws.attachments.get_untracked();
+    let typed = ctx.ui.sb_prompt.get_untracked();
+    // The web: a prompt OR attachments; files alone get its default ask.
+    let prompt = if typed.trim().is_empty() && !attachments.is_empty() {
+        ATTACH_ONLY_PROMPT.to_string()
+    } else {
+        typed
+    };
     if prompt.trim().is_empty() {
         store.notice.set(Some(
             "type a prompt — the test sends it to the model".into(),
         ));
+        return;
+    }
+    // An explicit MTP depth the gateway did not report for this pair is
+    // refused (the dialog already disables it; this is the send guard).
+    let mtp_ix = ws.mtp_ix.get_untracked();
+    if mtp_ix >= 2
+        && !ws
+            .mtp
+            .with_untracked(|m| m.depths().contains(&(mtp_ix as u64)))
+    {
+        store.notice.set(Some(format!(
+            "MTP {} is not available for this pair — {}",
+            MTP_CHOICES[mtp_ix],
+            ws.mtp.with_untracked(MtpSupport::reason)
+        )));
         return;
     }
     // Fold the previous answered turn into the history the web sends as
@@ -1510,9 +2164,14 @@ fn run(ctx: &Ctx, prov_ix: Signal<usize>, model_ix: Signal<usize>, prompt_state:
     let controls = TextControls {
         system_prompt: ws.system.get_untracked(),
         reasoning_ix: ws.reasoning_ix.get_untracked(),
-        mtp_ix: ws.mtp_ix.get_untracked(),
+        mtp_ix,
         history: ws.history.get_untracked(),
+        attachments: attachments.iter().map(|a| a.artifact.clone()).collect(),
     };
+    ws.last_attach_names
+        .set(attachments.iter().map(|a| a.name.clone()).collect());
+    // The web empties the pending attachments once they are sent.
+    ws.attachments.set(Vec::new());
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -1699,6 +2358,10 @@ fn text_body_view(gcx: Scope, t: &TokenSet, store: &Store) -> View {
         let last = ws.last_prompt.get();
         if !md.is_empty() && !last.is_empty() {
             md.push_str(&format!("**You:** {}\n\n", last.trim()));
+        }
+        let names = ws.last_attach_names.get();
+        if !names.is_empty() {
+            md.push_str(&format!("_attached: {}_\n\n", names.join(", ")));
         }
         if let Some(r) = ws.text_meta.get().and_then(|m| m.reasoning) {
             md.push_str("> **Reasoning**\n>\n");
@@ -1912,6 +2575,7 @@ mod tests {
             reasoning_ix: 5, // high
             mtp_ix: 3,       // depth 3
             history: vec![("q1".into(), "a1".into())],
+            attachments: vec![json!({"$artifact": "att1", "content_type": "image/png"})],
         };
         let b = text_body("lmstudio", "qwen", "q2", &c, "2026-09-27T10:00:00Z");
         assert_eq!(b["capability"], "input.text");
@@ -1923,7 +2587,10 @@ mod tests {
             b["messages"],
             json!([{"role": "user", "content": "q1"}, {"role": "assistant", "content": "a1"}])
         );
-        assert_eq!(b["attachments"], json!([]));
+        assert_eq!(
+            b["attachments"],
+            json!([{"$artifact": "att1", "content_type": "image/png"}])
+        );
         assert_eq!(b["reasoning"], "high");
         assert_eq!(
             b["speculation"],
@@ -2072,6 +2739,79 @@ mod tests {
         assert_eq!(
             sandbox_run_id("", ""),
             "session_memory_gateway_console_sandbox_default_user"
+        );
+    }
+
+    #[test]
+    fn upload_lands_on_the_sandbox_run_per_the_route() {
+        // gateway.py `_session_memory_run_id`: run = "session_memory_" +
+        // session_id. The session id we upload with must therefore map
+        // onto EXACTLY the run the media generations use.
+        let sid = sandbox_session_id("default", "admin");
+        assert_eq!(sid, "gateway_console_sandbox_default_admin");
+        assert_eq!(
+            format!("session_memory_{sid}"),
+            sandbox_run_id("default", "admin")
+        );
+        assert!(
+            !sid.starts_with("session_memory_"),
+            "never the web's doubled prefix"
+        );
+    }
+
+    #[test]
+    fn upload_response_parses_the_route_shape() {
+        // attachments_upload: {**stored, "attachment": stored["artifact"]}.
+        let v = json!({"ok": true, "run_id": "session_memory_gateway_console_sandbox_default_admin",
+            "artifact": {"$artifact": "a1", "artifact_id": "a1", "content_type": "image/png"},
+            "attachment": {"$artifact": "a1", "artifact_id": "a1", "content_type": "image/png", "filename": "x.png"},
+            "metadata": {"size_bytes": 74}});
+        let a = parse_upload(&v, "x.png", 74).unwrap();
+        assert_eq!(
+            a.artifact["filename"], "x.png",
+            "attachment wins over artifact"
+        );
+        assert_eq!(
+            (a.name.as_str(), a.size, a.content_type.as_str()),
+            ("x.png", 74, "image/png")
+        );
+        assert!(parse_upload(&json!({"ok": true}), "x", 1).is_err());
+        assert!(parse_upload(&json!({"attachment": {"filename": "x"}}), "x", 1).is_err());
+        assert_eq!(guess_content_type("Photo.JPG"), Some("image/jpeg"));
+        assert_eq!(guess_content_type("notes.md"), Some("text/markdown"));
+        assert_eq!(guess_content_type("blob.xyz"), None);
+    }
+
+    #[test]
+    fn mtp_support_follows_the_web_reading() {
+        let v = json!({"model": "m", "execution": {"speculation": {"supported": true,
+            "supported_depths": [2, "3"], "ready": true}}});
+        let s = mtp_support_from("p/m", &v);
+        assert_eq!(s.depths(), &[2, 3]);
+        assert!(s.reason().starts_with("MTP ready."));
+        let opts = mtp_options(&s);
+        let disabled: Vec<bool> = opts.iter().map(|o| o.disabled).collect();
+        assert_eq!(
+            disabled,
+            [false, false, false, false, true, true],
+            "inherit/off always; 2,3 on; 4,5 off"
+        );
+        // supported:false → no depths even if listed; message wins.
+        let v = json!({"execution": {"speculation": {"supported": false, "supported_depths": [2],
+            "message": "native MTP needs the mlx backend"}}});
+        let s = mtp_support_from("p/m", &v);
+        assert!(s.depths().is_empty());
+        assert_eq!(s.reason(), "native MTP needs the mlx backend");
+        let s = mtp_support_from(
+            "p/m",
+            &json!({"execution": {"available": false, "error": "x"}}),
+        );
+        assert!(s.reason().starts_with("MTP support is unavailable"));
+        assert!(
+            mtp_options(&MtpSupport::Checking {
+                target: "p/m".into()
+            })[2]
+                .disabled
         );
     }
 

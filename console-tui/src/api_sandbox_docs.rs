@@ -75,6 +75,45 @@ impl GatewayClient {
             .map_err(|e| io_err("download interrupted while writing", e))
     }
 
+    /// `POST /attachments/upload` (multipart: `session_id`, `file`,
+    /// `filename`, optional `content_type`) — the web's `uploadSandboxFile`.
+    /// Slow lane: the body is the whole file.
+    pub fn upload_attachment(
+        &self,
+        session_id: &str,
+        filename: &str,
+        content_type: Option<&str>,
+        bytes: &[u8],
+    ) -> ApiResult<Value> {
+        let (boundary, body) = multipart_body(session_id, filename, content_type, bytes);
+        let req = self.with_auth(
+            self.slow_agent
+                .post(&self.url("/attachments/upload"))
+                .set("Accept", "application/json")
+                .set(
+                    "Content-Type",
+                    &format!("multipart/form-data; boundary={boundary}"),
+                ),
+        );
+        let resp = req
+            .send_bytes(&body)
+            .map_err(|e| err_from_ureq("/attachments/upload", e))?;
+        Self::read_json("/attachments/upload", resp)
+    }
+
+    /// `GET /discovery/models/capabilities?model_name&provider` — model
+    /// metadata + execution-host capabilities (the MTP depth check).
+    pub fn model_capabilities(&self, provider: &str, model: &str) -> ApiResult<Value> {
+        self.get(
+            &format!(
+                "/discovery/models/capabilities?model_name={}&provider={}",
+                urlencode(model),
+                urlencode(provider)
+            ),
+            true,
+        )
+    }
+
     /// The gateway's own documentation corpus (`{app, source, chars,
     /// text}`); 404 with a detail when the gateway runs without one.
     pub fn docs_corpus(&self) -> ApiResult<Value> {
@@ -85,5 +124,84 @@ impl GatewayClient {
     /// starts the docs-qa catalog bundle with it.
     pub fn start_run(&self, body: &Value) -> ApiResult<Value> {
         self.send("POST", "/runs/start", body, false)
+    }
+}
+
+/// A multipart/form-data body (RFC 7578) for the attachment upload. The
+/// boundary is checked against the payload so it can never collide.
+pub fn multipart_body(
+    session_id: &str,
+    filename: &str,
+    content_type: Option<&str>,
+    bytes: &[u8],
+) -> (String, Vec<u8>) {
+    let mut n: u64 = 0x5a17_c0de;
+    let boundary = loop {
+        let b = format!("----abstractgateway-console-{n:x}");
+        let needle = b.as_bytes();
+        if !bytes.windows(needle.len()).any(|w| w == needle) {
+            break b;
+        }
+        n = n.wrapping_mul(31).wrapping_add(7);
+    };
+    // Quoted header values: drop the two characters that would end them.
+    let safe = |s: &str| s.replace(['"', '\r', '\n'], "_");
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len() + 512);
+    let mut field = |name: &str, value: &str| {
+        out.extend_from_slice(
+            format!("--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n")
+                .as_bytes(),
+        );
+    };
+    field("session_id", session_id);
+    field("filename", filename);
+    if let Some(ct) = content_type {
+        field("content_type", ct);
+    }
+    // Unknown type: NO part Content-Type, so the route's own filename
+    // guess (mimetypes) decides instead of a blanket octet-stream.
+    let part_type = content_type
+        .map(|ct| format!("Content-Type: {ct}\r\n"))
+        .unwrap_or_default();
+    out.extend_from_slice(
+        format!(
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{}\"\r\n{part_type}\r\n",
+            safe(filename),
+        )
+        .as_bytes(),
+    );
+    out.extend_from_slice(bytes);
+    out.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
+    (boundary, out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::multipart_body;
+
+    #[test]
+    fn multipart_carries_the_web_fields_and_the_bytes() {
+        let (b, body) = multipart_body(
+            "gateway_console_sandbox_default_admin",
+            "a.png",
+            Some("image/png"),
+            b"\x89PNGDATA",
+        );
+        let text = String::from_utf8_lossy(&body);
+        assert!(
+            text.contains("name=\"session_id\"\r\n\r\ngateway_console_sandbox_default_admin\r\n")
+        );
+        assert!(text.contains("name=\"filename\"\r\n\r\na.png\r\n"));
+        assert!(text.contains("name=\"content_type\"\r\n\r\nimage/png\r\n"));
+        assert!(
+            text.contains("name=\"file\"; filename=\"a.png\"\r\nContent-Type: image/png\r\n\r\n")
+        );
+        assert!(body.windows(8).any(|w| w == b"PNGDATA\r"));
+        assert!(text.ends_with(&format!("\r\n--{b}--\r\n")));
+        let (_, none) = multipart_body("s", "x.bin", None, b"z");
+        assert!(
+            !String::from_utf8_lossy(&none).contains("name=\"content_type\""),
+            "unknown type: no field"
+        );
     }
 }

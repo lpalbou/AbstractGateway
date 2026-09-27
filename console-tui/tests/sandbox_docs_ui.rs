@@ -507,3 +507,206 @@ fn f2_docs_assistant_asks_and_renders() {
         "answer renders:\n{s}"
     );
 }
+
+fn text_ready(h: &mut H) {
+    h.store.providers.set(Loadable::Ready(providers()));
+    h.store.models.update(|m| {
+        m.insert(
+            "lmstudio".into(),
+            Loadable::Ready(vec!["test-model-a".into()]),
+        );
+    });
+    h.ui.sb_provider.set("lmstudio".into());
+    h.ui.sb_model.set("test-model-a".into());
+}
+
+/// Attach: the dialog (Tab to Attach…, Enter) uploads the typed path on
+/// the sandbox SESSION id (the route maps it onto the sandbox run — not
+/// the web's doubled `session_memory_session_memory_…`); pending
+/// attachments ride the next turn and a files-only turn gets the web's
+/// default prompt.
+#[test]
+fn attachments_upload_on_the_session_and_ride_the_next_turn() {
+    let mut h = harness(Size::new(110, 34));
+    h.connect();
+    h.store.routes.set(Loadable::Ready(routes()));
+    text_ready(&mut h);
+    h.review();
+    for _ in 0..4 {
+        h.type_text("\t");
+        h.turns(1);
+    }
+    h.type_text("\r");
+    let s = h.turns(3);
+    assert!(
+        s.contains("Attach a file to the next text turn"),
+        "attach dialog opens:\n{s}"
+    );
+    h.type_text("~/Pictures/fox.png\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::SandboxAttach { .. })) {
+        Some(Cmd::SandboxAttach { path, session_id }) => {
+            assert_eq!(path, "~/Pictures/fox.png");
+            assert_eq!(session_id, "gateway_console_sandbox_default_admin");
+        }
+        other => panic!("expected SandboxAttach, got {other:?}"),
+    }
+    let s = h.turns(1);
+    assert!(s.contains("uploading"), "in-flight upload state:\n{s}");
+    // The worker's publish_upload.
+    abstractgateway_console::ui::sandbox::publish_upload(
+        &h.store,
+        Ok(abstractgateway_console::ui::sandbox::Attachment {
+            name: "fox.png".into(),
+            size: 2048,
+            content_type: "image/png".into(),
+            artifact: json!({"$artifact": "att_9", "content_type": "image/png"}),
+        }),
+    );
+    let s = h.turns(2);
+    assert!(
+        s.contains("✓ attached fox.png (2.0 KB)"),
+        "dialog confirms:\n{s}"
+    );
+    h.term.push_input(&[0x1b]);
+    h.turns(1);
+    std::thread::sleep(std::time::Duration::from_millis(45));
+    let s = h.turns(2);
+    assert!(
+        s.contains("📎 fox.png (2.0 KB)") && s.contains("Attach (1)"),
+        "chips + count:\n{s}"
+    );
+    // Files only: the web's default prompt, the ref in `attachments`.
+    h.ui.sb_prompt.set(String::new());
+    h.review();
+    h.type_text("\r");
+    h.turns(2);
+    let body = match h.find_cmd(|c| matches!(c, Cmd::SandboxTest { .. })) {
+        Some(Cmd::SandboxTest { request, .. }) => request.0,
+        other => panic!("expected SandboxTest, got {other:?}"),
+    };
+    assert_eq!(body["prompt"], "Please analyze the attached file(s).");
+    assert_eq!(
+        body["attachments"],
+        json!([{"$artifact": "att_9", "content_type": "image/png"}])
+    );
+    assert!(
+        h.store.sandbox_ws.attachments.get_untracked().is_empty(),
+        "sent = cleared"
+    );
+}
+
+/// Speak: offered on a reply when output.voice is configured; it sends
+/// the reply through the voice/tts lane on the sandbox run with the
+/// route's voice.
+#[test]
+fn speak_sends_the_reply_through_the_voice_lane() {
+    let mut h = harness(Size::new(110, 34));
+    h.connect();
+    h.store.routes.set(Loadable::Ready(routes()));
+    text_ready(&mut h);
+    h.review();
+    let s = h.turns(2);
+    assert!(!s.contains("Speak"), "no Speak without a reply:\n{s}");
+    h.store.sandbox.set(Loadable::Ready(SandboxOutcome {
+        ok: true,
+        error: None,
+        response: "Hello from the model.".into(),
+        routed_provider: None,
+        profile: None,
+        usage: None,
+        provider: "lmstudio".into(),
+        model: "test-model-a".into(),
+    }));
+    let s = h.turns(2);
+    assert!(s.contains("Speak"), "Speak offered on a reply:\n{s}");
+    for _ in 0..5 {
+        h.type_text("\t");
+        h.turns(1);
+    }
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::SandboxSpeak { .. })) {
+        Some(Cmd::SandboxSpeak { request }) => {
+            assert_eq!(request.leaf, "voice/tts");
+            assert_eq!(
+                request.run_id,
+                "session_memory_gateway_console_sandbox_default_admin"
+            );
+            assert_eq!(request.body["text"], "Hello from the model.");
+            assert_eq!(request.body["provider"], "supertonic");
+            assert_eq!(request.body["voice"], "M3");
+        }
+        other => panic!("expected SandboxSpeak, got {other:?}"),
+    }
+    let s = h.turns(1);
+    assert!(s.contains("Speaking…"), "in-flight label:\n{s}");
+}
+
+/// MTP: the picked pair is probed; only reported depths may be sent, an
+/// unreported one is refused with the gateway's reason.
+#[test]
+fn mtp_depths_follow_the_capabilities_probe() {
+    let mut h = harness(Size::new(110, 34));
+    h.connect();
+    text_ready(&mut h);
+    h.ui.sb_prompt.set("q".into());
+    h.review();
+    match h.find_cmd(|c| matches!(c, Cmd::SandboxMtpCaps { .. })) {
+        Some(Cmd::SandboxMtpCaps { provider, model }) => {
+            assert_eq!(
+                (provider.as_str(), model.as_str()),
+                ("lmstudio", "test-model-a")
+            );
+        }
+        other => panic!("expected SandboxMtpCaps, got {other:?}"),
+    }
+    use abstractgateway_console::ui::sandbox::{mtp_support_from, publish_mtp};
+    publish_mtp(
+        &h.store,
+        mtp_support_from(
+            "lmstudio/test-model-a",
+            &json!({"execution": {"speculation": {"supported": true, "supported_depths": [2],
+                "message": "depth 2 only on this host"}}}),
+        ),
+    );
+    // A late answer for ANOTHER pair never lands.
+    publish_mtp(&h.store, mtp_support_from("other/x", &json!({})));
+    assert_eq!(h.store.sandbox_ws.mtp.get_untracked().depths(), &[2]);
+    h.store.sandbox_ws.mtp_ix.set(3); // depth 3 — not reported
+    h.turns(2);
+    h.type_text("\r");
+    h.turns(2);
+    let notice = h.store.notice.get_untracked().unwrap_or_default();
+    assert!(
+        notice.contains("MTP depth 3 is not available")
+            && notice.contains("depth 2 only on this host"),
+        "{notice}"
+    );
+    assert!(h
+        .find_cmd(|c| matches!(c, Cmd::SandboxTest { .. }))
+        .is_none());
+    h.store.sandbox_ws.mtp_ix.set(2);
+    h.turns(2);
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::SandboxTest { .. })) {
+        Some(Cmd::SandboxTest { request, .. }) => {
+            assert_eq!(request.0["speculation"]["num_draft_tokens"], 2);
+        }
+        other => panic!("expected SandboxTest, got {other:?}"),
+    }
+    // Options dialog: the reason line renders.
+    h.store.sandbox.set(Loadable::NotAsked); // Generate enabled again (tab order)
+    h.turns(2);
+    for _ in 0..3 {
+        h.type_text("\t");
+        h.turns(1);
+    }
+    h.type_text("\r");
+    let s = h.turns(3);
+    assert!(
+        s.contains("Sandbox text options") && s.contains("depths 2 available"),
+        "options dialog:\n{s}"
+    );
+}

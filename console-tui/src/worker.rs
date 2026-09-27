@@ -297,6 +297,20 @@ pub enum Cmd {
     SandboxMedia {
         request: crate::ui::sandbox::MediaRequest,
     },
+    /// Upload a local file as a sandbox attachment (`/attachments/upload`).
+    SandboxAttach {
+        path: String,
+        session_id: String,
+    },
+    /// "Speak this message": TTS the reply on the sandbox run, then play.
+    SandboxSpeak {
+        request: crate::ui::sandbox::MediaRequest,
+    },
+    /// MTP depth availability for the picked text pair.
+    SandboxMtpCaps {
+        provider: String,
+        model: String,
+    },
     /// Docs assistant: start the docs-qa run (`op` = its busy entry).
     DocsAsk {
         question: String,
@@ -1960,6 +1974,36 @@ fn handle(
                     Err(e) => Loadable::Failed(e),
                 })
             });
+        }
+
+        Cmd::SandboxAttach { path, session_id } => {
+            let s = *store;
+            let out = with_busy(store, wake, "uploading attachment", || {
+                require_client(client)
+                    .and_then(|c| crate::ui::sandbox::perform_upload(&c, &path, &session_id))
+            });
+            wake.post(move || crate::ui::sandbox::publish_upload(&s, out));
+        }
+
+        Cmd::SandboxSpeak { request } => {
+            let s = *store;
+            let out = with_busy(store, wake, "speaking the reply", || {
+                require_client(client)
+                    .and_then(|c| crate::ui::sandbox::perform_media(&c, &request))
+            });
+            wake.post(move || crate::ui::sandbox::publish_speech(&s, out));
+        }
+
+        Cmd::SandboxMtpCaps { provider, model } => {
+            let s = *store;
+            let sup = match require_client(client) {
+                Ok(c) => crate::ui::sandbox::load_mtp(&c, &provider, &model),
+                Err(e) => crate::ui::sandbox::MtpSupport::Unknown {
+                    target: format!("{provider}/{model}"),
+                    reason: format!("MTP support unknown: {}", e.message),
+                },
+            };
+            wake.post(move || crate::ui::sandbox::publish_mtp(&s, sup));
         }
 
         Cmd::DocsAsk {
