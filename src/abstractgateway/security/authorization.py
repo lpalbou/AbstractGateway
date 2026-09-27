@@ -110,6 +110,9 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
             "/api/gateway/host/update",
             "/api/gateway/host/update/check",
             "/api/gateway/host/update/start",
+            # Start at login: the READ names host files and programs, the
+            # write registers a login item for the gateway's account.
+            "/api/gateway/host/start-at-login",
         ),
     ),
     # Network exposure (routes/network.py): changing who can reach this host

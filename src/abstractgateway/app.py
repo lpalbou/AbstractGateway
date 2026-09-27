@@ -159,6 +159,11 @@ app.include_router(apps_handover_router)
 from .routes.network import router as network_router  # noqa: E402
 
 app.include_router(network_router, prefix="/api")
+# Start at login (routes/start_at_login.py): literal /gateway/host/start-at-login
+# (gateway_start_at_login_v1), admin-only; the tray's and CLI's same switch.
+from .routes.start_at_login import router as start_at_login_router  # noqa: E402
+
+app.include_router(start_at_login_router, prefix="/api")
 # Automations v1 façade (routes/automations.py): literal /gateway/automations...
 # and /gateway/trigger-sources paths, before the parametrized gateway router.
 app.include_router(automations_router, prefix="/api")

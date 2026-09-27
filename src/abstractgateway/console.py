@@ -2204,6 +2204,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                     runs, it is there. The only reasons it can be absent are
 	                     facts about this machine, and this line names them. -->
 	                <div class="entity-kv"><span class="entity-kv-key">Desktop icon</span><span class="entity-kv-val"><span id="gateway-host-tray-note" class="muted"></span></span></div>
+	                <!-- Start at login: a real switch (admin), confirmed, verified by GET. -->
+	                <div id="gateway-host-login-row" class="entity-kv hidden"><span class="entity-kv-key">Start at login</span><span class="entity-kv-val"><span id="gateway-host-login-text" class="muted">…</span> <button id="gateway-host-login-toggle" class="secondary hidden" type="button"></button></span></div>
 	              </div>
 	              <div class="actions">
 	                <button id="gateway-host-restart" class="secondary hidden" type="button">Restart gateway…</button>
@@ -10153,8 +10155,52 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        _gwMsg("Gateway state unavailable: " + String(e.message || e), "error");
 	      }
 	      if (state.principal && state.principal.admin) {
+	        $("gateway-host-login-row").classList.remove("hidden");
+	        loadStartAtLogin("gateway-host");
 	        try { renderGatewayUpdate(await api("/api/gateway/host/update")); } catch {}
 	      }
+	    }
+	    // START AT LOGIN (GET/PUT /api/gateway/host/start-at-login, admin): one
+	    // switch rendered in the Gateway card ("gateway-host") and on the setup
+	    // guide's Done step ("first-run"). Every change is confirmed, then
+	    // VERIFIED by a fresh GET — the text shows the read-back, never the wish.
+	    const startAtLoginState = {};
+	    function renderStartAtLogin(scope, st, error) {
+	      const text = $(`${scope}-login-text`); const btn = $(`${scope}-login-toggle`);
+	      if (!text || !btn) return;
+	      startAtLoginState[scope] = st || null;
+	      if (!st) {
+	        text.textContent = error ? `unavailable — ${error}` : "…";
+	        btn.classList.add("hidden");
+	        return;
+	      }
+	      const lead = st.enabled ? "On" : ({ off: "Off", broken: "Needs repair", other: "Another gateway" }[st.state] || String(st.state));
+	      text.textContent = st.can_change ? `${lead} — ${st.summary}` : `${lead} — can't be changed here: ${st.reason}`;
+	      btn.classList.toggle("hidden", !st.can_change);
+	      btn.disabled = false;
+	      btn.textContent = st.enabled ? "Turn off…" : ({ broken: "Repair…", other: "Use this gateway…" }[st.state] || "Turn on…");
+	    }
+	    async function loadStartAtLogin(scope) {
+	      try { renderStartAtLogin(scope, await api("/api/gateway/host/start-at-login")); }
+	      catch (e) { renderStartAtLogin(scope, null, String(e.message || e)); }
+	    }
+	    async function toggleStartAtLogin(scope) {
+	      const st = startAtLoginState[scope]; if (!st || !st.can_change) return;
+	      const turnOn = !st.enabled;
+	      const ok = await confirmAction(turnOn
+	        ? { title: "Start AbstractGateway at login?", message: `Registers ${st.mechanism_label} so this gateway starts when you log in.${st.state === "other" ? ` It replaces the registration for another gateway (${st.other_data_dir || "another data folder"}).` : ""} The gateway running now is not restarted.`, confirmLabel: "Turn on" }
+	        : { title: "Stop starting at login?", message: "The gateway keeps running now; it will not start at your next login.", confirmLabel: "Turn off" });
+	      if (!ok) return;
+	      const btn = $(`${scope}-login-toggle`); if (btn) btn.disabled = true;
+	      let err = "";
+	      try { await api("/api/gateway/host/start-at-login", { method: "PUT", body: JSON.stringify({ enabled: turnOn, replace_other: st.state === "other" }) }); }
+	      catch (e) { err = String(e.message || e); }
+	      // Verify by GET, in every scope that shows the switch.
+	      await Promise.all(["gateway-host", "first-run"].filter((sc) => $(`${sc}-login-text`)).map(loadStartAtLogin));
+	      const now = startAtLoginState[scope];
+	      const msg = err ? `Start at login was not changed: ${err}` : (now && now.enabled === turnOn ? "" : `Start at login did not read back as ${turnOn ? "on" : "off"}: ${(now && now.summary) || "unknown"}`);
+	      if (scope === "gateway-host") _gwMsg(msg, msg ? "error" : "");
+	      else if (msg) { $("first-run-message").textContent = msg; $("first-run-message").className = "message error"; }
 	    }
 	    async function toggleGatewayPause() {
 	      const runner = state.hostRunner || {}; const btn = $("gateway-host-pause");
@@ -12198,20 +12244,19 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function renderFirstRunDone() {
       const box = $("first-run-done-body");
       const url = gatewayBaseUrl();
-      const svc = ((firstRun.host && firstRun.host.gateway) || {}).service || {};
       const text = (state.defaults || []).find((r) => r && r.key === "output.text")
         || (state.defaults || []).find((r) => r && r.key === "input.text") || null;
       const model = text && text.provider && text.model ? `${state.providerLabels.get(text.provider) || text.provider} · ${text.model}` : "Not set yet";
       box.innerHTML = firstRunTiles([
         ["Console", `<code class="ui-ellip is-block" title="${esc(url)}/console">${esc(url)}/console</code>`, "Bookmark it: this is your gateway's home"],
         ["Default text model", `<span class="ui-ellip is-block" title="${esc(model)}">${esc(model)}</span>`, "Change it any time in Multimodal"],
-        ["Starts at login", esc(svc.installed ? "Yes" : "Not yet"), svc.installed ? esc(`Installed as a ${svc.mechanism || "service"}`) : "Otherwise, start the gateway yourself after a restart"],
+        ["Starts at login", `<span id="first-run-login-text" class="ui-ellip is-block">…</span>`, `<button id="first-run-login-toggle" class="secondary hidden" type="button"></button>`],
         ["This guide", "Setup guide", "The button at the top right reopens it"],
       ])
         + `<div class="ui-advanced"><div class="ui-section-title"><h3>From the command line</h3></div>`
         + firstRunKv([
           ["Sign in again", `<code>abstractgateway claim --open</code> <span class="subtle">(one-time link, from this machine)</span>`],
-          ["Start at login", svc.installed ? esc(`installed (${svc.mechanism}); remove with abstractgateway service uninstall`) : `<code>abstractgateway service install</code>`],
+          ["Start at login", `<code>abstractgateway service enable</code> · <code>abstractgateway service disable</code>`],
           ["Status", `<code>abstractgateway-config status</code>`],
         ]) + `</div>`
         // Who can reach the gateway, with its addresses to copy: the same
@@ -12222,6 +12267,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         + `<div id="first-run-console-tui"></div>`;
       mountNetworkPanel("first-run", $("first-run-network"));
       mountConsoleTuiNote($("first-run-console-tui"));
+      $("first-run-login-toggle").onclick = () => toggleStartAtLogin("first-run");
+      loadStartAtLogin("first-run");
     }
     async function refresh() {
       let me;
@@ -12698,6 +12745,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("models-refresh").onclick = () => { loadHostState(); startHostStatePoll(); };
 	    $("gateway-host-pause").onclick = toggleGatewayPause;
 	    $("gateway-host-restart").onclick = restartGateway;
+	    $("gateway-host-login-toggle").onclick = () => toggleStartAtLogin("gateway-host");
 	    $("gateway-host-quit").onclick = quitGateway;
 	    $("gateway-host-update-check").onclick = checkGatewayUpdate;
 	    $("gateway-host-update-start").onclick = startGatewayUpdate;
