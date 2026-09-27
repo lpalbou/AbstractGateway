@@ -2575,6 +2575,47 @@ fn voice_audition_sends_the_unsaved_selection_and_shows_the_file() {
     );
 }
 
+/// Own-time Start with the fields left blank sends the web's body: an
+/// empty object (the gateway applies its own tick/day/rest defaults),
+/// never the console's own 20 / 8 / 30.
+#[test]
+fn own_time_start_with_blank_fields_sends_the_web_body() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.goto_screen(3);
+    h.store
+        .users
+        .set(Loadable::Ready(users_from_payload(&users_fixture())));
+    h.store
+        .entities
+        .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
+    h.turns(2);
+    h.type_text("m");
+    h.turns(2);
+    for _ in 0..4 {
+        h.key(b"\x1b[B");
+        h.turn();
+    }
+    h.type_text("\r");
+    let s = h.turns(3);
+    assert!(s.contains("Own time — Testor"), "own-time form open:\n{s}");
+    h.drain_cmds();
+    // tick → ticks → rest → grant hours → Grant → Revoke → Start loop.
+    for _ in 0..6 {
+        h.key(b"\t");
+        h.turn();
+    }
+    h.type_text("\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::EntityLoop { start: true, .. })) {
+        Some(Cmd::EntityLoop { name, body, .. }) => {
+            assert_eq!(name, "Testor");
+            assert_eq!(*body, json!({}), "blank fields are omitted like the web");
+        }
+        other => panic!("expected a loop start, got {other:?}"),
+    }
+}
+
 #[test]
 fn entity_tool_policy_editor_saves_changed_phases_only() {
     let mut h = harness();

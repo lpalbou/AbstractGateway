@@ -156,6 +156,38 @@ pub fn timer_grant_body(hours: &str, now_epoch: u64) -> Result<Option<Value>, St
     })))
 }
 
+/// The `POST /entities/{name}/loop/start` body, as the web builds it
+/// (console.py `entityOwntimeToggle`): a blank field is OMITTED so the
+/// gateway applies its own default (the placeholders 20 / 8 / 30 only
+/// describe that default); `ticks_per_day` is an integer. A field that
+/// is not a number is refused with the reason rather than sent or
+/// dropped (what you typed is what applies).
+pub fn loop_start_body(tick_s: &str, ticks_day: &str, rest_min: &str) -> Result<Value, String> {
+    let mut body = serde_json::Map::new();
+    let tick = tick_s.trim();
+    if !tick.is_empty() {
+        let v: f64 = tick
+            .parse()
+            .map_err(|_| format!("tick seconds is not a number: '{tick}'"))?;
+        body.insert("tick_seconds".into(), json!(v));
+    }
+    let ticks = ticks_day.trim();
+    if !ticks.is_empty() {
+        let v: u64 = ticks
+            .parse()
+            .map_err(|_| format!("ticks per day is not a whole number: '{ticks}'"))?;
+        body.insert("ticks_per_day".into(), json!(v));
+    }
+    let rest = rest_min.trim();
+    if !rest.is_empty() {
+        let v: f64 = rest
+            .parse()
+            .map_err(|_| format!("rest minutes is not a number: '{rest}'"))?;
+        body.insert("rest_minutes".into(), json!(v));
+    }
+    Ok(Value::Object(body))
+}
+
 /// Why an entity WRITE is refused before it is sent (None = send it).
 /// Every write below is an admin route on the gateway
 /// (`security/authorization.py`: the entities mutation pattern); forms
@@ -966,9 +998,11 @@ fn open_own_time_modal(cx: Scope, ctx: &Ctx, name: String) {
         // The web's "grant hours" (entity-grant-hours): blank = the start
         // itself arms an until-revoked grant; N > 0 = a timed window.
         let grant_hours = mcx.signal(String::new());
-        let tick_s = mcx.signal("20".to_string());
-        let ticks_day = mcx.signal("8".to_string());
-        let rest_min = mcx.signal("30".to_string());
+        // Empty = the gateway's default (the placeholders say which),
+        // as on the web: a blank field is omitted from the start body.
+        let tick_s = mcx.signal(String::new());
+        let ticks_day = mcx.signal(String::new());
+        let rest_min = mcx.signal(String::new());
         let name2 = name.clone();
         let ctx3 = ctx2.clone();
         let close2 = close.clone();
@@ -1027,6 +1061,8 @@ fn open_own_time_modal(cx: Scope, ctx: &Ctx, name: String) {
                 "tick seconds",
                 TextInput::new()
                     .value(tick_s)
+                    .placeholder("20")
+                    .placeholder_while_focused(true)
                     .layout(LayoutStyle::default().w(10).h(1))
                     .element(mcx, &t0)
                     .autofocus()
@@ -1037,6 +1073,8 @@ fn open_own_time_modal(cx: Scope, ctx: &Ctx, name: String) {
                 "ticks per day",
                 TextInput::new()
                     .value(ticks_day)
+                    .placeholder("8")
+                    .placeholder_while_focused(true)
                     .layout(LayoutStyle::default().w(10).h(1))
                     .element(mcx, &t0)
                     .build(),
@@ -1046,6 +1084,8 @@ fn open_own_time_modal(cx: Scope, ctx: &Ctx, name: String) {
                 "rest minutes",
                 TextInput::new()
                     .value(rest_min)
+                    .placeholder("30")
+                    .placeholder_while_focused(true)
                     .layout(LayoutStyle::default().w(10).h(1))
                     .element(mcx, &t0)
                     .build(),
@@ -1119,29 +1159,15 @@ fn open_own_time_modal(cx: Scope, ctx: &Ctx, name: String) {
                                     if !super::util::admin_gate(&ctx_start.store, "starting an entity's own time") {
                                         return;
                                     }
-                                    // Refuse garbage with the reason instead
-                                    // of silently substituting the default
-                                    // ("20abc" starting a loop at 20 is the
-                                    // what-you-typed-is-not-what-applies
-                                    // class). Blank = the default, stated.
-                                    let parse = |s: Signal<String>, d: f64, label: &str| {
-                                        let raw = s.get_untracked().trim().to_string();
-                                        if raw.is_empty() {
-                                            return Ok(d);
-                                        }
-                                        raw.parse::<f64>().map_err(|_| {
-                                            format!("{label} is not a number: '{raw}'")
-                                        })
-                                    };
-                                    let vals = (|| -> Result<(f64, f64, f64), String> {
-                                        Ok((
-                                            parse(tick_s, 20.0, "tick seconds")?,
-                                            parse(ticks_day, 8.0, "ticks per day")?,
-                                            parse(rest_min, 30.0, "rest minutes")?,
-                                        ))
-                                    })();
-                                    let (tick, ticks, rest) = match vals {
-                                        Ok(v) => v,
+                                    // Blank fields are omitted (the gateway's
+                                    // defaults apply, as on the web); garbage
+                                    // is refused with the reason.
+                                    let loop_body = match loop_start_body(
+                                        &tick_s.get_untracked(),
+                                        &ticks_day.get_untracked(),
+                                        &rest_min.get_untracked(),
+                                    ) {
+                                        Ok(b) => b,
                                         Err(e) => {
                                             ctx_start.store.notice.set(Some(e));
                                             return;
@@ -1168,11 +1194,7 @@ fn open_own_time_modal(cx: Scope, ctx: &Ctx, name: String) {
                                     ctx_start.send(Cmd::EntityLoop {
                                         name: n_start.clone(),
                                         start: true,
-                                        body: json!({
-                                            "tick_seconds": tick,
-                                            "ticks_per_day": ticks as u64,
-                                            "rest_minutes": rest,
-                                        }).into(),
+                                        body: loop_body.into(),
                                     });
                                 })
                                 .element(bcx, &t)
@@ -2034,8 +2056,29 @@ fn open_candidates_modal(cx: Scope, ctx: &Ctx, name: String) {
 
 #[cfg(test)]
 mod tests {
-    use super::timer_grant_body;
+    use super::{loop_start_body, timer_grant_body};
     use serde_json::json;
+
+    /// Own-time Start mirrors the web body: blank fields are omitted
+    /// (the gateway's defaults apply), typed values are sent as typed.
+    #[test]
+    fn loop_start_body_omits_blank_fields_like_the_web() {
+        assert_eq!(loop_start_body("", "", "").unwrap(), json!({}));
+        assert_eq!(
+            loop_start_body(" 45 ", "", "").unwrap(),
+            json!({"tick_seconds": 45.0})
+        );
+        assert_eq!(
+            loop_start_body("", "12", "2.5").unwrap(),
+            json!({"ticks_per_day": 12, "rest_minutes": 2.5})
+        );
+        assert!(loop_start_body("20abc", "", "")
+            .unwrap_err()
+            .contains("tick seconds is not a number"));
+        assert!(loop_start_body("", "8.5", "")
+            .unwrap_err()
+            .contains("ticks per day is not a whole number"));
+    }
 
     /// The own-time timer carries the expiry the web computes (now +
     /// hours) — without it the gateway answers 400.
