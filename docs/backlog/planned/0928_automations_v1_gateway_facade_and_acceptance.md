@@ -341,3 +341,18 @@ Behaviour:
 - abstractframework backlog 0928 (master item).
 - abstractgateway 0930 (console inventory, after v1), 0929 (v2 external events).
 - Legacy scheduled runs: `tests/test_gateway_scheduled_runs.py`.
+
+## Contracts pass (2026-09-27)
+
+Final contracts: untracked/design/automations-CONTRACTS.md (root repo; rev 2 with Astra turn-6 amendments 1–11). They supersede the contract text copied above; earlier text is kept as history. Concrete changes for this item:
+
+- Error body is `{"detail":{"reason_code","message","field?","command_id?"}}` (repo convention), enforced by scoped app-level handlers for every non-2xx on `/api/gateway/automations*` and `/api/gateway/trigger-sources`, including 401 `unauthorized`, 403 `forbidden`, malformed JSON → 422 `invalid_request`. Replaces `{error:{code,…}}`.
+- Full paths under `/api/gateway`. `changed_since` → 422 `unsupported_feature`; clients poll full paginated summaries; `Page={items,next_cursor}`; new `GET /api/gateway/automations/{id}/attention` (unseen, oldest first); summary `attention` gains `unseen_count`, `items` (oldest unseen first), `waits`.
+- `abstractgateway/command_types.py` is the single command-type source (route `:28465`, description `:2446`, runner `:1756/:1772`, capabilities `:17021`) + AST single-source test; the runner calls runtime `record_automation_command_result` before the cursor advances; crash tests around cursor advance.
+- Attention preferences: `<plane>/automations/attention/<sha256([tenant,user])>.json`, tuple stored and verified, serialized read-modify-replace; `/seen` keeps the max.
+- `/runs` rows gain `session_kind, automation_id, role, occurrence_index`; `session_kind` filter added to the known-params list; `is_scheduled` on index rows = `role=="legacy_schedule"`.
+- Discussion via runtime `start_discussion`; strip client `workspace_read_only`; `start_run` restamps discussion attribution + read-only workspace at entry (runtime `Runtime.start` is the authority) and seeds discussion sessions strictly (never the unseeded fallback at `bundle_host.py:2031`).
+- Load the controller through `load_from_dir(extra_bundle_paths=[controller_bundle_path()])` as `private`/`framework`; hide `metadata.internal` bundles; resolve the persisted `abstractframework.automation-controller@1.0.0:controller`.
+- VisualFlow save models accept `automation_defaults` (else `extra="forbid"` 422s it); publish writes `metadata.automation_defaults[root flow_id]`; `/bundles`, `/bundles/{id}`, catalog records expose it.
+- `@default` targets resolved at create/revise with `resolve_default_agent_workflow`; the concrete target is stored.
+- Acceptance script gains: one-shot exhaustion, kill between decision append and state save, retry (success on attempt 2 = no attention; 3 failures = one item), revise during backoff, EVENT-prompt wait counted, discussion `execute_python` and VisualFlow write refused, `changed_since` → 422.
