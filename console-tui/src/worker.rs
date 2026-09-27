@@ -17,6 +17,10 @@ use abstracttui::reactive::WakeHandle;
 use serde_json::Value;
 
 use crate::api::{ApiError, ApiErrorKind, ApiResult, GatewayClient};
+
+/// The Apps screen's handlers (install/update/start/stop/open, jobs).
+#[path = "worker_apps.rs"]
+mod apps;
 use crate::store::{
     entities_from_payload, models_from_payload, runtimes_from_payload, users_from_payload,
     AvailabilityData, ConnPhase, DiscoverOutcome, DownloadStatus, Identity, JournalEntry, Loadable,
@@ -164,6 +168,39 @@ pub enum Cmd {
         bundle_id: String,
         version: String,
         dest: String,
+    },
+    /// Apps screen: `GET /apps?latest=` (latest = also ask npm / the
+    /// terminal app's release for newer versions).
+    LoadApps {
+        latest: bool,
+    },
+    /// One app verb (install, update, start, stop, open, desktop open,
+    /// terminal open/install). `start_first`: Open on a stopped app
+    /// starts it, then mints the sign-in link.
+    AppAct {
+        app_id: String,
+        name: String,
+        verb: crate::store::apps::AppVerb,
+        path: Option<String>,
+        start_first: bool,
+    },
+    /// Cancel an apps job (`key` = app:<id> | tui:<id> | __node__).
+    CancelAppJob {
+        key: String,
+        name: String,
+        job_id: String,
+    },
+    /// `POST /apps/runtime/install`: Node.js for the browser apps.
+    InstallAppsNode,
+    /// `GET /apps/{id}/logs?tail=N`.
+    LoadAppLog {
+        app_id: String,
+        tail: u32,
+    },
+    /// ONE hop of the apps job poll chain (gen-gated on the UI thread).
+    PollAppJobs {
+        gen: u64,
+        jobs: Vec<(String, String)>,
     },
     /// One page of artifact metadata (deliverables).
     LoadArtifacts {
@@ -1320,6 +1357,21 @@ fn handle(
             let verified = Some(Ok(format!("wrote {dest}")));
             finish_write(store, wake, action, write, verified, None, on_done);
         }
+
+        Cmd::LoadApps { latest } => apps::load(client, store, wake, tx, latest),
+        Cmd::AppAct {
+            app_id,
+            name,
+            verb,
+            path,
+            start_first,
+        } => apps::act(client, store, wake, tx, &app_id, &name, verb, path, start_first),
+        Cmd::CancelAppJob { key, name, job_id } => {
+            apps::cancel(client, store, wake, tx, &key, &name, &job_id)
+        }
+        Cmd::InstallAppsNode => apps::install_node(client, store, wake, tx),
+        Cmd::LoadAppLog { app_id, tail } => apps::load_log(client, store, wake, &app_id, tail),
+        Cmd::PollAppJobs { gen, jobs } => apps::poll(client, store, wake, tx, gen, jobs),
 
         Cmd::LoadRuntimes => load(store, wake, "loading runtimes", store.runtimes, || {
             require_client(client)?

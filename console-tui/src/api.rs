@@ -12,6 +12,11 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
+/// The Apps screen's routes (`/api/gateway/apps*`): a child module so it
+/// shares this file's private GET/POST plumbing.
+#[path = "api_apps.rs"]
+pub mod api_apps;
+
 /// What kind of failure this is — drives which honest state the UI shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiErrorKind {

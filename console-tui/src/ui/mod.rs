@@ -7,6 +7,8 @@
 
 /// The About modal (F1 / ?).
 pub mod about;
+/// The Apps screen (browser apps, the desktop Assistant, Node.js).
+pub mod apps;
 pub mod connection;
 pub mod entity_manage;
 pub mod models;
@@ -35,7 +37,7 @@ use crate::worker::Cmd;
 use abstractcore_console::screens::Remote;
 use util::{hints, line, span, span_bold};
 
-pub const SCREENS: [&str; 10] = [
+pub const SCREENS: [&str; 11] = [
     "Connection",
     "Providers",
     "Routes",
@@ -51,6 +53,8 @@ pub const SCREENS: [&str; 10] = [
     // the model catalog / downloads / deletes, and the local engines.
     abstractcore_console::screens::CATALOG_TITLE,
     abstractcore_console::screens::ENGINES_TITLE,
+    // The web console's Apps tab (ui/apps.rs); key `A`.
+    "Apps",
 ];
 
 /// Screens with semantic weight get NAMES (round-4 P3-2): the bare
@@ -65,11 +69,18 @@ pub const SCREEN_MODELS: usize = 7;
 pub const SCREEN_CATALOG: usize = 8;
 /// AbstractCore's shared "Engines" screen (page id `engines`), key `0`.
 pub const SCREEN_ENGINES: usize = 9;
+/// The Apps screen (browser apps, Assistant, Node.js), key `A`. The
+/// first-run wizard references it BY THIS NAME; the number may move.
+pub const SCREEN_APPS: usize = 10;
 
 /// The digit that jumps to screen `i` in browse mode: 1-9, then 0 for
 /// the tenth (PageHost's own number jump covers 1-9 only).
 pub fn screen_key(i: usize) -> char {
-    if i == 9 {
+    if i == SCREEN_APPS {
+        // The digits are spent: the Apps screen gets a LETTER (shifted,
+        // so no screen's own lowercase verb ever collides with it).
+        'A'
+    } else if i == 9 {
         '0'
     } else {
         char::from_digit(i as u32 + 1, 10).expect("screens 1-9")
@@ -79,7 +90,7 @@ pub fn screen_key(i: usize) -> char {
 /// Stable PageHost page ids, parallel to `SCREENS`. `ui.screen: usize`
 /// stays the source of truth (the wizard gate reads indexes); a two-way
 /// equality-guarded bridge keeps PageHost's string `active` in lockstep.
-pub const SCREEN_IDS: [&str; 10] = [
+pub const SCREEN_IDS: [&str; 11] = [
     "connection",
     "providers",
     "routes",
@@ -92,6 +103,7 @@ pub const SCREEN_IDS: [&str; 10] = [
     // execution planes). The shared contract names these two.
     abstractcore_console::screens::CATALOG_ID,
     abstractcore_console::screens::ENGINES_ID,
+    "apps",
 ];
 
 /// Durable per-screen UI state (Copy: all signals).
@@ -502,6 +514,14 @@ impl Ctx {
             // engines read), reached when the root `r` handles the key.
             SCREEN_CATALOG => self.screens.refresh_catalog(),
             SCREEN_ENGINES => self.screens.refresh_engines(),
+            SCREEN_APPS => {
+                // Rows stay on screen while re-checking (web "Check
+                // again"); a first read shows the loading state.
+                if s.apps.overview.with_untracked(|o| o.ready().is_none()) {
+                    s.apps.overview.set(Loadable::Loading);
+                }
+                self.send(Cmd::LoadApps { latest: true });
+            }
             _ => {}
         }
     }
@@ -982,6 +1002,7 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         let c7 = host_ctx.clone();
         let c8 = host_ctx.clone();
         let c9 = host_ctx.clone();
+        let c10 = host_ctx.clone();
         PageHost::new()
             .page(SCREEN_IDS[0], "1 Connection", move |gcx| {
                 connection::view(gcx, &c0, &theme.get().tokens)
@@ -1013,6 +1034,9 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
             })
             .page(SCREEN_IDS[9], "0 Engines", move |gcx| {
                 abstractcore_console::screens::engines(gcx, &c9.screens_for_page())
+            })
+            .page(SCREEN_IDS[SCREEN_APPS], "A Apps", move |gcx| {
+                apps::view(gcx, &c10, &theme.get().tokens)
             })
             .active(active)
             .number_jump(!wizard_now)
@@ -1129,6 +1153,7 @@ fn wizard_goal(screen: usize) -> &'static str {
         SCREEN_ENGINES => {
             "optional — i installs a local engine (Ollama, MLX…) on the gateway host, after a confirm."
         }
+        SCREEN_APPS => "optional — i installs a browser app; o opens it signed in (a one-time link).",
         _ => "",
     }
 }
@@ -1195,6 +1220,7 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
                     let s = ctx.screens.store;
                     s.engines.with(Remote::is_not_asked) || s.host.with(Remote::is_not_asked)
                 }
+                SCREEN_APPS => matches!(store.apps.overview.get(), Loadable::NotAsked),
                 // Deliberately NOT keyed here: host-state freshness is
                 // owned end-to-end by the poll-lifecycle effect below
                 // (a second trigger lane would race it into double
@@ -1646,6 +1672,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 SCREEN_ENGINES => {
                     pairs.extend_from_slice(abstractcore_console::screens::engines::HINTS);
                 }
+                SCREEN_APPS => pairs.extend_from_slice(apps::HINTS),
                 _ => {}
             }
             hints(&t, &pairs)

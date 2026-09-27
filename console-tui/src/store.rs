@@ -13,6 +13,10 @@ use serde_json::Value;
 
 use crate::api::ApiError;
 
+/// The Apps screen's rows, decision rules and signals.
+#[path = "store_apps.rs"]
+pub mod apps;
+
 /// Remote data honesty: never render a guess.
 #[derive(Clone, Debug, Default)]
 pub enum Loadable<T> {
@@ -2463,6 +2467,8 @@ pub struct Store {
     /// The registered workflow registry: one row per bundle, plus the
     /// versions the gateway refused to serve.
     pub workflows: Signal<Loadable<WorkflowsData>>,
+    /// The Apps screen (browser apps, Node.js, their jobs): store_apps.rs.
+    pub apps: apps::AppsStore,
     pub runtime_config: Signal<Loadable<RuntimeConfigData>>,
     /// `GET /about` of the connected gateway (About modal).
     pub about: Signal<Loadable<Value>>,
@@ -3198,6 +3204,7 @@ impl Store {
             entities: cx.signal(Loadable::default()),
             runtimes: cx.signal(Loadable::default()),
             workflows: cx.signal(Loadable::default()),
+            apps: apps::AppsStore::create(cx),
             runtime_config: cx.signal(Loadable::default()),
             about: cx.signal(Loadable::default()),
             network: cx.signal(Loadable::default()),
@@ -3266,6 +3273,7 @@ impl Store {
             entities,
             runtimes,
             workflows,
+            apps,
             runtime_config,
             about,
             network,
@@ -3305,6 +3313,7 @@ impl Store {
         entities.set(Loadable::NotAsked);
         runtimes.set(Loadable::NotAsked);
         workflows.set(Loadable::NotAsked);
+        apps.reset();
         runtime_config.set(Loadable::NotAsked);
         about.set(Loadable::NotAsked);
         network.set(Loadable::NotAsked);
