@@ -2564,6 +2564,17 @@ pub struct Store {
     pub entity_prompt: Signal<Loadable<PromptData>>,
     /// Candidates review state: (entity, rows).
     pub entity_candidates: Signal<Loadable<(String, Vec<CandidateRow>)>>,
+    /// The summon form's inputs: templates, creation defaults, providers,
+    /// the default capability grid (entity parity — `api::entities`).
+    pub entity_kit: Signal<Loadable<crate::api::entities::CreationKit>>,
+    /// The summon dry-run verdict for the name in the open form.
+    pub entity_check: Signal<Loadable<crate::api::entities::CreateCheck>>,
+    /// The identity card of the entity whose card is open.
+    pub entity_card: Signal<Loadable<crate::api::entities::EntityCard>>,
+    /// The console's one live Talk visit (local transcript, like the web).
+    pub entity_chat: Signal<crate::api::entities::ChatState>,
+    /// The voice audition's result (audio saved to a file).
+    pub entity_audition: Signal<Loadable<crate::api::entities::AuditionOutcome>>,
     /// Recent root runs of ONE runtime plane (follows the Runtimes
     /// screen's selection; scope rides with the rows).
     pub runs: Signal<Loadable<RunsData>>,
@@ -3288,6 +3299,11 @@ impl Store {
             entity_policy: cx.signal(Loadable::default()),
             entity_prompt: cx.signal(Loadable::default()),
             entity_candidates: cx.signal(Loadable::default()),
+            entity_kit: cx.signal(Loadable::default()),
+            entity_check: cx.signal(Loadable::default()),
+            entity_card: cx.signal(Loadable::default()),
+            entity_chat: cx.signal(Default::default()),
+            entity_audition: cx.signal(Loadable::default()),
             runs: cx.signal(Loadable::default()),
             data_homes: cx.signal(Loadable::default()),
             artifacts: cx.signal(Loadable::default()),
@@ -3361,6 +3377,11 @@ impl Store {
             entity_policy,
             entity_prompt,
             entity_candidates,
+            entity_kit,
+            entity_check,
+            entity_card,
+            entity_chat,
+            entity_audition,
             runs,
             data_homes,
             artifacts,
@@ -3406,6 +3427,13 @@ impl Store {
         entity_policy.set(Loadable::NotAsked);
         entity_prompt.set(Loadable::NotAsked);
         entity_candidates.set(Loadable::NotAsked);
+        // Entity parity slots: a visit id or a template list from gateway
+        // A must never be driven against gateway B.
+        entity_kit.set(Loadable::NotAsked);
+        entity_check.set(Loadable::NotAsked);
+        entity_card.set(Loadable::NotAsked);
+        entity_chat.set(Default::default());
+        entity_audition.set(Loadable::NotAsked);
         runs.set(Loadable::NotAsked);
         data_homes.set(Loadable::NotAsked);
         artifacts.set(Loadable::NotAsked);

@@ -1,11 +1,12 @@
 //! Per-entity configuration + state controls — the TUI half of the web
 //! console's Manage drawer (parity audit items a-1..a-8).
 //!
-//! Scope law: entity CREATION, summoning and visits stay deliberately
-//! out (rituals, not configuration). What lives here is exactly what an
-//! operator changes on an existing entity: state (wake/sleep/pause),
-//! mind substrate, voice triple, work order, own-time grant + loop,
-//! re-embed, verify.
+//! What lives here is what an operator does to an existing entity:
+//! its identity card, Talk (the hosted visit — `entity_chat`), state
+//! (wake/sleep/pause), mind substrate, voice triple (+ audition), work
+//! order, own-time grant + loop, re-embed, verify. Summoning a NEW
+//! entity and its spark templates live in `entity_create` (web parity:
+//! the web console offers both).
 
 use abstracttui::prelude::*;
 use abstracttui::widgets::{ColWidth, Column, SubmitPolicy, Table};
@@ -38,7 +39,7 @@ pub fn open_manage_menu(cx: Scope, ctx: &Ctx, entity: EntityRow) {
         cx,
         ctx.ui,
         abstracttui::app::ChoicePrompt::new(format!(
-            "Manage entity '{}' (currently {}) — creation/summon/visits stay outside this console.",
+            "Manage entity '{}' (currently {}).",
             name, state_now
         ))
         .option("state", "State — wake / sleep / pause")
@@ -55,11 +56,18 @@ pub fn open_manage_menu(cx: Scope, ctx: &Ctx, entity: EntityRow) {
             "vector-index rewrite; takes the home lease — not advised unless repairing",
         )
         .option("verify", "Verify chain / spark / manifest")
+        .option("card", "Identity card (overview)")
+        .option(
+            "talk",
+            "Talk — open a visit and chat (also c on the roster)",
+        )
         .initial("state"),
         move |outcome| {
             if let abstracttui::app::ChoiceOutcome::Answered(a) = outcome {
                 let pick = a.selected.first().cloned().unwrap_or_default();
                 match pick.as_str() {
+                    "card" => super::entity_chat::open_card_modal(cx, &ctx2, entity.name.clone()),
+                    "talk" => super::entity_chat::open_talk_modal(cx, &ctx2, entity.name.clone()),
                     "state" => open_state_modal(cx, &ctx2, entity.clone()),
                     "substrate" => open_substrate_form(cx, &ctx2, entity.name.clone()),
                     "voice" => open_voice_form(cx, &ctx2, entity.name.clone()),
@@ -226,9 +234,9 @@ pub fn inspector_view(
         col = col
             .child(line(vec![span(String::new(), t.text)]))
             .child(line(vec![span(
-            "m = manage actions · i closes this panel · creation/summon stay outside this console",
-            t.text_faint,
-        )]));
+                "m = manage actions · c = talk · i closes this panel · n summons a new entity",
+                t.text_faint,
+            )]));
         Scroll::new(col.build()).view(gcx)
     })
 }
@@ -474,8 +482,10 @@ fn open_substrate_form(cx: Scope, ctx: &Ctx, name: String) {
 
 fn open_voice_form(cx: Scope, ctx: &Ctx, name: String) {
     let store = ctx.store;
+    // A previous audition (maybe of another entity) never dresses this form.
+    store.entity_audition.set(Loadable::NotAsked);
     let ctx2 = ctx.clone();
-    super::open_form_guarded(ctx, cx, Size::new(74, 18), move |mcx, close, guard| {
+    super::open_form_guarded(ctx, cx, Size::new(84, 24), move |mcx, close, guard| {
         let theme = use_theme(mcx);
         let t0 = theme.get().tokens;
         let detail = detail_for(&store, &name);
@@ -510,6 +520,7 @@ fn open_voice_form(cx: Scope, ctx: &Ctx, name: String) {
             .unwrap_or_else(|| "unknown".into());
         let ctx_save = ctx2.clone();
         let name_save = name.clone();
+        let name_aud = name.clone();
         let close_cancel = close.clone();
         Element::new()
             .style(LayoutStyle::column().gap(0))
@@ -565,16 +576,54 @@ fn open_voice_form(cx: Scope, ctx: &Ctx, name: String) {
                     .build(),
             ))
             .child(super::message_slot(theme, form_error, in_flight))
+            .child(audition_view(store, theme, name_aud))
             .child(dyn_view_scoped(
                 LayoutStyle::default().h(1).shrink(0.0),
                 move |bcx| {
                     let t = theme.get().tokens;
                     let busy = in_flight.get();
                     let ctx_s = ctx_save.clone();
+                    let ctx_a = ctx_save.clone();
                     let n = name_save.clone();
+                    let n_a = name_save.clone();
                     let close_b = close_cancel.clone();
                     Element::new()
                         .style(LayoutStyle::row().gap(2))
+                        .child(
+                            Button::new("Audition")
+                                .on_click(move || {
+                                    // The UNSAVED selection, spoken as the
+                                    // entity (web parity: Save makes it his).
+                                    // Untracked guard, not a disabled flag: a
+                                    // tracked flag would rebuild this row and
+                                    // drop the keyboard focus mid-form.
+                                    if store.entity_audition.with_untracked(Loadable::is_loading) {
+                                        return;
+                                    }
+                                    let p = provider.get_untracked().trim().to_string();
+                                    let m = model.get_untracked().trim().to_string();
+                                    let v = voice.get_untracked().trim().to_string();
+                                    if p.is_empty() || m.is_empty() {
+                                        form_error.set(Some(
+                                            "select at least a provider and model to audition."
+                                                .into(),
+                                        ));
+                                        return;
+                                    }
+                                    form_error.set(None);
+                                    ctx_a.store.entity_audition.set(Loadable::Loading);
+                                    ctx_a.send(Cmd::Entity(
+                                        crate::worker::entities::EntityCmd::VoiceAudition {
+                                            name: n_a.clone(),
+                                            provider: p,
+                                            model: m,
+                                            voice: (!v.is_empty()).then_some(v),
+                                        },
+                                    ));
+                                })
+                                .element(bcx, &t)
+                                .build(),
+                        )
                         .child(
                             Button::new("Save")
                                 .disabled(busy)
@@ -623,6 +672,76 @@ fn open_voice_form(cx: Scope, ctx: &Ctx, name: String) {
             ))
             .build()
     });
+}
+
+/// The audition's outcome inside the voice form — the terminal's twin
+/// of the web's inline audio player: the audio file's path (and a Play
+/// button only when a local command-line player exists).
+fn audition_view(
+    store: crate::store::Store,
+    theme: Signal<&'static abstracttui::theme::Theme>,
+    name: String,
+) -> View {
+    dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |acx| {
+        let t = theme.get().tokens;
+        match store.entity_audition.get() {
+            Loadable::NotAsked => Element::new().style(LayoutStyle::default().h(0)).build(),
+            Loadable::Loading => line(vec![span("⟳ Synthesizing… (up to 25s)", t.info)]),
+            Loadable::Failed(e) => line(vec![span(format!("Audition failed: {e}"), t.error)]),
+            Loadable::Ready(o) if o.entity != name => {
+                Element::new().style(LayoutStyle::default().h(0)).build()
+            }
+            Loadable::Ready(o) => {
+                let mut col = Element::new().style(LayoutStyle::column().gap(0));
+                for l in super::util::wrap_text(&o.summary, 76) {
+                    col = col.child(line(vec![span(l, t.ok)]));
+                }
+                if let Some(err) = &o.error {
+                    col = col.child(line(vec![span(err.clone(), t.error)]));
+                }
+                if let Some(path) = &o.path {
+                    col = col.child(line(vec![
+                        span("audio saved: ", t.text_muted),
+                        span(
+                            format!("{path} ({})", crate::store::human_bytes(o.bytes as u64)),
+                            t.text,
+                        ),
+                    ]));
+                    match &o.player {
+                        Some(player) => {
+                            let (pl, pa) = (player.clone(), path.clone());
+                            col = col.child(
+                                Element::new()
+                                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                                    .child(
+                                        Button::new(format!("Play ({pl})"))
+                                            .on_click(move || {
+                                                let note = match crate::api::entities::spawn_player(
+                                                    &pl, &pa,
+                                                ) {
+                                                    Ok(()) => format!("playing {pa} with {pl}"),
+                                                    Err(e) => format!("{pl} failed to start: {e}"),
+                                                };
+                                                store.notice.set(Some(note));
+                                            })
+                                            .element(acx, &t)
+                                            .build(),
+                                    )
+                                    .build(),
+                            );
+                        }
+                        None => {
+                            col = col.child(line(vec![span(
+                                "no command-line audio player found on PATH (afplay, paplay, aplay, ffplay) — open the file yourself",
+                                t.text_faint,
+                            )]));
+                        }
+                    }
+                }
+                col.build()
+            }
+        }
+    })
 }
 
 // ---------------------------------------------------------------------

@@ -764,8 +764,8 @@ impl GatewayClient {
     }
 
     // ---- entity configuration + state (the web's Manage drawer) ---------
-    // Creation/summon/visits stay deliberately out of scope (rituals);
-    // these are the operator CONFIG controls the web console exposes.
+    // The operator CONFIG controls the web console exposes; summon,
+    // templates, card, talk and the voice audition live in `entities`.
 
     pub fn entity_cognition(&self, name: &str) -> ApiResult<Value> {
         self.get(&entity_path(name, "cognition"), false)
@@ -1269,6 +1269,11 @@ impl GatewayClient {
 /// Minimal percent-encoding for path/query components (RFC 3986
 /// unreserved set stays literal). Gateway ids are conservative, but ids
 /// are user input — never interpolate them raw.
+/// Entity parity (summon, templates, card, talk, voice audition) —
+/// its own file, a child module so it shares this transport.
+#[path = "api_entities.rs"]
+pub mod entities;
+
 /// Per-entity route path: every entity endpoint is `/entities/{name}/<leaf>`
 /// with the name urlencoded — one constructor instead of 20 format! copies.
 fn entity_path(name: &str, leaf: &str) -> String {

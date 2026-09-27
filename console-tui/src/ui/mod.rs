@@ -10,6 +10,8 @@ pub mod about;
 /// The Apps screen (browser apps, the desktop Assistant, Node.js).
 pub mod apps;
 pub mod connection;
+pub mod entity_chat;
+pub mod entity_create;
 pub mod entity_manage;
 /// Gateway host panel (F2) + the paused / restart banner.
 pub mod host;
@@ -1736,6 +1738,9 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     pairs.push(("t", "rotate token"));
                     pairs.push(("d", "delete"));
                     pairs.push(("m", "manage entity"));
+                    pairs.push(("n", "summon entity"));
+                    pairs.push(("c", "talk"));
+                    pairs.push(("s", "spark templates"));
                     pairs.push(("i", "inspect"));
                     pairs.push(("v", "kept data of deleted users"));
                     pairs.push(("w", "my workspace policy"));

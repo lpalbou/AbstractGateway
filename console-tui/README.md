@@ -63,8 +63,16 @@ leaves it (not recorded, it opens again next start) or skips it
    grants from the live capability matrix; emptied phases ask
    reset-vs-deny-all), prompt overlay (per-layer multi-line editing),
    candidates review (promote/reject with journaled reasons), re-embed
-   (danger-gated), verify chain. Entity creation/summon/visits stay
-   deliberately outside this console (rituals, not configuration).
+   (danger-gated), verify chain, identity card, and a voice
+   **audition** (the unsaved triple spoken as the entity; the audio is
+   saved to a file and played only when a local player exists). As in
+   the web console you can also **summon** a new entity (`n`: template +
+   name → dry-run validate → a confirm naming the permanence → create,
+   with admin-only substrate / birth embedder / per-phase capabilities),
+   manage **spark templates** (`s`: view, edit as a new version, new
+   from selected — saving is admin-only), and **talk** with an entity
+   (`c`: open a hosted visit, send turns, close with the reflection
+   pass; one visit at a time).
 5. **Runtimes** — the data-plane inventory (default / per-user /
    per-entity) with owners, sizes, liveness, the runtime-knobs
    surface (per-knob value + provenance; API-writable, no UI edits

@@ -26,6 +26,9 @@ mod apps;
 /// workflow import/reload, skills reseed, WAN lookup, own workspace policy).
 #[path = "worker_operator.rs"]
 pub mod operator;
+/// Entity parity (summon, templates, card, talk, voice audition).
+#[path = "worker_entities.rs"]
+pub mod entities;
 use crate::store::{
     entities_from_payload, models_from_payload, runtimes_from_payload, users_from_payload,
     AvailabilityData, ConnPhase, DiscoverOutcome, DownloadStatus, Identity, JournalEntry, Loadable,
@@ -451,6 +454,8 @@ pub enum Cmd {
         promote: bool,
         reason: String,
     },
+    /// Entity parity: summon, templates, card, talk, voice audition.
+    Entity(entities::EntityCmd),
     /// Load the runs of ONE runtime plane (the scope names which — the
     /// Runtimes screen's selection effect owns this slot end-to-end).
     LoadRuns {
@@ -651,6 +656,7 @@ fn cmd_form_id(cmd: &Cmd) -> Option<u64> {
         | Cmd::EntityReembed { form_id, .. }
         | Cmd::CompleteFirstRun { form_id, .. } => *form_id,
         Cmd::Operator(op) => op.form_id(),
+        Cmd::Entity(e) => e.form_id(),
         _ => None,
     }
 }
@@ -2607,6 +2613,8 @@ fn handle(
                 publish_ready(wake, store.entity_candidates, folded);
             }
         }
+
+        Cmd::Entity(e) => entities::handle(client, store, wake, e, on_done),
 
         Cmd::LoadRuns {
             scope,
