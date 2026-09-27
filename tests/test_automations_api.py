@@ -791,3 +791,11 @@ def test_a_reused_command_id_for_another_command_is_an_identity_conflict(live: T
         "reason_code": "identity_conflict", "message": _envelope(r)["message"], "field": "command_id", "command_id": "same-id"}
     dup = live.post(f"/api/gateway/automations/{aid}/commands", headers=HEADERS, json={"command_id": "same-id", "type": "automation.pause"})
     assert dup.status_code == 200 and dup.json()["duplicate"] is True
+
+
+def test_summary_rows_carry_the_definitions_workspace_root(live: TestClient) -> None:
+    aid = _create(live, request_id="ws-row")["automation_id"]
+    definition = live.get(f"/api/gateway/automations/{aid}", headers=HEADERS).json()["definition"]
+    rows = {s["automation_id"]: s for s in live.get("/api/gateway/automations", headers=HEADERS).json()["items"]}
+    assert rows[aid]["workspace_root"] == definition["workspace_root"]
+    assert live.get(f"/api/gateway/automations/{aid}", headers=HEADERS).json()["summary"]["workspace_root"] == definition["workspace_root"]

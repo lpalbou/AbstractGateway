@@ -288,7 +288,8 @@ never inherit the grant: their tools ask as in any chat.
 {"automation_id": "…", "title": "…",
  "status": "active",                  // active | paused | completed | failed | archived
  "trigger": {"binding_id": "…", "source_id": "schedule", "source_version": 1, "config": {…}},
- "context_mode": "independent", "next_fire_at": "…", "occurrence_count": 6,
+ "context_mode": "independent", "workspace_root": "/…/workspaces/session-automation-…",
+ "next_fire_at": "…", "occurrence_count": 6,
  "last_occurrence": {"run_id", "index", "status", "attempts", "fired_at", "finished_at"?, "excerpt", "notify"},
  "attention": {"pending_waits": 0, "unread": false, "unseen_count": 0, "cursor": "att1:3", "items": [], "waits": []},
  "legacy": false, "revision": 1, "updated_at": "…",
@@ -296,6 +297,9 @@ never inherit the grant: their tools ask as in any chat.
  "session_kind": "automation"}
 ```
 
+- `workspace_root` is the automation's folder, the same value as
+  `definition.workspace_root` (an older scheduled run shows its own folder
+  when it has one).
 - `next_fire_at` is present only while a tick is scheduled.
 - `last_occurrence.excerpt` holds the first 280 characters of its answer.
 - `attention` is described in [Attention](#attention-and-seen); `items` and

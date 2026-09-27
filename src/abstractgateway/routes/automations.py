@@ -306,6 +306,9 @@ def automation_summary_row(svc: Any, principal: Any, controller: Any) -> Dict[st
         "status": status,
         "trigger": base["trigger"],
         "context_mode": base["context_mode"],
+        # The automation's folder (= definition.workspace_root): apps open it
+        # from the row without fetching the definition.
+        "workspace_root": base["workspace_root"],
         "next_fire_at": base.get("next_fire_at"),
         "occurrence_count": base["occurrence_count"],
         "attention": _attention_block(svc, principal, controller, waits),
@@ -360,6 +363,9 @@ def legacy_summary_row(run: Any, run_store: Any) -> Dict[str, Any]:
         "capabilities": ["legacy"],
         "session_kind": "automation",
     }
+    legacy_ws = (run.vars or {}).get("workspace_root") if isinstance(run.vars, dict) else None
+    if isinstance(legacy_ws, str) and legacy_ws.strip():
+        out["workspace_root"] = legacy_ws
     if run.status == RunStatus.WAITING and run.waiting is not None and run.waiting.until:
         out["next_fire_at"] = run.waiting.until
     if children:
