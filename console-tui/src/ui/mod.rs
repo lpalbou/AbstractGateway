@@ -654,8 +654,27 @@ pub fn open_prompt(
     resolve: impl FnOnce(ChoiceOutcome) + 'static,
 ) {
     ui.prompt_open.update(|n| *n += 1);
+    // THE SCREEN DOES NOT SHOW THROUGH A DIALOG (review 2, 80x24): the
+    // engine's choice dialog is frameless on a translucent scrim, so the
+    // screen around and under it read as part of the dialog. An opaque
+    // backdrop layer just under the modal band covers the screen while
+    // the prompt is open (removed when it resolves, whatever the answer).
+    let backdrop = cx.use_context::<abstracttui::app::Overlays>().map(|ov| {
+        let vp = abstracttui::app::use_viewport(cx).get_untracked();
+        let ground = abstracttui::app::current_theme().tokens.bg;
+        ov.layer_draw(
+            abstracttui::app::MODAL_Z - 1,
+            abstracttui::base::Rect::from_size(vp),
+            move |canvas, rect| {
+                canvas.fill_styled(rect, ' ', &abstracttui::render::Style::new().bg(ground));
+            },
+        )
+    });
     prompt
         .on_resolve(move |outcome| {
+            if let Some(b) = &backdrop {
+                b.remove();
+            }
             ui.prompt_open.update(|n| *n = n.saturating_sub(1));
             resolve(outcome);
         })

@@ -6711,6 +6711,35 @@ fn resources_keys_survive_the_host_state_poll() {
     );
 }
 
+/// Resources with NOTHING resident (no table): `w` still warms up after
+/// the poll re-renders the region (the keeper's anchor holds the keys).
+#[test]
+fn resources_w_works_with_no_model_resident_across_polls() {
+    let empty = || {
+        host_state_from_payload(&json!({
+            "ok": true, "ts": 1756252800.0,
+            "host": {"host_id": "h-1", "host_name": "studio.local"},
+            "memory": {"ram": {"total_bytes": 137438953472u64, "available_bytes": 51539607552u64,
+                               "used_bytes": 85899345920u64, "percent": 62.5}},
+            "models": [], "session_caches": [],
+            "totals": {"models": 0, "models_resident": 0, "session_caches": 0}
+        }))
+    };
+    let mut h = harness_sized(Size::new(80, 24));
+    h.connect_as_admin();
+    h.goto_screen(7);
+    for _ in 0..3 {
+        h.store.host_state.set(Loadable::Ready(empty()));
+        h.turns(2);
+    }
+    h.type_text("w");
+    let s = h.turns(3);
+    assert!(
+        s.contains("Load (warm up) a model"),
+        "w opens the warm-up form:\n{s}"
+    );
+}
+
 /// Runtimes: the first `w` fires the lazy runtime-config read; when it
 /// lands the inventory region re-renders — the second `w` must still
 /// reach the screen and open the form (review 2 N2).
@@ -9184,5 +9213,33 @@ fn eighty_by_twenty_four_nothing_is_clipped() {
         !s.lines()
             .any(|l| l.contains("A template is") && l.contains('…')),
         "no ellipsis on the intro:\n{s}"
+    );
+}
+/// A choice dialog does not show the screen through (review 2 e): an
+/// opaque backdrop covers the screen while the prompt is open, and it is
+/// gone once the prompt resolves.
+#[test]
+fn a_choice_dialog_covers_the_screen_while_open() {
+    let mut h = harness_sized(Size::new(80, 24));
+    h.connect_as_admin();
+    h.goto_screen(2);
+    h.store.routes.set(Loadable::Ready(routes_fixture()));
+    let s = h.turns(3);
+    assert!(s.contains("Routes — which provider"), "{s}");
+    h.key(b"a");
+    let s = h.turns(3);
+    assert!(
+        s.contains("Apply — keep routes I configured"),
+        "the dialog:\n{s}"
+    );
+    assert!(
+        !s.contains("Routes — which provider") && !s.contains("input.video"),
+        "the screen does not show around/through the dialog:\n{s}"
+    );
+    h.press_escape();
+    let s = h.turns(3);
+    assert!(
+        s.contains("Routes — which provider"),
+        "the screen is back:\n{s}"
     );
 }
