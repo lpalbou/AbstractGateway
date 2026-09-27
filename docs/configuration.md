@@ -39,8 +39,8 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.5.1`
-- `abstractcore>=2.16.1`
+- `AbstractRuntime>=0.6.0`
+- `abstractcore>=2.17.0`
 - `abstractagent>=0.3.15`
 - `AbstractMemory[lancedb]>=0.3.0`
 

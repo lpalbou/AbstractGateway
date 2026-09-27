@@ -90,6 +90,22 @@ records that it ran (`POST /api/gateway/host/first-run`); clicking outside the
 dialog closes it without recording anything. The **Setup** button (⚑, top
 right, admins only) reopens it at any time.
 
+### On a headless server
+
+On a machine without a browser (for example a Linux server you reach over SSH),
+run the same guide in the terminal console on that machine:
+
+```bash
+cargo install abstractgateway-console
+abstractgateway-console --url http://127.0.0.1:8080 \
+  --token-file "<data dir>/auth/bootstrap-admin-token"
+```
+
+It opens the setup guide for an admin whose first run is not completed, with
+the same steps through the same gateway routes, and records **Finish** or
+**Skip setup** on the gateway. See
+[console.md](./console.md#terminal-console-abstractgateway-console).
+
 ## 3. Get a new sign-in link
 
 A link works once and expires after 10 minutes. To get another one:
@@ -100,8 +116,11 @@ abstractgateway claim --open     # prints it and opens your browser
 abstractgateway-config claim-url # same command, from the config helper
 ```
 
-The command finds the running gateway's port from the data folder (the gateway
-writes `<data dir>/run/gateway-serve.json` while it runs). Use `--port` or
+The command finds the gateway from the data folder: the running gateway's
+address (the gateway writes `<data dir>/run/gateway-serve.json` while it runs),
+else the installed login service's, else the port saved in the Network setting,
+else `http://127.0.0.1:8080`. `abstractgateway models loaded|load|unload` find
+it the same way. Use `--port` or
 `--url` to target another gateway, `--data-dir` for another data folder, and
 `--json` for machine-readable output. It exits with code `2` when the running
 gateway does not use user auth (a static `ABSTRACTGATEWAY_AUTH_TOKEN`

@@ -12,7 +12,7 @@ right `Drawer` hosts the entity inspector), talking to the gateway's admin HTTP 
 Screens 9 and 0 are not implemented here: they are AbstractCore's shared
 **Models** and **Engines** screens, from the
 [`abstractcore-console`](https://crates.io/crates/abstractcore-console)
-crate (0.2), the same screens `abstractcore-console` shows over the
+crate (0.3), the same screens `abstractcore-console` shows over the
 `abstractcore` CLI. This crate mounts them over its own HTTP transport
 (`src/transport_http.rs`) against the gateway's mirrors of the
 AbstractCore routes. Both crates build on one abstracttui (0.3.6).

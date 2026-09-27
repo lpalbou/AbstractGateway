@@ -5,10 +5,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [0.6.0] - 2026-09-27
 
-Requires AbstractRuntime with automations support (the next release after 0.5.1); the minimum
-AbstractRuntime version is raised to that release when this version is published.
+Requires AbstractRuntime 0.6.0 and AbstractCore 2.17.0. The terminal console
+`abstractgateway-console` 0.10.0 ships with this release.
 
 ### Added
 
@@ -77,26 +77,42 @@ AbstractRuntime version is raised to that release when this version is published
   - Per-user apply: a broken route a user inherits from the gateway store is flagged in the
     report (`route_unavailable` with `inherited: true` and the note "inherited from the gateway
     store (admin)"); only an admin can change it, so no forced pass is offered for it.
+- **Terminal console 0.10.0: parity with the web console.** `abstractgateway-console` does what
+  the web console does, through the same routes and with the same admin rules: the setup
+  guide for a headless first run (Connection → Setup → Engines → Providers → Routes → Models →
+  Apps → Review, `Ctrl+G` to jump to any step), a **Setup** screen, **A Apps**, the **F2** docs
+  assistant, the **F3** host panel, every sandbox mode, entity summon and spark templates,
+  workflow import, and routes this computer cannot run flagged with the reason. Admin-only
+  actions are refused with the reason for a non-admin sign-in, and `--token-file PATH` signs in
+  with a token read from a file. Install or upgrade with
+  `cargo install abstractgateway-console`; see
+  [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md) and
+  [docs/console.md](docs/console.md#terminal-console-abstractgateway-console).
+- **One rule for where this computer's gateway answers.** `abstractgateway models
+  loaded|load|unload` and `abstractgateway claim` find the gateway the same way: the running
+  gateway's address, else the installed service's, else the port saved in the Network
+  setting, else `http://127.0.0.1:8080`. They follow a gateway the installer moved off a busy
+  port without `--url`. The `models` verbs gain `--data-dir DIR`, and read this data dir's
+  bootstrap admin token for a gateway on this computer when no token is given.
 
 ### Changed
 
+- Minimum versions raised to AbstractRuntime 0.6.0 (automations) and AbstractCore 2.17.0
+  (capability-default rows report routes this computer cannot run).
 - Automation list rows carry `workspace_root` (the automation's folder), so apps can open it
   from the list.
 - Automation summaries show the next scheduled run also while an occurrence is running, and
   the occurrence in progress (`current_occurrence`: index, run, attempt, status).
 - `GET /api/gateway/runs` turn rows carry `workspace_root`: the folder the run works in (a
   launch-folder override, a discussion's own folder), read from the run index.
-
 - With file-backed stores the gateway builds the run store's session and children indexes at
   startup, so the first chat after a start answers without that scan; the log reports the time
   it took.
-
-### Changed
-
 - A discussion about an automation run now works in its own folder, where it can write and run
   commands, with the automation's folder mounted read-only beside it (it used to get only the
   automation's folder, read-only). `POST …/discuss` answers `workspace_root` and
   `mounted_workspace`, and later turns of the discussion keep both.
+- The web console's theme selector and top-bar controls follow ui-kit 0.1.13.
 
 ### Fixed
 
@@ -106,7 +122,6 @@ AbstractRuntime version is raised to that release when this version is published
 - A run whose saved state said "paused" while it was still marked running was re-ticked
   thousands of times a second, slowing every other run of the gateway; it is now left alone
   until it is resumed.
-
 - Run commands (`pause`, `cancel`, …) sent to an automation's id are refused with 409
   `invalid_state` and a pointer to the `automation.*` commands.
 - A scheduled run listed by `GET /api/gateway/runs` reports `is_scheduled: true`.

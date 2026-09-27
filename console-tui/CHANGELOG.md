@@ -1,11 +1,11 @@
 # Changelog — abstractgateway-console
 
-## [Unreleased] — 0.10.0: parity with the web console
+## 0.10.0 (2026-09-27) — parity with the web console
 
 The terminal console now does what the web console (`/console`) does,
 through the same gateway routes, with the same admin rules and
 confirmations. Needs abstractcore-console 0.3 (screens 9 Models and
-0 Engines) and the AbstractGateway release that ships with it.
+0 Engines) and AbstractGateway 0.6.0.
 
 ### Setup guide (headless first run)
 - The guide follows the web console's first-run guide: Connection → Setup

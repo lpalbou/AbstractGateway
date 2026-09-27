@@ -4,9 +4,9 @@ version = 4
 
 [[package]]
 name = "abstractcore-console"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37f4ef3aac5f3ea21792707f1ea401567bc5750ca0a50d2aab0ebe6930ba5ac3"
+checksum = "3cef1768011a1f193aef6b503ca36db1cc7f570337ed5a48bf590ccaf046cd23"
 dependencies = [
  "abstracttui",
  "serde_json",
@@ -15,7 +15,7 @@ dependencies = [
 
 [[package]]
 name = "abstractgateway-console"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "abstractcore-console",
  "abstracttui",

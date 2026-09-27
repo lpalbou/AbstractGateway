@@ -7,7 +7,7 @@ a change made in one is immediately visible in the other.
 | | Web console | Terminal console |
 |---|---|---|
 | Delivery | served by the gateway at `GET /console` (part of the `abstractgateway` Python package) | Rust crate [`abstractgateway-console`](https://crates.io/crates/abstractgateway-console), installed with `cargo install` |
-| Sign-in | Gateway browser session (user id + token) | base URL + bearer token (`ABSTRACTGATEWAY_AUTH_TOKEN` or the Connection screen) |
+| Sign-in | Gateway browser session (user id + token) | base URL + bearer token (`--token-file PATH`, the Connection screen, or `ABSTRACTGATEWAY_AUTH_TOKEN`) |
 | Best for | day-to-day administration in a browser, sandbox chat with media previews | SSH sessions, headless hosts, keyboard-only setup |
 
 For how the stores behind these screens are owned (Gateway vs AbstractCore),
@@ -286,45 +286,88 @@ buttons disabled with the reason on hover.
 
 ## Terminal console (`abstractgateway-console`)
 
+The terminal console does what the web console does, through the same gateway
+routes, with the same admin rules and confirmations. Use it over SSH on a
+headless server, where it also runs the first-run setup guide.
+
 Install it from crates.io (Rust 1.87 or newer):
 
 ```bash
 cargo install abstractgateway-console
 ```
 
-Connect it to a running gateway. Pass the token through the environment rather
-than on the command line:
+Connect it to a running gateway. On the gateway host, sign in with the admin
+token file (`abstractgateway serve` prints its data dir):
 
 ```bash
-ABSTRACTGATEWAY_AUTH_TOKEN=... abstractgateway-console --url http://127.0.0.1:8080
+abstractgateway-console --url http://127.0.0.1:8080 \
+  --token-file "<data dir>/auth/bootstrap-admin-token"
 abstractgateway-console --help
 ```
 
-It opens as a guided wizard on first run and as free tabs afterwards, with eight
-screens: Connection, Providers, Routes (capability defaults, including the MTP
-selector and a Test verb per route), Users & Entities, Runtimes (runs with
-cancel and steer, data homes), Workflows, Review & Test (the session's change
-journal), Resources, Models and Engines. Every write is verified with a
-follow-up read and recorded in the journal. Keys: `Tab` focus, `Enter`
-activate, `1`-`9` and `0` screens, `r` refresh, `F1` or `?` About, `q` quit;
-each screen lists its actions in the footer.
+`--token-file PATH` reads the token from a file; an unreadable or empty file
+stops the launch with the reason. `ABSTRACTGATEWAY_AUTH_TOKEN` is also read.
+Avoid `--token` on shared machines: the command line is visible in `ps`. When
+sign-in fails, the Connection screen says whether no token was sent or the
+token was rejected, and where the admin token lives.
 
-**About** (`F1`, or `?` outside a text field) shows this console and its
-version, that it is part of AbstractFramework, the author, the copyright and
-licence, the links and the contact address, then the connected gateway's
-versions from `GET /api/gateway/about` (or one "Gateway: unavailable (reason)"
-line). `abstractgateway-console --about --url <gateway>` prints the same
-text without opening the interface.
+### Setup guide and browse mode
 
-The Runtimes screen's *Runtime knobs* show **stream replies** (on or off, and
-whether it is saved or the default); *Edit stream replies* changes it
-(admins). A gateway without the setting shows "not available on this
-gateway".
+The console has twelve screens: **1** Connection, **2** Providers, **3** Routes,
+**4** Users & Entities, **5** Runtimes, **6** Workflows, **7** Review & Test,
+**8** Resources, **9** Models, **0** Engines, **A** Apps, and **Setup**.
+
+- **Setup guide.** For an admin whose first run is not completed, the console
+  opens the setup guide: Connection → Setup → Engines → Providers → Routes →
+  Models → Apps → Review, the same steps as the web console's first-run guide.
+  Routes shows the recommended models for this computer with fit warnings
+  (`a` applies them, `D` downloads all of them as one job, `C` cancels, `p`
+  shows the plan). Review ends with **Finish** or **Skip setup**, recorded on
+  the gateway. No step is gated except signing in.
+- **Browse mode** (free tabs) opens otherwise. `--wizard` and `--browse` choose
+  the mode at launch.
+- **`Ctrl+G`** reopens the guide from browse mode; inside the guide it opens
+  the guide menu: go to any step, leave for now, or skip setup.
+- **Setup** shows this computer at a glance: memory, graphics, data folder,
+  sign-in mode, whether the gateway starts at login, and the first-run state.
+
+### Screens and panels
+
+- **Routes** flags a route this computer cannot run (for example an MLX image
+  route on Linux) with the reason, like the web console.
+- **Review & Test** holds the session's change journal and the sandbox: every
+  output mode (text, image, voice, music, sound effects, video), file
+  attachments and speak-this-reply.
+- **Users & Entities** summons entities (`n`), manages spark templates (`s`),
+  talks with an entity (`c`) and edits your own workspace policy (`w`).
+- **Workflows** imports a `.flow` bundle (`i`) and reloads the registry (`L`).
+- **A Apps** is the web console's Apps tab: open browser apps signed in,
+  install or update them, start and stop them, the desktop Assistant and
+  Node.js.
+- **F2** opens the docs assistant (questions answered from the gateway's own
+  documentation; signed in).
+- **F3** opens the gateway host panel: pause or resume workflows, restart,
+  quit, check for and install updates, the tray. A banner shows on every
+  screen while workflows are paused.
+- **About** (`F1`, or `?` outside a text field) shows this console, its
+  version, the links and the connected gateway's versions from
+  `GET /api/gateway/about`. `abstractgateway-console --about --url <gateway>`
+  prints the same text without opening the interface.
+
+Keys: `Tab` focus, `Enter` activate, `Ctrl+N` / `Ctrl+P` next and previous
+step, `Esc` back (in a text field, the first `Esc` releases it so screen keys
+work again), `1`-`9`, `0` and `A` screens, `r` refresh, `q` quit. Each screen
+lists its own actions in the footer.
+
+**Admin rules.** Admin-only actions are refused before anything is sent for a
+non-admin sign-in, with the reason, and the footer marks them "admin only".
+The setup guide is admin-only, as on the web. Every write is verified with a
+follow-up read and recorded in the journal.
 
 ### Models and Engines in the terminal console
 
 Screens 9 (**Models**) and 0 (**Engines**) are AbstractCore's own screens,
-taken from the `abstractcore-console` crate rather than rebuilt, so they look
+taken from the `abstractcore-console` crate (0.3) rather than rebuilt, so they look
 and behave the same in `abstractcore-console` and here. In the gateway console
 they act on the gateway's host, through the gateway's
 `/api/gateway/host/profile`, `/engines`, `/models/catalog`,
@@ -336,7 +379,8 @@ they act on the gateway's host, through the gateway's
   (`/`), fits only (`f`), engine (`e`), installed view (`v`), cancel (`c`).
 - **Engines:** see which engines are installed and running; install one (`i`)
   after a confirm that shows the exact command and the host it runs on (a dry
-  run is offered), or open its download page (`o`).
+  run is offered), or open its download page (`o`). Engine servers can be
+  started and stopped, and a paused install continued.
 
 Downloads, deletes and installs are admin-only and run on the gateway host; a
 refusal (for example installs disabled on a remote gateway, or a loaded model)

@@ -100,6 +100,22 @@ records that it ran (`POST /api/gateway/host/first-run`); clicking outside the
 dialog closes it without recording anything. The **Setup** button (⚑, top
 right, admins only) reopens it at any time.
 
+### On a headless server
+
+On a machine without a browser (for example a Linux server you reach over SSH),
+run the same guide in the terminal console on that machine:
+
+```bash
+cargo install abstractgateway-console
+abstractgateway-console --url http://127.0.0.1:8080 \
+  --token-file "<data dir>/auth/bootstrap-admin-token"
+```
+
+It opens the setup guide for an admin whose first run is not completed, with
+the same steps through the same gateway routes, and records **Finish** or
+**Skip setup** on the gateway. See
+[console.md](docs/console.md#terminal-console-abstractgateway-console).
+
 ## 3. Get a new sign-in link
 
 A link works once and expires after 10 minutes. To get another one:
@@ -110,8 +126,11 @@ abstractgateway claim --open     # prints it and opens your browser
 abstractgateway-config claim-url # same command, from the config helper
 ```
 
-The command finds the running gateway's port from the data folder (the gateway
-writes `<data dir>/run/gateway-serve.json` while it runs). Use `--port` or
+The command finds the gateway from the data folder: the running gateway's
+address (the gateway writes `<data dir>/run/gateway-serve.json` while it runs),
+else the installed login service's, else the port saved in the Network setting,
+else `http://127.0.0.1:8080`. `abstractgateway models loaded|load|unload` find
+it the same way. Use `--port` or
 `--url` to target another gateway, `--data-dir` for another data folder, and
 `--json` for machine-readable output. It exits with code `2` when the running
 gateway does not use user auth (a static `ABSTRACTGATEWAY_AUTH_TOKEN`
@@ -288,8 +307,8 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.5.1`
-- `abstractcore>=2.16.1`
+- `AbstractRuntime>=0.6.0`
+- `abstractcore>=2.17.0`
 - `abstractagent>=0.3.15`
 - `AbstractMemory[lancedb]>=0.3.0`
 
@@ -1673,7 +1692,7 @@ Most-used:
 - `abstractgateway serve --backlog-root PATH --exec-runner on|off`: the backlog
   folder and the exec runner for this run (they win over the saved settings until the gateway stops)
 - `abstractgateway migrate --from=file --to=sqlite --data-dir <DIR> --db-path <FILE>`
-- `abstractgateway models loaded|load|unload --url <URL> [--provider P --model M] [--force]`
+- `abstractgateway models loaded|load|unload [--url URL | --data-dir DIR] [--token T] [--provider P --model M] [--force]`
   (model residency on a running gateway; see [console.md](docs/console.md#model-residency-from-a-shell))
 
 ## Related docs
@@ -4821,8 +4840,8 @@ Evidence: `src/abstractgateway/routes/gateway.py` (`host_state`,
 Public (no sign-in): which versions this gateway runs, for About screens.
 
 ```json
-{"abstractframework": "0.4.0", "abstractgateway": "0.5.1",
- "packages": {"abstractcore": "2.16.1", "abstractruntime": "0.5.1", "abstractskill": "0.3.0"}}
+{"abstractframework": "0.5.0", "abstractgateway": "0.6.0",
+ "packages": {"abstractcore": "2.17.0", "abstractruntime": "0.6.0", "abstractskill": "0.3.0"}}
 ```
 
 `abstractframework` is null when the framework meta-package is not installed
@@ -5023,7 +5042,7 @@ a change made in one is immediately visible in the other.
 | | Web console | Terminal console |
 |---|---|---|
 | Delivery | served by the gateway at `GET /console` (part of the `abstractgateway` Python package) | Rust crate [`abstractgateway-console`](https://crates.io/crates/abstractgateway-console), installed with `cargo install` |
-| Sign-in | Gateway browser session (user id + token) | base URL + bearer token (`ABSTRACTGATEWAY_AUTH_TOKEN` or the Connection screen) |
+| Sign-in | Gateway browser session (user id + token) | base URL + bearer token (`--token-file PATH`, the Connection screen, or `ABSTRACTGATEWAY_AUTH_TOKEN`) |
 | Best for | day-to-day administration in a browser, sandbox chat with media previews | SSH sessions, headless hosts, keyboard-only setup |
 
 For how the stores behind these screens are owned (Gateway vs AbstractCore),
@@ -5302,45 +5321,88 @@ buttons disabled with the reason on hover.
 
 ## Terminal console (`abstractgateway-console`)
 
+The terminal console does what the web console does, through the same gateway
+routes, with the same admin rules and confirmations. Use it over SSH on a
+headless server, where it also runs the first-run setup guide.
+
 Install it from crates.io (Rust 1.87 or newer):
 
 ```bash
 cargo install abstractgateway-console
 ```
 
-Connect it to a running gateway. Pass the token through the environment rather
-than on the command line:
+Connect it to a running gateway. On the gateway host, sign in with the admin
+token file (`abstractgateway serve` prints its data dir):
 
 ```bash
-ABSTRACTGATEWAY_AUTH_TOKEN=... abstractgateway-console --url http://127.0.0.1:8080
+abstractgateway-console --url http://127.0.0.1:8080 \
+  --token-file "<data dir>/auth/bootstrap-admin-token"
 abstractgateway-console --help
 ```
 
-It opens as a guided wizard on first run and as free tabs afterwards, with eight
-screens: Connection, Providers, Routes (capability defaults, including the MTP
-selector and a Test verb per route), Users & Entities, Runtimes (runs with
-cancel and steer, data homes), Workflows, Review & Test (the session's change
-journal), Resources, Models and Engines. Every write is verified with a
-follow-up read and recorded in the journal. Keys: `Tab` focus, `Enter`
-activate, `1`-`9` and `0` screens, `r` refresh, `F1` or `?` About, `q` quit;
-each screen lists its actions in the footer.
+`--token-file PATH` reads the token from a file; an unreadable or empty file
+stops the launch with the reason. `ABSTRACTGATEWAY_AUTH_TOKEN` is also read.
+Avoid `--token` on shared machines: the command line is visible in `ps`. When
+sign-in fails, the Connection screen says whether no token was sent or the
+token was rejected, and where the admin token lives.
 
-**About** (`F1`, or `?` outside a text field) shows this console and its
-version, that it is part of AbstractFramework, the author, the copyright and
-licence, the links and the contact address, then the connected gateway's
-versions from `GET /api/gateway/about` (or one "Gateway: unavailable (reason)"
-line). `abstractgateway-console --about --url <gateway>` prints the same
-text without opening the interface.
+### Setup guide and browse mode
 
-The Runtimes screen's *Runtime knobs* show **stream replies** (on or off, and
-whether it is saved or the default); *Edit stream replies* changes it
-(admins). A gateway without the setting shows "not available on this
-gateway".
+The console has twelve screens: **1** Connection, **2** Providers, **3** Routes,
+**4** Users & Entities, **5** Runtimes, **6** Workflows, **7** Review & Test,
+**8** Resources, **9** Models, **0** Engines, **A** Apps, and **Setup**.
+
+- **Setup guide.** For an admin whose first run is not completed, the console
+  opens the setup guide: Connection → Setup → Engines → Providers → Routes →
+  Models → Apps → Review, the same steps as the web console's first-run guide.
+  Routes shows the recommended models for this computer with fit warnings
+  (`a` applies them, `D` downloads all of them as one job, `C` cancels, `p`
+  shows the plan). Review ends with **Finish** or **Skip setup**, recorded on
+  the gateway. No step is gated except signing in.
+- **Browse mode** (free tabs) opens otherwise. `--wizard` and `--browse` choose
+  the mode at launch.
+- **`Ctrl+G`** reopens the guide from browse mode; inside the guide it opens
+  the guide menu: go to any step, leave for now, or skip setup.
+- **Setup** shows this computer at a glance: memory, graphics, data folder,
+  sign-in mode, whether the gateway starts at login, and the first-run state.
+
+### Screens and panels
+
+- **Routes** flags a route this computer cannot run (for example an MLX image
+  route on Linux) with the reason, like the web console.
+- **Review & Test** holds the session's change journal and the sandbox: every
+  output mode (text, image, voice, music, sound effects, video), file
+  attachments and speak-this-reply.
+- **Users & Entities** summons entities (`n`), manages spark templates (`s`),
+  talks with an entity (`c`) and edits your own workspace policy (`w`).
+- **Workflows** imports a `.flow` bundle (`i`) and reloads the registry (`L`).
+- **A Apps** is the web console's Apps tab: open browser apps signed in,
+  install or update them, start and stop them, the desktop Assistant and
+  Node.js.
+- **F2** opens the docs assistant (questions answered from the gateway's own
+  documentation; signed in).
+- **F3** opens the gateway host panel: pause or resume workflows, restart,
+  quit, check for and install updates, the tray. A banner shows on every
+  screen while workflows are paused.
+- **About** (`F1`, or `?` outside a text field) shows this console, its
+  version, the links and the connected gateway's versions from
+  `GET /api/gateway/about`. `abstractgateway-console --about --url <gateway>`
+  prints the same text without opening the interface.
+
+Keys: `Tab` focus, `Enter` activate, `Ctrl+N` / `Ctrl+P` next and previous
+step, `Esc` back (in a text field, the first `Esc` releases it so screen keys
+work again), `1`-`9`, `0` and `A` screens, `r` refresh, `q` quit. Each screen
+lists its own actions in the footer.
+
+**Admin rules.** Admin-only actions are refused before anything is sent for a
+non-admin sign-in, with the reason, and the footer marks them "admin only".
+The setup guide is admin-only, as on the web. Every write is verified with a
+follow-up read and recorded in the journal.
 
 ### Models and Engines in the terminal console
 
 Screens 9 (**Models**) and 0 (**Engines**) are AbstractCore's own screens,
-taken from the `abstractcore-console` crate rather than rebuilt, so they look
+taken from the `abstractcore-console` crate (0.3) rather than rebuilt, so they look
 and behave the same in `abstractcore-console` and here. In the gateway console
 they act on the gateway's host, through the gateway's
 `/api/gateway/host/profile`, `/engines`, `/models/catalog`,
@@ -5352,7 +5414,8 @@ they act on the gateway's host, through the gateway's
   (`/`), fits only (`f`), engine (`e`), installed view (`v`), cancel (`c`).
 - **Engines:** see which engines are installed and running; install one (`i`)
   after a confirm that shows the exact command and the host it runs on (a dry
-  run is offered), or open its download page (`o`).
+  run is offered), or open its download page (`o`). Engine servers can be
+  started and stopped, and a paused install continued.
 
 Downloads, deletes and installs are admin-only and run on the gateway host; a
 refusal (for example installs disabled on a remote gateway, or a loaded model)
@@ -5368,13 +5431,18 @@ The same model routes the consoles drive are available from the Python CLI
 against a running gateway:
 
 ```bash
-abstractgateway models loaded --url http://127.0.0.1:8080
-abstractgateway models load   --url http://127.0.0.1:8080 --provider ollama --model qwen3:4b
-abstractgateway models unload --url http://127.0.0.1:8080 --provider ollama --model qwen3:4b
+abstractgateway models loaded
+abstractgateway models load   --provider ollama --model qwen3:4b
+abstractgateway models unload --provider ollama --model qwen3:4b
 ```
 
-The token comes from `--token` or `ABSTRACTGATEWAY_AUTH_TOKEN`, and the URL from
-`--url` or `ABSTRACTGATEWAY_URL`. The command prints the gateway's JSON answer
+Without `--url`, the command finds this computer's gateway the same way every
+local client does: the running gateway's address, else the installed service's,
+else the port saved in the Network setting, else `http://127.0.0.1:8080`. Use
+`--data-dir DIR` when the gateway keeps its data somewhere other than the
+default, and `--url` (or `ABSTRACTGATEWAY_URL`) to reach another machine. The
+token comes from `--token` or `ABSTRACTGATEWAY_AUTH_TOKEN`; for a gateway on
+this computer it falls back to the data dir's bootstrap admin token. The command prints the gateway's JSON answer
 and exits non-zero when the gateway reports a failure. `unload --force` unloads
 a locked model; in-flight calls on the model are cancelled first.
 
@@ -5551,8 +5619,7 @@ never schedules or runs anything itself.
     }
   ```
 
-- **Runtime.** Automations need AbstractRuntime with automations support (the
-  next release after 0.5.1). A gateway installed against an older runtime does
+- **Runtime.** Automations need AbstractRuntime 0.6.0 or later. A gateway installed against an older runtime does
   not start ([troubleshooting.md](docs/troubleshooting.md#the-gateway-does-not-start-an-abstractruntime-module-is-missing)).
 
 The examples below assume:
@@ -6185,7 +6252,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.5.1
+docker pull ghcr.io/lpalbou/abstractgateway:0.6.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -6193,7 +6260,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.5.1-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.6.0-gpu
 ```
 
 The image names `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -6402,7 +6469,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.5.1-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.6.0-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -6560,7 +6627,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.5.1
+docker pull ghcr.io/lpalbou/abstractgateway:0.6.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -6568,7 +6635,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.5.1-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.6.0-gpu
 ```
 
 The `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR names are
@@ -6900,7 +6967,7 @@ Related repos:
 ## Prerequisites
 
 - Python `>=3.10` (see `pyproject.toml`)
-- AbstractRuntime 0.5.1 or later, installed with the gateway; the gateway
+- AbstractRuntime 0.6.0 or later, installed with the gateway; the gateway
   refuses to start on an older runtime and names the version to install
 - Workflows: none needed to start. The gateway serves its shipped bundles
   ([shipped-workflows.md](docs/shipped-workflows.md)); you can point it at your
@@ -7091,7 +7158,7 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.5.1-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:0.6.0-gpu` with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -7218,7 +7285,7 @@ deny rules the gateway relies on; the message names what is missing. Upgrade
 it in the gateway's Python, then start again:
 
 ```bash
-pip install -U "abstractruntime>=0.5.1"
+pip install -U "abstractruntime>=0.6.0"
 ```
 
 ### The one-time sign-in link does not work
@@ -7258,8 +7325,7 @@ from the console's **Users & Entities** tab.
 
 `serve` or `runner` stops with `No module named 'abstractruntime.automation_queries'`
 (or `abstractruntime.automations`): the installed AbstractRuntime predates
-automations. Install AbstractRuntime with automations support (the next
-release after 0.5.1) in the gateway's Python, then start again. See
+automations. Install AbstractRuntime 0.6.0 or later in the gateway's Python, then start again. See
 [automations.md](docs/automations.md#before-you-start).
 
 ## Network access
@@ -7569,10 +7635,10 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [0.6.0] - 2026-09-27
 
-Requires AbstractRuntime with automations support (the next release after 0.5.1); the minimum
-AbstractRuntime version is raised to that release when this version is published.
+Requires AbstractRuntime 0.6.0 and AbstractCore 2.17.0. The terminal console
+`abstractgateway-console` 0.10.0 ships with this release.
 
 ### Added
 
@@ -7641,26 +7707,42 @@ AbstractRuntime version is raised to that release when this version is published
   - Per-user apply: a broken route a user inherits from the gateway store is flagged in the
     report (`route_unavailable` with `inherited: true` and the note "inherited from the gateway
     store (admin)"); only an admin can change it, so no forced pass is offered for it.
+- **Terminal console 0.10.0: parity with the web console.** `abstractgateway-console` does what
+  the web console does, through the same routes and with the same admin rules: the setup
+  guide for a headless first run (Connection → Setup → Engines → Providers → Routes → Models →
+  Apps → Review, `Ctrl+G` to jump to any step), a **Setup** screen, **A Apps**, the **F2** docs
+  assistant, the **F3** host panel, every sandbox mode, entity summon and spark templates,
+  workflow import, and routes this computer cannot run flagged with the reason. Admin-only
+  actions are refused with the reason for a non-admin sign-in, and `--token-file PATH` signs in
+  with a token read from a file. Install or upgrade with
+  `cargo install abstractgateway-console`; see
+  [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md) and
+  [docs/console.md](docs/console.md#terminal-console-abstractgateway-console).
+- **One rule for where this computer's gateway answers.** `abstractgateway models
+  loaded|load|unload` and `abstractgateway claim` find the gateway the same way: the running
+  gateway's address, else the installed service's, else the port saved in the Network
+  setting, else `http://127.0.0.1:8080`. They follow a gateway the installer moved off a busy
+  port without `--url`. The `models` verbs gain `--data-dir DIR`, and read this data dir's
+  bootstrap admin token for a gateway on this computer when no token is given.
 
 ### Changed
 
+- Minimum versions raised to AbstractRuntime 0.6.0 (automations) and AbstractCore 2.17.0
+  (capability-default rows report routes this computer cannot run).
 - Automation list rows carry `workspace_root` (the automation's folder), so apps can open it
   from the list.
 - Automation summaries show the next scheduled run also while an occurrence is running, and
   the occurrence in progress (`current_occurrence`: index, run, attempt, status).
 - `GET /api/gateway/runs` turn rows carry `workspace_root`: the folder the run works in (a
   launch-folder override, a discussion's own folder), read from the run index.
-
 - With file-backed stores the gateway builds the run store's session and children indexes at
   startup, so the first chat after a start answers without that scan; the log reports the time
   it took.
-
-### Changed
-
 - A discussion about an automation run now works in its own folder, where it can write and run
   commands, with the automation's folder mounted read-only beside it (it used to get only the
   automation's folder, read-only). `POST …/discuss` answers `workspace_root` and
   `mounted_workspace`, and later turns of the discussion keep both.
+- The web console's theme selector and top-bar controls follow ui-kit 0.1.13.
 
 ### Fixed
 
@@ -7670,7 +7752,6 @@ AbstractRuntime version is raised to that release when this version is published
 - A run whose saved state said "paused" while it was still marked running was re-ticked
   thousands of times a second, slowing every other run of the gateway; it is now left alone
   until it is resumed.
-
 - Run commands (`pause`, `cancel`, …) sent to an automation's id are refused with 409
   `invalid_state` and a pointer to the `automation.*` commands.
 - A scheduled run listed by `GET /api/gateway/runs` reports `is_scheduled: true`.
@@ -9098,8 +9179,7 @@ desktop Assistant, scripts) and **AbstractRuntime**:
 
 - **AbstractGateway** (this package): HTTP/SSE API, durability glue, security,
   and the operator control plane.
-- **AbstractRuntime** (required: AbstractRuntime with automations support, the
-  next release after 0.5.1): run model, tick loop, workflow registry, stores,
+- **AbstractRuntime** (required, 0.6.0 or later): run model, tick loop, workflow registry, stores,
   live token deltas, the workspace-scoped tools and the automation controller.
   The gateway checks the installed runtime when it builds its workflow host and
   refuses to start on an older one, naming the version to install.
