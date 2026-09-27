@@ -14,6 +14,8 @@
 //! closures posted through `WakeHandle` (the engine's live-data law).
 
 pub mod api;
+/// The one table of local audio players (sandbox playback, auditions).
+pub mod audio;
 pub mod health;
 /// The About facts: the vendored AbstractFramework identity descriptor.
 pub mod identity;

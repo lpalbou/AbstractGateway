@@ -808,45 +808,9 @@ pub fn artifact_id(artifact: &Value) -> Option<String> {
         .find_map(|k| st(artifact, k))
 }
 
-/// The command-line audio players the console knows how to drive, in
-/// preference order: (binary, args placed before the file path).
-pub const AUDIO_PLAYERS: [(&str, &[&str]); 4] = [
-    ("afplay", &[]),
-    ("paplay", &[]),
-    ("aplay", &["-q"]),
-    ("ffplay", &["-nodisp", "-autoexit", "-loglevel", "quiet"]),
-];
-
-/// The first known player present on `path_var` (a PATH-style list).
-pub fn find_player_in(path_var: &str) -> Option<String> {
-    for (bin, _) in AUDIO_PLAYERS {
-        for dir in std::env::split_paths(path_var) {
-            let candidate = dir.join(bin);
-            if candidate.is_file() {
-                return Some(bin.to_string());
-            }
-        }
-    }
-    None
-}
-
-/// Play `file` with `player` in the background (the console never waits
-/// on playback; the child dies with the console at worst).
-pub fn spawn_player(player: &str, file: &str) -> std::io::Result<()> {
-    let args: &[&str] = AUDIO_PLAYERS
-        .iter()
-        .find(|(b, _)| *b == player)
-        .map(|(_, a)| *a)
-        .unwrap_or(&[]);
-    std::process::Command::new(player)
-        .args(args)
-        .arg(file)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .map(|_| ())
-}
+// The audio-player table lives in `crate::audio` (one table for the
+// audition and the sandbox); re-exported for this module's callers.
+pub use crate::audio::{find_player_in, spawn_player, AUDIO_PLAYERS};
 
 /// The web create form's reasoning-effort options ("not set" sends
 /// nothing) — `console.py` `#entity-new-thinking`.
@@ -1064,19 +1028,6 @@ mod tests {
         );
         assert_eq!(artifact_id(&json!({"id": "art2"})).as_deref(), Some("art2"));
         assert_eq!(artifact_id(&json!({"x": 1})), None);
-    }
-
-    #[test]
-    fn player_lookup_scans_the_given_path_only() {
-        let dir = std::env::temp_dir().join(format!("agc-player-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        assert_eq!(find_player_in(dir.to_str().unwrap()), None);
-        std::fs::write(dir.join("aplay"), b"").unwrap();
-        assert_eq!(
-            find_player_in(dir.to_str().unwrap()).as_deref(),
-            Some("aplay")
-        );
-        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

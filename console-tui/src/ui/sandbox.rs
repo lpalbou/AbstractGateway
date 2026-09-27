@@ -1090,24 +1090,9 @@ impl SandboxWs {
 // Audio playback (a local player, when one exists)
 // ---------------------------------------------------------------------
 
-/// The first audio player on PATH: macOS `afplay`, PulseAudio `paplay`,
-/// ALSA `aplay`, then `ffplay` (headless flags).
-pub fn find_player() -> Option<(PathBuf, Vec<&'static str>)> {
-    let path = std::env::var_os("PATH")?;
-    for (bin, args) in [
-        ("afplay", vec![]),
-        ("paplay", vec![]),
-        ("aplay", vec!["-q"]),
-        ("ffplay", vec!["-nodisp", "-autoexit", "-loglevel", "quiet"]),
-    ] {
-        for dir in std::env::split_paths(&path) {
-            let p = dir.join(bin);
-            if p.is_file() {
-                return Some((p, args));
-            }
-        }
-    }
-    None
+/// The first audio player on PATH (the one table: `crate::audio`).
+pub fn find_player() -> Option<(PathBuf, &'static [&'static str])> {
+    crate::audio::find_player()
 }
 
 thread_local! {
@@ -1143,7 +1128,7 @@ fn play_file(path: &Path) -> Result<String, String> {
     })?;
     stop_player();
     let child = std::process::Command::new(&bin)
-        .args(&args)
+        .args(args)
         .arg(path)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
