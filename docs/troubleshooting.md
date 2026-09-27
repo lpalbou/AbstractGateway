@@ -81,6 +81,14 @@ from the console's **Users & Entities** tab.
 | `429` | repeated failed sign-ins from the same client address (lockout) | wait for the backoff; check `trust_proxy` behind a proxy |
 | `413` | the body exceeds `ABSTRACTGATEWAY_MAX_BODY_BYTES` (or the attachment / bundle limit) | send less, or raise the limit ([security.md](./security.md#limits-abuse-resistance)) |
 
+### The gateway does not start: an AbstractRuntime module is missing
+
+`serve` or `runner` stops with `No module named 'abstractruntime.automation_queries'`
+(or `abstractruntime.automations`): the installed AbstractRuntime predates
+automations. Install AbstractRuntime with automations support (the next
+release after 0.5.1) in the gateway's Python, then start again. See
+[automations.md](./automations.md#before-you-start).
+
 ## Network access
 
 ### A change of network mode "needs a restart"
@@ -222,6 +230,62 @@ often another `abstractgateway serve` still running from another
 environment on the same port. Stop it and start the one from your current
 environment.
 
+## Automations
+
+### An automation does not fire
+
+- No runner is ticking the data folder: check `runner.runners[].status` on
+  `GET /api/health`; with `serve --no-runner`, start `abstractgateway runner`
+  on the same data folder.
+- The gateway is paused (`"paused": true` on `/api/health`).
+- The automation is paused, archived or has no ticks left: read `status` and
+  `next_fire_at` in its summary (`GET /api/gateway/automations/{automation_id}`).
+- The schedule starts later (`start_at`) or ended (`until`, `count`).
+
+See [automations.md](./automations.md#operations).
+
+### An occurrence reads `waiting`
+
+It waits for a person: a question from the workflow (`ask_user`), a tool batch
+to approve (`tool_approval`, under `policy.tool_approval: "ask"` or for a
+tool that always asks), or an event. Its `waits` say which; answer with the
+`resume` command and the payload shape for that `kind`
+([automations.md](./automations.md#waits-on-a-person)). A 422
+`invalid_request` on `payload` means the answer does not fit the wait: a tool
+approval takes `{"approved": true}`, not `{"response": "…"}`.
+
+### A command answers 409
+
+- `automation_busy`: an occurrence is already running or waiting to run;
+  wait for it, or send `automation.stop_current`.
+- `invalid_state`: the state rules the command out (already paused, not
+  paused, nothing running, archived), or a run command such as `pause` or
+  `cancel` was sent to an automation id; use the `automation.*` commands.
+- `revision_conflict`: someone revised the automation; read it again and
+  resend with the new `revision`.
+- `identity_conflict`: the `command_id` or `request_id` was already used for a
+  different request; generate a new one.
+
+See [automations.md](./automations.md#errors).
+
+### A command was accepted but nothing changed
+
+The receipt means queued. AbstractRuntime records whether the command was
+applied or rejected in the automation's ledger
+(`GET /api/gateway/runs/{automation_id}/ledger`, `automation.command_result`
+records); a rejected command names its reason there. Check that a runner is
+ticking the data folder.
+
+### A discussion turn is refused
+
+- 400 about `context.messages`: a discussion's history is provided by the
+  gateway; send only the prompt.
+- 409 `session_attribution_failed` or `history_unavailable`: the discussion or
+  the automation's history cannot be read from the store; start a new
+  discussion with `POST /api/gateway/automations/{automation_id}/discuss`.
+
+See [automations.md](./automations.md#discuss-an-occurrence).
+
 ## Engines, models and apps
 
 ### Install buttons are disabled or answer `403`
@@ -317,5 +381,6 @@ abstractgateway service status
 ## Related docs
 
 - [faq.md](./faq.md): conceptual questions and limits
+- [automations.md](./automations.md): automations, their routes and operations
 - [first-run.md](./first-run.md), [getting-started.md](./getting-started.md)
 - [configuration.md](./configuration.md), [security.md](./security.md)

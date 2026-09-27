@@ -264,9 +264,13 @@ model. Details: [docs/api.md](docs/api.md) and [docs/faq.md](docs/faq.md).
     agent workflow for that interface; every start answers `resolved_workflow`
   - `input_data._runtime.stream: true` also sends the model's reply live
     (`llm.delta` frames on the ledger stream)
-- Clients can **schedule runs** (bundle mode): `POST /api/gateway/runs/schedule`
+- Clients create **automations**: a workflow run on a trigger (a fixed UTC
+  interval such as every 2 minutes, or only when asked), each run readable as a
+  chat turn, quiet unless a run asks for attention or fails:
+  `/api/gateway/automations*` ([docs/automations.md](docs/automations.md))
 - Clients **act** by submitting durable commands: `POST /api/gateway/commands`
-  - supported types: `pause|resume|cancel|emit_event|update_schedule|compact_memory`
+  - supported types: `pause|resume|cancel|conclude|emit_event|update_schedule|compact_memory|inject_guidance`,
+    plus the `automation.*` commands for an automation
 - Clients **render** by replaying/streaming the durable ledger:
   - replay: `GET /api/gateway/runs/{run_id}/ledger?after=...`
   - stream (SSE): `GET /api/gateway/runs/{run_id}/ledger/stream?after=...`
@@ -355,6 +359,7 @@ Published docs site: https://www.lpalbou.info/AbstractGateway/
 - Getting started: [docs/getting-started.md](docs/getting-started.md)
 - Architecture: [docs/architecture.md](docs/architecture.md)
 - API overview: [docs/api.md](docs/api.md)
+- Automations: [docs/automations.md](docs/automations.md)
 - Configuration: [docs/configuration.md](docs/configuration.md)
 - Consoles: [docs/console.md](docs/console.md)
 - Apps: [docs/apps.md](docs/apps.md)

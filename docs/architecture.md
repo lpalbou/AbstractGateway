@@ -3,7 +3,8 @@
 AbstractGateway is a **durable run gateway** for AbstractRuntime, and the
 control plane of an AbstractFramework installation:
 
-- clients **start runs** (and optionally schedule them);
+- clients **start runs**, and create **automations** that run a workflow on
+  a trigger;
 - clients act through **durable commands** (`pause`, `resume`, `cancel`,
   `emit_event`, …);
 - clients **replay** the durable ledger and optionally **stream** it (SSE);
@@ -22,8 +23,9 @@ desktop Assistant, scripts) and **AbstractRuntime**:
 
 - **AbstractGateway** (this package): HTTP/SSE API, durability glue, security,
   and the operator control plane.
-- **AbstractRuntime** (required, 0.5.1 or later): run model, tick loop,
-  workflow registry, stores, live token deltas and the workspace-scoped tools.
+- **AbstractRuntime** (required: AbstractRuntime with automations support, the
+  next release after 0.5.1): run model, tick loop, workflow registry, stores,
+  live token deltas, the workspace-scoped tools and the automation controller.
   The gateway checks the installed runtime when it builds its workflow host and
   refuses to start on an older one, naming the version to install.
 - **AbstractCore** (required, reached through Runtime facades): providers,
@@ -56,6 +58,7 @@ flowchart LR
     Principals["Principal routing: one data plane per user"]
     Defaults["Default agent workflow resolver (@default)"]
     Browse["Workspace browser: /runs/{id}/workspace/*"]
+    Autom["Automations API: /automations*, /trigger-sources"]
     Host["Workflow host: .flow bundles + workflow catalog"]
     Guard["Run workspace guard: a folder and the built-in deny rules for every run"]
     Hub["Live-delta hub: llm.delta frames per root run"]
@@ -88,6 +91,7 @@ flowchart LR
   Routes --> Principals --> Host
   Routes --> Defaults --> Host
   Routes --> Browse --> WS
+  Routes --> Autom --> RT
   Routes --> Settings
   Routes --> Skills
   Routes --> AppsMgr
@@ -211,6 +215,13 @@ browser on this computer from one elsewhere on the network
 - **Summoned entities** (`src/abstractgateway/entities.py`,
   `routes/entities.py`): persistent entity homes and their lifecycle. See
   [entities.md](./entities.md).
+- **Automations API** (`src/abstractgateway/routes/automations.py`,
+  `automation_errors.py`, `automation_attention.py`, `automation_defaults.py`,
+  `automation_command_types.py`): the HTTP projection of AbstractRuntime's
+  automations, the error envelope on those paths, the per-user seen store,
+  `automation_defaults` on flows and bundles, and the one list of command
+  types the command route, the runner and the capabilities document share.
+  See [Automations](#automations) and [automations.md](./automations.md).
 - **Operator tooling** (`src/abstractgateway/maintenance/`): reports, triage,
   backlog browsing, the backlog exec runner and the process manager. See
   [maintenance.md](./maintenance.md).
@@ -248,6 +259,88 @@ sequenceDiagram
 
 Evidence: `src/abstractgateway/routes/gateway.py` (ledger endpoints, SSE,
 commands) and `src/abstractgateway/runner.py` (command application, ticks).
+
+## Automations
+
+An automation is a durable AbstractRuntime root run, the **controller**, whose
+id is the automation id. Every workflow host registers the controller workflow
+that ships with AbstractRuntime
+(`abstractframework.automation-controller@1.0.0:controller`), so the runner
+ticks controllers like any run, also after a restart. When the trigger fires,
+the controller starts an **occurrence**, an ordinary child run of the target
+workflow; a **discussion** is a separate root run in its own session, seeded
+with the automation's conversation, on a read-only folder. The gateway routes
+create, read and command automations; they never schedule or run anything.
+
+```mermaid
+flowchart LR
+  subgraph Apps["Apps"]
+    Asst["Assistant"]
+    Obs["Observer"]
+    Flow["Flow editor: automation_defaults"]
+    Code["Code and other chat lists"]
+  end
+
+  subgraph GW["AbstractGateway"]
+    Env["Error envelope (automation paths)"]
+    ARoutes["/api/gateway/automations*<br/>/trigger-sources"]
+    Cmd["/api/gateway/commands<br/>(automation.* and wait answers)"]
+    Runs["/api/gateway/runs<br/>session_kind, role, turn roots"]
+    Start["/api/gateway/runs/start<br/>(discussion turns re-stamped)"]
+    Defs["/visualflows, /bundles<br/>automation_defaults"]
+    Seen[("Seen store<br/>automations/attention/")]
+    Inbox[("Durable command inbox")]
+    Runner["GatewayRunner"]
+  end
+
+  subgraph RT["AbstractRuntime"]
+    Ctl["Controller run<br/>(automation id)"]
+    Occ["Occurrence runs<br/>(child runs of the target)"]
+    Disc["Discussion runs<br/>(own session, read-only folder)"]
+    Ledger[("Automation ledger:<br/>definition, commands, attention")]
+  end
+
+  Asst --> Env
+  Obs --> Env
+  Flow -->|save, publish| Defs
+  Code --> Runs
+  Env --> ARoutes
+  ARoutes -->|create| Ctl
+  ARoutes -->|discuss| Disc
+  ARoutes -->|defaults at creation| Defs
+  ARoutes -->|commands, revise| Inbox
+  ARoutes --> Seen
+  ARoutes -->|summaries, occurrences, attention| Ledger
+  Cmd --> Inbox
+  Start --> Disc
+  Runner -->|apply commands| Ctl
+  Runner -->|tick| Ctl
+  Runner -->|tick| Occ
+  Runner -->|tick| Disc
+  Inbox --> Runner
+  Ctl -->|trigger fires| Occ
+  Ctl --> Ledger
+  Occ -->|notify, failure| Ledger
+```
+
+- **Door and applier.** The automation routes check what they can at once
+  (unknown automation, stale revision, a state that rules the command out)
+  and queue commands in the durable inbox; the runner hands each one to
+  AbstractRuntime, which records it as applied or rejected in the
+  automation's ledger.
+- **One writer.** v1 supports one process that ticks, resumes and commands
+  runs on a data folder (the runner); in the split shape the API process only
+  creates runs and queues commands.
+- **Turn roots.** Run lists and the session history bloc read turns through
+  AbstractRuntime's one selector: parent-less runs and occurrences, never
+  controllers, so a growing automation reads as one chat.
+- **Strict history.** A turn in an automation or discussion session is seeded
+  from its durable history strictly: when the history cannot be read the start
+  is refused instead of running without its context.
+- **Boot warm-up.** File-backed stores build the run store's session and
+  children indexes at startup (`stores.py`).
+
+See [automations.md](./automations.md) for the HTTP contract and operations.
 
 ## Live replies (token deltas)
 
@@ -438,6 +531,12 @@ plus CSRF token. See [security.md](./security.md).
   `engines.py`, `network.py`, `entities.py`)
 - Runner: `src/abstractgateway/runner.py`
 - Stores: `src/abstractgateway/stores.py`
+- Automations: `src/abstractgateway/routes/automations.py`,
+  `src/abstractgateway/automation_errors.py`,
+  `src/abstractgateway/automation_attention.py`,
+  `src/abstractgateway/automation_defaults.py`,
+  `src/abstractgateway/automation_command_types.py`,
+  `src/abstractgateway/session_history_bloc.py`
 - Security: `src/abstractgateway/security/`
 - Settings: `src/abstractgateway/runtime_config.py`
 - Default agent workflows: `src/abstractgateway/agent_defaults.py`
@@ -454,6 +553,7 @@ plus CSRF token. See [security.md](./security.md).
 - [getting-started.md](./getting-started.md): run the gateway and choose stores
 - [configuration.md](./configuration.md): every setting and environment variable
 - [api.md](./api.md): the client contract
+- [automations.md](./automations.md): automations, their routes and operations
 - [security.md](./security.md): auth, origins, network exposure
 - [deployment.md](./deployment.md): containers and Compose
 - [faq.md](./faq.md) and [troubleshooting.md](./troubleshooting.md)

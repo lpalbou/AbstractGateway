@@ -148,9 +148,25 @@ Notes:
 - Every start answers `resolved_workflow`, the workflow the run really runs.
 - See [api.md](./api.md) for ledger replay/stream and durable commands.
 
-## 2b) (Optional) Schedule a run (bundle mode)
+## 2b) (Optional) Run a workflow on a schedule
 
-To launch a workflow periodically, start a **scheduled parent run**:
+To run a workflow again and again, create an **automation**. Each run is kept
+as a chat turn, and the automation stays quiet unless a run asks for attention
+or fails:
+
+```bash
+curl -sS -H "Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token")" -H "Content-Type: application/json" \
+  -d '{"request_id":"memory-monitor-1","title":"Memory every 2 minutes","target":{"flow_id":"@default","interface":"abstractcode.agent.v1","input_data":{"prompt":"Report the memory use of this computer."}},"trigger":{"source_id":"schedule","source_version":1,"config":{"every":"2m"}}}' \
+  "http://127.0.0.1:8080/api/gateway/automations"
+```
+
+Read its runs with `GET /api/gateway/automations/{automation_id}/occurrences`,
+and pause, resume, run now or archive it with
+`POST /api/gateway/automations/{automation_id}/commands`. Tools run without
+asking by default (creating the automation is the consent). See
+[automations.md](./automations.md).
+
+For a plain **scheduled parent run** without these controls, use `POST /api/gateway/runs/schedule`:
 
 ```bash
 curl -sS -H "Authorization: Bearer $(cat "$ABSTRACTGATEWAY_DATA_DIR/auth/bootstrap-admin-token")" -H "Content-Type: application/json" \
@@ -270,5 +286,6 @@ abstractgateway migrate --from=file --to=sqlite \
 - Configuration (env vars + optional deps): [configuration.md](./configuration.md)
 - Deployment: [deployment.md](./deployment.md)
 - API overview: [api.md](./api.md)
+- Automations: [automations.md](./automations.md)
 - Security: [security.md](./security.md)
 - Operator tooling (optional): [maintenance.md](./maintenance.md)

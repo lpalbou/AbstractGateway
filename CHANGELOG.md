@@ -7,60 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
-Requires the AbstractRuntime release that contains Automations v1 with
-`policy.tool_approval` and typed waits (abstractruntime main 3cc9900 or later):
-the minimum AbstractRuntime version is raised to it when this is released.
+Requires AbstractRuntime with automations support (the next release after 0.5.1); the minimum
+AbstractRuntime version is raised to that release when this version is published.
 
 ### Added
 
 - **Automations.** Run a workflow again and again on a schedule ("every 2 minutes") or on
   request, read every run as a chat turn, and get notified only when a run asks for it or
-  fails. Documented in [docs/automations.md](docs/automations.md):
-  - `POST /api/gateway/automations` creates one (a workflow of this gateway or the default
-    agent, a trigger, independent or growing context); `GET /api/gateway/automations` lists
-    them in full pages, older scheduled runs included (`legacy: true`); `GET …/{id}`,
-    `PATCH …/{id}` (revise) and `POST …/{id}/commands` (pause, resume, run now, stop the
-    current run, archive).
+  fails. See [docs/automations.md](docs/automations.md).
+  - `POST /api/gateway/automations` creates an automation from a workflow of this gateway or the
+    gateway default agent (`flow_id: "@default"` with an `interface`), a trigger, an
+    independent or growing context and a policy; the same `request_id` returns the same
+    automation. `title` and `trigger` can come from the workflow's `automation_defaults`.
+  - `GET /api/gateway/automations` lists your automations in full pages, with older scheduled
+    runs on the last page (`legacy: true`); `GET …/{id}` returns the definition and summary.
+  - `PATCH …/{id}` revises title, target, trigger, context or policy; `POST …/{id}/commands`
+    pauses, resumes, runs now, stops the current run or archives. Commands the automation's
+    state rules out are refused at once (409 `automation_busy`, `invalid_state`,
+    `revision_conflict`, `identity_conflict`).
   - `GET …/{id}/occurrences` shows each run with its trigger, the prompt it received, its
-    answer, failures, files and pending questions; `GET …/{id}/attention` pages the
-    notifications you have not seen yet.
+    answer, failures, files and pending waits.
+  - `GET …/{id}/attention` pages the notifications you have not seen, and `POST …/{id}/seen`
+    records, per user, what you have seen.
   - `POST …/{id}/discuss` opens a separate conversation about one run, seeded with the
-    automation's conversation so far, that can read but never change the automation's
-    folder; its later turns through `POST /api/gateway/runs/start` stay read-only.
-  - Tools run unattended: `policy.tool_approval` is `auto` by default (creating the automation
-    is the consent); `ask` makes every tool batch wait for approval. Waits are typed
-    (`ask_user`, `tool_approval` with the tool calls, `event`), and an answer of the wrong shape
-    for an automation's wait is refused (422) instead of being recorded as a tool result.
-  - Commands the automation's state rules out are refused at once (409 `automation_busy` /
-    `invalid_state`) instead of being accepted and rejected later.
-  - Automations run as ordinary durable runs of the gateway's runner: they survive a
-    restart, and a restart during a run never starts it twice.
-  - `scripts/accept_automations_v1.py` checks the whole feature end to end against a
-    gateway it starts itself.
-  - Run lists say how each run belongs to an automation: `GET /api/gateway/runs` rows carry
-    `session_kind` (`chat`, `automation`, `occurrence`, `discussion`), `automation_id`, `role`,
-    `occurrence_index` and `legacy`, and accept a `session_kind` filter
-    (`session_kind=chat,discussion`). `root_only=true` returns conversation turns, so each run of
-    an automation reads as a turn of a chat; the session history bloc lists the same turns.
-  - `GET /api/gateway/trigger-sources` lists what can start an automation (`schedule@1`: a fixed
-    interval such as every 2 minutes; `manual@1`: only when asked).
-  - `POST /api/gateway/automations/{id}/seen` remembers, per user, which automation
-    notifications you have seen.
-  - Workflows can carry `automation_defaults` (trigger, context mode, inputs): saved and returned
-    by the flow editor routes, removed by `null`, checked on save, published into the bundle
-    manifest and shown by `/bundles`, `/bundles/{id}` and the shared catalog.
-  - `POST /api/gateway/commands` also accepts the six `automation.*` commands for an automation
-    id; the capabilities document advertises the API under `contracts.common.automations`.
-  - Errors on the automation routes, including sign-in failures and malformed JSON, all have the
-    shape `{"detail": {"reason_code", "message"}}`.
+    automation's conversation up to that run, on a read-only folder; its later turns through
+    `POST /api/gateway/runs/start` stay read-only and keep its history.
+  - `GET /api/gateway/trigger-sources` lists what can start an automation (`schedule@1`: a
+    fixed UTC interval; `manual@1`: only when asked).
+  - Tool approval: `policy.tool_approval` is `auto` by default (creating the automation is the
+    consent for its target's tools) or `ask` (every tool batch waits for approval).
+  - Typed waits: an occurrence's waits say what they wait for (`ask_user`, `tool_approval`
+    with the tool calls, `event`), and an answer of the wrong shape for an automation's wait
+    is refused with 422.
+  - Errors on the automation routes, sign-in failures and malformed JSON included, all have
+    the shape `{"detail": {"reason_code", "message", "field"?, "command_id"?}}`.
+  - The capabilities document advertises the API under `contracts.common.automations`, and
+    `POST /api/gateway/commands` also accepts the six `automation.*` commands for an automation
+    id.
+  - Automations are durable runs of the gateway's runner: they survive a restart, and a
+    restart during a run never starts it twice.
+  - `scripts/accept_automations_v1.py` checks the whole feature end to end against a gateway
+    it starts itself.
+- **Automation attribution in run lists.** `GET /api/gateway/runs` rows carry `session_kind`
+  (`chat`, `automation`, `occurrence`, `discussion`), `automation_id`, `role`,
+  `occurrence_index` and `legacy`, and accept a `session_kind` filter
+  (`session_kind=chat,discussion`). `root_only=true` returns conversation turns, one per
+  occurrence (a retried occurrence once), so a growing automation reads as one chat; the
+  session history bloc returns the same turns.
+- **`automation_defaults` on workflows.** The flow editor routes save, return and remove
+  (`null`) a workflow's automation defaults (title, trigger, context mode, inputs), checked on
+  save; publishing writes them into the bundle manifest, and `/bundles`, `/bundles/{id}` and
+  the shared catalog return them.
+
+### Changed
+
+- With file-backed stores the gateway builds the run store's session and children indexes at
+  startup, so the first chat after a start answers without that scan; the log reports the time
+  it took.
 
 ### Fixed
 
-- Run commands (`pause`, `cancel`, …) sent to an automation's id were accepted and broke the
-  automation (a paused controller that still read "active", a cancel that failed it for good);
-  they are now refused with 409 and a pointer to the `automation.*` commands.
-
-- A scheduled run listed by `GET /api/gateway/runs` said `is_scheduled: false`; it now says `true`.
+- Run commands (`pause`, `cancel`, …) sent to an automation's id are refused with 409
+  `invalid_state` and a pointer to the `automation.*` commands.
+- A scheduled run listed by `GET /api/gateway/runs` reports `is_scheduled: true`.
 
 ## [0.5.1] - 2026-09-26
 

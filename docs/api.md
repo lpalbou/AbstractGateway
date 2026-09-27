@@ -687,7 +687,7 @@ Commands are appended to a durable inbox and applied asynchronously by the runne
 Request fields (see `SubmitCommandRequest` in `src/abstractgateway/routes/gateway.py`):
 - `command_id`: client-supplied idempotency key (UUID recommended)
 - `run_id`: target run id (or session id for some event use-cases)
-- `type`: `pause|resume|cancel|conclude|emit_event|update_schedule|compact_memory|inject_guidance`, or an `automation.*` type with `run_id` = the automation id ([automations.md](./automations.md#commands-through-the-run-command-door))
+- `type`: `pause|resume|cancel|conclude|emit_event|update_schedule|compact_memory|inject_guidance`, or an `automation.*` type with `run_id` = the automation id ([automations.md](./automations.md#commands)). Run commands aimed at an automation id answer 409 `invalid_state`.
 - `payload`: command-specific object
 
 ### Pause / cancel
@@ -729,6 +729,36 @@ curl -sS -H "$AUTH" -H "Content-Type: application/json" \
 ```
 
 Evidence: `src/abstractgateway/runner.py` (`_apply_emit_event`).
+
+## Automations
+
+An automation runs a workflow on a trigger (a fixed UTC interval, or only when
+asked) as a durable controller run whose occurrences are ordinary child runs.
+The full contract, with request and response shapes, the error envelope,
+typed waits, attention and operations, is in [automations.md](./automations.md).
+
+| Route | Answer |
+|---|---|
+| `GET /api/gateway/trigger-sources` | `{items: [{id, version, label, capabilities, config_schema, event_schema, available, unavailable_reason?}]}` |
+| `POST /api/gateway/automations` | `{request_id, title?, target, trigger?, context?, policy?}` → `{automation_id, revision, summary}` |
+| `GET /api/gateway/automations?status=&cursor=&limit=` | `{items: [AutomationSummary], next_cursor}` (older scheduled runs on the last page, `legacy: true`) |
+| `GET /api/gateway/automations/{automation_id}` | `{definition, active_revision, summary}` |
+| `PATCH /api/gateway/automations/{automation_id}` | `{command_id, expected_revision?, changes}` → `{command_id, accepted, duplicate, seq}` |
+| `POST /api/gateway/automations/{automation_id}/commands` | `{command_id, type: automation.pause|resume|run_now|stop_current|archive|revise, payload?}` → the same receipt |
+| `GET /api/gateway/automations/{automation_id}/occurrences?cursor=&limit=` | `{items: [occurrence], next_cursor}`, newest first |
+| `GET /api/gateway/automations/{automation_id}/attention?cursor=&limit=` | `{items: [attention item], next_cursor}`: your unseen items, oldest first |
+| `POST /api/gateway/automations/{automation_id}/seen` | `{attention_cursor}` → `{attention_cursor}` (moves forward only) |
+| `POST /api/gateway/automations/{automation_id}/discuss` | `{request_id, occurrence_index, prompt}` → `{session_id, run_id, session_kind: "discussion"}` |
+
+Errors on these routes, 401 and 403 included, always have the shape
+`{"detail": {"reason_code", "message", "field"?, "command_id"?}}`
+([automations.md](./automations.md#errors)). An occurrence's wait is answered
+with the `resume` command above; the answer's shape depends on the wait's
+`kind` ([automations.md](./automations.md#waits-on-a-person)).
+`GET /api/gateway/runs` rows carry `session_kind`, `automation_id`, `role`,
+`occurrence_index` and `legacy`, accept `session_kind=chat,discussion`, and
+`root_only=true` returns conversation turns, one per occurrence
+([automations.md](./automations.md#automations-in-run-lists)).
 
 ## Beyond the core
 
@@ -924,9 +954,12 @@ offloaded input data.
 ### Session history bloc (`GET /sessions/{session_id}/history/bloc`)
 
 Returns one cursor-bounded bloc of **root session turns**, each with an inline
-`history_bundle` export — one round-trip instead of N per-turn bundle fetches
-(laurent c5551). Resume pagination uses an ISO `created_at` cursor in the
+`history_bundle` export — one round-trip instead of N per-turn bundle fetches. Resume pagination uses an ISO `created_at` cursor in the
 `before` query parameter (never turn-count offsets).
+The turns are the ones `GET /api/gateway/runs?root_only=true` lists for the
+session: parent-less runs plus automation occurrences (a retried occurrence
+once, as its last attempt), never automation controllers
+([automations.md](./automations.md#automations-in-run-lists)).
 
 Query parameters:
 

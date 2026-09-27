@@ -143,15 +143,20 @@ Evidence: `GET /runs/{run_id}/ledger` and `/ledger/stream` in `src/abstractgatew
 The background runner polls the inbox and applies commands asynchronously.
 
 Supported command types:
-`pause|resume|cancel|emit_event|update_schedule|compact_memory`
+`pause|resume|cancel|conclude|emit_event|update_schedule|compact_memory|inject_guidance`,
+plus the six `automation.*` commands with `run_id` set to an automation id
+([automations.md](./automations.md#commands)).
 
 Evidence: `submit_command` in `src/abstractgateway/routes/gateway.py`, command application in `src/abstractgateway/runner.py`.
 
 ### Can I schedule a workflow to run periodically?
 
-Yes (bundle mode).
+Yes. Create an **automation** with `POST /api/gateway/automations`: a
+workflow run on a fixed UTC interval (or only when you ask), each run kept as
+a chat turn, quiet unless a run asks for attention or fails. See
+[automations.md](./automations.md) and [Automations](#automations) below.
 
-Use `POST /api/gateway/runs/schedule` to start a scheduled parent run that launches the target workflow as child runs over time.
+`POST /api/gateway/runs/schedule` starts a scheduled parent run that launches the target workflow as child runs over time. Such schedules are listed with the automations as `legacy: true` and keep their own controls.
 
 Notes:
 - `interval` supports compact durations like `15m`, `1h`, `2d`.
@@ -159,6 +164,51 @@ Notes:
 - To stop the schedule, cancel the scheduled parent run via `POST /api/gateway/commands` with type `cancel`.
 
 Evidence: `ScheduleRunRequest` + `start_scheduled_run` in `src/abstractgateway/routes/gateway.py`.
+
+## Automations
+
+### What is the difference between an automation and a scheduled run?
+
+An automation is a durable controller run that AbstractRuntime drives: it
+has revisions, pause, resume, run now, retries, attention, discussions and
+typed waits, and each run reads as a chat turn. A scheduled run
+(`POST /api/gateway/runs/schedule`) is a parent run that starts children on an
+interval; it is listed read-only among the automations (`legacy: true`) and is
+never converted. See [automations.md](./automations.md#older-scheduled-runs-legacy).
+
+### Do an automation's tools ask for approval?
+
+Not by default. An automation runs unattended, so creating it with
+`policy.tool_approval: "auto"` (the default) is the consent for its target's
+tools. With `"ask"`, every tool batch waits for approval. Third-party MCP
+tools still ask under `"auto"`, and questions the workflow asks a person wait
+in both modes. See [automations.md](./automations.md#tool-approval-and-consent).
+
+### Why does an automation not notify me after every run?
+
+Automations are quiet. A run raises attention only when its output carries
+`notify: true` or `notify: {title, body}`, when it fails after its last retry,
+or while it waits for a person. See [automations.md](./automations.md#attention-and-seen).
+
+### Can an automation run daily at 08:00?
+
+Not in v1. Schedules are fixed UTC intervals ("every 24 hours" from a start
+time), with no cron expressions, time zones or daylight-saving rules. See
+[automations.md](./automations.md#limits-in-v1).
+
+### What does growing context do?
+
+In `growing` mode each run receives the previous runs as conversation
+history (at most 40 messages and 24,000 characters, whole turns), and the
+automation reads as one chat. In `independent` mode (the default) every run
+starts fresh. See [automations.md](./automations.md#create-an-automation).
+
+### Is an automation safe across a gateway restart?
+
+Yes. Automations are durable runs: after a restart the runner continues each
+one, a run interrupted mid-way continues rather than starting twice, and ticks
+missed while the gateway was down coalesce into one run. Run one gateway (or
+one runner) per data folder. See [automations.md](./automations.md#operations).
 
 ## Bundles and workflow execution
 
@@ -364,6 +414,7 @@ Evidence: CLI flag `--no-runner` in `src/abstractgateway/cli.py`, lock lifecycle
 - Troubleshooting: [troubleshooting.md](./troubleshooting.md)
 - Getting started: [getting-started.md](./getting-started.md)
 - API overview: [api.md](./api.md)
+- Automations: [automations.md](./automations.md)
 - Security: [security.md](./security.md)
 - Configuration: [configuration.md](./configuration.md)
 - Architecture: [architecture.md](./architecture.md)
