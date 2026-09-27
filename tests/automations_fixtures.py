@@ -233,6 +233,18 @@ def _ask_flow() -> dict:
     ]}
 
 
+def _fail_flow() -> dict:
+    """Always fails (a code node that raises)."""
+    return {"id": "fail", "name": "fail", "entryNode": "start", "nodes": [
+        {"id": "start", "type": "on_flow_start", "data": {"nodeType": "on_flow_start", "outputs": [_XO]}},
+        {"id": "boom", "type": "code", "data": {"nodeType": "code", "codeBody": "raise ValueError('target failed on purpose')", "inputs": [_X]}},
+        {"id": "end", "type": "on_flow_end", "data": {"nodeType": "on_flow_end", "inputs": [_X]}},
+    ], "edges": [
+        {"source": "start", "sourceHandle": "exec-out", "target": "boom", "targetHandle": "exec-in"},
+        {"source": "boom", "sourceHandle": "exec-out", "target": "end", "targetHandle": "exec-in"},
+    ]}
+
+
 def write_echo_bundle(bundles_dir: Path, *, automation_defaults: Optional[dict] = None) -> str:
     import json
     import zipfile
@@ -246,8 +258,8 @@ def write_echo_bundle(bundles_dir: Path, *, automation_defaults: Optional[dict] 
         "bundle_id": ECHO_BUNDLE_ID,
         "bundle_version": "1.0.0",
         "created_at": "2026-09-27T00:00:00+00:00",
-        "entrypoints": [{"flow_id": fid, "name": fid, "description": "", "interfaces": []} for fid in (ECHO_FLOW_ID, "slow", "ask")],
-        "flows": {fid: f"flows/{fid}.json" for fid in (ECHO_FLOW_ID, "slow", "nap", "ask")},
+        "entrypoints": [{"flow_id": fid, "name": fid, "description": "", "interfaces": []} for fid in (ECHO_FLOW_ID, "slow", "ask", "fail")],
+        "flows": {fid: f"flows/{fid}.json" for fid in (ECHO_FLOW_ID, "slow", "nap", "ask", "fail")},
         "artifacts": {},
         "assets": {},
         "metadata": metadata,
@@ -255,7 +267,7 @@ def write_echo_bundle(bundles_dir: Path, *, automation_defaults: Optional[dict] 
     with zipfile.ZipFile(bundles_dir / f"{ECHO_BUNDLE_ID}.flow", "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.writestr("manifest.json", json.dumps(manifest, indent=2))
         zf.writestr(f"flows/{ECHO_FLOW_ID}.json", json.dumps(echo_flow(), indent=2))
-        for flow in (_slow_flow(), _nap_flow(), _ask_flow()):
+        for flow in (_slow_flow(), _nap_flow(), _ask_flow(), _fail_flow()):
             zf.writestr(f"flows/{flow['id']}.json", json.dumps(flow, indent=2))
     return f"{ECHO_BUNDLE_ID}@1.0.0"
 

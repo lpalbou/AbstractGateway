@@ -639,3 +639,23 @@ def test_d6_legacy_rows_have_a_binding_and_a_last_occurrence(live: TestClient) -
     assert last["run_id"] == second.run_id and last["index"] == 2 and last["status"] == "completed"
     assert last["excerpt"] == "legacy answer" and last["notify"] is None and last["fired_at"] == second.created_at
     assert row["occurrence_count"] == 2
+
+
+def test_d3_a_retried_occurrence_is_one_turn(live: TestClient) -> None:
+    r = live.post("/api/gateway/automations", headers=HEADERS, json={
+        "request_id": "retry", "title": "retry", "target": {"bundle_ref": live.bundle_ref, "flow_id": "fail"},
+        "trigger": {"source_id": "manual", "source_version": 1, "config": {}},
+        "policy": {"retry": {"max_attempts": 2, "backoff": {"initial": "1s", "factor": 1, "max": "1s"}}}})
+    assert r.status_code == 200, r.text
+    aid = r.json()["automation_id"]
+    _command(live, aid, "automation.run_now", "go")
+    row = wait_until(lambda: (lambda o: o[0] if o and o[0]["status"] == "failed" else None)(_occurrences(live, aid)), timeout_s=30)
+    assert row["attempts"] == 2 and row["failure"]["attempts"] == 2
+    children = live.get(f"/api/gateway/runs?parent_run_id={aid}&include_ledger_len=false", headers=HEADERS).json()["items"]
+    attempts = [c for c in children if c["role"] == "occurrence" and c["occurrence_index"] == 1]
+    assert len(attempts) == 2 and len({c["session_id"] for c in attempts}) == 1
+    session = attempts[0]["session_id"]
+    turns = _rows(live, f"root_only=true&session_id={session}")
+    assert list(turns) == [row["run_id"]]   # one turn: the last attempt
+    bloc = live.get(f"/api/gateway/sessions/{session}/history/bloc?limit=10", headers=HEADERS).json()["turns"]
+    assert [t["run_id"] for t in bloc] == [row["run_id"]]

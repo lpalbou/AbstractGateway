@@ -8656,6 +8656,20 @@ def _is_turn_root_summary(summary: Dict[str, Any]) -> bool:
     return not str(summary.get("parent_run_id") or "").strip() and role != "controller"
 
 
+def _drop_superseded_attempts(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """One turn per logical occurrence: among the attempts of one
+    `(automation_id, occurrence_index)` only the newest stays (the runtime's
+    `latest_occurrence_of`, the rule `select_session_turns` applies too)."""
+    from abstractruntime.core.run_attribution import latest_occurrence_of
+
+    groups: Dict[tuple, List[Dict[str, Any]]] = {}
+    for row in rows:
+        if row.get("role") == "occurrence":
+            groups.setdefault((row.get("automation_id"), row.get("occurrence_index")), []).append(row)
+    keep = {id(latest_occurrence_of(group)) for group in groups.values()}
+    return [row for row in rows if row.get("role") != "occurrence" or id(row) in keep]
+
+
 @router.get("/runs")
 async def list_runs(
     request: Request,
@@ -8854,6 +8868,8 @@ async def list_runs(
                         session_kind=",".join(sorted(kinds)) if kinds is not None else None,
                     )
                     row_count = len(rows or [])
+                    if bool(root_only):
+                        rows = _drop_superseded_attempts(list(rows or []))
                     for row in rows or []:
                         wf_id = str(row.get("workflow_id") or "").strip()
                         # NOT a bare `__` prefix: a catalog-published workflow
@@ -8937,6 +8953,8 @@ async def list_runs(
 
         # Page slice BEFORE the metrics/ledger enrichment below — those cost
         # per-item work and must only ever run on the served page.
+        if bool(root_only):
+            items = _drop_superseded_attempts(items)
         has_more = len(items) > int(offset) + int(limit)
         # A cost-capped scan may hide matches BEYOND what it read: offer the
         # next page rather than claim the list ended (silently ending is the

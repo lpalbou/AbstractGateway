@@ -262,7 +262,7 @@ automation:
 - `root_only=true` returns **turns**: runs without a parent, except automation
   controllers, plus occurrences. An automation that keeps a growing
   conversation therefore reads as one chat session, one turn per occurrence,
-  with no client changes. `GET /api/gateway/sessions/{session_id}/history/bloc`
+  with no client changes. A retried occurrence is one turn (its last attempt). `GET /api/gateway/sessions/{session_id}/history/bloc`
   returns the same turns (a retried occurrence counts once, as its last
   attempt).
 - Every row also has `legacy`: `true` for an older scheduled run
