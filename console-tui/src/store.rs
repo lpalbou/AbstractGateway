@@ -16,6 +16,10 @@ use crate::api::ApiError;
 /// The Apps screen's rows, decision rules and signals.
 #[path = "store_apps.rs"]
 pub mod apps;
+/// Operator controls (host card, paused banner, own workspace policy,
+/// backlog settings): state + pure parsing, in its own file.
+#[path = "store_operator.rs"]
+pub mod operator;
 
 /// Remote data honesty: never render a guess.
 #[derive(Clone, Debug, Default)]
@@ -1232,6 +1236,8 @@ pub struct NetworkData {
     pub modes: Vec<NetworkMode>,
     pub addresses: Vec<NetworkAddress>,
     pub copy_hint: String,
+    /// `discovery.public_note`: why a requested WAN lookup did not run.
+    pub public_note: Option<String>,
     pub warnings: Vec<String>,
     /// Reverse proxy (`reverse_proxy`, mission Z): the stored origins the
     /// edit line changes, where the winning value comes from
@@ -1358,6 +1364,11 @@ impl NetworkData {
             modes,
             addresses,
             copy_hint: s(v, "copy_hint"),
+            public_note: v
+                .get("discovery")
+                .and_then(|d| d.get("public_note"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
             proxy: ReverseProxyView::from_value(v.get("reverse_proxy")),
             warnings: v
                 .get("warnings")
@@ -1416,6 +1427,9 @@ pub struct RuntimeConfigData {
     /// `agents.streaming_default`; None when this gateway's read lacks it
     /// (the knob row then says "not available on this gateway").
     pub streaming_default: Option<StreamingDefault>,
+    /// Backlog settings (triage_repo_root, backlog_exec_runner,
+    /// process_manager) — rendered by their own rows, not as knobs.
+    pub backlog: Vec<operator::BacklogSetting>,
 }
 
 /// `agents.streaming_default`: whether interactive runs that do not ask
@@ -1575,6 +1589,9 @@ impl RuntimeConfigData {
                 let (Some(value), Some(source)) = (val.get("value"), val.get("source")) else {
                     continue;
                 };
+                if operator::BACKLOG_KEYS.contains(&key.as_str()) {
+                    continue; // their own rows (store::operator)
+                }
                 if key == "workspace_root" {
                     workspace_root = match value {
                         Value::Null => String::new(),
@@ -1741,6 +1758,7 @@ impl RuntimeConfigData {
             agent_defaults: agent_defaults_from(v),
             skills_shelf: skills_shelf_from(v),
             streaming_default: streaming_default_from(v),
+            backlog: operator::backlog_settings_from(v),
         }
     }
 }
@@ -2520,6 +2538,9 @@ pub struct Store {
     pub about: Signal<Loadable<Value>>,
     /// Network exposure + reachable addresses (Connection screen).
     pub network: Signal<Loadable<NetworkData>>,
+    /// Operator controls: host runner/tray/update, paused-banner poll,
+    /// the caller's own workspace policy (see `store::operator`).
+    pub op: operator::OperatorStore,
     /// Per-provider model lists (route editor + provider browser).
     pub models: Signal<HashMap<String, Loadable<Vec<String>>>>,
     /// Result of the LAST discover-models call — a single slot, which
@@ -3257,6 +3278,7 @@ impl Store {
             runtime_config: cx.signal(Loadable::default()),
             about: cx.signal(Loadable::default()),
             network: cx.signal(Loadable::default()),
+            op: operator::OperatorStore::create(cx),
             models: cx.signal(HashMap::new()),
             discover: cx.signal(Loadable::default()),
             sandbox: cx.signal(Loadable::default()),
@@ -3329,6 +3351,7 @@ impl Store {
             runtime_config,
             about,
             network,
+            op,
             models,
             discover,
             sandbox,
@@ -3373,6 +3396,7 @@ impl Store {
         runtime_config.set(Loadable::NotAsked);
         about.set(Loadable::NotAsked);
         network.set(Loadable::NotAsked);
+        op.reset();
         models.update(|m| m.clear());
         discover.set(Loadable::NotAsked);
         sandbox.set(Loadable::NotAsked);

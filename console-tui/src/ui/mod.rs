@@ -11,7 +11,11 @@ pub mod about;
 pub mod apps;
 pub mod connection;
 pub mod entity_manage;
+/// Gateway host panel (F2) + the paused / restart banner.
+pub mod host;
 pub mod models;
+/// The caller's own workspace policy (Users screen, `w`).
+pub mod my_policy;
 pub mod network;
 pub mod providers;
 pub mod review;
@@ -899,6 +903,7 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
     let ctx_about = ctx.clone();
     let ctx_about2 = ctx.clone();
     let ctx_guide = ctx.clone();
+    let ctx_host = ctx.clone();
 
     let mut root_el = Element::new()
         .style(LayoutStyle::column())
@@ -992,7 +997,10 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
             welcome::guide_key(&ctx_guide, cx)
         })
         .shortcut(KeyChord::plain(Key::F(1)), move |_| about::open(&ctx_about, cx))
-        .shortcut(KeyChord::plain(Key::Char('?')), move |_| about::open(&ctx_about2, cx));
+        .shortcut(KeyChord::plain(Key::Char('?')), move |_| about::open(&ctx_about2, cx))
+        // Gateway host panel (pause/resume, restart, quit, update): F2
+        // anywhere — a function key survives focused text fields.
+        .shortcut(KeyChord::plain(host::OPEN_KEY), move |_| host::open(&ctx_host, cx));
     // Digit keys at the root. Wizard: a REFUSAL with a reason, so a
     // swallowed digit never reads as a dead app (F3). Browse: PageHost
     // owns digit jumps (its number_jump surface), but its shortcut rides
@@ -1146,6 +1154,9 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
 
     root_el
         .child(header(cx, &ctx, theme))
+        // "Workflows are paused" (web: every tab) + the restart/quit
+        // watcher line; zero rows when neither applies.
+        .child(host::banner(&ctx, theme))
         // One blank line between the title bar and the tab bar
         // (operator ask 2026-07-24: the header must never butt directly
         // against the components below). Pinned like the header — a
@@ -1240,6 +1251,8 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
     // First run: read the state at connect, take the boot decision,
     // route Finish / Skip outcomes (ui/welcome.rs).
     welcome::install(cx, ctx);
+    // The paused-banner poll (/host/runner, 15 s while connected).
+    host::install(cx, ctx);
 
     // Screen-entry data loading: when connected and a screen's domains
     // were never asked, ask. Loading is set synchronously in
@@ -1725,6 +1738,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     pairs.push(("m", "manage entity"));
                     pairs.push(("i", "inspect"));
                     pairs.push(("v", "kept data of deleted users"));
+                    pairs.push(("w", "my workspace policy"));
                     pairs.push(("r", "refresh"));
                 }
                 4 => {
@@ -1751,6 +1765,8 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     pairs.push(("e", "export .flow"));
                     pairs.push(("d", "delete version"));
                     pairs.push(("D", "delete every version"));
+                    pairs.push(("i", "import .flow"));
+                    pairs.push(("L", "reload from disk"));
                     pairs.push(("r", "refresh"));
                 }
                 SCREEN_REVIEW => {
@@ -1792,6 +1808,9 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
             } else {
                 ("Ctrl+G", "setup guide")
             });
+            // LAST: the row truncates right-edge-first, so the host panel
+            // key shows wherever the screen's own verbs leave room.
+            pairs.push((host::OPEN_KEY_LABEL, "gateway host"));
             hints(&t, &pairs)
         }))
         .build()

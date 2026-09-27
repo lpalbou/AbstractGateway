@@ -230,6 +230,33 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData) -> View {
     if d.proxy.present {
         col = col.child(proxy_view(cx, ctx, t, &d));
     }
+    // After the reverse proxy so the panel's Tab order stays put.
+    // WAN address (web: "Look up my public address" — admin, internet
+    // mode, no public address listed yet). One outbound HTTPS call made
+    // BY THE GATEWAY; the answer lands as a `public` address row.
+    if crate::store::operator::offers_public_lookup(&d) {
+        let ctx_l = ctx.clone();
+        col = col.child(
+            Element::new()
+                .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                .child(
+                    Button::new("Look up my public address")
+                        .on_click(move || {
+                            ctx_l.send(Cmd::Operator(crate::worker::operator::OpCmd::LookupPublic))
+                        })
+                        .element(cx, t)
+                        .build(),
+                )
+                .child(line(vec![span(
+                    "asks a public service which address your network shows the internet",
+                    t.text_faint,
+                )]))
+                .build(),
+        );
+    }
+    if let Some(note) = &d.public_note {
+        col = col.child(line(vec![span(format!("public address: {note}"), t.text_faint)]));
+    }
     col.build()
 }
 

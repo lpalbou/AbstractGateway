@@ -26,6 +26,10 @@ pub mod firstrun;
 // downloads feed): a child module so it reaches `get`/`send`.
 #[path = "api_engines.rs"]
 mod api_engines;
+/// Operator-control routes (host controls, workflow import/reload, skills
+/// reseed, WAN lookup, own workspace policy) — child module for privacy.
+#[path = "api_operator.rs"]
+mod api_operator;
 
 /// What kind of failure this is — drives which honest state the UI shows.
 #[derive(Debug, Clone, PartialEq, Eq)]

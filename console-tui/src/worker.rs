@@ -22,6 +22,10 @@ use crate::api::{ApiError, ApiErrorKind, ApiResult, GatewayClient};
 /// The Apps screen's handlers (install/update/start/stop/open, jobs).
 #[path = "worker_apps.rs"]
 mod apps;
+/// Operator controls (host card, paused-banner poll, restart/quit watcher,
+/// workflow import/reload, skills reseed, WAN lookup, own workspace policy).
+#[path = "worker_operator.rs"]
+pub mod operator;
 use crate::store::{
     entities_from_payload, models_from_payload, runtimes_from_payload, users_from_payload,
     AvailabilityData, ConnPhase, DiscoverOutcome, DownloadStatus, Identity, JournalEntry, Loadable,
@@ -268,6 +272,8 @@ pub enum Cmd {
     },
     /// `POST /network/restart` (the gateway goes away for a few seconds).
     RestartNetwork,
+    /// Operator controls — see `worker::operator::OpCmd`.
+    Operator(operator::OpCmd),
     /// `POST /network {allowed_origins?, trust_proxy?}` (reverse proxy,
     /// mission Z) then re-read. Only the named fields change; the gateway
     /// validates and its words are shown verbatim.
@@ -644,6 +650,7 @@ fn cmd_form_id(cmd: &Cmd) -> Option<u64> {
         | Cmd::SaveEntityPrompt { form_id, .. }
         | Cmd::EntityReembed { form_id, .. }
         | Cmd::CompleteFirstRun { form_id, .. } => *form_id,
+        Cmd::Operator(op) => op.form_id(),
         _ => None,
     }
 }
@@ -1693,6 +1700,8 @@ fn handle(
             let s = *store;
             wake.post(move || s.notice.set(Some(note.clone())));
         }
+
+        Cmd::Operator(op) => operator::handle(client, store, wake, tx, op, on_done),
 
         Cmd::LoadAbout => load(store, wake, "reading the gateway's versions", store.about, || {
             require_client(client)?.about()

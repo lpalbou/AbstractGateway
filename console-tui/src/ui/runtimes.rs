@@ -493,6 +493,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                         && d.agent_defaults.is_empty()
                                         && d.skills_shelf.is_none()
                                         && d.streaming_default.is_none()
+                                        && d.backlog.is_empty()
                                 },
                                 "the gateway reported no runtime knobs",
                                 |d| knobs_view(cx, &ctx_knobs, &tt, d),
@@ -1247,6 +1248,59 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
             rows.push(line(vec![span(format!("{:>20}  ⚠ {}", "", ellipsize(w, 96)), t.warn)]));
         }
     }
+    // Backlog settings (Continuum): folder, exec runner, process manager —
+    // value + where it comes from (web: "Advanced: backlog settings").
+    for b in &d.backlog {
+        let now = if b.redacted {
+            "(hidden — admin only)".to_string()
+        } else if b.value.is_empty() {
+            "—".to_string()
+        } else {
+            b.value.clone()
+        };
+        rows.push(line(vec![
+            span(format!("{:>20}: ", b.key), t.text_muted),
+            span(ellipsize(&now, 72), t.text),
+            span(format!("  ({})", crate::store::operator::backlog_source_word(&b.source)), t.text_faint),
+        ]));
+        if b.available == Some(false) {
+            rows.push(line(vec![span(
+                format!("{:>20}  ⚠ not available: {}", "", ellipsize(&b.reason, 90)),
+                t.warn,
+            )]));
+        }
+    }
+    // The skills-shelf / backlog verbs get their OWN button row under the
+    // first one (that row already overflows 160 columns; a row at the
+    // bottom of the knobs falls off shorter terminals).
+    let tail_row: View = if d.writable && (!d.backlog.is_empty() || d.skills_shelf.is_some()) {
+        let ctx7 = ctx.clone();
+        let current_backlog = d.clone();
+        let ctx8 = ctx.clone();
+        Element::new()
+            .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+            .child(if current_backlog.backlog.is_empty() {
+                Element::new().style(LayoutStyle::default().h(0)).build()
+            } else {
+                // Web: "Advanced: backlog settings" (Continuum).
+                Button::new("Edit backlog settings")
+                    .on_click(move || open_backlog_settings_form(cx, &ctx7, current_backlog.clone()))
+                    .element(cx, t)
+                    .build()
+            })
+            .child(if d.skills_shelf.is_none() {
+                Element::new().style(LayoutStyle::default().h(0)).build()
+            } else {
+                // Web: "Refresh the curated shelf" beside the shelf field.
+                Button::new("Refresh the curated skills shelf")
+                    .on_click(move || ctx8.send(Cmd::Operator(crate::worker::operator::OpCmd::ReseedSkills)))
+                    .element(cx, t)
+                    .build()
+            })
+            .build()
+    } else {
+        Element::new().style(LayoutStyle::default().h(0)).build()
+    };
     Element::new()
         .style(LayoutStyle::column())
         .child(if d.writable {
@@ -1260,6 +1314,7 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
             let current_agents = d.clone();
             let ctx6 = ctx.clone();
             let current_stream = d.clone();
+
             Element::new()
                 .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
                 .child(
@@ -1304,8 +1359,164 @@ fn knobs_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &RuntimeConfigData) -> View
         } else {
             Element::new().style(LayoutStyle::default().h(0)).build()
         })
+        .child(tail_row)
         .children(rows)
         .build()
+}
+
+/// Backlog settings form (web "Advanced: backlog settings"): the folder
+/// (prefilled with the SAVED value only — a default written back would
+/// silently become a saved one), and two switches with a third "not
+/// saved" state. Save sends only what changed; the gateway validates and
+/// its sentence is shown on refusal. "Use the gateway's own folder"
+/// fills the folder with the default path.
+fn open_backlog_settings_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
+    use crate::store::operator::{backlog_settings_body, backlog_source_word};
+    if !current.writable {
+        ctx.store
+            .notice
+            .set(Some("this needs an admin token".into()));
+        return;
+    }
+    let ctx2 = ctx.clone();
+    open_form(ctx, cx, Size::new(110, 22), move |mcx, close| {
+        let theme = use_theme(mcx);
+        let t0 = theme.get().tokens;
+        let form_error = mcx.signal(Option::<String>::None);
+        let in_flight = mcx.signal(false);
+        let form_id = crate::worker::next_form_id();
+        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
+        let rows = current.backlog.clone();
+        let fields: Vec<(String, Signal<String>)> = rows
+            .iter()
+            .map(|b| (b.key.clone(), mcx.signal(b.saved.clone())))
+            .collect();
+        let mut col = Element::new()
+            .focusable()
+            .autofocus()
+            .style(LayoutStyle::column().gap(0))
+            .child(line(vec![span_bold("Backlog settings (Continuum)", t0.accent)]))
+            .child(line(vec![span(
+                "empty / not saved = the launch flag, else the default (the gateway's own folder; switches off) · applies at once",
+                t0.text_faint,
+            )]));
+        for (b, (_, sig)) in rows.iter().zip(fields.iter()) {
+            let sig = *sig;
+            col = col.child(line(vec![
+                span_bold(b.label.clone(), t0.text),
+                span(format!("  ({})", backlog_source_word(&b.source)), t0.text_faint),
+                span(
+                    if b.flag.is_empty() { String::new() } else { format!("  · launch flag: serve {}", b.flag) },
+                    t0.text_faint,
+                ),
+            ]));
+            if b.is_folder() {
+                col = col.child(field(
+                    &t0,
+                    "folder",
+                    TextInput::new()
+                        .value(sig)
+                        .placeholder(if b.value.is_empty() { b.default_path.clone() } else { b.value.clone() })
+                        .layout(LayoutStyle::default().w(80).h(1))
+                        .element(mcx, &t0)
+                        .build(),
+                ));
+                col = col.child(line(vec![span(
+                    ellipsize(&format!("in use: {}", if b.value.is_empty() { "(hidden)" } else { b.value.as_str() }), 104),
+                    t0.text_faint,
+                )]));
+                if b.available == Some(false) {
+                    col = col.child(line(vec![span(ellipsize(&format!("⚠ not available: {}", b.reason), 104), t0.warn)]));
+                }
+                if !b.default_path.is_empty() && b.value != b.default_path {
+                    let def = b.default_path.clone();
+                    let ctx_def = ctx2.clone();
+                    col = col.child(
+                        // Web parity: this button SAVES at once.
+                        Button::new("Use the gateway's own folder")
+                            .on_click(move || {
+                                if in_flight.get_untracked() {
+                                    return;
+                                }
+                                form_error.set(None);
+                                in_flight.set(true);
+                                ctx_def.send(Cmd::SaveRuntimeConfig {
+                                    body: json!({ "triage_repo_root": def.clone() }).into(),
+                                    form_id: Some(form_id),
+                                });
+                            })
+                            .element(mcx, &t0)
+                            .build(),
+                    );
+                }
+            } else {
+                let now = b.value.clone();
+                col = col.child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
+                    let label = match sig.get().as_str() {
+                        "on" => "On".to_string(),
+                        "off" => "Off".to_string(),
+                        _ => format!("Not saved (now {now})"),
+                    };
+                    line(vec![span(format!("{:>18} ", "saved:"), t0.text_muted), span(label, t0.text)])
+                }));
+                col = col.child(
+                    Button::new(format!("change {}", b.label.to_lowercase()))
+                        .on_click(move || {
+                            sig.update(|v| {
+                                *v = match v.as_str() {
+                                    "" => "on".to_string(),
+                                    "on" => "off".to_string(),
+                                    _ => String::new(),
+                                }
+                            })
+                        })
+                        .element(mcx, &t0)
+                        .build(),
+                );
+            }
+            col = col.child(line(vec![span(ellipsize(&b.help, 106), t0.text_faint)]));
+        }
+        let ctx_save = ctx2.clone();
+        let close_cancel = close.clone();
+        col.child(super::message_slot(theme, form_error, in_flight))
+            .child(
+                Element::new()
+                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                    .child(
+                        Button::new("Save backlog settings")
+                            .on_click(move || {
+                                if in_flight.get_untracked() {
+                                    return;
+                                }
+                                let typed: Vec<(String, String)> = fields
+                                    .iter()
+                                    .map(|(k, sig)| (k.clone(), sig.get_untracked()))
+                                    .collect();
+                                let body = backlog_settings_body(&rows, &typed);
+                                if body.as_object().map(|m| m.is_empty()).unwrap_or(true) {
+                                    form_error.set(Some("nothing changed".into()));
+                                    return;
+                                }
+                                form_error.set(None);
+                                in_flight.set(true);
+                                ctx_save.send(Cmd::SaveRuntimeConfig {
+                                    body: body.into(),
+                                    form_id: Some(form_id),
+                                });
+                            })
+                            .element(mcx, &t0)
+                            .build(),
+                    )
+                    .child(
+                        Button::new("Cancel (Esc)")
+                            .on_click(move || close_cancel())
+                            .element(mcx, &t0)
+                            .build(),
+                    )
+                    .build(),
+            )
+            .build()
+    });
 }
 
 /// The body the apps form sends: only the settings whose text changed,
