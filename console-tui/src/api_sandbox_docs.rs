@@ -158,8 +158,9 @@ pub fn multipart_body(
     if let Some(ct) = content_type {
         field("content_type", ct);
     }
-    // Unknown type: NO part Content-Type, so the route's own filename
-    // guess (mimetypes) decides instead of a blanket octet-stream.
+    // Unknown type: no part Content-Type and no `content_type` field —
+    // the server then records application/octet-stream, exactly what a
+    // browser's upload of an unknown file type yields (live-verified).
     let part_type = content_type
         .map(|ct| format!("Content-Type: {ct}\r\n"))
         .unwrap_or_default();
