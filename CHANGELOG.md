@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `POST …/{id}/discuss` opens a separate conversation about one run, seeded with the
     automation's conversation so far, that can read but never change the automation's
     folder; its later turns through `POST /api/gateway/runs/start` stay read-only.
+  - Tools run unattended: `policy.tool_approval` is `auto` by default (creating the automation
+    is the consent); `ask` makes every tool batch wait for approval. Waits are typed
+    (`ask_user`, `tool_approval` with the tool calls, `event`), and an answer of the wrong shape
+    for an automation's wait is refused (422) instead of being recorded as a tool result.
   - Automations run as ordinary durable runs of the gateway's runner: they survive a
     restart, and a restart during a run never starts it twice.
   - `scripts/accept_automations_v1.py` checks the whole feature end to end against a

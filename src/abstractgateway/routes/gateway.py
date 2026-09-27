@@ -28607,6 +28607,53 @@ async def attachments_upload(
     return {**stored, "attachment": stored.get("artifact")}
 
 
+def _check_automation_wait_answer(svc: Any, *, run_id: str, command_payload: Dict[str, Any]) -> None:
+    """Refuse at the door an answer whose shape does not fit the wait (decision D1).
+
+    Scoped to AUTOMATION runs (occurrences and their descendants), whose waits
+    the runtime types (`wait_kind`): a `tool_approval` wait takes
+    `{approved: true|false}` (optional `tool_ids`), an `ask_user` wait takes
+    `{response}`, an `event` wait takes its event payload. A mismatched shape
+    used to pass through and be recorded as the tool result
+    (`{response: "approve"}` approved nothing). Ordinary chats are unchanged.
+    """
+    from abstractruntime.automations.attention import ANSWER_PAYLOADS, wait_kind
+
+    run = svc.runner.run_store.load(str(run_id))
+    meta = (run.vars or {}).get("_meta") if run is not None and isinstance(run.vars, dict) else None
+    if not (isinstance(meta, dict) and isinstance(meta.get("occurrence"), dict)):
+        return
+    kind = wait_kind(run)
+    if kind is None:
+        return
+    wait_key = command_payload.get("wait_key")
+    if wait_key is not None and run.waiting is not None and str(wait_key) != str(run.waiting.wait_key):
+        return  # a stale wait key: the runner's resume refuses it as today
+    answer = command_payload.get("payload")
+    ok = True
+    if kind == "tool_approval":
+        tool_ids = answer.get("tool_ids") if isinstance(answer, dict) else None
+        ok = (
+            isinstance(answer, dict)
+            and isinstance(answer.get("approved"), bool)
+            and set(answer) <= {"approved", "tool_ids"}
+            and (tool_ids is None or (isinstance(tool_ids, list) and all(isinstance(t, str) for t in tool_ids)))
+        )
+    elif kind == "ask_user":
+        ok = isinstance(answer, dict) and "response" in answer and "approved" not in answer
+    else:  # event: the event's own payload, any JSON object
+        ok = isinstance(answer, dict)
+    if not ok:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "reason_code": "invalid_request",
+                "message": f"this run waits for {kind}; answer with payload.payload = {ANSWER_PAYLOADS[kind]}",
+                "field": "payload",
+            },
+        )
+
+
 def _require_automation_controller(svc: Any, automation_id: str) -> Any:
     """The automation root run `automation_id` in this principal's store, or 404.
 
@@ -28686,6 +28733,9 @@ async def submit_command(req: SubmitCommandRequest) -> SubmitCommandResponse:
         is_visit_workflow = str(getattr(run, "workflow_id", "") or "") == _visit_wf_id
         if is_visit_vars or is_visit_workflow:
             raise HTTPException(status_code=403, detail=_visit_rite_detail)
+
+    if typ == "resume" and isinstance(req.payload, dict) and "payload" in req.payload:
+        _check_automation_wait_answer(svc, run_id=str(req.run_id), command_payload=dict(req.payload))
 
     record = CommandRecord(
         command_id=str(req.command_id),

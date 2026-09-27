@@ -99,6 +99,14 @@ an error (500 `internal_error`).
   the gateway's usual protection of the data folder and your credential
   folders applies to every occurrence.
 - The same `request_id` with a different request → 409 `identity_conflict`.
+- `policy.tool_approval`: `"auto"` (default) or `"ask"`. An automation runs
+  unattended, so it cannot stop to ask before every tool call: **creating
+  it is the consent** for the tools its target offers, and under `auto`
+  every occurrence runs them without asking. `"ask"` keeps the approval
+  wait of an ordinary chat on every tool batch (someone must answer each
+  one). Questions the workflow itself asks (Ask User) wait for a person in
+  both modes. Discussions always keep the interactive approval of ordinary
+  chats.
 
 ## List, read, revise, command
 
@@ -154,19 +162,26 @@ newest first:
  "ledger_url": "/api/gateway/runs/…/ledger", "workspace_url": "/api/gateway/runs/…/workspace"}
 ```
 
-`user_turn` and `answer` are the occurrence as a chat turn. An occurrence
-that waits is answered with the ordinary resume command on the wait's run,
+`user_turn` and `answer` are the occurrence as a chat turn.
+
+Each wait in `waits` (and in the summary's `attention.waits`) is typed:
+`{run_id, wait_key, kind, reason, prompt?, choices?, details?}` with `kind`
+one of `ask_user`, `tool_approval`, `event`; for `tool_approval`, `details`
+lists the tool calls awaiting approval (`[{name, arguments, call_id?}]`).
+Answer with the ordinary resume command on the wait's run,
 `POST /api/gateway/commands` `{"type": "resume", "run_id": <wait run_id>,
-"payload": {"wait_key": <wait_key>, "payload": <answer>}}`. The answer depends
-on what the run is waiting for:
+"payload": {"wait_key": <wait_key>, "payload": <answer>}}`, where the answer
+depends on `kind`:
 
-| Wait | Answer (`payload.payload`) |
+| `kind` | Answer (`payload.payload`) |
 |---|---|
-| a question from the workflow (Ask User) | `{"response": "…"}` |
-| approval of tool calls | `{"approved": true}` or `{"approved": false}` |
-| an event | the event payload |
+| `ask_user` | `{"response": "…"}` |
+| `tool_approval` | `{"approved": true}` or `{"approved": false}` (optional `tool_ids`) |
+| `event` | the event payload (a JSON object) |
 
-An approval answered with `{"response": …}` does not approve anything.
+For an automation's runs the gateway refuses an answer of the wrong shape
+(422 `invalid_request`, field `payload`): `{"response": "approve"}` to a tool
+approval is refused, never recorded as the tool result.
 
 ### The notify convention
 

@@ -135,6 +135,48 @@ def _writer_flow() -> Dict[str, Any]:
     }
 
 
+def _shell_agent_flow() -> Dict[str, Any]:
+    """Stand-in for the default agent (`abstractcode.agent.v1`): its run calls
+    `execute_command` deterministically, so the tool approval path is real
+    while no model provider is involved."""
+    return {
+        "id": "agent",
+        "name": "Shell agent stand-in",
+        "interfaces": ["abstractcode.agent.v1"],
+        "nodes": [
+            {"id": "start", "type": "on_flow_start", "data": {"nodeType": "on_flow_start", "outputs": [_EXEC_OUT, _pin("prompt", "string")]}},
+            {"id": "tools", "type": "tool_calls", "data": {"nodeType": "tool_calls", "inputs": [_EXEC, _pin("tool_calls", "array")],
+                                                           "outputs": [_EXEC_OUT, _pin("results", "array")],
+                                                           "pinDefaults": {"tool_calls": [{"name": "execute_command", "arguments": {"command": "echo acceptance-shell-ok"}}]}}},
+            {"id": "end", "type": "on_flow_end", "data": {"nodeType": "on_flow_end", "inputs": [_EXEC, _pin("results", "array")]}},
+        ],
+        "edges": [
+            {"source": "start", "sourceHandle": "exec-out", "target": "tools", "targetHandle": "exec-in"},
+            {"source": "tools", "sourceHandle": "exec-out", "target": "end", "targetHandle": "exec-in"},
+            {"source": "tools", "sourceHandle": "results", "target": "end", "targetHandle": "results"},
+        ],
+        "entryNode": "start",
+    }
+
+
+def write_shell_agent_bundle(bundles_dir: Path) -> None:
+    manifest = {
+        "bundle_format_version": "1",
+        "bundle_id": "basic-agent",   # the built-in default bundle id for abstractcode.agent.v1
+        "bundle_version": "9.9.9",
+        "created_at": "2026-09-27T00:00:00+00:00",
+        "default_entrypoint": "agent",
+        "entrypoints": [{"flow_id": "agent", "name": "agent", "description": "", "interfaces": ["abstractcode.agent.v1"]}],
+        "flows": {"agent": "flows/agent.json"},
+        "artifacts": {},
+        "assets": {},
+        "metadata": {},
+    }
+    with zipfile.ZipFile(bundles_dir / "basic-agent.flow", "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+        zf.writestr("flows/agent.json", json.dumps(_shell_agent_flow(), indent=2))
+
+
 def write_fixture_bundle(bundles_dir: Path) -> None:
     flows = {"echo": _echo_flow(), "ask": _ask_flow(), "writer": _writer_flow()}
     manifest = {
@@ -310,6 +352,7 @@ def main() -> int:
     data_dir.mkdir(parents=True, exist_ok=True)
     (data_dir / "home").mkdir()
     write_fixture_bundle(data_dir / "bundles")
+    write_shell_agent_bundle(data_dir / "bundles")
 
     spy = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Spy)
     threading.Thread(target=spy.serve_forever, daemon=True).start()
@@ -526,6 +569,47 @@ def main() -> int:
             return f"acknowledged {last}: unseen {before} -> {after}; changed_since -> 422"
 
         step("attention-items", s_attention)
+
+        def _default_agent_automation(request_id: str, policy: Optional[Dict[str, Any]]) -> str:
+            body: Dict[str, Any] = {
+                "request_id": request_id,
+                "title": f"Acceptance {request_id}",
+                "target": {"flow_id": "@default", "interface": "abstractcode.agent.v1", "input_data": {"prompt": "check the machine"}},
+                "trigger": {"source_id": "manual", "source_version": 1, "config": {}},
+            }
+            if policy is not None:
+                body["policy"] = policy
+            aid = gw.ok("POST", "/api/gateway/automations", body)["automation_id"]
+            command(aid, "automation.run_now")
+            return aid
+
+        def s_unattended_shell() -> str:
+            aid = _default_agent_automation("shell-auto", None)
+            check(gw.ok("GET", f"/api/gateway/automations/{aid}")["definition"]["policy"]["tool_approval"] == "auto", "default policy is not auto")
+            rows = wait_for("the unattended shell tick", lambda: done_rows(aid, 1), 60)
+            check(rows[0]["status"] == "completed" and rows[0]["waits"] == [], f"shell tick {rows[0]['status']} waits {rows[0]['waits']}")
+            ledger = gw.ok("GET", f"/api/gateway/runs/{rows[0]['run_id']}/ledger?after=0&limit=1000")["items"]
+            out = [str((r.get("result") or {}).get("results")) for r in ledger if ((r or {}).get("effect") or {}).get("type") == "tool_calls" and r.get("status") == "completed"]
+            check(any("acceptance-shell-ok" in o for o in out), "execute_command did not run")
+            return "@default target ran execute_command with no approval wait (policy auto, no client tool_policy)"
+
+        step("unattended-shell-tick", s_unattended_shell)
+
+        def s_tool_approval_by_kind() -> str:
+            aid = _default_agent_automation("shell-ask", {"tool_approval": "ask"})
+            att = wait_for("the tool approval wait", lambda: (lambda a: a if a["pending_waits"] == 1 else None)(summary(aid)["attention"]), 60)
+            wait = att["waits"][0]
+            check(wait["kind"] == "tool_approval" and [c["name"] for c in wait.get("details") or []] == ["execute_command"], f"wait {wait}")
+            status, out = gw.request("POST", "/api/gateway/commands", {"command_id": f"acc-{uuid.uuid4()}", "run_id": wait["run_id"], "type": "resume",
+                                                                        "payload": {"wait_key": wait["wait_key"], "payload": {"response": "approve"}}})
+            check(status == 422 and out["detail"]["field"] == "payload", f"a {{response}} answer to a tool approval -> {status} {out}")
+            gw.ok("POST", "/api/gateway/commands", {"command_id": f"acc-{uuid.uuid4()}", "run_id": wait["run_id"], "type": "resume",
+                                                    "payload": {"wait_key": wait["wait_key"], "payload": {"approved": True}}})
+            rows = wait_for("the approved tick", lambda: done_rows(aid, 1), 60)
+            check(rows[0]["status"] == "completed", f"approved tick {rows[0]['status']}")
+            return "ask: parked as tool_approval (execute_command); {response} -> 422; {approved: true} -> completed"
+
+        step("tool-approval-by-kind", s_tool_approval_by_kind)
 
         def s_replay() -> str:
             runs = [occurrences(state["gro"])[0]["run_id"], *state["discussion_runs"]]

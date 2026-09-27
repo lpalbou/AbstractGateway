@@ -266,10 +266,9 @@ def _attention_block(svc: Any, principal: Any, controller: Any, waits: List[Dict
         "unseen_count": unseen,
         "cursor": format_attention_cursor(latest),
         "items": items,
-        "waits": [
-            {k: w[k] for k in ("run_id", "wait_key", "index", "prompt") if w.get(k) is not None}
-            for w in waits[:_ITEMS_MAX]
-        ],
+        # Typed waits (decision D1): {run_id, wait_key, kind, reason, index,
+        # prompt?, choices?, details?} exactly as the runtime types them.
+        "waits": [dict(w) for w in waits[:_ITEMS_MAX]],
     }
 
 
@@ -706,9 +705,7 @@ def _occurrences(svc: Any, principal: Any, automation_id: str, cursor: Optional[
         raise _domain_error(e)
     waits_by_index: Dict[Any, List[Dict[str, Any]]] = {}
     for w in pending_waits(svc.host.run_store, str(controller.run_id), limit=1000):
-        waits_by_index.setdefault(w.get("index"), []).append(
-            {k: w[k] for k in ("run_id", "wait_key", "reason", "prompt", "choices") if w.get(k) is not None}
-        )
+        waits_by_index.setdefault(w.get("index"), []).append({k: v for k, v in w.items() if k != "index"})
     items: List[Dict[str, Any]] = []
     for occ in page["items"]:
         run_id = str(occ["run_id"])

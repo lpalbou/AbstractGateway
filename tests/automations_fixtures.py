@@ -226,3 +226,54 @@ def wait_until(predicate, *, timeout_s: float = 15.0, poll_s: float = 0.1):
             return last
         time.sleep(poll_s)
     raise AssertionError(f"timeout waiting for condition (last={last!r})")
+
+
+# The built-in default agent bundle id for abstractcode.agent.v1: a stand-in
+# whose "agent" deterministically calls `execute_command` (no provider).
+SHELL_AGENT_BUNDLE_ID = "basic-agent"
+
+
+def shell_agent_flow(command: str = "echo automation-shell-ok") -> dict:
+    return {
+        "id": "agent",
+        "name": "Shell agent stand-in",
+        "interfaces": ["abstractcode.agent.v1"],
+        "nodes": [
+            {"id": "start", "type": "on_flow_start", "data": {"nodeType": "on_flow_start", "outputs": [
+                {"id": "exec-out", "label": "", "type": "execution"}, {"id": "prompt", "label": "prompt", "type": "string"}]}},
+            {"id": "tools", "type": "tool_calls", "data": {"nodeType": "tool_calls", "inputs": [
+                {"id": "exec-in", "label": "", "type": "execution"}, {"id": "tool_calls", "label": "tool_calls", "type": "array"}],
+                "outputs": [{"id": "exec-out", "label": "", "type": "execution"}, {"id": "results", "label": "results", "type": "array"}],
+                "pinDefaults": {"tool_calls": [{"name": "execute_command", "arguments": {"command": command}}]}}},
+            {"id": "end", "type": "on_flow_end", "data": {"nodeType": "on_flow_end", "inputs": [
+                {"id": "exec-in", "label": "", "type": "execution"}, {"id": "results", "label": "results", "type": "array"}]}},
+        ],
+        "edges": [
+            {"source": "start", "sourceHandle": "exec-out", "target": "tools", "targetHandle": "exec-in"},
+            {"source": "tools", "sourceHandle": "exec-out", "target": "end", "targetHandle": "exec-in"},
+            {"source": "tools", "sourceHandle": "results", "target": "end", "targetHandle": "results"},
+        ],
+        "entryNode": "start",
+    }
+
+
+def write_shell_agent_bundle(bundles_dir: Path) -> None:
+    import json
+    import zipfile
+
+    bundles_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "bundle_format_version": "1",
+        "bundle_id": SHELL_AGENT_BUNDLE_ID,
+        "bundle_version": "9.9.9",
+        "created_at": "2026-09-27T00:00:00+00:00",
+        "default_entrypoint": "agent",
+        "entrypoints": [{"flow_id": "agent", "name": "agent", "description": "", "interfaces": ["abstractcode.agent.v1"]}],
+        "flows": {"agent": "flows/agent.json"},
+        "artifacts": {},
+        "assets": {},
+        "metadata": {},
+    }
+    with zipfile.ZipFile(bundles_dir / f"{SHELL_AGENT_BUNDLE_ID}.flow", "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+        zf.writestr("flows/agent.json", json.dumps(shell_agent_flow(), indent=2))
