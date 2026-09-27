@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -38,7 +42,13 @@ def build_file_stores(*, base_dir: Path) -> GatewayStores:
     base.mkdir(parents=True, exist_ok=True)
 
     artifact_store = FileArtifactStore(base)
-    run_store = OffloadingRunStore(JsonFileRunStore(base), artifact_store=artifact_store)
+    json_run_store = JsonFileRunStore(base)
+    # Build the JSON store's session/children indexes at boot (one scan,
+    # ~0.75-0.9 s at 20k runs) so the first chat does not pay for it.
+    started = time.perf_counter()
+    json_run_store.warm_session_index()
+    logger.info("run store session index warmed in %.2fs (%s)", time.perf_counter() - started, base)
+    run_store = OffloadingRunStore(json_run_store, artifact_store=artifact_store)
     ledger_store = OffloadingLedgerStore(ObservableLedgerStore(JsonlLedgerStore(base)), artifact_store=artifact_store)
     command_store = JsonlCommandStore(base)
     command_cursor_store = JsonFileCommandCursorStore(base / "commands_cursor.json")
