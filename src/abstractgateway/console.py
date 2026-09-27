@@ -8549,6 +8549,23 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (row?.inherits_broad) return { label: `inherited ← ${defaultRowParentKey(row)}`, cls: "covered" };
 	      return { label: "not configured", cls: "off" };
 	    }
+	    // AbstractCore stamps `recommendation_unavailable` {provider, model, reason}
+	    // on an UNSET row whose recommended engine cannot run on this host
+	    // (`manager.list_capability_defaults`), so the row says WHY it is empty
+	    // instead of a bare "not configured". Absent (older Core, or a runnable
+	    // recommendation): no markup at all.
+	    function defaultRowUnavailableReason(row) {
+	      const info = row?.recommendation_unavailable;
+	      if (!info || typeof info !== "object" || defaultRowConfigured(row)) return "";
+	      return String(info.reason || "").trim();
+	    }
+	    function defaultRowUnavailableMarkup(row) {
+	      const reason = defaultRowUnavailableReason(row);
+	      if (!reason) return "";
+	      const info = row.recommendation_unavailable;
+	      const rec = [info.provider, info.model].filter(Boolean).join(" / ");
+	      return `<div class="muted capability-unavailable" title="${esc(rec ? `Recommended: ${rec}` : "")}">No recommended model runs on this computer: ${esc(reason)}</div>`;
+	    }
 	    function defaultRowActionLabel(row) {
 	      if (row?.covered_by === "input.text") return row?.overrideable ? "Override" : "Covered by input.text";
 	      if (row?.derived_from === "input.text") return "Derived \u2190 input.text";
@@ -8667,9 +8684,21 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const pair = (row) => `${(row || {}).provider || "-"}/${(row || {}).model || "-"}`;
 	      const changed = rows.filter((r) => r.changed);
 	      const kept = rows.filter((r) => r.action === "kept");
+	      // HOST-AWARE RECOMMENDATIONS (AbstractCore `plan_recommended_capability_defaults`):
+	      // a recommended route whose engine cannot run on this host (MLX-Gen
+	      // images off Apple silicon) comes back as `action: "unavailable"` with
+	      // a `reason`, and is never written. Ignoring it made a Linux host read
+	      // "every recommended route already matched" while output.image stayed
+	      // empty. Absent on an older AbstractCore: nothing changes.
+	      const unavailable = rows.filter((r) => r.action === "unavailable");
 	      const parts = [];
 	      if (changed.length) parts.push(changed.map((r) => `${r.key}: ${pair(r.before)} \u2192 ${pair(r.after)}`).join("; "));
 	      if (kept.length) parts.push(`kept yours on ${kept.map((r) => `${r.key} (${pair(r.before)})`).join(", ")}`);
+	      if (unavailable.length) {
+	        const count = typeof report.unavailable === "number" ? report.unavailable : unavailable.length;
+	        parts.push(`${count === 1 ? "1 route has" : `${count} routes have`} no recommendation this computer can run (left unset): `
+	          + unavailable.map((r) => `${r.key}${r.reason ? ` \u2014 ${r.reason}` : ""}`).join("; "));
+	      }
 	      if (!parts.length) parts.push("every recommended route already matched");
 	      return parts.join(" \u00b7 ");
 	    }
@@ -8692,7 +8721,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        });
 	        const report = res.applied_recommended || {};
 	        msg.textContent = describeAppliedRecommended(report);
-	        msg.className = "message ok";
+	        // A route left unset because nothing recommended runs here is not a
+	        // success to celebrate: plain, not `ok`, when any row says so.
+	        msg.className = (report.routes || []).some((r) => r.action === "unavailable") ? "message" : "message ok";
 	        const kept = (report.routes || []).filter((r) => r.action === "kept");
 	        if (kept.length && !force) {
 	          const again = document.createElement("button");
@@ -10462,7 +10493,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <td>${row.model ? `<span class="ui-ellip" title="${esc(row.model)}">${esc(row.model)}</span>` + reasoningBadge : "-"}</td>
 	          <td>${weightsCellMarkup(row)}</td>
 	          <td>${source ? `<span class="badge">${esc(source)}</span>` : "-"}</td>
-	          <td><span class="state-pill ${esc(status.cls)}">${esc(status.label)}</span></td>
+	          <td><span class="state-pill ${esc(status.cls)}">${esc(status.label)}</span>${defaultRowUnavailableMarkup(row)}</td>
 	        `;
 	        const actions = document.createElement("td");
 	        actions.className = "actions";
@@ -10560,13 +10591,40 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (sandboxRouteMode(key) === "text") return "Text Chat";
 	      return `${key} - ${defaultRowCapability(row)}`;
 	    }
+	    // THE SERVER'S RESOLUTION, NOT A SECOND ONE. The image/video lanes post
+	    // to /runs/{id}/images|videos/generate, which hand the request to
+	    // AbstractCore's `resolve_capability_default_route`: the exact task row
+	    // (`output.image.text_to_image`) when it is configured, otherwise the
+	    // modality cell (`output.image`), the first of the two that carries any
+	    // field. A fresh install writes `output.image` alone, so reading only the
+	    // task row called a working route "not configured". Rule, mirrored here:
+	    //   task row has provider+model            -> the task row
+	    //   task row has other fields only         -> the task row (Core stops
+	    //                                            there; no provider+model = not ready)
+	    //   task row empty, parent has provider+model -> the parent's values
+	    //   otherwise                              -> not configured
+	    function sandboxEffectiveRow(row) {
+	      if (!row || defaultRowConfigured(row) || row.configured) return row;
+	      const parentKey = defaultRowParentKey(row);
+	      if (!parentKey) return row;
+	      const parent = findDefaultRow(state.defaults, parentKey);
+	      if (!defaultRowConfigured(parent)) return row;
+	      return {
+	        ...row,
+	        provider: parent.provider,
+	        model: parent.model,
+	        base_url: parent.base_url,
+	        options: parent.options || {},
+	        inherited_from: parentKey,
+	      };
+	    }
 	    function sandboxCandidateRows() {
 	      const wanted = new Set(["input.text", "output.text", "output.image.text_to_image", "output.voice", "output.sound", "output.music", "output.video.text_to_video"]);
 	      const byKey = new Map();
 	      for (const row of state.defaults || []) {
 	        if (!visibleCapabilityDefaultRow(row)) continue;
 	        const key = defaultRowKey(row);
-	        if (wanted.has(key) && !byKey.has(key)) byKey.set(key, row);
+	        if (wanted.has(key) && !byKey.has(key)) byKey.set(key, sandboxEffectiveRow(row));
 	      }
 	      const textRow = byKey.get("input.text") || byKey.get("output.text") || { key: "input.text", kind: "input", modality: "text", label: "Text Chat" };
 	      const ordered = [textRow];
@@ -10664,7 +10722,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const configured = defaultRowConfigured(row);
 	      const prov = row.provider ? (state.providerLabels.get(row.provider) || row.provider) : "";
 	      $("sandbox-context").textContent = configured
-	        ? `${sandboxRouteLabel(row)} will use ${prov} / ${row.model}.`
+	        ? `${sandboxRouteLabel(row)} will use ${prov} / ${row.model}${row.inherited_from ? ` (inherited from ${row.inherited_from})` : ""}.`
 	        : `${sandboxRouteLabel(row)} is not configured yet. Configure it in Multimodal Capabilities first.`;
 	      const prompt = $("sandbox-prompt");
 	      if (prompt) {
@@ -10996,11 +11054,20 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      target.scrollTop = target.scrollHeight;
 	      return true;
 	    }
-	    function sandboxRunId() {
+	    // ONE SANDBOX SESSION, ONE OWNER RUN. POST /attachments/upload takes a
+	    // SESSION id and stores under its owner run `session_memory_<session_id>`
+	    // (routes/gateway.py `_session_memory_run_id`); the media routes take
+	    // that owner RUN id. Uploading with the run id as `session_id` filed
+	    // attachments under `session_memory_session_memory_...`, a second owner
+	    // run the sandbox's generations never saw.
+	    function sandboxSessionId() {
 	      const p = state.principal || {};
 	      const tenant = String(p.tenant_id || "default").toLowerCase().replace(/[^a-z0-9_:-]+/g, "_").replace(/^_+|_+$/g, "") || "default";
 	      const user = String(p.user_id || p.runtime_id || "user").toLowerCase().replace(/[^a-z0-9_:-]+/g, "_").replace(/^_+|_+$/g, "") || "user";
-	      return `session_memory_gateway_console_sandbox_${tenant}_${user}`;
+	      return `gateway_console_sandbox_${tenant}_${user}`;
+	    }
+	    function sandboxRunId() {
+	      return `session_memory_${sandboxSessionId()}`;
 	    }
 	    function sandboxRequestId() {
 	      return `sandbox_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
@@ -11008,7 +11075,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    async function uploadSandboxFile(file) {
 	      if (typeof FormData === "undefined") throw new Error("This browser does not support file uploads.");
 	      const form = new FormData();
-	      form.append("session_id", sandboxRunId());
+	      form.append("session_id", sandboxSessionId());
 	      form.append("file", file);
 	      form.append("filename", file?.name || "upload.bin");
 	      if (file?.type) form.append("content_type", file.type);
@@ -11820,6 +11887,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function firstRunTiles(tiles) {
       return `<dl class="first-run-tiles">${tiles.map(([k, v, sub]) => `<div class="first-run-tile"><dt>${esc(k)}</dt><dd>${v}${sub ? `<div class="ui-sub">${sub}</div>` : ""}</dd></div>`).join("")}</dl>`;
     }
+    // /host/state's `host` block is AbstractCore's host identity
+    // ({host_id, host_name, kind}: utils/hostinfo.get_host_identity); it has
+    // no OS field. The one OS fact in the payload is the gateway's service
+    // block, `gateway.service.platform` (os_service.service_status ->
+    // host_paths.normalize_platform: darwin | windows | linux, any other
+    // POSIX reported as linux). Unknown value: no sub-line, never a guess.
+    function firstRunOsLabel(platform) {
+      return { darwin: "macOS", windows: "Windows", linux: "Linux" }[String(platform || "").trim().toLowerCase()] || "";
+    }
     async function loadFirstRunWelcome() {
       const box = $("first-run-host-summary");
       box.innerHTML = `<div class="ui-empty">Looking at this computer...</div>`;
@@ -11836,7 +11912,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const svc = gw.service || {};
       const dataDir = String(gw.data_dir || "?");
       box.innerHTML = firstRunTiles([
-        ["Computer", esc(host.hostname || host.name || CORE_CONSOLE.hostName || "This computer"), esc(host.os || host.platform || "")],
+        ["Computer", esc(host.host_name || CORE_CONSOLE.hostName || "This computer"), esc(firstRunOsLabel(svc.platform))],
         ["Memory", esc(typeof ram.total_bytes === "number" ? _fmtBytes(ram.total_bytes) : "Unknown"), "Available to models and apps"],
         ["Graphics", esc(gpus.length ? gpus.join(", ") : "None detected"), gpus.length ? "Used to run local models" : "Models run on the processor"],
         ["Data folder", `<code class="ui-ellip is-block" title="${esc(dataDir)}">${esc(dataDir)}</code>`, `Runs, workflows and settings live here <span class="ui-advanced">(${esc(gw.data_dir_source || "?")})</span>`],
@@ -11882,6 +11958,28 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       "output.image": { mark: "Im", title: "Images", what: "Creates pictures from a description" },
       "input.image": { mark: "Vi", title: "Vision", what: "Understands pictures" },
     };
+    // A recommended route this host cannot run (AbstractCore
+    // `recommendation_unavailable`, e.g. MLX-Gen images on Linux) has no
+    // download, so it is absent from `plan.recommended`; without a card the
+    // guide silently listed text and voice only. One card per such route,
+    // with Core's reason, and no Download button: nothing here can fetch it.
+    function firstRunUnavailableCards(recommendedRows) {
+      const listed = new Set((recommendedRows || []).map((r) => r && r.route).filter(Boolean));
+      return (state.defaults || []).filter((row) => defaultRowUnavailableReason(row) && !listed.has(defaultRowKey(row))).map((row) => {
+        const key = defaultRowKey(row);
+        const info = row.recommendation_unavailable;
+        const copy = FIRST_RUN_ROUTE_COPY[key] || { mark: "AI", title: key || "Model", what: "" };
+        const provider = state.providerLabels.get(info.provider) || info.provider || "";
+        return `<article class="ui-card first-run-unavailable"><div class="ui-card__head"><span class="ui-mark" aria-hidden="true">${esc(copy.mark)}</span>`
+          + `<div class="ui-card__titles"><div class="ui-card__title">${esc(copy.title)}</div><span class="ui-card__status">${uiPill("Not available here", "muted", info.reason || "")}</span></div></div>`
+          + `<div class="ui-card__blurb">${esc(copy.what)}</div>`
+          + `<div class="ui-card__body"><p class="ui-card__note">${esc(defaultRowUnavailableReason(row))}</p>`
+          + `<ul class="ui-facts">${provider ? `<li class="ui-advanced">Recommended elsewhere: <b>${esc(provider)}</b> <code class="ui-ellip" title="${esc(info.model || "")}">${esc(info.model || "")}</code></li>` : ""}<li class="ui-advanced">Route <code>${esc(key)}</code></li></ul></div>`
+          + `<div class="ui-card__actions"></div>`
+          + `<div class="ui-card__tech"></div>`
+          + `</article>`;
+      }).join("");
+    }
     function firstRunCap(text) { const t = String(text || ""); return t ? t.charAt(0).toUpperCase() + t.slice(1) : t; }
     function renderFirstRunModel() {
       if (!firstRun.open || firstRun.step !== "model") return;
@@ -11942,7 +12040,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           + `<div class="ui-card__actions">${cancel}${canDownload ? `<button class="ui-btn is-primary first-run-download" data-provider="${esc(r.provider)}" data-artifact="${esc(r.artifact)}">Download</button>` : ""}</div>`
           + `<div class="ui-card__tech"></div>`
           + `</article>`;
-      }).join("");
+      }).join("") + firstRunUnavailableCards(rows);
       // "Download all" = N's ONE parent job (`grp_…`): its card (overall bar,
       // bytes/ETA, one row per model, Cancel per model + Cancel all) sits
       // above the per-model cards while it runs and after it ends.
@@ -11951,7 +12049,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const canDownloadAll = rows.some((r) => r.status === "absent" && !dlActive(state.downloadJobs.get(downloadJobKey(r.provider, r.artifact)))) && !dlActive(group);
       box.innerHTML = `<div class="ui-section-title"><h3>Recommended for this computer</h3><span class="ui-sub">${current ? `Text model now: <b>${esc(current)}</b>` : "No text model is set yet."}</span></div>`
         + groupBox
-        + (rows.length ? `<div class="ui-card-grid is-fit is-aligned">${cards}</div>` : `<div class="ui-empty">This gateway reported no recommended downloads.</div>`)
+        + (cards ? `<div class="ui-card-grid is-fit is-aligned">${cards}</div>` : `<div class="ui-empty">This gateway reported no recommended downloads.</div>`)
         + `<div class="ui-toolbar"><button id="first-run-apply-recommended" class="ui-btn is-primary">Use recommended defaults</button>`
         + (canDownloadAll ? `<button id="first-run-download-all" class="ui-btn is-ghost">Download all</button>` : "")
         + `<span>Sets the recommended models for text, voice and images. Choices you already made are kept.</span>`
