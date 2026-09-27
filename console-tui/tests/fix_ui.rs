@@ -42,7 +42,12 @@ impl ConsoleTransport for NoTransport {
     fn models_installed(&self, _p: Option<&str>) -> Result<Value, TransportError> {
         Err(TransportError::unavailable("test"))
     }
-    fn start_download(&self, _p: &str, _a: &str) -> Result<Value, TransportError> {
+    fn start_download(
+        &self,
+        _p: &str,
+        _a: &str,
+        _expected_bytes: Option<u64>,
+    ) -> Result<Value, TransportError> {
         Err(TransportError::unavailable("test"))
     }
     fn delete_model(&self, _p: &str, _a: &str, _f: bool) -> Result<Value, TransportError> {
@@ -88,6 +93,8 @@ fn harness(size: Size) -> H {
             cx,
             transport.clone(),
             overlays.clone(),
+            // The same Access wiring as lib.rs (follows the connection).
+            ui::screens_access_signal(cx, store),
             ScreensOptions {
                 notice: Some(store.notice),
                 opener: Some(Rc::new(|_url: &str| Ok(()))),
