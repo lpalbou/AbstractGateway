@@ -53,6 +53,16 @@ history window. The terminal console builds on `abstractcore-console` 0.4.
 
 ### Changed
 
+- **Chat routes that take a client-sent history use the runtime's one history window** (ADR-0026, operator ruling
+  2026-09-28): `POST /runs/{id}/chat`, `/backlog/assist`, `/backlog/maintain`, `/backlog/advisor` and
+  `/sandbox/generate` replay the newest whole messages up to 50,000 tokens (`fold_history_window`; the question being
+  asked is always kept whole) and return the receipt as `history` (`replayed_messages`, `replayed_tokens`,
+  `dropped_messages`, `dropped_tokens`, `max_tokens`, ...); run chat also records it in the persisted
+  `abstract.chat` event. When older messages are dropped, the oldest kept one carries the runtime's `#TRUNCATION`
+  notice. Removed: the 12,000-character cut on every run-chat and backlog-assist message, the advisor's
+  12,000-character cut and its "first 40 messages" cap (the newest question was dropped), maintain's 8,000-character
+  cut, and the backlog assist/maintain draft and template cuts (500k/600k/220k/120k characters, 180k context).
+
 - Every browser app is launched with `--port`, `--host`, `--gateway-url` flags (Observer, Code, Entity and Flow join
   Continuum). An installed version older than the flags (Observer 0.1.14, Code 0.5.0, Entity 0.2.2 or earlier) also
   gets the legacy `PORT`/`HOST`/`<APP>_GATEWAY_URL` environment, so it still listens on the port the gateway chose.

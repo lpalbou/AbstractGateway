@@ -141,7 +141,11 @@ from ..workflow_catalog import (
 from ..workflow_deprecations import WorkflowDeprecatedError
 from ..automation_command_types import AUTOMATION_COMMAND_TYPES, COMMAND_TYPES
 from ..automation_defaults import manifest_automation_defaults
-from abstractruntime.session_history import SessionHistoryError
+# The ONE history window (runtime 0.7.0): `fold_history_window` keeps the
+# newest whole turns up to HISTORY_REPLAY_MAX_TOKENS and `_announce_dropped`
+# writes its in-band #TRUNCATION notice. Client-sent chat histories go through
+# `_client_history_window` below — never a second window, never a message cap.
+from abstractruntime.session_history import SessionHistoryError, _announce_dropped, fold_history_window
 
 
 router = APIRouter(prefix="/gateway", tags=["gateway"])
@@ -2585,6 +2589,13 @@ class RunChatResponse(BaseModel):
     model: str
     generated_at: str
     answer: str
+    history: Dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "The history window's receipt for the client-sent `messages` (runtime session_history "
+            "report: replayed_messages/tokens, dropped_messages/tokens, max_tokens, policy)."
+        ),
+    )
 
 
 class SaveChatThreadRequest(BaseModel):
@@ -6685,13 +6696,47 @@ def _generate_summary_text(*, provider: str, model: str, context: Dict[str, Any]
     return text
 
 
+def _client_history_window(
+    messages: Any, *, roles: frozenset = frozenset({"user", "assistant"})
+) -> tuple[list[Dict[str, str]], Dict[str, Any]]:
+    """Bound a CLIENT-SENT chat history with the runtime's one history window.
+
+    ADR-0026 + operator ruling 2026-09-28: no message-count or character caps;
+    replayed history is the newest WHOLE messages up to 50,000 tokens, stated
+    and recorded. Messages are grouped into turns (a user message plus the
+    replies after it) so a reply never loses its question, then
+    `abstractruntime.session_history.fold_history_window` keeps the newest
+    turns that fit (the newest turn — the question being asked — is always
+    kept whole). When older turns were dropped, the oldest kept message carries
+    the runtime's labeled #TRUNCATION notice. Returns (messages, report); the
+    report is the window's receipt for the response / ledger.
+    """
+    turns: list[list[Dict[str, str]]] = []
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        role = str(m.get("role") or "").strip().lower()
+        content = m.get("content")
+        if role not in roles or not isinstance(content, str) or not content.strip():
+            continue
+        msg = {"role": role, "content": content.strip()}
+        if role == "user" or not turns:
+            turns.append([msg])
+        else:
+            turns[-1].append(msg)
+    kept, report = fold_history_window(turns)
+    out: list[Dict[str, Any]] = [dict(m) for turn in kept for m in turn]
+    _announce_dropped(out, report)
+    return [{"role": m["role"], "content": m["content"]} for m in out], report
+
+
 def _generate_chat_text(*, provider: str, model: str, context: Dict[str, Any], messages: list[Dict[str, Any]]) -> str:
     """Generate a read-only chat response grounded in a run ledger (patchable in tests)."""
     system = (
         "You are AbstractObserver Chat.\n"
         "You are given:\n"
         "- RUN_CONTEXT: a JSON object derived from an append-only workflow ledger (parent + subruns).\n"
-        "- CHAT_MESSAGES: a short chat history.\n\n"
+        "- The conversation so far as chat messages.\n\n"
         "Your job:\n"
         "- Answer the user's latest question using ONLY facts from RUN_CONTEXT.\n"
         "- If RUN_CONTEXT does not contain enough information, say you don't know.\n"
@@ -6703,17 +6748,9 @@ def _generate_chat_text(*, provider: str, model: str, context: Dict[str, Any], m
 
     ctx = json.dumps(context, ensure_ascii=False, indent=2)
     prompt_msgs: list[Dict[str, str]] = [{"role": "user", "content": "RUN_CONTEXT:\n" + _clamp_text(ctx, max_len=180_000)}]
-
-    for m in messages or []:
-        if not isinstance(m, dict):
-            continue
-        role = str(m.get("role") or "").strip().lower()
-        if role not in {"user", "assistant"}:
-            continue
-        content = m.get("content")
-        if not isinstance(content, str) or not content.strip():
-            continue
-        prompt_msgs.append({"role": role, "content": _clamp_text(content.strip(), max_len=12_000)})
+    # `messages` is already the history window's output (_client_history_window):
+    # whole messages, never cut here.
+    prompt_msgs.extend({"role": m["role"], "content": m["content"]} for m in messages or [])
 
     llm, _routed, _profile = _gateway_llm_client(str(provider), str(model))
     res = llm.generate(
@@ -10907,7 +10944,7 @@ async def run_chat(run_id: str, req: RunChatRequest) -> RunChatResponse:
         model=req.model,
         purpose="run chat generation",
     )
-    messages = list(req.messages or [])
+    messages, history = _client_history_window(req.messages)
 
     try:
         answer_text = await asyncio.to_thread(_generate_chat_text, provider=provider, model=model, context=context, messages=messages)
@@ -10920,8 +10957,10 @@ async def run_chat(run_id: str, req: RunChatRequest) -> RunChatResponse:
 
     if bool(req.persist):
         # Persist a single Q/A exchange (last user message + assistant answer).
+        # The question as the client sent it (the window's notice, if any, is
+        # model-facing and may prefix the kept messages).
         question: str = ""
-        for m in reversed(messages):
+        for m in reversed(list(req.messages or [])):
             if isinstance(m, dict) and str(m.get("role") or "") == "user":
                 c = m.get("content")
                 if isinstance(c, str) and c.strip():
@@ -10933,6 +10972,7 @@ async def run_chat(run_id: str, req: RunChatRequest) -> RunChatResponse:
             "model": model,
             "question": question,
             "answer": answer_text,
+            "history": history,
             "source": {"run_id": rid, "include_subruns": include_subruns},
         }
         try:
@@ -10950,6 +10990,7 @@ async def run_chat(run_id: str, req: RunChatRequest) -> RunChatResponse:
         model=model,
         generated_at=generated_at,
         answer=answer_text,
+        history=history,
     )
 
 
@@ -20141,6 +20182,7 @@ class BacklogAssistResponse(BaseModel):
     ok: bool = True
     reply: str
     draft_markdown: str = ""
+    history: Dict[str, Any] = Field(default_factory=dict, description="History window receipt for `messages` (see RunChatResponse.history).")
 
 
 class BacklogMaintainRequest(BaseModel):
@@ -20197,6 +20239,7 @@ class BacklogAdvisorResponse(BaseModel):
     reply: str
     run_id: Optional[str] = None
     tool_trace: Optional[List[Dict[str, Any]]] = None
+    history: Dict[str, Any] = Field(default_factory=dict, description="History window receipt for `messages` (see RunChatResponse.history).")
 
 
 class BacklogExecConfigResponse(BaseModel):
@@ -22865,24 +22908,17 @@ def _generate_backlog_assist_json(
             "package": package,
             "title": title,
             "summary": summary,
-            "backlog_template": _clamp_text(template_md, max_len=120_000),
-            "current_draft_markdown": _clamp_text(draft_md, max_len=120_000),
+            # Whole (ADR-0026, operator ruling 2026-09-28: no char caps on model inputs).
+            "backlog_template": template_md,
+            "current_draft_markdown": draft_md,
         },
         ensure_ascii=False,
         indent=2,
     )
 
-    prompt_msgs: list[Dict[str, str]] = [{"role": "user", "content": "CONTEXT:\n" + _clamp_text(intro, max_len=180_000)}]
-    for m in messages or []:
-        if not isinstance(m, dict):
-            continue
-        role = str(m.get("role") or "").strip().lower()
-        if role not in {"user", "assistant"}:
-            continue
-        content = m.get("content")
-        if not isinstance(content, str) or not content.strip():
-            continue
-        prompt_msgs.append({"role": role, "content": _clamp_text(content.strip(), max_len=12_000)})
+    prompt_msgs: list[Dict[str, str]] = [{"role": "user", "content": "CONTEXT:\n" + intro}]
+    # `messages` is already the history window's output (_client_history_window).
+    prompt_msgs.extend({"role": m["role"], "content": m["content"]} for m in messages or [])
 
     llm, _routed, _profile = _gateway_llm_client(str(provider), str(model))
     gen_params: Dict[str, Any] = {"temperature": 0.2}
@@ -23812,10 +23848,9 @@ async def backlog_assist(req: BacklogAssistRequest) -> BacklogAssistResponse:
 
     summary = str(req.summary or "").strip()
     draft_md = str(req.draft_markdown or "")
-    if len(draft_md) > 500_000:
-        draft_md = draft_md[:500_000] + "\n…(truncated)…\n"
 
     template_md = _read_backlog_template(repo_root)
+    messages, history = _client_history_window(req.messages)
 
     provider, model = _resolve_gateway_provider_model_or_400(
         provider=req.provider,
@@ -23835,14 +23870,14 @@ async def backlog_assist(req: BacklogAssistRequest) -> BacklogAssistResponse:
             title=title,
             summary=summary,
             draft_md=draft_md,
-            messages=req.messages or [],
+            messages=messages,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Backlog assist failed: {e}")
 
     reply = str(out.get("reply") or "").strip()
     draft = str(out.get("draft_markdown") or "").strip()
-    return BacklogAssistResponse(ok=True, reply=reply, draft_markdown=draft)
+    return BacklogAssistResponse(ok=True, reply=reply, draft_markdown=draft, history=history)
 
 
 def _build_backlog_maintain_agent_prompt(
@@ -23868,16 +23903,11 @@ def _build_backlog_maintain_agent_prompt(
         "package": package,
         "title": title,
         "summary": summary,
-        "backlog_template": _clamp_text(template_md, max_len=80_000),
-        "current_draft_markdown": _clamp_text(draft_md, max_len=220_000),
-        "messages": [
-            {"role": str(m.get("role") or ""), "content": _clamp_text(str(m.get("content") or ""), max_len=8_000)}
-            for m in (messages or [])
-            if isinstance(m, dict)
-            and str(m.get("role") or "").strip().lower() in {"user", "assistant"}
-            and isinstance(m.get("content"), str)
-            and str(m.get("content") or "").strip()
-        ],
+        # Whole (ADR-0026, operator ruling 2026-09-28: no char caps on model inputs).
+        "backlog_template": template_md,
+        "current_draft_markdown": draft_md,
+        # Already the history window's output (_client_history_window).
+        "messages": [{"role": m["role"], "content": m["content"]} for m in (messages or [])],
     }
     return (
         "You are maintaining a single backlog markdown item in AbstractFramework.\n\n"
@@ -23935,21 +23965,8 @@ def _build_backlog_advisor_agent_prompt(
         "messages": [],
     }
 
-    # Bound message history for safety.
-    out_msgs: list[Dict[str, str]] = []
-    for m in messages or []:
-        if not isinstance(m, dict):
-            continue
-        role = str(m.get("role") or "").strip().lower()
-        if role not in {"user", "assistant", "system"}:
-            continue
-        content = m.get("content")
-        if not isinstance(content, str) or not content.strip():
-            continue
-        out_msgs.append({"role": role, "content": _clamp_text(content.strip(), max_len=12_000)})
-        if len(out_msgs) >= 40:
-            break
-    ctx["messages"] = out_msgs
+    # Already the history window's output (_client_history_window).
+    ctx["messages"] = [{"role": m["role"], "content": m["content"]} for m in (messages or [])]
 
     return (
         "You are AbstractFramework Backlog Advisor (read-only).\n\n"
@@ -24255,8 +24272,6 @@ async def backlog_maintain(req: BacklogMaintainRequest) -> BacklogAssistResponse
 
     summary = str(req.summary or "").strip()
     draft_md = str(req.draft_markdown or "")
-    if len(draft_md) > 600_000:
-        draft_md = draft_md[:600_000] + "\n…(truncated)…\n"
 
     dir_path = _backlog_dir_for(repo_root, k)
     backlog_path = (dir_path / safe_name).resolve()
@@ -24277,6 +24292,7 @@ async def backlog_maintain(req: BacklogMaintainRequest) -> BacklogAssistResponse
     )
 
     # Build an agentic prompt (tools can read/search the repo + web).
+    messages, history = _client_history_window(req.messages)
     prompt = _build_backlog_maintain_agent_prompt(
         repo_root=repo_root,
         kind=k,
@@ -24286,7 +24302,7 @@ async def backlog_maintain(req: BacklogMaintainRequest) -> BacklogAssistResponse
         summary=summary,
         template_md=template_md,
         draft_md=draft_md,
-        messages=req.messages or [],
+        messages=messages,
     )
 
     schema = {
@@ -24398,7 +24414,7 @@ async def backlog_maintain(req: BacklogMaintainRequest) -> BacklogAssistResponse
         raise HTTPException(status_code=500, detail="Maintenance agent produced no output")
     raw_resp = str((run2.output or {}).get("response") or "").strip()
     reply, draft = _parse_backlog_maintain_reply(raw_resp)
-    return BacklogAssistResponse(ok=True, reply=reply, draft_markdown=draft)
+    return BacklogAssistResponse(ok=True, reply=reply, draft_markdown=draft, history=history)
 
 
 @router.post("/backlog/advisor", response_model=BacklogAdvisorResponse)
@@ -24439,6 +24455,8 @@ async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
     allowed_paths = _backlog_agent_allowed_paths(repo_root=repo_root, svc=svc)
     access_mode = "workspace_or_allowed" if allowed_paths else "workspace_only"
 
+    # The advisor accepts client `system` notes in its history (as before).
+    messages, history = _client_history_window(req.messages, roles=frozenset({"user", "assistant", "system"}))
     prompt = _build_backlog_advisor_agent_prompt(
         repo_root=repo_root,
         gateway_data_dir=Path(getattr(getattr(svc, "config", None), "data_dir", repo_root)).expanduser().resolve(),
@@ -24446,7 +24464,7 @@ async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
         focus_kind=focus_kind,
         focus_type=focus_type,
         web_tools_enabled=allow_web,
-        messages=req.messages or [],
+        messages=messages,
     )
 
     schema = {
@@ -24552,7 +24570,7 @@ async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
             tool_trace = _collect_tool_trace_for_run_tree(svc=svc, root_run_id=str(run_id))
         except Exception:
             tool_trace = None
-    return BacklogAdvisorResponse(ok=True, reply=reply, run_id=str(run_id), tool_trace=tool_trace)
+    return BacklogAdvisorResponse(ok=True, reply=reply, run_id=str(run_id), tool_trace=tool_trace, history=history)
 
 
 # ---------------------------------------------------------------------------
@@ -26433,20 +26451,9 @@ def _gateway_llm_client(provider: str, model: str) -> tuple[Any, str, Optional[D
     return llm, routed_provider, profile_public
 
 
-def _sandbox_messages(req: _GatewaySandboxGenerateRequest) -> list[Dict[str, str]]:
-    messages: list[Dict[str, str]] = []
-    for item in req.messages or []:
-        if not isinstance(item, dict):
-            continue
-        role = str(item.get("role") or "").strip().lower()
-        if role not in {"user", "assistant"}:
-            continue
-        content = item.get("content")
-        if not isinstance(content, str) or not content.strip():
-            continue
-        messages.append({"role": role, "content": content.strip()})
-    messages.append({"role": "user", "content": str(req.prompt or "").strip()})
-    return messages
+def _sandbox_messages(req: _GatewaySandboxGenerateRequest) -> tuple[list[Dict[str, str]], Dict[str, Any]]:
+    """The sandbox conversation (client history + this prompt) through the one history window."""
+    return _client_history_window([*(req.messages or []), {"role": "user", "content": str(req.prompt or "")}])
 
 
 def _sandbox_media_refs(req: _GatewaySandboxGenerateRequest) -> Optional[list[Dict[str, Any]]]:
@@ -26548,13 +26555,14 @@ async def gateway_sandbox_generate(request: Request, req: _GatewaySandboxGenerat
     if client_context:
         trace_metadata["client_context"] = client_context
     params["trace_metadata"] = trace_metadata
+    sandbox_messages, history = _sandbox_messages(req)
     try:
         media = _sandbox_media_refs(req)
         llm, routed_provider, profile_public = _gateway_llm_client(provider, model)
         result = await asyncio.to_thread(
             llm.generate,
             prompt="",
-            messages=_sandbox_messages(req),
+            messages=sandbox_messages,
             media=media,
             system_prompt=str(req.system_prompt or "").strip() or "You are a concise test assistant in the AbstractGateway console sandbox.",
             params=params,
@@ -26587,6 +26595,7 @@ async def gateway_sandbox_generate(request: Request, req: _GatewaySandboxGenerat
         "speculation": (result.get("metadata") or {}).get("speculation") if isinstance(result, dict) else None,
         "usage": result.get("usage") if isinstance(result, dict) else None,
         "provider_endpoint_profile": profile_public,
+        "history": history,
     }
 
 
