@@ -712,3 +712,14 @@ def test_the_runtime_floor_is_declared_once_and_checked_at_host_build(tmp_path: 
     monkeypatch.setattr(wst, "WorkspaceScope", real_scope)
     with pytest.raises(ld.RuntimeTooOld, match="set_live_delta_sink"):
         ld.require_runtime_features(_NoSinkRuntime())
+
+    # A runtime before the 50k-token history window (0.7.0): the seed call
+    # would fail per run and only be logged, so the host refuses to build.
+    import abstractruntime.session_history as sh
+
+    monkeypatch.delattr(sh, "HISTORY_REPLAY_MAX_TOKENS")
+    with pytest.raises(ld.RuntimeTooOld, match=r"abstractruntime>=0\.7\.0.*HISTORY_REPLAY_MAX_TOKENS"):
+        WorkflowBundleGatewayHost.load_from_dir(
+            bundles_dir=bundles, data_dir=tmp_path / "data2", run_store=InMemoryRunStore(),
+            ledger_store=InMemoryLedgerStore(), artifact_store=None,
+        )

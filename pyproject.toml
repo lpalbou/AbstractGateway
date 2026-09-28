@@ -18,16 +18,27 @@ dependencies = [
   # refuses to start on a runtime without them. 0.5.1: a wait is resumed at
   # most once (a parent could run its Agent/subflow child twice otherwise).
   # 0.6.0: automations (abstractruntime.automations / automation_queries),
-  # which the gateway imports unconditionally.
-  "AbstractRuntime>=0.6.0",
+  # which the gateway imports unconditionally. 0.7.0: THE history window
+  # (session_chat_messages replays the newest whole turns up to 50k tokens
+  # and reports it; the message/char caps are gone) and the host-supplied
+  # voice_openai_api_key threaded to AbstractVoice.
+  "AbstractRuntime>=0.7.0",
   # Floor only (no extras; Runtime chooses them). The gateway relies on
   # AbstractCore 2.16.1 (abstractcore.utils.identity for the About rows,
   # process-wide model residency and eject semantics, host-job download
   # progress, the recommended text tiers, the MLX held-memory report; 2.16.1:
   # MLX prompts follow the model's chat template; 2.17.0: capability-default
   # rows carry route_unavailable / host-aware recommendation_unavailable, which
-  # the consoles render); Runtime alone would keep an older Core on upgrade.
-  "abstractcore>=2.17.0",
+  # the consoles render; 2.18.0: engine_missing routes and the needs_gpu_limit
+  # fit verdict, which the consoles render); Runtime alone would keep an older
+  # Core on upgrade.
+  "abstractcore>=2.18.0",
+  # Imported directly (routes/gateway.py voice listings):
+  # abstractvoice.engine_runtime (0.13.0) decides which local voice engines
+  # are available, and voice_openai_api_key (0.13.0) carries the Providers
+  # screen's OpenAI key. Also reached through Runtime -> abstractcore[voice],
+  # but that is three hops; the direct import gets a direct floor.
+  "abstractvoice>=0.13.0",
   # 0.3.14: delegated sub-agents inherit the run's _runtime.stream switch.
   # 0.3.15: CodeAct/MemAct crash fix; re-prompt when a reply announces tool
   # calls it never makes.
@@ -62,7 +73,7 @@ dependencies = [
 # Tooling extras for contributors: `dev`, `docs`.
 
 embeddings = [
-  "abstractcore[embeddings]>=2.17.0",
+  "abstractcore[embeddings]>=2.18.0",
 ]
 
 # Desktop tray / menu-bar icon shown by `abstractgateway serve` (macOS, Windows,
@@ -80,7 +91,7 @@ tray = [
 # deployment entry point, Gateway's `apple` profile installs the full native
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
-  "AbstractRuntime[apple]>=0.6.0",
+  "AbstractRuntime[apple]>=0.7.0",
   "abstractagent[apple]>=0.3.15",
   "AbstractMemory[all-apple]>=0.3.0",
 ]
@@ -88,7 +99,7 @@ apple = [
 # Native/container GPU Gateway profile. This is the full local GPU aggregate for
 # Python installs and for the NVIDIA Docker image.
 gpu = [
-  "AbstractRuntime[gpu]>=0.6.0",
+  "AbstractRuntime[gpu]>=0.7.0",
   "abstractagent[gpu]>=0.3.15",
   "AbstractMemory[all-gpu]>=0.3.0",
 ]

@@ -23,7 +23,7 @@ Related repos:
 ## Prerequisites
 
 - Python `>=3.10` (see `pyproject.toml`)
-- AbstractRuntime 0.6.0 or later, installed with the gateway; the gateway
+- AbstractRuntime 0.7.0 or later, installed with the gateway; the gateway
   refuses to start on an older runtime and names the version to install
 - Workflows: none needed to start. The gateway serves its shipped bundles
   ([shipped-workflows.md](./shipped-workflows.md)); you can point it at your

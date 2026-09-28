@@ -30,6 +30,8 @@
 - Apps → Open never starts a browser over SSH or without a display: it shows
   the link to copy and the SSH port forwards. The display rule is
   AbstractCore's console (`display_available`); needs abstractcore-console 0.4.
+- Depends on `abstractcore-console` 0.4 (was 0.3): `OpenError` / `display_available`,
+  `engine_missing` and `needs_gpu_limit` rows.
 
 ## 0.10.0 (2026-09-27) — parity with the web console
 

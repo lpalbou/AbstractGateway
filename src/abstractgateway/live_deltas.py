@@ -79,8 +79,12 @@ _role_lock = threading.Lock()
 # (`workspace_builtin_deny_prefixes` / `workspace_builtin_allow`, enforced and
 # never written into the prompt: runtime 6567ed4). An older runtime would
 # silently ignore the deny keys, so `require_runtime_features` refuses to
-# build a host on it.
-ABSTRACTRUNTIME_FLOOR = "0.6.0"
+# build a host on it. 0.7.0: the history window
+# (`abstractruntime.session_history.HISTORY_REPLAY_MAX_TOKENS`,
+# `session_chat_messages` returning a reported window): on an older runtime
+# the gateway's seed call fails and would only be logged, so every run would
+# silently start without its session history.
+ABSTRACTRUNTIME_FLOOR = "0.7.0"
 
 
 class LiveDeltaError(RuntimeError):
@@ -844,6 +848,10 @@ def require_runtime_features(runtime: Any) -> None:
             missing.append("the host's built-in tool deny (WorkspaceScope.builtin_deny_prefixes / builtin_allow)")
     except Exception as exc:  # noqa: BLE001 - a missing module is the same answer
         missing.append(f"the workspace-scoped tools ({type(exc).__name__}: {exc})")
+    try:
+        from abstractruntime.session_history import HISTORY_REPLAY_MAX_TOKENS  # noqa: F401
+    except ImportError:
+        missing.append("the session history window (abstractruntime.session_history.HISTORY_REPLAY_MAX_TOKENS)")
     if missing:
         try:
             from importlib.metadata import version

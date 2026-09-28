@@ -7,11 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Requires the next AbstractRuntime release (the session history window; `session_chat_messages` no longer accepts
-the old caps).
+Requires AbstractRuntime 0.7.0 (the session history window; `session_chat_messages` no longer accepts the old caps),
+AbstractCore 2.18.0 (`engine_missing`, `needs_gpu_limit`) and AbstractVoice 0.13.0 (`abstractvoice.engine_runtime`,
+`voice_openai_api_key`), now declared directly. The gateway refuses to build its workflow host on a runtime without the
+history window. The terminal console builds on `abstractcore-console` 0.4.
 
 ### Added
 
+- **Apps are served through the gateway at `/apps/<id>/`** (HTTP streaming, server-sent events, WebSocket), gated by
+  the app's gateway session, with cookies isolated per app. An app that announces `X-AbstractFramework-App: <id>;
+  mount=1` is served there; `POST /api/gateway/apps/{id}/open` returns `app_path` and builds `app_url` on the
+  browser's `origin`; the sign-in handover redirects relatively with `Path=/apps/<id>/` cookies, so apps open from a
+  LAN address, a reverse proxy or a tunnel. Requests carrying another origin are refused. See
+  [docs/apps.md](docs/apps.md) and the nginx block in [docs/deployment.md](docs/deployment.md).
+- **The local gateway pointer** `~/.abstractframework/gateway.json`: `serve` writes it once bound (url, port, data
+  directory, `written_by: "serve"`) under an ownership rule (default data directory, or the pointer already names
+  this gateway's data directory), so the terminal consoles, the Node apps and the Assistant find this computer's
+  gateway. `abstractgateway network status` shows it.
+- `GET /config/capability-defaults` warns, in words, when the default text route names an endpoint profile that was
+  deleted or disabled.
 - `_runtime.session_history` records the history window for every seeded run: `seeded`, `policy`, `max_tokens`,
   `token_estimator`, `replayed_messages`, `replayed_tokens`, `dropped_messages`, `dropped_tokens`,
   `dropped_counts_complete`, `oversize_turn_kept`. Strict seeding (automation and discussion sessions) also adds
@@ -39,6 +53,20 @@ the old caps).
 
 ### Changed
 
+- Every browser app is launched with `--port`, `--host`, `--gateway-url` flags (Observer, Code, Entity and Flow join
+  Continuum). An installed version older than the flags (Observer 0.1.14, Code 0.5.0, Entity 0.2.2 or earlier) also
+  gets the legacy `PORT`/`HOST`/`<APP>_GATEWAY_URL` environment, so it still listens on the port the gateway chose.
+- `apps.host` is deprecated: apps always listen on 127.0.0.1 and open through the gateway. Only a loopback value is
+  accepted; an older saved `0.0.0.0` is ignored with one warning.
+- Run Ask, run summary, backlog assist and the console sandbox share one LLM client resolved like a run's (endpoint
+  profiles, the console's provider connections, the Core store). Ask on a run whose provider was `endpoint:<id>`
+  failed with "Unknown provider".
+- `use_context` is set by the server for automation targets and discussion turns: the automation's context mode
+  (independent / growing) is the one history control. Discussion follow-ups that name no model keep the fork's
+  provider and model.
+- `GET /runs/{id}/input_data` never returns a workspace folder the gateway made inside its data folder (a second
+  automation started from it was refused); the refusal for such a folder says to leave the workspace empty.
+
 - **Session history replay is the most recent 50,000 tokens of whole turns.** A run started with
   `use_session_history` gets the session's newest turns that fit 50,000 estimated tokens (AbstractRuntime's history
   window). No message is cut, and there is no message-count or character cap. The old defaults (40 messages,
@@ -58,6 +86,12 @@ the old caps).
 - The static voice listings decide which local engines are available from AbstractVoice's
   `abstractvoice.engine_runtime` (a Supertonic voice without its runtime is no longer listed),
   and answer 503 with the reason when AbstractVoice lacks that API.
+
+### Fixed
+
+- A default text route naming a deleted or disabled endpoint profile no longer stops the workflow host from loading
+  (every `/automations` and `/runs` read answered 500). The host loads with the default unrouted; a call that uses it
+  fails naming the profile.
 
 ## [0.6.0] - 2026-09-27
 
