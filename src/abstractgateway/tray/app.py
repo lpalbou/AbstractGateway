@@ -1431,10 +1431,13 @@ class TrayApp:
         def _do() -> None:
             r = self.client.start_update(installer_sha256=action.get("installer_sha256"))
             if not r.ok:
-                self._update_phase = "available"
+                # The offer is stale (the installer changed, a job runs, check again first):
+                # drop it, so the next click checks again instead of re-offering it.
+                self._update_phase = "idle"
+                self._update_action = None
                 self.sampler.set_override(None)
                 self._force_menu_rebuild()
-                self._info("The update didn't start", r.detail, style="warning")
+                self._info("The update didn't start", f"{r.detail}. Choose Check for Updates… to check again.", style="warning")
                 return
             # Poll the job until it settles.
             while not self._stopping:
