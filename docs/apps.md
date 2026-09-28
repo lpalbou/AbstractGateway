@@ -48,7 +48,9 @@ Stop, Show log, Update, versions, addresses and commands are under
 
 Install only installs: nothing starts and no tab opens. The card then shows
 **Open**, which starts the app on a free port when it is stopped, waits until
-it answers, and opens it in a new tab, already signed in.
+it answers, and opens it in a new tab, already signed in, at
+`<the gateway's address>/apps/<app>/` (see
+[Apps are served through the gateway](#apps-are-served-through-the-gateway)).
 
 Every step is a job with a percentage, downloaded bytes and a plain message.
 When a step fails, the job says why in one sentence and carries the full log
@@ -68,10 +70,53 @@ in its `details` field (`<data dir>/apps/jobs/<job>.log`).
   seconds). After more than 3 crashes in a minute it stops trying and shows
   "crash_loop" with the app's log.
 - Each app writes its output to `<data dir>/logs/apps/<app>.log`.
-- Apps listen on `127.0.0.1` (the `apps.host` setting changes this). Ports: the app's usual port when it is
+- Apps always listen on `127.0.0.1`: browsers reach them through the gateway
+  (next section), never directly. Ports: the app's usual port when it is
   free, else the first free port in 3100-3199. The usual ports are the
   framework's stack port map (`scripts/start-local.sh`): Observer 3001,
   Continuum 3002, Code 3003, Entity 3004, Flow 3005.
+
+## Apps are served through the gateway
+
+Every browser app opens at **`/apps/<app>/` on the gateway's own address**:
+`http://127.0.0.1:8080/apps/observer/` on the gateway machine,
+`https://gateway.example.com/apps/flow/` behind a reverse proxy, the same
+path through a tunnel. One address and one port serve the console, the API
+and every app, so a remote or headless gateway needs nothing more than the
+one address it already has.
+
+The gateway relays each request to the app's own server on `127.0.0.1`
+(app_proxy.py):
+
+- **Signed in, per app.** Every request under `/apps/<app>/` needs a valid
+  gateway session for that app: the app's own session cookie, set by the
+  one-time handover below with `Path=/apps/<app>/`. Without one, opening a
+  page sends the browser to the console (`/console#apps?open=<app>&path=…`),
+  which signs you in and opens the app on the page you asked for; any other
+  request gets 401 `app_sign_in_required`. A WebSocket without one is
+  refused, and so is a WebSocket opened by another site's page (its
+  `Origin` must name the gateway's own address).
+- **Streaming.** Responses are relayed as they arrive (live updates, server-sent
+  events), and WebSockets frame by frame.
+- **What the app receives.** The path with `/apps/<app>` removed, plus
+  `X-Forwarded-Prefix: /apps/<app>`, `X-Forwarded-For: <the browser's
+  address>` (written by the gateway, never passed through from the
+  browser), `X-Forwarded-Proto` and `X-Forwarded-Host`. It receives only its
+  own cookies (`<app prefix>_*`): never the console's session cookie, never an
+  `Authorization` header. It can set only its own cookies in return.
+- **Only apps that say they can.** An app announces that it can be served
+  this way with a header on every response:
+  `X-AbstractFramework-App: <app>; mount=1` (the abstractuic app-server kit
+  does it). The row's `mounted` and `app_path` (`/apps/<app>/`) say whether it
+  does. An older app version does not: it would read every visitor as a
+  browser on the gateway machine (the gateway is its local peer), so the
+  gateway never serves it under `/apps/<app>/` (409 `not_mountable`), and it
+  opens by its own port from the gateway machine only (409
+  `app_loopback_only` from anywhere else, with the hint to update it).
+
+How an app uses these headers (base path, the browser's address, cookie
+paths, the identity header) is the app-server kit's contract:
+[abstractuic `app-server`](https://github.com/lpalbou/AbstractUIC/tree/main/app-server).
 
 ## Apps started outside the gateway
 
@@ -90,8 +135,9 @@ listening on the port, when this computer shows which program that is.
 Such an app is listed as installed and running, with `source: "external"`,
 `managed: false`, its `url`, `port` and `version`, and one action: **Open**.
 Opening it works exactly like opening an app the gateway started (the
-one-time sign-in link below): the app's server reads the same sign-in
-cookies whoever started it. The gateway does not stop, update or show the
+one-time sign-in link below, and `/apps/<app>/` when it announces it can be
+served there): the app's server reads the same sign-in cookies whoever
+started it. The gateway does not stop, update or show the
 log of an app it did not start; the console's **Technical details** says
 "Started outside the gateway on port 3001" instead, and `POST /apps/{id}/stop`
 answers 409 `started_outside_gateway`. Starting the gateway's own copy while
@@ -111,16 +157,25 @@ in [configuration.md](./configuration.md#allow_engine_install).
 ## Opening an app signed in
 
 The console asks the gateway for a one-time link
-(`POST /api/gateway/apps/{id}/open`) and opens it in a new tab. The link
-(`/apps/handover/<code>`) works once, for two minutes, and only on the address
-it was made for. The gateway creates a browser session for the person who
-clicked, puts it in the app's own sign-in cookies, and redirects to the app.
-Browsers keep cookies per machine name, not per port, so the app's server finds
-the session and the app opens connected. The gateway token never appears in
-the page, the link or the browser's storage.
+(`POST /api/gateway/apps/{id}/open`, sending the browser's `origin`) and
+opens it in a new tab. The link (`/apps/handover/<code>`) works once, for two
+minutes, and only on the address it was made for. The gateway creates a
+browser session for the person who clicked, puts it in the app's own sign-in
+cookies (`Path=/apps/<app>/`), and answers with a **relative** redirect to
+`/apps/<app>/`, so it lands on whatever address the browser used (a LAN
+address, a reverse proxy, a tunnel). The app's server finds the session and
+the app opens connected. The gateway token never appears in the page, the
+link or the browser's storage.
 
-A browser on another computer cannot reach an app that listens on
-`127.0.0.1`; the gateway says so instead of producing a broken link.
+The answer also carries `app_path` (`/apps/<app>/…`) and `app_url` (the
+`origin` you sent, or the address the request came in on, plus `app_path`).
+`origin` must be exactly `scheme://host[:port]` (400 `invalid_origin`
+otherwise).
+
+An older app version that cannot be served through the gateway keeps the
+direct link to its own port (`app_path: null`, cookies at `Path=/`), which
+works from the gateway machine only; from another computer the gateway says
+so (409 `app_loopback_only`) instead of producing a broken link.
 
 ### Landing somewhere inside the app
 
@@ -244,25 +299,26 @@ Each app runs its own small server, started by the gateway, rather than being
 served as static files by the gateway. The app's server does real work:
 
 - it holds the sign-in (`/api/connection/gateway`, HttpOnly session cookies,
-  CSRF) and forwards `/api/*` to the gateway on the same origin, which is how
-  live updates (server-sent events) reach the page;
-- four of the five apps load their files from absolute `/assets/...` paths,
-  and Code and Observer register a service worker at the site root, so they
-  cannot live under a sub-path of the gateway;
+  CSRF) and forwards `/api/*` to the gateway, which is how live updates
+  (server-sent events) reach the page;
 - Observer reveals local folders, Flow keeps its connection file, and
   Continuum proxies the agora hub.
 
-This is why each app has its own port. The gateway gives each server its
-port, bind address and gateway URL: Continuum as launch flags (`--port`,
-`--host`, `--gateway-url`), which win over its saved settings file; the
-other four apps in the environment (`PORT`, `HOST`, `<APP>_GATEWAY_URL`).
+The gateway serves them all on its own address at `/apps/<app>/` (above). It
+gives each server its port and gateway URL: Continuum as launch flags
+(`--port`, `--host`, `--gateway-url`), which win over its saved settings
+file; the other four apps in the environment (`PORT`, `HOST`,
+`<APP>_GATEWAY_URL`). The bind address is always `127.0.0.1`.
 
 ## Settings
 
-Five settings control the apps: `apps.node` (*Node.js for apps*),
-`apps.ports` (*Ports for apps*), `apps.host` (*Where apps listen*),
-`apps.npm_registry` (*npm registry*) and `apps.pypi_url` (*Node.js download
-index*). Change them from the Apps page (*Advanced: apps settings*), the
+Four settings control the apps: `apps.node` (*Node.js for apps*),
+`apps.ports` (*Ports for apps*), `apps.npm_registry` (*npm registry*) and
+`apps.pypi_url` (*Node.js download index*). `apps.host` (*Where apps
+listen*) is **deprecated**: apps always listen on `127.0.0.1` and open
+through the gateway. It accepts only a loopback address; an older saved
+`0.0.0.0` (or `ABSTRACTGATEWAY_APPS_HOST`) is ignored with one warning in the
+gateway's log, and clearing it removes the warning. Change them from the Apps page (*Advanced: apps settings*), the
 terminal console (Runtimes → *Runtime knobs* → *Edit apps settings*) or the
 CLI:
 
@@ -375,7 +431,7 @@ All routes are under `/api/gateway/apps` and need a signed-in principal, except 
 | `POST /apps/{id}/launch` | admin | Start the app (waits until it answers) and mark it enabled. For `assistant`: open it on the gateway's computer, signed in as the caller, `{ok, app, already_running, signed_in_by_gateway, message}`; from another computer 409 `not_on_gateway_machine`, and nothing starts. |
 | `POST /apps/desktop-handover` `{"code"}` | no sign-in; this computer only | The Assistant trades its one-time code for a remembered sign-in: `{base_url, session_id, csrf_token, user_id, expires_at}`. Answered only for a direct caller on this computer (no proxy headers, no app-server session header): 403 otherwise; 410 for a used or expired code. |
 | `POST /apps/{id}/stop` | admin | Stop the app and mark it disabled. 409 `started_outside_gateway` for an app the gateway did not start. |
-| `POST /apps/{id}/open` `{"remember"?, "path"?}` | any user | A one-time `open_url` (relative to the gateway) that opens the running app signed in, at `path` inside the app when given (e.g. `/#new`). 400 `invalid_app_path` for anything that is not a path inside the app. 409 `desktop_app` for the Assistant (use `/launch`). |
+| `POST /apps/{id}/open` `{"remember"?, "path"?, "origin"?}` | any user | A one-time `open_url` (relative to the gateway) that opens the running app signed in, at `path` inside the app when given (e.g. `/#new`): `{open_url, mounted, app_path, app_url, expires_in_s}`. `app_path` is `/apps/<id>/…` for an app served through the gateway (else `null`); `app_url` is `origin` (default: this request's address) + `app_path`. 400 `invalid_app_path` / `invalid_origin`. 409 `desktop_app` for the Assistant (use `/launch`). |
 | `GET /apps/{id}/logs?tail=200` | admin | The end of the app's log. |
 | `GET /apps/jobs`, `GET /apps/jobs/{job}` | any user | Jobs: `state` (queued, running, succeeded, failed, cancelled), `percent`, `bytes_done`, `bytes_total`, `message`, `steps`, `parts` (the child rows of an Install that covers two parts), `details` (full log on failure). |
 | `POST /apps/jobs/{job}/cancel` | admin | Cancel a job. |
@@ -383,6 +439,13 @@ All routes are under `/api/gateway/apps` and need a signed-in principal, except 
 | `POST /apps/{id}/launch-tui` | admin, on the gateway machine | Open the terminal version in a new terminal window, signed in as the caller: `{ok, app_id, interface: "tui", terminal, version, message, expires_in_s}`. From another computer (non-loopback peer or `Host`, or any proxy header): 409 `not_on_gateway_machine` with `command` and `signin_command`, and nothing opens. |
 | `POST /apps/{id}/tui-command` | admin, on the gateway machine | The same one-use launcher as launch-tui without opening a window: `{ok, app_id, interface, version, signin_command, command, expires_in_s}`. From another computer: 409 `not_on_gateway_machine` with `command` and `signin_command`. |
 | `POST /apps/tui-handover` `{"code"}` (outside `/api/gateway`) | the launcher script, loopback only | Trade a launcher's one-time code for `{token, token_env, url_env, gateway_url, gateway_flag, user}`. 403 `loopback_only`, 410 `handover_expired`. |
+
+The apps themselves, outside `/api/gateway`:
+
+| Method and path | Who | What |
+|---|---|---|
+| `GET /apps/handover/<code>` | the one-time code | Sets the app's sign-in cookies and redirects: relative `303` to `/apps/<id>/…` (cookies `Path=/apps/<id>/`), or to the app's own port for an older app. 410 used or expired, 400 another address. |
+| any `/apps/<id>/…` (HTTP, SSE, WebSocket) | the app's gateway session | The app, relayed (see [Apps are served through the gateway](#apps-are-served-through-the-gateway)). Without a session: `303` to `/console#apps?open=<id>&path=…` for a page load, else 401 `app_sign_in_required`. 404 `unknown_app`, 409 `not_running` / `not_mountable`, 502 `app_not_answering`. `/apps/<id>` redirects to `/apps/<id>/`. |
 
 Errors are `{"ok": false, "reason", "message", "hint"?, "details"?}` with
 404 (`unknown_app`, also for a terminal route on a browser-only app), 409

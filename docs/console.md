@@ -224,14 +224,17 @@ themselves are described in [apps.md](./apps.md)). What a plain user sees on
 each card: the app's mark, name and status pill (Not installed, Installed,
 Running, Installing, Stopped unexpectedly, Keeps crashing), one line of
 description (hover it for the whole sentence), and one row of buttons. The
-button rows of the cards side by side are always at the same height.
+button rows of the cards side by side are always at the same height. Above
+the cards, one line names where the apps open: this browser's own address
+plus `/apps/` (for example `https://gateway.example.com/apps/…`), whatever
+address the browser used to reach the gateway.
 
 | The app is | The action row |
 |---|---|
 | not installed | **Install** (installs Node.js first when the gateway needs it, then the app and, for Code when a ready-made download exists for this computer, its terminal app too; nothing opens by itself) |
 | installing | a progress bar above the row (with one row per part: "Code in the browser", "Code in the terminal"), and **Cancel** (it stops both) |
 | an install failed | the reason, **Show details**, and **Install** again |
-| installed and running | **Open** (a new tab, already signed in) |
+| installed and running | **Open** (a new tab at `/apps/<app>/`, already signed in) |
 | installed but stopped, or crashed | **Open** (starts it, then opens it); a crash also shows the reason, with **Show details** |
 
 Code has a terminal version too. Next to Code's Open: **Open in Terminal**
@@ -256,6 +259,11 @@ not on the gateway's computer, then **Open** (it starts in the menu bar of the
 gateway's computer, or comes to the front when it already runs). From another
 computer the card says "The Assistant runs on the gateway's computer: open it
 there." with no button. See [apps.md](./apps.md#the-assistant-a-desktop-app).
+
+A link to `/apps/<app>/…` opened while signed out (a bookmark, a shared
+link) lands on the console (`/console#apps?open=<app>&path=…`): once you are
+signed in, the console opens that app in the same tab, on the page the link
+named.
 
 A result box appears only after something you did ("Code opened in a new
 Terminal window, signed in to this gateway.", "Flow Editor opened in a new

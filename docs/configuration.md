@@ -696,20 +696,20 @@ as `env_shadowed`.
 |---|---|---|---|---|
 | `apps.node` | Node.js for apps | `auto` | `auto` (Node.js 18+ on this computer, else the gateway's own) · `managed` · `system` · an absolute path to `node` | `ABSTRACTGATEWAY_APPS_NODE` |
 | `apps.ports` | Ports for apps | (empty) | a port or `low-high`; empty = each app's usual port, else the next free one in 3100-3199 | `ABSTRACTGATEWAY_APPS_PORTS` |
-| `apps.host` | Where apps listen | `127.0.0.1` | an IP or host name; `0.0.0.0` opens the apps to every network this computer is on | `ABSTRACTGATEWAY_APPS_HOST` |
+| `apps.host` | Where apps listen (deprecated) | `127.0.0.1` | **deprecated**: apps always listen on `127.0.0.1` and open through the gateway at `/apps/<app>/` ([apps.md](./apps.md#apps-are-served-through-the-gateway)); only a loopback address is accepted, and an older saved `0.0.0.0` is ignored with one warning | `ABSTRACTGATEWAY_APPS_HOST` |
 | `apps.npm_registry` | npm registry | `https://registry.npmjs.org` | an http(s) URL (a mirror) | `ABSTRACTGATEWAY_APPS_NPM_REGISTRY` |
 | `apps.pypi_url` | Node.js download index | `https://pypi.org/pypi` | an http(s) URL (a mirror) | `ABSTRACTGATEWAY_APPS_PYPI_URL` |
 
 `GET /api/gateway/admin/runtime-config` returns them under `apps` as
 `{name: {key, label, help, placeholder, default, env_name, value, source,
-note?, env_shadowed?, invalid_stored?, invalid_env?}}` (the registry
+note?, env_shadowed?, invalid_stored?, invalid_env?, deprecated?}}` (the registry
 `runtime_config.APPS_SETTINGS`: a new knob is one row, and the TUI renders
 whatever the payload lists). Writes go through the generic door, admin-only
 and audit-logged (`setting_change` on the request's audit line):
-`POST /api/gateway/admin/runtime-config {"apps.host": "0.0.0.0"}` (or
-`{"apps": {"host": "0.0.0.0"}}`); an empty value clears back to env/default.
+`POST /api/gateway/admin/runtime-config {"apps.ports": "3200-3299"}` (or
+`{"apps": {"ports": "3200-3299"}}`); an empty value clears back to env/default.
 Each value is validated before anything is written (400 with the reason). Read
-at each use: a change applies at the next app start (`node`, `host`, `ports`)
+at each use: a change applies at the next app start (`node`, `ports`)
 or the next download (the two URLs).
 
 Three ways, same semantics:
