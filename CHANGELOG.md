@@ -5,6 +5,37 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Start at login from the consoles.** `GET/PUT /api/gateway/host/start-at-login` (admin)
+  reports whether this gateway starts at the next login (`enabled`, `state`, the mechanism:
+  LaunchAgent, systemd user unit or desktop autostart entry, Windows Run value) and whether it
+  can be changed here (`can_change` with a plain `reason`), and turns it on or off without
+  starting or stopping the running gateway. The web console has the switch in the Gateway card
+  and on the setup guide's last step; the terminal console in F3 and on the Finish step.
+- **Cloud voice providers are always listed.** Voice provider listings include `openai` and
+  `openai-compatible` marked `needs_key` until a key is configured, in the environment or
+  through the Providers screen; both consoles show the state.
+- Voice listings pass AbstractVoice's `unavailable_providers` and `unavailable_reason` through,
+  and a listing filtered to a cloud provider without a key says where the key goes. Both
+  consoles' voice pickers show the reason instead of an empty list.
+- The consoles show AbstractCore's `engine_missing` (a route this computer can run whose engine
+  is not installed, with the install command) and the `needs_gpu_limit` fit verdict (the exact
+  command that raises the GPU memory limit).
+- `restart.port` in `GET /api/gateway/network`: the port a restart binds; the restart route
+  reconnects there.
+
+### Changed
+
+- `restart_required` compares **saved** values only: a gateway started with `--port N` and no
+  saved port needs no restart, and a command-line flag counts as overriding the setting only
+  when it shadows a saved value that differs.
+- The static voice listings decide which local engines are available from AbstractVoice's
+  `abstractvoice.engine_runtime` (a Supertonic voice without its runtime is no longer listed),
+  and answer 503 with the reason when AbstractVoice lacks that API.
+
 ## [0.6.0] - 2026-09-27
 
 Requires AbstractRuntime 0.6.0 and AbstractCore 2.17.0. The terminal console
