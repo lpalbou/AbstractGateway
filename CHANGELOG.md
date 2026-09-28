@@ -64,6 +64,12 @@ history window. The terminal console builds on `abstractcore-console` 0.4.
   notice. Removed: the 12,000-character cut on every run-chat and backlog-assist message, the advisor's
   12,000-character cut and its "first 40 messages" cap (the newest question was dropped), maintain's 8,000-character
   cut, and the backlog assist/maintain draft and template cuts (500k/600k/220k/120k characters, 180k context).
+- **`POST /runs/start` bounds a client-sent `input_data.context.messages` with the same history window** (older
+  clients such as the AbstractCode web legacy REPL and older TUIs send their whole transcript there): leading system
+  messages are kept, the rest is the newest whole turns up to 50,000 tokens with the `#TRUNCATION` notice when older
+  turns are dropped; messages keep their shape (tool and multimodal messages pass through). The receipt is recorded as
+  `_runtime.session_history` with `source: "client_context"` (a client-sent value is replaced) and returned by
+  `GET /runs/{id}`. Discussion and automation sessions still refuse client messages (400).
 - **docs-qa 0.1.1 (replaces 0.1.0): conversation history comes from the run's session.** The question is the
   `prompt` input; each question of a conversation starts with the same `session_id` and `use_session_history`, the
   gateway replays the earlier turns through the runtime's history window and the bundle's LLM call includes them.

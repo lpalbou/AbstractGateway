@@ -338,3 +338,81 @@ def test_console_sandbox_history_goes_through_the_window() -> None:
     assert report["dropped_messages"] > 0 and report["replayed_tokens"] <= HISTORY_REPLAY_MAX_TOKENS
     assert messages[-1] == {"role": "user", "content": "the-prompt"}
     assert messages[0]["content"].startswith("[#TRUNCATION: ")
+
+
+# ---------------------------------------------------------------- /runs/start client context (older clients)
+
+
+def _start_with_context(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, context: Dict[str, Any], extra: Dict[str, Any] | None = None):
+    app, bundle_id, flow_id = _run_chat_client(tmp_path, monkeypatch, [])
+    from abstractgateway.service import get_gateway_service
+
+    headers = {"Authorization": "Bearer t"}
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/gateway/runs/start",
+            json={"bundle_id": bundle_id, "flow_id": flow_id, "input_data": {"prompt": "now?", "context": context, **(extra or {})}},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        run_id = r.json()["run_id"]
+        run = get_gateway_service().host.run_store.load(run_id)
+        summary = client.get(f"/api/gateway/runs/{run_id}", headers=headers).json()
+    return run, summary
+
+
+@pytest.mark.basic
+def test_runs_start_bounds_a_client_transcript_with_the_window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    history = [{"role": "system", "content": "be brief"}] + _conversation(40, answer_chars=8_000)
+    run, summary = _start_with_context(tmp_path, monkeypatch, {"messages": history, "task": "t"})
+
+    sent = run.vars["context"]["messages"]
+    receipt = run.vars["_runtime"]["session_history"]
+    assert receipt["source"] == "client_context" and receipt["seeded"] == 0
+    assert receipt["dropped_messages"] > 0 and receipt["replayed_tokens"] <= HISTORY_REPLAY_MAX_TOKENS
+    assert receipt["system_messages_kept"] == 1
+    assert sent[0] == {"role": "system", "content": "be brief"}             # instructions always kept
+    assert sent[1]["role"] == "user" and sent[1]["content"].startswith("[#TRUNCATION: ")
+    assert sent[-1]["content"] == "the-newest-question"
+    assert len(sent) == 1 + receipt["replayed_messages"]
+    assert run.vars["context"]["task"] == "t"                               # the rest of the context untouched
+    assert summary["session_history"] == receipt
+
+
+@pytest.mark.basic
+def test_runs_start_keeps_a_short_client_transcript_whole_and_shaped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    history = _conversation(30)
+    history[1] = {"role": "assistant", "content": "w" * 40_000, "tool_calls": [{"id": "c1", "name": "read_file"}]}
+    history.insert(2, {"role": "tool", "content": "file body", "tool_call_id": "c1"})
+    run, _summary = _start_with_context(tmp_path, monkeypatch, {"messages": history})
+    assert run.vars["context"]["messages"] == history                       # nothing cut, nothing reshaped
+    assert run.vars["_runtime"]["session_history"]["dropped_messages"] == 0
+
+
+@pytest.mark.basic
+def test_runs_start_never_trusts_a_client_sent_receipt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    run, _ = _start_with_context(
+        tmp_path, monkeypatch, {"task": "t"}, extra={"_runtime": {"session_history": {"dropped_messages": 0, "forged": True}}}
+    )
+    assert "session_history" not in (run.vars.get("_runtime") or {}) or "forged" not in run.vars["_runtime"]["session_history"]
+
+
+@pytest.mark.basic
+def test_runs_start_keeps_the_client_receipt_when_session_replay_is_skipped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    app, bundle_id, flow_id = _run_chat_client(tmp_path, monkeypatch, [])
+    from abstractgateway.service import get_gateway_service
+
+    headers = {"Authorization": "Bearer t"}
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/gateway/runs/start",
+            json={"bundle_id": bundle_id, "flow_id": flow_id, "session_id": "s-legacy",
+                  "input_data": {"prompt": "now?", "use_session_history": True,
+                                 "context": {"messages": _conversation(40, answer_chars=8_000)}}},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        run = get_gateway_service().host.run_store.load(r.json()["run_id"])
+    receipt = run.vars["_runtime"]["session_history"]
+    assert receipt["skipped"] == "client context.messages present"
+    assert receipt["source"] == "client_context" and receipt["dropped_messages"] > 0

@@ -6727,6 +6727,48 @@ def _client_history_window(
     return list(windowed), windowed.report
 
 
+CLIENT_CONTEXT_HISTORY_SOURCE = "client_context"
+
+
+def _window_client_context_messages(input_data: Dict[str, Any]) -> None:
+    """Bound a client-sent `input_data.context.messages` with the one history window (in place).
+
+    Older clients (the AbstractCode web legacy REPL, older TUIs) send their
+    whole transcript as `context.messages`. ADR-0026 + operator ruling
+    2026-09-28: no message-count or character caps; the model gets the newest
+    WHOLE messages up to 50,000 tokens, stated and recorded. Unlike
+    `_client_history_window`, the messages keep their shape (tool, system and
+    multimodal messages pass through as sent) because the run consumes them
+    directly: leading system messages are instructions, always kept; the rest
+    go through `abstractruntime.session_history.window_transcript` (whole
+    turns, newest first, labeled #TRUNCATION notice on the oldest kept
+    message when older turns were dropped). The receipt is written to
+    `_runtime.session_history` with `source: "client_context"` — always
+    server-written: a client-sent `_runtime.session_history` is replaced.
+    """
+    runtime_ns = input_data.get("_runtime")
+    if isinstance(runtime_ns, dict) and "session_history" in runtime_ns:
+        runtime_ns = dict(runtime_ns)
+        runtime_ns.pop("session_history", None)
+        input_data["_runtime"] = runtime_ns
+    ctx = input_data.get("context")
+    messages = ctx.get("messages") if isinstance(ctx, dict) else None
+    if not isinstance(messages, list) or not messages:
+        return
+    items = [m for m in messages if isinstance(m, dict)]
+    lead = 0
+    while lead < len(items) and items[lead].get("role") == "system":
+        lead += 1
+    windowed = window_transcript(items[lead:])
+    input_data["context"] = {**ctx, "messages": [dict(m) for m in items[:lead]] + list(windowed)}
+    _ensure_input_runtime_namespace(input_data)["session_history"] = {
+        "source": CLIENT_CONTEXT_HISTORY_SOURCE,
+        "seeded": 0,
+        "system_messages_kept": lead,
+        **windowed.report,
+    }
+
+
 def _generate_chat_text(*, provider: str, model: str, context: Dict[str, Any], messages: list[Dict[str, Any]]) -> str:
     """Generate a read-only chat response grounded in a run ledger (patchable in tests)."""
     system = (
@@ -8159,6 +8201,9 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
         if session_id:
             read_only_mounts = _restamp_discussion_turn(svc, session_id=session_id, input_data=input_data)
         input_data = _normalize_run_context_media(input_data)
+        # A client-sent transcript (older clients) gets the one history window.
+        # Discussion/automation sessions still refuse client messages (host 400).
+        _window_client_context_messages(input_data)
         thinking = _normalize_gateway_thinking(req.thinking)
         if thinking is not None:
             _ensure_input_runtime_namespace(input_data)["thinking"] = thinking

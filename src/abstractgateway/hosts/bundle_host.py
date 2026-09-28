@@ -2139,7 +2139,12 @@ class WorkflowBundleGatewayHost:
                 return
             existing = ctx0.get("messages") if isinstance(ctx0, dict) else None
             if isinstance(existing, list) and existing:
+                # The client's transcript wins; keep the window receipt the
+                # /runs/start door wrote for it (source "client_context").
+                prior = rt_ns.get("session_history")
+                receipt = dict(prior) if isinstance(prior, dict) and prior.get("source") == "client_context" else {}
                 rt_ns["session_history"] = {
+                    **receipt,
                     "seeded": 0,
                     "skipped": "client context.messages present",
                 }
