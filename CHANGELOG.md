@@ -89,6 +89,11 @@ history window. The terminal console builds on `abstractcore-console` 0.4.
 
 ### Fixed
 
+- The app proxy never relays a request without `X-Forwarded-Host`. A browser `Host` the proxy cannot forward (Chrome
+  accepts names such as `a_b.attacker.com`) is refused with 400 `invalid_host` (HTTP) or a closed WebSocket (1008);
+  before, the request reached the app with only the gateway's loopback `Host`, which an app that checks for a
+  loopback peer and a loopback host (abstractuic app-server kit 0.1.14) would have treated as a browser on this
+  machine.
 - A default text route naming a deleted or disabled endpoint profile no longer stops the workflow host from loading
   (every `/automations` and `/runs` read answered 500). The host loads with the default unrouted; a call that uses it
   fails naming the profile.

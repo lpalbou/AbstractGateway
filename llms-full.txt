@@ -2379,7 +2379,10 @@ The gateway relays each request to the app's own server on `127.0.0.1`
 - **What the app receives.** The path with `/apps/<app>` removed, plus
   `X-Forwarded-Prefix: /apps/<app>`, `X-Forwarded-For: <the browser's
   address>` (written by the gateway, never passed through from the
-  browser), `X-Forwarded-Proto` and `X-Forwarded-Host`. It receives only its
+  browser), `X-Forwarded-Proto` and `X-Forwarded-Host`, always both. A
+  request whose `Host` is not a host name or address the gateway can pass on
+  (browsers accept some, such as `a_b.example.com`, that it cannot) is refused
+  with 400 `invalid_host` and never reaches the app. It receives only its
   own cookies (`<app prefix>_*`): never the console's session cookie, never an
   `Authorization` header. It can set only its own cookies in return.
 - **Only apps that say they can.** An app announces that it can be served
@@ -2726,7 +2729,7 @@ The apps themselves, outside `/api/gateway`:
 | Method and path | Who | What |
 |---|---|---|
 | `GET /apps/handover/<code>` | the one-time code | Sets the app's sign-in cookies and redirects: relative `303` to `/apps/<id>/…` (cookies `Path=/apps/<id>/`), or to the app's own port for an older app. 410 used or expired, 400 another address. |
-| any `/apps/<id>/…` (HTTP, SSE, WebSocket) | the app's gateway session | The app, relayed (see [Apps are served through the gateway](#apps-are-served-through-the-gateway)). Without a session: `303` to `/console#apps?open=<id>&path=…` for a page load, else 401 `app_sign_in_required`. 404 `unknown_app`, 403 `cross_origin`, 409 `not_running` / `not_mountable`, 502 `app_not_answering`. `/apps/<id>` redirects to `/apps/<id>/`. |
+| any `/apps/<id>/…` (HTTP, SSE, WebSocket) | the app's gateway session | The app, relayed (see [Apps are served through the gateway](#apps-are-served-through-the-gateway)). Without a session: `303` to `/console#apps?open=<id>&path=…` for a page load, else 401 `app_sign_in_required`. 400 `invalid_host`, 404 `unknown_app`, 403 `cross_origin`, 409 `not_running` / `not_mountable`, 502 `app_not_answering`. `/apps/<id>` redirects to `/apps/<id>/`. |
 
 Errors are `{"ok": false, "reason", "message", "hint"?, "details"?}` with
 404 (`unknown_app`, also for a terminal route on a browser-only app), 409
@@ -7947,6 +7950,11 @@ history window. The terminal console builds on `abstractcore-console` 0.4.
 
 ### Fixed
 
+- The app proxy never relays a request without `X-Forwarded-Host`. A browser `Host` the proxy cannot forward (Chrome
+  accepts names such as `a_b.attacker.com`) is refused with 400 `invalid_host` (HTTP) or a closed WebSocket (1008);
+  before, the request reached the app with only the gateway's loopback `Host`, which an app that checks for a
+  loopback peer and a loopback host (abstractuic app-server kit 0.1.14) would have treated as a browser on this
+  machine.
 - A default text route naming a deleted or disabled endpoint profile no longer stops the workflow host from loading
   (every `/automations` and `/runs` read answered 500). The host loads with the default unrouted; a call that uses it
   fails naming the profile.

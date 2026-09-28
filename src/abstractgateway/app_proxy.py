@@ -26,7 +26,10 @@ Every request to `/apps/<id>/...`:
 - is relayed with the `/apps/<id>` prefix stripped, and
     X-Forwarded-Prefix: /apps/<id>
     X-Forwarded-For:    <the effective peer> (overwritten, never appended)
-    X-Forwarded-Proto / X-Forwarded-Host: what the browser used;
+    X-Forwarded-Proto / X-Forwarded-Host: what the browser used (ALWAYS
+    both: a Host this proxy cannot forward as X-Forwarded-Host is refused
+    with 400 `invalid_host`, never relayed without it — the app would see
+    only the gateway's loopback Host and treat a remote page as local);
 - carries ONLY the app's own cookies (`<cookie_prefix>_*`): never the
   console's session cookie, never an Authorization header, never a gateway
   session header;
@@ -264,9 +267,30 @@ def _forward_headers(request_headers: Any, *, spec: AppSpec, client: str, proto:
     out.append(("x-forwarded-for", client))
     out.append(("x-forwarded-prefix", app_prefix(spec.id)))
     out.append(("x-forwarded-proto", proto))
-    if host and _HOST_RE.match(host):
-        out.append(("x-forwarded-host", host))
+    if not _forwardable_host(host):
+        # Callers refuse such a request first (400 invalid_host); a request
+        # relayed without X-Forwarded-Host must be impossible, not unlikely.
+        raise ValueError(f"host {host!r} cannot be forwarded as X-Forwarded-Host")
+    out.append(("x-forwarded-host", host))
     return out
+
+
+def _forwardable_host(host: Optional[str]) -> bool:
+    """The browser's Host is one this proxy forwards as X-Forwarded-Host.
+    Browsers accept names this pattern does not (Chrome: `a_b.attacker.com`);
+    such a request is refused, because the app decides "on this machine?"
+    from the loopback peer AND a loopback Host / X-Forwarded-Host (the
+    abstractuic kit's clientIsLoopback), and without X-Forwarded-Host it
+    would see only the gateway's own loopback Host."""
+    return bool(host) and bool(_HOST_RE.match(str(host)))
+
+
+def _invalid_host_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=400,
+        content={"ok": False, "reason": "invalid_host", "message": "The Host this request was sent to is not a host name or address the gateway can pass on to the app."},
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 def _response_headers(raw: List[Tuple[bytes, bytes]], spec: AppSpec) -> List[Tuple[bytes, bytes]]:
@@ -357,6 +381,8 @@ async def app_http(request: Request, app_id: str, path: str) -> Response:
     rest = _upstream_path(request.scope, spec.id)
     if rest is None:
         return _refusal(request, 404, "unknown_app", "No such app", f"There is no app '{app_id}' on this gateway.")
+    if not _forwardable_host(request.headers.get("host")):
+        return _invalid_host_response()
     # Another origin's page (another site, or another port on this host,
     # which is "same-site" and so still carries the app's Lax cookies) never
     # reaches the app: browsers send Origin on every cross-origin request.
@@ -420,7 +446,7 @@ async def app_websocket(websocket: WebSocket, app_id: str, path: str) -> None:
     headers = websocket.headers
     scheme = "https" if websocket.url.scheme in ("wss", "https") else "http"
     host = str(headers.get("host") or "")
-    if not _same_origin(headers.get("origin"), host, scheme):
+    if not _forwardable_host(host) or not _same_origin(headers.get("origin"), host, scheme):
         await websocket.close(code=1008)
         return
     _prefix, session_cookie = app_cookie_names(spec)

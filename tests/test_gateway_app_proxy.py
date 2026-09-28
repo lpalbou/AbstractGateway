@@ -319,3 +319,37 @@ def test_another_origin_never_reaches_the_app(env) -> None:
     assert len(up.seen) == before
     ok = browser.post("/apps/observer/api/thing", content=b"{}", headers={"origin": "http://127.0.0.1:18823"})
     assert ok.status_code == 200
+
+
+@pytest.mark.parametrize("bad_host", ["a_b.attacker.com", "a_b.attacker.com:18823", "evil host", "x.example/path", ""])
+def test_a_host_the_proxy_cannot_forward_is_refused_never_relayed_without_x_forwarded_host(env, bad_host) -> None:
+    """The app decides "is this browser on the gateway machine?" from the
+    loopback peer AND a loopback Host / X-Forwarded-Host (abstractuic kit
+    0.1.14 clientIsLoopback). Browsers accept Host names this proxy's pattern
+    does not (Chrome: `a_b.attacker.com`); relaying such a request WITHOUT
+    X-Forwarded-Host would leave the app only the gateway's own loopback Host,
+    i.e. a remote page treated as local. The proxy answers 400 instead, for
+    HTTP and WebSocket alike, and the app never sees the request."""
+    from starlette.websockets import WebSocketDisconnect
+
+    app, _m, up = env
+    browser = _signed_in(app)
+    jar = "; ".join(f"{c.name}={c.value}" for c in browser.cookies.jar)
+    before = len(up.seen)
+    r = browser.get("/apps/observer/api/thing", headers={"host": bad_host})
+    assert r.status_code == 400 and r.json()["reason"] == "invalid_host", (bad_host, r.status_code, r.text[:200])
+    assert len(up.seen) == before, "the app must never receive a request without X-Forwarded-Host"
+    with pytest.raises(WebSocketDisconnect):
+        with browser.websocket_connect("/apps/observer/ws", headers={"host": bad_host, "cookie": jar}) as ws:
+            ws.receive_text()
+
+
+def test_every_relayed_request_carries_x_forwarded_host(env) -> None:
+    from abstractgateway import app_proxy as proxy
+
+    spec = am.APP_BY_ID["observer"]
+    fwd = dict(proxy._forward_headers({"host": "gw.example:8443"}, spec=spec, client="203.0.113.9", proto="https", host="gw.example:8443"))
+    assert fwd["x-forwarded-host"] == "gw.example:8443"
+    for bad in ("a_b.attacker.com", "", "evil host"):
+        with pytest.raises(ValueError):
+            proxy._forward_headers({"host": bad}, spec=spec, client="203.0.113.9", proto="https", host=bad)
