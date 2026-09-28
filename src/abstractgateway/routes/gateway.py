@@ -26040,11 +26040,41 @@ async def model_residency_loaded(
     return out
 
 
+def capability_defaults_route_problems(base_dir: Path) -> list[str]:
+    """Why the default TEXT route cannot be used right now, in words (an
+    `endpoint:<id>` default whose profile was deleted or disabled), or [].
+    Reported here, next to the control that fixes it; the host itself keeps
+    loading (hosts/bundle_host.py) and a call that uses it fails naming it."""
+    from ..provider_defaults import resolve_gateway_provider_model
+    from ..provider_endpoint_profiles import explain_endpoint_profile_miss
+
+    provider = str(resolve_gateway_provider_model(base_dir=base_dir, purpose="default text route").provider or "").strip()
+    if not provider.lower().startswith("endpoint:"):
+        return []
+    current, root = _gateway_profile_dirs()
+    try:
+        profile = resolve_effective_endpoint_profile(provider, base_dir=current, root_base_dir=root)
+    except ProviderEndpointProfileError as exc:
+        return [f"The default text model uses {provider!r}, which is invalid: {exc}. Choose another default."]
+    if profile is not None and profile.enabled:
+        return []
+    reason = explain_endpoint_profile_miss(provider, base_dir=current, root_base_dir=root) or (
+        f"the endpoint profile {provider!r} is not configured or is disabled"
+    )
+    return [f"The default text model cannot be used: {reason}. Runs and helpers that rely on the default fail until you choose another default or restore the profile."]
+
+
 @router.get("/config/capability-defaults")
 async def capability_defaults_get() -> Dict[str, Any]:
     """List execution-host Core/Runtime capability routing defaults for thin-client settings UIs."""
     svc = get_gateway_service()
-    return gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir))
+    payload = gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir))
+    problems = capability_defaults_route_problems(Path(svc.config.data_dir))
+    if problems:
+        payload = dict(payload)
+        existing = payload.get("warnings")
+        payload["warnings"] = ([*existing] if isinstance(existing, list) else []) + problems
+    return payload
 
 
 @router.get("/config/provider-endpoint-profiles")
