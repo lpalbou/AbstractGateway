@@ -182,21 +182,32 @@ deliberately narrower than what history views display):
 
 - Client-provided non-empty `context.messages` always win; the seed never
   overwrites them. An EMPTY client `context.messages` list does not count as
-  a transcript — the seed still runs (use the cap below to disable).
+  a transcript — the seed still runs (leave out `use_session_history` to
+  start without history).
 - Only COMPLETED root runs of the session contribute, as strictly alternating
   user/assistant pairs. FAILED and CANCELLED turns are invisible to replay by
   design (a promptless answer or answerless prompt would seed a dangling
   message and invite re-answering a stale ask); history views still show them.
-- Steering/operator guidance injected mid-run is not replayed; over-long
-  messages are truncated with a labeled `#TRUNCATION` marker; whole oldest
-  turns are dropped first (`session_history_max_chars` cumulative budget).
-- Caps: `input_data.session_history_max_messages` (1..200; explicit `0`
-  disables replay for the run) > `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_MESSAGES`
-  > default 40. Chars: `session_history_max_chars` >
-  `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS` > default 24000.
+- Steering/operator guidance injected mid-run is not replayed.
+- The history window: replay keeps the most recent turns that fit 50,000
+  estimated tokens (AbstractRuntime `HISTORY_REPLAY_MAX_TOKENS`), as whole
+  messages, newest first. No message is cut, and there is no message-count or
+  character cap. The model can use the rest of its context window. When older
+  turns are dropped, the oldest replayed message starts with a labeled
+  `[#TRUNCATION: ...]` line. A newest turn that alone exceeds 50,000 tokens is
+  kept whole (`oversize_turn_kept: true`).
+- The retired caps `input_data.session_history_max_messages` and
+  `input_data.session_history_max_chars` are ignored and listed in
+  `_runtime.session_history.ignored_inputs`. The environment variables
+  `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_MESSAGES` and
+  `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS` are no longer read.
 - Failures degrade to a labeled `_runtime.session_history` `#FALLBACK` note
-  and an unseeded start — never a blocked run. Success records
-  `_runtime.session_history = {seeded: N, ...}` on the run for observability.
+  and an unseeded start — never a blocked run. Success records the window on
+  the run as `_runtime.session_history`: `{seeded, policy, max_tokens,
+  token_estimator, replayed_messages, replayed_tokens, dropped_messages,
+  dropped_tokens, dropped_counts_complete, oversize_turn_kept}`.
+  `dropped_counts_complete: false` means replay stopped reading once the window
+  was full: older turns were dropped too, and they are not counted.
 - Entity lanes never ride this: their transcript authority is the entity home
   (`_visit.history` / the chat driver), not the run store.
 
@@ -288,19 +299,30 @@ manual upload below then remains the path.
 curl -sS -H "$AUTH" -H "Content-Type: application/json" -d '{
   "registry_scope": "tenant_catalog",
   "bundle_id": "docs-qa",
-  "bundle_version": "0.1.0",
+  "bundle_version": "0.1.1",
   "flow_id": "docsqa001",
+  "session_id": "myapp-docs-assistant:<one id per conversation>",
   "input_data": {
-    "question": "How do I publish a workflow bundle?",
-    "history": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}],
+    "prompt": "How do I publish a workflow bundle?",
     "docs": "<your llms.txt text>",
-    "app": "MyApp"
+    "app": "MyApp",
+    "use_session_history": true
   }
 }' "$BASE_URL/api/gateway/runs/start"
 ```
 
+Conversation history comes from the run's session, never from the caller
+(0.1.1): start every question of one conversation with the same `session_id`
+and `use_session_history: true`. The gateway replays the session's earlier
+turns through the runtime's history window (the newest whole turns up to
+50,000 tokens) and the bundle's LLM call includes them; a new conversation is
+a new `session_id`. 0.1.0's `question` + `history` inputs (last 12 messages
+kept) are gone.
+
 Then poll `GET /runs/{run_id}` (or stream the ledger); the answer is
-`output.response`. `provider`/`model`/`temperature` may ride `input_data` to
+`output.response`, and `session_history` is the window's receipt
+(`replayed_messages`, `dropped_messages`, ...) to show when earlier messages
+were not replayed. `provider`/`model`/`temperature` may ride `input_data` to
 override gateway defaults. Answers cite section headings and say plainly when
 the docs do not answer — the bundle refuses to invent endpoints or behavior.
 Docs Q&A must never route through entity chat (a visit is billable and forms
@@ -1024,6 +1046,17 @@ Each route adds:
 
 Examples:
 
+- Voice provider listings (`/voice/voices?providers_only=true`,
+  `/audio/speech/models?providers_only=true`,
+  `/audio/transcriptions/models?providers_only=true`) always list the cloud
+  providers `openai` and `openai-compatible`; their `items` carry `needs_key`,
+  `key_source` (`environment` | `providers` | null), `state` and `reason`, and
+  `cloud_providers` repeats them. A key counts when it is in the environment or
+  saved through the Providers screen. Local engines are listed when
+  AbstractVoice reports their runtime installed; `unavailable_providers`
+  (per kind: `{provider, code: runtime_missing|model_not_downloaded|not_configured,
+  reason}`) and `unavailable_reason` say why others are missing, and a listing
+  filtered to a cloud provider without a key says where the key goes.
 - `/voice/voices`: `items` contain voice/profile records with `id`, `label`,
   optional `provider`, optional `model`, and `voice_kind`
 - `/audio/*/models`: `items` contain model records with `id`, `label`,
@@ -1514,6 +1547,21 @@ any authenticated principal; writes require an admin principal.
   `{"ok": true, "restart": true, "requested_by": "...", "reason": "..."}`;
   409 with a plain reason when unsupported (`--reload`, embedded server, an
   update is installing).
+- `GET /api/gateway/host/start-at-login`, `PUT /api/gateway/host/start-at-login
+  {enabled, replace_other?}` — admin. Would this gateway start at the next
+  login, and can it be changed from here: `{enabled, state: on|off|broken|other,
+  mechanism, mechanism_label, can_change, reason, summary, problems, location,
+  platform, experimental[, other_data_dir]}`. The mechanism is a LaunchAgent
+  (macOS), a systemd user unit or, without a systemd user manager, a desktop
+  autostart entry (Linux), or a `HKCU\…\Run` value (Windows). `can_change:
+  false` carries the reason (for example a Linux server with neither a systemd
+  user manager nor a desktop session). `PUT` registers for the next login
+  without starting a second gateway, or unregisters without stopping this one,
+  and answers the read-back under `start_at_login`; 409 when it cannot change
+  here or when another gateway's registration would be replaced without
+  `replace_other: true`; 500 when the change does not read back. The same
+  switch as the tray's *Start at login* and `abstractgateway service
+  enable|disable`.
 - `GET /api/gateway/host/update`, `POST /api/gateway/host/update/check`,
   `POST /api/gateway/host/update/start` — `{current, install: {kind,
   upgradable, reason, command, extras}, check: {latest, update_available,

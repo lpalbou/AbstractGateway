@@ -39,9 +39,10 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.6.0`
-- `abstractcore>=2.17.0`
-- `abstractagent>=0.3.15`
+- `AbstractRuntime>=0.7.0`
+- `abstractcore>=2.18.0`
+- `abstractvoice>=0.13.0` (the voice listings import `abstractvoice.engine_runtime`)
+- `abstractagent>=0.3.17`
 - `AbstractMemory[lancedb]>=0.3.0`
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
@@ -213,9 +214,12 @@ runtime-config key (`network`); there is no environment variable for it.
   the status says `restart_required: true` with `configured` vs `effective`
   until the gateway restarts (`POST /api/gateway/network/restart`, the tray's
   *Restart AbstractGateway…*, `abstractgateway network restart`, or stop and
-  start `serve`).
-- **`serve --host/--port` win** over the setting and are reported as
-  `effective.overridden_by_cli: true`. A restart replays the same command
+  start `serve`). Only **saved** values are compared: with no port saved, a
+  gateway started with `--port N` needs no restart, and `restart.port` is the
+  port a restart binds (the saved one, else the running one).
+- **`serve --host/--port` win** over a saved value that differs and are then
+  reported as `effective.overridden_by_cli: true` (a flag that shadows nothing
+  saved overrides nothing). A restart replays the same command
   line, so it cannot apply the setting: the status says so
   (`restart.applies: false` + `restart.reason`) and the restart route refuses.
 - **The login service lets the setting apply.** The LaunchAgent,
@@ -696,20 +700,20 @@ as `env_shadowed`.
 |---|---|---|---|---|
 | `apps.node` | Node.js for apps | `auto` | `auto` (Node.js 18+ on this computer, else the gateway's own) · `managed` · `system` · an absolute path to `node` | `ABSTRACTGATEWAY_APPS_NODE` |
 | `apps.ports` | Ports for apps | (empty) | a port or `low-high`; empty = each app's usual port, else the next free one in 3100-3199 | `ABSTRACTGATEWAY_APPS_PORTS` |
-| `apps.host` | Where apps listen | `127.0.0.1` | an IP or host name; `0.0.0.0` opens the apps to every network this computer is on | `ABSTRACTGATEWAY_APPS_HOST` |
+| `apps.host` | Where apps listen (deprecated) | `127.0.0.1` | **deprecated**: apps always listen on `127.0.0.1` and open through the gateway at `/apps/<app>/` ([apps.md](./apps.md#apps-are-served-through-the-gateway)); only a loopback address is accepted, and an older saved `0.0.0.0` is ignored with one warning | `ABSTRACTGATEWAY_APPS_HOST` |
 | `apps.npm_registry` | npm registry | `https://registry.npmjs.org` | an http(s) URL (a mirror) | `ABSTRACTGATEWAY_APPS_NPM_REGISTRY` |
 | `apps.pypi_url` | Node.js download index | `https://pypi.org/pypi` | an http(s) URL (a mirror) | `ABSTRACTGATEWAY_APPS_PYPI_URL` |
 
 `GET /api/gateway/admin/runtime-config` returns them under `apps` as
 `{name: {key, label, help, placeholder, default, env_name, value, source,
-note?, env_shadowed?, invalid_stored?, invalid_env?}}` (the registry
+note?, env_shadowed?, invalid_stored?, invalid_env?, deprecated?}}` (the registry
 `runtime_config.APPS_SETTINGS`: a new knob is one row, and the TUI renders
 whatever the payload lists). Writes go through the generic door, admin-only
 and audit-logged (`setting_change` on the request's audit line):
-`POST /api/gateway/admin/runtime-config {"apps.host": "0.0.0.0"}` (or
-`{"apps": {"host": "0.0.0.0"}}`); an empty value clears back to env/default.
+`POST /api/gateway/admin/runtime-config {"apps.ports": "3200-3299"}` (or
+`{"apps": {"ports": "3200-3299"}}`); an empty value clears back to env/default.
 Each value is validated before anything is written (400 with the reason). Read
-at each use: a change applies at the next app start (`node`, `host`, `ports`)
+at each use: a change applies at the next app start (`node`, `ports`)
 or the next download (the two URLs).
 
 Three ways, same semantics:
@@ -752,7 +756,7 @@ changed. It never falls back to another workflow on its own.
   "key": "agents.default_workflow.abstractcode.agent.v1", "value": "coding-agent:coder", "source": "stored",
   "available": true, "reason": null, "default": "basic-agent:81795ea9",
   "resolved": {"bundle_id": "coding-agent", "bundle_version": "0.2.7", "flow_id": "coder",
-               "registry_scope": "private", "workflow_id": "coding-agent@0.2.7:coder", "name": "coder"},
+               "registry_scope": "private", "workflow_id": "coding-agent@0.2.8:coder", "name": "coder"},
   "eligible": [{"value": "basic-agent:81795ea9", "workflow_id": "basic-agent@0.0.5:81795ea9", "name": "basic-agent", "...": "..."}]}},
   "index_source": "host"}
 ```

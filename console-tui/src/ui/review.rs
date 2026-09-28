@@ -193,7 +193,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             }
             // The guide's last step: Finish / Skip setup record the
             // first-run outcome on the gateway (ui/welcome.rs).
-            super::welcome::finish_row(gcx, &ctx_finish, &t)
+            super::welcome::finish_row(gcx, cx, &ctx_finish, &t)
         }))
         .build()
 }

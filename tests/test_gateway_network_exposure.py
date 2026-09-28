@@ -315,6 +315,42 @@ def test_status_restart_required_until_the_bind_matches(tmp_path) -> None:
     assert s["copy_hint"] == "http://192.168.1.23:18842"  # the LAN URL, not loopback
 
 
+def test_status_restart_required_compares_stored_values_only(tmp_path) -> None:
+    # Nothing stored, started with --port 18882: the default port (8080) is not
+    # something a restart would apply (it replays --port), so no restart.
+    cli_port = _running_env("127.0.0.1", 18882, "host=default;port=cli", ABSTRACTGATEWAY_USER_AUTH="1")
+    s = _status(tmp_path, cli_port)
+    assert s["configured"]["source"] == "default" and s["configured"]["port_source"] == "default"
+    assert s["restart_required"] is False
+    assert not any(w.startswith("Restart the gateway") for w in s["warnings"])
+
+    # Only the mode is stored: the port still is not compared...
+    _store(tmp_path, "localhost")
+    assert _status(tmp_path, cli_port)["restart_required"] is False
+    # ...but a stored mode that differs from the running bind is.
+    _store(tmp_path, "lan")
+    s = _status(tmp_path, cli_port)
+    assert s["restart_required"] is True
+    # `--port` shadows no stored port: nothing is overridden, the restart
+    # applies the mode, and the warning names the port it binds (18882, not 8080).
+    assert s["effective"]["overridden_by_cli"] is False and s["restart"]["applies"] is True
+    assert s["warnings"][0] == "Restart the gateway to apply 'lan' on port 18882 (running: 127.0.0.1:18882)."
+    assert s["restart"]["port"] == 18882  # what the restart route reconnects to
+
+
+def test_status_stored_port_alone_is_compared(tmp_path) -> None:
+    from abstractgateway.runtime_config import write_network_setting
+
+    # A stored port without a stored mode: the port is compared, the host is not.
+    write_network_setting(tmp_path, mode=None, port=18843, internet_acknowledged=None, actor="t")
+    running = _running_env("127.0.0.1", 18841, "host=default;port=setting", ABSTRACTGATEWAY_USER_AUTH="1")
+    s = _status(tmp_path, running)
+    assert s["configured"]["source"] == "default" and s["configured"]["port_source"] == "stored"
+    assert s["restart_required"] is True
+    s = _status(tmp_path, _running_env("127.0.0.1", 18843, "host=default;port=setting", ABSTRACTGATEWAY_USER_AUTH="1"))
+    assert s["restart_required"] is False
+
+
 def test_status_reports_cli_override_and_a_restart_that_cannot_apply(tmp_path) -> None:
     _store(tmp_path, "lan", 18841)
     s = _status(tmp_path, _running_env("127.0.0.1", 18841, "host=cli;port=setting", ABSTRACTGATEWAY_USER_AUTH="1"))

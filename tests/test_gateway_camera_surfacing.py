@@ -42,7 +42,6 @@ proof that the composition holds on the door:
 
 from __future__ import annotations
 
-import importlib.util
 import subprocess
 import sys
 
@@ -50,7 +49,22 @@ import pytest
 
 pytestmark = pytest.mark.basic
 
-_HAS_CAMERA = importlib.util.find_spec("abstractcamera") is not None
+def _camera_plugin_installed() -> bool:
+    """Is abstractcamera INSTALLED, the way the runtime sees it?
+
+    Camera tools reach the gateway only through AbstractCore's capability
+    plugin entry point (`abstractcore.capabilities_plugins` → abstractcamera),
+    never through an import. `importlib.util.find_spec("abstractcamera")` is
+    the wrong question: run from the framework workspace root it finds the
+    sibling `abstractcamera/` checkout as a NAMESPACE package, the installed
+    arm then ran with no plugin and failed ("no cameras discovered").
+    """
+    from importlib.metadata import entry_points
+
+    return any(ep.name == "abstractcamera" for ep in entry_points(group="abstractcore.capabilities_plugins"))
+
+
+_HAS_CAMERA = _camera_plugin_installed()
 
 # Subprocess probes: registration is resolved at import/call time inside
 # abstractruntime, and other tests in this session may have imported those
@@ -148,7 +162,7 @@ def test_absent_package_means_no_camera_name_anywhere() -> None:
     assert out["matrix_camera"] == [], "camera must never enter the phase matrix"
 
 
-@pytest.mark.skipif(not _HAS_CAMERA, reason="abstractcamera is not installed")
+@pytest.mark.skipif(not _HAS_CAMERA, reason="abstractcamera is not installed (no abstractcore.capabilities_plugins entry point)")
 def test_installed_camera_rides_gateway_run_lanes_with_derived_partition() -> None:
     out = _probe(installed=True)
     # The toolset surfaces through the GATEWAY's /discovery/tools handler.
@@ -176,7 +190,7 @@ def test_installed_camera_rides_gateway_run_lanes_with_derived_partition() -> No
         assert capturing in require, f"{capturing} must ask by default (ruled default, user-overridable)"
 
 
-@pytest.mark.skipif(not _HAS_CAMERA, reason="abstractcamera is not installed")
+@pytest.mark.skipif(not _HAS_CAMERA, reason="abstractcamera is not installed (no abstractcore.capabilities_plugins entry point)")
 def test_installed_walled_entity_surfaces_stay_shut() -> None:
     """Camera never reaches the WALLED entity surfaces even when installed:
     not a walled row, hence absent from the entity inventory, the phase

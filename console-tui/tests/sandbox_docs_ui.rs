@@ -112,6 +112,7 @@ fn harness(size: Size) -> H {
             modal: Rc::new(RefCell::new(None)),
             entity_drawer: Rc::new(RefCell::new(None)),
             env_token_set: false,
+            no_display: None,
             prober: Rc::new(RefCell::new(None)),
             screens,
             screens_transport: transport,
@@ -588,10 +589,17 @@ fn f2_docs_assistant_asks_and_renders() {
     let s = h.turns(3);
     match h.find_cmd(|c| matches!(c, Cmd::DocsAsk { .. })) {
         Some(Cmd::DocsAsk {
-            question, history, ..
+            question,
+            session_id,
+            ..
         }) => {
             assert_eq!(question, "how do I add a provider?");
-            assert!(history.is_empty());
+            // The conversation's own session: the gateway replays its turns.
+            assert_eq!(session_id, h.store.docs.session_id.get_untracked());
+            assert!(
+                session_id.starts_with("gateway-console-docs-assistant:"),
+                "{session_id}"
+            );
         }
         other => panic!("expected DocsAsk, got {other:?}"),
     }
@@ -610,11 +618,25 @@ fn f2_docs_assistant_asks_and_renders() {
         };
     });
     h.store.docs.busy.set(false);
+    h.store
+        .docs
+        .replay
+        .set("Earlier messages not replayed: 49 (~61,234 tokens).".into());
     let s = h.turns(2);
     assert!(
         s.contains("Open") && s.contains("Providers"),
         "answer renders:\n{s}"
     );
+    assert!(
+        s.contains("Earlier messages not replayed: 49"),
+        "replay note renders:\n{s}"
+    );
+    // New conversation: a new session, an empty thread, no replay note.
+    let before = h.store.docs.session_id.get_untracked();
+    h.store.docs.new_conversation();
+    assert_ne!(h.store.docs.session_id.get_untracked(), before);
+    assert!(h.store.docs.turns.get_untracked().is_empty());
+    assert!(h.store.docs.replay.get_untracked().is_empty());
 }
 
 fn text_ready(h: &mut H) {

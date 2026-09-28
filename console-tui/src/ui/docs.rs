@@ -5,8 +5,14 @@
 //!    A failure degrades honestly: the question still runs with an empty
 //!    corpus and the note says `#FALLBACK … answers are ungrounded`, once.
 //! 2. `POST /runs/start` with the docs-qa catalog bundle
-//!    (`tenant_catalog / docs-qa 0.1.0 / docsqa001`, actor `gateway`) and
-//!    `input_data {question, history (last 12), docs, app}`.
+//!    (`tenant_catalog / docs-qa 0.1.1 / docsqa001`, actor `gateway`),
+//!    this conversation's `session_id` and
+//!    `input_data {prompt, docs, app, use_session_history: true}`.
+//!    History (ADR-0026, operator ruling 2026-09-28): no client-side copy,
+//!    no turn cap — the gateway replays the session's earlier turns through
+//!    the runtime's history window (newest whole turns up to 50,000 tokens)
+//!    and records the receipt (`session_history` on `GET /runs/{id}`), shown
+//!    when earlier messages were not replayed. New conversation = new session.
 //! 3. `GET /runs/{id}` every 2 s, up to 90 polls (~3 minutes): completed
 //!    → `output.response` (else the output JSON); failed/cancelled → the
 //!    run's error; still running → the web's "check the Runtimes tab".
@@ -32,11 +38,11 @@ use abstracttui::reactive::WakeHandle;
 /// The web's `ASSISTANT_BUNDLE` + `actor_id`.
 pub const BUNDLE_SCOPE: &str = "tenant_catalog";
 pub const BUNDLE_ID: &str = "docs-qa";
-pub const BUNDLE_VERSION: &str = "0.1.0";
+pub const BUNDLE_VERSION: &str = "0.1.1";
 pub const FLOW_ID: &str = "docsqa001";
 pub const POLL_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
 pub const MAX_POLLS: u32 = 90;
-pub const HISTORY_TURNS: usize = 12;
+pub const SESSION_PREFIX: &str = "gateway-console-docs-assistant";
 pub const DEFAULT_NOTE: &str =
     "Answers are grounded on the gateway's own documentation (llms.txt) via the docs-qa workflow.";
 
@@ -60,6 +66,25 @@ pub struct DocsState {
     pub busy: Signal<bool>,
     pub note: Signal<String>,
     pub draft: Signal<String>,
+    /// This conversation's gateway session (the server replays its turns).
+    pub session_id: Signal<String>,
+    /// "Earlier messages not replayed: N …" from the latest answer, or "".
+    pub replay: Signal<String>,
+}
+
+/// A fresh conversation's session id: nothing from another conversation is replayed.
+pub fn new_session_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+    format!(
+        "{SESSION_PREFIX}:{nanos:x}-{:x}-{seq:x}",
+        std::process::id()
+    )
 }
 
 impl DocsState {
@@ -69,6 +94,8 @@ impl DocsState {
             busy: cx.signal(false),
             note: cx.signal(DEFAULT_NOTE.to_string()),
             draft: cx.signal(String::new()),
+            session_id: cx.signal(new_session_id()),
+            replay: cx.signal(String::new()),
         }
     }
 
@@ -77,24 +104,15 @@ impl DocsState {
         self.turns.set(Vec::new());
         self.busy.set(false);
         self.note.set(DEFAULT_NOTE.to_string());
+        self.new_conversation();
     }
 
-    /// The web's `assistantState.history`: successful (user, assistant)
-    /// pairs only, as role/content messages, last 12.
-    pub fn history(turns: &[Turn]) -> Vec<Value> {
-        let mut out = Vec::new();
-        let mut i = 0;
-        while i + 1 < turns.len() {
-            if turns[i].role == Role::User && turns[i + 1].role == Role::Assistant {
-                out.push(json!({"role": "user", "content": turns[i].text}));
-                out.push(json!({"role": "assistant", "content": turns[i + 1].text}));
-                i += 2;
-            } else {
-                i += 1;
-            }
-        }
-        let skip = out.len().saturating_sub(HISTORY_TURNS);
-        out.split_off(skip)
+    /// The web's assistantClear: a new session, an empty thread (an answer
+    /// still on its way keeps its pending row), no replay note.
+    pub fn new_conversation(&self) {
+        self.session_id.set(new_session_id());
+        self.turns.update(|v| v.retain(|x| x.role == Role::Pending));
+        self.replay.set(String::new());
     }
 }
 
@@ -128,20 +146,72 @@ impl Corpus {
 }
 
 /// The `POST /runs/start` body the web sends.
-pub fn start_body(question: &str, history: &[Value], corpus: &Corpus) -> Value {
+pub fn start_body(question: &str, session_id: &str, corpus: &Corpus) -> Value {
     json!({
         "registry_scope": BUNDLE_SCOPE,
         "bundle_id": BUNDLE_ID,
         "bundle_version": BUNDLE_VERSION,
         "flow_id": FLOW_ID,
         "actor_id": "gateway",
+        "session_id": session_id,
         "input_data": {
-            "question": question,
-            "history": history,
+            "prompt": question,
             "docs": corpus.text,
             "app": corpus.app,
+            "use_session_history": true,
         },
     })
+}
+
+/// The web's assistantReplayNote: what the gateway's history window did not
+/// replay (`session_history` on `GET /runs/{id}`), or "" when it replayed all.
+pub fn replay_note(run: &Value) -> String {
+    let h = run.get("session_history").cloned().unwrap_or(Value::Null);
+    let n = |k: &str| {
+        h.get(k)
+            .and_then(Value::as_f64)
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .map(|v| v as u64)
+            .unwrap_or(0)
+    };
+    let dropped = n("dropped_messages");
+    if dropped == 0 {
+        return String::new();
+    }
+    let replayed = n("replayed_messages");
+    let tokens = n("dropped_tokens");
+    let budget = n("max_tokens");
+    let mut out = format!("Earlier messages not replayed: {}", group(dropped));
+    if tokens > 0 {
+        out.push_str(&format!(" (~{} tokens)", group(tokens)));
+    }
+    out.push_str(&format!(
+        ". The model read the newest {} message{}",
+        group(replayed),
+        if replayed == 1 { "" } else { "s" }
+    ));
+    if budget > 0 {
+        out.push_str(&format!(
+            " (history window: the most recent {} tokens of whole messages).",
+            group(budget)
+        ));
+    } else {
+        out.push('.');
+    }
+    out
+}
+
+/// 61234 -> "61,234" (the web's toLocaleString("en-US")).
+fn group(v: u64) -> String {
+    let digits = v.to_string();
+    let mut out = String::new();
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
 }
 
 /// One poll's verdict.
@@ -224,10 +294,10 @@ fn ensure_corpus(c: &GatewayClient) -> (Corpus, Option<String>) {
 pub fn start_ask(
     c: &GatewayClient,
     question: &str,
-    history: &[Value],
+    session_id: &str,
 ) -> ApiResult<(String, Option<String>)> {
     let (corpus, note) = ensure_corpus(c);
-    let started = c.start_run(&start_body(question, history, &corpus))?;
+    let started = c.start_run(&start_body(question, session_id, &corpus))?;
     let run_id = started
         .get("run_id")
         .and_then(Value::as_str)
@@ -257,8 +327,11 @@ fn schedule(tx: &Sender<Cmd>, run_id: String, attempt: u32, op: u64) {
         .ok();
 }
 
-/// Settle the pending turn (UI thread).
-fn settle(store: &Store, op: u64, turn: Turn) {
+/// Settle the pending turn (UI thread); `replay` = the answer's replay note.
+fn settle(store: &Store, op: u64, turn: Turn, replay: Option<String>) {
+    if let Some(r) = replay {
+        store.docs.replay.set(r);
+    }
     store.docs.turns.update(|t| {
         if let Some(last) = t.iter_mut().rev().find(|x| x.role == Role::Pending) {
             *last = turn;
@@ -296,6 +369,7 @@ pub fn after_start(
                         role: Role::Error,
                         text: msg,
                     },
+                    None,
                 )
             });
         }
@@ -313,6 +387,10 @@ pub fn after_poll(
     r: ApiResult<Value>,
 ) {
     let s = *store;
+    let replay = match &r {
+        Ok(v) if matches!(poll_verdict(v), PollVerdict::Answer(_)) => Some(replay_note(v)),
+        _ => None,
+    };
     let turn = match r.map(|v| poll_verdict(&v)) {
         Ok(PollVerdict::Answer(a)) => Turn { role: Role::Assistant, text: a },
         Ok(PollVerdict::Failed(m)) => Turn { role: Role::Error, text: format!("Failed: {m}") },
@@ -328,7 +406,7 @@ pub fn after_poll(
         },
         Err(e) => Turn { role: Role::Error, text: format!("Failed: {}", e.message) },
     };
-    wake.post(move || settle(&s, op, turn));
+    wake.post(move || settle(&s, op, turn, replay));
 }
 
 // ---------------------------------------------------------------------
@@ -358,7 +436,7 @@ fn ask(ctx: &Ctx) {
             .set(Some("type a question about the gateway first".into()));
         return;
     }
-    let history = DocsState::history(&d.turns.get_untracked());
+    let session_id = d.session_id.get_untracked();
     d.draft.set(String::new());
     d.busy.set(true);
     d.turns.update(|t| {
@@ -375,7 +453,7 @@ fn ask(ctx: &Ctx) {
     store.begin_busy(op, "docs assistant: answering");
     ctx.send(Cmd::DocsAsk {
         question,
-        history,
+        session_id,
         op,
     });
 }
@@ -412,6 +490,15 @@ pub fn open(ctx: &Ctx, cx: Scope) {
                     t.text_faint
                 };
                 line(vec![span(note, ink)])
+            }))
+            .child(dyn_view(LayoutStyle::default().shrink(0.0), move || {
+                let t = theme.get().tokens;
+                let replay = d.replay.get();
+                if replay.is_empty() {
+                    Element::new().build()
+                } else {
+                    line(vec![span(replay, t.info)])
+                }
             }))
             .child(dyn_view_scoped(
                 LayoutStyle::default().grow(1.0).min_h(3),
@@ -496,11 +583,8 @@ pub fn open(ctx: &Ctx, cx: Scope) {
                                 .build(),
                         )
                         .child(
-                            Button::new("Clear")
-                                .on_click(move || {
-                                    // The web's assistantClear: history + messages.
-                                    d.turns.update(|v| v.retain(|x| x.role == Role::Pending));
-                                })
+                            Button::new("New conversation")
+                                .on_click(move || d.new_conversation())
                                 .element(bcx, &t)
                                 .build(),
                         )
@@ -527,15 +611,19 @@ mod tests {
             app: "AbstractGateway".into(),
             text: "# llms".into(),
         };
-        let h = vec![json!({"role": "user", "content": "q0"})];
-        let b = start_body("how do I add a provider?", &h, &c);
+        let b = start_body(
+            "how do I add a provider?",
+            "gateway-console-docs-assistant:s1",
+            &c,
+        );
         assert_eq!(
             b,
             json!({
                 "registry_scope": "tenant_catalog", "bundle_id": "docs-qa",
-                "bundle_version": "0.1.0", "flow_id": "docsqa001", "actor_id": "gateway",
-                "input_data": {"question": "how do I add a provider?", "history": h,
-                               "docs": "# llms", "app": "AbstractGateway"}
+                "bundle_version": "0.1.1", "flow_id": "docsqa001", "actor_id": "gateway",
+                "session_id": "gateway-console-docs-assistant:s1",
+                "input_data": {"prompt": "how do I add a provider?", "docs": "# llms",
+                               "app": "AbstractGateway", "use_session_history": true}
             })
         );
     }
@@ -585,31 +673,28 @@ mod tests {
     }
 
     #[test]
-    fn history_keeps_answered_pairs_only_last_twelve() {
-        let mut turns = Vec::new();
-        for i in 0..8 {
-            turns.push(Turn {
-                role: Role::User,
-                text: format!("q{i}"),
-            });
-            turns.push(Turn {
-                role: Role::Assistant,
-                text: format!("a{i}"),
-            });
-        }
-        // A failed question never becomes context.
-        turns.push(Turn {
-            role: Role::User,
-            text: "bad".into(),
-        });
-        turns.push(Turn {
-            role: Role::Error,
-            text: "Failed: x".into(),
-        });
-        let h = DocsState::history(&turns);
-        assert_eq!(h.len(), 12);
-        assert_eq!(h[0], json!({"role": "user", "content": "q2"}));
-        assert_eq!(h[11], json!({"role": "assistant", "content": "a7"}));
-        assert!(!h.iter().any(|m| m["content"] == "bad"));
+    fn each_conversation_has_its_own_session() {
+        let a = new_session_id();
+        let b = new_session_id();
+        assert!(a.starts_with("gateway-console-docs-assistant:"), "{a}");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn replay_note_follows_the_gateway_receipt() {
+        let run = json!({"status": "completed", "session_history": {
+            "replayed_messages": 12, "dropped_messages": 49, "dropped_tokens": 61234, "max_tokens": 50000}});
+        assert_eq!(
+            replay_note(&run),
+            "Earlier messages not replayed: 49 (~61,234 tokens). The model read the newest 12 messages \
+             (history window: the most recent 50,000 tokens of whole messages)."
+        );
+        assert_eq!(
+            replay_note(
+                &json!({"session_history": {"replayed_messages": 4, "dropped_messages": 0}})
+            ),
+            ""
+        );
+        assert_eq!(replay_note(&json!({"session_history": null})), "");
     }
 }

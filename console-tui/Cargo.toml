@@ -22,6 +22,7 @@ include = [
     "src/**/*.rs",
     "tests/**/*.rs",
     "tests/fixtures/*.json",
+    "tests/fixtures/gateway_pointer/*.json",
     "assets/abstractframework_identity.json",
     "Cargo.toml",
     "Cargo.lock",
@@ -56,10 +57,17 @@ abstracttui = "0.3.6"
 # `/api/gateway/models/*` + `/engines/*` mirrors. It builds on the same
 # abstracttui 0.3.6: both crates MUST resolve one abstracttui (one
 # reactive runtime, one widget set) — the lockfile pins it.
-abstractcore-console = "0.3"
+# 0.4: `display_available` / `OpenError` (Apps Open on a machine with no
+# display shows the link instead of launching a browser), `engine_missing`
+# and `needs_gpu_limit` rows.
+abstractcore-console = "0.4"
 # HTTP client (blocking, small): fits the background-thread + posted-closure
 # model. "tls" is rustls (remote HTTPS gateways work with zero system
 # OpenSSL), "gzip" matches server defaults — the abstractcode-tui precedent.
 ureq = { version = "2.12", default-features = false, features = ["tls", "gzip"] }
 # JSON: gateway payloads carry arbitrary user text; battle-tested parsing.
 serde_json = "1"
+
+# getuid(): the gateway pointer file must belong to the current user.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

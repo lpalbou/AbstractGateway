@@ -5,6 +5,151 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Requires AbstractRuntime 0.7.0 (the session history window and its public `window_transcript`), AbstractCore 2.18.0
+(`engine_missing`, `needs_gpu_limit`), AbstractVoice 0.13.0 (`abstractvoice.engine_runtime`, `voice_openai_api_key`,
+now declared directly) and AbstractAgent 0.3.17 (entity visit turns send the runtime's history window). The gateway
+refuses to build its workflow host on a runtime without the history window. The terminal console
+(`abstractgateway-console`, see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md)) builds on
+`abstractcore-console` 0.4.
+
+### Added
+
+- **Apps are served through the gateway at `/apps/<id>/`** (HTTP streaming, server-sent events, WebSocket), gated by
+  the app's gateway session, with cookies isolated per app. An app that announces `X-AbstractFramework-App: <id>;
+  mount=1` is served there; `POST /api/gateway/apps/{id}/open` returns `app_path` and builds `app_url` on the
+  browser's `origin`; the sign-in handover redirects relatively with `Path=/apps/<id>/` cookies, so apps open from a
+  LAN address, a reverse proxy or a tunnel. Requests carrying another origin are refused. See
+  [docs/apps.md](docs/apps.md) and the nginx block in [docs/deployment.md](docs/deployment.md).
+- **The local gateway pointer** `~/.abstractframework/gateway.json`: `serve` writes it once bound (url, port, data
+  directory, `written_by: "serve"`) under an ownership rule (default data directory, or the pointer already names
+  this gateway's data directory), so the terminal consoles, the Node apps and the Assistant find this computer's
+  gateway. `abstractgateway network status` shows it.
+- `GET /config/capability-defaults` warns, in words, when the default text route names an endpoint profile that was
+  deleted or disabled.
+- `_runtime.session_history` records the history window for every seeded run: `seeded`, `policy`, `max_tokens`,
+  `token_estimator`, `replayed_messages`, `replayed_tokens`, `dropped_messages`, `dropped_tokens`,
+  `dropped_counts_complete`, `oversize_turn_kept`. Strict seeding (automation and discussion sessions) also adds
+  `strict` and `session_kind`.
+  `GET /runs/{id}` returns the same receipt as `session_history` (counts only, `null` for a run that was not
+  seeded), so a client can say how many earlier messages were not replayed.
+- **Start at login from the consoles.** `GET/PUT /api/gateway/host/start-at-login` (admin)
+  reports whether this gateway starts at the next login (`enabled`, `state`, the mechanism:
+  LaunchAgent, systemd user unit or desktop autostart entry, Windows Run value) and whether it
+  can be changed here (`can_change` with a plain `reason`), and turns it on or off without
+  starting or stopping the running gateway. The web console has the switch in the Gateway card
+  and on the setup guide's last step; the terminal console in F3 and on the Finish step.
+- **Cloud voice providers are always listed.** Voice provider listings include `openai` and
+  `openai-compatible` marked `needs_key` until a key is configured, in the environment or
+  through the Providers screen; both consoles show the state.
+- Voice listings pass AbstractVoice's `unavailable_providers` and `unavailable_reason` through,
+  and a listing filtered to a cloud provider without a key says where the key goes. Both
+  consoles' voice pickers show the reason instead of an empty list.
+- The consoles show AbstractCore's `engine_missing` (a route this computer can run whose engine
+  is not installed, with the install command) and the `needs_gpu_limit` fit verdict (the exact
+  command that raises the GPU memory limit).
+- An OpenAI key saved through the Providers screen reaches voice: the voice listings pass it to
+  AbstractVoice as `voice_openai_api_key` on every call, and the gateway's runtime is built with
+  it for voice generation.
+- `restart.port` in `GET /api/gateway/network`: the port a restart binds; the restart route
+  reconnects there.
+- The web console's Apps page names this browser's address and the `/apps/` path the apps open under; a link
+  `#apps?open=<id>&path=<path>` opens an app already signed in (where the proxy sends a signed-out visitor).
+- The terminal console finds its gateway like every client: `--gateway-url` (alias `--url`), the legacy
+  `ABSTRACTGATEWAY_URL`, then the local gateway pointer, then `http://127.0.0.1:8080`; it follows a gateway restarted on
+  a new port. It also gained a Network screen, the start-at-login switch and voice/engine states (details in its
+  changelog).
+
+### Changed
+
+- **Chat routes that take a client-sent history use the runtime's one history window** (ADR-0026, operator ruling
+  2026-09-28): `POST /runs/{id}/chat`, `/backlog/assist`, `/backlog/maintain`, `/backlog/advisor` and
+  `/sandbox/generate` replay the newest whole messages up to 50,000 tokens (`fold_history_window`; the question being
+  asked is always kept whole) and return the receipt as `history` (`replayed_messages`, `replayed_tokens`,
+  `dropped_messages`, `dropped_tokens`, `max_tokens`, ...); run chat also records it in the persisted
+  `abstract.chat` event. When older messages are dropped, the oldest kept one carries the runtime's `#TRUNCATION`
+  notice. Removed: the 12,000-character cut on every run-chat and backlog-assist message, the advisor's
+  12,000-character cut and its "first 40 messages" cap (the newest question was dropped), maintain's 8,000-character
+  cut, and the backlog assist/maintain draft and template cuts (500k/600k/220k/120k characters, 180k context).
+- **`POST /runs/start` bounds a client-sent `input_data.context.messages` with the same history window** (older
+  clients such as the AbstractCode web legacy REPL and older TUIs send their whole transcript there): leading system
+  messages are kept, the rest is the newest whole turns up to 50,000 tokens with the `#TRUNCATION` notice when older
+  turns are dropped; messages keep their shape (tool and multimodal messages pass through). The receipt is recorded as
+  `_runtime.session_history` with `source: "client_context"` (a client-sent value is replaced) and returned by
+  `GET /runs/{id}`. Discussion and automation sessions still refuse client messages (400).
+- **Shipped workflows rebuilt without truncation (ADR-0026):** `coding-agent` 0.2.8 replaces 0.2.6 and
+  `co-scientist` 0.2.1 replaces 0.2.0. The coding agent's gates and fixer now read whole failure lines (the snippet
+  cuts are gone) and its verifier and spec judges no longer cap their output at 4,000 tokens; co-scientist embeds the
+  rebuilt `deep-plan`, `deep-investigate` and `diagram-render`. The example workflow id in the default-agent hint is
+  `coding-agent@0.2.8:coder`.
+- **docs-qa 0.1.1 (replaces 0.1.0): conversation history comes from the run's session.** The question is the
+  `prompt` input; each question of a conversation starts with the same `session_id` and `use_session_history`, the
+  gateway replays the earlier turns through the runtime's history window and the bundle's LLM call includes them.
+  The `question`/`history` inputs and the bundle's "last 12 messages" cap are gone. The web console's and the
+  terminal console's docs assistants no longer send a history copy (they sent the last 12 messages): one session per
+  conversation, **New conversation** starts a new one, and the drawer says when earlier messages were not replayed.
+  Clients that pinned `docs-qa@0.1.0` keep working on installs whose catalog already holds it; fresh installs publish
+  0.1.1 only.
+- Every browser app is launched with `--port`, `--host`, `--gateway-url` flags (Observer, Code, Entity and Flow join
+  Continuum). An installed version older than the flags (Observer 0.1.14, Code 0.5.0, Entity 0.2.2 or earlier) also
+  gets the legacy `PORT`/`HOST`/`<APP>_GATEWAY_URL` environment, so it still listens on the port the gateway chose.
+- `apps.host` is deprecated: apps always listen on 127.0.0.1 and open through the gateway. Only a loopback value is
+  accepted; an older saved `0.0.0.0` is ignored with one warning.
+- Run Ask, run summary, backlog assist and the console sandbox share one LLM client resolved like a run's (endpoint
+  profiles, the console's provider connections, the Core store). Ask on a run whose provider was `endpoint:<id>`
+  failed with "Unknown provider".
+- `use_context` is set by the server for automation targets and discussion turns: the automation's context mode
+  (independent / growing) is the one history control. Discussion follow-ups that name no model keep the fork's
+  provider and model.
+- `GET /runs/{id}/input_data` never returns a workspace folder the gateway made inside its data folder (a second
+  automation started from it was refused); the refusal for such a folder says to leave the workspace empty.
+- **Session history replay is the most recent 50,000 tokens of whole turns.** A run started with
+  `use_session_history` gets the session's newest turns that fit 50,000 estimated tokens (AbstractRuntime's history
+  window). No message is cut, and there is no message-count or character cap. The old defaults (40 messages,
+  24,000 characters, 200-message / 200,000-character ceilings) are removed. Automation (growing) and discussion
+  sessions use the same window. The model can use the rest of its context window (operator ruling 2026-09-28,
+  ADR-0026).
+- **Retired history caps.** `input_data.session_history_max_messages` and `input_data.session_history_max_chars` no
+  longer change what is replayed. A run that still sends them lists them in `_runtime.session_history.ignored_inputs`
+  and the gateway logs a warning. An explicit `0` no longer disables replay; to start without history, leave out
+  `use_session_history`. The environment variables `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_MESSAGES` and
+  `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS` are no longer read and have been removed from the environment registry.
+- **Telegram bridge:** `ABSTRACT_TELEGRAM_MAX_HISTORY_MESSAGES` (default 30) is retired. The bridge no longer sends a
+  message cap or `_limits.max_history_messages`, and it logs a warning when the variable is still set.
+- `restart_required` compares **saved** values only: a gateway started with `--port N` and no
+  saved port needs no restart, and a command-line flag counts as overriding the setting only
+  when it shadows a saved value that differs.
+- The static voice listings decide which local engines are available from AbstractVoice's
+  `abstractvoice.engine_runtime` (a Supertonic voice without its runtime is no longer listed),
+  and answer 503 with the reason when AbstractVoice lacks that API.
+- The web console's model cards show AbstractCore 2.18's `needs_gpu_limit` verdict as **Needs GPU limit** with the
+  exact command to run (`sudo sysctl iogpu.wired_limit_mb=<MB>`, click to copy), instead of "Fit unknown", and the
+  **Fits this computer** filter keeps those models (AbstractCore's `FITS_FILTER_VERDICTS`): on a 128 GiB Mac the
+  recommended model was hidden by the filter.
+- The console's theme selector and connect control are re-vendored from the released `@abstractframework/ui-kit`
+  0.1.14.
+
+### Security
+
+- The terminal console reads the gateway pointer the way the kit and AbstractCode do: opened without following a
+  symbolic link and without blocking (a FIFO in its place cannot hang the console), checked on the open file
+  (regular file, owned by you, not writable by group or others), and read from the same file with a 64 KiB bound.
+- The gateway writes the pointer through a fresh private temporary file (random name, created exclusively, mode 0600)
+  and an atomic rename: a symbolic link planted at the old predictable temporary name, or at the pointer itself, is
+  never written through.
+
+### Fixed
+
+- The app proxy never relays a request without `X-Forwarded-Host`. A browser `Host` the proxy cannot forward (Chrome
+  accepts names such as `a_b.attacker.com`) is refused with 400 `invalid_host` (HTTP) or a closed WebSocket (1008);
+  before, the request reached the app with only the gateway's loopback `Host`, which an app that checks for a
+  loopback peer and a loopback host (abstractuic app-server kit 0.1.14) would have treated as a browser on this
+  machine.
+- A default text route naming a deleted or disabled endpoint profile no longer stops the workflow host from loading
+  (every `/automations` and `/runs` read answered 500). The host loads with the default unrouted; a call that uses it
+  fails naming the profile.
+
 ## [0.6.0] - 2026-09-27
 
 Requires AbstractRuntime 0.6.0 and AbstractCore 2.17.0. The terminal console

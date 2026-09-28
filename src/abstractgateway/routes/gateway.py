@@ -85,6 +85,7 @@ from ..provider_connections import (
     builtin_provider_public_row,
     configured_builtin_provider_public_rows,
     configured_provider_request_kwargs,
+    providers_screen_api_key,
 )
 from .. import host_control, host_metrics, self_update
 from ..run_retention import (
@@ -140,7 +141,12 @@ from ..workflow_catalog import (
 from ..workflow_deprecations import WorkflowDeprecatedError
 from ..automation_command_types import AUTOMATION_COMMAND_TYPES, COMMAND_TYPES
 from ..automation_defaults import manifest_automation_defaults
-from abstractruntime.session_history import SessionHistoryError
+# The ONE history window (runtime 0.7.0): `window_transcript` keeps the newest
+# whole turns up to HISTORY_REPLAY_MAX_TOKENS (fold_history_window) and writes
+# the labeled #TRUNCATION notice (announce_dropped). Client-sent chat histories
+# go through `_client_history_window` below — never a second window, never a
+# message cap.
+from abstractruntime.session_history import SessionHistoryError, window_transcript
 
 
 router = APIRouter(prefix="/gateway", tags=["gateway"])
@@ -2584,6 +2590,13 @@ class RunChatResponse(BaseModel):
     model: str
     generated_at: str
     answer: str
+    history: Dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "The history window's receipt for the client-sent `messages` (runtime session_history "
+            "report: replayed_messages/tokens, dropped_messages/tokens, max_tokens, policy)."
+        ),
+    )
 
 
 class SaveChatThreadRequest(BaseModel):
@@ -4063,8 +4076,9 @@ def _data_dir_workspace_problem(
         return f"it is the folder that holds every workspace in the gateway's data folder ({own}), not one workspace"
     if _gateway_folder_kind(own / rel.parts[0], principal=principal, session_id=session_id) is None:
         return (
-            f"it is inside the gateway's data folder ({data_root}) and is not a workspace the gateway made "
-            "for this conversation or one of your runs"
+            f"it is a folder the gateway made for another conversation, run or automation (inside its data "
+            f"folder {data_root}), and one workspace is never shared that way. Leave the workspace empty and the "
+            "gateway creates a folder of its own for this one"
         )
     return None
 
@@ -4218,7 +4232,7 @@ def _sanitize_run_workspace_policy(
         if data_problem:
             raise HTTPException(
                 status_code=400,
-                detail=f"workspace_root {str(resolved)!r} is refused: {data_problem}. The run was NOT started.",
+                detail=f"workspace_root {str(resolved)!r} is refused: {data_problem}. Nothing was started.",
             )
         if allow_overrides or blacklist_mode or trust_launch_folder or _is_under_allowed_roots(resolved, allowed_roots):
             input_data["workspace_root"] = str(resolved)
@@ -6658,8 +6672,6 @@ def _list_descendant_run_ids(run_store: Any, root_run_id: str, *, limit: int = 2
 
 def _generate_summary_text(*, provider: str, model: str, context: Dict[str, Any]) -> str:
     """Generate a human-readable summary for a run (patchable in tests)."""
-    from abstractruntime.integrations.abstractcore.llm_client import LocalAbstractCoreLLMClient
-
     system = (
         "You are AbstractObserver. You are given an execution digest derived from an append-only workflow ledger.\n"
         "Write a concise human-readable SUMMARY of what the workflow did.\n\n"
@@ -6674,7 +6686,7 @@ def _generate_summary_text(*, provider: str, model: str, context: Dict[str, Any]
     )
 
     user = json.dumps(context, ensure_ascii=False, indent=2)
-    llm = LocalAbstractCoreLLMClient(provider=str(provider), model=str(model))
+    llm, _routed, _profile = _gateway_llm_client(str(provider), str(model))
     res = llm.generate(
         prompt="",
         messages=[{"role": "user", "content": _clamp_text(user, max_len=180_000)}],
@@ -6685,15 +6697,85 @@ def _generate_summary_text(*, provider: str, model: str, context: Dict[str, Any]
     return text
 
 
+def _client_history_window(
+    messages: Any, *, roles: frozenset = frozenset({"user", "assistant"})
+) -> tuple[list[Dict[str, str]], Dict[str, Any]]:
+    """Bound a CLIENT-SENT chat history with the runtime's one history window.
+
+    ADR-0026 + operator ruling 2026-09-28: no message-count or character caps;
+    replayed history is the newest WHOLE messages up to 50,000 tokens, stated
+    and recorded. The client's messages are normalized to plain role/content
+    (unknown roles and empty messages skipped), then
+    `abstractruntime.session_history.window_transcript` groups them into turns
+    (a user message plus the replies after it, so a reply never loses its
+    question), keeps the newest turns that fit (the newest turn — the question
+    being asked — is always kept whole) and, when older turns were dropped,
+    prefixes the oldest kept message with the runtime's labeled #TRUNCATION
+    notice. Returns (messages, report); the report is the window's receipt for
+    the response / ledger.
+    """
+    normalized: list[Dict[str, str]] = []
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        role = str(m.get("role") or "").strip().lower()
+        content = m.get("content")
+        if role not in roles or not isinstance(content, str) or not content.strip():
+            continue
+        normalized.append({"role": role, "content": content.strip()})
+    windowed = window_transcript(normalized)
+    return list(windowed), windowed.report
+
+
+CLIENT_CONTEXT_HISTORY_SOURCE = "client_context"
+
+
+def _window_client_context_messages(input_data: Dict[str, Any]) -> None:
+    """Bound a client-sent `input_data.context.messages` with the one history window (in place).
+
+    Older clients (the AbstractCode web legacy REPL, older TUIs) send their
+    whole transcript as `context.messages`. ADR-0026 + operator ruling
+    2026-09-28: no message-count or character caps; the model gets the newest
+    WHOLE messages up to 50,000 tokens, stated and recorded. Unlike
+    `_client_history_window`, the messages keep their shape (tool, system and
+    multimodal messages pass through as sent) because the run consumes them
+    directly: leading system messages are instructions, always kept; the rest
+    go through `abstractruntime.session_history.window_transcript` (whole
+    turns, newest first, labeled #TRUNCATION notice on the oldest kept
+    message when older turns were dropped). The receipt is written to
+    `_runtime.session_history` with `source: "client_context"` — always
+    server-written: a client-sent `_runtime.session_history` is replaced.
+    """
+    runtime_ns = input_data.get("_runtime")
+    if isinstance(runtime_ns, dict) and "session_history" in runtime_ns:
+        runtime_ns = dict(runtime_ns)
+        runtime_ns.pop("session_history", None)
+        input_data["_runtime"] = runtime_ns
+    ctx = input_data.get("context")
+    messages = ctx.get("messages") if isinstance(ctx, dict) else None
+    if not isinstance(messages, list) or not messages:
+        return
+    items = [m for m in messages if isinstance(m, dict)]
+    lead = 0
+    while lead < len(items) and items[lead].get("role") == "system":
+        lead += 1
+    windowed = window_transcript(items[lead:])
+    input_data["context"] = {**ctx, "messages": [dict(m) for m in items[:lead]] + list(windowed)}
+    _ensure_input_runtime_namespace(input_data)["session_history"] = {
+        "source": CLIENT_CONTEXT_HISTORY_SOURCE,
+        "seeded": 0,
+        "system_messages_kept": lead,
+        **windowed.report,
+    }
+
+
 def _generate_chat_text(*, provider: str, model: str, context: Dict[str, Any], messages: list[Dict[str, Any]]) -> str:
     """Generate a read-only chat response grounded in a run ledger (patchable in tests)."""
-    from abstractruntime.integrations.abstractcore.llm_client import LocalAbstractCoreLLMClient
-
     system = (
         "You are AbstractObserver Chat.\n"
         "You are given:\n"
         "- RUN_CONTEXT: a JSON object derived from an append-only workflow ledger (parent + subruns).\n"
-        "- CHAT_MESSAGES: a short chat history.\n\n"
+        "- The conversation so far as chat messages.\n\n"
         "Your job:\n"
         "- Answer the user's latest question using ONLY facts from RUN_CONTEXT.\n"
         "- If RUN_CONTEXT does not contain enough information, say you don't know.\n"
@@ -6705,19 +6787,11 @@ def _generate_chat_text(*, provider: str, model: str, context: Dict[str, Any], m
 
     ctx = json.dumps(context, ensure_ascii=False, indent=2)
     prompt_msgs: list[Dict[str, str]] = [{"role": "user", "content": "RUN_CONTEXT:\n" + _clamp_text(ctx, max_len=180_000)}]
+    # `messages` is already the history window's output (_client_history_window):
+    # whole messages, never cut here.
+    prompt_msgs.extend({"role": m["role"], "content": m["content"]} for m in messages or [])
 
-    for m in messages or []:
-        if not isinstance(m, dict):
-            continue
-        role = str(m.get("role") or "").strip().lower()
-        if role not in {"user", "assistant"}:
-            continue
-        content = m.get("content")
-        if not isinstance(content, str) or not content.strip():
-            continue
-        prompt_msgs.append({"role": role, "content": _clamp_text(content.strip(), max_len=12_000)})
-
-    llm = LocalAbstractCoreLLMClient(provider=str(provider), model=str(model))
+    llm, _routed, _profile = _gateway_llm_client(str(provider), str(model))
     res = llm.generate(
         prompt="",
         messages=prompt_msgs,
@@ -8065,7 +8139,14 @@ def _restamp_discussion_turn(svc: Any, *, session_id: str, input_data: Dict[str,
     runtime_ns = input_data.get("_runtime") if isinstance(input_data.get("_runtime"), dict) else {}
     client_mounts = list(read_only_paths({"_runtime": runtime_ns}))
     input_data["_runtime"] = {**runtime_ns, READ_ONLY_PATHS_KEY: sorted(set(mounts) | set(client_mounts))}
+    # A discussion is a chat about the automation's timeline: its history is
+    # always read (the flow's `use_context` pin defaults to False), and a turn
+    # that names no model answers with the model the fork was started on.
     input_data["use_session_history"] = True
+    input_data["use_context"] = True
+    for key in ("provider", "model"):
+        if not str(input_data.get(key) or "").strip() and str(root_vars.get(key) or "").strip():
+            input_data[key] = root_vars[key]
     return mounts
 
 
@@ -8120,6 +8201,9 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
         if session_id:
             read_only_mounts = _restamp_discussion_turn(svc, session_id=session_id, input_data=input_data)
         input_data = _normalize_run_context_media(input_data)
+        # A client-sent transcript (older clients) gets the one history window.
+        # Discussion/automation sessions still refuse client messages (host 400).
+        _window_client_context_messages(input_data)
         thinking = _normalize_gateway_thinking(req.thinking)
         if thinking is not None:
             _ensure_input_runtime_namespace(input_data)["thinking"] = thinking
@@ -9242,9 +9326,26 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
     workspace_defaults = _public_run_workspace_defaults(vars_obj)
     workflow_selection = _public_run_workflow_selection(svc=svc, vars_obj=vars_obj)
 
+    data_root = gateway_data_dir_from_env().expanduser().resolve()
+
     def _response(payload: Dict[str, Any]) -> Dict[str, Any]:
         if workflow_selection:
             payload["workflow_selection"] = dict(workflow_selection)
+        # `input_data` is what a client may START again. A folder inside the
+        # gateway's data folder is one the gateway made for THIS run, session
+        # or automation, never a start input: echoed into a new launch or
+        # automation it is refused (operator report 2026-09-28: the second
+        # automation carried the first one's folder). Where the run works
+        # stays readable in `workspace`.
+        inputs = payload.get("input_data")
+        ws = inputs.get("workspace_root") if isinstance(inputs, dict) else None
+        if isinstance(ws, str) and ws.strip():
+            try:
+                inside = _is_under_allowed_roots(_resolve_user_path(ws, base=_workspace_root()), [data_root])
+            except Exception:  # noqa: BLE001 - an unresolvable path is not a gateway folder
+                inside = False
+            if inside:
+                payload["input_data"] = {k: v for k, v in inputs.items() if k != "workspace_root"}
         return payload
 
     # Scheduled wrapper runs: expose the target bundle/flow + the target input payload.
@@ -10653,6 +10754,8 @@ async def generate_run_summary(run_id: str, req: GenerateRunSummaryRequest) -> G
 
     try:
         summary_text = await asyncio.to_thread(_generate_summary_text, provider=provider, model=model, context=context)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to generate summary: {e}")
 
@@ -10883,10 +10986,12 @@ async def run_chat(run_id: str, req: RunChatRequest) -> RunChatResponse:
         model=req.model,
         purpose="run chat generation",
     )
-    messages = list(req.messages or [])
+    messages, history = _client_history_window(req.messages)
 
     try:
         answer_text = await asyncio.to_thread(_generate_chat_text, provider=provider, model=model, context=context, messages=messages)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to generate chat answer: {e}")
 
@@ -10894,8 +10999,10 @@ async def run_chat(run_id: str, req: RunChatRequest) -> RunChatResponse:
 
     if bool(req.persist):
         # Persist a single Q/A exchange (last user message + assistant answer).
+        # The question as the client sent it (the window's notice, if any, is
+        # model-facing and may prefix the kept messages).
         question: str = ""
-        for m in reversed(messages):
+        for m in reversed(list(req.messages or [])):
             if isinstance(m, dict) and str(m.get("role") or "") == "user":
                 c = m.get("content")
                 if isinstance(c, str) and c.strip():
@@ -10907,6 +11014,7 @@ async def run_chat(run_id: str, req: RunChatRequest) -> RunChatResponse:
             "model": model,
             "question": question,
             "answer": answer_text,
+            "history": history,
             "source": {"run_id": rid, "include_subruns": include_subruns},
         }
         try:
@@ -10924,6 +11032,7 @@ async def run_chat(run_id: str, req: RunChatRequest) -> RunChatResponse:
         model=model,
         generated_at=generated_at,
         answer=answer_text,
+        history=history,
     )
 
 
@@ -14744,10 +14853,6 @@ def _builtin_voice_profile_records(engine: str) -> list[Dict[str, Any]]:
     return records
 
 
-def _has_builtin_voice_profiles(engine: str) -> bool:
-    return bool(_builtin_voice_profile_records(engine))
-
-
 def _utc_now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -15425,6 +15530,11 @@ def _compact_voice_catalog_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "tts_profiles_by_provider",
         "tts_formats_by_provider",
         "controls",
+        "cloud_providers",
+        # Why a provider is not listed / why the listing is empty
+        # (AbstractVoice's `unavailable_*`): the consoles show the reason.
+        "unavailable_providers",
+        "unavailable_reason",
     )
     return {key: payload[key] for key in keep_keys if key in payload}
 
@@ -15714,7 +15824,7 @@ def _static_voice_catalog_response(provider: Optional[str] = None) -> Dict[str, 
         tts_profiles_by_provider["openai"] = [str(item["id"]) for item in openai_profiles]
         tts_voices_by_provider["openai"] = [str(item["id"]) for item in openai_profiles]
 
-    if include("piper") and (_module_available("piper") or _module_available("piper_phonemize")):
+    if include("piper") and _voice_engine_installed("piper", "tts"):
         piper_profiles = _static_piper_profile_records()
         add_provider("piper")
         profiles.extend(piper_profiles)
@@ -15722,7 +15832,7 @@ def _static_voice_catalog_response(provider: Optional[str] = None) -> Dict[str, 
         tts_profiles_by_provider["piper"] = [str(item["id"]) for item in piper_profiles if str(item.get("id") or "").strip()]
         tts_voices_by_provider["piper"] = [str(item["id"]) for item in piper_profiles if str(item.get("id") or "").strip()]
 
-    if include("omnivoice") and _module_available("omnivoice"):
+    if include("omnivoice") and _voice_engine_installed("omnivoice", "tts"):
         omni_profiles = _builtin_voice_profile_records("omnivoice")
         add_provider("omnivoice")
         profiles.extend(omni_profiles)
@@ -15734,14 +15844,16 @@ def _static_voice_catalog_response(provider: Optional[str] = None) -> Dict[str, 
         supertonic_profiles = _builtin_voice_profile_records("supertonic")
     else:
         supertonic_profiles = []
-    if include("supertonic") and (supertonic_profiles or _module_available("onnxruntime")):
+    # Listed only when its runtime (onnxruntime) is installed: built-in voice
+    # styles without the runtime were a voice that could never speak.
+    if include("supertonic") and _voice_engine_installed("supertonic", "tts"):
         add_provider("supertonic")
         profiles.extend(supertonic_profiles)
         tts_models_by_provider["supertonic"] = _static_tts_model_ids_for_provider("supertonic")
         tts_profiles_by_provider["supertonic"] = [str(item["id"]) for item in supertonic_profiles]
         tts_voices_by_provider["supertonic"] = [str(item["id"]) for item in supertonic_profiles]
 
-    if include("audiodit") and _module_available("torch") and _module_available("transformers"):
+    if include("audiodit") and _voice_engine_installed("audiodit", "tts"):
         add_provider("audiodit")
         tts_models_by_provider["audiodit"] = _static_tts_model_ids_for_provider("audiodit")
 
@@ -15793,13 +15905,138 @@ def _static_voice_catalog_response(provider: Optional[str] = None) -> Dict[str, 
     }
 
 
-def _module_available(module_name: str) -> bool:
+def _voice_engine_runtime(engine: str, kind: str) -> Any:
+    """AbstractVoice's own answer to "is this engine's runtime installed?"
+    (`abstractvoice.engine_runtime`, find_spec only: no engine is imported).
+    The ONE source of truth for the static voice listings; a voice package
+    without that API fails loudly here (the release sets the floor)."""
     try:
-        import importlib.util
+        from abstractvoice.engine_runtime import engine_runtime_status
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "voice engine status needs AbstractVoice with abstractvoice.engine_runtime "
+                f"(install or upgrade abstractvoice): {exc}"
+            ),
+        ) from exc
+    return engine_runtime_status(engine, kind=kind)
 
-        return importlib.util.find_spec(module_name) is not None
-    except Exception:
-        return False
+
+def _voice_engine_installed(engine: str, kind: str) -> bool:
+    return bool(_voice_engine_runtime(engine, kind).installed)
+
+
+def _voice_runtime_unavailable(kind: str, listed: list[str]) -> Dict[str, Dict[str, Any]]:
+    """`unavailable_providers[kind]` for the static listings: every local
+    engine of `kind` whose runtime is not installed, in AbstractVoice's
+    record shape ({provider, code: runtime_missing, reason, runtime})."""
+    from abstractvoice.engine_runtime import known_engines
+
+    out: Dict[str, Dict[str, Any]] = {}
+    present = {str(p).strip().lower().replace("_", "-") for p in listed}
+    for engine in known_engines(kind):
+        status = _voice_engine_runtime(engine, kind)
+        if status.remote or status.installed or engine.replace("_", "-") in present:
+            continue
+        out[engine] = {"provider": engine, "code": "runtime_missing", "reason": status.reason, "runtime": status.to_dict()}
+    return out
+
+
+# Cloud voice providers (TTS and STT): ALWAYS listed, so a user can see they
+# exist before configuring them, marked `needs_key` until a key is configured
+# — in the environment, or through the Providers screen (AbstractCore's
+# `api_keys.<provider>` or an endpoint profile of that family with a key).
+_VOICE_CLOUD_PROVIDERS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("openai", "OpenAI", ("OPENAI_API_KEY", "ABSTRACTVOICE_OPENAI_API_KEY")),
+    ("openai-compatible", "OpenAI-compatible", ("ABSTRACTVOICE_REMOTE_API_KEY", "OPENAI_API_KEY")),
+)
+
+
+def _voice_cloud_provider_details(provider: Optional[str] = None) -> list[Dict[str, Any]]:
+    """[{provider, label, display_name, cloud, needs_key, key_source, state, reason}]
+    for the cloud voice providers (filtered to `provider` when given)."""
+    wanted = str(provider or "").strip().lower().replace("_", "-")
+    current_base, root_base = _gateway_profile_dirs()
+    out: list[Dict[str, Any]] = []
+    for provider_id, name, env_keys in _VOICE_CLOUD_PROVIDERS:
+        if wanted and wanted != provider_id:
+            continue
+        source: Optional[str] = "environment" if _env_first(*env_keys) else None
+        if source is None and providers_screen_api_key(
+            provider_id, current_base_dir=current_base, root_base_dir=root_base
+        ):
+            source = "providers"
+        needs_key = source is None
+        out.append(
+            {
+                "provider": provider_id,
+                "display_name": name,
+                "label": name,
+                "status": "needs an API key (add it under Providers)" if needs_key else "ready",
+                "cloud": True,
+                "needs_key": needs_key,
+                "key_source": source,
+                "state": "needs_key" if needs_key else "ready",
+                "reason": (
+                    f"{name} is a cloud service: add its API key under Providers to use it"
+                    if needs_key
+                    else f"API key configured ({'Providers screen' if source == 'providers' else 'environment'})"
+                ),
+            }
+        )
+    return out
+
+
+def _voice_openai_api_key() -> Optional[str]:
+    """The OpenAI key saved through the Providers screen, for AbstractVoice's
+    host setting `voice_openai_api_key` (None when none is saved). Resolved
+    per call, so a key rotated in Providers reaches the next listing."""
+    current_base, root_base = _gateway_profile_dirs()
+    return providers_screen_api_key("openai", current_base_dir=current_base, root_base_dir=root_base) or None
+
+
+def _with_voice_cloud_providers(
+    payload: Dict[str, Any], *, list_keys: tuple[str, ...], provider: Optional[str] = None
+) -> Dict[str, Any]:
+    """`payload` with the cloud voice providers appended to each list in
+    `list_keys` and their states under `cloud_providers`."""
+    details = _voice_cloud_provider_details(provider)
+    out = dict(payload)
+    for key in list_keys:
+        values = [str(x) for x in (out.get(key) or []) if isinstance(x, str) and str(x).strip()]
+        present = {v.strip().lower() for v in values}
+        values.extend(d["provider"] for d in details if d["provider"] not in present)
+        out[key] = values
+    out["cloud_providers"] = details
+    return out
+
+
+def _with_cloud_voice_reason(payload: Dict[str, Any], provider: Optional[str]) -> Dict[str, Any]:
+    """A voice listing filtered to a cloud provider that has no key: its
+    reason names where the key goes (the Providers screen), not only that
+    none is configured."""
+    wanted = str(provider or "").strip().lower().replace("_", "-")
+    if not wanted or wanted not in {pid for pid, _name, _env in _VOICE_CLOUD_PROVIDERS}:
+        return payload
+    detail = _voice_cloud_provider_details(wanted)[0]
+    if not detail["needs_key"]:
+        return payload
+    out = dict(payload)
+    out["unavailable_reason"] = f"{detail['display_name']}: needs an API key (add it under Providers)"
+    return out
+
+
+def _voice_provider_catalog_items(payload: Dict[str, Any], *, provider_keys: tuple[str, ...]) -> list[Dict[str, Any]]:
+    """Provider items with each cloud provider's state merged in (label,
+    needs_key, key_source, state, reason) — what both consoles render."""
+    by_id = {d["provider"]: d for d in (payload.get("cloud_providers") or []) if isinstance(d, dict)}
+    items = _gateway_catalog_provider_items(payload, provider_keys=provider_keys)
+    for item in items:
+        detail = by_id.get(str(item.get("id") or "").strip().lower())
+        if detail:
+            item.update(detail)
+    return items
 
 
 def _static_voice_providers_only_response() -> Dict[str, Any]:
@@ -15813,26 +16050,17 @@ def _static_voice_providers_only_response() -> Dict[str, Any]:
 
     add(tts_providers, _resolved_voice_engine("tts"))
     add(stt_providers, _resolved_voice_engine("stt"))
-    if _env_first("OPENAI_API_KEY", "ABSTRACTVOICE_OPENAI_API_KEY"):
-        add(tts_providers, "openai")
-        add(stt_providers, "openai")
-    if _env_first("ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL", "ABSTRACTVOICE_REMOTE_BASE_URL"):
-        add(tts_providers, "openai-compatible")
-        add(stt_providers, "openai-compatible")
-    if _module_available("piper") or _module_available("piper_phonemize"):
-        add(tts_providers, "piper")
-    if _module_available("omnivoice"):
-        add(tts_providers, "omnivoice")
-    if _module_available("onnxruntime") or _has_builtin_voice_profiles("supertonic"):
-        add(tts_providers, "supertonic")
-    if _module_available("torch") and _module_available("transformers"):
-        add(tts_providers, "audiodit")
-    if _module_available("f5_tts"):
-        add(tts_providers, "f5-tts")
-    if _module_available("faster_whisper") or _module_available("whisper"):
-        add(stt_providers, "faster-whisper")
-    if _module_available("torch") and _module_available("transformers") and _module_available("soundfile"):
-        add(stt_providers, "transformers-asr")
+    # openai / openai-compatible: always listed by the callers through
+    # `_with_voice_cloud_providers` (with their needs_key state).
+    # Local engines: listed when AbstractVoice says their runtime is
+    # installed (one source of truth); the rest are explained below.
+    from abstractvoice.engine_runtime import known_engines
+
+    for kind, target in (("tts", tts_providers), ("stt", stt_providers)):
+        for engine in known_engines(kind):
+            status = _voice_engine_runtime(engine, kind)
+            if not status.remote and status.installed:
+                add(target, engine)
 
     return {
         "kind": "voice_providers",
@@ -15841,6 +16069,10 @@ def _static_voice_providers_only_response() -> Dict[str, Any]:
         "providers": tts_providers,
         "tts_providers": tts_providers,
         "stt_providers": stt_providers,
+        "unavailable_providers": {
+            "tts": _voice_runtime_unavailable("tts", tts_providers),
+            "stt": _voice_runtime_unavailable("stt", stt_providers),
+        },
         "profiles": [],
         "voices": [],
         "cloned_voices": [],
@@ -15891,19 +16123,15 @@ def _static_speech_models_response(provider: Optional[str] = None) -> Dict[str, 
         openai_values = _dedupe_strings(values + ["tts-1", "tts-1-hd", "gpt-4o-mini-tts"])
         if openai_values and (_env_first("OPENAI_API_KEY", "ABSTRACTVOICE_OPENAI_API_KEY") or provider_key == "openai"):
             models_by_provider["openai"] = openai_values
-    if (not provider_key or provider_key == "supertonic") and (
-        _module_available("onnxruntime") or _has_builtin_voice_profiles("supertonic")
-    ):
+    if (not provider_key or provider_key == "supertonic") and _voice_engine_installed("supertonic", "tts"):
         models_by_provider["supertonic"] = _static_tts_model_ids_for_provider("supertonic")
-    if (not provider_key or provider_key == "piper") and (
-        _module_available("piper") or _module_available("piper_phonemize")
-    ):
+    if (not provider_key or provider_key == "piper") and _voice_engine_installed("piper", "tts"):
         piper_models = _static_tts_model_ids_for_provider("piper")
         if piper_models:
             models_by_provider["piper"] = piper_models
-    if (not provider_key or provider_key == "omnivoice") and _module_available("omnivoice"):
+    if (not provider_key or provider_key == "omnivoice") and _voice_engine_installed("omnivoice", "tts"):
         models_by_provider["omnivoice"] = _static_tts_model_ids_for_provider("omnivoice")
-    if (not provider_key or provider_key == "audiodit") and _module_available("torch") and _module_available("transformers"):
+    if (not provider_key or provider_key == "audiodit") and _voice_engine_installed("audiodit", "tts"):
         models_by_provider["audiodit"] = _static_tts_model_ids_for_provider("audiodit")
     if not provider_key and engine and values:
         models_by_provider.setdefault(engine.lower(), _dedupe_strings(values))
@@ -17635,8 +17863,12 @@ async def voice_voices_catalog(
             model=model,
             providers_only=providers_only,
         )
+        if providers_only:
+            out = _with_voice_cloud_providers(out, list_keys=("providers", "tts_providers"), provider=provider)
+        else:
+            out = _with_cloud_voice_reason(out, provider)
         items = (
-            _gateway_catalog_provider_items(out, provider_keys=("providers", "tts_providers"))
+            _voice_provider_catalog_items(out, provider_keys=("providers", "tts_providers"))
             if providers_only
             else _gateway_catalog_voice_items(out)
         )
@@ -17653,6 +17885,7 @@ async def voice_voices_catalog(
             discovery.get_voice_catalog,
             base_url=base_url,
             provider_api_key=_request_provider_api_key(request),
+            voice_openai_api_key=_voice_openai_api_key(),
             provider=provider,
             model=model,
             providers_only=providers_only,
@@ -17665,8 +17898,12 @@ async def voice_voices_catalog(
         model=model,
         providers_only=providers_only,
     )
+    if providers_only:
+        out = _with_voice_cloud_providers(out, list_keys=("providers", "tts_providers"), provider=provider)
+    else:
+        out = _with_cloud_voice_reason(out, provider)
     items = (
-        _gateway_catalog_provider_items(out, provider_keys=("providers", "tts_providers"))
+        _voice_provider_catalog_items(out, provider_keys=("providers", "tts_providers"))
         if providers_only
         else _gateway_catalog_voice_items(out)
     )
@@ -17708,6 +17945,7 @@ async def audio_speech_models_catalog(
                     discovery.get_voice_catalog,
                     base_url=base_url,
                     provider_api_key=_request_provider_api_key(request),
+                    voice_openai_api_key=_voice_openai_api_key(),
                     provider=provider,
                     model=None,
                     providers_only=True,
@@ -17722,6 +17960,7 @@ async def audio_speech_models_catalog(
                 )
             except Exception as e:
                 raise HTTPException(status_code=502, detail=str(e)) from e
+        out = _with_voice_cloud_providers(out, list_keys=("providers", "tts_providers"), provider=provider)
         out.setdefault("models", [])
         out["models"] = []
         out.setdefault("models_by_provider", {})
@@ -17730,7 +17969,7 @@ async def audio_speech_models_catalog(
             out,
             kind="providers",
             scope="tts",
-            items=_gateway_catalog_provider_items(out, provider_keys=("providers", "tts_providers")),
+            items=_voice_provider_catalog_items(out, provider_keys=("providers", "tts_providers")),
             provider=provider,
             metadata={"providers_only": True},
         )
@@ -17816,6 +18055,7 @@ async def audio_transcription_models_catalog(
                     discovery.get_voice_catalog,
                     base_url=base_url,
                     provider_api_key=_request_provider_api_key(request),
+                    voice_openai_api_key=_voice_openai_api_key(),
                     provider=provider,
                     model=None,
                     providers_only=True,
@@ -17845,11 +18085,12 @@ async def audio_transcription_models_catalog(
             out["stt_models_by_provider"] = {}
             out["provider_models"] = []
             out["active_provider"] = stt_providers[0] if stt_providers else None
+        out = _with_voice_cloud_providers(out, list_keys=("providers", "stt_providers", "available_providers"), provider=provider)
         return _gateway_catalog_response(
             out,
             kind="providers",
             scope="stt",
-            items=_gateway_catalog_provider_items(out, provider_keys=("providers", "stt_providers", "available_providers")),
+            items=_voice_provider_catalog_items(out, provider_keys=("providers", "stt_providers", "available_providers")),
             provider=provider,
             metadata={"providers_only": True},
         )
@@ -19983,6 +20224,7 @@ class BacklogAssistResponse(BaseModel):
     ok: bool = True
     reply: str
     draft_markdown: str = ""
+    history: Dict[str, Any] = Field(default_factory=dict, description="History window receipt for `messages` (see RunChatResponse.history).")
 
 
 class BacklogMaintainRequest(BaseModel):
@@ -20039,6 +20281,7 @@ class BacklogAdvisorResponse(BaseModel):
     reply: str
     run_id: Optional[str] = None
     tool_trace: Optional[List[Dict[str, Any]]] = None
+    history: Dict[str, Any] = Field(default_factory=dict, description="History window receipt for `messages` (see RunChatResponse.history).")
 
 
 class BacklogExecConfigResponse(BaseModel):
@@ -22688,8 +22931,6 @@ def _generate_backlog_assist_json(
     messages: list[Dict[str, Any]],
 ) -> Dict[str, str]:
     """Generate a backlog-authoring assistant response (patchable in tests)."""
-    from abstractruntime.integrations.abstractcore.llm_client import LocalAbstractCoreLLMClient
-
     system = (
         "You are AbstractFramework Backlog Assistant.\n"
         "You help a human author a single backlog item that is clear, testable, and aligned with the framework conventions.\n\n"
@@ -22709,26 +22950,19 @@ def _generate_backlog_assist_json(
             "package": package,
             "title": title,
             "summary": summary,
-            "backlog_template": _clamp_text(template_md, max_len=120_000),
-            "current_draft_markdown": _clamp_text(draft_md, max_len=120_000),
+            # Whole (ADR-0026, operator ruling 2026-09-28: no char caps on model inputs).
+            "backlog_template": template_md,
+            "current_draft_markdown": draft_md,
         },
         ensure_ascii=False,
         indent=2,
     )
 
-    prompt_msgs: list[Dict[str, str]] = [{"role": "user", "content": "CONTEXT:\n" + _clamp_text(intro, max_len=180_000)}]
-    for m in messages or []:
-        if not isinstance(m, dict):
-            continue
-        role = str(m.get("role") or "").strip().lower()
-        if role not in {"user", "assistant"}:
-            continue
-        content = m.get("content")
-        if not isinstance(content, str) or not content.strip():
-            continue
-        prompt_msgs.append({"role": role, "content": _clamp_text(content.strip(), max_len=12_000)})
+    prompt_msgs: list[Dict[str, str]] = [{"role": "user", "content": "CONTEXT:\n" + intro}]
+    # `messages` is already the history window's output (_client_history_window).
+    prompt_msgs.extend({"role": m["role"], "content": m["content"]} for m in messages or [])
 
-    llm = LocalAbstractCoreLLMClient(provider=str(provider), model=str(model))
+    llm, _routed, _profile = _gateway_llm_client(str(provider), str(model))
     gen_params: Dict[str, Any] = {"temperature": 0.2}
     if str(thinking or "").strip():
         # Reasoning effort on the one wire name; absent means absent.
@@ -23656,10 +23890,9 @@ async def backlog_assist(req: BacklogAssistRequest) -> BacklogAssistResponse:
 
     summary = str(req.summary or "").strip()
     draft_md = str(req.draft_markdown or "")
-    if len(draft_md) > 500_000:
-        draft_md = draft_md[:500_000] + "\n…(truncated)…\n"
 
     template_md = _read_backlog_template(repo_root)
+    messages, history = _client_history_window(req.messages)
 
     provider, model = _resolve_gateway_provider_model_or_400(
         provider=req.provider,
@@ -23679,14 +23912,14 @@ async def backlog_assist(req: BacklogAssistRequest) -> BacklogAssistResponse:
             title=title,
             summary=summary,
             draft_md=draft_md,
-            messages=req.messages or [],
+            messages=messages,
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Backlog assist failed: {e}")
 
     reply = str(out.get("reply") or "").strip()
     draft = str(out.get("draft_markdown") or "").strip()
-    return BacklogAssistResponse(ok=True, reply=reply, draft_markdown=draft)
+    return BacklogAssistResponse(ok=True, reply=reply, draft_markdown=draft, history=history)
 
 
 def _build_backlog_maintain_agent_prompt(
@@ -23712,16 +23945,11 @@ def _build_backlog_maintain_agent_prompt(
         "package": package,
         "title": title,
         "summary": summary,
-        "backlog_template": _clamp_text(template_md, max_len=80_000),
-        "current_draft_markdown": _clamp_text(draft_md, max_len=220_000),
-        "messages": [
-            {"role": str(m.get("role") or ""), "content": _clamp_text(str(m.get("content") or ""), max_len=8_000)}
-            for m in (messages or [])
-            if isinstance(m, dict)
-            and str(m.get("role") or "").strip().lower() in {"user", "assistant"}
-            and isinstance(m.get("content"), str)
-            and str(m.get("content") or "").strip()
-        ],
+        # Whole (ADR-0026, operator ruling 2026-09-28: no char caps on model inputs).
+        "backlog_template": template_md,
+        "current_draft_markdown": draft_md,
+        # Already the history window's output (_client_history_window).
+        "messages": [{"role": m["role"], "content": m["content"]} for m in (messages or [])],
     }
     return (
         "You are maintaining a single backlog markdown item in AbstractFramework.\n\n"
@@ -23779,21 +24007,8 @@ def _build_backlog_advisor_agent_prompt(
         "messages": [],
     }
 
-    # Bound message history for safety.
-    out_msgs: list[Dict[str, str]] = []
-    for m in messages or []:
-        if not isinstance(m, dict):
-            continue
-        role = str(m.get("role") or "").strip().lower()
-        if role not in {"user", "assistant", "system"}:
-            continue
-        content = m.get("content")
-        if not isinstance(content, str) or not content.strip():
-            continue
-        out_msgs.append({"role": role, "content": _clamp_text(content.strip(), max_len=12_000)})
-        if len(out_msgs) >= 40:
-            break
-    ctx["messages"] = out_msgs
+    # Already the history window's output (_client_history_window).
+    ctx["messages"] = [{"role": m["role"], "content": m["content"]} for m in (messages or [])]
 
     return (
         "You are AbstractFramework Backlog Advisor (read-only).\n\n"
@@ -24099,8 +24314,6 @@ async def backlog_maintain(req: BacklogMaintainRequest) -> BacklogAssistResponse
 
     summary = str(req.summary or "").strip()
     draft_md = str(req.draft_markdown or "")
-    if len(draft_md) > 600_000:
-        draft_md = draft_md[:600_000] + "\n…(truncated)…\n"
 
     dir_path = _backlog_dir_for(repo_root, k)
     backlog_path = (dir_path / safe_name).resolve()
@@ -24121,6 +24334,7 @@ async def backlog_maintain(req: BacklogMaintainRequest) -> BacklogAssistResponse
     )
 
     # Build an agentic prompt (tools can read/search the repo + web).
+    messages, history = _client_history_window(req.messages)
     prompt = _build_backlog_maintain_agent_prompt(
         repo_root=repo_root,
         kind=k,
@@ -24130,7 +24344,7 @@ async def backlog_maintain(req: BacklogMaintainRequest) -> BacklogAssistResponse
         summary=summary,
         template_md=template_md,
         draft_md=draft_md,
-        messages=req.messages or [],
+        messages=messages,
     )
 
     schema = {
@@ -24242,7 +24456,7 @@ async def backlog_maintain(req: BacklogMaintainRequest) -> BacklogAssistResponse
         raise HTTPException(status_code=500, detail="Maintenance agent produced no output")
     raw_resp = str((run2.output or {}).get("response") or "").strip()
     reply, draft = _parse_backlog_maintain_reply(raw_resp)
-    return BacklogAssistResponse(ok=True, reply=reply, draft_markdown=draft)
+    return BacklogAssistResponse(ok=True, reply=reply, draft_markdown=draft, history=history)
 
 
 @router.post("/backlog/advisor", response_model=BacklogAdvisorResponse)
@@ -24283,6 +24497,8 @@ async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
     allowed_paths = _backlog_agent_allowed_paths(repo_root=repo_root, svc=svc)
     access_mode = "workspace_or_allowed" if allowed_paths else "workspace_only"
 
+    # The advisor accepts client `system` notes in its history (as before).
+    messages, history = _client_history_window(req.messages, roles=frozenset({"user", "assistant", "system"}))
     prompt = _build_backlog_advisor_agent_prompt(
         repo_root=repo_root,
         gateway_data_dir=Path(getattr(getattr(svc, "config", None), "data_dir", repo_root)).expanduser().resolve(),
@@ -24290,7 +24506,7 @@ async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
         focus_kind=focus_kind,
         focus_type=focus_type,
         web_tools_enabled=allow_web,
-        messages=req.messages or [],
+        messages=messages,
     )
 
     schema = {
@@ -24396,7 +24612,7 @@ async def backlog_advisor(req: BacklogAdvisorRequest) -> BacklogAdvisorResponse:
             tool_trace = _collect_tool_trace_for_run_tree(svc=svc, root_run_id=str(run_id))
         except Exception:
             tool_trace = None
-    return BacklogAdvisorResponse(ok=True, reply=reply, run_id=str(run_id), tool_trace=tool_trace)
+    return BacklogAdvisorResponse(ok=True, reply=reply, run_id=str(run_id), tool_trace=tool_trace, history=history)
 
 
 # ---------------------------------------------------------------------------
@@ -26017,11 +26233,41 @@ async def model_residency_loaded(
     return out
 
 
+def capability_defaults_route_problems(base_dir: Path) -> list[str]:
+    """Why the default TEXT route cannot be used right now, in words (an
+    `endpoint:<id>` default whose profile was deleted or disabled), or [].
+    Reported here, next to the control that fixes it; the host itself keeps
+    loading (hosts/bundle_host.py) and a call that uses it fails naming it."""
+    from ..provider_defaults import resolve_gateway_provider_model
+    from ..provider_endpoint_profiles import explain_endpoint_profile_miss
+
+    provider = str(resolve_gateway_provider_model(base_dir=base_dir, purpose="default text route").provider or "").strip()
+    if not provider.lower().startswith("endpoint:"):
+        return []
+    current, root = _gateway_profile_dirs()
+    try:
+        profile = resolve_effective_endpoint_profile(provider, base_dir=current, root_base_dir=root)
+    except ProviderEndpointProfileError as exc:
+        return [f"The default text model uses {provider!r}, which is invalid: {exc}. Choose another default."]
+    if profile is not None and profile.enabled:
+        return []
+    reason = explain_endpoint_profile_miss(provider, base_dir=current, root_base_dir=root) or (
+        f"the endpoint profile {provider!r} is not configured or is disabled"
+    )
+    return [f"The default text model cannot be used: {reason}. Runs and helpers that rely on the default fail until you choose another default or restore the profile."]
+
+
 @router.get("/config/capability-defaults")
 async def capability_defaults_get() -> Dict[str, Any]:
     """List execution-host Core/Runtime capability routing defaults for thin-client settings UIs."""
     svc = get_gateway_service()
-    return gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir))
+    payload = gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir))
+    problems = capability_defaults_route_problems(Path(svc.config.data_dir))
+    if problems:
+        payload = dict(payload)
+        existing = payload.get("warnings")
+        payload["warnings"] = ([*existing] if isinstance(existing, list) else []) + problems
+    return payload
 
 
 @router.get("/config/provider-endpoint-profiles")
@@ -26182,9 +26428,16 @@ async def provider_endpoint_profiles_discover_models(request: Request, req: _Gat
     return body
 
 
-def _sandbox_provider_resolution(request: Request, provider: str) -> tuple[str, Dict[str, Any], Optional[Dict[str, Any]]]:
+def _gateway_provider_resolution(provider: str) -> tuple[str, Dict[str, Any], Optional[Dict[str, Any]]]:
+    """(routed provider, in-process client kwargs, public profile | None) for
+    `provider`: a gateway endpoint profile (`endpoint:<id>`) routes to its
+    provider family with its base URL and key; a built-in provider gets the
+    key / base URL configured in the console (provider connections)."""
     current_base, root_base = _gateway_profile_dirs()
-    profile = _resolve_endpoint_profile_for_request(request, provider)
+    try:
+        profile = resolve_effective_endpoint_profile(provider, base_dir=current_base, root_base_dir=root_base)
+    except ProviderEndpointProfileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if profile is not None:
         kwargs: Dict[str, Any] = {}
         if profile.base_url:
@@ -26200,20 +26453,49 @@ def _sandbox_provider_resolution(request: Request, provider: str) -> tuple[str, 
     return str(provider or "").strip(), kwargs, None
 
 
-def _sandbox_messages(req: _GatewaySandboxGenerateRequest) -> list[Dict[str, str]]:
-    messages: list[Dict[str, str]] = []
-    for item in req.messages or []:
-        if not isinstance(item, dict):
-            continue
-        role = str(item.get("role") or "").strip().lower()
-        if role not in {"user", "assistant"}:
-            continue
-        content = item.get("content")
-        if not isinstance(content, str) or not content.strip():
-            continue
-        messages.append({"role": role, "content": content.strip()})
-    messages.append({"role": "user", "content": str(req.prompt or "").strip()})
-    return messages
+def _gateway_llm_client(provider: str, model: str) -> tuple[Any, str, Optional[Dict[str, Any]]]:
+    """(client, routed provider, public profile | None): THE LLM client of every
+    gateway-side generation (run summary, run chat, backlog assist, console
+    sandbox), resolved exactly like a run's: the gateway's endpoint profiles
+    (`endpoint:<id>`, also for nested calls through the resolver), the provider
+    connections configured in the console, this scope's Core store and
+    capability defaults. A bare `LocalAbstractCoreLLMClient(provider, model)`
+    knows none of these: Ask on a run failed at once with "Unknown provider:
+    endpoint:<id>" on a gateway whose runs used that default fine."""
+    from abstractruntime.integrations.abstractcore.llm_client import LocalAbstractCoreLLMClient
+
+    svc = get_gateway_service()
+    current_base, root_base = _gateway_profile_dirs()
+    routed_provider, llm_kwargs, profile_public = _gateway_provider_resolution(provider)
+    llm = LocalAbstractCoreLLMClient(
+        provider=routed_provider,
+        model=model,
+        llm_kwargs=llm_kwargs or None,
+        artifact_store=getattr(getattr(svc, "stores", None), "artifact_store", None),
+        # ONE STORE ON THE EXECUTION PATH TOO (operator ruling 2026-08-01):
+        # `runtime_core_config_file` is the seam the bundle host uses (this
+        # scope's overlay when it has one, else THE Core store), never the
+        # retired `<data_dir>/config/abstractcore.json`.
+        core_config_file=runtime_core_config_file(current_base),
+        capability_defaults=gateway_capability_defaults_payload(base_dir=current_base),
+    )
+
+    def _resolve_profile(provider_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            profile = resolve_effective_endpoint_profile(provider_id, base_dir=current_base, root_base_dir=root_base)
+        except ProviderEndpointProfileError:
+            return None
+        if profile is None or not profile.enabled:
+            return None
+        return profile.private_resolution()
+
+    llm.set_provider_endpoint_profile_resolver(_resolve_profile)
+    return llm, routed_provider, profile_public
+
+
+def _sandbox_messages(req: _GatewaySandboxGenerateRequest) -> tuple[list[Dict[str, str]], Dict[str, Any]]:
+    """The sandbox conversation (client history + this prompt) through the one history window."""
+    return _client_history_window([*(req.messages or []), {"role": "user", "content": str(req.prompt or "")}])
 
 
 def _sandbox_media_refs(req: _GatewaySandboxGenerateRequest) -> Optional[list[Dict[str, Any]]]:
@@ -26292,7 +26574,6 @@ async def gateway_sandbox_generate(request: Request, req: _GatewaySandboxGenerat
     model = str(req.model or "").strip()
     if not provider or not model:
         raise HTTPException(status_code=400, detail="provider and model are required")
-    routed_provider, llm_kwargs, profile_public = _sandbox_provider_resolution(request, provider)
     params: Dict[str, Any] = {"temperature": 0.2}
     if req.temperature is not None:
         params["temperature"] = float(req.temperature)
@@ -26316,47 +26597,14 @@ async def gateway_sandbox_generate(request: Request, req: _GatewaySandboxGenerat
     if client_context:
         trace_metadata["client_context"] = client_context
     params["trace_metadata"] = trace_metadata
+    sandbox_messages, history = _sandbox_messages(req)
     try:
-        from abstractruntime.integrations.abstractcore.llm_client import LocalAbstractCoreLLMClient
-
-        svc = get_gateway_service()
-        current_base, root_base = _gateway_profile_dirs()
-        artifact_store = getattr(getattr(svc, "stores", None), "artifact_store", None)
         media = _sandbox_media_refs(req)
-        capability_defaults = gateway_capability_defaults_payload(base_dir=current_base)
-        llm = LocalAbstractCoreLLMClient(
-            provider=routed_provider,
-            model=model,
-            llm_kwargs=llm_kwargs or None,
-            artifact_store=artifact_store,
-            # ONE STORE ON THE EXECUTION PATH TOO (operator ruling
-            # 2026-08-01). `<data_dir>/config/abstractcore.json` is the
-            # RETIRED second store: after the migration that file does not
-            # exist, so the console's own smoke test was resolving providers
-            # and keys from a file neither `abstractcore` nor a real run
-            # opens — the sandbox could fail on a provider the gateway runs
-            # fine. `runtime_core_config_file` is the same seam the bundle
-            # host uses: this scope's overlay when it has one, else THE Core
-            # store.
-            core_config_file=runtime_core_config_file(current_base),
-            capability_defaults=capability_defaults,
-        )
-        resolver = getattr(llm, "set_provider_endpoint_profile_resolver", None)
-        if callable(resolver):
-            def _resolve_profile(provider_id: str) -> Optional[Dict[str, Any]]:
-                try:
-                    profile = resolve_effective_endpoint_profile(provider_id, base_dir=current_base, root_base_dir=root_base)
-                except ProviderEndpointProfileError:
-                    return None
-                if profile is None or not profile.enabled:
-                    return None
-                return profile.private_resolution()
-
-            resolver(_resolve_profile)
+        llm, routed_provider, profile_public = _gateway_llm_client(provider, model)
         result = await asyncio.to_thread(
             llm.generate,
             prompt="",
-            messages=_sandbox_messages(req),
+            messages=sandbox_messages,
             media=media,
             system_prompt=str(req.system_prompt or "").strip() or "You are a concise test assistant in the AbstractGateway console sandbox.",
             params=params,
@@ -26389,6 +26637,7 @@ async def gateway_sandbox_generate(request: Request, req: _GatewaySandboxGenerat
         "speculation": (result.get("metadata") or {}).get("speculation") if isinstance(result, dict) else None,
         "usage": result.get("usage") if isinstance(result, dict) else None,
         "provider_endpoint_profile": profile_public,
+        "history": history,
     }
 
 

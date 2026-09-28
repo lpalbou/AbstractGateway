@@ -164,6 +164,14 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .child(dyn_view(LayoutStyle::column().gap(0).shrink(0.0), move || {
             status_view(&tt, &store.conn.get(), ui.token_source.get())
         }))
+        // An ignored gateway pointer file (~/.abstractframework/gateway.json):
+        // why, in one line; nothing when the file is fine or absent.
+        .child(dyn_view(LayoutStyle::default().shrink(0.0), move || {
+            match ui.pointer_notice.get() {
+                Some(w) => line(vec![span(format!("⚠ {w}"), tt.warn)]),
+                None => Element::new().style(LayoutStyle::default().h(0)).build(),
+            }
+        }))
         // About (F1 / ? anywhere): this console, the framework it is part
         // of, and the connected gateway's versions. A hint line, not a
         // button: a focusable here would shift the screen's Tab chain.
@@ -200,9 +208,9 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 None => line(vec![span("no probe has run yet", t.text_faint)]),
             }
         }))
-        // Who can reach this gateway (localhost / LAN / internet) and the
-        // addresses to copy — the gateway's `gateway_network_v1` verdicts.
-        .child(super::network::panel(cx, ctx, t))
+        // Who can reach this gateway: one line (saved vs running); the
+        // Network screen (N) changes it and lists the addresses.
+        .child(super::network::summary(cx, ctx, t))
         .element(t)
         .style_signal(move || roomy_or_tight(tight.get()))
         .build()
@@ -244,9 +252,11 @@ fn pin(v: View) -> View {
 /// probe, `Ctx::effective_credentials_with_source`, the 401 copy).
 pub const NO_TOKEN_SENT: &str = "none — no Authorization header sent";
 
-/// Where the gateway keeps its admin token — the gateway's own words
-/// (`abstractgateway serve --help`, `--print-token`).
-pub const ADMIN_TOKEN_PATH: &str = "<data dir>/auth/bootstrap-admin-token";
+/// Where the admin token comes from — `abstractgateway serve` prints it
+/// when it starts. Given directly (`--token <token>`), never as a file or
+/// an env var in the instructions (operator rule, wave 2).
+pub const ADMIN_TOKEN_HINT: &str =
+    "admin token: `abstractgateway serve` prints it when it starts (on the gateway host)";
 
 /// The honest states, visually distinct — never one generic "error".
 /// Auth failures name the SOURCE of the token that was rejected (field /
@@ -284,11 +294,11 @@ fn status_view(t: &TokenSet, conn: &ConnPhase, token_source: Option<String>) -> 
                 )]))
                 .child(line(vec![span(format!("  {msg}"), t.text)]))
                 .child(line(vec![span(
-                    format!("  admin token: {ADMIN_TOKEN_PATH} on the gateway host"),
+                    format!("  {ADMIN_TOKEN_HINT}"),
                     t.warn,
                 )]))
                 .child(line(vec![span(
-                    "  paste it in Admin token, or launch with --token-file PATH",
+                    "  paste it in Admin token, or launch with --token <token>",
                     t.text_muted,
                 )]))
                 .build()
@@ -302,7 +312,7 @@ fn status_view(t: &TokenSet, conn: &ConnPhase, token_source: Option<String>) -> 
             .child(line(vec![span(format!("  {msg}"), t.text)]))
             .child(source_line(t))
             .child(line(vec![span(
-                format!("  admin token: {ADMIN_TOKEN_PATH} on the gateway host"),
+                format!("  {ADMIN_TOKEN_HINT}"),
                 t.text_muted,
             )]))
             .build(),

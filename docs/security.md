@@ -310,10 +310,16 @@ your network:
   - **a smaller attack surface**: every admin route is reachable to whoever
     holds an admin credential. Give each person their own account, keep the
     admin token off other machines, and prefer non-admin accounts for daily use.
-  - **exposure of the browser apps**: apps started from the Apps page stay
-    bound to `127.0.0.1` (the `apps.host` setting, *Where apps listen*), and the sign-in
-    handover (`/apps/handover/{code}`) only works on the host it was minted
-    for and refuses a loopback-only app to a browser on another machine.
+  - **exposure of the browser apps**: apps always listen on `127.0.0.1` and
+    are reached through the gateway at `/apps/<app>/`, which requires a
+    gateway session for that app on every request (a signed-out page load
+    goes to the console, anything else gets 401), relays only the app's own
+    cookies (never the console's session or an `Authorization` header), and
+    tells the app the browser's real address (`X-Forwarded-For`, written by
+    the gateway). The sign-in handover (`/apps/handover/{code}`) only works on
+    the host it was minted for. An app version that does not announce it can
+    be served this way is never served under `/apps/` and stays reachable
+    from the gateway machine only.
   - **engine and app installs for remote admins**: `allow_engine_install`
     defaults to off on a non-loopback bind for callers on other computers.
     Someone at the gateway machine itself can still install (see

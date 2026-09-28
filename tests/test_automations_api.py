@@ -377,6 +377,13 @@ def test_growing_vs_independent_history(live: TestClient) -> None:
     assert second_ind["answer"].startswith("ECHO[0]")          # fresh every time
     assert second_gro["answer"].startswith("ECHO[2]")          # sees turn 1 + answer 1
     assert "assistant:ECHO[0]" in second_gro["answer"]
+    # The occurrence run records its history window (ADR-0026: explicit and
+    # observable; operator ruling 2026-09-28: the most recent 50k tokens).
+    from abstractgateway.service import get_gateway_service
+
+    note = get_gateway_service().host.run_store.load(second_gro["run_id"]).vars["_runtime"]["session_history"]
+    assert note["max_tokens"] == 50_000 and note["policy"] == "most_recent_whole_turns"
+    assert note["replayed_messages"] == 2 and note["dropped_messages"] == 0 and note["session_kind"] == "automation"
 
 
 def test_commands_door_revision_and_patch(live: TestClient) -> None:
@@ -866,3 +873,20 @@ def test_summary_passes_next_fire_at_and_current_occurrence_through(live: TestCl
 
     idle = _create(live, request_id="idle")["summary"]        # manual trigger, nothing running
     assert idle["current_occurrence"] is None and "next_fire_at" not in idle
+
+
+def test_a_discussion_turn_with_a_client_transcript_is_still_refused(live: TestClient) -> None:
+    """The /runs/start client-context window (ADR-0026) never turns the strict
+    refusal into acceptance: a discussion session is seeded by the gateway."""
+    aid = _create(live, mode="growing")["automation_id"]
+    _run_now_and_wait(live, aid, "c1", index=1)
+    out = live.post(f"/api/gateway/automations/{aid}/discuss", headers=HEADERS,
+                    json={"request_id": "dx", "occurrence_index": 1, "prompt": "why?"}).json()
+    long_transcript = []
+    for i in range(40):
+        long_transcript += [{"role": "user", "content": f"q{i}"}, {"role": "assistant", "content": "x" * 8_000}]
+    r = live.post("/api/gateway/runs/start", headers=HEADERS, json={
+        "bundle_id": live.bundle_ref, "flow_id": ECHO_FLOW_ID, "session_id": out["session_id"],
+        "input_data": {"prompt": "and then?", "context": {"messages": long_transcript}}})
+    assert r.status_code == 400, r.text
+    assert "do not send context.messages" in r.text

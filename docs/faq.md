@@ -199,7 +199,7 @@ time), with no cron expressions, time zones or daylight-saving rules. See
 ### What does growing context do?
 
 In `growing` mode each run receives the previous runs as conversation
-history (at most 40 messages and 24,000 characters, whole turns), and the
+history (the most recent 50,000 tokens of whole turns; no message is cut), and the
 automation reads as one chat. In `independent` mode (the default) every run
 starts fresh. See [automations.md](./automations.md#create-an-automation).
 

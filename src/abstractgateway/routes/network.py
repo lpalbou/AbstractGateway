@@ -152,17 +152,20 @@ async def network_restart(request: Request, req: Optional[NetworkRestartRequest]
         )
     from .. import host_control
 
+    # The port the restart binds: the stored one, else the running one (a
+    # restart replays the command line) — never the unstored default.
+    port = story["port"]
     try:
         res = host_control.request_restart(
             by=_host_control_actor(principal),
-            reason=f"apply network exposure '{status['configured']['mode']}' on port {status['configured']['port']}",
+            reason=f"apply network exposure '{status['configured']['mode']}' on port {port}",
         )
     except host_control.HostControlError as e:
         return JSONResponse(status_code=409, content={"ok": False, "restart": False, "refused_reason": str(e), "restart_story": story})
     out = dict(res)
     out["next"] = {
         "mode": status["configured"]["mode"],
-        "port": status["configured"]["port"],
-        "reconnect_url": f"http://127.0.0.1:{status['configured']['port']}",
+        "port": port,
+        "reconnect_url": f"http://127.0.0.1:{port}",
     }
     return out

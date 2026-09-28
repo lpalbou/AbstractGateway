@@ -80,6 +80,35 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         });
     }
 
+    // `w`: the worker read the target's catalog size; now confirm it.
+    {
+        let ctx_d = ctx.clone();
+        cx.effect(move || {
+            let Some(offer) = store.download_offer.get() else {
+                return;
+            };
+            store.download_offer.set(None);
+            let ctx_go = ctx_d.clone();
+            let (provider, artifact) = (offer.provider.clone(), offer.artifact.clone());
+            super::confirm_danger(
+                cx,
+                ctx_d.ui,
+                offer.prompt(),
+                "Download",
+                "Not now",
+                move || {
+                    // The weights column and the voice lists are re-read when
+                    // the job FINISHES (worker `finish_download`), not now:
+                    // the job has only just started.
+                    ctx_go.send(Cmd::DownloadModel {
+                        provider: provider.clone(),
+                        artifact: artifact.clone(),
+                    });
+                },
+            );
+        });
+    }
+
     super::util::clamp_selection(cx, ui.route_sel, move || {
         store
             .routes
@@ -109,7 +138,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         // the column the operator is looking at.
         .shortcut(KeyChord::plain(Key::Char('w')), {
             let ctx_dl = ctx.clone();
-            move |_| download_selected(cx, &ctx_dl)
+            move |_| download_selected(&ctx_dl)
         })
         // `a` for APPLY — the other half of the weights banner, and the
         // same key, prompt and vocabulary as the AbstractCore console-TUI
@@ -316,8 +345,16 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                 if warned == 1 { "" } else { "s" }
                             ));
                         }
+                        let missing = plan.iter().filter(|r| r.engine_missing.is_some()).count();
+                        if missing > 0 {
+                            head.push_str(&format!(
+                                " · {missing} engine{} missing (p says what to install)",
+                                if missing == 1 { "" } else { "s" }
+                            ));
+                        }
+                        let attention = warned > 0 || missing > 0;
                         rows.push(line(vec![
-                            span_bold(head, if warned > 0 { t.warn } else { t.text }),
+                            span_bold(head, if attention { t.warn } else { t.text }),
                             span("  ·  p plan · D download all · a apply", t.text_faint),
                         ]));
                         if wizard {
@@ -327,7 +364,11 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                     span(format!("{:<15}", r.status_label()), status_tone(&t, &r.status)),
                                     span(format!("{} {}", r.provider, r.artifact), t.text),
                                 ];
-                                if let Some(w) = &r.warning {
+                                if let Some(m) = &r.engine_missing {
+                                    spans.push(span(format!("  ⚠ {}", m.text()), t.warn));
+                                } else if let Some(g) = r.gpu_limit_text() {
+                                    spans.push(span(format!("  {g}"), t.info));
+                                } else if let Some(w) = &r.warning {
                                     spans.push(span(format!("  ⚠ {w}"), t.warn));
                                 }
                                 rows.push(line(spans));
@@ -399,6 +440,21 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                         broken_route_fix(&r.key, admin)
                                     ),
                                     t.error,
+                                ));
+                            } else if let Some(m) = r.engine_missing.as_ref().filter(|_| r.configured) {
+                                // Runnable here, engine not installed: the
+                                // reason and the exact command, never "fine".
+                                spans.push(span(
+                                    format!(
+                                        "{}{}  ",
+                                        m.text(),
+                                        if m.engine_row.is_some() {
+                                            " (0 Engines: i installs it)"
+                                        } else {
+                                            ""
+                                        }
+                                    ),
+                                    t.warn,
                                 ));
                             } else if let Some(u) = &r.recommendation_unavailable {
                                 // Host-aware recommendation: unset because
@@ -542,7 +598,16 @@ fn routes_table(
     // it on exactly the machine most likely to be a fresh install. 14
     // cells is the widest label it prints ("not downloaded"), so the
     // floor is the whole vocabulary, never a stub.
-    rules.push(widths::ColRule::head("weights", 14));
+    // The floor is the widest label IN USE: "not downloaded — w: download"
+    // carries its verb whenever a row can be fetched, and a verb cut to
+    // "w: d…" teaches nothing.
+    let weights_floor = weights
+        .values()
+        .map(|w| w.label().chars().count() as i32)
+        .max()
+        .unwrap_or(0)
+        .max(14);
+    rules.push(widths::ColRule::head("weights", weights_floor));
     if w >= 112 {
         rules.push(widths::ColRule::tail("source", 12));
     }
@@ -728,6 +793,16 @@ fn open_plan(cx: Scope, ctx: &Ctx) {
                     format!("  Chosen by memory: {tier}"),
                     t.text_faint,
                 )]));
+            }
+            if let Some(g) = r.gpu_limit_text() {
+                for l in super::util::wrap_text(&g, width.saturating_sub(4)) {
+                    rows.push(line(vec![span(format!("  {l}"), t.info)]));
+                }
+            }
+            if let Some(m) = &r.engine_missing {
+                for l in super::util::wrap_text(&m.text(), width.saturating_sub(4)) {
+                    rows.push(line(vec![span(format!("  {l}"), t.warn)]));
+                }
             }
             if let Some(w) = &r.warning {
                 for (i, l) in super::util::wrap_text(w, width.saturating_sub(4))
@@ -947,7 +1022,7 @@ fn cancel_download_all(cx: Scope, ctx: &Ctx) {
 /// relay provider with nothing to fetch, and — the important one — an
 /// `unknown` answer, where guessing would spend the host's disk on a
 /// model that may already be there.
-fn download_selected(cx: Scope, ctx: &Ctx) {
+fn download_selected(ctx: &Ctx) {
     // `POST /models/download` spends the shared host's disk: admin-only
     // on the gateway (security/authorization.py, resource "models").
     if !super::util::admin_gate(&ctx.store, "downloading model weights") {
@@ -1018,29 +1093,12 @@ fn download_selected(cx: Scope, ctx: &Ctx) {
         return;
     }
 
-    let ctx2 = ctx.clone();
-    let provider = weights.provider.clone();
-    let artifact = weights.artifact.clone();
-    super::confirm_danger(
-        cx,
-        ctx.ui,
-        format!(
-            "Download {artifact} with {provider} on the execution host? This runs the \
-             provider's own tool and may fetch several gigabytes."
-        ),
-        "Download",
-        "Not now",
-        move || {
-            ctx2.send(Cmd::DownloadModel {
-                provider: provider.clone(),
-                artifact: artifact.clone(),
-            });
-            // The worker lane is SERIAL, so this re-probe runs after the
-            // job finishes — the weights column tells the truth the
-            // moment the operator looks back at it.
-            ctx2.send(Cmd::LoadAvailability);
-        },
-    );
+    // The confirm names the target AND its size: the worker reads the
+    // catalog first, then `store.download_offer` opens the confirm.
+    ctx.send(Cmd::PrepareDownload {
+        provider: weights.provider.clone(),
+        artifact: weights.artifact.clone(),
+    });
 }
 
 /// ONE confirm policy for clearing a route — shared by the table's `x`
@@ -1868,13 +1926,29 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                             match store.voices.get() {
                                 Loadable::Ready(d) if d.provider == pair.0 && d.model == pair.1 => {
                                     if d.voices.is_empty() {
+                                        // The reason when the gateway gave
+                                        // one (not installed / needs a key).
                                         return field(
                                             &t,
                                             "voice",
-                                            line(vec![span(
-                                                "no voices reported — the provider default applies",
-                                                t.text_muted,
-                                            )]),
+                                            match &d.unavailable_reason {
+                                                Some(why) => {
+                                                    let lines = super::util::wrap_text(why, 52);
+                                                    let mut col = Element::new().style(
+                                                        LayoutStyle::column()
+                                                            .h(lines.len() as i32)
+                                                            .shrink(0.0),
+                                                    );
+                                                    for l in lines {
+                                                        col = col.child(line(vec![span(l, t.warn)]));
+                                                    }
+                                                    col.build()
+                                                }
+                                                None => line(vec![span(
+                                                    "no voices reported — the provider default applies",
+                                                    t.text_muted,
+                                                )]),
+                                            },
                                         );
                                     }
                                     let opts: Vec<SelectOption> = std::iter::once(

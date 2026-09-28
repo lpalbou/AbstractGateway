@@ -104,6 +104,7 @@ fn harness_sized(size: Size) -> Harness {
             modal: Rc::new(RefCell::new(None)),
             entity_drawer: Rc::new(RefCell::new(None)),
             env_token_set: false,
+            no_display: None,
             prober: prober_slot.clone(),
             screens,
             screens_transport: transport,
@@ -575,7 +576,7 @@ fn pagehost_browse_navigation_digits_and_chords() {
             .notice
             .get_untracked()
             .unwrap_or_default()
-            .contains("screen jumps (1-9, 0, A) work in browse mode"),
+            .contains("screen jumps (1-9, 0, A, N) work in browse mode"),
         "wizard digit refusal carries its reason"
     );
 }
@@ -3763,10 +3764,9 @@ fn title_bar_and_separator_survive_content_pressure() {
             h.ui.screen.set(screen);
             let scr = h.turns(3);
             // The Setup step has no jump key: its tab is titled bare.
-            let want = if screen < ui::KEYED_SCREENS {
-                format!("{} {}", ui::screen_key(screen), ui::SCREENS[screen])
-            } else {
-                ui::SCREENS[screen].to_string()
+            let want = match ui::screen_key(screen) {
+                Some(k) => format!("{k} {}", ui::SCREENS[screen]),
+                None => ui::SCREENS[screen].to_string(),
             };
             let lines: Vec<&str> = scr.lines().collect();
             assert!(
@@ -5426,6 +5426,8 @@ fn applied_recommended_summary_names_changes_and_what_was_kept() {
 /// console that spends gigabytes never fires on a single keystroke.
 #[test]
 fn w_confirms_then_downloads_the_recommended_artifact() {
+    use abstractgateway_console::store::DownloadOffer;
+
     let mut h = harness_sized(Size::new(150, 44));
     h.connect_as_admin();
     h.goto_screen(2);
@@ -5433,15 +5435,38 @@ fn w_confirms_then_downloads_the_recommended_artifact() {
     h.store
         .availability
         .set(Loadable::Ready(availability_fixture()));
-    h.turns(2);
+    let s = h.turns(2);
+    // The verb rides in the row of an absent, downloadable model.
+    assert!(
+        s.contains("not downloaded — w: download"),
+        "weights cell:\n{s}"
+    );
     h.drain_cmds();
 
     h.ui.route_sel.set(0); // input.text — weights absent
     h.key(b"w");
+    h.turns(2);
+    // First the size: the worker reads the catalog entry for the target.
+    let dbg = format!("{:?}", h.drain_cmds());
+    assert!(
+        dbg.contains("PrepareDownload")
+            && dbg.contains("qwen/qwen3.5-9b@4bit")
+            && !dbg.contains("DownloadModel"),
+        "w asks for the size, downloads nothing: {dbg}"
+    );
+    let catalog = json!({"rows": [{"id": "qwen3.5-9b", "artifacts": [
+        {"provider": "lmstudio", "artifact": "qwen/qwen3.5-9b@4bit", "download_bytes": 5_637_144_576u64, "size_source": "catalog"}
+    ]}]});
+    h.store.download_offer.set(Some(DownloadOffer::from_catalog(
+        "lmstudio",
+        "qwen/qwen3.5-9b@4bit",
+        &catalog,
+    )));
     let s = h.turns(2);
     assert!(
-        s.contains("Download qwen/qwen3.5-9b@4bit with lmstudio"),
-        "the confirm names artifact and provider:\n{s}"
+        s.contains("Download qwen/qwen3.5-9b@4bit (5.2 GiB download)")
+            && s.contains("with lmstudio on the execution host?"),
+        "the confirm names artifact, size and provider:\n{s}"
     );
     assert!(
         h.drain_cmds().is_empty(),
@@ -5457,10 +5482,42 @@ fn w_confirms_then_downloads_the_recommended_artifact() {
         dbg.contains("DownloadModel") && dbg.contains("qwen/qwen3.5-9b@4bit"),
         "the download names the artifact: {dbg}"
     );
+    // The weights are re-read when the job FINISHES (worker test
+    // `a_finished_download_rereads_availability_and_clears_voices`), not
+    // at the start, when nothing changed yet.
     assert!(
-        dbg.contains("LoadAvailability"),
-        "the weights are re-probed right after: {dbg}"
+        !dbg.contains("LoadAvailability"),
+        "no re-read at the start: {dbg}"
     );
+}
+
+#[test]
+fn the_download_confirm_says_when_the_size_is_not_known() {
+    use abstractgateway_console::store::DownloadOffer;
+    let unlisted = DownloadOffer::from_catalog("supertonic", "supertonic-3", &json!({"rows": []}));
+    assert_eq!(
+        unlisted.prompt(),
+        "Download supertonic-3 (size not published by the catalog) with supertonic on the execution host? This runs the provider's own tool."
+    );
+    let estimate = DownloadOffer::from_catalog(
+        "mlx",
+        "m",
+        &json!({"rows": [{"artifacts": [{"provider": "mlx", "artifact": "m", "download_bytes": 1024u64, "size_source": "estimate"}]}]}),
+    );
+    assert!(
+        estimate.prompt().contains("(about 1.0 KiB (an estimate))"),
+        "{}",
+        estimate.prompt()
+    );
+    let unread = DownloadOffer {
+        provider: "p".into(),
+        artifact: "a".into(),
+        catalog_error: Some("timed out".into()),
+        ..DownloadOffer::default()
+    };
+    assert!(unread
+        .prompt()
+        .contains("size unknown — the catalog could not be read: timed out"));
 }
 
 /// The three refusals, each with its reason. `unknown` is the important
@@ -7660,7 +7717,7 @@ fn zero_jumps_to_engines_in_browse_and_is_refused_in_the_wizard() {
     let s = h.turns(2);
     assert_eq!(h.ui.screen.get_untracked(), 1, "wizard does not jump");
     assert!(
-        s.contains("screen jumps (1-9, 0, A) work in browse mode"),
+        s.contains("screen jumps (1-9, 0, A, N) work in browse mode"),
         "{s}"
     );
 }
@@ -7878,7 +7935,7 @@ fn a_reconnect_forgets_the_old_gateways_models_and_reloads() {
 }
 
 // =======================================================================
-// Network exposure panel (Connection screen, gateway_network_v1)
+// Network screen (key N, gateway_network_v1)
 // =======================================================================
 
 fn network_fixture(configured: &str, running_bind: &str, restart: bool, applies: bool) -> Value {
@@ -7920,11 +7977,10 @@ fn set_network(h: &mut Harness, v: Value) -> String {
     h.turns(3)
 }
 
-/// Focus the mode picker: Tab past the tab bar, URL, token and the probe
-/// button. Connected, nothing holds the caret (REVIEW-1 M2: the URL field
-/// autofocuses only while not connected), so the chain starts at the top.
+/// Focus the mode list on the Network screen: Tab past the tab bar (no
+/// restart button in these fixtures' in-sync / not-applicable states).
 fn focus_network_modes(h: &mut Harness) {
-    for _ in 0..5 {
+    for _ in 0..2 {
         h.key(b"\t");
         h.turn();
     }
@@ -7934,7 +7990,7 @@ fn focus_network_modes(h: &mut Harness) {
 fn network_panel_loads_on_connect_and_renders_modes_and_addresses() {
     let mut h = harness_sized(Size::new(110, 40));
     h.connect_as_admin();
-    h.ui.screen.set(0);
+    h.ui.screen.set(ui::SCREEN_NETWORK);
     let s = h.turns(3);
     assert!(
         h.find_cmd(|c| matches!(c, Cmd::LoadNetwork)).is_some(),
@@ -7946,11 +8002,13 @@ fn network_panel_loads_on_connect_and_renders_modes_and_addresses() {
         network_fixture("localhost", "127.0.0.1", false, true),
     );
     for needle in [
-        "Network exposure",
-        "Localhost only",
-        "Local network",
-        "Internet…",
-        "Network exposure: Localhost only · port 8080 · running: Localhost only 127.0.0.1:8080",
+        "Network — who can reach this gateway",
+        // Saved vs running now, each labelled; (•) marks the SAVED mode only.
+        "Saved:       Localhost only (saved) · port 8080",
+        "Running now: Localhost only 127.0.0.1:8080 (address from the saved setting, port from the saved setting)",
+        "(•) Localhost only",
+        "( ) Local network",
+        "( ) Internet…",
         "● http://127.0.0.1:8080",
         "○ http://192.168.1.23:8080",
         "lan · Wi-Fi",
@@ -7960,7 +8018,7 @@ fn network_panel_loads_on_connect_and_renders_modes_and_addresses() {
         assert!(s.contains(needle), "missing {needle:?}:\n{s}");
     }
     assert!(
-        !s.contains("restart required"),
+        !s.contains("not running yet"),
         "no banner when in sync:\n{s}"
     );
     // The text render is the report's evidence (MISSION R).
@@ -7973,11 +8031,11 @@ fn network_panel_loads_on_connect_and_renders_modes_and_addresses() {
 fn network_panel_restart_banner_and_cli_override_story() {
     let mut h = harness_sized(Size::new(110, 40));
     h.connect_as_admin();
-    h.ui.screen.set(0);
+    h.ui.screen.set(ui::SCREEN_NETWORK);
     h.turns(2);
     let s = set_network(&mut h, network_fixture("lan", "127.0.0.1", true, true));
     assert!(
-        s.contains("restart required to apply 'lan' on port 8080"),
+        s.contains("saved, not running yet: a restart applies 'lan' on port 8080"),
         "banner:\n{s}"
     );
     assert!(s.contains("Restart to apply"), "restart button:\n{s}");
@@ -7987,7 +8045,7 @@ fn network_panel_restart_banner_and_cli_override_story() {
     }
     let s = set_network(&mut h, network_fixture("lan", "127.0.0.1", true, false));
     assert!(
-        s.contains("not applied (command line overrides the setting): this gateway was started with --host/--port"),
+        s.contains("saved, not running yet (the command line overrides the setting): this gateway was started with"),
         "cli story:\n{s}"
     );
     assert!(
@@ -8000,7 +8058,7 @@ fn network_panel_restart_banner_and_cli_override_story() {
 fn network_mode_arrow_enter_posts_the_chosen_mode() {
     let mut h = harness_sized(Size::new(110, 40));
     h.connect_as_admin();
-    h.ui.screen.set(0);
+    h.ui.screen.set(ui::SCREEN_NETWORK);
     h.turns(2);
     set_network(
         &mut h,
@@ -8028,7 +8086,7 @@ fn network_mode_arrow_enter_posts_the_chosen_mode() {
 fn network_internet_needs_the_danger_confirm_then_acknowledges() {
     let mut h = harness_sized(Size::new(110, 40));
     h.connect_as_admin();
-    h.ui.screen.set(0);
+    h.ui.screen.set(ui::SCREEN_NETWORK);
     h.turns(2);
     set_network(
         &mut h,
@@ -8058,7 +8116,7 @@ fn network_internet_needs_the_danger_confirm_then_acknowledges() {
             .is_none(),
         "keep posts nothing"
     );
-    h.type_text("\r"); // the radio still holds Internet: Enter asks again
+    h.type_text("\r"); // the list cursor still holds Internet: Enter asks again
     h.turns(2);
     h.key(b"\x1b[A"); // up to the danger option
     h.turn();
@@ -8080,7 +8138,7 @@ fn network_internet_needs_the_danger_confirm_then_acknowledges() {
 fn network_refused_mode_says_the_fix_and_posts_nothing() {
     let mut h = harness_sized(Size::new(110, 40));
     h.connect_as_admin();
-    h.ui.screen.set(0);
+    h.ui.screen.set(ui::SCREEN_NETWORK);
     h.turns(2);
     let mut v = network_fixture("localhost", "127.0.0.1", false, true);
     v["modes"][1]["allowed"] = json!(false);
@@ -8109,7 +8167,7 @@ fn network_refused_mode_says_the_fix_and_posts_nothing() {
 fn network_c_copies_the_highlighted_address() {
     let mut h = harness_sized(Size::new(110, 40));
     h.connect_as_admin();
-    h.ui.screen.set(0);
+    h.ui.screen.set(ui::SCREEN_NETWORK);
     h.turns(2);
     set_network(&mut h, network_fixture("lan", "0.0.0.0", false, true));
     focus_network_modes(&mut h);
@@ -8136,6 +8194,114 @@ fn network_c_copies_the_highlighted_address() {
         h.store.notice.get_untracked().as_deref(),
         Some("copied http://mymac.local:8080")
     );
+}
+
+/// `N` jumps to the Network screen (browse); the Connection screen keeps
+/// one line (saved vs running) that points there.
+#[test]
+fn n_jumps_to_the_network_screen_and_connection_keeps_one_line() {
+    let mut h = harness_sized(Size::new(120, 40));
+    h.connect_as_admin();
+    h.ui.wizard.set(false);
+    h.ui.screen.set(0);
+    h.turns(2);
+    let s = set_network(&mut h, network_fixture("lan", "127.0.0.1", true, true));
+    assert!(
+        s.contains("Network: Local network (saved, restart needed) · running Localhost only 127.0.0.1:8080 — N opens Network"),
+        "{s}"
+    );
+    assert!(
+        !s.contains("Addresses"),
+        "the list lives on the Network screen:\n{s}"
+    );
+    h.type_text("N");
+    h.turns(2);
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_NETWORK);
+}
+
+/// The list marks the SAVED mode only: moving the cursor never moves (•).
+#[test]
+fn network_list_marks_the_saved_mode_not_the_cursor() {
+    let mut h = harness_sized(Size::new(110, 40));
+    h.connect_as_admin();
+    h.ui.screen.set(ui::SCREEN_NETWORK);
+    h.turns(2);
+    set_network(
+        &mut h,
+        network_fixture("localhost", "127.0.0.1", false, true),
+    );
+    focus_network_modes(&mut h);
+    h.key(b"\x1b[B");
+    h.key(b"\x1b[B");
+    let s = h.turns(2);
+    assert!(s.contains("(•) Localhost only"), "{s}");
+    assert!(
+        s.contains("( ) Internet…"),
+        "cursor on Internet, still unsaved:\n{s}"
+    );
+}
+
+/// A save that leaves the gateway needing a restart it can apply offers
+/// the restart (a confirm, default "Not now"); confirming sends it.
+#[test]
+fn network_save_that_needs_a_restart_offers_it() {
+    use abstractgateway_console::worker::network_restart_offer;
+    use abstractgateway_console::worker::operator::OpCmd;
+    let mut h = harness_sized(Size::new(110, 40));
+    h.connect_as_admin();
+    h.ui.screen.set(ui::SCREEN_NETWORK);
+    h.turns(2);
+    let v = network_fixture("lan", "127.0.0.1", true, true);
+    set_network(&mut h, v.clone());
+    h.drain_cmds();
+    let d = abstractgateway_console::store::NetworkData::from_value(&v);
+    let offer = network_restart_offer(&d).expect("restart required, applies, available");
+    h.store.op.network_restart_offer.set(Some(offer));
+    let s = h.turns(2);
+    assert!(
+        s.contains("'Local network' on port 8080 is saved but not")
+            && s.contains("Restart the gateway now to apply it?"),
+        "{s}"
+    );
+    assert!(
+        h.store.op.network_restart_offer.get_untracked().is_none(),
+        "taken once"
+    );
+    h.key(b"\x1b[A"); // the danger option
+    h.turn();
+    h.type_text("\r");
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::RestartNetwork)))
+            .is_some(),
+        "confirm restarts through the network route"
+    );
+    // No offer when a restart cannot apply the setting.
+    let cli = abstractgateway_console::store::NetworkData::from_value(&network_fixture(
+        "lan",
+        "127.0.0.1",
+        true,
+        false,
+    ));
+    assert_eq!(network_restart_offer(&cli), None);
+}
+
+#[test]
+fn network_restart_reconnects_on_the_port_it_binds() {
+    use abstractgateway_console::worker::operator::url_with_port;
+    assert_eq!(
+        url_with_port("http://127.0.0.1:8080", 18882),
+        "http://127.0.0.1:18882"
+    );
+    assert_eq!(
+        url_with_port("http://gw.lan:8080/", 9000),
+        "http://gw.lan:9000"
+    );
+    assert_eq!(
+        url_with_port("https://[fd7a::1]:8443", 8444),
+        "https://[fd7a::1]:8444"
+    );
+    assert_eq!(url_with_port("http://host", 81), "http://host:81");
 }
 
 #[test]
@@ -8205,10 +8371,10 @@ fn proxy_fixture(
     v
 }
 
-/// Tab to the origins edit line (tab bar, URL, token, probe, modes,
-/// addresses, origins) — connected, nothing holds the caret (M2).
+/// Tab to the origins edit line on the Network screen (tab bar, modes,
+/// addresses, origins).
 fn focus_origins_line(h: &mut Harness) {
-    for _ in 0..7 {
+    for _ in 0..4 {
         h.key(b"\t");
         h.turn();
     }
@@ -8218,7 +8384,7 @@ fn focus_origins_line(h: &mut Harness) {
 fn network_reverse_proxy_shows_values_and_where_they_come_from() {
     let mut h = harness_sized(Size::new(160, 60));
     h.connect_as_admin();
-    h.ui.screen.set(0);
+    h.ui.screen.set(ui::SCREEN_NETWORK);
     h.turns(2);
     let s = set_network(
         &mut h,
@@ -8274,7 +8440,7 @@ fn network_reverse_proxy_shows_values_and_where_they_come_from() {
 fn network_origins_line_enter_saves_the_whole_list() {
     let mut h = harness_sized(Size::new(160, 60));
     h.connect_as_admin();
-    h.ui.screen.set(0);
+    h.ui.screen.set(ui::SCREEN_NETWORK);
     h.turns(2);
     set_network(
         &mut h,
@@ -8315,7 +8481,7 @@ fn network_origins_line_enter_saves_the_whole_list() {
 fn network_trust_checkbox_saves_on_toggle() {
     let mut h = harness_sized(Size::new(160, 60));
     h.connect_as_admin();
-    h.ui.screen.set(0);
+    h.ui.screen.set(ui::SCREEN_NETWORK);
     h.turns(2);
     set_network(&mut h, proxy_fixture(&[], false, None, None));
     h.drain_cmds();
@@ -8493,6 +8659,136 @@ fn restart_and_quit_confirm_first_and_default_to_keep() {
         s.contains("restart is not available: started with --reload"),
         "reason:\n{s}"
     );
+}
+
+fn start_at_login(
+    state: &str,
+    enabled: bool,
+    can_change: bool,
+) -> abstractgateway_console::store::operator::StartAtLogin {
+    abstractgateway_console::store::operator::StartAtLogin::from_value(&json!({
+        "schema": "gateway_start_at_login_v1", "enabled": enabled, "state": state,
+        "mechanism": "systemd-user", "mechanism_label": "a systemd user unit",
+        "can_change": can_change,
+        "reason": if can_change { Value::Null } else { json!("no systemd user manager answers on this machine and there is no desktop session") },
+        "summary": if enabled { "On — a systemd user unit starts the gateway at login" } else { "Off — nothing starts the gateway at login" }
+    }))
+}
+
+/// F3: the start-at-login row (the gateway's read-back), `L` confirms
+/// then sends the PUT; a host where it cannot change says why.
+#[test]
+fn host_panel_start_at_login_toggle_confirms_then_puts() {
+    use abstractgateway_console::worker::operator::OpCmd;
+    let mut h = harness_sized(Size::new(140, 40));
+    h.connect_as_admin();
+    h.store.op.runner.set(Loadable::Ready(paused_runner()));
+    h.turns(2);
+    let _ = h.drain_cmds();
+    h.key(b"\x1bOR"); // F3
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::LoadStartAtLogin)))
+            .is_some(),
+        "opening F3 reads start at login (admin)"
+    );
+    h.store
+        .op
+        .start_at_login
+        .set(Loadable::Ready(start_at_login("off", false, true)));
+    let s = h.turns(2);
+    assert!(
+        s.contains("start at login: off — Off — nothing starts the gateway at login"),
+        "{s}"
+    );
+    assert!(
+        s.contains("Start at login: Turn on…"),
+        "button names the verb:\n{s}"
+    );
+    assert!(s.contains("L start at login"), "key listed:\n{s}");
+    h.type_text("L");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Start AbstractGateway at login? Registers a systemd")
+            && s.contains("The gateway running now is not restarted."),
+        "{s}"
+    );
+    h.type_text("\r"); // "Leave it" is the default
+    h.turns(2);
+    assert!(
+        h.drain_cmds()
+            .iter()
+            .all(|c| !is_op(c, |o| matches!(o, OpCmd::SetStartAtLogin { .. }))),
+        "leave sends nothing"
+    );
+    h.key(b"\x1bOR");
+    h.turns(2);
+    h.type_text("L");
+    h.turns(2);
+    h.key(b"\x1b[A");
+    h.turn();
+    h.type_text("\r");
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(
+            o,
+            OpCmd::SetStartAtLogin {
+                enabled: true,
+                replace_other: false
+            }
+        )))
+        .is_some(),
+        "confirm turns it on"
+    );
+    // A headless host without systemd: the reason, no verb.
+    h.store
+        .op
+        .start_at_login
+        .set(Loadable::Ready(start_at_login("off", false, false)));
+    h.key(b"\x1bOR");
+    let s = h.turns(2);
+    assert!(
+        s.contains("can't be changed here: no systemd user manager"),
+        "{s}"
+    );
+    assert!(!s.contains("Start at login: Turn on…"), "{s}");
+    h.type_text("L");
+    h.turns(2);
+    assert!(
+        h.store
+            .notice
+            .get_untracked()
+            .unwrap_or_default()
+            .starts_with("start at login can't be changed here"),
+        "{:?}",
+        h.store.notice.get_untracked()
+    );
+}
+
+/// The setup guide's Finish step carries the same toggle.
+#[test]
+fn finish_step_offers_start_at_login() {
+    use abstractgateway_console::worker::operator::OpCmd;
+    let mut h = harness_sized(Size::new(150, 44));
+    h.connect_as_admin();
+    h.ui.wizard.set(true);
+    h.ui.screen.set(ui::SCREEN_REVIEW);
+    h.turns(3);
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::LoadStartAtLogin)))
+            .is_some(),
+        "the Finish step reads start at login"
+    );
+    h.store
+        .op
+        .start_at_login
+        .set(Loadable::Ready(start_at_login("on", true, true)));
+    let s = h.turns(3);
+    assert!(
+        s.contains("starts at login on — On — a systemd user unit starts the gateway at login"),
+        "{s}"
+    );
+    assert!(s.contains("Start at login: Turn off…"), "{s}");
 }
 
 /// `e` shows the destination (the console's downloads folder, never the
@@ -8705,7 +9001,7 @@ fn users_w_opens_my_workspace_policy() {
 fn network_reverse_proxy_is_read_only_without_admin() {
     let mut h = harness_sized(Size::new(160, 60));
     h.connect_as_admin();
-    h.ui.screen.set(0);
+    h.ui.screen.set(ui::SCREEN_NETWORK);
     h.turns(2);
     let mut v = proxy_fixture(&["https://a.example"], true, None, None);
     v["writable"] = json!(false);
@@ -9304,5 +9600,226 @@ fn the_current_screen_key_keeps_the_screen_keys_live() {
     assert!(
         s.contains("Load (warm up) a model"),
         "w still reaches the screen:\n{s}"
+    );
+}
+
+/// The voice picker says WHY a provider/model lists no voices (the
+/// gateway's / AbstractVoice's `unavailable_reason`), not a bare "none".
+#[test]
+fn the_voice_picker_shows_why_no_voices_are_listed() {
+    use abstractgateway_console::store::VoicesData;
+    let why = "Supertonic is not installed: the Python package onnxruntime is missing. Install it with: pip install \"abstractvoice[supertonic]\"";
+    let d = VoicesData::from_value(
+        "supertonic",
+        "supertonic-3",
+        &json!({"items": [], "unavailable_reason": why}),
+    );
+    assert_eq!(d.unavailable_reason.as_deref(), Some(why));
+    let d = VoicesData::from_value(
+        "openai",
+        "tts-1",
+        &json!({"items": [], "error": "OpenAI audio requires OPENAI_API_KEY"}),
+    );
+    assert_eq!(
+        d.unavailable_reason.as_deref(),
+        Some("OpenAI audio requires OPENAI_API_KEY")
+    );
+    let d = VoicesData::from_value(
+        "supertonic",
+        "supertonic-3",
+        &json!({"items": [{"profile_id": "M1"}], "unavailable_reason": why}),
+    );
+    assert_eq!(
+        d.unavailable_reason, None,
+        "listed voices: nothing to explain"
+    );
+
+    let mut h = harness_sized(Size::new(150, 44));
+    h.connect_as_admin();
+    h.goto_screen(2);
+    h.store.routes.set(Loadable::Ready(routes_fixture()));
+    h.turns(2);
+    h.ui.route_sel.set(4); // output.voice
+    h.key(b"\r");
+    h.turns(3);
+    let (p, m) = match h.find_cmd(|c| matches!(c, Cmd::LoadVoices { .. })) {
+        Some(Cmd::LoadVoices { provider, model }) => (provider, model),
+        other => panic!("the editor asks for the pair's voices, got {other:?}"),
+    };
+    h.store.voices.set(Loadable::Ready(VoicesData::from_value(
+        &p,
+        &m,
+        &json!({"items": [], "unavailable_reason": why}),
+    )));
+    let s = h.turns(3);
+    assert!(
+        s.contains("Supertonic is not installed: the Python package"),
+        "{s}"
+    );
+    assert!(
+        s.contains("Install it with: pip install") && s.contains("\"abstractvoice[supertonic]\""),
+        "{s}"
+    );
+    assert!(!s.contains("no voices reported"), "{s}");
+}
+
+// AbstractCore 2.18 shapes (config/route_engines.py, utils/model_fit.py):
+// `engine_missing` and the `needs_gpu_limit` fit verdict.
+fn mlx_engine_missing() -> Value {
+    json!({"engine": "mlx", "name": "MLX (mlx-lm)",
+        "reason": "MLX (mlx-lm) is not installed in this Python environment (mlx_lm missing); the mlx provider runs models with it. Install it with: pip install mlx-lm",
+        "install": "pip install mlx-lm", "engine_row": "mlx"})
+}
+
+/// A configured route whose engine is not installed reads "engine
+/// missing" (not "configured", not "cannot run here") and names the
+/// install command; `p` says it per recommended model, with the GPU-limit
+/// verdict in its own words.
+#[test]
+fn routes_and_plan_show_engine_missing_and_the_gpu_limit() {
+    let mut h = harness_sized(Size::new(200, 48));
+    h.connect_as_admin();
+    h.goto_screen(ui::SCREEN_ROUTES);
+    h.store
+        .routes
+        .set(Loadable::Ready(RoutesData::from_value(&json!({
+            "ok": true, "writable": true, "routes": [
+                {"key": "input.text", "kind": "input", "modality": "text", "label": "Text Input",
+                 "provider": "mlx", "model": "mlx-community/Qwen3.8-Flash-Next-4bit",
+                 "source": "abstractcore.capability_defaults", "configured": true,
+                 "engine_missing": mlx_engine_missing()}
+            ]
+        }))));
+    h.store.availability.set(Loadable::Ready(AvailabilityData::from_value(&json!({
+        "ok": true, "routes": [],
+        "recommended": {"recommended": [
+            {"route": "input.text", "provider": "mlx", "artifact": "mlx-community/Qwen3.8-Flash-Next-4bit",
+             "status": "absent", "downloadable": true, "fit_verdict": "needs_gpu_limit",
+             "gpu_limit": {"sysctl": "iogpu.wired_limit_mb", "current_mb": 0, "required_mb": 117760,
+                "command": "sudo sysctl iogpu.wired_limit_mb=117760", "needs_admin": true,
+                "resets_at_restart": true, "verdict_with_limit": "tight"},
+             "engine_missing": mlx_engine_missing()}
+        ], "total": 1, "installed": 0, "absent": 1, "unknown": 0, "gaps": []}
+    }))));
+    h.ui.route_sel.set(0);
+    let s = h.turns(3);
+    assert!(s.contains("engine missing"), "state column:\n{s}");
+    assert!(
+        s.contains("engine missing: MLX (mlx-lm) is not installed in this Python environment"),
+        "selected-row line:\n{s}"
+    );
+    assert!(
+        s.contains("1 engine missing (p says what to install)"),
+        "plan banner:\n{s}"
+    );
+    h.type_text("p");
+    let s = h.turns(3);
+    assert!(
+        s.contains("fits after raising the GPU memory limit: sudo sysctl iogpu.wired_limit_mb=117760 (admin; resets at restart)"),
+        "gpu limit:\n{s}"
+    );
+    assert!(
+        s.contains("— install: pip install mlx-lm"),
+        "install command:\n{s}"
+    );
+}
+
+#[test]
+fn engine_missing_is_its_own_state_and_rides_the_apply_report() {
+    use abstractgateway_console::store::RouteRow;
+    use abstractgateway_console::worker::applied_recommended_summary;
+    let row = RouteRow::from_value(&json!({"key": "output.voice", "kind": "output", "modality": "voice",
+        "provider": "supertonic", "model": "supertonic-3", "configured": true,
+        "engine_missing": {"engine": "supertonic", "name": "Supertonic",
+            "reason": "Supertonic is not installed", "install": "pip install \"abstractvoice[supertonic]\""}}))
+    .unwrap();
+    assert_eq!(row.state_label(), "engine missing");
+    // Never combined with route_unavailable, which wins as the harder fact.
+    let broken = RouteRow::from_value(&json!({"key": "output.image", "provider": "mlx-gen", "model": "m",
+        "configured": true, "route_unavailable": {"provider": "mlx-gen", "model": "m", "reason": "needs MLX"}}))
+    .unwrap();
+    assert_eq!(broken.state_label(), "cannot run here");
+    let summary = applied_recommended_summary(&json!({"applied_recommended": {"routes": [
+        {"key": "input.text", "action": "changed", "changed": true,
+         "before": {"provider": "ollama", "model": "a"}, "after": {"provider": "mlx", "model": "b"},
+         "engine_missing": mlx_engine_missing()}
+    ]}}));
+    assert!(
+        summary.contains("input.text: engine missing: MLX (mlx-lm) is not installed"),
+        "{summary}"
+    );
+    assert!(
+        summary.contains("— install: pip install mlx-lm"),
+        "{summary}"
+    );
+}
+
+/// A connection that never reached the gateway, on a URL from the gateway
+/// pointer: the pointer is read again and a gateway restarted on a new port
+/// is followed. A URL the person gave (flag, env) never moves.
+#[test]
+fn an_unreachable_pointer_url_follows_the_pointer() {
+    use abstractgateway_console::pointer::UrlSource;
+    let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/test-scratch")
+        .join(format!("pointer-ui-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(home.join(".abstractframework")).unwrap();
+    std::fs::write(
+        home.join(".abstractframework/gateway.json"),
+        r#"{"schema": 1, "url": "http://127.0.0.1:18894"}"#,
+    )
+    .unwrap();
+
+    let mut h = harness_sized(Size::new(120, 40));
+    h.ui.conn_url.set("http://127.0.0.1:18893".into());
+    h.ui.url_source.set(UrlSource::Flag);
+    h.ui.pointer_home.set(Some(home.clone()));
+    h.turns(2);
+    h.drain_cmds();
+    h.store
+        .conn
+        .set(ConnPhase::Unreachable("connection refused".into()));
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::Connect { .. })).is_none(),
+        "a flag URL stays what the person chose"
+    );
+
+    h.store.conn.set(ConnPhase::Probing);
+    h.ui.url_source.set(UrlSource::Pointer);
+    h.turns(1);
+    h.store
+        .conn
+        .set(ConnPhase::Unreachable("connection refused".into()));
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::Connect { .. })) {
+        Some(Cmd::Connect { url, .. }) => assert_eq!(url, "http://127.0.0.1:18894"),
+        other => panic!("expected a reconnect to the pointer's new port, got {other:?}"),
+    }
+    assert_eq!(h.ui.conn_url.get_untracked(), "http://127.0.0.1:18894");
+
+    // A bad pointer file: one visible line on Connection.
+    std::fs::write(
+        home.join(".abstractframework/gateway.json"),
+        r#"{"schema": 2, "url": "http://127.0.0.1:1"}"#,
+    )
+    .unwrap();
+    h.ui.wizard.set(false);
+    h.ui.screen.set(0);
+    h.store.conn.set(ConnPhase::Probing);
+    h.turns(1);
+    h.store
+        .conn
+        .set(ConnPhase::Unreachable("connection refused".into()));
+    let s = h.turns(3);
+    assert!(s.contains("⚠ Ignoring the gateway pointer"), "{s}");
+    assert!(
+        h.ui.pointer_notice
+            .get_untracked()
+            .unwrap_or_default()
+            .contains("unknown schema 2"),
+        "{:?}",
+        h.ui.pointer_notice.get_untracked()
     );
 }

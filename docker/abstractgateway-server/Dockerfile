@@ -31,9 +31,9 @@ COPY src /tmp/abstractgateway-src/src
 COPY flows/bundles/basic-agent.flow \
      flows/bundles/abstractassistant-orchestrator@0.0.0.flow \
      flows/bundles/deep-research@0.1.8.flow \
-     flows/bundles/coding-agent@0.2.6.flow \
-     flows/bundles/co-scientist@0.2.0.flow \
-     flows/bundles/docs-qa@0.1.0.flow \
+     flows/bundles/coding-agent@0.2.8.flow \
+     flows/bundles/co-scientist@0.2.1.flow \
+     flows/bundles/docs-qa@0.1.1.flow \
      flows/bundles/react-agent@0.1.0.flow \
      flows/bundles/codeact-agent@0.1.0.flow \
      flows/bundles/memact-agent@0.1.0.flow \

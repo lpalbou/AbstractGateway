@@ -70,6 +70,15 @@ PUBLIC_ROUTES: set[tuple[str, str]] = {
     # from a loopback socket peer with no proxy headers, and yields a
     # loopback-only token acting as the principal who minted it.
     ("POST", "/apps/tui-handover"),
+    # The browser apps served THROUGH the gateway (app_proxy.py): outside
+    # /api/gateway because a browser reaches them by plain navigation, but
+    # NOT open: every request needs a valid gateway session for that app
+    # (its own session cookie, minted by the handover above), a signed-out
+    # page load goes to the console and anything else is 401; a cross-origin
+    # request is 403. Pinned in test_gateway_app_proxy.py.
+    ("GET", "/apps/{app_id}"),  # redirect to /apps/{app_id}/ only
+    ("HEAD", "/apps/{app_id}"),
+    *{(m, "/apps/{app_id}/{path:path}") for m in ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")},
 }
 
 

@@ -169,7 +169,11 @@ CATALOG_JS = r"""
     const MC_CAPS = [["text", "Text"], ["thinking", "Thinking"], ["tools", "Tools"], ["vision", "Vision"], ["audio", "Audio"], ["embedding", "Embedding"], ["voice", "Voice"], ["image", "Image"], ["video", "Video"]];
     const MC_PROVIDER_LABEL = { ollama: "Ollama", lmstudio: "LM Studio", mlx: "MLX", "mlx-gen": "MLX images & video", "mlx-vlm": "MLX vision", huggingface: "Hugging Face", diffusers: "Diffusers", supertonic: "Supertonic", llamacpp: "llama.cpp" };
     const MC_WEIGHTS = { installed: ["Downloaded", "ok"], absent: ["Not downloaded", "muted"], unknown: ["Unknown", "muted"], not_applicable: ["Remote", "muted"] };
-    const MC_FIT = { fits: ["Fits", "ok"], tight: ["Tight", "warn"], partial_offload: ["Partial offload", "warn"], too_large: ["Too large", "err"], unknown: ["Fit unknown", "muted"] };
+    // needs_gpu_limit (AbstractCore 2.18): fits once the Mac's GPU memory limit
+    // is raised; the card shows the exact sysctl command (fit.gpu_limit).
+    const MC_FIT = { fits: ["Fits", "ok"], tight: ["Tight", "warn"], needs_gpu_limit: ["Needs GPU limit", "warn"], partial_offload: ["Partial offload", "warn"], too_large: ["Too large", "err"], unknown: ["Fit unknown", "muted"] };
+    // The "fits this computer" filter keeps AbstractCore's FITS_FILTER_VERDICTS.
+    const MC_FITS_FILTER_VERDICTS = ["fits", "tight", "needs_gpu_limit"];
     const MC_ENGINE_PROVIDER = { mlx: "mlx", ollama: "ollama", lmstudio: "lmstudio", huggingface: "huggingface", llamacpp: "huggingface" };
     const mcStore = { data: null, error: "", loading: false, seq: 0, views: new Map(), busy: new Set(), notices: new Map(), reloadFor: new Set(), reloadTimer: null,
       hub: { q: null, data: null, error: "", loading: false, seq: 0 } };
@@ -252,7 +256,18 @@ CATALOG_JS = r"""
     function mcJob(a) { return state.downloadJobs.get(mcKey(a)) || null; }
     function mcJobDone(job) { return !!job && (job.state === "done" || job.status === "completed"); }
     function mcInstalled(a) { return ((a.presence || {}).status === "installed") || mcJobDone(mcJob(a)); }
-    function mcFits(a) { return a.supported_on_host !== false && ["fits", "tight"].includes(String((a.fit || {}).verdict || "")); }
+    function mcFits(a) { return a.supported_on_host !== false && MC_FITS_FILTER_VERDICTS.includes(String((a.fit || {}).verdict || "")); }
+    // needs_gpu_limit: AbstractCore's gpu_limit_instruction, with the command
+    // to copy. Nothing when the verdict or the command is absent.
+    function mcGpuLimitMarkup(a) {
+      const f = a.fit || {};
+      const gl = f.gpu_limit || {};
+      if (String(f.verdict || "") !== "needs_gpu_limit" || typeof gl.command !== "string" || !gl.command) return "";
+      const gib = uiNum(gl.required_mb) ? ` ${Math.round(Number(gl.required_mb) / 1024)} GiB` : " more memory";
+      return `<div class="mc-note" data-mc-gpu-limit="1">It fits once macOS lets the GPU use${esc(gib)}: run `
+        + `<code class="mc-id" tabindex="0" role="button" title="Click to copy" data-mc-copy="${esc(gl.command)}">${esc(gl.command)}</code>`
+        + ` in a terminal (asks for your password; lasts until the Mac restarts), then load it.</div>`;
+    }
     // quant_class is AbstractCore's. A payload where ANY artifact
     // lacks it cannot drive the quant filter: the view says so, loudly.
     function mcQuantReported() {
@@ -482,7 +497,7 @@ CATALOG_JS = r"""
         + `<div class="mc-art__fit">${uiPill(fLabel, fTone, mcFitTitle(a.fit))}</div>`
         + `</div>`
         + `<div class="mc-art__action">${mcActionMarkup(row, a, job)}</div>`
-        + `<div class="mc-art__job">${mcJobMarkup(a, job)}</div>`
+        + `<div class="mc-art__job">${a.supported_on_host === false ? "" : mcGpuLimitMarkup(a)}${mcJobMarkup(a, job)}</div>`
         + `</li>`;
     }
     // The card's mark: two letters of the model's name, like the engine and

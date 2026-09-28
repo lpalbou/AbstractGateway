@@ -468,6 +468,13 @@ def _guarded_input_data(svc: Any, principal: Any, input_data: Dict[str, Any], *,
         data = _sanitize_run_workspace_policy(data, principal=principal, session_id=session_id)
     except HTTPException as e:
         raise AutomationError(422, "invalid_definition", str(e.detail), field="target.input_data")
+    # The automation's context mode is the ONE history control (operator
+    # 2026-09-28): the runtime replays prior occurrences into
+    # `context.messages` for "growing" and none for "independent"; the flow
+    # always reads what it is given. A client `use_context` (the flow pin,
+    # default False on basic-agent) silently dropped a growing automation's
+    # history and a discussion's seed, so it is server-owned here.
+    data["use_context"] = True
     tenant, user = _principal_tuple(principal)
     guard_run_vars(
         data,

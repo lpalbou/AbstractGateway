@@ -7,7 +7,7 @@ a change made in one is immediately visible in the other.
 | | Web console | Terminal console |
 |---|---|---|
 | Delivery | served by the gateway at `GET /console` (part of the `abstractgateway` Python package) | Rust crate [`abstractgateway-console`](https://crates.io/crates/abstractgateway-console), installed with `cargo install` |
-| Sign-in | Gateway browser session (user id + token) | base URL + bearer token (`--token-file PATH`, the Connection screen, or `ABSTRACTGATEWAY_AUTH_TOKEN`) |
+| Sign-in | Gateway browser session (user id + token) | gateway URL + token (`--gateway-url URL --token <token>`, or the Connection screen) |
 | Best for | day-to-day administration in a browser, sandbox chat with media previews | SSH sessions, headless hosts, keyboard-only setup |
 
 For how the stores behind these screens are owned (Gateway vs AbstractCore),
@@ -39,11 +39,23 @@ The sidebar lists these tabs:
 | **Providers** | provider connections (OpenAI, Anthropic, OpenRouter, Portkey, LM Studio, Ollama, custom OpenAI-compatible endpoints) with write-only keys |
 | **Multimodal** | capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
 | **Sandbox** | quick chat and media generation against the configured defaults |
-| **Resources** | memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the **Gateway** card (pause, update, restart, desktop icon) |
+| **Resources** | memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the **Gateway** card (pause, update, restart, desktop icon, start at login) |
 | **Models** | browse models that fit this machine, download them, delete installed ones (below) |
 | **Engines** | the local engines on the gateway host: installed or not, running or not, install, start, stop (below) |
 | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), plus *Advanced: apps settings* and *Advanced: backlog settings (Continuum)* |
 | **Network** | who can reach the gateway (localhost only, local network, internet), its addresses, and *Advanced: reverse proxy* ([configuration.md](./configuration.md#network-exposure-localhost--local-network--internet)) |
+
+**Start at login** (the Gateway card, and the setup guide's last step) is a
+real switch for admins: it names the mechanism (a LaunchAgent, a systemd user
+unit, a desktop autostart entry, a Windows Run entry), asks before each change
+and shows the state read back from the gateway. Where nothing on the machine
+could start the gateway at login, it says why instead of offering the switch.
+
+In **Multimodal**, a configured route whose engine is not installed reads
+"engine missing" with the install command, and the voice pickers say why a
+provider lists no voices. The cloud voice providers (OpenAI,
+OpenAI-compatible) are always listed, marked "needs an API key" until you add
+one under **Providers**.
 
 The **Technical details** switch at the bottom of the sidebar shows commands,
 route ids and other technical information throughout the console. The top bar
@@ -224,14 +236,17 @@ themselves are described in [apps.md](./apps.md)). What a plain user sees on
 each card: the app's mark, name and status pill (Not installed, Installed,
 Running, Installing, Stopped unexpectedly, Keeps crashing), one line of
 description (hover it for the whole sentence), and one row of buttons. The
-button rows of the cards side by side are always at the same height.
+button rows of the cards side by side are always at the same height. Above
+the cards, one line names where the apps open: this browser's own address
+plus `/apps/` (for example `https://gateway.example.com/apps/…`), whatever
+address the browser used to reach the gateway.
 
 | The app is | The action row |
 |---|---|
 | not installed | **Install** (installs Node.js first when the gateway needs it, then the app and, for Code when a ready-made download exists for this computer, its terminal app too; nothing opens by itself) |
 | installing | a progress bar above the row (with one row per part: "Code in the browser", "Code in the terminal"), and **Cancel** (it stops both) |
 | an install failed | the reason, **Show details**, and **Install** again |
-| installed and running | **Open** (a new tab, already signed in) |
+| installed and running | **Open** (a new tab at `/apps/<app>/`, already signed in) |
 | installed but stopped, or crashed | **Open** (starts it, then opens it); a crash also shows the reason, with **Show details** |
 
 Code has a terminal version too. Next to Code's Open: **Open in Terminal**
@@ -256,6 +271,11 @@ not on the gateway's computer, then **Open** (it starts in the menu bar of the
 gateway's computer, or comes to the front when it already runs). From another
 computer the card says "The Assistant runs on the gateway's computer: open it
 there." with no button. See [apps.md](./apps.md#the-assistant-a-desktop-app).
+
+A link to `/apps/<app>/…` opened while signed out (a bookmark, a shared
+link) lands on the console (`/console#apps?open=<app>&path=…`): once you are
+signed in, the console opens that app in the same tab, on the page the link
+named.
 
 A result box appears only after something you did ("Code opened in a new
 Terminal window, signed in to this gateway.", "Flow Editor opened in a new
@@ -296,26 +316,29 @@ Install it from crates.io (Rust 1.87 or newer):
 cargo install abstractgateway-console
 ```
 
-Connect it to a running gateway. On the gateway host, sign in with the admin
-token file (`abstractgateway serve` prints its data dir):
+Connect it to a running gateway with its URL and your token. The admin token
+is printed by `abstractgateway serve` when it starts:
 
 ```bash
-abstractgateway-console --url http://127.0.0.1:8080 \
-  --token-file "<data dir>/auth/bootstrap-admin-token"
+abstractgateway-console --gateway-url http://127.0.0.1:8080 --token <token>
 abstractgateway-console --help
 ```
 
-`--token-file PATH` reads the token from a file; an unreadable or empty file
-stops the launch with the reason. `ABSTRACTGATEWAY_AUTH_TOKEN` is also read.
-Avoid `--token` on shared machines: the command line is visible in `ps`. When
-sign-in fails, the Connection screen says whether no token was sent or the
-token was rejected, and where the admin token lives.
+`--url` is an alias of `--gateway-url`. Without the flag, the console uses
+`ABSTRACTGATEWAY_URL` (legacy), else the address this computer's gateway
+records in `~/.abstractframework/gateway.json` (a loopback address only), else
+`http://127.0.0.1:8080`; when that gateway stops answering, the console reads
+the file again and follows it to a new port. `--token-file PATH` reads the token
+from a file instead; an unreadable or empty file stops the launch with the
+reason. When sign-in fails, the Connection screen says whether no token was
+sent or the token was rejected.
 
 ### Setup guide and browse mode
 
-The console has twelve screens: **1** Connection, **2** Providers, **3** Routes,
+The console has thirteen screens: **1** Connection, **2** Providers, **3** Routes,
 **4** Users & Entities, **5** Runtimes, **6** Workflows, **7** Review & Test,
-**8** Resources, **9** Models, **0** Engines, **A** Apps, and **Setup**.
+**8** Resources, **9** Models, **0** Engines, **A** Apps, **N** Network, and
+**Setup**.
 
 - **Setup guide.** For an admin whose first run is not completed, the console
   opens the setup guide: Connection → Setup → Engines → Providers → Routes →
@@ -323,7 +346,8 @@ The console has twelve screens: **1** Connection, **2** Providers, **3** Routes,
   Routes shows the recommended models for this computer with fit warnings
   (`a` applies them, `D` downloads all of them as one job, `C` cancels, `p`
   shows the plan). Review ends with **Finish** or **Skip setup**, recorded on
-  the gateway. No step is gated except signing in.
+  the gateway, and a **Start at login** switch. No step is gated except
+  signing in.
 - **Browse mode** (free tabs) opens otherwise. `--wizard` and `--browse` choose
   the mode at launch.
 - **`Ctrl+G`** reopens the guide from browse mode; inside the guide it opens
@@ -334,7 +358,21 @@ The console has twelve screens: **1** Connection, **2** Providers, **3** Routes,
 ### Screens and panels
 
 - **Routes** flags a route this computer cannot run (for example an MLX image
-  route on Linux) with the reason, like the web console.
+  route on Linux) with the reason, and a route whose engine is not installed
+  ("engine missing", with the install command), like the web console. A model
+  that is not on this computer reads "not downloaded — w: download"; `w` asks
+  first, naming the model and its size, and the row updates by itself when the
+  download finishes. The voice picker says why a provider lists no voices (for
+  example "Supertonic is not installed … Install it with: …", or "OpenAI:
+  needs an API key (add it under Providers)").
+- **N Network** shows who can reach the gateway: the **saved** exposure
+  (localhost only, local network, internet) next to what is **running now**,
+  and every address to copy (`c`). `(•)` marks the saved mode; move the cursor
+  and press `Enter` to save another (internet asks for an acknowledgement
+  first). When the saved mode needs a restart that can apply it, the console
+  offers the restart, reconnects when the gateway is back and reads the network
+  again. When a restart cannot apply it, the gateway's reason is shown. The
+  Connection screen keeps a one-line summary.
 - **Review & Test** holds the session's change journal and the sandbox: every
   output mode (text, image, voice, music, sound effects, video), file
   attachments and speak-this-reply.
@@ -343,20 +381,23 @@ The console has twelve screens: **1** Connection, **2** Providers, **3** Routes,
 - **Workflows** imports a `.flow` bundle (`i`) and reloads the registry (`L`).
 - **A Apps** is the web console's Apps tab: open browser apps signed in,
   install or update them, start and stop them, the desktop Assistant and
-  Node.js.
+  Node.js. Over SSH, or on a machine without a display, **Open** never starts
+  a browser: it shows the one-time link to copy (`y`) and the `ssh -L` port
+  forwards that make it work from your own computer.
 - **F2** opens the docs assistant (questions answered from the gateway's own
   documentation; signed in).
 - **F3** opens the gateway host panel: pause or resume workflows, restart,
-  quit, check for and install updates, the tray. A banner shows on every
-  screen while workflows are paused.
+  quit, check for and install updates, the tray, and **start at login** (`L`,
+  confirmed, then read back). A banner shows on every screen while workflows
+  are paused.
 - **About** (`F1`, or `?` outside a text field) shows this console, its
   version, the links and the connected gateway's versions from
-  `GET /api/gateway/about`. `abstractgateway-console --about --url <gateway>`
+  `GET /api/gateway/about`. `abstractgateway-console --about --gateway-url <gateway>`
   prints the same text without opening the interface.
 
 Keys: `Tab` focus, `Enter` activate, `Ctrl+N` / `Ctrl+P` next and previous
 step, `Esc` back (in a text field, the first `Esc` releases it so screen keys
-work again), `1`-`9`, `0` and `A` screens, `r` refresh, `q` quit. Each screen
+work again), `1`-`9`, `0`, `A` and `N` screens, `r` refresh, `q` quit. Each screen
 lists its own actions in the footer.
 
 **Admin rules.** Admin-only actions are refused before anything is sent for a

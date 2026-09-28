@@ -1,0 +1,10 @@
+{
+  "about": "The local gateway pointer (~/.abstractframework/gateway.json, root backlog 0943): one shared case table every reader (Node app-server, Rust TUIs, the frozen Assistant) checks. `file: null` = no pointer file. `expect` is the URL the reader must use when nothing else is configured (flag, env and saved login all absent); `warn` = the reader shows one visible warning.",
+  "cases": [
+    {"name": "valid", "file": "valid.json", "expect": "http://127.0.0.1:8081", "warn": false},
+    {"name": "non_loopback", "file": "non_loopback.json", "expect": "http://127.0.0.1:8080", "warn": true},
+    {"name": "wrong_schema", "file": "wrong_schema.json", "expect": "http://127.0.0.1:8080", "warn": true},
+    {"name": "malformed", "file": "malformed.json", "expect": "http://127.0.0.1:8080", "warn": true},
+    {"name": "missing", "file": null, "expect": "http://127.0.0.1:8080", "warn": false}
+  ]
+}

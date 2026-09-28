@@ -436,6 +436,30 @@ def _tray_base_url(bind_host: str, port: int) -> str:
     return f"http://{host}:{int(port)}"
 
 
+def _wait_until_bound(server: Any, timeout_s: float = 120.0) -> bool:
+    """Block (a helper thread) until uvicorn accepts connections; False when
+    it exits or never binds within `timeout_s`."""
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if getattr(server, "should_exit", False):
+            return False
+        if getattr(server, "started", False):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def _bound_port(server: Any, fallback: int) -> int:
+    """The port the listener actually bound (uvicorn's first socket)."""
+    try:
+        for srv in getattr(server, "servers", None) or []:
+            for sock in getattr(srv, "sockets", None) or []:
+                return int(sock.getsockname()[1])
+    except Exception:  # noqa: BLE001
+        pass
+    return int(fallback)
+
+
 def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv: list[str]) -> None:
     """Run uvicorn with the host-control seam (restart/shutdown from the tray
     or console) and the desktop tray helper (2026-09-05).
@@ -495,6 +519,22 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
             "is used through the network setting `trust_proxy` (`abstractgateway network set --trust-proxy`)."
         )
 
+    # The local gateway pointer (~/.abstractframework/gateway.json, root
+    # backlog 0943): written once the listener is bound, with the port it
+    # bound, under the ownership rule (gateway_pointer.py).
+    def _write_pointer_when_bound() -> None:
+        if not _wait_until_bound(server):
+            return
+        try:
+            from .gateway_pointer import record_serve_pointer
+
+            _written, sentence = record_serve_pointer(host=str(args.host), port=_bound_port(server, int(args.port)), data_dir=data_dir)
+            _stderr(sentence)
+        except Exception as exc:  # noqa: BLE001 - a pointer is a hint for other clients, never a reason to stop serving
+            _stderr(f"[WARN] could not write the gateway pointer: {type(exc).__name__}: {exc}")
+
+    threading.Thread(target=_write_pointer_when_bound, name="gateway-pointer", daemon=True).start()
+
     tray = get_tray_supervisor()
     # NO SETTING TO READ (operator ruling 2026-09-06): while `serve` runs on a
     # desktop that can hold an icon, the icon is there. What is left in
@@ -507,14 +547,7 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
         # once uvicorn accepts connections; boot (minutes) is separate and
         # the tray shows "Starting…" meanwhile.
         def _start_tray_when_bound() -> None:
-            deadline = time.monotonic() + 120.0
-            while time.monotonic() < deadline:
-                if getattr(server, "should_exit", False):
-                    return
-                if getattr(server, "started", False):
-                    break
-                time.sleep(0.1)
-            else:
+            if not _wait_until_bound(server):
                 return
             st = tray.start(base_url=base_url, data_dir=data_dir, version=version, decision=decision)
             if st.get("running"):

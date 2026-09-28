@@ -207,6 +207,79 @@ with data in the per-user data folder. See [first-run.md](./first-run.md). Conta
 servers use the explicit configuration shown on this page: the image sets
 `--host 0.0.0.0` with user accounts on.
 
+## Behind a reverse proxy (one block, apps included)
+
+The console, the API and every browser app share the gateway's one address:
+the apps are served at `/apps/<app>/` by the gateway itself
+([apps.md](./apps.md#apps-are-served-through-the-gateway)). So one proxy
+block covers everything. It must pass WebSocket upgrades (Flow's live
+editor), must not buffer (live updates are server-sent events), and must keep
+the `Host` the browser used (the sign-in handover is bound to it):
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name gateway.example.com;
+    # ssl_certificate ... ; ssl_certificate_key ... ;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_read_timeout 1h;
+        client_max_body_size 0;
+    }
+}
+
+# In the http {} block:
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+```
+
+Run nginx on the gateway machine, as here, so the gateway believes its
+`X-Forwarded-For` (it believes it from a loopback peer only). Then set the
+browser origin once:
+`abstractgateway network set --allowed-origins https://gateway.example.com`.
+`X-Forwarded-For $remote_addr` replaces anything the browser sent. The apps
+themselves always listen on `127.0.0.1`; nothing else needs to reach them,
+and no other port needs to be exposed. A tunnel (Cloudflare Tunnel,
+Tailscale Funnel, ngrok) to the gateway's port works the same way.
+
+## Where local clients find the gateway (`~/.abstractframework/gateway.json`)
+
+The gateway does not always listen on 8080 (the installer moves it when 8080
+is busy, and an admin can change the port). Clients that cannot ask
+`abstractgateway` (the terminal apps, the browser apps started by hand with
+`npx`, the frozen Assistant app) read one small file instead:
+
+```json
+{"schema": 1, "url": "http://127.0.0.1:8081", "port": 8081,
+ "data_dir": "/home/me/.local/share/abstractgateway",
+ "updated_at": "2026-09-27T12:00:00Z", "written_by": "serve"}
+```
+
+- `abstractgateway serve` writes it (mode 0600, atomically) once its listener
+  is bound, with the port it bound, but only when the file is absent and the
+  gateway uses the default data folder, or when the file names this
+  gateway's own data folder. A test or second gateway with its own data
+  folder never changes it. The installer writes it too
+  (`"written_by": "installer"`), and its uninstall deletes this one file.
+- `network set` does not change it: clients move when the gateway does, at the
+  restart that binds the new port. `serve` never deletes it.
+- It holds no token and no liveness information. Readers accept it only with
+  `schema` 1, a URL on `127.0.0.1`, `::1` or `localhost`, and (Linux, macOS)
+  when it belongs to them; anything else is ignored with one warning.
+- The order a client follows: its launch flag (`--gateway-url`), its legacy
+  environment variable, its saved sign-in (a saved `http://127.0.0.1:8080`
+  gives way to the file), this file, then `http://127.0.0.1:8080`.
+
 ## Cache and auth notes
 
 Gateway auth is controlled by `ABSTRACTGATEWAY_*` variables and protects

@@ -22,7 +22,7 @@ from ..core_config import (
 )
 from ..memory_store import build_gateway_memory_embedder, open_gateway_memory_store
 from ..provider_endpoint_profiles import ProviderEndpointProfileError, resolve_effective_endpoint_profile
-from ..provider_connections import configured_provider_request_kwargs
+from ..provider_connections import configured_provider_request_kwargs, providers_screen_api_key
 from ..provider_defaults import ProviderModelConfigError, resolve_gateway_provider_model
 from ..workflow_deprecations import WorkflowDeprecatedError, WorkflowDeprecationStore
 from ..workflow_catalog import (
@@ -42,6 +42,12 @@ from .native_loop_bundles import (
 
 
 logger = logging.getLogger(__name__)
+
+
+# Per-run inputs that capped replayed history by message count / chars. Retired
+# 2026-09-28 (operator ruling: history replay is the most recent 50k tokens of
+# whole turns, nothing else); recorded as ignored when a client still sends them.
+_RETIRED_SESSION_HISTORY_INPUTS = ("session_history_max_messages", "session_history_max_chars")
 
 
 @dataclass(frozen=True)
@@ -183,6 +189,19 @@ def _resolve_gateway_default_endpoint_profile(
     if profile.api_key:
         llm_kwargs["api_key"] = profile.api_key
     return profile.provider_family, llm_kwargs, profile.virtual_provider_id
+
+
+def _with_voice_openai_key(llm_kwargs: Optional[Dict[str, Any]], data_root: Path, catalog_root: Path) -> Optional[Dict[str, Any]]:
+    """`llm_kwargs` plus AbstractVoice's host setting `voice_openai_api_key`:
+    the OpenAI key saved through the Providers screen, so voice generation
+    (TTS/STT runs) uses the key the consoles call configured. Resolved when
+    this runtime is built; None/unchanged when no key is saved."""
+    key = providers_screen_api_key("openai", current_base_dir=data_root, root_base_dir=catalog_root)
+    if not key:
+        return llm_kwargs or None
+    out = dict(llm_kwargs or {})
+    out["voice_openai_api_key"] = key
+    return out
 
 
 def _split_bundle_ref(raw: str) -> tuple[str, Optional[str]]:
@@ -1363,11 +1382,25 @@ class WorkflowBundleGatewayHost:
                         e,
                     )
 
-                provider_for_runtime, default_profile_kwargs, provider_override = _resolve_gateway_default_endpoint_profile(
-                    provider=provider,
-                    data_root=data_root,
-                    catalog_root=catalog_root,
-                )
+                default_route_error: Optional[str] = None
+                try:
+                    provider_for_runtime, default_profile_kwargs, provider_override = _resolve_gateway_default_endpoint_profile(
+                        provider=provider,
+                        data_root=data_root,
+                        catalog_root=catalog_root,
+                    )
+                except WorkflowBundleError as exc:
+                    # The DEFAULT names an endpoint profile that is gone or
+                    # disabled (operator deleted it). Loading a bundle calls no
+                    # model, so this must not take the host down: every read
+                    # (automations, runs, sessions) failed 500 while it did.
+                    # The default stays what the operator configured, unrouted:
+                    # a call that uses it fails at the call, naming the
+                    # profile, and the console reports it on the text route
+                    # (`capability_defaults_route_problems`).
+                    default_route_error = str(exc)
+                    logger.warning("default text route unavailable, host loads without it: %s", exc)
+                    provider_for_runtime, default_profile_kwargs, provider_override = provider, {}, provider
                 if core_server_base_url:
                     headers: Dict[str, str] = {}
                     token = core_server_token()
@@ -1394,7 +1427,7 @@ class WorkflowBundleGatewayHost:
                         runtime = create_local_runtime(
                             provider=str(provider_for_runtime or ""),
                             model=str(model or ""),
-                            llm_kwargs=default_profile_kwargs or None,
+                            llm_kwargs=_with_voice_openai_key(default_profile_kwargs, data_root, catalog_root),
                             run_store=run_store,
                             ledger_store=ledger_store,
                             artifact_store=artifact_store,
@@ -1437,6 +1470,7 @@ class WorkflowBundleGatewayHost:
                         setattr(runtime, "_gateway_default_provider_override", provider_override)
                     except Exception:
                         pass
+                setattr(runtime, "_gateway_default_route_error", default_route_error)
                 _attach_provider_endpoint_profile_resolver(runtime=runtime, data_root=data_root, catalog_root=catalog_root)
                 runtime.set_workflow_registry(wf_reg)
             else:
@@ -2059,7 +2093,12 @@ class WorkflowBundleGatewayHost:
             strict=True,
         )
         self._normalize_seeded_context(vars0, ctx0, messages=messages)
-        rt_ns["session_history"] = {"seeded": len(messages), "strict": True, "session_kind": attribution.get("kind")}
+        rt_ns["session_history"] = {
+            "seeded": len(messages),
+            **messages.report,
+            "strict": True,
+            "session_kind": attribution.get("kind"),
+        }
 
     def _seed_session_history(
         self,
@@ -2100,35 +2139,30 @@ class WorkflowBundleGatewayHost:
                 return
             existing = ctx0.get("messages") if isinstance(ctx0, dict) else None
             if isinstance(existing, list) and existing:
+                # The client's transcript wins; keep the window receipt the
+                # /runs/start door wrote for it (source "client_context").
+                prior = rt_ns.get("session_history")
+                receipt = dict(prior) if isinstance(prior, dict) and prior.get("source") == "client_context" else {}
                 rt_ns["session_history"] = {
+                    **receipt,
                     "seeded": 0,
                     "skipped": "client context.messages present",
                 }
                 return
 
-            limit = _int_text(vars0.get("session_history_max_messages"))
-            if limit == 0:
-                # Explicit 0 = replay disabled for this run (audit #9); the
-                # empty-list normalization below still runs via the shared
-                # tail so turn classification stays stable.
-                self._normalize_seeded_context(vars0, ctx0, messages=[])
-                rt_ns["session_history"] = {
-                    "seeded": 0,
-                    "skipped": "disabled by session_history_max_messages=0",
-                }
-                return
-            if limit is None:
-                limit = _int_text(_env("ABSTRACTGATEWAY_SESSION_HISTORY_MAX_MESSAGES"))
-            if limit is None or limit <= 0:
-                limit = 40
-            limit = max(1, min(200, int(limit)))
-
-            max_chars = _int_text(vars0.get("session_history_max_chars"))
-            if max_chars is None or max_chars <= 0:
-                max_chars = _int_text(_env("ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS"))
-            if max_chars is None or max_chars <= 0:
-                max_chars = 24000
-            max_chars = max(1000, min(200000, int(max_chars)))
+            # THE history window (operator ruling 2026-09-28; ADR-0026): the
+            # most recent `HISTORY_REPLAY_MAX_TOKENS` (50k) tokens of whole
+            # turns, owned by abstractruntime.session_history. The retired
+            # message-count / char caps are not honored; a client still
+            # sending them is told so in the run record, never silently.
+            retired = [k for k in _RETIRED_SESSION_HISTORY_INPUTS if k in vars0]
+            if retired:
+                logger.warning(
+                    "session history: ignoring retired input(s) %s for session %s "
+                    "(history replay is the most recent 50k tokens of whole turns)",
+                    ", ".join(retired),
+                    session_id,
+                )
 
             from abstractruntime.session_history import session_chat_messages
 
@@ -2139,8 +2173,6 @@ class WorkflowBundleGatewayHost:
                 run_store=self.runtime.run_store,
                 ledger_store=self.runtime.ledger_store,
                 session_id=session_id,
-                max_messages=limit,
-                max_total_chars=max_chars,
             )
             # Normalize context.messages to a list even when the seed is
             # empty: turn classification treats a messages LIST as "chat",
@@ -2148,11 +2180,10 @@ class WorkflowBundleGatewayHost:
             # and be hidden by the chat-preference filter on later reads
             # (audit #5).
             self._normalize_seeded_context(vars0, ctx0, messages=messages)
-            rt_ns["session_history"] = {
-                "seeded": len(messages),
-                "max_messages": limit,
-                "max_total_chars": max_chars,
-            }
+            note: Dict[str, Any] = {"seeded": len(messages), **messages.report}
+            if retired:
+                note["ignored_inputs"] = retired
+            rt_ns["session_history"] = note
         except Exception as e:  # noqa: BLE001 - degrade, never block the start
             logger.warning(
                 "#FALLBACK: session history seed failed for session %s: %s",

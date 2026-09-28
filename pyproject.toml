@@ -18,20 +18,32 @@ dependencies = [
   # refuses to start on a runtime without them. 0.5.1: a wait is resumed at
   # most once (a parent could run its Agent/subflow child twice otherwise).
   # 0.6.0: automations (abstractruntime.automations / automation_queries),
-  # which the gateway imports unconditionally.
-  "AbstractRuntime>=0.6.0",
+  # which the gateway imports unconditionally. 0.7.0: THE history window
+  # (session_chat_messages replays the newest whole turns up to 50k tokens
+  # and reports it; the message/char caps are gone) and the host-supplied
+  # voice_openai_api_key threaded to AbstractVoice.
+  "AbstractRuntime>=0.7.0",
   # Floor only (no extras; Runtime chooses them). The gateway relies on
   # AbstractCore 2.16.1 (abstractcore.utils.identity for the About rows,
   # process-wide model residency and eject semantics, host-job download
   # progress, the recommended text tiers, the MLX held-memory report; 2.16.1:
   # MLX prompts follow the model's chat template; 2.17.0: capability-default
   # rows carry route_unavailable / host-aware recommendation_unavailable, which
-  # the consoles render); Runtime alone would keep an older Core on upgrade.
-  "abstractcore>=2.17.0",
+  # the consoles render; 2.18.0: engine_missing routes and the needs_gpu_limit
+  # fit verdict, which the consoles render); Runtime alone would keep an older
+  # Core on upgrade.
+  "abstractcore>=2.18.0",
+  # Imported directly (routes/gateway.py voice listings):
+  # abstractvoice.engine_runtime (0.13.0) decides which local voice engines
+  # are available, and voice_openai_api_key (0.13.0) carries the Providers
+  # screen's OpenAI key. Also reached through Runtime -> abstractcore[voice],
+  # but that is three hops; the direct import gets a direct floor.
+  "abstractvoice>=0.13.0",
   # 0.3.14: delegated sub-agents inherit the run's _runtime.stream switch.
   # 0.3.15: CodeAct/MemAct crash fix; re-prompt when a reply announces tool
-  # calls it never makes.
-  "abstractagent>=0.3.15",
+  # calls it never makes. 0.3.17: entity visit react turns send the runtime's
+  # history window (newest whole turns up to 50k tokens, ADR-0026).
+  "abstractagent>=0.3.17",
   "AbstractMemory[lancedb]>=0.3.0",
   # 0.3.0 ships the curated skill shelf inside the package (abstractskill.bundled)
   # and seed_registry, which the gateway uses to keep <data dir>/skills/registry.
@@ -41,6 +53,12 @@ dependencies = [
   "fastapi<1.0.0,>=0.136.0",
   "python-multipart>=0.0.6",
   "uvicorn[standard]<1.0.0,>=0.38.0",
+  # The apps are served through the gateway at /apps/<id>/ (app_proxy.py):
+  # httpx relays HTTP (streaming, SSE), websockets relays WebSockets
+  # (asyncio client API: 13.1+). Both were transitive; declared because they
+  # are load-bearing.
+  "httpx<1.0.0,>=0.28.1",
+  "websockets>=13.1",
   # Entity homes store the attested spark as YAML (spark.yaml). Previously
   # only transitive via uvicorn[standard]; declared because it is load-bearing.
   "pyyaml>=5.1",
@@ -56,7 +74,7 @@ dependencies = [
 # Tooling extras for contributors: `dev`, `docs`.
 
 embeddings = [
-  "abstractcore[embeddings]>=2.17.0",
+  "abstractcore[embeddings]>=2.18.0",
 ]
 
 # Desktop tray / menu-bar icon shown by `abstractgateway serve` (macOS, Windows,
@@ -74,16 +92,16 @@ tray = [
 # deployment entry point, Gateway's `apple` profile installs the full native
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
-  "AbstractRuntime[apple]>=0.6.0",
-  "abstractagent[apple]>=0.3.15",
+  "AbstractRuntime[apple]>=0.7.0",
+  "abstractagent[apple]>=0.3.17",
   "AbstractMemory[all-apple]>=0.3.0",
 ]
 
 # Native/container GPU Gateway profile. This is the full local GPU aggregate for
 # Python installs and for the NVIDIA Docker image.
 gpu = [
-  "AbstractRuntime[gpu]>=0.6.0",
-  "abstractagent[gpu]>=0.3.15",
+  "AbstractRuntime[gpu]>=0.7.0",
+  "abstractagent[gpu]>=0.3.17",
   "AbstractMemory[all-gpu]>=0.3.0",
 ]
 dev = [
@@ -115,12 +133,12 @@ packages = ["src/abstractgateway"]
 # Out-of-box flagship workflows: a fresh install serves a proven coder
 # (coding-agent:coder — abstractcode-tui's default agent when installed),
 # deep research, and co-scientist without any manual bundle install.
-"flows/bundles/coding-agent@0.2.6.flow" = "abstractgateway/flows/bundles/coding-agent@0.2.6.flow"
-"flows/bundles/co-scientist@0.2.0.flow" = "abstractgateway/flows/bundles/co-scientist@0.2.0.flow"
+"flows/bundles/coding-agent@0.2.8.flow" = "abstractgateway/flows/bundles/coding-agent@0.2.8.flow"
+"flows/bundles/co-scientist@0.2.1.flow" = "abstractgateway/flows/bundles/co-scientist@0.2.1.flow"
 # The console assistant drawer's transport bundle: boot ensure-publishes it
 # into the tenant catalog (shipped_catalog.py, card 013) — the wheel must
 # actually carry it or a fresh pip install has nothing to publish.
-"flows/bundles/docs-qa@0.1.0.flow" = "abstractgateway/flows/bundles/docs-qa@0.1.0.flow"
+"flows/bundles/docs-qa@0.1.1.flow" = "abstractgateway/flows/bundles/docs-qa@0.1.1.flow"
 "flows/bundles/react-agent@0.1.0.flow" = "abstractgateway/flows/bundles/react-agent@0.1.0.flow"
 "flows/bundles/codeact-agent@0.1.0.flow" = "abstractgateway/flows/bundles/codeact-agent@0.1.0.flow"
 "flows/bundles/memact-agent@0.1.0.flow" = "abstractgateway/flows/bundles/memact-agent@0.1.0.flow"
@@ -140,9 +158,9 @@ exclude = [
 "flows/bundles/basic-agent.flow" = "flows/bundles/basic-agent.flow"
 "flows/bundles/abstractassistant-orchestrator@0.0.0.flow" = "flows/bundles/abstractassistant-orchestrator@0.0.0.flow"
 "flows/bundles/deep-research@0.1.8.flow" = "flows/bundles/deep-research@0.1.8.flow"
-"flows/bundles/coding-agent@0.2.6.flow" = "flows/bundles/coding-agent@0.2.6.flow"
-"flows/bundles/co-scientist@0.2.0.flow" = "flows/bundles/co-scientist@0.2.0.flow"
-"flows/bundles/docs-qa@0.1.0.flow" = "flows/bundles/docs-qa@0.1.0.flow"
+"flows/bundles/coding-agent@0.2.8.flow" = "flows/bundles/coding-agent@0.2.8.flow"
+"flows/bundles/co-scientist@0.2.1.flow" = "flows/bundles/co-scientist@0.2.1.flow"
+"flows/bundles/docs-qa@0.1.1.flow" = "flows/bundles/docs-qa@0.1.1.flow"
 "flows/bundles/react-agent@0.1.0.flow" = "flows/bundles/react-agent@0.1.0.flow"
 "flows/bundles/codeact-agent@0.1.0.flow" = "flows/bundles/codeact-agent@0.1.0.flow"
 "flows/bundles/memact-agent@0.1.0.flow" = "flows/bundles/memact-agent@0.1.0.flow"

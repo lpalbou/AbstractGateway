@@ -255,6 +255,30 @@ def configured_provider_api_key(
     return "", ""
 
 
+def providers_screen_api_key(provider_id: str, *, current_base_dir: Path, root_base_dir: Path) -> str:
+    """The API key saved through the Providers screen for `provider_id`, or "".
+
+    Two places hold one: AbstractCore's `api_keys.<provider>` (the scoped core
+    config files) and an ENABLED endpoint profile of that provider family with
+    a key. The environment is deliberately not read here (callers that honour
+    it check it themselves). The ONE resolution the voice listings and the
+    voice runtime use, so what the consoles call "configured" is what runs.
+    """
+
+    key, _scope = configured_provider_api_key(
+        provider_id, current_base_dir=current_base_dir, root_base_dir=root_base_dir, include_env=False
+    )
+    if key:
+        return key
+    from .provider_endpoint_profiles import effective_endpoint_profiles
+
+    wanted = str(provider_id or "").strip().lower()
+    for profile in effective_endpoint_profiles(base_dir=current_base_dir, root_base_dir=root_base_dir):
+        if profile.enabled and profile.provider_family.lower() == wanted and str(profile.api_key or "").strip():
+            return str(profile.api_key).strip()
+    return ""
+
+
 def configured_provider_base_url(provider_id: str) -> tuple[str, str]:
     spec = _spec_for_provider(provider_id)
     if spec is None:

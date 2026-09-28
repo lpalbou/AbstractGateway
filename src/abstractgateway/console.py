@@ -2204,6 +2204,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                     runs, it is there. The only reasons it can be absent are
 	                     facts about this machine, and this line names them. -->
 	                <div class="entity-kv"><span class="entity-kv-key">Desktop icon</span><span class="entity-kv-val"><span id="gateway-host-tray-note" class="muted"></span></span></div>
+	                <!-- Start at login: a real switch (admin), confirmed, verified by GET. -->
+	                <div id="gateway-host-login-row" class="entity-kv hidden"><span class="entity-kv-key">Start at login</span><span class="entity-kv-val"><span id="gateway-host-login-text" class="muted">…</span> <button id="gateway-host-login-toggle" class="secondary hidden" type="button"></button></span></div>
 	              </div>
 	              <div class="actions">
 	                <button id="gateway-host-restart" class="secondary hidden" type="button">Restart gateway…</button>
@@ -2955,12 +2957,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     <div class="af-drawer__header">
       <div class="af-drawer__title">Docs assistant</div>
       <div class="af-drawer__header-actions">
-        <button id="assistant-clear" class="secondary" type="button" title="Clear conversation">Clear</button>
+        <button id="assistant-clear" class="secondary" type="button" title="Start a new conversation (nothing earlier is replayed)">New conversation</button>
         <button id="assistant-close" class="af-drawer__close" type="button" aria-label="Close assistant">×</button>
       </div>
     </div>
     <div class="af-drawer__body">
       <div id="assistant-messages" class="assistant-messages"></div>
+      <div id="assistant-replay" class="assistant-note" hidden></div>
       <div id="assistant-note" class="assistant-note">Answers are grounded on the gateway's own documentation (llms.txt) via the docs-qa workflow.</div>
       <form id="assistant-form" class="assistant-composer">
         <textarea id="assistant-input" rows="2" placeholder="Ask about the gateway…" aria-label="Question for the docs assistant"></textarea>
@@ -2976,7 +2979,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
   <script id="af-console-islands">/*__AF_CONSOLE_ISLANDS_JS__*/</script>
   <!--__ABSTRACTCORE_FRAGMENT_SCRIPT__-->
   <script>
-		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
+		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), voiceReasons: new Map(), providerStateLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
 		    const $ = (id) => document.getElementById(id);
 		    const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 		    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] || ch);
@@ -3362,8 +3365,35 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // ask() = start a catalog run of docs-qa with the gateway's OWN corpus
 	    // (GET /docs/corpus) and poll the run to completion. Never routes through
 	    // entity chat (a visit is billable and forms memories — kit contract).
-	    const ASSISTANT_BUNDLE = { registry_scope: "tenant_catalog", bundle_id: "docs-qa", bundle_version: "0.1.0", flow_id: "docsqa001" };
-	    const assistantState = { open: false, busy: false, corpus: null, corpusWarned: false, history: [] };
+	    // History (ADR-0026, operator ruling 2026-09-28): no client-side copy and
+	    // no turn cap. Each conversation is ONE gateway session; every question
+	    // starts with use_session_history, so the gateway replays the earlier
+	    // turns through the runtime's history window (newest whole turns up to
+	    // 50,000 tokens) and records the receipt (run.session_history), shown
+	    // when earlier messages were not replayed. New conversation = new session.
+	    const ASSISTANT_BUNDLE = { registry_scope: "tenant_catalog", bundle_id: "docs-qa", bundle_version: "0.1.1", flow_id: "docsqa001" };
+	    function assistantNewSessionId() {
+	      let id = "";
+	      try { if (typeof crypto !== "undefined" && crypto.randomUUID) id = crypto.randomUUID(); } catch {}
+	      return "gateway-docs-assistant:" + (id || (Date.now() + "-" + Math.random().toString(16).slice(2)));
+	    }
+	    const assistantState = { open: false, busy: false, corpus: null, corpusWarned: false, sessionId: assistantNewSessionId() };
+	    function assistantReplayNote(history) {
+	      const n = (v) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.trunc(v) : 0);
+	      const dropped = n(history && history.dropped_messages);
+	      if (!dropped) return "";
+	      const replayed = n(history.replayed_messages);
+	      const tokens = n(history.dropped_tokens);
+	      const budget = n(history.max_tokens);
+	      return `Earlier messages not replayed: ${dropped.toLocaleString("en-US")}${tokens ? ` (~${tokens.toLocaleString("en-US")} tokens)` : ""}. ` +
+	        `The model read the newest ${replayed.toLocaleString("en-US")} message${replayed === 1 ? "" : "s"}` +
+	        (budget ? ` (history window: the most recent ${budget.toLocaleString("en-US")} tokens of whole messages).` : ".");
+	    }
+	    function assistantShowReplay(history) {
+	      const text = assistantReplayNote(history);
+	      $("assistant-replay").textContent = text;
+	      $("assistant-replay").hidden = !text;
+	    }
 	    function assistantAppend(role, text, extraClass) {
 	      const div = document.createElement("div");
 	      div.className = `assistant-msg ${role}${extraClass ? ` ${extraClass}` : ""}`;
@@ -3404,11 +3434,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        body: JSON.stringify({
 	          ...ASSISTANT_BUNDLE,
 	          actor_id: "gateway",
+	          session_id: assistantState.sessionId,
 	          input_data: {
-	            question,
-	            history: assistantState.history.slice(-12),
+	            prompt: question,
 	            docs: corpus.text,
 	            app: corpus.app,
+	            use_session_history: true,
 	          },
 	        }),
 	      });
@@ -3422,7 +3453,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (status === "completed") {
 	          const out = run.output || {};
 	          const text = typeof out.response === "string" && out.response.trim() ? out.response : JSON.stringify(out);
-	          return text;
+	          return { text, history: run.session_history || null };
 	        }
 	        if (status === "failed" || status === "cancelled") {
 	          throw new Error(`docs-qa run ${status}: ${JSON.stringify(run.error || run.output || {}).slice(0, 300)}`);
@@ -3443,8 +3474,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      try {
 	        const answer = await assistantAsk(question);
 	        pending.classList.remove("pending");
-	        pending.textContent = answer;
-	        assistantState.history.push({ role: "user", content: question }, { role: "assistant", content: answer });
+	        pending.textContent = answer.text;
+	        assistantShowReplay(answer.history);
 	      } catch (err) {
 	        pending.classList.remove("pending");
 	        pending.classList.add("error");
@@ -3455,8 +3486,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	    }
 	    function assistantClear() {
-	      assistantState.history = [];
+	      assistantState.sessionId = assistantNewSessionId();
 	      $("assistant-messages").textContent = "";
+	      assistantShowReplay(null);
 	    }
 	    const TAB_TITLES = {
 	      users: ["Users & Entities", "People, tokens, and the summoned entities living on this gateway"],
@@ -4714,7 +4746,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      try {
 	        const payload = await api(withQuery("/api/gateway/voice/voices", { providers_only: true, compact: true }));
 	        const providers = providerOptionsFromCatalog(payload, ["tts_providers", "providers", "available_providers"]);
-	        setSelectOptions(provSel, providers, { emptyLabel: "Choose a provider…", disabled: !providers.length, selected: selProvider });
+	        setSelectOptions(provSel, providers, { emptyLabel: "Choose a provider…", disabled: !providers.length, selected: selProvider, labelMap: catalogProviderStateLabels(payload) });
 	        if (selProvider && providers.includes(selProvider)) {
 	          await loadEntityVoiceModels(selProvider, selModel, selVoice);
 	        }
@@ -4751,12 +4783,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      try {
 	        const payload = await api(withQuery("/api/gateway/voice/voices", { provider, model, compact: true }));
 	        const voices = voiceOptionsFromCatalog(payload, provider, model);
+	        const reason = voices.length ? "" : voiceUnavailableReason(payload);
 	        setSelectOptions(voiceSel, voices, {
-	          emptyLabel: voices.length ? "Use provider default voice" : "No voices discovered",
+	          emptyLabel: voices.length ? "Use provider default voice" : (reason ? "No voices — see why below" : "No voices discovered"),
 	          disabled: !voices.length,
 	          selected: selVoice,
 	          labelMap: state.voiceLabels,
 	        });
+	        if (reason) _entOut("entity-voice-out", reason);
 	      } catch (e) {
 	        setSelectOptions(voiceSel, [], { emptyLabel: "voices unavailable", disabled: true });
 	        _entOut("entity-voice-out", "voice discovery failed: " + (e.message || e));
@@ -7333,6 +7367,19 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       }
       return dedupeOptionValues(out);
     }
+    // Per-provider STATE the catalog reports (cloud voice providers:
+    // `needs_key` until a key is configured): a label map for THAT picker
+    // only — never written to the global providerLabels, where "openai"
+    // also names the text provider.
+    function catalogProviderStateLabels(payload) {
+      const out = new Map();
+      for (const item of arrayValue(payload?.items)) {
+        const rec = objectValue(item); const provider = catalogProviderFromItem(item);
+        if (!rec || !provider || !rec.needs_key) continue;
+        out.set(provider, `${catalogLabelFromItem(item, provider)} — ${textValue(rec.status) || "needs an API key"}`);
+      }
+      return out;
+    }
     function modelOptionsFromCatalog(payload, provider, valueKeys = [], mapKeys = []) {
       const wanted = String(provider || "").trim().toLowerCase();
       const out = [];
@@ -7756,6 +7803,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (!state.providerModels.has(cacheKey)) {
 	        const payload = await api(path);
 	        let providers = providerOptionsFromCatalog(payload, catalog.providerKeys, catalog.mapKeys);
+	        state.providerStateLabels.set(catalog.scope, catalogProviderStateLabels(payload));
 	        if (!providers.length && catalog.useConfiguredProviderFallback) providers = configuredProviderOptions();
 	        state.providerModels.set(cacheKey, providers);
 	      }
@@ -7792,12 +7840,22 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    async function fetchDefaultVoices(provider, model, row) {
 	      if (!provider || !isVoiceOutputDefault(row)) return [];
 	      const path = withQuery("/api/gateway/voice/voices", { provider, model, compact: true });
-	      const cacheKey = `voices::${provider}::${model || ""}::${path}`;
+	      const cacheKey = defaultVoicesKey(provider, model);
 	      if (!state.providerModels.has(cacheKey)) {
 	        const payload = await api(path);
 	        state.providerModels.set(cacheKey, voiceOptionsFromCatalog(payload, provider, model));
+	        state.voiceReasons.set(cacheKey, voiceUnavailableReason(payload));
 	      }
 	      return state.providerModels.get(cacheKey) || [];
+	    }
+	    function defaultVoicesKey(provider, model) {
+	      return `voices::${provider}::${model || ""}`;
+	    }
+	    // WHY a voice listing is empty, in the gateway's / AbstractVoice's own
+	    // words ("Supertonic is not installed: … Install it with: …", "OpenAI:
+	    // needs an API key (add it under Providers)") — never a bare "no voices".
+	    function voiceUnavailableReason(payload) {
+	      return textValue(payload?.unavailable_reason) || textValue(payload?.error) || "";
 	    }
 	    // OFFLINE IS A SUPPORTED MODE, NOT A DEGRADED ONE. A provider or model
 	    // field that can only offer *discovered* values is a dead end the moment
@@ -7931,12 +7989,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        throw e;
 	      }
 	      if (defaultModalMoved(row)) return;
+	      const reason = voices.length ? "" : (state.voiceReasons.get(defaultVoicesKey(provider, model)) || "");
 	      setSelectOptions(select, voices, {
-	        emptyLabel: voices.length ? "Use provider default voice" : "No voices discovered",
+	        emptyLabel: voices.length ? "Use provider default voice" : (reason ? "No voices — see why below" : "No voices discovered"),
 	        disabled: !voices.length,
 	        selected,
 	        labelMap: state.voiceLabels,
 	      });
+	      if (reason) {
+	        $("default-modal-message").textContent = reason;
+	        $("default-modal-message").className = "message warn";
+	      }
 	      if (selected && !voices.includes(selected)) {
 	        $("default-modal-message").textContent = `Configured voice "${selected}" is not currently in the discovered voice catalog for ${provider}/${model}.`;
 	        $("default-modal-message").className = "message error";
@@ -8538,6 +8601,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // (`route_unavailable`) is not "configured" in the sense that matters:
 	      // calls to it fail. Warning tone; the reason sits under the pill.
 	      if (defaultRowConfigured(row) && defaultRowRouteUnavailableReason(row)) return { label: "cannot run here", cls: "off" };
+	      // The host CAN run it, but the engine's software is not installed in
+	      // this Python environment (AbstractCore `engine_missing`): a third
+	      // state, distinct from "cannot run here" and from "not downloaded".
+	      if (defaultRowConfigured(row) && engineMissingInfo(row)) return { label: "engine missing", cls: "off" };
 	      if (defaultRowConfigured(row)) return { label: "configured", cls: "ok" };
 	      // AN UNSET PARENT WHOSE TASK ROWS ARE ALL SET IS NOT A PROBLEM. Core
 	      // proves it (`capability_route_tasks_cover_broad`): the task rows are
@@ -8586,6 +8653,36 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const info = row.route_unavailable;
 	      const pair = [info.provider, info.model].filter(Boolean).join(" / ");
 	      return `<div class="ui-field-msg tone-warn capability-route-unavailable" role="note" title="${esc(pair)}">Configured but cannot run on this computer: ${esc(reason)}</div>`;
+	    }
+	    // AbstractCore `engine_missing` {engine, name, reason, install[, engine_row]}
+	    // on a capability-default row, an apply-recommended entry or a
+	    // recommended-plan row. Never combined with `route_unavailable`.
+	    function engineMissingInfo(rec) {
+	      const info = rec && rec.engine_missing;
+	      if (!info || typeof info !== "object" || !String(info.reason || "").trim()) return null;
+	      return { reason: String(info.reason).trim(), install: String(info.install || "").trim(), engineRow: String(info.engine_row || "").trim() };
+	    }
+	    function engineMissingText(rec) {
+	      const info = engineMissingInfo(rec);
+	      if (!info) return "";
+	      return `engine missing: ${info.reason}${info.install ? ` — install: ${info.install}` : ""}`;
+	    }
+	    function engineMissingMarkup(rec, cls = "ui-field-msg tone-warn") {
+	      const info = engineMissingInfo(rec);
+	      if (!info) return "";
+	      const engines = info.engineRow ? " (Engines tab: Install)" : "";
+	      return `<div class="${cls} capability-engine-missing" role="note">Engine missing: ${esc(info.reason)}${info.install ? ` — install: <code>${esc(info.install)}</code>` : ""}${esc(engines)}</div>`;
+	    }
+	    // AbstractCore's fit verdict `needs_gpu_limit`: the model fits once macOS
+	    // lets the GPU use more memory (`fit.gpu_limit` = the exact sysctl).
+	    function gpuLimitText(rec) {
+	      const fit = (rec && typeof rec.fit === "object" && rec.fit) || {};
+	      const verdict = rec && (rec.fit_verdict || fit.verdict);
+	      if (verdict !== "needs_gpu_limit") return "";
+	      const gl = (rec && rec.gpu_limit) || fit.gpu_limit || null;
+	      if (!gl || !gl.command) return "fits after raising the GPU memory limit";
+	      const cost = [gl.needs_admin ? "admin" : "", gl.resets_at_restart ? "resets at restart" : ""].filter(Boolean).join("; ");
+	      return `fits after raising the GPU memory limit: ${gl.command}${cost ? ` (${cost})` : ""}`;
 	    }
 	    function defaultRowActionLabel(row) {
 	      if (row?.covered_by === "input.text") return row?.overrideable ? "Override" : "Covered by input.text";
@@ -8736,6 +8833,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (changed.length) parts.push(changed.map((r) => `${r.key}: ${pair(r.before)} \u2192 ${pair(r.after)}`).join("; "));
 	      if (cleared.length) parts.push(cleared.map((r) => `${r.key}: removed ${pair(r.before)} \u2014 cannot run on this computer: ${r.route_unavailable.reason}`).join("; "));
 	      if (kept.length) parts.push(`kept yours on ${kept.map((r) => `${r.key} (${pair(r.before)}${brokenWhy(r)})`).join(", ")}`);
+	      // Written (or kept) but its engine is not installed here: said per
+	      // route, with the exact install command (AbstractCore `engine_missing`).
+	      const missing = rows.filter((r) => engineMissingInfo(r));
+	      if (missing.length) parts.push(missing.map((r) => `${r.key}: ${engineMissingText(r)}`).join("; "));
 	      if (unavailable.length) {
 	        parts.push(`${unavailable.length === 1 ? "1 route has" : `${unavailable.length} routes have`} no recommendation this computer can run: `
 	          + unavailable.map((r) => `${r.key}${r.reason ? ` \u2014 ${r.reason}` : ""}${r.route_unavailable ? ` (configured ${pair(r.route_unavailable)} cannot run here either${r.route_unavailable.inherited ? `; ${r.route_unavailable.note}` : ""})` : ""}`).join("; "));
@@ -10153,8 +10254,52 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        _gwMsg("Gateway state unavailable: " + String(e.message || e), "error");
 	      }
 	      if (state.principal && state.principal.admin) {
+	        $("gateway-host-login-row").classList.remove("hidden");
+	        loadStartAtLogin("gateway-host");
 	        try { renderGatewayUpdate(await api("/api/gateway/host/update")); } catch {}
 	      }
+	    }
+	    // START AT LOGIN (GET/PUT /api/gateway/host/start-at-login, admin): one
+	    // switch rendered in the Gateway card ("gateway-host") and on the setup
+	    // guide's Done step ("first-run"). Every change is confirmed, then
+	    // VERIFIED by a fresh GET — the text shows the read-back, never the wish.
+	    const startAtLoginState = {};
+	    function renderStartAtLogin(scope, st, error) {
+	      const text = $(`${scope}-login-text`); const btn = $(`${scope}-login-toggle`);
+	      if (!text || !btn) return;
+	      startAtLoginState[scope] = st || null;
+	      if (!st) {
+	        text.textContent = error ? `unavailable — ${error}` : "…";
+	        btn.classList.add("hidden");
+	        return;
+	      }
+	      const lead = st.enabled ? "On" : ({ off: "Off", broken: "Needs repair", other: "Another gateway" }[st.state] || String(st.state));
+	      text.textContent = st.can_change ? `${lead} — ${st.summary}` : `${lead} — can't be changed here: ${st.reason}`;
+	      btn.classList.toggle("hidden", !st.can_change);
+	      btn.disabled = false;
+	      btn.textContent = st.enabled ? "Turn off…" : ({ broken: "Repair…", other: "Use this gateway…" }[st.state] || "Turn on…");
+	    }
+	    async function loadStartAtLogin(scope) {
+	      try { renderStartAtLogin(scope, await api("/api/gateway/host/start-at-login")); }
+	      catch (e) { renderStartAtLogin(scope, null, String(e.message || e)); }
+	    }
+	    async function toggleStartAtLogin(scope) {
+	      const st = startAtLoginState[scope]; if (!st || !st.can_change) return;
+	      const turnOn = !st.enabled;
+	      const ok = await confirmAction(turnOn
+	        ? { title: "Start AbstractGateway at login?", message: `Registers ${st.mechanism_label} so this gateway starts when you log in.${st.state === "other" ? ` It replaces the registration for another gateway (${st.other_data_dir || "another data folder"}).` : ""} The gateway running now is not restarted.`, confirmLabel: "Turn on" }
+	        : { title: "Stop starting at login?", message: "The gateway keeps running now; it will not start at your next login.", confirmLabel: "Turn off" });
+	      if (!ok) return;
+	      const btn = $(`${scope}-login-toggle`); if (btn) btn.disabled = true;
+	      let err = "";
+	      try { await api("/api/gateway/host/start-at-login", { method: "PUT", body: JSON.stringify({ enabled: turnOn, replace_other: st.state === "other" }) }); }
+	      catch (e) { err = String(e.message || e); }
+	      // Verify by GET, in every scope that shows the switch.
+	      await Promise.all(["gateway-host", "first-run"].filter((sc) => $(`${sc}-login-text`)).map(loadStartAtLogin));
+	      const now = startAtLoginState[scope];
+	      const msg = err ? `Start at login was not changed: ${err}` : (now && now.enabled === turnOn ? "" : `Start at login did not read back as ${turnOn ? "on" : "off"}: ${(now && now.summary) || "unknown"}`);
+	      if (scope === "gateway-host") _gwMsg(msg, msg ? "error" : "");
+	      else if (msg) { $("first-run-message").textContent = msg; $("first-run-message").className = "message error"; }
 	    }
 	    async function toggleGatewayPause() {
 	      const runner = state.hostRunner || {}; const btn = $("gateway-host-pause");
@@ -10313,6 +10458,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        setActiveTab(wantedTab);
 	        if (wantedTab === "models") { loadHostState(); startHostStatePoll(); }
 	        if (wantedTab === "catalog" || wantedTab === "engines" || wantedTab === "apps" || wantedTab === "network") openCoreTab(wantedTab);
+	        // `#apps?open=<id>&path=<p>` (app_proxy.py sends a signed-out page
+	        // load of /apps/<id>/... here): open that app, signed in.
+	        if (wantedTab === "apps") {
+	          const q = new URLSearchParams(String(location.hash || "").split("?").slice(1).join("?"));
+	          if (q.get("open")) appOpenFromLink(q.get("open"), q.get("path") || "/");
+	        }
 	      } else {
 	        setActiveTab(state.activeTab);
 	      }
@@ -10538,7 +10689,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <td>${row.model ? `<span class="ui-ellip" title="${esc(row.model)}">${esc(row.model)}</span>` + reasoningBadge : "-"}</td>
 	          <td>${weightsCellMarkup(row)}</td>
 	          <td>${source ? `<span class="badge">${esc(source)}</span>` : "-"}</td>
-	          <td><span class="state-pill ${esc(status.cls)}">${esc(status.label)}</span>${defaultRowUnavailableMarkup(row)}${defaultRowRouteUnavailableMarkup(row)}</td>
+	          <td><span class="state-pill ${esc(status.cls)}">${esc(status.label)}</span>${defaultRowUnavailableMarkup(row)}${defaultRowRouteUnavailableMarkup(row)}${defaultRowConfigured(row) ? engineMissingMarkup(row) : ""}</td>
 	        `;
 	        const actions = document.createElement("td");
 	        actions.className = "actions";
@@ -11414,6 +11565,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        emptyLabel: providers.length ? "Select provider..." : catalog.emptyProviders,
 	        disabled: !providers.length,
 	        selected: row.provider || "",
+	        labelMap: state.providerStateLabels.get(catalog.scope) || null,
 	      });
 	      // Same rule as the model lane: a provider field that can only offer
 	      // DISCOVERED values is a dead end when nothing can be reached — and a
@@ -12110,7 +12262,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           + `<div class="ui-card__body"><ul class="ui-facts"><li><b>${esc(provider)}</b></li><li><code class="ui-ellip" title="${esc(r.artifact || "")}">${esc(r.artifact || "")}</code></li><li class="ui-advanced">Route <code>${esc(r.route || "")}</code></li>${r.tier ? `<li class="ui-advanced">Chosen by memory: ${esc(r.tier)}</li>` : ""}</ul>`
           // AbstractCore's fit estimate doubts the pick: say so on the card
           // (the recommendation itself never switches model on its own).
+          + (gpuLimitText(r) ? `<div class="ui-alert tone-info first-run-gpu-limit" role="note"><span>${esc(firstRunCap(gpuLimitText(r)))}</span></div>` : "")
           + (r.warning ? `<div class="ui-alert tone-warn" role="note"><span>${esc(r.warning)}</span></div>` : "")
+          + engineMissingMarkup(r, "ui-alert tone-warn")
           + firstRunRouteUnavailableAlert(r.route)
           + body + `</div>`
           + `<div class="ui-card__actions">${cancel}${canDownload ? `<button class="ui-btn is-primary first-run-download" data-provider="${esc(r.provider)}" data-artifact="${esc(r.artifact)}">Download</button>` : ""}</div>`
@@ -12198,20 +12352,19 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function renderFirstRunDone() {
       const box = $("first-run-done-body");
       const url = gatewayBaseUrl();
-      const svc = ((firstRun.host && firstRun.host.gateway) || {}).service || {};
       const text = (state.defaults || []).find((r) => r && r.key === "output.text")
         || (state.defaults || []).find((r) => r && r.key === "input.text") || null;
       const model = text && text.provider && text.model ? `${state.providerLabels.get(text.provider) || text.provider} · ${text.model}` : "Not set yet";
       box.innerHTML = firstRunTiles([
         ["Console", `<code class="ui-ellip is-block" title="${esc(url)}/console">${esc(url)}/console</code>`, "Bookmark it: this is your gateway's home"],
         ["Default text model", `<span class="ui-ellip is-block" title="${esc(model)}">${esc(model)}</span>`, "Change it any time in Multimodal"],
-        ["Starts at login", esc(svc.installed ? "Yes" : "Not yet"), svc.installed ? esc(`Installed as a ${svc.mechanism || "service"}`) : "Otherwise, start the gateway yourself after a restart"],
+        ["Starts at login", `<span id="first-run-login-text" class="ui-ellip is-block">…</span>`, `<button id="first-run-login-toggle" class="secondary hidden" type="button"></button>`],
         ["This guide", "Setup guide", "The button at the top right reopens it"],
       ])
         + `<div class="ui-advanced"><div class="ui-section-title"><h3>From the command line</h3></div>`
         + firstRunKv([
           ["Sign in again", `<code>abstractgateway claim --open</code> <span class="subtle">(one-time link, from this machine)</span>`],
-          ["Start at login", svc.installed ? esc(`installed (${svc.mechanism}); remove with abstractgateway service uninstall`) : `<code>abstractgateway service install</code>`],
+          ["Start at login", `<code>abstractgateway service enable</code> · <code>abstractgateway service disable</code>`],
           ["Status", `<code>abstractgateway-config status</code>`],
         ]) + `</div>`
         // Who can reach the gateway, with its addresses to copy: the same
@@ -12222,6 +12375,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         + `<div id="first-run-console-tui"></div>`;
       mountNetworkPanel("first-run", $("first-run-network"));
       mountConsoleTuiNote($("first-run-console-tui"));
+      $("first-run-login-toggle").onclick = () => toggleStartAtLogin("first-run");
+      loadStartAtLogin("first-run");
     }
     async function refresh() {
       let me;
@@ -12698,6 +12853,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("models-refresh").onclick = () => { loadHostState(); startHostStatePoll(); };
 	    $("gateway-host-pause").onclick = toggleGatewayPause;
 	    $("gateway-host-restart").onclick = restartGateway;
+	    $("gateway-host-login-toggle").onclick = () => toggleStartAtLogin("gateway-host");
 	    $("gateway-host-quit").onclick = quitGateway;
 	    $("gateway-host-update-check").onclick = checkGatewayUpdate;
 	    $("gateway-host-update-start").onclick = startGatewayUpdate;

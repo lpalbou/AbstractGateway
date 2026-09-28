@@ -431,7 +431,9 @@ fn summary_rows(t: &TokenSet, w: &WelcomeSummary) -> Vec<View> {
 
 /// The finish row on the last step (Review), wizard mode: the web
 /// guide's "done" facts in one line, then Finish / Skip setup.
-pub fn finish_row(gcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
+/// `screen` is the Review screen's scope (stable while this row rebuilds):
+/// the start-at-login confirm opens there.
+pub fn finish_row(gcx: Scope, screen: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
     let admin = admin_now(ctx);
@@ -448,13 +450,19 @@ pub fn finish_row(gcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 .map(|row| row.pair_text())
         })
     });
-    let login = store
-        .welcome
-        .with(|w| match w.ready().and_then(|w| w.service_installed) {
-            Some(true) => "yes",
-            Some(false) => "not yet",
-            None => "unknown",
-        });
+    // Start at login: the gateway's own verdict (GET /host/start-at-login),
+    // with the toggle below — read once when this step shows.
+    if admin
+        && store
+            .op
+            .start_at_login
+            .with_untracked(|r| matches!(r, Loadable::NotAsked))
+    {
+        super::host::load_start_at_login(ctx);
+    }
+    let login_state = store.op.start_at_login.get();
+    let login = super::host::start_at_login_text(&login_state, admin);
+    let login_verb = login_state.ready().and_then(|st| st.verb());
     let model = model.unwrap_or_else(|| "not set yet".into());
     let facts = line(vec![
         span("Console ", t.text_muted),
@@ -462,7 +470,7 @@ pub fn finish_row(gcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         span("  ·  text model ", t.text_muted),
         span(model.clone(), t.text),
         span("  ·  starts at login ", t.text_muted),
-        span(login, t.text),
+        span(login.clone(), t.text),
     ]);
     // The web guide's "From the command line" block, on one line.
     let service = store.welcome.with(|w| {
@@ -491,7 +499,7 @@ pub fn finish_row(gcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             span("text model ", t.text_muted),
             span(model, t.text),
             span(" · starts at login ", t.text_muted),
-            span(login, t.text),
+            span(login.clone(), t.text),
             span(format!(" · {}/console", ui.conn_url.get()), t.text_muted),
         ])
     } else {
@@ -515,6 +523,15 @@ pub fn finish_row(gcx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 .element(gcx, t)
                 .build(),
         );
+        if let Some(verb) = login_verb {
+            let c_login = ctx.clone();
+            buttons = buttons.child(
+                Button::new(format!("Start at login: {verb}…"))
+                    .on_click(move || super::host::toggle_start_at_login(screen, &c_login, &|| {}))
+                    .element(gcx, t)
+                    .build(),
+            );
+        }
     }
     // 30+ rows: the facts and the web's command-line block get their own
     // lines above the controls. Below that the facts ride the controls'

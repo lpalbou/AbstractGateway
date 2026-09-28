@@ -19,6 +19,7 @@ version = "0.10.0"
 dependencies = [
  "abstractcore-console",
  "abstracttui",
+ "libc",
  "serde_json",
  "ureq",
 ]

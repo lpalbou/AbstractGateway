@@ -19,6 +19,9 @@ pub mod audio;
 pub mod health;
 /// The About facts: the vendored AbstractFramework identity descriptor.
 pub mod identity;
+/// Where is the gateway: flag > ABSTRACTGATEWAY_URL > the local gateway
+/// pointer (~/.abstractframework/gateway.json) > http://127.0.0.1:8080.
+pub mod pointer;
 /// The one query language every search box speaks (substring, or glob).
 pub mod query;
 pub mod store;
@@ -40,19 +43,22 @@ const HELP: &str = "\
 abstractgateway-console — configure an AbstractGateway from the terminal
 
 USAGE:
-  abstractgateway-console [--url URL] [--token TOKEN | --token-file PATH]
+  abstractgateway-console [--gateway-url URL] [--token <token>]
                           [--wizard|--browse] [--theme ID]
 
 OPTIONS:
-  --url URL      gateway base URL (default http://127.0.0.1:8080)
-  --token TOKEN  bearer token (default: $ABSTRACTGATEWAY_AUTH_TOKEN;
-                 prefer --token-file or the env var — argv is visible
-                 in `ps`)
+  --gateway-url URL
+                 the gateway's base URL; --url is an alias. Without it:
+                 $ABSTRACTGATEWAY_URL (legacy alias), else the address this
+                 computer's gateway records in
+                 ~/.abstractframework/gateway.json, else
+                 http://127.0.0.1:8080
+  --token <token>
+                 your token: the admin token `abstractgateway serve`
+                 prints at start, or a user token from Users
   --token-file PATH
-                 read the bearer token from a file (surrounding
-                 whitespace trimmed). On the gateway host the admin
-                 token is <data dir>/auth/bootstrap-admin-token
-                 (`abstractgateway serve` prints its data dir)
+                 read the token from a file (surrounding whitespace
+                 trimmed) instead of --token
   --wizard       start in the setup guide (wizard), whatever the
                  gateway's first-run state
   --browse       start in browse mode (tabs, no step gating)
@@ -63,16 +69,18 @@ OPTIONS:
   -h, --help     this help
   --version      print the version
   --about        print About (this console, AbstractFramework, the
-                 gateway's versions from GET /api/gateway/about at --url)
+                 gateway's versions from GET /api/gateway/about at
+                 --gateway-url)
 
 KEYS: Tab focus · Enter activate · Ctrl+N next step · Ctrl+P / Esc back
       (in a text field Esc first releases the caret) ·
       ] / [ next/back (outside text fields) ·
-      1-9,0 screens, A Apps (browse) ·
+      1-9,0 screens, A Apps, N Network (browse) ·
       Ctrl+G setup guide (browse: reopen; guide: go to any step, leave,
       or Skip setup) ·
       r refresh · F1 / ? About · F2 docs assistant (signed in) ·
-      F3 gateway host (pause/resume, restart, quit, update) ·
+      F3 gateway host (pause/resume, restart, quit, update, start at
+      login) ·
       Ctrl+L repaint · q / Ctrl+C quit
 
 SCREENS: 1 Connection · 2 Providers · 3 Routes · 4 Users & Entities ·
@@ -80,6 +88,8 @@ SCREENS: 1 Connection · 2 Providers · 3 Routes · 4 Users & Entities ·
          9 Models (browse, download, delete models on the gateway host) ·
          0 Engines (detect and install Ollama, LM Studio, MLX, llama.cpp) ·
          A Apps (browser apps, the desktop Assistant, Node.js) ·
+         N Network (who can reach the gateway: saved vs running, the
+         addresses to copy) ·
          Setup (the guide's welcome step: this computer at a glance)
 
 SCREEN KEYS (the footer lists each screen's keys):
@@ -89,6 +99,7 @@ SCREEN KEYS (the footer lists each screen's keys):
   Workflows  i import .flow · L reload from disk
   Apps       Enter/o open · i/u install/update · s/x start/stop · l log ·
              c cancel · t/T terminal · n Node.js · y copy
+  Network    ↑↓ Enter saves the mode · c copies an address
 
 SETUP GUIDE (the web console's first-run guide — its five steps,
 welcome · engines · model · apps · done, on eight screens here, through
@@ -130,7 +141,14 @@ fn parse_args(argv: &[String]) -> Result<Option<Args>, String> {
                 println!("abstractgateway-console {}", env!("CARGO_PKG_VERSION"));
                 return Ok(None);
             }
-            "--url" => url = it.next().cloned().ok_or("--url needs a value")?,
+            // `--gateway-url` is the one flag name every app and TUI shares;
+            // `--url` stays as its alias.
+            "--gateway-url" | "--url" => {
+                url = it
+                    .next()
+                    .cloned()
+                    .ok_or_else(|| format!("{a} needs a value"))?
+            }
             "--token" => {
                 token = it.next().cloned().ok_or("--token needs a value")?;
                 token_flag = true;
@@ -197,13 +215,15 @@ pub fn run_cli(argv: &[String]) -> i32 {
         }
     };
 
+    // Where is the gateway (pointer.rs): flag > env > pointer > default.
+    let resolved = pointer::resolve_now(&args.url);
+
     if args.about {
         // Works without a terminal and without a token (the route is public).
-        let url = ui::normalize_url(if args.url.is_empty() {
-            "http://127.0.0.1:8080"
-        } else {
-            &args.url
-        });
+        if let Some(w) = &resolved.warning {
+            eprintln!("abstractgateway-console: {w}");
+        }
+        let url = ui::normalize_url(&resolved.url);
         let read = api::GatewayClient::new(&url, None)
             .about()
             .map_err(|e| e.to_string());
@@ -225,6 +245,10 @@ pub fn run_cli(argv: &[String]) -> i32 {
         set_theme_by_id(&id);
     }
 
+    // Headless / SSH: never run a URL opener (the link is shown instead).
+    // AbstractCore's console owns the rule (one rule for both consoles).
+    let no_display = abstractcore_console::display_available().err();
+
     let env_token_set = std::env::var("ABSTRACTGATEWAY_AUTH_TOKEN")
         .map(|t| !t.trim().is_empty())
         .unwrap_or(false);
@@ -234,11 +258,9 @@ pub fn run_cli(argv: &[String]) -> i32 {
     let quitter = app.quitter();
     let (tx, rx) = mpsc::channel::<worker::Cmd>();
 
-    let url0 = if args.url.is_empty() {
-        "http://127.0.0.1:8080".to_string()
-    } else {
-        args.url.clone()
-    };
+    let url0 = resolved.url.clone();
+    let url_source = resolved.source;
+    let pointer_warning = resolved.warning.clone();
     let token0 = args.token.clone();
     let wizard0 = args.wizard;
 
@@ -266,6 +288,13 @@ pub fn run_cli(argv: &[String]) -> i32 {
         // the guide's Connection step (the terminal must sign in first).
         ui_state.wizard.set(wizard0.unwrap_or(true));
         ui_state.mode_forced.set(wizard0.is_some());
+        ui_state.url_source.set(url_source);
+        ui_state.pointer_home.set(pointer::home_dir());
+        if let Some(w) = pointer_warning.clone() {
+            // A bad pointer file: said once, visibly.
+            ui_state.pointer_notice.set(Some(w.clone()));
+            store.notice.set(Some(w));
+        }
         *ui_out.borrow_mut() = Some(ui_state);
         let prober: ui::ProberSlot = Rc::new(RefCell::new(None));
         // Production prober: ONE short-lived thread per verification,
@@ -313,6 +342,7 @@ pub fn run_cli(argv: &[String]) -> i32 {
             modal: Rc::new(RefCell::new(None)),
             entity_drawer: Rc::new(RefCell::new(None)),
             env_token_set,
+            no_display: no_display.clone(),
             prober,
             screens,
             screens_transport: screens_transport.clone(),
@@ -481,9 +511,31 @@ mod token_file_args {
     }
 
     #[test]
-    fn help_documents_the_token_file_and_where_the_admin_token_lives() {
-        assert!(super::HELP.contains("--token-file PATH"));
-        assert!(super::HELP.contains("<data dir>/auth/bootstrap-admin-token"));
+    fn help_gives_the_token_directly_and_names_where_it_comes_from() {
+        assert!(super::HELP.contains("[--gateway-url URL] [--token <token>]"));
+        assert!(super::HELP.contains("the admin token `abstractgateway serve`"));
+        // Operator rule (wave 2): the token is a direct parameter; the
+        // help never steers to an env var or a token file.
+        assert!(!super::HELP.contains("prefer"), "{}", super::HELP);
+        assert!(!super::HELP.contains("ABSTRACTGATEWAY_AUTH_TOKEN"));
+        assert!(!super::HELP.contains("bootstrap-admin-token"));
+    }
+
+    #[test]
+    fn gateway_url_is_the_flag_and_url_its_alias() {
+        let a = parse_args(&args(&["--gateway-url", "http://h:1"]))
+            .unwrap()
+            .unwrap();
+        assert_eq!(a.url, "http://h:1");
+        let a = parse_args(&args(&["--url", "http://h:2"]))
+            .unwrap()
+            .unwrap();
+        assert_eq!(a.url, "http://h:2");
+        let e = parse_args(&args(&["--gateway-url"]))
+            .err()
+            .expect("needs a value");
+        assert!(e.contains("--gateway-url needs a value"), "{e}");
+        assert!(super::HELP.contains("--url is an alias"));
     }
 }
 

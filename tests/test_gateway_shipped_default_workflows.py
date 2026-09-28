@@ -134,6 +134,17 @@ def test_every_force_included_bundle_is_tracked_by_git() -> None:
     import subprocess
 
     rel = [str(p.relative_to(ROOT)) for p in _force_included_bundle_files()]
+    # Only the gateway's OWN work tree can answer. Run from an sdist or an
+    # archive unpacked inside another repository, `git ls-files` would ask
+    # that PARENT repository and report every bundle as untracked.
+    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=ROOT, capture_output=True, text=True)
+    if top.returncode != 0:
+        pytest.skip(f"not inside a git work tree (an sdist or archive): {top.stderr.strip()}")
+    if Path(top.stdout.strip()).resolve() != ROOT.resolve():
+        pytest.skip(
+            f"the gateway at {ROOT} is not the root of its own git work tree (git answers for {top.stdout.strip()}): "
+            "an archive or sdist unpacked inside another repository cannot say what the gateway repo tracks"
+        )
     proc = subprocess.run(
         ["git", "ls-files", "--", *rel],
         cwd=ROOT,

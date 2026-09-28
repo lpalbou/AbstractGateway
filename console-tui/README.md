@@ -155,16 +155,15 @@ inside a 200 renders as failure (body over transport).
 
 ```sh
 cargo install abstractgateway-console
-# on the gateway host: the admin token file (`abstractgateway serve` prints its data dir)
-abstractgateway-console --url http://127.0.0.1:8081 \
-  --token-file "<data dir>/auth/bootstrap-admin-token"
-# or through the environment
-ABSTRACTGATEWAY_AUTH_TOKEN=... abstractgateway-console --url http://127.0.0.1:8081
+# the admin token is printed by `abstractgateway serve` when it starts
+abstractgateway-console --gateway-url http://127.0.0.1:8080 --token <token>
 ```
 
-`--token-file PATH` reads the token from a file (whitespace trimmed; an
-unreadable or empty file stops the launch with the reason). Prefer it, or
-the environment variable, over `--token`: argv is visible in `ps`.
+`--url` is an alias of `--gateway-url`. Without it the console uses
+`ABSTRACTGATEWAY_URL` (legacy alias), else `~/.abstractframework/gateway.json`
+(the address this computer's gateway records), else `http://127.0.0.1:8080`. `--token-file PATH` reads the token
+from a file instead (whitespace trimmed; an unreadable or empty file stops
+the launch with the reason).
 
 The crate is released from the AbstractGateway repository
 (`console-tui/`); see [CHANGELOG.md](CHANGELOG.md). The gateway-side guide is
@@ -176,8 +175,8 @@ The crate is released from the AbstractGateway repository
 ```sh
 cargo build
 cargo run -- --help
-# against a local gateway (token via env, preferred over argv):
-ABSTRACTGATEWAY_AUTH_TOKEN=... cargo run -- --url http://127.0.0.1:8080
+# against a local gateway:
+cargo run -- --gateway-url http://127.0.0.1:8090 --token <token>
 cargo run < /dev/null   # headless: prints a skip line, exits 0
 ```
 
@@ -185,12 +184,12 @@ Keys: `Tab` focus · `Enter` activate · `Ctrl+N` next step / `Ctrl+P`
 back (always work — `]`/`[` are alternates that text fields swallow) ·
 `Esc` back / close modal (in a screen's text field, the first `Esc`
 releases the caret so screen keys work again; page text fields never
-take the caret by themselves once connected) · `1-9`, `0`, `A` (Apps) screens (browse; the
+take the caret by themselves once connected) · `1-9`, `0`, `A` (Apps), `N` (Network) screens (browse; the
 screen bar is also clickable in browse) · `Ctrl+G` setup guide (browse:
 reopen; guide: go to any step, leave or Skip setup) · `r` refresh · `F1` / `?` About ·
 `F2` docs assistant (signed in; the web top bar's ✦ drawer) · `F3`
 gateway host panel (pause/resume, restart, quit, update check/install,
-tray; a paused banner shows on every screen) · `Ctrl+L` repaint · `q`
+tray, start at login; a paused banner shows on every screen) · `Ctrl+L` repaint · `q`
 (browse) / `Ctrl+C` quit. Per-screen actions sit in the footer, and a
 refused action always SAYS why (toast + footer) instead of doing
 nothing.

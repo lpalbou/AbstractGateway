@@ -843,10 +843,12 @@ APPS_SETTINGS: List[Dict[str, Any]] = [
     },
     {
         "name": "host", "key": "apps.host", "env": "ABSTRACTGATEWAY_APPS_HOST", "default": "127.0.0.1",
-        "label": "Where apps listen",
-        "help": "127.0.0.1 = this computer only. 0.0.0.0 = every network this computer is on (other machines can "
-                "open the apps; put them behind your own access control). Applies when an app next starts.",
+        "label": "Where apps listen (deprecated)",
+        "help": "Deprecated: apps always listen on 127.0.0.1 and open through the gateway at /apps/<id>/ "
+                "(the gateway's own address and port, sign-in included). Only a loopback address is accepted; "
+                "clear an old 0.0.0.0 here.",
         "placeholder": "127.0.0.1",
+        "deprecated": True,
     },
     {
         "name": "npm_registry", "key": "apps.npm_registry", "env": "ABSTRACTGATEWAY_APPS_NPM_REGISTRY",
@@ -892,16 +894,22 @@ def _validate_apps_value(name: str, raw: Any) -> str:
             raise RuntimeConfigError(f"{key}: {text!r} is not a valid port range (1-65535, low-high)")
         return f"{lo}-{hi}" if lo != hi else str(lo)
     if name == "host":
-        h = text.strip("[]")
+        # Deprecated (apps_manager.AppsManager.bind_host): apps always bind
+        # 127.0.0.1 and open through the gateway at /apps/<id>/. A loopback
+        # value is accepted (it changes nothing); any other is refused.
+        h = text.strip("[]").lower()
         try:
             import ipaddress
 
-            return str(ipaddress.ip_address(h))
+            if ipaddress.ip_address(h).is_loopback:
+                return str(ipaddress.ip_address(h))
         except ValueError:
-            pass
-        if h.lower() == "localhost" or re.match(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$", h):
-            return h.lower()
-        raise RuntimeConfigError(f"{key} is an IP address or a host name, e.g. 127.0.0.1 or 0.0.0.0 (got {text!r})")
+            if h == "localhost":
+                return h
+        raise RuntimeConfigError(
+            f"{key} is deprecated: apps always listen on 127.0.0.1 and open through the gateway at /apps/<id>/ "
+            f"(got {text!r}; only a loopback address is accepted)"
+        )
     if name in ("npm_registry", "pypi_url"):
         from urllib.parse import urlsplit
 
@@ -922,6 +930,8 @@ def _apps_setting_payload(stored: Dict[str, Any], name: str, env: Optional[Any] 
         "key": row["key"], "label": row["label"], "help": row["help"], "placeholder": row["placeholder"],
         "default": row["default"], "env_name": row["env"],
     }
+    if row.get("deprecated"):
+        out["deprecated"] = True
     if name in apps_stored and apps_stored[name] is not None:
         try:
             out.update({"value": _validate_apps_value(name, apps_stored[name]), "source": "stored"})

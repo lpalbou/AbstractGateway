@@ -656,6 +656,9 @@ def test_gateway_sandbox_text_generation_uses_server_side_endpoint_credentials(t
         def __init__(self, *, provider: str, model: str, llm_kwargs: dict[str, Any] | None = None, **_: Any) -> None:
             calls.append({"provider": provider, "model": model, "llm_kwargs": llm_kwargs or {}})
 
+        def set_provider_endpoint_profile_resolver(self, resolver: Any) -> None:  # the real client's seam
+            self.resolver = resolver
+
         def generate(self, **kwargs: Any) -> dict[str, Any]:
             calls.append({"generate": kwargs})
             return {"content": "sandbox ok", "usage": {"total_tokens": 3}}
@@ -739,6 +742,9 @@ def test_gateway_sandbox_text_generation_does_not_apply_console_prompt_caps(tmp_
     calls: list[dict[str, Any]] = []
 
     class FakeLLM:
+        def set_provider_endpoint_profile_resolver(self, resolver: Any) -> None:  # the real client's seam
+            self.resolver = resolver
+
         def __init__(self, *, provider: str, model: str, **_: Any) -> None:
             calls.append({"provider": provider, "model": model})
 
@@ -789,6 +795,9 @@ def test_gateway_sandbox_reasoning_rides_the_thinking_key_and_is_visible(tmp_pat
     calls: list[dict[str, Any]] = []
 
     class FakeLLM:
+        def set_provider_endpoint_profile_resolver(self, resolver: Any) -> None:  # the real client's seam
+            self.resolver = resolver
+
         def __init__(self, **_: Any) -> None:
             pass
 

@@ -562,12 +562,16 @@ def test_handover_code_is_single_use_and_expires(tmp_path: Path, monkeypatch: py
     assert m.redeem_handover("") is None
 
 
-# -- Continuum takes its address and gateway URL as launch flags -------------
-# Continuum 0.3.1 reads ~/.abstractcontinuum/settings.json, which beats the
-# environment: PORT/HOST/ABSTRACTCONTINUUM_GATEWAY_URL could lose to a user's
-# saved values. Flags beat the file. The other four apps still read the env.
+# -- Every app takes its address and gateway URL as launch flags ------------
+# Flags beat the environment and any settings file an app keeps (Continuum
+# 0.3.1 reads ~/.abstractcontinuum/settings.json, which beats the env). An
+# install of an app version that predates the flags (Observer <= 0.1.14,
+# Code <= 0.5.0, Entity <= 0.2.2), or of an unknown version, also gets the
+# legacy environment below the flags so it still binds the assigned port.
 
 _ADDRESS_ENV = ("PORT", "HOST", "ABSTRACTCONTINUUM_GATEWAY_URL", "ABSTRACTCODE_GATEWAY_URL")
+_FLAG_KW = dict(port=3002, host="127.0.0.1", gateway_url="http://127.0.0.1:8080")
+_FLAGS = ["--port", "3002", "--host", "127.0.0.1", "--gateway-url", "http://127.0.0.1:8080"]
 
 
 def _probe(row: dict) -> dict:
@@ -576,15 +580,27 @@ def _probe(row: dict) -> dict:
     return json.loads(urllib.request.urlopen(row["url"] + "probe", timeout=5).read().decode())
 
 
-def test_launch_config_flags_for_continuum_env_for_the_other_apps() -> None:
-    kw = dict(port=3002, host="127.0.0.1", gateway_url="http://127.0.0.1:8080")
-    flags, env = am.app_launch_config("continuum", gateway_url_env="ABSTRACTCONTINUUM_GATEWAY_URL", **kw)
-    assert flags == ["--port", "3002", "--host", "127.0.0.1", "--gateway-url", "http://127.0.0.1:8080"] and env == {}
+def test_launch_config_flags_for_every_app() -> None:
+    assert am.FLAG_CONFIGURED_APPS == {spec.id for spec in am.APPS}
     for spec in am.APPS:
-        if spec.id == "continuum":
-            continue
-        flags, env = am.app_launch_config(spec.id, gateway_url_env=spec.gateway_url_env, **kw)
-        assert flags == [] and env == {"PORT": "3002", "HOST": "127.0.0.1", spec.gateway_url_env: "http://127.0.0.1:8080"}, spec.id
+        flags, env = am.app_launch_config(spec.id, gateway_url_env=spec.gateway_url_env, version="9.0.0", **_FLAG_KW)
+        assert flags == _FLAGS and env == {}, spec.id
+
+
+@pytest.mark.parametrize(("app_id", "last_env_only", "first_flags"), [("observer", "0.1.14", "0.1.15"), ("code", "0.5.0", "0.5.1"), ("entity", "0.2.2", "0.2.3")])
+def test_launch_config_adds_the_legacy_env_for_versions_that_ignore_flags(app_id: str, last_env_only: str, first_flags: str) -> None:
+    spec = am.APP_BY_ID[app_id]
+    legacy = {"PORT": "3002", "HOST": "127.0.0.1", spec.gateway_url_env: "http://127.0.0.1:8080"}
+    for version in (last_env_only, "0.0.1", None):
+        assert am.app_launch_config(app_id, gateway_url_env=spec.gateway_url_env, version=version, **_FLAG_KW) == (_FLAGS, legacy), version
+    assert am.app_launch_config(app_id, gateway_url_env=spec.gateway_url_env, version=first_flags, **_FLAG_KW) == (_FLAGS, {})
+
+
+def test_launch_config_continuum_and_flow_never_get_the_env() -> None:
+    for app_id in ("continuum", "flow"):
+        spec = am.APP_BY_ID[app_id]
+        for version in ("0.3.1", None):
+            assert am.app_launch_config(app_id, gateway_url_env=spec.gateway_url_env, version=version, **_FLAG_KW) == (_FLAGS, {})
 
 
 def test_continuum_is_launched_with_flags_and_without_the_address_env(manager: am.AppsManager, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -605,7 +621,7 @@ def test_continuum_is_launched_with_flags_and_without_the_address_env(manager: a
     assert rec["bin_js"] == probe["argv"][0] and rec["cmd"][-1] == "http://127.0.0.1:18823"
 
 
-def test_other_apps_still_get_the_address_env_and_no_flags(manager: am.AppsManager, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_code_is_launched_with_flags_and_no_env_from_its_first_flag_version(manager: am.AppsManager, monkeypatch: pytest.MonkeyPatch) -> None:
     for name in _ADDRESS_ENV:
         monkeypatch.delenv(name, raising=False)
     _publish(manager, am.APP_BY_ID["code"], "1.0.0")
@@ -615,7 +631,22 @@ def test_other_apps_still_get_the_address_env_and_no_flags(manager: am.AppsManag
     monkeypatch.setenv(am.ENV_PORTS, f"{port}-{port}")
     row = manager.launch("code", gateway_url="http://127.0.0.1:18823")
     probe = _probe(row)
-    assert len(probe["argv"]) == 1 and probe["argv"][0].endswith("bin/cli.js")
+    assert probe["argv"][0].endswith("bin/cli.js")
+    assert probe["argv"][1:] == ["--port", str(port), "--host", manager.bind_host, "--gateway-url", "http://127.0.0.1:18823"]
+    assert not {"PORT", "HOST", "ABSTRACTCODE_GATEWAY_URL"} & set(probe["env"]), probe["env"]
+
+
+def test_an_older_code_install_gets_the_flags_and_the_legacy_env(manager: am.AppsManager, monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in _ADDRESS_ENV:
+        monkeypatch.delenv(name, raising=False)
+    _publish(manager, am.APP_BY_ID["code"], "0.5.0")
+    job, _ = manager.start_install("code", with_terminal=False, run_inline=True)
+    assert job.state == "succeeded", job.details
+    port = _free_port()
+    monkeypatch.setenv(am.ENV_PORTS, f"{port}-{port}")
+    row = manager.launch("code", gateway_url="http://127.0.0.1:18823")
+    probe = _probe(row)
+    assert probe["argv"][1:] == ["--port", str(port), "--host", manager.bind_host, "--gateway-url", "http://127.0.0.1:18823"]
     assert probe["env"]["PORT"] == str(port) and probe["env"]["HOST"] == manager.bind_host
     assert probe["env"]["ABSTRACTCODE_GATEWAY_URL"] == "http://127.0.0.1:18823"
 

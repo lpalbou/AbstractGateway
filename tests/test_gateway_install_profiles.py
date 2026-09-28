@@ -34,8 +34,9 @@ def test_base_install_is_remote_light_server() -> None:
     from abstractgateway.live_deltas import ABSTRACTRUNTIME_FLOOR
 
     assert f"AbstractRuntime>={ABSTRACTRUNTIME_FLOOR}" in deps
-    assert "abstractcore>=2.17.0" in deps
-    assert "abstractagent>=0.3.15" in deps
+    assert "abstractcore>=2.18.0" in deps
+    assert "abstractvoice>=0.13.0" in deps
+    assert "abstractagent>=0.3.17" in deps
     assert "AbstractMemory[lancedb]>=0.3.0" in deps
     assert "requests<3.0.0,>=2.32.5" in deps
     assert "urllib3<3.0.0,>=2.5.0" in deps
@@ -121,7 +122,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
 
     assert "embeddings" in extras
     embeddings = "\n".join(extras["embeddings"])
-    assert "abstractcore[embeddings]>=2.17.0" in embeddings
+    assert "abstractcore[embeddings]>=2.18.0" in embeddings
 
     assert "apple" in extras
     assert "gpu" in extras
@@ -130,8 +131,8 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "docs" in extras
 
     apple = "\n".join(extras["apple"])
-    assert "AbstractRuntime[apple]>=0.6.0" in apple
-    assert "abstractagent[apple]>=0.3.15" in apple
+    assert "AbstractRuntime[apple]>=0.7.0" in apple
+    assert "abstractagent[apple]>=0.3.17" in apple
     assert "abstractagent[all-apple]" not in apple
     assert "AbstractMemory[all-apple]>=0.3.0" in apple
     assert "abstractcore[" not in apple
@@ -139,8 +140,8 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "abstractvoice" not in apple
     assert "abstractmusic" not in apple
     gpu = "\n".join(extras["gpu"])
-    assert "AbstractRuntime[gpu]>=0.6.0" in gpu
-    assert "abstractagent[gpu]>=0.3.15" in gpu
+    assert "AbstractRuntime[gpu]>=0.7.0" in gpu
+    assert "abstractagent[gpu]>=0.3.17" in gpu
     assert "AbstractMemory[all-gpu]>=0.3.0" in gpu
     assert "abstractcore[" not in gpu
     assert "abstractvision" not in gpu
@@ -177,12 +178,12 @@ def test_basic_agent_bundle_is_packaged_as_default_gateway_entrypoint() -> None:
         == "abstractgateway/flows/bundles/deep-research@0.1.8.flow"
     )
     assert (
-        wheel_force["flows/bundles/coding-agent@0.2.6.flow"]
-        == "abstractgateway/flows/bundles/coding-agent@0.2.6.flow"
+        wheel_force["flows/bundles/coding-agent@0.2.8.flow"]
+        == "abstractgateway/flows/bundles/coding-agent@0.2.8.flow"
     )
     assert (
-        wheel_force["flows/bundles/co-scientist@0.2.0.flow"]
-        == "abstractgateway/flows/bundles/co-scientist@0.2.0.flow"
+        wheel_force["flows/bundles/co-scientist@0.2.1.flow"]
+        == "abstractgateway/flows/bundles/co-scientist@0.2.1.flow"
     )
     assert (
         wheel_force["flows/bundles/react-agent@0.1.0.flow"]
@@ -206,12 +207,12 @@ def test_basic_agent_bundle_is_packaged_as_default_gateway_entrypoint() -> None:
         == "flows/bundles/deep-research@0.1.8.flow"
     )
     assert (
-        sdist_force["flows/bundles/coding-agent@0.2.6.flow"]
-        == "flows/bundles/coding-agent@0.2.6.flow"
+        sdist_force["flows/bundles/coding-agent@0.2.8.flow"]
+        == "flows/bundles/coding-agent@0.2.8.flow"
     )
     assert (
-        sdist_force["flows/bundles/co-scientist@0.2.0.flow"]
-        == "flows/bundles/co-scientist@0.2.0.flow"
+        sdist_force["flows/bundles/co-scientist@0.2.1.flow"]
+        == "flows/bundles/co-scientist@0.2.1.flow"
     )
     assert (
         sdist_force["flows/bundles/react-agent@0.1.0.flow"]
@@ -225,6 +226,26 @@ def test_basic_agent_bundle_is_packaged_as_default_gateway_entrypoint() -> None:
         sdist_force["flows/bundles/memact-agent@0.1.0.flow"]
         == "flows/bundles/memact-agent@0.1.0.flow"
     )
+
+
+def test_docs_qa_bundle_is_packaged_at_the_console_pinned_version() -> None:
+    """docs-qa 0.1.1 (session-replayed history, no turn cap) ships in the wheel,
+    the sdist and both images, and it is the version both consoles pin."""
+    build = _pyproject()["tool"]["hatch"]["build"]["targets"]
+    wheel_force = build["wheel"]["force-include"]
+    sdist_force = build["sdist"]["force-include"]
+    name = "flows/bundles/docs-qa@0.1.1.flow"
+    assert (ROOT / name).is_file()
+    assert wheel_force[name] == "abstractgateway/" + name
+    assert sdist_force[name] == name
+    assert not [k for k in wheel_force if k.startswith("flows/bundles/docs-qa@") and k != name]
+    for dockerfile in ("Dockerfile", "Dockerfile.nvidia"):
+        assert name in (ROOT / "docker" / "abstractgateway-server" / dockerfile).read_text(encoding="utf-8")
+    assert f"!{name}" in (ROOT / ".gitignore").read_text(encoding="utf-8")
+    console = (ROOT / "src" / "abstractgateway" / "console.py").read_text(encoding="utf-8")
+    assert 'bundle_id: "docs-qa", bundle_version: "0.1.1"' in console
+    tui = (ROOT / "console-tui" / "src" / "ui" / "docs.rs").read_text(encoding="utf-8")
+    assert 'pub const BUNDLE_VERSION: &str = "0.1.1";' in tui
 
 
 def test_default_docker_image_uses_base_server_and_nvidia_uses_gpu_profile() -> None:

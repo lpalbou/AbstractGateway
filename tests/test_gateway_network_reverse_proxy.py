@@ -418,16 +418,16 @@ def test_apps_settings_registry_and_door(tmp_path, monkeypatch) -> None:
     apps = read_runtime_config(tmp_path)["apps"]
     assert apps["host"]["value"] == "127.0.0.1" and apps["host"]["source"] == "default"
 
-    out = write_runtime_config(tmp_path, {"apps.host": "0.0.0.0", "apps.ports": "3200 - 3299",
+    out = write_runtime_config(tmp_path, {"apps.host": "::1", "apps.ports": "3200 - 3299",
                                           "apps": {"npm_registry": "https://npm.example.com/"}}, actor="t")
-    assert out["applied"] == {"apps.host": "0.0.0.0", "apps.ports": "3200-3299", "apps.npm_registry": "https://npm.example.com"}
-    assert resolve_apps_setting(tmp_path, "host") == {**resolve_apps_setting(tmp_path, "host"), "value": "0.0.0.0", "source": "stored"}
+    assert out["applied"] == {"apps.host": "::1", "apps.ports": "3200-3299", "apps.npm_registry": "https://npm.example.com"}
+    assert resolve_apps_setting(tmp_path, "host") == {**resolve_apps_setting(tmp_path, "host"), "value": "::1", "source": "stored", "deprecated": True}
 
     # env = labeled fallback below the stored value (dm#194), shadowing reported.
-    monkeypatch.setenv("ABSTRACTGATEWAY_APPS_HOST", "10.0.0.5")
+    monkeypatch.setenv("ABSTRACTGATEWAY_APPS_HOST", "127.0.0.2")
     monkeypatch.setenv("ABSTRACTGATEWAY_APPS_NODE", "system")
     host = resolve_apps_setting(tmp_path, "host")
-    assert host["value"] == "0.0.0.0" and host["env_shadowed"] is True
+    assert host["value"] == "::1" and host["env_shadowed"] is True
     node = resolve_apps_setting(tmp_path, "node")
     assert node["value"] == "system" and node["source"] == "env" and "a saved value replaces it" in node["note"]
     monkeypatch.setenv("ABSTRACTGATEWAY_APPS_PORTS", "not-a-range")
@@ -435,7 +435,7 @@ def test_apps_settings_registry_and_door(tmp_path, monkeypatch) -> None:
     ports = resolve_apps_setting(tmp_path, "ports")
     assert ports["source"] == "default" and "ABSTRACTGATEWAY_APPS_PORTS='not-a-range'" in ports["invalid_env"]
 
-    for bad in ({"apps.ports": "70000"}, {"apps.host": "exa mple"}, {"apps.node": "relative/node"},
+    for bad in ({"apps.ports": "70000"}, {"apps.host": "0.0.0.0"}, {"apps.host": "192.168.1.5"}, {"apps.node": "relative/node"},
                 {"apps.npm_registry": "ftp://x"}, {"apps.bogus": "1"}, {"apps": "x"}):
         with pytest.raises(RuntimeConfigError):
             write_runtime_config(tmp_path, bad, actor="t")
@@ -448,17 +448,19 @@ def test_apps_settings_through_the_route_admin_only_and_audited(tmp_path, monkey
         created = client.post("/api/gateway/admin/users", headers=ADMIN,
                               json={"user_id": "eve", "tenant_id": "default", "roles": ["user"]})
         user = {"Authorization": f"Bearer {created.json()['token']}"}
-        assert client.post("/api/gateway/admin/runtime-config", headers=user, json={"apps.host": "0.0.0.0"}).status_code == 403
-        r = client.post("/api/gateway/admin/runtime-config", headers=ADMIN, json={"apps.host": "0.0.0.0"})
+        assert client.post("/api/gateway/admin/runtime-config", headers=user, json={"apps.host": "127.0.0.1"}).status_code == 403
+        r = client.post("/api/gateway/admin/runtime-config", headers=ADMIN, json={"apps.host": "127.0.0.1"})
         assert r.status_code == 200, r.text
-        assert r.json()["apps"]["host"]["value"] == "0.0.0.0"
+        assert r.json()["apps"]["host"]["value"] == "127.0.0.1"
         got = client.get("/api/gateway/admin/runtime-config", headers=ADMIN).json()["apps"]["host"]
-        assert got["source"] == "stored" and got["label"] == "Where apps listen"
+        assert got["source"] == "stored" and got["label"] == "Where apps listen (deprecated)" and got["deprecated"] is True
+        lan = client.post("/api/gateway/admin/runtime-config", headers=ADMIN, json={"apps.host": "0.0.0.0"})
+        assert lan.status_code == 400 and "/apps/<id>/" in lan.json()["detail"]
         bad = client.post("/api/gateway/admin/runtime-config", headers=ADMIN, json={"apps.ports": "x"})
         assert bad.status_code == 400
     lines = [e for e in _audit(tmp_path) if e.get("path") == "/api/gateway/admin/runtime-config" and e.get("method") == "POST"]
     ok = [e for e in lines if e["status"] == 200][-1]["setting_change"]
-    assert ok["ok"] is True and ok["applied"] == {"apps.host": "0.0.0.0"}
+    assert ok["ok"] is True and ok["applied"] == {"apps.host": "127.0.0.1"}
     refused = [e for e in lines if e["status"] == 400][-1]["setting_change"]
     assert refused["ok"] is False and refused["keys"] == ["apps.ports"]
 
@@ -481,12 +483,14 @@ def test_apps_config_cli(tmp_path, capsys) -> None:
     from abstractgateway.apps_cli import run_apps_command
 
     base = dict(apps_cmd="config", json=False, data_dir=str(tmp_path))
-    assert run_apps_command(SimpleNamespace(**base, apps_config_cmd="set", name="host", value="0.0.0.0")) == 0
+    assert run_apps_command(SimpleNamespace(**base, apps_config_cmd="set", name="host", value="0.0.0.0")) == 2  # deprecated: loopback only
+    capsys.readouterr()
+    assert run_apps_command(SimpleNamespace(**base, apps_config_cmd="set", name="host", value="::1")) == 0
     assert "apps.host" in capsys.readouterr().out
     assert run_apps_command(SimpleNamespace(**base, apps_config_cmd="set", name="ports", value="0")) == 2
     assert "refused:" in capsys.readouterr().err
     assert run_apps_command(SimpleNamespace(**{**base, "json": True}, apps_config_cmd="get", name="apps.host")) == 0
-    assert json.loads(capsys.readouterr().out)["host"]["value"] == "0.0.0.0"
+    assert json.loads(capsys.readouterr().out)["host"]["value"] == "::1"
     assert run_apps_command(SimpleNamespace(**base, apps_config_cmd="get", name="nope")) == 1
 
 
@@ -550,7 +554,7 @@ def test_three_doors_refuse_a_bad_origin_with_the_same_sentence(tmp_path, monkey
 @pytest.mark.parametrize(
     "name,good,bad",
     [
-        ("host", "0.0.0.0", "exa mple"),
+        ("host", "::1", "0.0.0.0"),
         ("ports", "3200-3299", "70000"),
         ("node", "managed", "relative/node"),
         ("npm_registry", "https://npm.example.com", "ftp://npm.example.com"),
@@ -623,14 +627,30 @@ def test_apps_manager_reads_the_settings_door(tmp_path, monkeypatch) -> None:
 
     for name in ("HOST", "PORTS", "NODE", "NPM_REGISTRY", "PYPI_URL"):
         monkeypatch.delenv(f"ABSTRACTGATEWAY_APPS_{name}", raising=False)
-    write_runtime_config(tmp_path, {"apps.host": "0.0.0.0", "apps.ports": "3200-3299",
+    write_runtime_config(tmp_path, {"apps.ports": "3200-3299",
                                     "apps.npm_registry": "https://npm.example.com"}, actor="t")
     m = AppsManager(tmp_path)
-    assert m.bind_host == "0.0.0.0"
+    assert m.bind_host == "127.0.0.1"
     assert m.port_range() == ((3200, 3299), True)
     assert m.registry_url == "https://npm.example.com"
     assert m.pypi_url == "https://pypi.org/pypi"  # default rung
+
+
+def test_apps_host_is_deprecated_apps_always_bind_loopback(tmp_path, monkeypatch, caplog) -> None:
+    """apps.host: an old stored 0.0.0.0 (or the env) is refused with ONE
+    warning; apps bind 127.0.0.1 and open through the gateway at /apps/<id>/."""
+    import logging
+
+    from abstractgateway.apps_manager import AppsManager
+    from abstractgateway.runtime_config import _read_store, _write_store
+
+    stored = _read_store(tmp_path)
+    stored["apps"] = {"host": "0.0.0.0"}  # written by an older gateway
+    _write_store(tmp_path, stored)
     monkeypatch.setenv("ABSTRACTGATEWAY_APPS_HOST", "10.9.9.9")
-    assert m.bind_host == "0.0.0.0"  # stored beats env (dm#194)
-    write_runtime_config(tmp_path, {"apps.host": ""}, actor="t")
-    assert m.bind_host == "10.9.9.9"  # cleared: the env fallback rung, read at use
+    m = AppsManager(tmp_path)
+    with caplog.at_level(logging.WARNING, logger="abstractgateway.apps_manager"):
+        assert m.bind_host == "127.0.0.1"
+        assert m.bind_host == "127.0.0.1"
+    warned = [r for r in caplog.records if "apps.host is deprecated" in r.getMessage()]
+    assert len(warned) == 1 and "0.0.0.0" in warned[0].getMessage()
