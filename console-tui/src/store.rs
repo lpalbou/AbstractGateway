@@ -2839,6 +2839,11 @@ pub struct VoicesData {
     pub provider: String,
     pub model: String,
     pub voices: Vec<String>,
+    /// Why the listing is empty, in the gateway's / AbstractVoice's words
+    /// (`unavailable_reason`, else `error`): "Supertonic is not installed:
+    /// … Install it with: …", "OpenAI: needs an API key (add it under
+    /// Providers)". None when voices are listed or nothing was said.
+    pub unavailable_reason: Option<String>,
 }
 
 impl VoicesData {
@@ -2863,10 +2868,18 @@ impl VoicesData {
                 }
             }
         }
+        let unavailable_reason = if voices.is_empty() {
+            s(v, "unavailable_reason")
+                .or_else(|| s(v, "error"))
+                .filter(|r| !r.trim().is_empty())
+        } else {
+            None
+        };
         VoicesData {
             provider: provider.to_string(),
             model: model.to_string(),
             voices,
+            unavailable_reason,
         }
     }
 }

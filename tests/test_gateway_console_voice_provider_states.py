@@ -50,3 +50,27 @@ def test_state_labels_are_scoped_to_the_voice_pickers() -> None:
     proc = subprocess.run([require_node(), f.name], capture_output=True, text=True, timeout=60, check=False)
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout) == [["openai", "OpenAI — needs an API key (add it under Providers)"]]
+
+
+def test_voice_pickers_show_why_no_voices_are_listed() -> None:
+    html = _html()
+    # Both voice selects (route editor + entity voice) say the reason.
+    assert html.count('"No voices — see why below"') == 2
+    assert "state.voiceReasons.set(cacheKey, voiceUnavailableReason(payload));" in html
+    assert 'if (reason) _entOut("entity-voice-out", reason);' in html
+    fns = "\n".join(_function(html, n) for n in ("textValue", "voiceUnavailableReason"))
+    cases = [
+        {"items": [], "unavailable_reason": "Supertonic is not installed: onnxruntime is missing"},
+        {"items": [], "error": "OpenAI audio requires OPENAI_API_KEY"},
+        {"items": []},
+    ]
+    script = fns + f"\nconsole.log(JSON.stringify({json.dumps(cases)}.map(voiceUnavailableReason)));"
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as f:
+        f.write(script)
+    proc = subprocess.run([require_node(), f.name], capture_output=True, text=True, timeout=60, check=False)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == [
+        "Supertonic is not installed: onnxruntime is missing",
+        "OpenAI audio requires OPENAI_API_KEY",
+        "",
+    ]

@@ -2978,7 +2978,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
   <script id="af-console-islands">/*__AF_CONSOLE_ISLANDS_JS__*/</script>
   <!--__ABSTRACTCORE_FRAGMENT_SCRIPT__-->
   <script>
-		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), providerStateLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
+		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), voiceReasons: new Map(), providerStateLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
 		    const $ = (id) => document.getElementById(id);
 		    const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 		    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] || ch);
@@ -4753,12 +4753,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      try {
 	        const payload = await api(withQuery("/api/gateway/voice/voices", { provider, model, compact: true }));
 	        const voices = voiceOptionsFromCatalog(payload, provider, model);
+	        const reason = voices.length ? "" : voiceUnavailableReason(payload);
 	        setSelectOptions(voiceSel, voices, {
-	          emptyLabel: voices.length ? "Use provider default voice" : "No voices discovered",
+	          emptyLabel: voices.length ? "Use provider default voice" : (reason ? "No voices — see why below" : "No voices discovered"),
 	          disabled: !voices.length,
 	          selected: selVoice,
 	          labelMap: state.voiceLabels,
 	        });
+	        if (reason) _entOut("entity-voice-out", reason);
 	      } catch (e) {
 	        setSelectOptions(voiceSel, [], { emptyLabel: "voices unavailable", disabled: true });
 	        _entOut("entity-voice-out", "voice discovery failed: " + (e.message || e));
@@ -7808,12 +7810,22 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    async function fetchDefaultVoices(provider, model, row) {
 	      if (!provider || !isVoiceOutputDefault(row)) return [];
 	      const path = withQuery("/api/gateway/voice/voices", { provider, model, compact: true });
-	      const cacheKey = `voices::${provider}::${model || ""}::${path}`;
+	      const cacheKey = defaultVoicesKey(provider, model);
 	      if (!state.providerModels.has(cacheKey)) {
 	        const payload = await api(path);
 	        state.providerModels.set(cacheKey, voiceOptionsFromCatalog(payload, provider, model));
+	        state.voiceReasons.set(cacheKey, voiceUnavailableReason(payload));
 	      }
 	      return state.providerModels.get(cacheKey) || [];
+	    }
+	    function defaultVoicesKey(provider, model) {
+	      return `voices::${provider}::${model || ""}`;
+	    }
+	    // WHY a voice listing is empty, in the gateway's / AbstractVoice's own
+	    // words ("Supertonic is not installed: … Install it with: …", "OpenAI:
+	    // needs an API key (add it under Providers)") — never a bare "no voices".
+	    function voiceUnavailableReason(payload) {
+	      return textValue(payload?.unavailable_reason) || textValue(payload?.error) || "";
 	    }
 	    // OFFLINE IS A SUPPORTED MODE, NOT A DEGRADED ONE. A provider or model
 	    // field that can only offer *discovered* values is a dead end the moment
@@ -7947,12 +7959,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        throw e;
 	      }
 	      if (defaultModalMoved(row)) return;
+	      const reason = voices.length ? "" : (state.voiceReasons.get(defaultVoicesKey(provider, model)) || "");
 	      setSelectOptions(select, voices, {
-	        emptyLabel: voices.length ? "Use provider default voice" : "No voices discovered",
+	        emptyLabel: voices.length ? "Use provider default voice" : (reason ? "No voices — see why below" : "No voices discovered"),
 	        disabled: !voices.length,
 	        selected,
 	        labelMap: state.voiceLabels,
 	      });
+	      if (reason) {
+	        $("default-modal-message").textContent = reason;
+	        $("default-modal-message").className = "message warn";
+	      }
 	      if (selected && !voices.includes(selected)) {
 	        $("default-modal-message").textContent = `Configured voice "${selected}" is not currently in the discovered voice catalog for ${provider}/${model}.`;
 	        $("default-modal-message").className = "message error";

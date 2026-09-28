@@ -9602,3 +9602,63 @@ fn the_current_screen_key_keeps_the_screen_keys_live() {
         "w still reaches the screen:\n{s}"
     );
 }
+
+/// The voice picker says WHY a provider/model lists no voices (the
+/// gateway's / AbstractVoice's `unavailable_reason`), not a bare "none".
+#[test]
+fn the_voice_picker_shows_why_no_voices_are_listed() {
+    use abstractgateway_console::store::VoicesData;
+    let why = "Supertonic is not installed: the Python package onnxruntime is missing. Install it with: pip install \"abstractvoice[supertonic]\"";
+    let d = VoicesData::from_value(
+        "supertonic",
+        "supertonic-3",
+        &json!({"items": [], "unavailable_reason": why}),
+    );
+    assert_eq!(d.unavailable_reason.as_deref(), Some(why));
+    let d = VoicesData::from_value(
+        "openai",
+        "tts-1",
+        &json!({"items": [], "error": "OpenAI audio requires OPENAI_API_KEY"}),
+    );
+    assert_eq!(
+        d.unavailable_reason.as_deref(),
+        Some("OpenAI audio requires OPENAI_API_KEY")
+    );
+    let d = VoicesData::from_value(
+        "supertonic",
+        "supertonic-3",
+        &json!({"items": [{"profile_id": "M1"}], "unavailable_reason": why}),
+    );
+    assert_eq!(
+        d.unavailable_reason, None,
+        "listed voices: nothing to explain"
+    );
+
+    let mut h = harness_sized(Size::new(150, 44));
+    h.connect_as_admin();
+    h.goto_screen(2);
+    h.store.routes.set(Loadable::Ready(routes_fixture()));
+    h.turns(2);
+    h.ui.route_sel.set(4); // output.voice
+    h.key(b"\r");
+    h.turns(3);
+    let (p, m) = match h.find_cmd(|c| matches!(c, Cmd::LoadVoices { .. })) {
+        Some(Cmd::LoadVoices { provider, model }) => (provider, model),
+        other => panic!("the editor asks for the pair's voices, got {other:?}"),
+    };
+    h.store.voices.set(Loadable::Ready(VoicesData::from_value(
+        &p,
+        &m,
+        &json!({"items": [], "unavailable_reason": why}),
+    )));
+    let s = h.turns(3);
+    assert!(
+        s.contains("Supertonic is not installed: the Python package"),
+        "{s}"
+    );
+    assert!(
+        s.contains("Install it with: pip install") && s.contains("\"abstractvoice[supertonic]\""),
+        "{s}"
+    );
+    assert!(!s.contains("no voices reported"), "{s}");
+}

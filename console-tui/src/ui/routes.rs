@@ -1880,13 +1880,29 @@ pub fn open_route_editor(cx: Scope, ctx: &Ctx, row: RouteRow) {
                             match store.voices.get() {
                                 Loadable::Ready(d) if d.provider == pair.0 && d.model == pair.1 => {
                                     if d.voices.is_empty() {
+                                        // The reason when the gateway gave
+                                        // one (not installed / needs a key).
                                         return field(
                                             &t,
                                             "voice",
-                                            line(vec![span(
-                                                "no voices reported — the provider default applies",
-                                                t.text_muted,
-                                            )]),
+                                            match &d.unavailable_reason {
+                                                Some(why) => {
+                                                    let lines = super::util::wrap_text(why, 52);
+                                                    let mut col = Element::new().style(
+                                                        LayoutStyle::column()
+                                                            .h(lines.len() as i32)
+                                                            .shrink(0.0),
+                                                    );
+                                                    for l in lines {
+                                                        col = col.child(line(vec![span(l, t.warn)]));
+                                                    }
+                                                    col.build()
+                                                }
+                                                None => line(vec![span(
+                                                    "no voices reported — the provider default applies",
+                                                    t.text_muted,
+                                                )]),
+                                            },
                                         );
                                     }
                                     let opts: Vec<SelectOption> = std::iter::once(
