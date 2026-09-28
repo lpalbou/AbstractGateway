@@ -31,6 +31,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import tempfile
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -72,7 +73,8 @@ def serve_owns_pointer(data_dir: Path, *, existing: Optional[Dict[str, Any]], de
 
 
 def write_gateway_pointer(*, url: str, port: int, data_dir: Path, written_by: str, path: Optional[Path] = None) -> Path:
-    """Write the pointer atomically (tmp file + replace), mode 0600."""
+    """Write the pointer atomically (fresh temp file + replace), mode 0600;
+    a symlink at the target is replaced, never followed."""
     p = path or gateway_pointer_path()
     host = str(url).split("://", 1)[-1].rsplit(":", 1)[0]
     if host not in _LOOPBACK_HOSTS:
@@ -86,15 +88,25 @@ def write_gateway_pointer(*, url: str, port: int, data_dir: Path, written_by: st
         "written_by": str(written_by),
     }
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(p.name + f".{os.getpid()}.tmp")
-    fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+    # The temp file is created fresh (mkstemp: random name, O_EXCL, mode
+    # 0600), so a symlink planted at a predictable temp name cannot redirect
+    # the write. os.replace renames onto the target: a symlink at the target
+    # is REPLACED by the regular file, never followed.
+    fd, tmp_name = tempfile.mkstemp(dir=str(p.parent), prefix=f".{p.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
     try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
         os.chmod(tmp, 0o600)
-    except OSError:
-        pass
-    os.replace(tmp, p)
+        os.replace(tmp, p)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
     return p
 
 

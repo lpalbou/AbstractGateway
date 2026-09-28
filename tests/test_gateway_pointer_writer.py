@@ -139,3 +139,45 @@ def test_pointer_status_for_network_status(tmp_path: Path) -> None:
     st = pointer_status(tmp_path / "other", running_port=8095, path=p)
     assert st["this_data_dir"] is False and st["matches_running"] is False
     assert pointer_status(tmp_path / "d", running_port=None, path=p)["matches_running"] is None
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink and mode semantics")
+def test_a_symlink_at_the_target_is_replaced_never_followed(tmp_path: Path) -> None:
+    home = tmp_path / "home" / ".abstractframework"
+    home.mkdir(parents=True)
+    victim = tmp_path / "victim.txt"
+    victim.write_text("do not touch\n")
+    p = home / "gateway.json"
+    p.symlink_to(victim)
+    write_gateway_pointer(url="http://127.0.0.1:8081", port=8081, data_dir=tmp_path / "data", written_by="serve", path=p)
+    assert victim.read_text() == "do not touch\n", "the write followed the symlink"
+    assert not p.is_symlink() and stat.S_IMODE(p.stat().st_mode) == 0o600
+    assert json.loads(p.read_text())["port"] == 8081
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlink semantics")
+def test_a_symlink_planted_at_a_predictable_temp_name_is_never_written_through(tmp_path: Path) -> None:
+    home = tmp_path / "home" / ".abstractframework"
+    home.mkdir(parents=True)
+    victim = tmp_path / "victim.txt"
+    victim.write_text("do not touch\n")
+    p = home / "gateway.json"
+    # The old writer's temp name was gateway.json.<pid>.tmp.
+    (home / f"gateway.json.{os.getpid()}.tmp").symlink_to(victim)
+    write_gateway_pointer(url="http://127.0.0.1:8081", port=8081, data_dir=tmp_path / "data", written_by="serve", path=p)
+    assert victim.read_text() == "do not touch\n"
+    assert json.loads(p.read_text())["port"] == 8081 and stat.S_IMODE(p.stat().st_mode) == 0o600
+
+
+def test_a_failed_write_leaves_no_temp_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import abstractgateway.gateway_pointer as gp
+
+    p = tmp_path / "home" / ".abstractframework" / "gateway.json"
+
+    def _boom(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(gp.os, "replace", _boom)
+    with pytest.raises(OSError):
+        write_gateway_pointer(url="http://127.0.0.1:8081", port=8081, data_dir=tmp_path, written_by="serve", path=p)
+    assert list(p.parent.iterdir()) == []

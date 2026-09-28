@@ -7,8 +7,8 @@
 use std::path::{Path, PathBuf};
 
 use abstractgateway_console::pointer::{
-    current_uid, follow_pointer, loopback_origin, read_pointer, resolve, PointerRead, UrlSource,
-    BUILTIN_GATEWAY_URL,
+    current_uid, follow_pointer, loopback_origin, pointer_path, read_pointer, resolve, PointerRead,
+    UrlSource, BUILTIN_GATEWAY_URL, MAX_POINTER_BYTES,
 };
 use serde_json::Value;
 
@@ -160,7 +160,7 @@ fn only_a_regular_file_of_this_user() {
         std::os::unix::fs::symlink(&target, &link).unwrap();
         match read_pointer(&link, current_uid()) {
             PointerRead::Refused { warning } => {
-                assert!(warning.contains("not a regular file"), "{warning}")
+                assert!(warning.contains("it is a symbolic link"), "{warning}")
             }
             r => panic!("a symlink is refused: {r:?}"),
         }
@@ -196,4 +196,80 @@ fn a_gateway_restarted_on_a_new_port_is_followed() {
         (next.url.as_str(), next.source),
         ("http://127.0.0.1:18894", UrlSource::Pointer)
     );
+}
+
+// The kit's reader (app-server gateway_pointer.js, v0.1.14) and abstractcode's
+// refuse `mode & 0o022` the same way; the shared case table has no mode case.
+#[cfg(unix)]
+#[test]
+fn a_pointer_other_users_can_write_is_refused() {
+    use std::os::unix::fs::PermissionsExt;
+    let valid = std::fs::read_to_string(fixtures().join("valid.json")).unwrap();
+    let h = home("mode");
+    let p = put(&h, &valid);
+    for (mode, believed) in [(0o600, true), (0o644, true), (0o664, false), (0o646, false)] {
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(mode)).unwrap();
+        match read_pointer(&p, current_uid()) {
+            PointerRead::Ok { url } if believed => assert_eq!(url, "http://127.0.0.1:8081"),
+            PointerRead::Refused { warning } if !believed => assert!(
+                warning.contains(&format!("other users can write it (mode {mode:o})")),
+                "{warning}"
+            ),
+            other => panic!("mode {mode:o}: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn an_oversized_pointer_is_refused() {
+    let valid = std::fs::read_to_string(fixtures().join("valid.json")).unwrap();
+    let h = home("size");
+    let pad = " ".repeat(MAX_POINTER_BYTES as usize + 1 - valid.len());
+    let p = put(&h, &format!("{valid}{pad}"));
+    match read_pointer(&p, current_uid()) {
+        PointerRead::Refused { warning } => assert!(
+            warning.contains("larger than the 64 KiB a pointer file may be"),
+            "{warning}"
+        ),
+        other => panic!("an oversized pointer must be refused: {other:?}"),
+    }
+    // Exactly at the bound is still read.
+    let pad = " ".repeat(MAX_POINTER_BYTES as usize - valid.len());
+    let p = put(&h, &format!("{valid}{pad}"));
+    assert_eq!(
+        read_pointer(&p, current_uid()),
+        PointerRead::Ok {
+            url: "http://127.0.0.1:8081".into()
+        }
+    );
+}
+
+/// A FIFO in the pointer's place must not hang the console: the open is
+/// non-blocking and the fstat refuses it. Run on a thread with a deadline so
+/// a regression FAILS instead of hanging the suite.
+#[cfg(unix)]
+#[test]
+fn a_fifo_in_the_pointers_place_never_blocks() {
+    use std::os::unix::ffi::OsStrExt;
+    let h = home("fifo");
+    let path = pointer_path(&h);
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    // SAFETY: a valid NUL-terminated path; mkfifo has no other preconditions.
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "mkfifo");
+    let (tx, rx) = std::sync::mpsc::channel();
+    let p = path.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(read_pointer(&p, current_uid()));
+    });
+    match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+        Ok(PointerRead::Refused { warning }) => {
+            assert!(warning.contains("not a regular file"), "{warning}")
+        }
+        Ok(other) => panic!("a FIFO must be refused: {other:?}"),
+        Err(_) => {
+            // Unblock the stuck reader so the process can exit.
+            let _ = std::fs::OpenOptions::new().write(true).open(&path);
+            panic!("reading a FIFO pointer blocked (no O_NONBLOCK)");
+        }
+    }
 }

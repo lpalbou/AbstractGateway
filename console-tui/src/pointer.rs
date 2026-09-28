@@ -12,8 +12,16 @@
 //! is no "saved login" step. The pointer is believed only when `schema` is 1,
 //! the url is http(s) on 127.0.0.1 / ::1 / localhost with nothing after the
 //! port and no user info, and — on POSIX — the file is a regular file (not a
-//! symlink) owned by the current user. A bad file is ignored with ONE visible
-//! notice; a missing one is silent. The same rules and the same shared case
+//! symlink) owned by the current user and writable by nobody else (no
+//! group/world write bit). The checks run on the OPENED file (POSIX:
+//! `O_NOFOLLOW | O_NONBLOCK`, then `fstat`) and the bytes are read from that
+//! same descriptor, so the file cannot be swapped between the check and the
+//! read and a FIFO in its place cannot hang the console. A pointer is a few
+//! hundred bytes of configuration: a file over [`MAX_POINTER_BYTES`] is
+//! refused, never read (a config-file bound, not a model-input cap). A bad
+//! file is ignored with ONE visible notice; a missing one is silent. The
+//! reader matches abstractcode's `tui/src/gateway_pointer.rs` and the kit's
+//! app-server `gateway_pointer.js` (v0.1.14). The same rules and the same shared case
 //! table (`tests/fixtures/gateway_pointer/`, byte-identical to AbstractUIC's
 //! `ui-kit/scripts/fixtures/gateway_pointer/`) as every other reader.
 //!
@@ -21,9 +29,14 @@
 //! failed connection, so a gateway restarted on a new port is followed; a
 //! flag or the environment stays what the person chose.
 
+use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 pub const POINTER_SCHEMA: u64 = 1;
+/// The largest pointer file this reader opens (64 KiB). The real file is a
+/// few hundred bytes; anything this large is not a pointer.
+pub const MAX_POINTER_BYTES: u64 = 64 * 1024;
 pub const BUILTIN_GATEWAY_URL: &str = "http://127.0.0.1:8080";
 
 /// Where the URL in use came from.
@@ -99,30 +112,98 @@ fn refused(path: &Path, reason: &str) -> PointerRead {
     }
 }
 
+/// Why the pointer could not be opened.
+enum OpenError {
+    Missing,
+    Symlink,
+    Other(std::io::Error),
+}
+
+/// Open without following a final symlink and without blocking (a FIFO).
+#[cfg(unix)]
+fn open_pointer(path: &Path) -> Result<File, OpenError> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|e| match e.raw_os_error() {
+            _ if e.kind() == std::io::ErrorKind::NotFound => OpenError::Missing,
+            // ELOOP (Linux, macOS) / EMLINK (FreeBSD): the final component is a symlink.
+            Some(code) if code == libc::ELOOP || code == libc::EMLINK => OpenError::Symlink,
+            _ => OpenError::Other(e),
+        })
+}
+
+/// Windows has no O_NOFOLLOW through std: refuse a symlink before opening.
+#[cfg(not(unix))]
+fn open_pointer(path: &Path) -> Result<File, OpenError> {
+    match std::fs::symlink_metadata(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(OpenError::Missing),
+        Err(e) => return Err(OpenError::Other(e)),
+        Ok(m) if m.file_type().is_symlink() => return Err(OpenError::Symlink),
+        Ok(_) => {}
+    }
+    File::open(path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => OpenError::Missing,
+        _ => OpenError::Other(e),
+    })
+}
+
 /// Read and check the pointer at `path`. `uid`: the owner it must have
 /// (None = not checked, Windows).
 pub fn read_pointer(path: &Path, uid: Option<u32>) -> PointerRead {
-    let meta = match std::fs::symlink_metadata(path) {
+    let mut file = match open_pointer(path) {
+        Ok(f) => f,
+        Err(OpenError::Missing) => return PointerRead::Missing,
+        Err(OpenError::Symlink) => return refused(path, "it is a symbolic link"),
+        Err(OpenError::Other(e)) => return refused(path, &format!("cannot read it ({e})")),
+    };
+    // Every check below reads the OPENED file (fstat), never the path again.
+    let meta = match file.metadata() {
         Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return PointerRead::Missing,
         Err(e) => return refused(path, &format!("cannot read it ({e})")),
     };
     if !meta.file_type().is_file() {
         return refused(path, "it is not a regular file");
     }
     #[cfg(unix)]
-    if let Some(uid) = uid {
+    {
         use std::os::unix::fs::MetadataExt;
-        if meta.uid() != uid {
-            return refused(path, "it belongs to another user");
+        if let Some(uid) = uid {
+            if meta.uid() != uid {
+                return refused(path, "it belongs to another user");
+            }
+        }
+        if meta.mode() & 0o022 != 0 {
+            return refused(
+                path,
+                &format!("other users can write it (mode {:o})", meta.mode() & 0o777),
+            );
         }
     }
     #[cfg(not(unix))]
     let _ = uid;
-    let text = match std::fs::read_to_string(path) {
-        Ok(t) => t,
-        Err(e) => return refused(path, &format!("cannot read it ({e})")),
-    };
+    // Read from the same descriptor, at most one byte past the bound: an
+    // oversized file (or one that grew after the fstat) is refused, and
+    // nothing past the bound is ever read.
+    // #[WARNING:TRUNCATION] config-file bound (64 KiB), refused whole — never a partial read
+    let mut text = String::new();
+    if let Err(e) = (&mut file)
+        .take(MAX_POINTER_BYTES + 1)
+        .read_to_string(&mut text)
+    {
+        return refused(path, &format!("cannot read it ({e})"));
+    }
+    if text.len() as u64 > MAX_POINTER_BYTES {
+        return refused(
+            path,
+            &format!(
+                "it is larger than the {} KiB a pointer file may be",
+                MAX_POINTER_BYTES / 1024
+            ),
+        );
+    }
     let data: serde_json::Value = match serde_json::from_str(&text) {
         Ok(v) => v,
         Err(e) => {
