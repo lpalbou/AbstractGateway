@@ -23,23 +23,25 @@ Needs abstractcore-console 0.4 and AbstractGateway 0.7.0.
   are read again when the download finishes. "engine missing" routes and the
   GPU-memory-limit fit verdict show their reason and command.
 - The voice picker shows why a provider lists no voices.
+- The console finds this computer's gateway without a flag: the legacy
+  `ABSTRACTGATEWAY_URL`, else the address the installer and `abstractgateway
+  serve` record in `~/.abstractframework/gateway.json`, else
+  `http://127.0.0.1:8080`. The pointer is believed only for a loopback
+  http(s) URL with schema 1, read the way the kit and AbstractCode read it:
+  opened without following a symbolic link and without blocking (a FIFO
+  cannot hang the console), checked on the open file (a regular file owned by
+  you, not writable by group or others) and read from that same file with a
+  64 KiB bound; a bad file is ignored with one visible line. When a gateway
+  found this way stops answering, the console reads the file again and
+  follows a gateway restarted on a new port. An address you typed, submitted
+  or probed on the Connection screen is never replaced (your token is sent
+  only there).
 
 ### Changed
 - `--gateway-url` is the flag for the gateway's address (`--url` stays as an
-  alias); `--help` gives the token directly (`--token <token>`).
-- The gateway pointer is read like the kit and AbstractCode read it: opened
-  without following a symbolic link and without blocking (a FIFO cannot hang
-  the console), checked on the open file (regular file, owned by you, not
-  writable by group or others: a `0664` file is now refused) and read from
-  that same file with a 64 KiB bound. A symbolic link is refused as "it is a
-  symbolic link".
-- Without the flag the console finds this computer's gateway: the legacy
-  `ABSTRACTGATEWAY_URL`, else the address the installer and `abstractgateway
-  serve` record in `~/.abstractframework/gateway.json` (believed only for a
-  loopback http(s) URL with schema 1, in a regular file owned by you; a bad
-  file is ignored with one visible line), else `http://127.0.0.1:8080`. When
-  a gateway found this way stops answering, the console reads the file again
-  and follows a gateway restarted on a new port.
+  alias). The token is given with `--token <token>` or pasted on the
+  Connection screen; `--token-file` and `ABSTRACTGATEWAY_AUTH_TOKEN` remain
+  as legacy aliases and are no longer taught by `--help` or the screen.
 - Apps → Open never starts a browser over SSH or without a display: it shows
   the link to copy and the SSH port forwards. The display rule is
   AbstractCore's console (`display_available`); needs abstractcore-console 0.4.

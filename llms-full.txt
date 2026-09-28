@@ -5491,9 +5491,10 @@ abstractgateway-console --help
 `ABSTRACTGATEWAY_URL` (legacy), else the address this computer's gateway
 records in `~/.abstractframework/gateway.json` (a loopback address only), else
 `http://127.0.0.1:8080`; when that gateway stops answering, the console reads
-the file again and follows it to a new port. `--token-file PATH` reads the token
-from a file instead; an unreadable or empty file stops the launch with the
-reason. When sign-in fails, the Connection screen says whether no token was
+the file again and follows it to a new port. Give the token with `--token
+<token>` or paste it on the Connection screen (`--token-file PATH` and
+`ABSTRACTGATEWAY_AUTH_TOKEN` remain as legacy aliases for existing scripts).
+When sign-in fails, the Connection screen says whether no token was
 sent or the token was rejected.
 
 ### Setup guide and browse mode
@@ -7929,9 +7930,13 @@ refuses to build its workflow host on a runtime without the history window. The 
 - The web console's Apps page names this browser's address and the `/apps/` path the apps open under; a link
   `#apps?open=<id>&path=<path>` opens an app already signed in (where the proxy sends a signed-out visitor).
 - The terminal console finds its gateway like every client: `--gateway-url` (alias `--url`), the legacy
-  `ABSTRACTGATEWAY_URL`, then the local gateway pointer, then `http://127.0.0.1:8080`; it follows a gateway restarted on
-  a new port. It also gained a Network screen, the start-at-login switch and voice/engine states (details in its
-  changelog).
+  `ABSTRACTGATEWAY_URL`, then the local gateway pointer, then `http://127.0.0.1:8080`. It reads the pointer the way the
+  kit and AbstractCode do: opened without following a symbolic link and without blocking (a FIFO in its place cannot
+  hang the console), checked on the open file (regular file, owned by you, not writable by group or others), read from
+  the same file with a 64 KiB bound, loopback URLs only. When a gateway found this way stops answering, the console
+  follows it to a new port; an address you typed, submitted or probed on the Connection screen is never replaced.
+  Give the token with `--token <token>`. It also gained a Network screen, the start-at-login switch and voice/engine
+  states (details in its changelog).
 
 ### Changed
 
@@ -7949,20 +7954,22 @@ refuses to build its workflow host on a runtime without the history window. The 
   messages are kept, the rest is the newest whole turns up to 50,000 tokens with the `#TRUNCATION` notice when older
   turns are dropped; messages keep their shape (tool and multimodal messages pass through). The receipt is recorded as
   `_runtime.session_history` with `source: "client_context"` (a client-sent value is replaced) and returned by
-  `GET /runs/{id}`. Discussion and automation sessions still refuse client messages (400).
-- **Shipped workflows rebuilt without truncation (ADR-0026):** `coding-agent` 0.2.8 replaces 0.2.6 and
-  `co-scientist` 0.2.1 replaces 0.2.0. The coding agent's gates and fixer now read whole failure lines (the snippet
+  `GET /runs/{id}`. Discussion and automation sessions still refuse client messages (400). `POST /runs/schedule`
+  applies the same window and receipt to the input its runs start with.
+- **Shipped workflows rebuilt without truncation (ADR-0026):** `coding-agent` 0.2.8 and `co-scientist` 0.2.1 are the
+  versions a new start gets. The versions 0.6.0 shipped (`coding-agent` 0.2.6, `co-scientist` 0.2.0, `docs-qa` 0.1.0)
+  still ship, so automations and catalog records that pin them keep running after the upgrade. The coding agent's gates and fixer now read whole failure lines (the snippet
   cuts are gone) and its verifier and spec judges no longer cap their output at 4,000 tokens; co-scientist embeds the
   rebuilt `deep-plan`, `deep-investigate` and `diagram-render`. The example workflow id in the default-agent hint is
   `coding-agent@0.2.8:coder`.
-- **docs-qa 0.1.1 (replaces 0.1.0): conversation history comes from the run's session.** The question is the
+- **docs-qa 0.1.1: conversation history comes from the run's session.** The question is the
   `prompt` input; each question of a conversation starts with the same `session_id` and `use_session_history`, the
   gateway replays the earlier turns through the runtime's history window and the bundle's LLM call includes them.
   The `question`/`history` inputs and the bundle's "last 12 messages" cap are gone. The web console's and the
   terminal console's docs assistants no longer send a history copy (they sent the last 12 messages): one session per
   conversation, **New conversation** starts a new one, and the drawer says when earlier messages were not replayed.
-  Clients that pinned `docs-qa@0.1.0` keep working on installs whose catalog already holds it; fresh installs publish
-  0.1.1 only.
+  Both versions are published into the tenant catalog at boot (clients of 0.6.0 pin 0.1.0); a fresh catalog's default
+  is 0.1.1.
 - Every browser app is launched with `--port`, `--host`, `--gateway-url` flags (Observer, Code, Entity and Flow join
   Continuum). An installed version older than the flags (Observer 0.1.14, Code 0.5.0, Entity 0.2.2 or earlier) also
   gets the legacy `PORT`/`HOST`/`<APP>_GATEWAY_URL` environment, so it still listens on the port the gateway chose.
@@ -8004,9 +8011,9 @@ refuses to build its workflow host on a runtime without the history window. The 
 
 ### Security
 
-- The terminal console reads the gateway pointer the way the kit and AbstractCode do: opened without following a
-  symbolic link and without blocking (a FIFO in its place cannot hang the console), checked on the open file
-  (regular file, owned by you, not writable by group or others), and read from the same file with a 64 KiB bound.
+- The OpenAI key used for voice comes from the Providers screen's OpenAI key or from an endpoint profile on OpenAI's
+  own endpoint only; the key of an `openai`-family profile that points at another base URL (a proxy, a self-hosted
+  server) is no longer sent to OpenAI.
 - The gateway writes the pointer through a fresh private temporary file (random name, created exclusively, mode 0600)
   and an atomic rename: a symbolic link planted at the old predictable temporary name, or at the pointer itself, is
   never written through.
@@ -8017,6 +8024,8 @@ refuses to build its workflow host on a runtime without the history window. The 
   accepts names such as `a_b.attacker.com`) is refused with 400 `invalid_host` (HTTP) or a closed WebSocket (1008),
   so an app that checks for a loopback peer and a loopback host (abstractuic app-server kit 0.1.14) never sees a
   remote page as a browser on this machine.
+- Model discovery for a saved endpoint profile (`POST /config/provider-endpoint-profiles/discover-models` with
+  `profile_id` only) uses the profile's provider family; a saved `openai` profile was listed as `openai-compatible`.
 - Retrying an automation command whose first attempt was already applied (for example a `PATCH` revise sent again
   after a lost response) returns the duplicate receipt of the first attempt instead of `409 revision_conflict`.
 - A default text route naming a deleted or disabled endpoint profile no longer stops the workflow host from loading
