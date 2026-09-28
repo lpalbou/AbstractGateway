@@ -321,6 +321,13 @@ def _policy_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, peer: str, b
     data = tmp_path / "runtime"
     m = am.AppsManager(data, urlopen=lambda *a, **k: (_ for _ in ()).throw(OSError("offline")), install_allowed=am._default_install_allowed(data))
     m.external_probe = lambda **kw: {}
+    # The Assistant row is installable only when the gateway's Python has uv
+    # or pip: the HOST's tools, found through PATH and this venv. These tests
+    # are about the install POLICY, so the tool is a given (a uv-made venv
+    # without pip, with uv off PATH, made the Assistant "not installable" and
+    # the LAN test red on such a machine, green on a developer's).
+    m.desktop_find_uv = lambda: "/fake/uv"
+    m.desktop_has_pip = lambda: False
     started: List[str] = []
     monkeypatch.setattr(m.jobs, "start", lambda **kw: (started.append(kw["target"]) or (type("J", (), {"to_dict": lambda self: {"id": "j"}})(), True)))
     import abstractgateway.routes.apps as routes
