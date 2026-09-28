@@ -28272,7 +28272,8 @@ async def host_update_check(request: Request) -> Dict[str, Any]:
 
 class _HostUpdateStartRequest(BaseModel):
     # The sha256 of the installer the admin reviewed (the action's `installer_sha256`): the
-    # update refuses to run another one. Optional: clients before 0.7.2 send `{}`.
+    # update refuses to run another one. Required for an installer install (409 "check again
+    # first" without it); package installs (pip, pipx, uv) ignore it.
     installer_sha256: Optional[str] = None
 
 

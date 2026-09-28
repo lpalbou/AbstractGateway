@@ -649,9 +649,19 @@ def check_for_update(
             # with the release's gateway pin, so a gateway newer than the release is never
             # "updated" back down to it.
             if installed:
-                available = is_newer(rel["version"], installed)
+                pair = (rel["version"], installed)
+                available = is_newer(*pair)
             else:
-                available = is_newer(rel["gateway_version"], current)
+                pair = (rel["gateway_version"], current)
+                available = is_newer(*pair)
+            if available is None:
+                # Never "up to date" over versions that cannot be compared.
+                out.update({"latest": None, "update_available": None, "release": None,
+                            "error": f"cannot compare the versions {pair[0]!r} (the {FRAMEWORK_NAME} release) and {pair[1]!r} (installed)"})
+                with _check_lock:
+                    _last_check = dict(out)
+                    _last_check_at = clock
+                return out
             script = bytes(rel["installer_bytes"])
             digest = hashlib.sha256(script).hexdigest()
             out.update(
@@ -686,7 +696,11 @@ def check_for_update(
         out.update({"source": "pypi", "offline": bool(result.get("offline"))})
         if result.get("ok"):
             latest = str(result.get("latest"))
-            out.update({"latest": latest, "update_available": is_newer(latest, current), "error": None})
+            newer = is_newer(latest, current)
+            if newer is None:
+                out.update({"latest": None, "update_available": None, "error": f"cannot compare the versions {latest!r} (PyPI) and {current!r} (installed)"})
+            else:
+                out.update({"latest": latest, "update_available": newer, "error": None})
         else:
             out.update({"latest": None, "update_available": None, "error": str(result.get("error") or "check failed")})
     with _check_lock:
@@ -765,6 +779,7 @@ class _Job:
 
 
 _job_lock = threading.Lock()
+_start_lock = threading.Lock()  # serializes start_update (see there)
 _job = _Job()
 _job_thread: Optional[threading.Thread] = None
 
@@ -842,9 +857,41 @@ def installer_command(script: Path, data_dir: str) -> List[str]:
     return ["/bin/sh", str(script), *INSTALLER_UPDATE_FLAGS, "--data-dir", str(data_dir)]
 
 
+def _write_installer_script(folder: Path, data: bytes, sha256: str) -> Path:
+    """A NEW file per run (written to a temporary name in `folder`, then renamed to a name no
+    other run uses): /bin/sh reads its script while it runs, so a running script's file is
+    never written again. Only called while no update runs (start_update holds _start_lock and
+    checked), so the older scripts of finished runs are removed first."""
+    import tempfile
+    import uuid
+
+    folder.mkdir(parents=True, exist_ok=True)
+    for old in folder.glob("install-*.sh"):
+        try:
+            old.unlink()
+        except OSError:
+            pass
+    fd, tmp = tempfile.mkstemp(dir=str(folder), prefix=".install-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, 0o600)
+        final = folder / f"install-{sha256[:12]}-{uuid.uuid4().hex[:8]}.sh"
+        os.rename(tmp, final)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return final
+
+
 def _prepare_installer_run(inst: InstallInfo, *, installer_sha256: Optional[str], fetch_release: Any) -> tuple:
     """(command, {url, commit_url, sha256}, release packages): the checked installer, written
-    to <data_dir>/update/install.sh, and the exact command that runs it."""
+    to its own new file in <data_dir>/update/, and the exact command that runs it."""
     with _check_lock:
         checked = dict(_installer_checked) if _installer_checked else None
         last = dict(_last_check) if _last_check else None
@@ -855,16 +902,18 @@ def _prepare_installer_run(inst: InstallInfo, *, installer_sha256: Optional[str]
     if checked is None:
         why = (last or {}).get("error") or "the check did not download it"
         raise UpdateNotPossible(f"the AbstractFramework installer could not be downloaded: {why}")
-    if installer_sha256 and installer_sha256.strip().lower() != checked["sha256"]:
+    if not (installer_sha256 or "").strip():
+        raise UpdateNotPossible(
+            "check again first: an installer update runs only the installer whose sha256 the confirmation showed "
+            f"(the last check downloaded {checked['sha256'][:12]}…), and this request named none"
+        )
+    if installer_sha256.strip().lower() != checked["sha256"]:
         raise UpdateNotPossible(
             f"the installer changed since it was checked (you reviewed sha256 {installer_sha256[:12]}…, the last check "
             f"downloaded {checked['sha256'][:12]}…): check again and review it"
         )
+    script = _write_installer_script(Path(str(inst.data_dir)) / "update", checked["bytes"], checked["sha256"])
     ddir = Path(str(inst.data_dir))
-    script = ddir / "update" / "install.sh"
-    script.parent.mkdir(parents=True, exist_ok=True)
-    script.write_bytes(checked["bytes"])
-    os.chmod(script, 0o600)
     meta = {"url": INSTALLER_URL, "commit_url": checked["url"], "sha256": checked["sha256"]}
     return installer_command(script, str(ddir)), meta, list(checked.get("python_packages") or {})
 
@@ -880,6 +929,20 @@ def start_update(
     """Launch the upgrade in the background. `runner(command, on_line) -> exit_code` and
     `snapshot(python) -> {name: version}` are injectable for tests. `installer_sha256` (the
     confirmation's) refuses to run an installer other than the one the admin reviewed."""
+    # One start at a time, and the busy check BEFORE any preparation: preparing an installer
+    # run writes a script, which must never happen while another run executes one.
+    if not _start_lock.acquire(blocking=False):
+        raise UpdateJobBusy("an update is being started")
+    try:
+        with _job_lock:
+            if _job.state == "running":
+                raise UpdateJobBusy("an update is already running")
+        return _start_update_locked(info=info, runner=runner, installer_sha256=installer_sha256, fetch_release=fetch_release, snapshot=snapshot)
+    finally:
+        _start_lock.release()
+
+
+def _start_update_locked(*, info: Optional[InstallInfo], runner: Any, installer_sha256: Optional[str], fetch_release: Any, snapshot: Any) -> Dict[str, Any]:
     global _job, _job_thread
     inst = info or detect_install()
     if not inst.upgradable:
@@ -935,21 +998,42 @@ def start_update(
             text=True,
             bufsize=1,
             env=env,
+            # Its own process group, so the watchdog stops the whole tree (the installer's uv,
+            # cargo, …), not only the shell: a child left holding the pipe would hang the job.
+            start_new_session=(os.name != "nt"),
         )
         with _job_lock:
             job.proc = proc
         assert proc.stdout is not None
-        deadline = time.monotonic() + JOB_TIMEOUT_S
-        for line in proc.stdout:
-            on_line(line.rstrip("\n")[:LOG_LINE_MAX_CHARS])
-            if time.monotonic() > deadline:
-                try:
+        # A watchdog, not a check between log lines: a command that hangs silently is killed too.
+        timeout_s = float(JOB_TIMEOUT_S)
+        timed_out = threading.Event()
+
+        def _kill() -> None:
+            timed_out.set()
+            try:
+                if os.name != "nt":
+                    import signal
+
+                    os.killpg(proc.pid, signal.SIGKILL)
+                else:
                     proc.kill()
-                except Exception:
-                    pass
-                on_line(f"[gateway] update timed out after {int(JOB_TIMEOUT_S // 60)} minutes; command killed")
-                break
-        return int(proc.wait())
+            except Exception:
+                pass
+
+        watchdog = threading.Timer(timeout_s, _kill)
+        watchdog.daemon = True
+        watchdog.start()
+        try:
+            for line in proc.stdout:
+                on_line(line.rstrip("\n")[:LOG_LINE_MAX_CHARS])
+            code = int(proc.wait())
+        finally:
+            watchdog.cancel()
+        if timed_out.is_set():
+            on_line(f"[gateway] update timed out after {timeout_s / 60:.0f} minutes ({timeout_s:.0f} s); command killed")
+            return code if code != 0 else 124
+        return code
 
     def _work() -> None:
         def on_line(line: str) -> None:
