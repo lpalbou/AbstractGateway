@@ -42,7 +42,7 @@ Default dependency floors (see `pyproject.toml`):
 - `AbstractRuntime>=0.7.0`
 - `abstractcore>=2.18.0`
 - `abstractvoice>=0.13.0` (the voice listings import `abstractvoice.engine_runtime`)
-- `abstractagent>=0.3.15`
+- `abstractagent>=0.3.17`
 - `AbstractMemory[lancedb]>=0.3.0`
 
 Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
@@ -756,7 +756,7 @@ changed. It never falls back to another workflow on its own.
   "key": "agents.default_workflow.abstractcode.agent.v1", "value": "coding-agent:coder", "source": "stored",
   "available": true, "reason": null, "default": "basic-agent:81795ea9",
   "resolved": {"bundle_id": "coding-agent", "bundle_version": "0.2.7", "flow_id": "coder",
-               "registry_scope": "private", "workflow_id": "coding-agent@0.2.7:coder", "name": "coder"},
+               "registry_scope": "private", "workflow_id": "coding-agent@0.2.8:coder", "name": "coder"},
   "eligible": [{"value": "basic-agent:81795ea9", "workflow_id": "basic-agent@0.0.5:81795ea9", "name": "basic-agent", "...": "..."}]}},
   "index_source": "host"}
 ```

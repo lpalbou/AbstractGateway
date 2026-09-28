@@ -144,7 +144,7 @@ def parse_workflow_ref(raw: Any) -> tuple[str, str, Optional[str], str]:
     bundle part ends at the FIRST `:` after the optional scope word, so a
     flow id may itself contain `:`. Raises DefaultWorkflowError in words."""
     text = str(raw if raw is not None else "").strip()
-    hint = "write [private:|catalog:]bundle[@version]:flow, e.g. basic-agent:81795ea9 or coding-agent@0.2.7:coder"
+    hint = "write [private:|catalog:]bundle[@version]:flow, e.g. basic-agent:81795ea9 or coding-agent@0.2.8:coder"
     scope = SCOPE_WORDS["private"]
     head, sep, rest = text.partition(":")
     if sep and head.strip() in SCOPE_WORDS and ":" in rest:

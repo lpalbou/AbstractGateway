@@ -41,8 +41,9 @@ dependencies = [
   "abstractvoice>=0.13.0",
   # 0.3.14: delegated sub-agents inherit the run's _runtime.stream switch.
   # 0.3.15: CodeAct/MemAct crash fix; re-prompt when a reply announces tool
-  # calls it never makes.
-  "abstractagent>=0.3.15",
+  # calls it never makes. 0.3.17: entity visit react turns send the runtime's
+  # history window (newest whole turns up to 50k tokens, ADR-0026).
+  "abstractagent>=0.3.17",
   "AbstractMemory[lancedb]>=0.3.0",
   # 0.3.0 ships the curated skill shelf inside the package (abstractskill.bundled)
   # and seed_registry, which the gateway uses to keep <data dir>/skills/registry.
@@ -92,7 +93,7 @@ tray = [
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
   "AbstractRuntime[apple]>=0.7.0",
-  "abstractagent[apple]>=0.3.15",
+  "abstractagent[apple]>=0.3.17",
   "AbstractMemory[all-apple]>=0.3.0",
 ]
 
@@ -100,7 +101,7 @@ apple = [
 # Python installs and for the NVIDIA Docker image.
 gpu = [
   "AbstractRuntime[gpu]>=0.7.0",
-  "abstractagent[gpu]>=0.3.15",
+  "abstractagent[gpu]>=0.3.17",
   "AbstractMemory[all-gpu]>=0.3.0",
 ]
 dev = [
@@ -132,8 +133,8 @@ packages = ["src/abstractgateway"]
 # Out-of-box flagship workflows: a fresh install serves a proven coder
 # (coding-agent:coder — abstractcode-tui's default agent when installed),
 # deep research, and co-scientist without any manual bundle install.
-"flows/bundles/coding-agent@0.2.6.flow" = "abstractgateway/flows/bundles/coding-agent@0.2.6.flow"
-"flows/bundles/co-scientist@0.2.0.flow" = "abstractgateway/flows/bundles/co-scientist@0.2.0.flow"
+"flows/bundles/coding-agent@0.2.8.flow" = "abstractgateway/flows/bundles/coding-agent@0.2.8.flow"
+"flows/bundles/co-scientist@0.2.1.flow" = "abstractgateway/flows/bundles/co-scientist@0.2.1.flow"
 # The console assistant drawer's transport bundle: boot ensure-publishes it
 # into the tenant catalog (shipped_catalog.py, card 013) — the wheel must
 # actually carry it or a fresh pip install has nothing to publish.
@@ -157,8 +158,8 @@ exclude = [
 "flows/bundles/basic-agent.flow" = "flows/bundles/basic-agent.flow"
 "flows/bundles/abstractassistant-orchestrator@0.0.0.flow" = "flows/bundles/abstractassistant-orchestrator@0.0.0.flow"
 "flows/bundles/deep-research@0.1.8.flow" = "flows/bundles/deep-research@0.1.8.flow"
-"flows/bundles/coding-agent@0.2.6.flow" = "flows/bundles/coding-agent@0.2.6.flow"
-"flows/bundles/co-scientist@0.2.0.flow" = "flows/bundles/co-scientist@0.2.0.flow"
+"flows/bundles/coding-agent@0.2.8.flow" = "flows/bundles/coding-agent@0.2.8.flow"
+"flows/bundles/co-scientist@0.2.1.flow" = "flows/bundles/co-scientist@0.2.1.flow"
 "flows/bundles/docs-qa@0.1.1.flow" = "flows/bundles/docs-qa@0.1.1.flow"
 "flows/bundles/react-agent@0.1.0.flow" = "flows/bundles/react-agent@0.1.0.flow"
 "flows/bundles/codeact-agent@0.1.0.flow" = "flows/bundles/codeact-agent@0.1.0.flow"

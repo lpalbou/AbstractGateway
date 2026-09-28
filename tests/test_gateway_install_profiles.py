@@ -36,7 +36,7 @@ def test_base_install_is_remote_light_server() -> None:
     assert f"AbstractRuntime>={ABSTRACTRUNTIME_FLOOR}" in deps
     assert "abstractcore>=2.18.0" in deps
     assert "abstractvoice>=0.13.0" in deps
-    assert "abstractagent>=0.3.15" in deps
+    assert "abstractagent>=0.3.17" in deps
     assert "AbstractMemory[lancedb]>=0.3.0" in deps
     assert "requests<3.0.0,>=2.32.5" in deps
     assert "urllib3<3.0.0,>=2.5.0" in deps
@@ -132,7 +132,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
 
     apple = "\n".join(extras["apple"])
     assert "AbstractRuntime[apple]>=0.7.0" in apple
-    assert "abstractagent[apple]>=0.3.15" in apple
+    assert "abstractagent[apple]>=0.3.17" in apple
     assert "abstractagent[all-apple]" not in apple
     assert "AbstractMemory[all-apple]>=0.3.0" in apple
     assert "abstractcore[" not in apple
@@ -141,7 +141,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "abstractmusic" not in apple
     gpu = "\n".join(extras["gpu"])
     assert "AbstractRuntime[gpu]>=0.7.0" in gpu
-    assert "abstractagent[gpu]>=0.3.15" in gpu
+    assert "abstractagent[gpu]>=0.3.17" in gpu
     assert "AbstractMemory[all-gpu]>=0.3.0" in gpu
     assert "abstractcore[" not in gpu
     assert "abstractvision" not in gpu
@@ -178,12 +178,12 @@ def test_basic_agent_bundle_is_packaged_as_default_gateway_entrypoint() -> None:
         == "abstractgateway/flows/bundles/deep-research@0.1.8.flow"
     )
     assert (
-        wheel_force["flows/bundles/coding-agent@0.2.6.flow"]
-        == "abstractgateway/flows/bundles/coding-agent@0.2.6.flow"
+        wheel_force["flows/bundles/coding-agent@0.2.8.flow"]
+        == "abstractgateway/flows/bundles/coding-agent@0.2.8.flow"
     )
     assert (
-        wheel_force["flows/bundles/co-scientist@0.2.0.flow"]
-        == "abstractgateway/flows/bundles/co-scientist@0.2.0.flow"
+        wheel_force["flows/bundles/co-scientist@0.2.1.flow"]
+        == "abstractgateway/flows/bundles/co-scientist@0.2.1.flow"
     )
     assert (
         wheel_force["flows/bundles/react-agent@0.1.0.flow"]
@@ -207,12 +207,12 @@ def test_basic_agent_bundle_is_packaged_as_default_gateway_entrypoint() -> None:
         == "flows/bundles/deep-research@0.1.8.flow"
     )
     assert (
-        sdist_force["flows/bundles/coding-agent@0.2.6.flow"]
-        == "flows/bundles/coding-agent@0.2.6.flow"
+        sdist_force["flows/bundles/coding-agent@0.2.8.flow"]
+        == "flows/bundles/coding-agent@0.2.8.flow"
     )
     assert (
-        sdist_force["flows/bundles/co-scientist@0.2.0.flow"]
-        == "flows/bundles/co-scientist@0.2.0.flow"
+        sdist_force["flows/bundles/co-scientist@0.2.1.flow"]
+        == "flows/bundles/co-scientist@0.2.1.flow"
     )
     assert (
         sdist_force["flows/bundles/react-agent@0.1.0.flow"]
