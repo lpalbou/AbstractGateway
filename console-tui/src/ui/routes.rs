@@ -598,7 +598,16 @@ fn routes_table(
     // it on exactly the machine most likely to be a fresh install. 14
     // cells is the widest label it prints ("not downloaded"), so the
     // floor is the whole vocabulary, never a stub.
-    rules.push(widths::ColRule::head("weights", 14));
+    // The floor is the widest label IN USE: "not downloaded — w: download"
+    // carries its verb whenever a row can be fetched, and a verb cut to
+    // "w: d…" teaches nothing.
+    let weights_floor = weights
+        .values()
+        .map(|w| w.label().chars().count() as i32)
+        .max()
+        .unwrap_or(0)
+        .max(14);
+    rules.push(widths::ColRule::head("weights", weights_floor));
     if w >= 112 {
         rules.push(widths::ColRule::tail("source", 12));
     }

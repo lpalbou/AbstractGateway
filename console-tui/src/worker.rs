@@ -1203,8 +1203,9 @@ fn handle(
             // unreadable catalog says why; the download never depends on it).
             let label = format!("reading the size of {artifact}");
             let catalog = with_busy(store, wake, &label, || {
-                require_client(client)
-                    .and_then(|c| c.models_catalog(&artifact, Some(&provider), false))
+                // The whole engine's rows (the free-text `q` matches model
+                // names, not artifact ids): the artifact is found below.
+                require_client(client).and_then(|c| c.models_catalog("", Some(&provider), false))
             });
             let offer = match &catalog {
                 Ok(v) => DownloadOffer::from_catalog(&provider, &artifact, v),
