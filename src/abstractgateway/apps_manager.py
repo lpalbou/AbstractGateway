@@ -261,6 +261,14 @@ class ToolchainRequired(AppsError):
     reason = "toolchain_required"
 
 
+class ForeignBinary(AppsError):
+    """The terminal app's file name is taken by another program (for example
+    the older Python `abstractcode` from PyPI): the gateway never replaces it."""
+
+    status_code = 409
+    reason = "foreign_binary"
+
+
 class StartedOutsideGateway(AppsError):
     status_code = 409
     reason = "started_outside_gateway"
@@ -2703,6 +2711,25 @@ class AppsManager:
         self._tui_probe_cache[key] = (version,)
         return version
 
+    def refuse_foreign_tui(self, tui: TuiSpec) -> None:
+        """Raise ForeignBinary when the install target holds a file that is not
+        this terminal app (another program of the same name, a script, a
+        dangling link). A copy that IS the app, the gateway's own or the
+        installer's cargo build, is updated in place."""
+        target = self.managed_tui_path(tui)
+        if not (target.exists() or target.is_symlink()):
+            return
+        if self.probe_tui_binary(target, tui):
+            return
+        raise ForeignBinary(
+            f"{target} already exists and is not {tui.name}'s terminal app, so the gateway did not replace it.",
+            hint=(
+                f"If it is the older Python AbstractCode from PyPI, run `uv tool uninstall {tui.binary}`; "
+                f"otherwise remove {target} yourself. Then install again."
+            ),
+            extra={"path": str(target)},
+        )
+
     def tui_status(self, tui: TuiSpec) -> Dict[str, Any]:
         """{installed, version, source: gateway|path|None, path}: presence only."""
         for source, path in self._tui_candidates(tui):
@@ -2782,6 +2809,7 @@ class AppsManager:
         plan = self.tui_install_plan(tui, rel)
         if plan["method"] != "release_binary":
             raise ToolchainRequired(plan["reason"], hint=f"Install it with `{tui.install_command}`.", extra={"command": tui.install_command})
+        self.refuse_foreign_tui(tui)
         ver, name = rel["version"], plan["asset"]
         asset = rel["assets"][name]
         job.result.update({"version": ver})
@@ -2830,6 +2858,7 @@ class AppsManager:
                     f"The downloaded {tui.binary} did not answer `--version` with {ver}.",
                     details=f"exit code {out.returncode}\nstdout: {out.stdout}\nstderr: {out.stderr}",
                 )
+            self.refuse_foreign_tui(tui)  # again: the download took time
             target = self.managed_tui_path(tui)
             os.replace(staging, target)
         finally:

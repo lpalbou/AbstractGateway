@@ -287,6 +287,82 @@ def test_a_malformed_receipt_falls_back_to_data_apps_bin_and_never_crashes(tmp_p
     assert m.tool_bin_dir is None and m.bin_dir == m.legacy_bin_dir
 
 
+def test_install_refuses_to_replace_a_foreign_abstractcode_in_the_shared_folder(mgr, home: Path) -> None:
+    """A uv-installed PyPI `abstractcode` (the older Python AbstractCode) sits
+    where the gateway installs the terminal app. Presence says "not ours";
+    install must refuse, name the file and say what to do, and leave it."""
+    m, net, _ = mgr
+    shared = home / ".local" / "bin"
+    shared.mkdir(parents=True)
+    m.tool_bin_dir = shared
+    foreign = shared / "abstractcode"
+    foreign_text = "#!/usr/bin/env python3\n# uv tool: abstractcode (PyPI)\nprint('abstractcode 0.3.8')\n"
+    foreign.write_text(foreign_text)
+    foreign.chmod(0o755)
+    assert m.tui_status(am.CODE_TUI)["installed"] is False
+    _publish(net, version="0.7.0")
+    d = m.start_tui_install("code", run_inline=True)[0].to_dict()
+    assert d["state"] == "failed", d
+    err = json.dumps(d)
+    assert str(foreign) in err, "names the other file"
+    assert "uv tool uninstall abstractcode" in err, "says what to do"
+    assert foreign.read_text() == foreign_text, "never silently replaced"
+    assert not list(shared.glob(".abstractcode.*")), "no staging leftovers"
+    assert not any("/releases/download/" in u for u in net.calls), "refused before downloading"
+
+
+def test_install_refuses_a_foreign_file_that_appears_during_the_download(mgr, home: Path) -> None:
+    m, net, _ = mgr
+    shared = home / ".local" / "bin"
+    shared.mkdir(parents=True)
+    m.tool_bin_dir = shared
+    foreign = shared / "abstractcode"
+    real_download = m._download
+
+    def download_then_uv_tool_install(*a, **kw):
+        out = real_download(*a, **kw)
+        foreign.write_text("#!/usr/bin/env python3\nprint('abstractcode 0.3.8')\n")
+        foreign.chmod(0o755)
+        return out
+
+    m._download = download_then_uv_tool_install
+    _publish(net, version="0.7.0")
+    d = m.start_tui_install("code", run_inline=True)[0].to_dict()
+    assert d["state"] == "failed", d
+    assert "0.3.8" in foreign.read_text(), "never silently replaced"
+    assert not list(shared.glob(".abstractcode.*")), "no staging leftovers"
+
+
+def test_install_refuses_a_dangling_link_at_the_target_too(mgr, home: Path) -> None:
+    m, net, _ = mgr
+    shared = home / ".local" / "bin"
+    shared.mkdir(parents=True)
+    m.tool_bin_dir = shared
+    link = shared / "abstractcode"
+    link.symlink_to(home / "nowhere" / "abstractcode")
+    _publish(net, version="0.7.0")
+    d = m.start_tui_install("code", run_inline=True)[0].to_dict()
+    assert d["state"] == "failed", d
+    assert link.is_symlink() and str(link) in json.dumps(d)
+
+
+def test_install_updates_its_own_copy_in_place(mgr, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The absent-input case of the refusal: a copy that IS the terminal app
+    (the gateway's own, or the installer's cargo build) is updated."""
+    m, net, _ = mgr
+    shared = home / ".local" / "bin"
+    shared.mkdir(parents=True)
+    m.tool_bin_dir = shared
+    own = shared / "abstractcode"
+    own.write_text(_FAKE_BIN.replace("0.9.9", "0.6.0"))
+    own.chmod(0o755)
+    monkeypatch.setattr(am, "_is_script", lambda p: False)  # stands in for a native binary
+    _publish(net, version="0.7.0")
+    d = m.start_tui_install("code", run_inline=True)[0].to_dict()
+    assert d["state"] == "succeeded", d
+    assert "abstractcode 0.7.0" in own.read_text()
+
+
 def test_install_lands_in_the_shared_tool_bin_dir_and_removes_the_old_copy(mgr, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     m, net, _ = mgr
     shared = home / ".local" / "bin"
