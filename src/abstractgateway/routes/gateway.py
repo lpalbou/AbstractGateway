@@ -28256,7 +28256,11 @@ async def host_update_state(request: Request) -> Dict[str, Any]:
 
 @router.post("/host/update/check")
 async def host_update_check(request: Request) -> Dict[str, Any]:
-    """Ask PyPI for the latest version (5 s timeout; offline is an in-band answer, never an error). Admin only."""
+    """Check for a newer release (5 s timeouts; offline is an in-band answer, never an error). Admin only.
+
+    An AbstractFramework installer install compares its recorded release with the newest one
+    (the framework repo's `main`: install manifest + install.sh); any other install compares
+    the gateway with PyPI's newest."""
     _require_admin_principal(request)
 
     def _run() -> Dict[str, Any]:
@@ -28266,14 +28270,29 @@ async def host_update_check(request: Request) -> Dict[str, Any]:
     return await asyncio.to_thread(_run)
 
 
-@router.post("/host/update/start")
-async def host_update_start(request: Request) -> Dict[str, Any]:
-    """Run the upgrade command in the background; poll GET /host/update. Admin only.
+class _HostUpdateStartRequest(BaseModel):
+    # The sha256 of the installer the admin reviewed (the action's `installer_sha256`): the
+    # update refuses to run another one. Optional: clients before 0.7.2 send `{}`.
+    installer_sha256: Optional[str] = None
 
-    409 when the install method cannot be upgraded in place or a job is running."""
+
+@router.post("/host/update/start")
+async def host_update_start(request: Request, req: Optional[_HostUpdateStartRequest] = None) -> Dict[str, Any]:
+    """Start the update in the background; answers the same payload as GET /host/update. Admin only.
+
+    An AbstractFramework installer install runs the installer (the checked install.sh, with
+    --yes --no-start --no-open --no-modify-path --data-dir); any other install runs its package
+    manager's upgrade. 409 when the install cannot be upgraded in place, the installer changed
+    since the admin reviewed it, or a job is running."""
     _require_admin_principal(request)
+    sha = req.installer_sha256 if req else None
+
+    def _run() -> Dict[str, Any]:
+        self_update.start_update(installer_sha256=sha)
+        return self_update.update_overview(check=False)
+
     try:
-        return await asyncio.to_thread(self_update.start_update)
+        return await asyncio.to_thread(_run)
     except (self_update.UpdateNotPossible, self_update.UpdateJobBusy) as e:
         raise HTTPException(status_code=409, detail=str(e)) from e
 
