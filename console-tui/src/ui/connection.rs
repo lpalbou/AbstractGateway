@@ -164,6 +164,14 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .child(dyn_view(LayoutStyle::column().gap(0).shrink(0.0), move || {
             status_view(&tt, &store.conn.get(), ui.token_source.get())
         }))
+        // An ignored gateway pointer file (~/.abstractframework/gateway.json):
+        // why, in one line; nothing when the file is fine or absent.
+        .child(dyn_view(LayoutStyle::default().shrink(0.0), move || {
+            match ui.pointer_notice.get() {
+                Some(w) => line(vec![span(format!("⚠ {w}"), tt.warn)]),
+                None => Element::new().style(LayoutStyle::default().h(0)).build(),
+            }
+        }))
         // About (F1 / ? anywhere): this console, the framework it is part
         // of, and the connected gateway's versions. A hint line, not a
         // button: a focusable here would shift the screen's Tab chain.

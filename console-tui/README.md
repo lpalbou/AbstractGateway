@@ -159,7 +159,9 @@ cargo install abstractgateway-console
 abstractgateway-console --gateway-url http://127.0.0.1:8080 --token <token>
 ```
 
-`--url` is an alias of `--gateway-url`. `--token-file PATH` reads the token
+`--url` is an alias of `--gateway-url`. Without it the console uses
+`ABSTRACTGATEWAY_URL` (legacy alias), else `~/.abstractframework/gateway.json`
+(the address this computer's gateway records), else `http://127.0.0.1:8080`. `--token-file PATH` reads the token
 from a file instead (whitespace trimmed; an unreadable or empty file stops
 the launch with the reason).
 

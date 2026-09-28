@@ -5380,7 +5380,11 @@ abstractgateway-console --gateway-url http://127.0.0.1:8080 --token <token>
 abstractgateway-console --help
 ```
 
-`--url` is an alias of `--gateway-url`. `--token-file PATH` reads the token
+`--url` is an alias of `--gateway-url`. Without the flag, the console uses
+`ABSTRACTGATEWAY_URL` (legacy), else the address this computer's gateway
+records in `~/.abstractframework/gateway.json` (a loopback address only), else
+`http://127.0.0.1:8080`; when that gateway stops answering, the console reads
+the file again and follows it to a new port. `--token-file PATH` reads the token
 from a file instead; an unreadable or empty file stops the launch with the
 reason. When sign-in fails, the Connection screen says whether no token was
 sent or the token was rejected.
@@ -7712,6 +7716,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The consoles show AbstractCore's `engine_missing` (a route this computer can run whose engine
   is not installed, with the install command) and the `needs_gpu_limit` fit verdict (the exact
   command that raises the GPU memory limit).
+- An OpenAI key saved through the Providers screen reaches voice: the voice listings pass it to
+  AbstractVoice as `voice_openai_api_key` on every call, and the gateway's runtime is built with
+  it for voice generation.
 - `restart.port` in `GET /api/gateway/network`: the port a restart binds; the restart route
   reconnects there.
 

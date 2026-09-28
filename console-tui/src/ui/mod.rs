@@ -176,6 +176,15 @@ pub struct UiState {
     pub first_run_error: Signal<Option<String>>,
 
     pub conn_url: Signal<String>,
+    /// Where `conn_url` came from (`pointer::UrlSource`): only a URL from
+    /// the gateway pointer or the default follows the pointer when a
+    /// connection fails.
+    pub url_source: Signal<crate::pointer::UrlSource>,
+    /// The home the pointer is read under (None = never follow; the boot
+    /// sets it from the real HOME, tests from a scratch dir).
+    pub pointer_home: Signal<Option<std::path::PathBuf>>,
+    /// The last pointer notice shown (a bad file is said once).
+    pub pointer_notice: Signal<Option<String>>,
     pub conn_token: Signal<String>,
     /// Human description of the token the LAST probe actually sent
     /// ("field (44 chars)", "env ABSTRACTGATEWAY_AUTH_TOKEN (19 chars)",
@@ -284,6 +293,9 @@ impl UiState {
             first_run_pending: cx.signal(None),
             first_run_error: cx.signal(None),
             conn_url: cx.signal(url),
+            url_source: cx.signal(crate::pointer::UrlSource::Flag),
+            pointer_home: cx.signal(None),
+            pointer_notice: cx.signal(None),
             conn_token: cx.signal(token),
             token_source: cx.signal(None),
             profile_sel: cx.signal(0),
@@ -927,6 +939,57 @@ pub fn open_form_guarded(
 }
 
 /// The root component.
+/// Say a pointer notice once (a bad file is not repeated on every re-read).
+pub fn pointer_notice(ctx: &Ctx, warning: Option<String>) {
+    if let Some(w) = warning {
+        if ctx
+            .ui
+            .pointer_notice
+            .with_untracked(|p| p.as_deref() != Some(w.as_str()))
+        {
+            ctx.ui.pointer_notice.set(Some(w.clone()));
+            ctx.store.notice.set(Some(w));
+        }
+    }
+}
+
+/// A connection that never reached the gateway, on a URL that came from the
+/// gateway pointer or the default: re-read the pointer and, when it names
+/// another address (a gateway restarted on a new port), connect there.
+fn install_pointer_follow(cx: Scope, ctx: &Ctx) {
+    let ctx = ctx.clone();
+    let was_unreachable = Rc::new(std::cell::Cell::new(false));
+    cx.effect(move || {
+        let unreachable = ctx
+            .store
+            .conn
+            .with(|c| matches!(c, ConnPhase::Unreachable(_)));
+        let entered = unreachable && !was_unreachable.get();
+        was_unreachable.set(unreachable);
+        if !entered || !ctx.ui.url_source.get_untracked().follows_pointer() {
+            return;
+        }
+        let Some(home) = ctx.ui.pointer_home.get_untracked() else {
+            return;
+        };
+        let current = ctx.ui.conn_url.get_untracked();
+        if let Some(next) =
+            crate::pointer::follow_pointer(&current, Some(&home), crate::pointer::current_uid())
+        {
+            pointer_notice(&ctx, next.warning.clone());
+            ctx.ui.url_source.set(next.source);
+            ctx.ui.conn_url.set(next.url.clone());
+            if next.warning.is_none() {
+                ctx.store.notice.set(Some(format!(
+                    "{current} did not answer; the gateway pointer names {} — connecting there",
+                    next.url
+                )));
+            }
+            ctx.connect_now();
+        }
+    });
+}
+
 pub fn root(cx: Scope, ctx: Ctx) -> View {
     let theme = use_theme(cx);
     let ui = ctx.ui;
@@ -1330,6 +1393,7 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
     welcome::install(cx, ctx);
     // The paused-banner poll (/host/runner, 15 s while connected).
     host::install(cx, ctx);
+    install_pointer_follow(cx, ctx);
 
     // Screen-entry data loading: when connected and a screen's domains
     // were never asked, ask. Loading is set synchronously in

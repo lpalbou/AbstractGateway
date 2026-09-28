@@ -20,6 +20,13 @@
 ### Changed
 - `--gateway-url` is the flag for the gateway's address (`--url` stays as an
   alias); `--help` gives the token directly (`--token <token>`).
+- Without the flag the console finds this computer's gateway: the legacy
+  `ABSTRACTGATEWAY_URL`, else the address the installer and `abstractgateway
+  serve` record in `~/.abstractframework/gateway.json` (believed only for a
+  loopback http(s) URL with schema 1, in a regular file owned by you; a bad
+  file is ignored with one visible line), else `http://127.0.0.1:8080`. When
+  a gateway found this way stops answering, the console reads the file again
+  and follows a gateway restarted on a new port.
 - Apps → Open never starts a browser over SSH or without a display: it shows
   the link to copy and the SSH port forwards. The display rule is
   AbstractCore's console (`display_available`); needs abstractcore-console 0.4.

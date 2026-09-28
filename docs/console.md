@@ -316,7 +316,11 @@ abstractgateway-console --gateway-url http://127.0.0.1:8080 --token <token>
 abstractgateway-console --help
 ```
 
-`--url` is an alias of `--gateway-url`. `--token-file PATH` reads the token
+`--url` is an alias of `--gateway-url`. Without the flag, the console uses
+`ABSTRACTGATEWAY_URL` (legacy), else the address this computer's gateway
+records in `~/.abstractframework/gateway.json` (a loopback address only), else
+`http://127.0.0.1:8080`; when that gateway stops answering, the console reads
+the file again and follows it to a new port. `--token-file PATH` reads the token
 from a file instead; an unreadable or empty file stops the launch with the
 reason. When sign-in fails, the Connection screen says whether no token was
 sent or the token was rejected.

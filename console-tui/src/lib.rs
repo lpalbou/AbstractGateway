@@ -19,6 +19,9 @@ pub mod audio;
 pub mod health;
 /// The About facts: the vendored AbstractFramework identity descriptor.
 pub mod identity;
+/// Where is the gateway: flag > ABSTRACTGATEWAY_URL > the local gateway
+/// pointer (~/.abstractframework/gateway.json) > http://127.0.0.1:8080.
+pub mod pointer;
 /// The one query language every search box speaks (substring, or glob).
 pub mod query;
 pub mod store;
@@ -45,8 +48,11 @@ USAGE:
 
 OPTIONS:
   --gateway-url URL
-                 the gateway's base URL (default http://127.0.0.1:8080);
-                 --url is an alias
+                 the gateway's base URL; --url is an alias. Without it:
+                 $ABSTRACTGATEWAY_URL (legacy alias), else the address this
+                 computer's gateway records in
+                 ~/.abstractframework/gateway.json, else
+                 http://127.0.0.1:8080
   --token <token>
                  your token: the admin token `abstractgateway serve`
                  prints at start, or a user token from Users
@@ -209,13 +215,15 @@ pub fn run_cli(argv: &[String]) -> i32 {
         }
     };
 
+    // Where is the gateway (pointer.rs): flag > env > pointer > default.
+    let resolved = pointer::resolve_now(&args.url);
+
     if args.about {
         // Works without a terminal and without a token (the route is public).
-        let url = ui::normalize_url(if args.url.is_empty() {
-            "http://127.0.0.1:8080"
-        } else {
-            &args.url
-        });
+        if let Some(w) = &resolved.warning {
+            eprintln!("abstractgateway-console: {w}");
+        }
+        let url = ui::normalize_url(&resolved.url);
         let read = api::GatewayClient::new(&url, None)
             .about()
             .map_err(|e| e.to_string());
@@ -250,11 +258,9 @@ pub fn run_cli(argv: &[String]) -> i32 {
     let quitter = app.quitter();
     let (tx, rx) = mpsc::channel::<worker::Cmd>();
 
-    let url0 = if args.url.is_empty() {
-        "http://127.0.0.1:8080".to_string()
-    } else {
-        args.url.clone()
-    };
+    let url0 = resolved.url.clone();
+    let url_source = resolved.source;
+    let pointer_warning = resolved.warning.clone();
     let token0 = args.token.clone();
     let wizard0 = args.wizard;
 
@@ -282,6 +288,13 @@ pub fn run_cli(argv: &[String]) -> i32 {
         // the guide's Connection step (the terminal must sign in first).
         ui_state.wizard.set(wizard0.unwrap_or(true));
         ui_state.mode_forced.set(wizard0.is_some());
+        ui_state.url_source.set(url_source);
+        ui_state.pointer_home.set(pointer::home_dir());
+        if let Some(w) = pointer_warning.clone() {
+            // A bad pointer file: said once, visibly.
+            ui_state.pointer_notice.set(Some(w.clone()));
+            store.notice.set(Some(w));
+        }
         *ui_out.borrow_mut() = Some(ui_state);
         let prober: ui::ProberSlot = Rc::new(RefCell::new(None));
         // Production prober: ONE short-lived thread per verification,

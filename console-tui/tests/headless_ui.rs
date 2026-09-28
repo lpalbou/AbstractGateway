@@ -9753,3 +9753,73 @@ fn engine_missing_is_its_own_state_and_rides_the_apply_report() {
         "{summary}"
     );
 }
+
+/// A connection that never reached the gateway, on a URL from the gateway
+/// pointer: the pointer is read again and a gateway restarted on a new port
+/// is followed. A URL the person gave (flag, env) never moves.
+#[test]
+fn an_unreachable_pointer_url_follows_the_pointer() {
+    use abstractgateway_console::pointer::UrlSource;
+    let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/test-scratch")
+        .join(format!("pointer-ui-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(home.join(".abstractframework")).unwrap();
+    std::fs::write(
+        home.join(".abstractframework/gateway.json"),
+        r#"{"schema": 1, "url": "http://127.0.0.1:18894"}"#,
+    )
+    .unwrap();
+
+    let mut h = harness_sized(Size::new(120, 40));
+    h.ui.conn_url.set("http://127.0.0.1:18893".into());
+    h.ui.url_source.set(UrlSource::Flag);
+    h.ui.pointer_home.set(Some(home.clone()));
+    h.turns(2);
+    h.drain_cmds();
+    h.store
+        .conn
+        .set(ConnPhase::Unreachable("connection refused".into()));
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::Connect { .. })).is_none(),
+        "a flag URL stays what the person chose"
+    );
+
+    h.store.conn.set(ConnPhase::Probing);
+    h.ui.url_source.set(UrlSource::Pointer);
+    h.turns(1);
+    h.store
+        .conn
+        .set(ConnPhase::Unreachable("connection refused".into()));
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::Connect { .. })) {
+        Some(Cmd::Connect { url, .. }) => assert_eq!(url, "http://127.0.0.1:18894"),
+        other => panic!("expected a reconnect to the pointer's new port, got {other:?}"),
+    }
+    assert_eq!(h.ui.conn_url.get_untracked(), "http://127.0.0.1:18894");
+
+    // A bad pointer file: one visible line on Connection.
+    std::fs::write(
+        home.join(".abstractframework/gateway.json"),
+        r#"{"schema": 2, "url": "http://127.0.0.1:1"}"#,
+    )
+    .unwrap();
+    h.ui.wizard.set(false);
+    h.ui.screen.set(0);
+    h.store.conn.set(ConnPhase::Probing);
+    h.turns(1);
+    h.store
+        .conn
+        .set(ConnPhase::Unreachable("connection refused".into()));
+    let s = h.turns(3);
+    assert!(s.contains("⚠ Ignoring the gateway pointer"), "{s}");
+    assert!(
+        h.ui.pointer_notice
+            .get_untracked()
+            .unwrap_or_default()
+            .contains("unknown schema 2"),
+        "{:?}",
+        h.ui.pointer_notice.get_untracked()
+    );
+}
