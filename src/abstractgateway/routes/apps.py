@@ -12,11 +12,18 @@ browser session for THAT principal, never for someone else.
 The handover route `/apps/handover/{code}` sits outside `/api/gateway` on
 purpose: the browser reaches it by plain navigation (no bearer header), and
 the one-time code minted by `POST /api/gateway/apps/{id}/open` is its only
-credential. Cookies are scoped to a host, not to a port, so the gateway can
-set the app's own `<app>_gateway_{url,session,csrf}` cookies on the host the
-browser used and then redirect to the app on that same host: the app's server
-finds a valid gateway session and the app opens already connected. The
-gateway token never reaches the browser or the URL.
+credential. It sets the app's own `<app>_gateway_{url,session,csrf}` cookies
+and redirects to the app, which finds a valid gateway session and opens
+already connected. The gateway token never reaches the browser or the URL.
+
+Apps are served THROUGH the gateway at `/apps/<id>/` (app_proxy.py) when
+they announce it (`X-AbstractFramework-App: <id>; mount=1`): the cookies
+then carry `Path=/apps/<id>/` and the redirect is RELATIVE
+(`/apps/<id>/...`), so it works from any address the browser used for the
+gateway (a LAN address, a reverse proxy, a tunnel). An older app that does
+not announce it keeps the direct link to its own port, which works only from
+the gateway machine (it listens on 127.0.0.1: 409 `app_loopback_only`
+elsewhere).
 
 Apps started OUTSIDE the gateway (the dev stack, npx, a global install) are
 listed too (`source: "external"`, `managed: false`, apps_manager
@@ -110,6 +117,11 @@ class AppOpenRequest(BaseModel):
         default=None,
         max_length=2048,
         description='Where inside the app to land, e.g. "/#new" (Entity\'s creation form). A path on the app\'s own origin only: "//host", a full address or a backslash is refused (400 invalid_app_path).',
+    )
+    origin: Optional[str] = Field(
+        default=None,
+        max_length=512,
+        description="The browser's origin (`location.origin`, scheme://host[:port]) the answer's `app_url` is built on; default: what this request came in on. Anything else (a path, a query, credentials) is refused (400 invalid_origin).",
     )
 
 
@@ -391,17 +403,28 @@ def apps_open(request: Request, app_id: str, payload: Optional[AppOpenRequest] =
         )
     try:
         spec = spec_for(app_id)
-        handover_path(None if payload is None else payload.path)  # 400 before anything else
+        target = handover_path(None if payload is None else payload.path)  # 400 before anything else
         row = m.app_row(spec)
     except AppsError as exc:
         return _error(exc)
+    origin = _validated_origin(None if payload is None else payload.origin, request)
+    if origin is None:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "reason": "invalid_origin", "message": "origin must be the browser's scheme://host[:port], nothing else.", "hint": "Send location.origin, or leave it out."},
+        )
     if not row["running"]:
         return JSONResponse(
             status_code=409,
             content={"ok": False, "reason": "not_running", "message": f"{spec.name} is not running.", "hint": "Start it first (Launch)."},
         )
     host = _request_hostname(request)
-    if row.get("source") == "external":
+    mounted = bool(row.get("mounted"))
+    if mounted:
+        # Served through the gateway (app_proxy.py): reachable wherever the
+        # gateway itself is, so no loopback-only refusal applies.
+        pass
+    elif row.get("source") == "external":
         # Started outside the gateway: where it listens is its own business.
         # From a browser on another address, it must answer on that address.
         if not _is_loopback_name(host) and not _port_answers(host, int(row["port"])):
@@ -411,31 +434,60 @@ def apps_open(request: Request, app_id: str, payload: Optional[AppOpenRequest] =
                     "ok": False,
                     "reason": "app_loopback_only",
                     "message": f"{spec.name} was started outside the gateway and listens on this machine only (port {row['port']}); a browser on another machine cannot reach it.",
-                    "hint": "Open it from the gateway machine, or restart it so it listens on all addresses, behind your own access control.",
+                    "hint": f"Update {spec.name} to a version the gateway serves at /apps/{spec.id}/, or open it from the gateway machine.",
                 },
             )
-    elif _is_loopback_name(m.bind_host) and not _is_loopback_name(host):
+    elif not _is_loopback_name(host):
         return JSONResponse(
             status_code=409,
             content={
                 "ok": False,
                 "reason": "app_loopback_only",
-                "message": f"{spec.name} listens on this gateway machine only ({m.bind_host}:{row['port']}); a browser on another machine cannot reach it.",
-                "hint": "Open it from the gateway machine, or set Where apps listen to 0.0.0.0 (behind your own access control: Apps settings, or `abstractgateway apps config set host 0.0.0.0`) and relaunch the app.",
+                "message": f"This {spec.name} version listens on the gateway machine only (port {row['port']}) and cannot be served through the gateway; a browser on another machine cannot reach it.",
+                "hint": f"Update {spec.name} from the Apps page: newer versions open at /apps/{spec.id}/ from anywhere the gateway is reachable.",
             },
         )
     try:
-        code = m.mint_handover(spec.id, principal, host=host, path=None if payload is None else payload.path)
+        code = m.mint_handover(spec.id, principal, host=host, path=target)
     except AppsError as exc:
         return _error(exc)
     remember = True if payload is None else bool(payload.remember)
+    app_path = f"/apps/{spec.id}{target}" if mounted else None
     return {
         "ok": True,
         "app_id": spec.id,
         "open_url": f"/apps/handover/{code}" + ("" if remember else "?remember=0"),
-        "app_url": f"{request.url.scheme}://{host}:{row['port']}/",
+        "mounted": mounted,
+        "app_path": app_path,
+        "app_url": (origin + app_path) if mounted else f"{request.url.scheme}://{host}:{row['port']}/",
         "expires_in_s": int(HANDOVER_TTL_S),
     }
+
+
+def _validated_origin(origin: Optional[str], request: Request) -> Optional[str]:
+    """`scheme://host[:port]` of the browser, validated; the request's own
+    when not given. None when the given value is not an origin."""
+    from urllib.parse import urlsplit
+
+    if origin is None or not str(origin).strip():
+        return _browser_gateway_url(request)
+    raw = str(origin).strip()
+    try:
+        parts = urlsplit(raw)
+        port = parts.port
+    except ValueError:
+        return None
+    if parts.scheme not in ("http", "https") or not parts.hostname or parts.username or parts.password:
+        return None
+    if parts.path not in ("", "/") or parts.query or parts.fragment or raw.endswith("?") or raw.endswith("#"):
+        return None
+    import re
+
+    if not re.fullmatch(r"(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)(:\d{1,5})?", parts.netloc):
+        return None
+    if port is not None and not (1 <= port <= 65535):
+        return None
+    return f"{parts.scheme}://{parts.netloc.lower()}"
 
 
 def _port_answers(host: str, port: int, timeout: float = 0.5) -> bool:
@@ -513,11 +565,18 @@ def apps_handover(request: Request, code: str, remember: str = "1"):
         app_path = handover_path(app_path)
     except AppsError as exc:
         return _handover_error(400, "This app link is not valid", exc.message)
-    target = f"{scheme}://{host}:{row['port']}{app_path}"
+    if row.get("mounted"):
+        # Served through the gateway: a RELATIVE redirect onto /apps/<id>/,
+        # on whatever address the browser used, and cookies for that path.
+        target = f"/apps/{spec.id}{app_path}"
+        cookie_path = f"/apps/{spec.id}/"
+    else:
+        target = f"{scheme}://{host}:{row['port']}{app_path}"
+        cookie_path = "/"
     resp = RedirectResponse(url=target, status_code=303)
     resp.headers["Cache-Control"] = "no-store"
     resp.headers["Referrer-Policy"] = "no-referrer"
-    common: Dict[str, Any] = {"path": "/", "samesite": "lax", "secure": scheme == "https"}
+    common: Dict[str, Any] = {"path": cookie_path, "samesite": "lax", "secure": scheme == "https"}
     if persist:
         common["max_age"] = ttl
     prefix = spec.cookie_prefix

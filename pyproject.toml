@@ -41,6 +41,12 @@ dependencies = [
   "fastapi<1.0.0,>=0.136.0",
   "python-multipart>=0.0.6",
   "uvicorn[standard]<1.0.0,>=0.38.0",
+  # The apps are served through the gateway at /apps/<id>/ (app_proxy.py):
+  # httpx relays HTTP (streaming, SSE), websockets relays WebSockets
+  # (asyncio client API: 13.1+). Both were transitive; declared because they
+  # are load-bearing.
+  "httpx<1.0.0,>=0.28.1",
+  "websockets>=13.1",
   # Entity homes store the attested spark as YAML (spark.yaml). Previously
   # only transitive via uvicorn[standard]; declared because it is load-bearing.
   "pyyaml>=5.1",

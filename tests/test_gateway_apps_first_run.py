@@ -339,5 +339,7 @@ def test_console_card_says_create_your_first_entity_only_at_zero() -> None:
 
 def test_console_card_click_sends_the_path_through_the_handover() -> None:
     out = _drive_card()
-    assert out["posts"] == [{"path": "/#new"}, {}]
+    # Every Open names the browser's origin (the answer's app_url is built on it).
+    assert [{k: v for k, v in p.items() if k != "origin"} for p in out["posts"]] == [{"path": "/#new"}, {}]
+    assert all(p.get("origin") for p in out["posts"])
     assert out["assigned"] == ["/apps/handover/c0de", "/apps/handover/c0de"]

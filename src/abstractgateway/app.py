@@ -154,6 +154,12 @@ from .routes.apps import router as apps_router  # noqa: E402
 
 app.include_router(apps_router, prefix="/api")
 app.include_router(apps_handover_router)
+# The apps themselves, served through the gateway at /apps/<id>/ (HTTP, SSE,
+# WebSocket; gated on the app's gateway session): app_proxy.py. AFTER the
+# handover routes, whose literal /apps/handover/... paths must win.
+from .app_proxy import router as app_proxy_router  # noqa: E402
+
+app.include_router(app_proxy_router)
 # Network exposure (localhost / lan / internet) + reachable addresses:
 # routes/network.py, literal /gateway/network... paths (gateway_network_v1).
 from .routes.network import router as network_router  # noqa: E402

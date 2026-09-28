@@ -1765,10 +1765,20 @@ def run_network_command(args: Any) -> int:
         return 0 if status == 200 else 1
     payload = network_status(data_dir, in_process=False, lookup_public=bool(getattr(args, "public", False)))
     if cmd in ("status", "show"):
+        from .gateway_pointer import pointer_status
+
+        eff = payload.get("effective") or {}
+        ptr = pointer_status(data_dir, running_port=eff.get("port") if eff.get("running") else None)
         if args.json:
-            print(json.dumps(payload, indent=2, default=str))
+            print(json.dumps({**payload, "gateway_pointer": ptr}, indent=2, default=str))
         else:
             _print_status(payload)
+            if ptr["url"]:
+                owner = "this gateway" if ptr["this_data_dir"] else "ANOTHER gateway's data folder"
+                match = {True: ", matches the running port", False: ", does NOT match the running port", None: ""}[ptr["matches_running"]]
+                print(f"pointer:    {ptr['url']} ({owner}{match})  [{ptr['path']}]")
+            else:
+                print(f"pointer:    {'unreadable' if ptr['present'] else 'none'}  [{ptr['path']}]")
             _print_addresses(payload)
             for w in payload.get("warnings") or []:
                 print(f"  - {w}")

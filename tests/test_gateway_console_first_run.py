@@ -111,9 +111,9 @@ const el = (id) => {
 const document = { body: el("body"), documentElement: el("html"), cookie: "", getElementById: el, createElement: (t) => new Element(t) };
 const store = new Map();
 const localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) };
-const location = { hash: scenario.hash, pathname: "/console", search: "", origin: "http://127.0.0.1:18080", reload() {} };
+const location = { hash: scenario.hash, pathname: "/console", search: "", origin: "http://127.0.0.1:18080", reload() {}, replaced: [], replace(url) { this.replaced.push(String(url)); } };
 const history = { calls: [], replaceState(_s, _t, url) { this.calls.push({ url, hashAtCall: location.hash, claimCallsSoFar: calls.filter((c) => c.path.endsWith("/session/claim")).length }); location.hash = (String(url).match(/#.*$/) || [""])[0]; } };
-let loggedIn = false;
+let loggedIn = Boolean(scenario.loggedIn);
 let firstRunCompleted = scenario.completed;
 const calls = [];
 const res = (status, payload) => ({ ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(payload) });
@@ -171,6 +171,7 @@ async function fetch(path, options = {}) {
       row("assistant", "abstractassistant", { kind: "desktop", name: "Assistant", installed: true, version: "0.5.0", status: "stopped", actions: ["open"], interfaces: [], desktop: { location: "/Applications/AbstractAssistant.app", launch_command: "open -a /Applications/AbstractAssistant.app", launch_available: true, launch_blocked: null } }),
     ] });
   }
+  if (path === "/api/gateway/apps/observer/open" && method === "POST") return res(200, { ok: true, app_id: "observer", open_url: "/apps/handover/code-1", mounted: true, app_path: "/apps/observer/runs?x=1" });
   if (path === "/api/gateway/apps/flow/install" && method === "POST") return res(200, { ok: true, created: true, job: { id: "app-1", kind: "install", app_id: "flow", state: "running", percent: 12, bytes_done: 0, bytes_total: null, message: "Installing Node.js", steps: [] } });
   if (path === "/api/gateway/apps/jobs/app-1") return res(200, { ok: true, job: { id: "app-1", kind: "install", app_id: "flow", state: "succeeded", percent: 100, message: "Flow is running" } });
   if (path === "/api/gateway/models/catalog") {
@@ -221,7 +222,7 @@ const coreLib = {
 const windowStub = scenario.coreStub ? { AbstractCoreConsole: coreLib } : {};
 const context = vm.createContext({
   window: windowStub,
-  document, fetch, Headers, localStorage, location, history, console, Blob,
+  document, fetch, Headers, localStorage, location, history, console, Blob, URLSearchParams,
   URL: { createObjectURL: () => "blob:x", revokeObjectURL() {} },
   Intl, navigator: { languages: ["en-US"], language: "en-US" },
   setTimeout: (fn, ms, ...a) => { const t = setTimeout(fn, Math.min(ms || 0, 5), ...a); t.unref(); return t; },
@@ -389,6 +390,19 @@ if (scenario.name === "claim") {
   }
 }
 
+if (scenario.name === "app-link") {
+  // `/console#apps?open=<id>&path=<p>` (app_proxy.py's signed-out redirect):
+  // signed in, the console opens the app through the handover IN THIS TAB.
+  const opens = calls.filter((c) => c.path === "/api/gateway/apps/observer/open");
+  if (!scenario.loggedIn) {
+    if (opens.length || location.replaced.length) fail("opened an app before signing in");
+  } else {
+    if (opens.length !== 1) fail("expected one open call, got " + opens.length);
+    const body = JSON.parse(opens[0].body);
+    if (body.path !== "/runs?x=1" || body.origin !== "http://127.0.0.1:18080") fail("open body: " + opens[0].body);
+    if (location.replaced.join() !== "/apps/handover/code-1") fail("did not go to the handover: " + location.replaced.join());
+  }
+}
 if (scenario.name === "claim-tab") {
   // `#claim=<code>&tab=<tab>`: the code is stripped, the tab survives as the
   // `#<tab>` deep link, and the guide does not cover the requested tab.
@@ -524,6 +538,13 @@ def test_completed_data_dir_does_not_auto_open_but_setup_reopens() -> None:
 def test_claim_link_with_a_tab_lands_on_that_tab_without_the_guide() -> None:
     code = "agclaim_" + "D" * 43
     result = _run({"name": "claim-tab", "hash": f"#claim={code}&tab=apps", "code": code, "completed": False, "tab": "apps"})
+    assert result.returncode == 0, result.stderr + result.stdout
+    assert "OK" in result.stdout
+
+
+@pytest.mark.parametrize("logged_in", [True, False])
+def test_app_link_opens_the_app_signed_in_in_this_tab(logged_in) -> None:
+    result = _run({"name": "app-link", "hash": "#apps?open=observer&path=%2Fruns%3Fx%3D1", "code": "", "completed": True, "loggedIn": logged_in})
     assert result.returncode == 0, result.stderr + result.stdout
     assert "OK" in result.stdout
 

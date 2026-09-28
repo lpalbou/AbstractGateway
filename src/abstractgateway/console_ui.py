@@ -1414,7 +1414,7 @@ CONSOLE_UI_JS = r"""
       not_installed: ["Not installed", "muted"], stopped: ["Installed", "muted"], starting: ["Starting", "info tone-busy"],
       running: ["Running", "ok"], stopping: ["Stopping", "info tone-busy"], crashed: ["Stopped unexpectedly", "err"], crash_loop: ["Keeps crashing", "err"],
     };
-    const appStore = { data: null, error: "", loading: false, views: new Map(), jobs: new Map(), polling: false, message: "", busy: new Set(), pending: new Map(), notices: new Map(), logs: new Map() };
+    const appStore = { data: null, error: "", loading: false, views: new Map(), jobs: new Map(), polling: false, message: "", busy: new Set(), pending: new Map(), notices: new Map(), logs: new Map(), linkHandled: false };
     const APP_PENDING = { install: "Starting the install...", launch: "Starting...", stop: "Stopping...", update: "Starting the update...", cancel: "Cancelling...", open: "Opening...", "runtime-install": "Starting...", "tui-open": "Opening the terminal...", "tui-install": "Starting the install...", "tui-cancel": "Cancelling...", "desktop-open": "Opening..." };
     const APP_LOG_TAIL = 200;
     const APP_LOG_MAX = 5000;  // the route's own ceiling (routes/apps.py), said out loud in the panel
@@ -1751,7 +1751,8 @@ CONSOLE_UI_JS = r"""
         const doneLog = job && job.state === "succeeded" && (job.details || (Array.isArray(job.log_tail) && job.log_tail.length)) ? (job.details || job.log_tail.join("\n")) : "";
         tech = (items.length ? `<div class="ui-card__techline" data-app-tech="${esc(app.id)}">${appTechSep(items)}</div>` : "")
           + tui.lines
-          + (app.url ? `<div class="ui-card__techrow"><span class="ui-card__techlabel">Address</span><code class="ui-ellip" title="${esc(app.url)}">${esc(app.url)}</code></div>` : "")
+          + (app.app_path ? `<div class="ui-card__techrow"><span class="ui-card__techlabel">Address</span><code class="ui-ellip" title="${esc(appBrowserOrigin() + app.app_path)}">${esc(appBrowserOrigin() + app.app_path)}</code></div>` : "")
+          + (app.url ? `<div class="ui-card__techrow"><span class="ui-card__techlabel">${app.app_path ? "On this machine" : "Address"}</span><code class="ui-ellip" title="${esc(app.url)}">${esc(app.url)}</code></div>` : "")
           + `<div class="ui-card__techrow"><span class="ui-card__techlabel">npm</span><code class="ui-ellip" title="npx ${esc(app.package || "")}">npx ${esc(app.package || "")}</code></div>`
           + (doneLog ? `<details class="ui-details"><summary>Install log</summary><pre class="ui-log">${esc(doneLog)}</pre></details>` : "")
           + appLogMarkup(app);
@@ -1778,7 +1779,10 @@ CONSOLE_UI_JS = r"""
       const d = appStore.data;
       const node = ((d.runtime || {}).node) || {};
       const apps = Array.isArray(d.apps) ? d.apps : [];
-      let intro = `<div class="ui-toolbar"><span>Apps open in your browser, already signed in, and talk to this gateway at <code class="ui-ellip">${esc(d.gateway_url || url)}</code>.</span>`
+      // Apps are served THROUGH the gateway (app_proxy.py): the address is
+      // this browser's own origin + /apps/<id>/, wherever it reached us.
+      const appsBase = `${appBrowserOrigin()}${d.apps_path_prefix || "/apps/"}`;
+      let intro = `<div class="ui-toolbar"><span data-apps-base>Apps open in your browser at <code class="ui-ellip">${esc(appsBase)}…</code>, already signed in to this gateway.</span>`
         + `<button type="button" class="ui-btn is-quiet" data-app-action="refresh">${appStore.loading ? "Checking..." : "Check again"}</button></div>`;
       intro += appRuntimeMarkup(d);
       if (d.registry && d.registry.reachable === false) intro += `<div class="ui-alert tone-warn" role="alert"><strong>The app store (npm) is not reachable.</strong><span>Installed apps keep working; installing needs the internet.</span></div>`;
@@ -1786,6 +1790,26 @@ CONSOLE_UI_JS = r"""
       return intro + msg + `<div class="ui-card-grid is-aligned">${apps.map(appCardMarkup).join("")}</div>`;
     }
     function appRender() { for (const el of appStore.views.values()) if (el) el.innerHTML = appViewMarkup(); }
+    function appBrowserOrigin() {
+      try { return String(location.origin || ""); } catch { return ""; }
+    }
+    // `/console#apps?open=<id>&path=<p>`: where the gateway sends a page load
+    // of /apps/<id>/... that has no app session (app_proxy.py). Once signed
+    // in, open the app through the usual one-time handover IN THIS TAB,
+    // landing on the page that was asked for. Once per page load.
+    async function appOpenFromLink(id, appPath) {
+      if (appStore.linkHandled) return;
+      appStore.linkHandled = true;
+      try {
+        const body = { origin: appBrowserOrigin() };
+        if (appPath && appPath !== "/") body.path = appPath;
+        const res = await api(`/api/gateway/apps/${encodeURIComponent(id)}/open`, { method: "POST", body: JSON.stringify(body) });
+        location.replace(res.open_url);
+      } catch (err) {
+        appNotify(id, { tone: "err", text: `Could not open ${appName(id)}: ${String((err && err.message) || err)}`, hint: (err && err.data && err.data.hint) || "", details: uiErrorDetails(err) });
+        appRender();
+      }
+    }
     async function appRefresh() {
       appStore.loading = true;
       appRender();
@@ -1952,7 +1976,7 @@ CONSOLE_UI_JS = r"""
           // A first-run button lands inside the app (data-app-path, e.g.
           // Entity's "/#new"); the gateway validates it as a same-app path.
           const appPath = (button && button.dataset && button.dataset.appPath) || "";
-          const res = await api(`/api/gateway/apps/${encodeURIComponent(id)}/open`, { method: "POST", body: JSON.stringify(appPath ? { path: appPath } : {}) });
+          const res = await api(`/api/gateway/apps/${encodeURIComponent(id)}/open`, { method: "POST", body: JSON.stringify(Object.assign({ origin: appBrowserOrigin() }, appPath ? { path: appPath } : {})) });
           if (tab) tab.location = res.open_url; else if (typeof location !== "undefined") location.assign(res.open_url);
           appNotify(id, { tone: "ok", text: tab ? `${appName(id)} opened in a new tab.` : `Opening ${appName(id)}...` });
         } catch (err) {

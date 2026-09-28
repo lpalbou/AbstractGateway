@@ -26,6 +26,10 @@ a plain message, and the full log behind `details` on failure):
   each app's output to `<data_dir>/logs/apps/<id>.log`.
 - Sign-in handover: a one-time code lets the console open an app already
   signed in to this gateway (see `mint_handover`).
+- Serving through the gateway: an app that announces
+  `X-AbstractFramework-App: <id>; mount=1` is served at `/apps/<id>/` by
+  the gateway itself (app_proxy.py); `app_mount` says whether it does.
+  Apps always listen on 127.0.0.1 (`bind_host`).
 """
 
 from __future__ import annotations
@@ -82,7 +86,14 @@ JOB_DETAILS_MAX_BYTES = 256_000
 
 ENV_NODE = "ABSTRACTGATEWAY_APPS_NODE"  # auto (default) | managed | system | /path/to/node
 ENV_PORTS = "ABSTRACTGATEWAY_APPS_PORTS"  # e.g. 3100-3199
-ENV_HOST = "ABSTRACTGATEWAY_APPS_HOST"  # bind host for the apps (default 127.0.0.1)
+ENV_HOST = "ABSTRACTGATEWAY_APPS_HOST"  # DEPRECATED: apps always bind 127.0.0.1 (`AppsManager.bind_host`)
+APPS_BIND_HOST = "127.0.0.1"
+# The response header an app sends to say it can be served under the
+# gateway's `/apps/<id>/` (the abstractuic app-server kit's mount.js):
+#   X-AbstractFramework-App: <id>; mount=1
+APP_IDENTITY_HEADER = "X-AbstractFramework-App"
+MOUNT_PROBE_TTL_S = 10.0
+MOUNT_PROBE_TIMEOUT_S = 2.0
 ENV_REGISTRY = "ABSTRACTGATEWAY_APPS_NPM_REGISTRY"
 ENV_PYPI = "ABSTRACTGATEWAY_APPS_PYPI_URL"
 DEFAULT_PORT_RANGE = (3100, 3199)
@@ -1182,6 +1193,36 @@ def identify_app_page(html: str) -> Optional[str]:
     return None
 
 
+def parse_app_identity(value: Optional[str]) -> Optional[Tuple[str, bool]]:
+    """`X-AbstractFramework-App: <id>; mount=1` -> (id, mountable); None when
+    absent or not of that shape."""
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    parts = [p.strip() for p in raw.split(";")]
+    app_id = parts[0].lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", app_id):
+        return None
+    mount = any(p.replace(" ", "").lower() == "mount=1" for p in parts[1:])
+    return app_id, mount
+
+
+def probe_app_identity(port: int, *, host: str = "127.0.0.1", timeout: float = MOUNT_PROBE_TIMEOUT_S) -> Optional[Tuple[str, bool]]:
+    """GET http://host:port/ -> the app's identity header, parsed; None when
+    nothing answers or the header is absent."""
+    import http.client
+
+    conn = http.client.HTTPConnection(host, int(port), timeout=float(timeout))
+    try:
+        conn.request("GET", "/", headers={"Accept": "text/html", "User-Agent": "abstractgateway-apps-probe"})
+        resp = conn.getresponse()
+        return parse_app_identity(resp.getheader(APP_IDENTITY_HEADER))
+    except Exception:  # noqa: BLE001 - nothing there, or not an HTTP server
+        return None
+    finally:
+        conn.close()
+
+
 def probe_app_port(port: int, *, host: str = "127.0.0.1", timeout: float = EXTERNAL_PROBE_TIMEOUT_S) -> Optional[Tuple[str, str]]:
     """GET http://host:port/ -> (app id, page) when one of the apps answers."""
     import http.client
@@ -1648,6 +1689,11 @@ class AppsManager:
         self.desktop_wait: Callable[[Any], Optional[int]] = _desk.wait_launch
         self.desktop_python: str = sys.executable
         self._desktop_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+        # Whether an app answers with `<id>; mount=1` (app_mount), per
+        # (app id, port); tests replace the probe.
+        self.identity_probe: Callable[..., Optional[Tuple[str, bool]]] = probe_app_identity
+        self._mount_cache: Dict[Tuple[str, int], Tuple[float, bool]] = {}
+        self._bind_host_warned = False
 
     # -- paths ---------------------------------------------------------------
     @property
@@ -1696,7 +1742,48 @@ class AppsManager:
 
     @property
     def bind_host(self) -> str:
-        return self._setting("host").strip() or "127.0.0.1"
+        """Always 127.0.0.1: apps are opened THROUGH the gateway at
+        `/apps/<id>/` (app_proxy.py), so nothing else needs to reach them.
+        The `apps.host` setting is deprecated; a non-loopback value found
+        in the store or the environment is refused with ONE warning."""
+        from .runtime_config import resolve_apps_setting
+
+        row = resolve_apps_setting(self.data_dir, "host")
+        refused = row.get("invalid_stored") or row.get("invalid_env")
+        if refused and not self._bind_host_warned:
+            self._bind_host_warned = True
+            logger.warning(
+                "apps.host is deprecated and ignored (%s): apps listen on %s and open through the gateway at /apps/<id>/",
+                refused,
+                APPS_BIND_HOST,
+            )
+        return APPS_BIND_HOST
+
+    # -- serving through the gateway (/apps/<id>/) -----------------------------
+    def serving_port(self, spec: AppSpec) -> Optional[int]:
+        """The loopback port the app answers on now (started by the gateway,
+        or outside it), or None when it is not running."""
+        p = self._procs.get(spec.id)
+        if p is not None and p.alive() and p.port and p.status == "running":
+            return int(p.port)
+        if p is not None and p.alive():
+            return None  # starting: not serving yet
+        ext = self.external_apps().get(spec.id)
+        return int(ext.port) if ext is not None else None
+
+    def app_mount(self, spec: AppSpec, port: int) -> bool:
+        """The app on `port` announces `X-AbstractFramework-App: <spec.id>;
+        mount=1` (cached MOUNT_PROBE_TTL_S per port). Only such an app is
+        served at `/apps/<id>/`: an older one reads every visitor as local
+        (the gateway's proxy is a loopback peer)."""
+        key = (spec.id, int(port))
+        hit = self._mount_cache.get(key)
+        if hit is not None and _now() - hit[0] < MOUNT_PROBE_TTL_S:
+            return hit[1]
+        ident = self.identity_probe(int(port))
+        ok = bool(ident and ident[0] == spec.id and ident[1])
+        self._mount_cache[key] = (_now(), ok)
+        return ok
 
     def port_range(self) -> Tuple[Tuple[int, int], bool]:
         explicit = parse_port_range(self._setting("ports"))
@@ -3259,6 +3346,8 @@ class AppsManager:
             "managed_version": managed_version,
             "enabled": bool(self.app_state(spec.id).get("enabled")),
             "url": ext.url,
+            "mounted": self.app_mount(spec, int(ext.port)),
+            "app_path": f"/apps/{spec.id}/" if self.app_mount(spec, int(ext.port)) else None,
             "port": ext.port,
             "pid": ext.pid,
             "restarts_last_minute": 0,
@@ -3304,6 +3393,7 @@ class AppsManager:
                 return self._external_row(spec, ext, managed_version=installed, latest=latest, caller=caller, tui_release=tui_release, tui_release_error=tui_release_error)
         port = snap["port"] if running else st.get("port")
         url = f"http://{_connect_host(self.bind_host)}:{port}/" if running and port else None
+        mounted = bool(running and port and snap["status"] == "running" and self.app_mount(spec, int(port)))
         allowed = self.install_allowed(same_machine=bool((caller or {}).get("same_machine")))
         node = node if node is not None else self.node_status()
         update_available = bool(installed and latest and version_newer(latest, installed))
@@ -3342,6 +3432,11 @@ class AppsManager:
             "external": None,
             "enabled": bool(st.get("enabled")),
             "url": url,
+            # Served by the gateway at this path (same origin as the console)
+            # when the running app announces it can be (app_mount); None
+            # otherwise (the app is then reachable on this machine only).
+            "mounted": mounted,
+            "app_path": f"/apps/{spec.id}/" if mounted else None,
             "port": port,
             "pid": snap["pid"],
             "restarts_last_minute": snap["restarts_last_minute"],
@@ -3425,6 +3520,7 @@ class AppsManager:
             "gateway_url": self.resolve_gateway_url(),
             "console_tui": self.console_tui_interface(caller=caller),
             "apps_host": self.bind_host,
+            "apps_path_prefix": "/apps/",
             "data": {"apps_dir": str(self.apps_root), "node_dir": str(self.node_root), "logs_dir": str(self.data_dir / "logs" / "apps")},
         }
 
