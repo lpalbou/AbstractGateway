@@ -183,6 +183,11 @@ if (__SCRIPT__ === "hf") {
   snap("second");
   out.hubCalls2 = calls.filter((c) => c.path.startsWith("/api/gateway/models/catalog?")).map((c) => c.path);
 }
+if (__SCRIPT__ === "gpulimit") {
+  out.html = root.innerHTML;
+  root.onchange({ target: { dataset: { mcFits: "1" }, checked: true } }); snap("fits");
+  out.fitsHtml = root.innerHTML;
+}
 if (__SCRIPT__ === "unreported") {
   chip("quant", "8bit", true); snap("clicked");
 }
@@ -371,3 +376,43 @@ def test_hugging_face_texts() -> None:
     for text in ("Hugging Face has no model matching", "Hugging Face could not be searched right now.", "Hugging Face could not be reached, so these results may be incomplete."):
         assert text in js
     assert "export " not in js and "HF_TOKEN" not in js and "environment variable" not in js
+
+
+def _gpu_limit_catalog() -> dict:
+    """The 128 GiB Mac case: the recommendation fits once the GPU wired limit is raised."""
+    cat = _catalog(3)
+    art = cat["rows"][0]["artifacts"][1]
+    art["fit"] = {
+        "verdict": "needs_gpu_limit",
+        "notes": ["fits once the GPU may use more memory: sudo sysctl iogpu.wired_limit_mb=118000"],
+        "gpu_limit": {"sysctl": "iogpu.wired_limit_mb", "required_mb": 118000, "command": "sudo sysctl iogpu.wired_limit_mb=118000"},
+    }
+    for row in cat["rows"][1:]:
+        for a in row["artifacts"]:
+            a["fit"] = {"verdict": "too_large", "notes": []}
+    for a in cat["rows"][0]["artifacts"]:
+        if a is not art:
+            a["fit"] = {"verdict": "too_large", "notes": []}
+    return cat
+
+
+def test_needs_gpu_limit_shows_its_badge_and_command_and_counts_as_fitting() -> None:
+    """AbstractCore 2.18's needs_gpu_limit verdict: never "Fit unknown", the
+    sysctl command is on the card, and the fits filter keeps it (core's
+    FITS_FILTER_VERDICTS), so the 128 GiB recommendation is not hidden."""
+    cat = _gpu_limit_catalog()
+    out = _run(cat, "gpulimit")
+    html = out["html"]
+    assert "Needs GPU limit" in html
+    assert html.count('data-mc-gpu-limit="1"') == 1
+    assert "sudo sysctl iogpu.wired_limit_mb=118000" in html and "115 GiB" in html
+    assert out["fits"]["count"] == [1, 3, 1]
+    assert 'data-mc-gpu-limit="1"' in out["fitsHtml"]
+
+
+def test_fits_filter_matches_abstractcore_fits_filter_verdicts() -> None:
+    from abstractcore.config.model_catalog import FITS_FILTER_VERDICTS
+
+    m = re.search(r"const MC_FITS_FILTER_VERDICTS = (\[[^\]]*\]);", CATALOG_JS)
+    assert m, "the console names its fits-filter verdicts"
+    assert tuple(json.loads(m.group(1))) == tuple(FITS_FILTER_VERDICTS)
