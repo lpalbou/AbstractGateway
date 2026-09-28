@@ -35,6 +35,7 @@ pytestmark = pytest.mark.basic
 UV_TOOL_PREFIX = "/home/u/.local/share/uv/tools/abstractgateway"
 SCRIPT = b"#!/bin/sh\n# AbstractFramework bootstrap installer (test double)\necho installing\n"
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
+SHA = hashlib.sha256(SCRIPT).hexdigest()
 
 
 @pytest.fixture(autouse=True)
@@ -258,7 +259,9 @@ def test_the_update_runs_the_checked_installer_streams_its_log_and_reports_what_
     st = self_update.start_update(info=info, runner=runner, snapshot=_snapshots(before, after), installer_sha256=hashlib.sha256(SCRIPT).hexdigest())
     assert st["installer"]["url"].endswith("/main/scripts/install.sh") and st["installer"]["commit_url"].endswith(f"/{COMMIT}/scripts/install.sh")
     st = _wait_job()
-    assert ran == [["/bin/sh", str(data / "update" / "install.sh"), "--yes", "--no-start", "--no-open", "--no-modify-path", "--data-dir", str(data)]]
+    assert len(ran) == 1 and ran[0][0] == "/bin/sh" and ran[0][2:] == ["--yes", "--no-start", "--no-open", "--no-modify-path", "--data-dir", str(data)]
+    script = Path(ran[0][1])
+    assert script.parent == data / "update" and script.name.startswith("install-") and script.suffix == ".sh"
     assert st["state"] == "succeeded" and st["restart_recommended"] is True and self_update.restart_pending()
     assert st["log_tail"] == ["AbstractFramework 0.6.1 found: upgrading to 0.6.2", "[3] AbstractGateway", "  abstractgateway 0.7.1 -> 0.7.2"]
     assert st["framework_before"] == "0.6.1" and st["framework_after"] == "0.6.2" and st["version_after"] == "0.7.2"
@@ -277,7 +280,7 @@ def test_already_up_to_date_is_said_and_no_restart_is_offered(tmp_path: Path) ->
     info = _installer_info(data, "0.6.2")
     self_update.check_for_update(force=True, info=info, fetch=_pypi_must_not_be_asked, fetch_release=lambda: _release())
     same = {"abstractgateway": "0.7.2", "abstractcore": "2.18.1"}
-    self_update.start_update(info=info, runner=lambda c, on_line: on_line("Already up to date") or 0, snapshot=_snapshots(same, same))
+    self_update.start_update(info=info, runner=lambda c, on_line: on_line("Already up to date") or 0, snapshot=_snapshots(same, same), installer_sha256=SHA)
     st = _wait_job()
     assert st["state"] == "succeeded_no_change" and st["restart_recommended"] is False and not self_update.restart_pending()
     assert st["message"] == "already up to date: AbstractFramework 0.6.2; the installer changed nothing"
@@ -295,7 +298,7 @@ def test_a_failed_installer_run_names_its_exit_code_and_log_never_the_package_in
         on_line("ERROR: uv tool install failed: no wheel for webrtcvad")
         return 1
 
-    self_update.start_update(info=info, runner=runner, snapshot=_snapshots({}, {}))
+    self_update.start_update(info=info, runner=runner, snapshot=_snapshots({}, {}), installer_sha256=SHA)
     st = _wait_job()
     assert st["state"] == "failed" and st["exit_code"] == 1 and st["restart_recommended"] is False
     assert st["log_tail"] == ["ERROR: uv tool install failed: no wheel for webrtcvad"]
@@ -409,6 +412,8 @@ def test_the_http_update_runs_a_real_installer_script_admin_only(tmp_path: Path,
         assert body["install"]["kind"] == "installer" and body["update"]["status"] == "available"
         sha = body["update"]["action"]["installer_sha256"]
         assert c.post("/api/gateway/host/update/start", headers=h, json={"installer_sha256": "0" * 64}).status_code == 409
+        r = c.post("/api/gateway/host/update/start", headers=h)
+        assert r.status_code == 409 and "check again first" in r.json()["detail"]
         r = c.post("/api/gateway/host/update/start", headers=h, json={"installer_sha256": sha})
         assert r.status_code == 200 and r.json()["job"]["state"] in {"running", "succeeded"}
         st = _wait_job()
@@ -417,3 +422,85 @@ def test_the_http_update_runs_a_real_installer_script_admin_only(tmp_path: Path,
         assert st["state"] == "succeeded" and st["framework_after"] == "0.6.2"
         view = c.get("/api/gateway/host/update", headers=h).json()["update"]
         assert view["status"] == "installed" and "restart to finish" in view["line"]
+
+
+# ------------------------------------------------ tag-gate findings (0.7.2)
+
+
+def test_a_start_during_a_running_update_leaves_the_running_script_intact(tmp_path: Path) -> None:
+    """/bin/sh reads its script while it runs: a second start must never write over it. The
+    busy check comes before any preparation, and every run gets its own new file."""
+    import threading
+
+    data = tmp_path / "data"
+    _state(data)
+    info = _installer_info(data)
+    self_update.check_for_update(force=True, info=info, fetch=_pypi_must_not_be_asked, fetch_release=lambda: _release())
+    started, release_a = threading.Event(), threading.Event()
+    seen: Dict[str, Any] = {}
+
+    def runner(command: List[str], on_line: Any) -> int:
+        seen["path"] = Path(command[1])
+        started.set()
+        release_a.wait(10)
+        seen["bytes_at_end"] = Path(command[1]).read_bytes()
+        return 0
+
+    self_update.start_update(info=info, runner=runner, snapshot=_snapshots({}, {}), installer_sha256=SHA)
+    assert started.wait(5)
+    other = b"#!/bin/sh\n# AbstractFramework bootstrap installer (another)\necho B\n"
+    self_update.check_for_update(force=True, info=info, fetch=_pypi_must_not_be_asked, fetch_release=lambda: _release(script=other))
+    with pytest.raises(self_update.UpdateJobBusy):
+        self_update.start_update(info=info, runner=lambda c, o: 0, installer_sha256=hashlib.sha256(other).hexdigest())
+    assert seen["path"].read_bytes() == SCRIPT
+    assert sorted(p.name for p in (data / "update").iterdir()) == [seen["path"].name], "nothing else was written"
+    release_a.set()
+    st = _wait_job()
+    assert seen["bytes_at_end"] == SCRIPT and st["installer"]["sha256"] == SHA
+
+    # The next run gets a new file; the finished run's file is not reused.
+    self_update.start_update(info=info, runner=lambda c, o: seen.setdefault("second", Path(c[1])) and 0, snapshot=_snapshots({}, {}), installer_sha256=hashlib.sha256(other).hexdigest())
+    _wait_job()
+    assert seen["second"] != seen["path"] and seen["second"].read_bytes() == other
+
+
+def test_an_installer_update_needs_the_reviewed_sha256(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _state(data)
+    info = _installer_info(data)
+    self_update.check_for_update(force=True, info=info, fetch=_pypi_must_not_be_asked, fetch_release=lambda: _release())
+    for missing in (None, ""):
+        with pytest.raises(self_update.UpdateNotPossible, match="check again first"):
+            self_update.start_update(info=info, runner=lambda c, o: 0, installer_sha256=missing)
+    assert self_update.job_status()["state"] == "idle"
+    assert not (data / "update").exists() or not any((data / "update").iterdir())
+
+
+def test_an_unreadable_version_is_an_error_never_up_to_date(tmp_path: Path, hermetic: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    info = _installer_info(tmp_path / "data")
+    chk = self_update.check_for_update(force=True, info=info, fetch=_pypi_must_not_be_asked, fetch_release=lambda: _release(version="next"))
+    assert chk["update_available"] is None and "next" in str(chk["error"])
+    view = self_update.update_view(info, chk, {"state": "idle"}, False)
+    assert view["status"] == "error" and view["action"] is None and "up to date" not in view["line"]
+
+    plain = tmp_path / "venv"
+    plain.mkdir()
+    monkeypatch.setattr(self_update, "_dist_installed", lambda name: name == "pip")
+    monkeypatch.setattr(self_update, "_dist_installer", lambda: "pip")
+    pip = self_update.detect_install(executable="/py", prefix=str(plain), env={}, data_dir=tmp_path / "none")
+    chk = self_update.check_for_update(force=True, info=pip, fetch=lambda: {"ok": True, "offline": False, "latest": "soon"})
+    assert chk["update_available"] is None and "soon" in str(chk["error"])
+    assert self_update.update_view(pip, chk, {"state": "idle"}, False)["status"] == "error"
+
+
+def test_the_job_timeout_fires_on_a_silent_hang(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A command that prints nothing and never exits is killed by the watchdog."""
+    if os.name == "nt":
+        pytest.skip("uses /bin/sh")
+    monkeypatch.setattr(self_update, "JOB_TIMEOUT_S", 0.5)
+    info = self_update.InstallInfo(kind="pip", upgradable=True, reason=None, command=["/bin/sh", "-c", "sleep 30; echo never"], display_command="x", python=sys.executable, prefix="/v", version="0.7.1")
+    t0 = time.time()
+    self_update.start_update(info=info)
+    st = _wait_job()
+    assert time.time() - t0 < 8
+    assert st["state"] == "failed" and any("timed out" in line for line in st["log_tail"])

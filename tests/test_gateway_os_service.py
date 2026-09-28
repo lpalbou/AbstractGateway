@@ -485,8 +485,37 @@ def test_launchd_bootstrap_eio_is_retried_then_named_with_the_command_to_run(tmp
     assert [c[1] for c in fake.calls].count("bootstrap") == os_service.LAUNCHD_BOOTSTRAP_ATTEMPTS > 1
     msg = str(e.value)
     assert "Bootstrap failed: 5" in msg
-    assert f"Run it by hand: launchctl bootstrap gui/501 {plan.files[0]['path']}" in msg or \
-        f"Run it by hand: launchctl bootstrap gui/501 '{plan.files[0]['path']}'" in msg
+    assert f"after {os_service.LAUNCHD_BOOTSTRAP_ATTEMPTS} attempts" in msg
+    # Clean state, said as it is: the login item is removed, so nothing loads at the next login.
+    assert not Path(plan.files[0]["path"]).exists()
+    assert "Start at login is off" in msg and "abstractgateway service enable" in msg
+    assert "Run it by hand" not in msg
+
+
+def test_launchd_non_retryable_bootstrap_failure_says_one_attempt_and_removes_the_item(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A bootstrap that fails with a code other than 5/37 is not retried, and the message
+    says so: never "after 4 attempts" for a single try."""
+
+    class _Refuses(_Launchd):
+        def __call__(self, argv):
+            if list(argv[:2]) == ["launchctl", "bootstrap"]:
+                self.calls.append(list(argv))
+                return subprocess.CompletedProcess(list(argv), 1, stdout="", stderr="Bootstrap failed: 1: Operation not permitted")
+            return super().__call__(argv)
+
+    fake = _Refuses(loaded=False)
+    monkeypatch.setattr(os_service, "_sleep", fake.sleep, raising=False)
+    monkeypatch.setattr(os_service, "_monotonic", fake.monotonic, raising=False)
+    home = tmp_path / "home"
+    plan = os_service.build_install_plan(platform="darwin", home=home, host="127.0.0.1", port=18080, data_dir=tmp_path / "d", exe_argv=_exe(home), uid=501)
+    with pytest.raises(SystemExit) as e:
+        os_service.execute_plan(plan, runner=fake, echo=lambda _l: None)
+    msg = str(e.value)
+    assert [c[1] for c in fake.calls].count("bootstrap") == 1
+    assert "Bootstrap failed: 1: Operation not permitted" in msg
+    assert "attempts" not in msg and "not retried" in msg
+    assert not Path(plan.files[0]["path"]).exists()
+    assert "Start at login is off" in msg and "abstractgateway service enable" in msg
 
 
 def test_launchd_bootstrap_37_already_loaded_is_retried_until_it_loads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -533,4 +562,4 @@ def test_launchd_settle_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     plan = os_service.build_install_plan(platform="darwin", home=home, host="127.0.0.1", port=18080, data_dir=tmp_path / "d", exe_argv=_exe(home), uid=501)
     with pytest.raises(SystemExit) as e:
         os_service.execute_plan(plan, runner=fake, echo=lambda _l: None)
-    assert fake.now < 10_000.0 and "Run it by hand" in str(e.value)
+    assert fake.now < 10_000.0 and "Start at login is off" in str(e.value) and "abstractgateway service enable" in str(e.value)

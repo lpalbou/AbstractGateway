@@ -127,3 +127,26 @@ def test_up_to_date_and_not_possible_say_the_gateways_words(tray) -> None:
     app.check_or_apply_update()
     assert shown[-1] == ("AbstractFramework 0.6.2 is available, but not from here", win_hint)
     assert app._update_phase == "not_possible" and not confirms
+
+
+def test_a_refused_start_does_not_leave_the_tray_stuck_on_the_old_offer(tray) -> None:
+    """A 409 (installer changed, a job already running, check again first) clears the offer:
+    the next click checks again instead of re-offering the stale action forever."""
+    app, shown, confirms, answers = tray
+
+    class _Refusing(_Client):
+        def start_update(self, installer_sha256=None):
+            self.started.append(installer_sha256)
+            return Result(False, 409, {"detail": "the installer changed since it was checked"}, "the installer changed since it was checked")
+
+    app.client = _Refusing(_overview("available", action=ACTION), [])
+    checks: List[int] = []
+    real_check = app.client.check_update
+    app.client.check_update = lambda: checks.append(1) or real_check()
+    answers.append(True)
+    app.check_or_apply_update()
+    assert app._update_phase == "idle" and app._update_action is None
+    assert shown[-1][0] == "The update didn't start"
+    answers.append(False)
+    app.check_or_apply_update()
+    assert checks == [1, 1], "the second click checks again"
