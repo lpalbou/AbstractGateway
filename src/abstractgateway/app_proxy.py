@@ -14,6 +14,8 @@ would read every visitor as local (this proxy is its loopback peer), so it
 is never exposed here.
 
 Every request to `/apps/<id>/...`:
+- is refused (403) when it carries an Origin other than the gateway's own
+  address (another site, or another port on this host);
 - is GATED on a valid gateway session for that app: the app's own
   `<cookie_prefix>_gateway_session` cookie (set by the sign-in handover,
   routes/apps.py, with `Path=/apps/<id>/`). Without one, a page navigation
@@ -355,6 +357,11 @@ async def app_http(request: Request, app_id: str, path: str) -> Response:
     rest = _upstream_path(request.scope, spec.id)
     if rest is None:
         return _refusal(request, 404, "unknown_app", "No such app", f"There is no app '{app_id}' on this gateway.")
+    # Another origin's page (another site, or another port on this host,
+    # which is "same-site" and so still carries the app's Lax cookies) never
+    # reaches the app: browsers send Origin on every cross-origin request.
+    if not _same_origin(request.headers.get("origin"), request.headers.get("host"), request.url.scheme):
+        return JSONResponse(status_code=403, content={"ok": False, "reason": "cross_origin", "message": "Requests to an app must come from the gateway's own pages."}, headers={"Cache-Control": "no-store"})
     _prefix, session_cookie = app_cookie_names(spec)
     pairs = parse_cookie_pairs(request.headers.get("cookie"))
     if not await run_in_threadpool(session_valid, first_cookie(pairs, session_cookie)):

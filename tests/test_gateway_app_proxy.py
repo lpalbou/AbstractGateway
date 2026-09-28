@@ -305,3 +305,17 @@ def test_handover_routes_still_win_over_the_app_routes(env) -> None:
     app, _m, _up = env
     r = TestClient(app).get("/apps/handover/not-a-code", follow_redirects=False)
     assert r.status_code == 410
+
+
+def test_another_origin_never_reaches_the_app(env) -> None:
+    """A page on another origin (another site, or another port on this host:
+    same-site, so the Lax cookies ride along) cannot read or write the app."""
+    app, _m, up = env
+    browser = _signed_in(app)
+    before = len(up.seen)
+    for origin in ("http://127.0.0.1:9999", "https://evil.example"):
+        r = browser.post("/apps/observer/api/thing", content=b"{}", headers={"origin": origin})
+        assert r.status_code == 403 and r.json()["reason"] == "cross_origin", origin
+    assert len(up.seen) == before
+    ok = browser.post("/apps/observer/api/thing", content=b"{}", headers={"origin": "http://127.0.0.1:18823"})
+    assert ok.status_code == 200
