@@ -25,6 +25,12 @@
 ### Changed
 - `--gateway-url` is the flag for the gateway's address (`--url` stays as an
   alias); `--help` gives the token directly (`--token <token>`).
+- The gateway pointer is read like the kit and AbstractCode read it: opened
+  without following a symbolic link and without blocking (a FIFO cannot hang
+  the console), checked on the open file (regular file, owned by you, not
+  writable by group or others: a `0664` file is now refused) and read from
+  that same file with a 64 KiB bound. A symbolic link is refused as "it is a
+  symbolic link".
 - Without the flag the console finds this computer's gateway: the legacy
   `ABSTRACTGATEWAY_URL`, else the address the installer and `abstractgateway
   serve` record in `~/.abstractframework/gateway.json` (believed only for a

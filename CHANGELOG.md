@@ -7,10 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Requires AbstractRuntime 0.7.0 (the session history window; `session_chat_messages` no longer accepts the old caps),
-AbstractCore 2.18.0 (`engine_missing`, `needs_gpu_limit`) and AbstractVoice 0.13.0 (`abstractvoice.engine_runtime`,
-`voice_openai_api_key`), now declared directly. The gateway refuses to build its workflow host on a runtime without the
-history window. The terminal console builds on `abstractcore-console` 0.4.
+Requires AbstractRuntime 0.7.0 (the session history window and its public `window_transcript`), AbstractCore 2.18.0
+(`engine_missing`, `needs_gpu_limit`), AbstractVoice 0.13.0 (`abstractvoice.engine_runtime`, `voice_openai_api_key`,
+now declared directly) and AbstractAgent 0.3.17 (entity visit turns send the runtime's history window). The gateway
+refuses to build its workflow host on a runtime without the history window. The terminal console
+(`abstractgateway-console`, see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md)) builds on
+`abstractcore-console` 0.4.
 
 ### Added
 
@@ -52,6 +54,12 @@ history window. The terminal console builds on `abstractcore-console` 0.4.
   it for voice generation.
 - `restart.port` in `GET /api/gateway/network`: the port a restart binds; the restart route
   reconnects there.
+- The web console's Apps page names this browser's address and the `/apps/` path the apps open under; a link
+  `#apps?open=<id>&path=<path>` opens an app already signed in (where the proxy sends a signed-out visitor).
+- The terminal console finds its gateway like every client: `--gateway-url` (alias `--url`), the legacy
+  `ABSTRACTGATEWAY_URL`, then the local gateway pointer, then `http://127.0.0.1:8080`; it follows a gateway restarted on
+  a new port. It also gained a Network screen, the start-at-login switch and voice/engine states (details in its
+  changelog).
 
 ### Changed
 
@@ -70,6 +78,11 @@ history window. The terminal console builds on `abstractcore-console` 0.4.
   turns are dropped; messages keep their shape (tool and multimodal messages pass through). The receipt is recorded as
   `_runtime.session_history` with `source: "client_context"` (a client-sent value is replaced) and returned by
   `GET /runs/{id}`. Discussion and automation sessions still refuse client messages (400).
+- **Shipped workflows rebuilt without truncation (ADR-0026):** `coding-agent` 0.2.8 replaces 0.2.6 and
+  `co-scientist` 0.2.1 replaces 0.2.0. The coding agent's gates and fixer now read whole failure lines (the snippet
+  cuts are gone) and its verifier and spec judges no longer cap their output at 4,000 tokens; co-scientist embeds the
+  rebuilt `deep-plan`, `deep-investigate` and `diagram-render`. The example workflow id in the default-agent hint is
+  `coding-agent@0.2.8:coder`.
 - **docs-qa 0.1.1 (replaces 0.1.0): conversation history comes from the run's session.** The question is the
   `prompt` input; each question of a conversation starts with the same `session_id` and `use_session_history`, the
   gateway replays the earlier turns through the runtime's history window and the bundle's LLM call includes them.
@@ -78,7 +91,6 @@ history window. The terminal console builds on `abstractcore-console` 0.4.
   conversation, **New conversation** starts a new one, and the drawer says when earlier messages were not replayed.
   Clients that pinned `docs-qa@0.1.0` keep working on installs whose catalog already holds it; fresh installs publish
   0.1.1 only.
-
 - Every browser app is launched with `--port`, `--host`, `--gateway-url` flags (Observer, Code, Entity and Flow join
   Continuum). An installed version older than the flags (Observer 0.1.14, Code 0.5.0, Entity 0.2.2 or earlier) also
   gets the legacy `PORT`/`HOST`/`<APP>_GATEWAY_URL` environment, so it still listens on the port the gateway chose.
@@ -92,7 +104,6 @@ history window. The terminal console builds on `abstractcore-console` 0.4.
   provider and model.
 - `GET /runs/{id}/input_data` never returns a workspace folder the gateway made inside its data folder (a second
   automation started from it was refused); the refusal for such a folder says to leave the workspace empty.
-
 - **Session history replay is the most recent 50,000 tokens of whole turns.** A run started with
   `use_session_history` gets the session's newest turns that fit 50,000 estimated tokens (AbstractRuntime's history
   window). No message is cut, and there is no message-count or character cap. The old defaults (40 messages,
@@ -112,6 +123,21 @@ history window. The terminal console builds on `abstractcore-console` 0.4.
 - The static voice listings decide which local engines are available from AbstractVoice's
   `abstractvoice.engine_runtime` (a Supertonic voice without its runtime is no longer listed),
   and answer 503 with the reason when AbstractVoice lacks that API.
+- The web console's model cards show AbstractCore 2.18's `needs_gpu_limit` verdict as **Needs GPU limit** with the
+  exact command to run (`sudo sysctl iogpu.wired_limit_mb=<MB>`, click to copy), instead of "Fit unknown", and the
+  **Fits this computer** filter keeps those models (AbstractCore's `FITS_FILTER_VERDICTS`): on a 128 GiB Mac the
+  recommended model was hidden by the filter.
+- The console's theme selector and connect control are re-vendored from the released `@abstractframework/ui-kit`
+  0.1.14.
+
+### Security
+
+- The terminal console reads the gateway pointer the way the kit and AbstractCode do: opened without following a
+  symbolic link and without blocking (a FIFO in its place cannot hang the console), checked on the open file
+  (regular file, owned by you, not writable by group or others), and read from the same file with a 64 KiB bound.
+- The gateway writes the pointer through a fresh private temporary file (random name, created exclusively, mode 0600)
+  and an atomic rename: a symbolic link planted at the old predictable temporary name, or at the pointer itself, is
+  never written through.
 
 ### Fixed
 
