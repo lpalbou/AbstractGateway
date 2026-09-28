@@ -1497,7 +1497,10 @@ def uv_tool_bin_dir(prefix: Optional[str] = None, *, entry: str = "abstractgatew
     tool's environment: `<sys.prefix>/uv-receipt.toml`, whose
     `[tool] entrypoints` list each command's `install-path`. None when this
     gateway is not a uv tool install (a development venv, pip), or on a
-    Python without tomllib (3.10)."""
+    Python without tomllib (3.10). A receipt of any other shape (no
+    `[tool]` table, no `entrypoints` list, a relative or non-text
+    `install-path`) is not one uv wrote: None too, never an exception, so the
+    gateway keeps <data>/apps/bin."""
     try:
         import tomllib
     except ImportError:  # Python 3.10: no TOML reader in the standard library
@@ -1507,10 +1510,20 @@ def uv_tool_bin_dir(prefix: Optional[str] = None, *, entry: str = "abstractgatew
         data = tomllib.loads(receipt.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    tool = data.get("tool") if isinstance(data, dict) else None
-    for ep in (tool or {}).get("entrypoints") or []:
-        if isinstance(ep, dict) and ep.get("name") == entry and ep.get("install-path"):
-            return Path(str(ep["install-path"])).parent
+    tool = data.get("tool")
+    if not isinstance(tool, dict):
+        return None
+    entrypoints = tool.get("entrypoints")
+    if not isinstance(entrypoints, list):
+        return None
+    for ep in entrypoints:
+        if not isinstance(ep, dict) or ep.get("name") != entry:
+            continue
+        raw = ep.get("install-path")
+        if not isinstance(raw, str) or not raw:
+            return None
+        path = Path(raw)
+        return path.parent if path.is_absolute() else None
     return None
 
 

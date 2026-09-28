@@ -24,6 +24,7 @@ from abstractgateway import apps_manager as am
 from abstractgateway import tui_signin
 
 _TOKEN = "apps-tui-test-token-0123456789abcdef"
+_real_uv_tool_bin_dir = am.uv_tool_bin_dir  # before conftest patches it per test
 _REPO_API = f"{am.GITHUB_API}/repos/lpalbou/abstractcode/releases?per_page=30"
 _FAKE_BIN = "#!/bin/sh\ncase \"$1\" in --help) echo 'abstractcode — AbstractCode on AbstractTUI (gateway client)';; --version) echo 'abstractcode 0.9.9';; esac\n"
 
@@ -259,6 +260,31 @@ def test_the_tool_bin_dir_comes_from_uv_s_receipt(tmp_path: Path) -> None:
     (tmp_path / "broken").mkdir()
     (tmp_path / "broken" / "uv-receipt.toml").write_text("[tool\n")
     assert am.uv_tool_bin_dir(str(tmp_path / "broken")) is None
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="tomllib (3.11+); 3.10 keeps <data>/apps/bin")
+@pytest.mark.parametrize(
+    "body",
+    [
+        'tool = "abstractgateway"\n',  # tool is not a table
+        "tool = [1, 2]\n",
+        "[tool]\nentrypoints = 7\n",  # entrypoints is not a list
+        '[tool]\nentrypoints = "abstractgateway"\n',
+        '[tool]\nentrypoints = [{ name = "abstractgateway", install-path = "bin/abstractgateway" }]\n',  # relative
+        '[tool]\nentrypoints = [{ name = "abstractgateway", install-path = 12 }]\n',  # not a path
+        '[tool]\nentrypoints = [{ name = "abstractgateway", install-path = "" }]\n',
+    ],
+)
+def test_a_malformed_receipt_falls_back_to_data_apps_bin_and_never_crashes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str) -> None:
+    prefix = tmp_path / "tool"
+    prefix.mkdir()
+    (prefix / "uv-receipt.toml").write_text(body)
+    assert am.uv_tool_bin_dir(str(prefix)) is None
+    # The constructor reads this gateway's own receipt: a malformed one leaves
+    # the manager on <data>/apps/bin instead of failing to build it.
+    monkeypatch.setattr(am, "uv_tool_bin_dir", lambda _prefix=None, **kw: _real_uv_tool_bin_dir(str(prefix), **kw))
+    m = am.AppsManager(tmp_path / "data")
+    assert m.tool_bin_dir is None and m.bin_dir == m.legacy_bin_dir
 
 
 def test_install_lands_in_the_shared_tool_bin_dir_and_removes_the_old_copy(mgr, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
