@@ -1142,7 +1142,7 @@ a change made in one is immediately visible in the other.</p>
 <tr>
 <td>Sign-in</td>
 <td>Gateway browser session (user id + token)</td>
-<td>base URL + bearer token (<code>--token-file PATH</code>, the Connection screen, or <code>ABSTRACTGATEWAY_AUTH_TOKEN</code>)</td>
+<td>gateway URL + token (<code>--gateway-url URL --token &lt;token&gt;</code>, or the Connection screen)</td>
 </tr>
 <tr>
 <td>Best for</td>
@@ -1199,7 +1199,7 @@ You can also sign in with a user id and token (the admin's first token is in
 </tr>
 <tr>
 <td><strong>Resources</strong></td>
-<td>memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the <strong>Gateway</strong> card (pause, update, restart, desktop icon)</td>
+<td>memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the <strong>Gateway</strong> card (pause, update, restart, desktop icon, start at login)</td>
 </tr>
 <tr>
 <td><strong>Models</strong></td>
@@ -1219,6 +1219,16 @@ You can also sign in with a user id and token (the admin's first token is in
 </tr>
 </tbody>
 </table>
+<p><strong>Start at login</strong> (the Gateway card, and the setup guide's last step) is a
+real switch for admins: it names the mechanism (a LaunchAgent, a systemd user
+unit, a desktop autostart entry, a Windows Run entry), asks before each change
+and shows the state read back from the gateway. Where nothing on the machine
+could start the gateway at login, it says why instead of offering the switch.</p>
+<p>In <strong>Multimodal</strong>, a configured route whose engine is not installed reads
+"engine missing" with the install command, and the voice pickers say why a
+provider lists no voices. The cloud voice providers (OpenAI,
+OpenAI-compatible) are always listed, marked "needs an API key" until you add
+one under <strong>Providers</strong>.</p>
 <p>The <strong>Technical details</strong> switch at the bottom of the sidebar shows commands,
 route ids and other technical information throughout the console. The top bar
 holds the docs assistant (answers grounded on this gateway's documentation),
@@ -1399,7 +1409,10 @@ themselves are described in <a href="../apps/">apps.md</a>). What a plain user s
 each card: the app's mark, name and status pill (Not installed, Installed,
 Running, Installing, Stopped unexpectedly, Keeps crashing), one line of
 description (hover it for the whole sentence), and one row of buttons. The
-button rows of the cards side by side are always at the same height.</p>
+button rows of the cards side by side are always at the same height. Above
+the cards, one line names where the apps open: this browser's own address
+plus <code>/apps/</code> (for example <code>https://gateway.example.com/apps/…</code>), whatever
+address the browser used to reach the gateway.</p>
 <table>
 <thead>
 <tr>
@@ -1422,7 +1435,7 @@ button rows of the cards side by side are always at the same height.</p>
 </tr>
 <tr>
 <td>installed and running</td>
-<td><strong>Open</strong> (a new tab, already signed in)</td>
+<td><strong>Open</strong> (a new tab at <code>/apps/&lt;app&gt;/</code>, already signed in)</td>
 </tr>
 <tr>
 <td>installed but stopped, or crashed</td>
@@ -1450,6 +1463,10 @@ not on the gateway's computer, then <strong>Open</strong> (it starts in the menu
 gateway's computer, or comes to the front when it already runs). From another
 computer the card says "The Assistant runs on the gateway's computer: open it
 there." with no button. See <a href="../apps/#the-assistant-a-desktop-app">apps.md</a>.</p>
+<p>A link to <code>/apps/&lt;app&gt;/…</code> opened while signed out (a bookmark, a shared
+link) lands on the console (<code>/console#apps?open=&lt;app&gt;&amp;path=…</code>): once you are
+signed in, the console opens that app in the same tab, on the page the link
+named.</p>
 <p>A result box appears only after something you did ("Code opened in a new
 Terminal window, signed in to this gateway.", "Flow Editor opened in a new
 tab.") and closes itself after a few seconds. A failure stays, with the
@@ -1482,21 +1499,25 @@ headless server, where it also runs the first-run setup guide.</p>
 <p>Install it from crates.io (Rust 1.87 or newer):</p>
 <div class="highlight"><pre><span></span><code>cargo<span class="w"> </span>install<span class="w"> </span>abstractgateway-console
 </code></pre></div>
-<p>Connect it to a running gateway. On the gateway host, sign in with the admin
-token file (<code>abstractgateway serve</code> prints its data dir):</p>
-<div class="highlight"><pre><span></span><code>abstractgateway-console<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8080<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--token-file<span class="w"> </span><span class="s2">"&lt;data dir&gt;/auth/bootstrap-admin-token"</span>
+<p>Connect it to a running gateway with its URL and your token. The admin token
+is printed by <code>abstractgateway serve</code> when it starts:</p>
+<div class="highlight"><pre><span></span><code>abstractgateway-console<span class="w"> </span>--gateway-url<span class="w"> </span>http://127.0.0.1:8080<span class="w"> </span>--token<span class="w"> </span>&lt;token&gt;
 abstractgateway-console<span class="w"> </span>--help
 </code></pre></div>
-<p><code>--token-file PATH</code> reads the token from a file; an unreadable or empty file
-stops the launch with the reason. <code>ABSTRACTGATEWAY_AUTH_TOKEN</code> is also read.
-Avoid <code>--token</code> on shared machines: the command line is visible in <code>ps</code>. When
-sign-in fails, the Connection screen says whether no token was sent or the
-token was rejected, and where the admin token lives.</p>
+<p><code>--url</code> is an alias of <code>--gateway-url</code>. Without the flag, the console uses
+<code>ABSTRACTGATEWAY_URL</code> (legacy), else the address this computer's gateway
+records in <code>~/.abstractframework/gateway.json</code> (a loopback address only), else
+<code>http://127.0.0.1:8080</code>; when that gateway stops answering, the console reads
+the file again and follows it to a new port. Give the token with <code>--token
+&lt;token&gt;</code> or paste it on the Connection screen (<code>--token-file PATH</code> and
+<code>ABSTRACTGATEWAY_AUTH_TOKEN</code> remain as legacy aliases for existing scripts).
+When sign-in fails, the Connection screen says whether no token was
+sent or the token was rejected.</p>
 <h3 id="setup-guide-and-browse-mode">Setup guide and browse mode<a class="headerlink" href="#setup-guide-and-browse-mode" title="Permanent link">&para;</a></h3>
-<p>The console has twelve screens: <strong>1</strong> Connection, <strong>2</strong> Providers, <strong>3</strong> Routes,
+<p>The console has thirteen screens: <strong>1</strong> Connection, <strong>2</strong> Providers, <strong>3</strong> Routes,
 <strong>4</strong> Users &amp; Entities, <strong>5</strong> Runtimes, <strong>6</strong> Workflows, <strong>7</strong> Review &amp; Test,
-<strong>8</strong> Resources, <strong>9</strong> Models, <strong>0</strong> Engines, <strong>A</strong> Apps, and <strong>Setup</strong>.</p>
+<strong>8</strong> Resources, <strong>9</strong> Models, <strong>0</strong> Engines, <strong>A</strong> Apps, <strong>N</strong> Network, and
+<strong>Setup</strong>.</p>
 <ul>
 <li><strong>Setup guide.</strong> For an admin whose first run is not completed, the console
   opens the setup guide: Connection → Setup → Engines → Providers → Routes →
@@ -1504,7 +1525,8 @@ token was rejected, and where the admin token lives.</p>
   Routes shows the recommended models for this computer with fit warnings
   (<code>a</code> applies them, <code>D</code> downloads all of them as one job, <code>C</code> cancels, <code>p</code>
   shows the plan). Review ends with <strong>Finish</strong> or <strong>Skip setup</strong>, recorded on
-  the gateway. No step is gated except signing in.</li>
+  the gateway, and a <strong>Start at login</strong> switch. No step is gated except
+  signing in.</li>
 <li><strong>Browse mode</strong> (free tabs) opens otherwise. <code>--wizard</code> and <code>--browse</code> choose
   the mode at launch.</li>
 <li><strong><code>Ctrl+G</code></strong> reopens the guide from browse mode; inside the guide it opens
@@ -1515,7 +1537,21 @@ token was rejected, and where the admin token lives.</p>
 <h3 id="screens-and-panels">Screens and panels<a class="headerlink" href="#screens-and-panels" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Routes</strong> flags a route this computer cannot run (for example an MLX image
-  route on Linux) with the reason, like the web console.</li>
+  route on Linux) with the reason, and a route whose engine is not installed
+  ("engine missing", with the install command), like the web console. A model
+  that is not on this computer reads "not downloaded — w: download"; <code>w</code> asks
+  first, naming the model and its size, and the row updates by itself when the
+  download finishes. The voice picker says why a provider lists no voices (for
+  example "Supertonic is not installed … Install it with: …", or "OpenAI:
+  needs an API key (add it under Providers)").</li>
+<li><strong>N Network</strong> shows who can reach the gateway: the <strong>saved</strong> exposure
+  (localhost only, local network, internet) next to what is <strong>running now</strong>,
+  and every address to copy (<code>c</code>). <code>(•)</code> marks the saved mode; move the cursor
+  and press <code>Enter</code> to save another (internet asks for an acknowledgement
+  first). When the saved mode needs a restart that can apply it, the console
+  offers the restart, reconnects when the gateway is back and reads the network
+  again. When a restart cannot apply it, the gateway's reason is shown. The
+  Connection screen keeps a one-line summary.</li>
 <li><strong>Review &amp; Test</strong> holds the session's change journal and the sandbox: every
   output mode (text, image, voice, music, sound effects, video), file
   attachments and speak-this-reply.</li>
@@ -1524,20 +1560,23 @@ token was rejected, and where the admin token lives.</p>
 <li><strong>Workflows</strong> imports a <code>.flow</code> bundle (<code>i</code>) and reloads the registry (<code>L</code>).</li>
 <li><strong>A Apps</strong> is the web console's Apps tab: open browser apps signed in,
   install or update them, start and stop them, the desktop Assistant and
-  Node.js.</li>
+  Node.js. Over SSH, or on a machine without a display, <strong>Open</strong> never starts
+  a browser: it shows the one-time link to copy (<code>y</code>) and the <code>ssh -L</code> port
+  forwards that make it work from your own computer.</li>
 <li><strong>F2</strong> opens the docs assistant (questions answered from the gateway's own
   documentation; signed in).</li>
 <li><strong>F3</strong> opens the gateway host panel: pause or resume workflows, restart,
-  quit, check for and install updates, the tray. A banner shows on every
-  screen while workflows are paused.</li>
+  quit, check for and install updates, the tray, and <strong>start at login</strong> (<code>L</code>,
+  confirmed, then read back). A banner shows on every screen while workflows
+  are paused.</li>
 <li><strong>About</strong> (<code>F1</code>, or <code>?</code> outside a text field) shows this console, its
   version, the links and the connected gateway's versions from
-  <code>GET /api/gateway/about</code>. <code>abstractgateway-console --about --url &lt;gateway&gt;</code>
+  <code>GET /api/gateway/about</code>. <code>abstractgateway-console --about --gateway-url &lt;gateway&gt;</code>
   prints the same text without opening the interface.</li>
 </ul>
 <p>Keys: <code>Tab</code> focus, <code>Enter</code> activate, <code>Ctrl+N</code> / <code>Ctrl+P</code> next and previous
 step, <code>Esc</code> back (in a text field, the first <code>Esc</code> releases it so screen keys
-work again), <code>1</code>-<code>9</code>, <code>0</code> and <code>A</code> screens, <code>r</code> refresh, <code>q</code> quit. Each screen
+work again), <code>1</code>-<code>9</code>, <code>0</code>, <code>A</code> and <code>N</code> screens, <code>r</code> refresh, <code>q</code> quit. Each screen
 lists its own actions in the footer.</p>
 <p><strong>Admin rules.</strong> Admin-only actions are refused before anything is sent for a
 non-admin sign-in, with the reason, and the footer marks them "admin only".
@@ -1545,7 +1584,7 @@ The setup guide is admin-only, as on the web. Every write is verified with a
 follow-up read and recorded in the journal.</p>
 <h3 id="models-and-engines-in-the-terminal-console">Models and Engines in the terminal console<a class="headerlink" href="#models-and-engines-in-the-terminal-console" title="Permanent link">&para;</a></h3>
 <p>Screens 9 (<strong>Models</strong>) and 0 (<strong>Engines</strong>) are AbstractCore's own screens,
-taken from the <code>abstractcore-console</code> crate (0.3) rather than rebuilt, so they look
+taken from the <code>abstractcore-console</code> crate (0.4) rather than rebuilt, so they look
 and behave the same in <code>abstractcore-console</code> and here. In the gateway console
 they act on the gateway's host, through the gateway's
 <code>/api/gateway/host/profile</code>, <code>/engines</code>, <code>/models/catalog</code>,

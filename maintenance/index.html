@@ -1225,7 +1225,7 @@ abstractgateway<span class="w"> </span>config<span class="w"> </span><span class
   - <code>ABSTRACTGATEWAY_TOOL_MODE=delegated</code>: tools are not executed locally; workflows enter a durable <code>JOB</code> wait for external executors.
 - optional knobs:
   - Telegram-only routing override: <code>ABSTRACT_TELEGRAM_MODEL</code> (and optionally <code>ABSTRACT_TELEGRAM_PROVIDER</code>)
-  - Durable history limit: <code>ABSTRACT_TELEGRAM_MAX_HISTORY_MESSAGES</code>
+  - Replayed history is the gateway's window (the most recent 50,000 tokens of whole turns); <code>ABSTRACT_TELEGRAM_MAX_HISTORY_MESSAGES</code> is retired and ignored (a warning is logged when it is set)
   - <code>/reset</code> controls: <code>ABSTRACT_TELEGRAM_RESET_DELETE_MESSAGES</code>, <code>ABSTRACT_TELEGRAM_RESET_DELETE_MAX</code>, <code>ABSTRACT_TELEGRAM_RESET_MESSAGE</code></p>
 <p>Enable (Email):
 - <code>ABSTRACT_EMAIL_BRIDGE=1</code>

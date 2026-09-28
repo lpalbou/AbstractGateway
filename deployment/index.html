@@ -642,6 +642,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#behind-a-reverse-proxy-one-block-apps-included" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Behind a reverse proxy (one block, apps included)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-local-clients-find-the-gateway-abstractframeworkgatewayjson" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where local clients find the gateway (~/.abstractframework/gateway.json)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#cache-and-auth-notes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1002,6 +1024,28 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#behind-a-reverse-proxy-one-block-apps-included" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Behind a reverse proxy (one block, apps included)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-local-clients-find-the-gateway-abstractframeworkgatewayjson" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where local clients find the gateway (~/.abstractframework/gateway.json)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#cache-and-auth-notes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1051,12 +1095,12 @@ and the Runtime-owned provider/tool stack together.</p>
 <h2 id="published-image">Published image<a class="headerlink" href="#published-image" title="Permanent link">&para;</a></h2>
 <p>Release images are published to GHCR. The default image is the light,
 portable server image:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.6.0
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.7.0
 </code></pre></div>
 <p>NVIDIA hosts can try the experimental full GPU image when local
 vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.6.0-gpu
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.7.0-gpu
 </code></pre></div>
 <p>The image names <code>ghcr.io/lpalbou/abstractgateway-server:*</code> and
 <code>ghcr.io/lpalbou/abstractgateway-server-nvidia:*</code> are published as aliases for
@@ -1215,6 +1259,71 @@ setting decides the bind (seeded to <code>localhost</code>, i.e. <code>127.0.0.1
 with data in the per-user data folder. See <a href="../first-run/">first-run.md</a>. Containers and
 servers use the explicit configuration shown on this page: the image sets
 <code>--host 0.0.0.0</code> with user accounts on.</p>
+<h2 id="behind-a-reverse-proxy-one-block-apps-included">Behind a reverse proxy (one block, apps included)<a class="headerlink" href="#behind-a-reverse-proxy-one-block-apps-included" title="Permanent link">&para;</a></h2>
+<p>The console, the API and every browser app share the gateway's one address:
+the apps are served at <code>/apps/&lt;app&gt;/</code> by the gateway itself
+(<a href="../apps/#apps-are-served-through-the-gateway">apps.md</a>). So one proxy
+block covers everything. It must pass WebSocket upgrades (Flow's live
+editor), must not buffer (live updates are server-sent events), and must keep
+the <code>Host</code> the browser used (the sign-in handover is bound to it):</p>
+<div class="highlight"><pre><span></span><code><span class="k">server</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kn">listen</span><span class="w"> </span><span class="mi">443</span><span class="w"> </span><span class="s">ssl</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">server_name</span><span class="w"> </span><span class="s">gateway.example.com</span><span class="p">;</span>
+<span class="w">    </span><span class="c1"># ssl_certificate ... ; ssl_certificate_key ... ;</span>
+
+<span class="w">    </span><span class="kn">location</span><span class="w"> </span><span class="s">/</span><span class="w"> </span><span class="p">{</span>
+<span class="w">        </span><span class="kn">proxy_pass</span><span class="w"> </span><span class="s">http://127.0.0.1:8080</span><span class="p">;</span>
+<span class="w">        </span><span class="kn">proxy_http_version</span><span class="w"> </span><span class="mi">1</span><span class="s">.1</span><span class="p">;</span>
+<span class="w">        </span><span class="kn">proxy_set_header</span><span class="w"> </span><span class="s">Upgrade</span><span class="w"> </span><span class="nv">$http_upgrade</span><span class="p">;</span>
+<span class="w">        </span><span class="kn">proxy_set_header</span><span class="w"> </span><span class="s">Connection</span><span class="w"> </span><span class="nv">$connection_upgrade</span><span class="p">;</span>
+<span class="w">        </span><span class="kn">proxy_set_header</span><span class="w"> </span><span class="s">Host</span><span class="w"> </span><span class="nv">$host</span><span class="p">;</span>
+<span class="w">        </span><span class="kn">proxy_set_header</span><span class="w"> </span><span class="s">X-Forwarded-For</span><span class="w"> </span><span class="nv">$remote_addr</span><span class="p">;</span>
+<span class="w">        </span><span class="kn">proxy_set_header</span><span class="w"> </span><span class="s">X-Forwarded-Proto</span><span class="w"> </span><span class="nv">$scheme</span><span class="p">;</span>
+<span class="w">        </span><span class="kn">proxy_buffering</span><span class="w"> </span><span class="no">off</span><span class="p">;</span>
+<span class="w">        </span><span class="kn">proxy_read_timeout</span><span class="w"> </span><span class="s">1h</span><span class="p">;</span>
+<span class="w">        </span><span class="kn">client_max_body_size</span><span class="w"> </span><span class="mi">0</span><span class="p">;</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="p">}</span>
+
+<span class="c1"># In the http {} block:</span>
+<span class="k">map</span><span class="w"> </span><span class="nv">$http_upgrade</span><span class="w"> </span><span class="nv">$connection_upgrade</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="kn">default</span><span class="w"> </span><span class="s">upgrade</span><span class="p">;</span>
+<span class="w">    </span><span class="kn">''</span><span class="w">      </span><span class="s">close</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>Run nginx on the gateway machine, as here, so the gateway believes its
+<code>X-Forwarded-For</code> (it believes it from a loopback peer only). Then set the
+browser origin once:
+<code>abstractgateway network set --allowed-origins https://gateway.example.com</code>.
+<code>X-Forwarded-For $remote_addr</code> replaces anything the browser sent. The apps
+themselves always listen on <code>127.0.0.1</code>; nothing else needs to reach them,
+and no other port needs to be exposed. A tunnel (Cloudflare Tunnel,
+Tailscale Funnel, ngrok) to the gateway's port works the same way.</p>
+<h2 id="where-local-clients-find-the-gateway-abstractframeworkgatewayjson">Where local clients find the gateway (<code>~/.abstractframework/gateway.json</code>)<a class="headerlink" href="#where-local-clients-find-the-gateway-abstractframeworkgatewayjson" title="Permanent link">&para;</a></h2>
+<p>The gateway does not always listen on 8080 (the installer moves it when 8080
+is busy, and an admin can change the port). Clients that cannot ask
+<code>abstractgateway</code> (the terminal apps, the browser apps started by hand with
+<code>npx</code>, the frozen Assistant app) read one small file instead:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"schema"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">"url"</span><span class="p">:</span><span class="w"> </span><span class="s2">"http://127.0.0.1:8081"</span><span class="p">,</span><span class="w"> </span><span class="nt">"port"</span><span class="p">:</span><span class="w"> </span><span class="mi">8081</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"data_dir"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/home/me/.local/share/abstractgateway"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"updated_at"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2026-09-27T12:00:00Z"</span><span class="p">,</span><span class="w"> </span><span class="nt">"written_by"</span><span class="p">:</span><span class="w"> </span><span class="s2">"serve"</span><span class="p">}</span>
+</code></pre></div>
+<ul>
+<li><code>abstractgateway serve</code> writes it (mode 0600, atomically) once its listener
+  is bound, with the port it bound, but only when the file is absent and the
+  gateway uses the default data folder, or when the file names this
+  gateway's own data folder. A test or second gateway with its own data
+  folder never changes it. The installer writes it too
+  (<code>"written_by": "installer"</code>), and its uninstall deletes this one file.</li>
+<li><code>network set</code> does not change it: clients move when the gateway does, at the
+  restart that binds the new port. <code>serve</code> never deletes it.</li>
+<li>It holds no token and no liveness information. Readers accept it only with
+  <code>schema</code> 1, a URL on <code>127.0.0.1</code>, <code>::1</code> or <code>localhost</code>, and (Linux, macOS)
+  when it belongs to them; anything else is ignored with one warning.</li>
+<li>The order a client follows: its launch flag (<code>--gateway-url</code>), its legacy
+  environment variable, its saved sign-in (a saved <code>http://127.0.0.1:8080</code>
+  gives way to the file), this file, then <code>http://127.0.0.1:8080</code>.</li>
+</ul>
 <h2 id="cache-and-auth-notes">Cache and auth notes<a class="headerlink" href="#cache-and-auth-notes" title="Permanent link">&para;</a></h2>
 <p>Gateway auth is controlled by <code>ABSTRACTGATEWAY_*</code> variables and protects
 <code>/api/gateway/*</code>. AbstractCore provider/server auth variables control upstream
@@ -1230,7 +1339,7 @@ CachedSession persistence system.</p>
 <h2 id="local-source-image">Local-source image<a class="headerlink" href="#local-source-image" title="Permanent link">&para;</a></h2>
 <p>Before a version is published to PyPI, build from the checkout:</p>
 <div class="highlight"><pre><span></span><code><span class="nv">ABSTRACTGATEWAY_INSTALL_MODE</span><span class="o">=</span><span class="nb">local</span><span class="w"> </span><span class="se">\</span>
-<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.6.0-local<span class="w"> </span><span class="se">\</span>
+<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.7.0-local<span class="w"> </span><span class="se">\</span>
 docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>docker/abstractgateway-server/compose.yml<span class="w"> </span>up<span class="w"> </span>-d<span class="w"> </span>--build
 </code></pre></div>
 <p>Release automation builds the published image from the PyPI package after the

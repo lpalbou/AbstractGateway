@@ -1018,7 +1018,7 @@ you omit <code>flow_id</code>.</p>
 </tr>
 <tr>
 <td><code>coding-agent</code></td>
-<td>0.2.6</td>
+<td>0.2.8</td>
 <td><code>coder</code> (<code>abstractcode.agent.v1</code>), <code>coding-agent</code>* (<code>abstractcode.coding.v1</code>)</td>
 <td>Verify-gated coding: a builder agent writes code, an independent verifier runs build/execute/match gates each round, and failures feed back as reprompts until gates pass. <code>coder</code> is the chat entrypoint; <code>coding-agent</code> is the structured pipeline.</td>
 </tr>
@@ -1030,7 +1030,7 @@ you omit <code>flow_id</code>.</p>
 </tr>
 <tr>
 <td><code>co-scientist</code></td>
-<td>0.2.0</td>
+<td>0.2.1</td>
 <td><code>co-scientist</code>* (<code>abstractresearch.coscientist.v1</code>)</td>
 <td>Multi-agent hypothesis engine: literature grounding through the deep-research investigation flows, then cycles of generation, reflection, Elo-ranked pairwise debate, and evolution into a final reviewed research overview.</td>
 </tr>
@@ -1042,9 +1042,9 @@ you omit <code>flow_id</code>.</p>
 </tr>
 <tr>
 <td><code>docs-qa</code></td>
-<td>0.1.0</td>
+<td>0.1.1</td>
 <td><code>docsqa001</code>*</td>
-<td>Documentation Q&amp;A grounded on the asking app's <code>llms.txt</code> corpus; also auto-published into the tenant workflow catalog at boot.</td>
+<td>Documentation Q&amp;A grounded on the asking app's <code>llms.txt</code> corpus; history comes from the run's session (<code>use_session_history</code>); also auto-published into the tenant workflow catalog at boot.</td>
 </tr>
 <tr>
 <td><code>react-agent</code> / <code>codeact-agent</code> / <code>memact-agent</code></td>

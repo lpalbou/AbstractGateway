@@ -1462,8 +1462,8 @@ never schedules or runs anything itself.</p>
   }
 </code></pre></div>
 <ul>
-<li><strong>Runtime.</strong> Automations need AbstractRuntime 0.6.0 or later. A gateway installed against an older runtime does
-  not start (<a href="../troubleshooting/#the-gateway-does-not-start-an-abstractruntime-module-is-missing">troubleshooting.md</a>).</li>
+<li><strong>Runtime.</strong> Automations need AbstractRuntime 0.6.0 or later, and this gateway needs 0.7.0 or later. A gateway installed against
+  an older runtime does not start (<a href="../troubleshooting/#the-gateway-does-not-start-an-abstractruntime-module-is-missing">troubleshooting.md</a>).</li>
 </ul>
 <p>The examples below assume:</p>
 <div class="highlight"><pre><span></span><code><span class="nb">export</span><span class="w"> </span><span class="nv">BASE_URL</span><span class="o">=</span><span class="s2">"http://127.0.0.1:8080"</span>
@@ -1728,7 +1728,7 @@ server-owned keys at all: saving the workflow answers 422 with the <code>field</
 </tr>
 <tr>
 <td><code>growing</code></td>
-<td>receives the previous occurrences as conversation history: whole turns, at most 40 messages and 24,000 characters, not summarized</td>
+<td>receives the previous occurrences as conversation history: the most recent 50,000 tokens of whole turns, never a cut message, not summarized; the occurrence run records what was replayed and dropped in <code>_runtime.session_history</code></td>
 <td>the automation's session, <code>automation:&lt;automation_id&gt;</code></td>
 </tr>
 </tbody>
@@ -2201,8 +2201,8 @@ against a gateway it starts and stops itself:</p>
   or event triggers.</li>
 <li>Occurrences run one at a time, missed ticks coalesce, and a failed
   occurrence never stops the automation. These policies cannot be changed.</li>
-<li>Growing history is bounded (40 messages, 24,000 characters, whole turns)
-  and is not summarized.</li>
+<li>Growing history is the most recent 50,000 tokens of whole turns and is not
+  summarized; older turns drop out of the replay (they stay in the store).</li>
 <li>Under <code>tool_approval: "auto"</code>, tools outside AbstractRuntime's
   classification, such as third-party MCP tools, still ask for approval.</li>
 <li>Retries repeat the external effects of the failed attempt.</li>

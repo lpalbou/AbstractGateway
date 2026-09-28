@@ -1776,9 +1776,10 @@ sentence-transformer embeddings on the Gateway host.</p>
 - <code>abstractgateway[docs]</code>: MkDocs site tooling
 - <code>abstractgateway[dev]</code>: local dev/test deps</p>
 <p>Default dependency floors (see <code>pyproject.toml</code>):
-- <code>AbstractRuntime&gt;=0.6.0</code>
-- <code>abstractcore&gt;=2.17.0</code>
-- <code>abstractagent&gt;=0.3.15</code>
+- <code>AbstractRuntime&gt;=0.7.0</code>
+- <code>abstractcore&gt;=2.18.0</code>
+- <code>abstractvoice&gt;=0.13.0</code> (the voice listings import <code>abstractvoice.engine_runtime</code>)
+- <code>abstractagent&gt;=0.3.17</code>
 - <code>AbstractMemory[lancedb]&gt;=0.3.0</code></p>
 <p>Gateway's KG resolver targets AbstractMemory's TripleStore API. It does not use
 the newer memory-agent API directly.</p>
@@ -1952,9 +1953,12 @@ runtime-config key (<code>network</code>); there is no environment variable for 
   the status says <code>restart_required: true</code> with <code>configured</code> vs <code>effective</code>
   until the gateway restarts (<code>POST /api/gateway/network/restart</code>, the tray's
   <em>Restart AbstractGateway…</em>, <code>abstractgateway network restart</code>, or stop and
-  start <code>serve</code>).</li>
-<li><strong><code>serve --host/--port</code> win</strong> over the setting and are reported as
-  <code>effective.overridden_by_cli: true</code>. A restart replays the same command
+  start <code>serve</code>). Only <strong>saved</strong> values are compared: with no port saved, a
+  gateway started with <code>--port N</code> needs no restart, and <code>restart.port</code> is the
+  port a restart binds (the saved one, else the running one).</li>
+<li><strong><code>serve --host/--port</code> win</strong> over a saved value that differs and are then
+  reported as <code>effective.overridden_by_cli: true</code> (a flag that shadows nothing
+  saved overrides nothing). A restart replays the same command
   line, so it cannot apply the setting: the status says so
   (<code>restart.applies: false</code> + <code>restart.reason</code>) and the restart route refuses.</li>
 <li><strong>The login service lets the setting apply.</strong> The LaunchAgent,
@@ -2609,9 +2613,9 @@ as <code>env_shadowed</code>.</p>
 </tr>
 <tr>
 <td><code>apps.host</code></td>
-<td>Where apps listen</td>
+<td>Where apps listen (deprecated)</td>
 <td><code>127.0.0.1</code></td>
-<td>an IP or host name; <code>0.0.0.0</code> opens the apps to every network this computer is on</td>
+<td><strong>deprecated</strong>: apps always listen on <code>127.0.0.1</code> and open through the gateway at <code>/apps/&lt;app&gt;/</code> (<a href="../apps/#apps-are-served-through-the-gateway">apps.md</a>); only a loopback address is accepted, and an older saved <code>0.0.0.0</code> is ignored with one warning</td>
 <td><code>ABSTRACTGATEWAY_APPS_HOST</code></td>
 </tr>
 <tr>
@@ -2632,14 +2636,14 @@ as <code>env_shadowed</code>.</p>
 </table>
 <p><code>GET /api/gateway/admin/runtime-config</code> returns them under <code>apps</code> as
 <code>{name: {key, label, help, placeholder, default, env_name, value, source,
-note?, env_shadowed?, invalid_stored?, invalid_env?}}</code> (the registry
+note?, env_shadowed?, invalid_stored?, invalid_env?, deprecated?}}</code> (the registry
 <code>runtime_config.APPS_SETTINGS</code>: a new knob is one row, and the TUI renders
 whatever the payload lists). Writes go through the generic door, admin-only
 and audit-logged (<code>setting_change</code> on the request's audit line):
-<code>POST /api/gateway/admin/runtime-config {"apps.host": "0.0.0.0"}</code> (or
-<code>{"apps": {"host": "0.0.0.0"}}</code>); an empty value clears back to env/default.
+<code>POST /api/gateway/admin/runtime-config {"apps.ports": "3200-3299"}</code> (or
+<code>{"apps": {"ports": "3200-3299"}}</code>); an empty value clears back to env/default.
 Each value is validated before anything is written (400 with the reason). Read
-at each use: a change applies at the next app start (<code>node</code>, <code>host</code>, <code>ports</code>)
+at each use: a change applies at the next app start (<code>node</code>, <code>ports</code>)
 or the next download (the two URLs).</p>
 <p>Three ways, same semantics:</p>
 <table>
@@ -2714,7 +2718,7 @@ changed. It never falls back to another workflow on its own.</p>
 <span class="w">  </span><span class="nt">"key"</span><span class="p">:</span><span class="w"> </span><span class="s2">"agents.default_workflow.abstractcode.agent.v1"</span><span class="p">,</span><span class="w"> </span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="s2">"coding-agent:coder"</span><span class="p">,</span><span class="w"> </span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"stored"</span><span class="p">,</span>
 <span class="w">  </span><span class="nt">"available"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"reason"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"default"</span><span class="p">:</span><span class="w"> </span><span class="s2">"basic-agent:81795ea9"</span><span class="p">,</span>
 <span class="w">  </span><span class="nt">"resolved"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"bundle_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"coding-agent"</span><span class="p">,</span><span class="w"> </span><span class="nt">"bundle_version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.2.7"</span><span class="p">,</span><span class="w"> </span><span class="nt">"flow_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"coder"</span><span class="p">,</span>
-<span class="w">               </span><span class="nt">"registry_scope"</span><span class="p">:</span><span class="w"> </span><span class="s2">"private"</span><span class="p">,</span><span class="w"> </span><span class="nt">"workflow_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"coding-agent@0.2.7:coder"</span><span class="p">,</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"coder"</span><span class="p">},</span>
+<span class="w">               </span><span class="nt">"registry_scope"</span><span class="p">:</span><span class="w"> </span><span class="s2">"private"</span><span class="p">,</span><span class="w"> </span><span class="nt">"workflow_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"coding-agent@0.2.8:coder"</span><span class="p">,</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"coder"</span><span class="p">},</span>
 <span class="w">  </span><span class="nt">"eligible"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"value"</span><span class="p">:</span><span class="w"> </span><span class="s2">"basic-agent:81795ea9"</span><span class="p">,</span><span class="w"> </span><span class="nt">"workflow_id"</span><span class="p">:</span><span class="w"> </span><span class="s2">"basic-agent@0.0.5:81795ea9"</span><span class="p">,</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"basic-agent"</span><span class="p">,</span><span class="w"> </span><span class="nt">"..."</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">}]}},</span>
 <span class="w">  </span><span class="nt">"index_source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"host"</span><span class="p">}</span>
 </code></pre></div>

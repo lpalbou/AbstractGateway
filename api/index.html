@@ -2134,23 +2134,32 @@ deliberately narrower than what history views display):</p>
 <ul>
 <li>Client-provided non-empty <code>context.messages</code> always win; the seed never
   overwrites them. An EMPTY client <code>context.messages</code> list does not count as
-  a transcript — the seed still runs (use the cap below to disable).</li>
+  a transcript — the seed still runs (leave out <code>use_session_history</code> to
+  start without history).</li>
 <li>Only COMPLETED root runs of the session contribute, as strictly alternating
   user/assistant pairs. FAILED and CANCELLED turns are invisible to replay by
   design (a promptless answer or answerless prompt would seed a dangling
   message and invite re-answering a stale ask); history views still show them.</li>
-<li>Steering/operator guidance injected mid-run is not replayed; over-long
-  messages are truncated with a labeled <code>#TRUNCATION</code> marker; whole oldest
-  turns are dropped first (<code>session_history_max_chars</code> cumulative budget).</li>
-<li>Caps: <code>input_data.session_history_max_messages</code> (1..200; explicit <code>0</code>
-  disables replay for the run) &gt; <code>ABSTRACTGATEWAY_SESSION_HISTORY_MAX_MESSAGES</code><blockquote>
-<p>default 40. Chars: <code>session_history_max_chars</code> &gt;
-  <code>ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS</code> &gt; default 24000.</p>
-</blockquote>
-</li>
+<li>Steering/operator guidance injected mid-run is not replayed.</li>
+<li>The history window: replay keeps the most recent turns that fit 50,000
+  estimated tokens (AbstractRuntime <code>HISTORY_REPLAY_MAX_TOKENS</code>), as whole
+  messages, newest first. No message is cut, and there is no message-count or
+  character cap. The model can use the rest of its context window. When older
+  turns are dropped, the oldest replayed message starts with a labeled
+  <code>[#TRUNCATION: ...]</code> line. A newest turn that alone exceeds 50,000 tokens is
+  kept whole (<code>oversize_turn_kept: true</code>).</li>
+<li>The retired caps <code>input_data.session_history_max_messages</code> and
+  <code>input_data.session_history_max_chars</code> are ignored and listed in
+  <code>_runtime.session_history.ignored_inputs</code>. The environment variables
+  <code>ABSTRACTGATEWAY_SESSION_HISTORY_MAX_MESSAGES</code> and
+  <code>ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS</code> are no longer read.</li>
 <li>Failures degrade to a labeled <code>_runtime.session_history</code> <code>#FALLBACK</code> note
-  and an unseeded start — never a blocked run. Success records
-  <code>_runtime.session_history = {seeded: N, ...}</code> on the run for observability.</li>
+  and an unseeded start — never a blocked run. Success records the window on
+  the run as <code>_runtime.session_history</code>: <code>{seeded, policy, max_tokens,
+  token_estimator, replayed_messages, replayed_tokens, dropped_messages,
+  dropped_tokens, dropped_counts_complete, oversize_turn_kept}</code>.
+  <code>dropped_counts_complete: false</code> means replay stopped reading once the window
+  was full: older turns were dropped too, and they are not counted.</li>
 <li>Entity lanes never ride this: their transcript authority is the entity home
   (<code>_visit.history</code> / the chat driver), not the run store.</li>
 </ul>
@@ -2220,18 +2229,28 @@ manual upload below then remains the path.</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{</span>
 <span class="s1">  "registry_scope": "tenant_catalog",</span>
 <span class="s1">  "bundle_id": "docs-qa",</span>
-<span class="s1">  "bundle_version": "0.1.0",</span>
+<span class="s1">  "bundle_version": "0.1.1",</span>
 <span class="s1">  "flow_id": "docsqa001",</span>
+<span class="s1">  "session_id": "myapp-docs-assistant:&lt;one id per conversation&gt;",</span>
 <span class="s1">  "input_data": {</span>
-<span class="s1">    "question": "How do I publish a workflow bundle?",</span>
-<span class="s1">    "history": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}],</span>
+<span class="s1">    "prompt": "How do I publish a workflow bundle?",</span>
 <span class="s1">    "docs": "&lt;your llms.txt text&gt;",</span>
-<span class="s1">    "app": "MyApp"</span>
+<span class="s1">    "app": "MyApp",</span>
+<span class="s1">    "use_session_history": true</span>
 <span class="s1">  }</span>
 <span class="s1">}'</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/runs/start"</span>
 </code></pre></div>
+<p>Conversation history comes from the run's session, never from the caller
+(0.1.1): start every question of one conversation with the same <code>session_id</code>
+and <code>use_session_history: true</code>. The gateway replays the session's earlier
+turns through the runtime's history window (the newest whole turns up to
+50,000 tokens) and the bundle's LLM call includes them; a new conversation is
+a new <code>session_id</code>. 0.1.0's <code>question</code> + <code>history</code> inputs (last 12 messages
+kept) are gone.</p>
 <p>Then poll <code>GET /runs/{run_id}</code> (or stream the ledger); the answer is
-<code>output.response</code>. <code>provider</code>/<code>model</code>/<code>temperature</code> may ride <code>input_data</code> to
+<code>output.response</code>, and <code>session_history</code> is the window's receipt
+(<code>replayed_messages</code>, <code>dropped_messages</code>, ...) to show when earlier messages
+were not replayed. <code>provider</code>/<code>model</code>/<code>temperature</code> may ride <code>input_data</code> to
 override gateway defaults. Answers cite section headings and say plainly when
 the docs do not answer — the bundle refuses to invent endpoints or behavior.
 Docs Q&amp;A must never route through entity chat (a visit is billable and forms
@@ -2944,6 +2963,17 @@ Gateway and capability-package environment variables.</p>
 </ul>
 <p>Examples:</p>
 <ul>
+<li>Voice provider listings (<code>/voice/voices?providers_only=true</code>,
+  <code>/audio/speech/models?providers_only=true</code>,
+  <code>/audio/transcriptions/models?providers_only=true</code>) always list the cloud
+  providers <code>openai</code> and <code>openai-compatible</code>; their <code>items</code> carry <code>needs_key</code>,
+  <code>key_source</code> (<code>environment</code> | <code>providers</code> | null), <code>state</code> and <code>reason</code>, and
+  <code>cloud_providers</code> repeats them. A key counts when it is in the environment or
+  saved through the Providers screen. Local engines are listed when
+  AbstractVoice reports their runtime installed; <code>unavailable_providers</code>
+  (per kind: <code>{provider, code: runtime_missing|model_not_downloaded|not_configured,
+  reason}</code>) and <code>unavailable_reason</code> say why others are missing, and a listing
+  filtered to a cloud provider without a key says where the key goes.</li>
 <li><code>/voice/voices</code>: <code>items</code> contain voice/profile records with <code>id</code>, <code>label</code>,
   optional <code>provider</code>, optional <code>model</code>, and <code>voice_kind</code></li>
 <li><code>/audio/*/models</code>: <code>items</code> contain model records with <code>id</code>, <code>label</code>,
@@ -3476,8 +3506,8 @@ carries a <code>caches</code> array and <code>clear_all</code> always carries <c
 <code>src/abstractgateway/security/authorization.py</code> (route-family policy).</p>
 <h2 id="about-get-apigatewayabout">About (<code>GET /api/gateway/about</code>)<a class="headerlink" href="#about-get-apigatewayabout" title="Permanent link">&para;</a></h2>
 <p>Public (no sign-in): which versions this gateway runs, for About screens.</p>
-<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"abstractframework"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.5.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"abstractgateway"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.6.0"</span><span class="p">,</span>
-<span class="w"> </span><span class="nt">"packages"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"abstractcore"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2.17.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"abstractruntime"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.6.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"abstractskill"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.3.0"</span><span class="p">}}</span>
+<div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"abstractframework"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.5.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"abstractgateway"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.7.0"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"packages"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"abstractcore"</span><span class="p">:</span><span class="w"> </span><span class="s2">"2.18.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"abstractruntime"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.7.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"abstractskill"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.3.0"</span><span class="p">}}</span>
 </code></pre></div>
 <p><code>abstractframework</code> is null when the framework meta-package is not installed
 on the gateway computer. Versions only: no paths, host names or settings.</p>
@@ -3517,6 +3547,21 @@ any authenticated principal; writes require an admin principal.</p>
   <code>{"ok": true, "restart": true, "requested_by": "...", "reason": "..."}</code>;
   409 with a plain reason when unsupported (<code>--reload</code>, embedded server, an
   update is installing).</li>
+<li><code>GET /api/gateway/host/start-at-login</code>, <code>PUT /api/gateway/host/start-at-login
+  {enabled, replace_other?}</code> — admin. Would this gateway start at the next
+  login, and can it be changed from here: <code>{enabled, state: on|off|broken|other,
+  mechanism, mechanism_label, can_change, reason, summary, problems, location,
+  platform, experimental[, other_data_dir]}</code>. The mechanism is a LaunchAgent
+  (macOS), a systemd user unit or, without a systemd user manager, a desktop
+  autostart entry (Linux), or a <code>HKCU\…\Run</code> value (Windows). <code>can_change:
+  false</code> carries the reason (for example a Linux server with neither a systemd
+  user manager nor a desktop session). <code>PUT</code> registers for the next login
+  without starting a second gateway, or unregisters without stopping this one,
+  and answers the read-back under <code>start_at_login</code>; 409 when it cannot change
+  here or when another gateway's registration would be replaced without
+  <code>replace_other: true</code>; 500 when the change does not read back. The same
+  switch as the tray's <em>Start at login</em> and <code>abstractgateway service
+  enable|disable</code>.</li>
 <li><code>GET /api/gateway/host/update</code>, <code>POST /api/gateway/host/update/check</code>,
   <code>POST /api/gateway/host/update/start</code> — <code>{current, install: {kind,
   upgradable, reason, command, extras}, check: {latest, update_available,

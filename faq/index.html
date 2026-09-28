@@ -2046,7 +2046,7 @@ time), with no cron expressions, time zones or daylight-saving rules. See
 <a href="../automations/#limits-in-v1">automations.md</a>.</p>
 <h3 id="what-does-growing-context-do">What does growing context do?<a class="headerlink" href="#what-does-growing-context-do" title="Permanent link">&para;</a></h3>
 <p>In <code>growing</code> mode each run receives the previous runs as conversation
-history (at most 40 messages and 24,000 characters, whole turns), and the
+history (the most recent 50,000 tokens of whole turns; no message is cut), and the
 automation reads as one chat. In <code>independent</code> mode (the default) every run
 starts fresh. See <a href="../automations/#create-an-automation">automations.md</a>.</p>
 <h3 id="is-an-automation-safe-across-a-gateway-restart">Is an automation safe across a gateway restart?<a class="headerlink" href="#is-an-automation-safe-across-a-gateway-restart" title="Permanent link">&para;</a></h3>

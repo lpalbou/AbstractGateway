@@ -441,6 +441,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#apps-are-served-through-the-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apps are served through the gateway
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#apps-started-outside-the-gateway" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1068,6 +1079,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#apps-are-served-through-the-gateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Apps are served through the gateway
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#apps-started-outside-the-gateway" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1318,7 +1340,9 @@ desktop app, the <strong>Assistant</strong> (see <a href="#the-assistant-a-deskt
 </ol>
 <p>Install only installs: nothing starts and no tab opens. The card then shows
 <strong>Open</strong>, which starts the app on a free port when it is stopped, waits until
-it answers, and opens it in a new tab, already signed in.</p>
+it answers, and opens it in a new tab, already signed in, at
+<code>&lt;the gateway's address&gt;/apps/&lt;app&gt;/</code> (see
+<a href="#apps-are-served-through-the-gateway">Apps are served through the gateway</a>).</p>
 <p>Every step is a job with a percentage, downloaded bytes and a plain message.
 When a step fails, the job says why in one sentence and carries the full log
 in its <code>details</code> field (<code>&lt;data dir&gt;/apps/jobs/&lt;job&gt;.log</code>).</p>
@@ -1336,11 +1360,55 @@ in its <code>details</code> field (<code>&lt;data dir&gt;/apps/jobs/&lt;job&gt;.
   seconds). After more than 3 crashes in a minute it stops trying and shows
   "crash_loop" with the app's log.</li>
 <li>Each app writes its output to <code>&lt;data dir&gt;/logs/apps/&lt;app&gt;.log</code>.</li>
-<li>Apps listen on <code>127.0.0.1</code> (the <code>apps.host</code> setting changes this). Ports: the app's usual port when it is
+<li>Apps always listen on <code>127.0.0.1</code>: browsers reach them through the gateway
+  (next section), never directly. Ports: the app's usual port when it is
   free, else the first free port in 3100-3199. The usual ports are the
   framework's stack port map (<code>scripts/start-local.sh</code>): Observer 3001,
   Continuum 3002, Code 3003, Entity 3004, Flow 3005.</li>
 </ul>
+<h2 id="apps-are-served-through-the-gateway">Apps are served through the gateway<a class="headerlink" href="#apps-are-served-through-the-gateway" title="Permanent link">&para;</a></h2>
+<p>Every browser app opens at <strong><code>/apps/&lt;app&gt;/</code> on the gateway's own address</strong>:
+<code>http://127.0.0.1:8080/apps/observer/</code> on the gateway machine,
+<code>https://gateway.example.com/apps/flow/</code> behind a reverse proxy, the same
+path through a tunnel. One address and one port serve the console, the API
+and every app, so a remote or headless gateway needs nothing more than the
+one address it already has.</p>
+<p>The gateway relays each request to the app's own server on <code>127.0.0.1</code>
+(app_proxy.py):</p>
+<ul>
+<li><strong>Signed in, per app.</strong> Every request under <code>/apps/&lt;app&gt;/</code> needs a valid
+  gateway session for that app: the app's own session cookie, set by the
+  one-time handover below with <code>Path=/apps/&lt;app&gt;/</code>. Without one, opening a
+  page sends the browser to the console (<code>/console#apps?open=&lt;app&gt;&amp;path=…</code>),
+  which signs you in and opens the app on the page you asked for; any other
+  request gets 401 <code>app_sign_in_required</code>. A WebSocket without one is
+  refused. A request or WebSocket whose <code>Origin</code> is not the gateway's own
+  address (another site, or another port on the same host) is refused too
+  (403 <code>cross_origin</code>).</li>
+<li><strong>Streaming.</strong> Responses are relayed as they arrive (live updates, server-sent
+  events), and WebSockets frame by frame.</li>
+<li><strong>What the app receives.</strong> The path with <code>/apps/&lt;app&gt;</code> removed, plus
+  <code>X-Forwarded-Prefix: /apps/&lt;app&gt;</code>, <code>X-Forwarded-For: &lt;the browser's
+  address&gt;</code> (written by the gateway, never passed through from the
+  browser), <code>X-Forwarded-Proto</code> and <code>X-Forwarded-Host</code>, always both. A
+  request whose <code>Host</code> is not a host name or address the gateway can pass on
+  (browsers accept some, such as <code>a_b.example.com</code>, that it cannot) is refused
+  with 400 <code>invalid_host</code> and never reaches the app. It receives only its
+  own cookies (<code>&lt;app prefix&gt;_*</code>): never the console's session cookie, never an
+  <code>Authorization</code> header. It can set only its own cookies in return.</li>
+<li><strong>Only apps that say they can.</strong> An app announces that it can be served
+  this way with a header on every response:
+  <code>X-AbstractFramework-App: &lt;app&gt;; mount=1</code> (the abstractuic app-server kit
+  does it). The row's <code>mounted</code> and <code>app_path</code> (<code>/apps/&lt;app&gt;/</code>) say whether it
+  does. An older app version does not: it would read every visitor as a
+  browser on the gateway machine (the gateway is its local peer), so the
+  gateway never serves it under <code>/apps/&lt;app&gt;/</code> (409 <code>not_mountable</code>), and it
+  opens by its own port from the gateway machine only (409
+  <code>app_loopback_only</code> from anywhere else, with the hint to update it).</li>
+</ul>
+<p>How an app uses these headers (base path, the browser's address, cookie
+paths, the identity header) is the app-server kit's contract:
+<a href="https://github.com/lpalbou/AbstractUIC/tree/main/app-server">abstractuic <code>app-server</code></a>.</p>
 <h2 id="apps-started-outside-the-gateway">Apps started outside the gateway<a class="headerlink" href="#apps-started-outside-the-gateway" title="Permanent link">&para;</a></h2>
 <p>An app can also run without the gateway having started it: the framework's
 development stack (<code>scripts/start-local.sh</code>), <code>npx @abstractframework/observer</code>,
@@ -1356,8 +1424,9 @@ listening on the port, when this computer shows which program that is.</p>
 <p>Such an app is listed as installed and running, with <code>source: "external"</code>,
 <code>managed: false</code>, its <code>url</code>, <code>port</code> and <code>version</code>, and one action: <strong>Open</strong>.
 Opening it works exactly like opening an app the gateway started (the
-one-time sign-in link below): the app's server reads the same sign-in
-cookies whoever started it. The gateway does not stop, update or show the
+one-time sign-in link below, and <code>/apps/&lt;app&gt;/</code> when it announces it can be
+served there): the app's server reads the same sign-in cookies whoever
+started it. The gateway does not stop, update or show the
 log of an app it did not start; the console's <strong>Technical details</strong> says
 "Started outside the gateway on port 3001" instead, and <code>POST /apps/{id}/stop</code>
 answers 409 <code>started_outside_gateway</code>. Starting the gateway's own copy while
@@ -1373,15 +1442,23 @@ an admin to turn the setting on. How "at the gateway machine" is decided is
 in <a href="../configuration/#allow_engine_install">configuration.md</a>.</p>
 <h2 id="opening-an-app-signed-in">Opening an app signed in<a class="headerlink" href="#opening-an-app-signed-in" title="Permanent link">&para;</a></h2>
 <p>The console asks the gateway for a one-time link
-(<code>POST /api/gateway/apps/{id}/open</code>) and opens it in a new tab. The link
-(<code>/apps/handover/&lt;code&gt;</code>) works once, for two minutes, and only on the address
-it was made for. The gateway creates a browser session for the person who
-clicked, puts it in the app's own sign-in cookies, and redirects to the app.
-Browsers keep cookies per machine name, not per port, so the app's server finds
-the session and the app opens connected. The gateway token never appears in
-the page, the link or the browser's storage.</p>
-<p>A browser on another computer cannot reach an app that listens on
-<code>127.0.0.1</code>; the gateway says so instead of producing a broken link.</p>
+(<code>POST /api/gateway/apps/{id}/open</code>, sending the browser's <code>origin</code>) and
+opens it in a new tab. The link (<code>/apps/handover/&lt;code&gt;</code>) works once, for two
+minutes, and only on the address it was made for. The gateway creates a
+browser session for the person who clicked, puts it in the app's own sign-in
+cookies (<code>Path=/apps/&lt;app&gt;/</code>), and answers with a <strong>relative</strong> redirect to
+<code>/apps/&lt;app&gt;/</code>, so it lands on whatever address the browser used (a LAN
+address, a reverse proxy, a tunnel). The app's server finds the session and
+the app opens connected. The gateway token never appears in the page, the
+link or the browser's storage.</p>
+<p>The answer also carries <code>app_path</code> (<code>/apps/&lt;app&gt;/…</code>) and <code>app_url</code> (the
+<code>origin</code> you sent, or the address the request came in on, plus <code>app_path</code>).
+<code>origin</code> must be exactly <code>scheme://host[:port]</code> (400 <code>invalid_origin</code>
+otherwise).</p>
+<p>An older app version that cannot be served through the gateway keeps the
+direct link to its own port (<code>app_path: null</code>, cookies at <code>Path=/</code>), which
+works from the gateway machine only; from another computer the gateway says
+so (409 <code>app_loopback_only</code>) instead of producing a broken link.</p>
 <h3 id="landing-somewhere-inside-the-app">Landing somewhere inside the app<a class="headerlink" href="#landing-somewhere-inside-the-app" title="Permanent link">&para;</a></h3>
 <p><code>POST /api/gateway/apps/{id}/open</code> accepts an optional <code>path</code>: where inside
 the app the browser lands after the handover, for example <code>/#new</code>, Entity's
@@ -1488,23 +1565,27 @@ peers without proxy headers, and a browser handover code does not work there
 served as static files by the gateway. The app's server does real work:</p>
 <ul>
 <li>it holds the sign-in (<code>/api/connection/gateway</code>, HttpOnly session cookies,
-  CSRF) and forwards <code>/api/*</code> to the gateway on the same origin, which is how
-  live updates (server-sent events) reach the page;</li>
-<li>four of the five apps load their files from absolute <code>/assets/...</code> paths,
-  and Code and Observer register a service worker at the site root, so they
-  cannot live under a sub-path of the gateway;</li>
+  CSRF) and forwards <code>/api/*</code> to the gateway, which is how live updates
+  (server-sent events) reach the page;</li>
 <li>Observer reveals local folders, Flow keeps its connection file, and
   Continuum proxies the agora hub.</li>
 </ul>
-<p>This is why each app has its own port. The gateway gives each server its
-port, bind address and gateway URL: Continuum as launch flags (<code>--port</code>,
-<code>--host</code>, <code>--gateway-url</code>), which win over its saved settings file; the
-other four apps in the environment (<code>PORT</code>, <code>HOST</code>, <code>&lt;APP&gt;_GATEWAY_URL</code>).</p>
+<p>The gateway serves them all on its own address at <code>/apps/&lt;app&gt;/</code> (above). It
+gives each server its port and gateway URL as launch flags (<code>--port</code>,
+<code>--host</code>, <code>--gateway-url</code>), which win over the environment and over any
+settings file the app keeps. An installed version older than the flags
+(Observer 0.1.14, Code 0.5.0 or Entity 0.2.2 and earlier), or a global
+install of unknown version started from the tray, also gets the legacy
+environment (<code>PORT</code>, <code>HOST</code>, <code>&lt;APP&gt;_GATEWAY_URL</code>), so it still listens on the
+port the gateway chose. The bind address is always <code>127.0.0.1</code>.</p>
 <h2 id="settings">Settings<a class="headerlink" href="#settings" title="Permanent link">&para;</a></h2>
-<p>Five settings control the apps: <code>apps.node</code> (<em>Node.js for apps</em>),
-<code>apps.ports</code> (<em>Ports for apps</em>), <code>apps.host</code> (<em>Where apps listen</em>),
-<code>apps.npm_registry</code> (<em>npm registry</em>) and <code>apps.pypi_url</code> (<em>Node.js download
-index</em>). Change them from the Apps page (<em>Advanced: apps settings</em>), the
+<p>Four settings control the apps: <code>apps.node</code> (<em>Node.js for apps</em>),
+<code>apps.ports</code> (<em>Ports for apps</em>), <code>apps.npm_registry</code> (<em>npm registry</em>) and
+<code>apps.pypi_url</code> (<em>Node.js download index</em>). <code>apps.host</code> (<em>Where apps
+listen</em>) is <strong>deprecated</strong>: apps always listen on <code>127.0.0.1</code> and open
+through the gateway. It accepts only a loopback address; an older saved
+<code>0.0.0.0</code> (or <code>ABSTRACTGATEWAY_APPS_HOST</code>) is ignored with one warning in the
+gateway's log, and clearing it removes the warning. Change them from the Apps page (<em>Advanced: apps settings</em>), the
 terminal console (Runtimes → <em>Runtime knobs</em> → <em>Edit apps settings</em>) or the
 CLI:</p>
 <div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>apps<span class="w"> </span>config<span class="w"> </span>get<span class="w"> </span><span class="o">[</span>NAME<span class="o">]</span><span class="w"> </span><span class="o">[</span>--json<span class="o">]</span>
@@ -1640,9 +1721,9 @@ Python environment as the gateway; a gateway-only install may not.</p>
 <td>Stop the app and mark it disabled. 409 <code>started_outside_gateway</code> for an app the gateway did not start.</td>
 </tr>
 <tr>
-<td><code>POST /apps/{id}/open</code> <code>{"remember"?, "path"?}</code></td>
+<td><code>POST /apps/{id}/open</code> <code>{"remember"?, "path"?, "origin"?}</code></td>
 <td>any user</td>
-<td>A one-time <code>open_url</code> (relative to the gateway) that opens the running app signed in, at <code>path</code> inside the app when given (e.g. <code>/#new</code>). 400 <code>invalid_app_path</code> for anything that is not a path inside the app. 409 <code>desktop_app</code> for the Assistant (use <code>/launch</code>).</td>
+<td>A one-time <code>open_url</code> (relative to the gateway) that opens the running app signed in, at <code>path</code> inside the app when given (e.g. <code>/#new</code>): <code>{open_url, mounted, app_path, app_url, expires_in_s}</code>. <code>app_path</code> is <code>/apps/&lt;id&gt;/…</code> for an app served through the gateway (else <code>null</code>); <code>app_url</code> is <code>origin</code> (default: this request's address) + <code>app_path</code>. 400 <code>invalid_app_path</code> / <code>invalid_origin</code>. 409 <code>desktop_app</code> for the Assistant (use <code>/launch</code>).</td>
 </tr>
 <tr>
 <td><code>GET /apps/{id}/logs?tail=200</code></td>
@@ -1678,6 +1759,28 @@ Python environment as the gateway; a gateway-only install may not.</p>
 <td><code>POST /apps/tui-handover</code> <code>{"code"}</code> (outside <code>/api/gateway</code>)</td>
 <td>the launcher script, loopback only</td>
 <td>Trade a launcher's one-time code for <code>{token, token_env, url_env, gateway_url, gateway_flag, user}</code>. 403 <code>loopback_only</code>, 410 <code>handover_expired</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>The apps themselves, outside <code>/api/gateway</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Method and path</th>
+<th>Who</th>
+<th>What</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /apps/handover/&lt;code&gt;</code></td>
+<td>the one-time code</td>
+<td>Sets the app's sign-in cookies and redirects: relative <code>303</code> to <code>/apps/&lt;id&gt;/…</code> (cookies <code>Path=/apps/&lt;id&gt;/</code>), or to the app's own port for an older app. 410 used or expired, 400 another address.</td>
+</tr>
+<tr>
+<td>any <code>/apps/&lt;id&gt;/…</code> (HTTP, SSE, WebSocket)</td>
+<td>the app's gateway session</td>
+<td>The app, relayed (see <a href="#apps-are-served-through-the-gateway">Apps are served through the gateway</a>). Without a session: <code>303</code> to <code>/console#apps?open=&lt;id&gt;&amp;path=…</code> for a page load, else 401 <code>app_sign_in_required</code>. 400 <code>invalid_host</code>, 404 <code>unknown_app</code>, 403 <code>cross_origin</code>, 409 <code>not_running</code> / <code>not_mountable</code>, 502 <code>app_not_answering</code>. <code>/apps/&lt;id&gt;</code> redirects to <code>/apps/&lt;id&gt;/</code>.</td>
 </tr>
 </tbody>
 </table>

@@ -1721,10 +1721,16 @@ your network:</p>
 <li><strong>a smaller attack surface</strong>: every admin route is reachable to whoever
     holds an admin credential. Give each person their own account, keep the
     admin token off other machines, and prefer non-admin accounts for daily use.</li>
-<li><strong>exposure of the browser apps</strong>: apps started from the Apps page stay
-    bound to <code>127.0.0.1</code> (the <code>apps.host</code> setting, <em>Where apps listen</em>), and the sign-in
-    handover (<code>/apps/handover/{code}</code>) only works on the host it was minted
-    for and refuses a loopback-only app to a browser on another machine.</li>
+<li><strong>exposure of the browser apps</strong>: apps always listen on <code>127.0.0.1</code> and
+    are reached through the gateway at <code>/apps/&lt;app&gt;/</code>, which requires a
+    gateway session for that app on every request (a signed-out page load
+    goes to the console, anything else gets 401), relays only the app's own
+    cookies (never the console's session or an <code>Authorization</code> header), and
+    tells the app the browser's real address (<code>X-Forwarded-For</code>, written by
+    the gateway). The sign-in handover (<code>/apps/handover/{code}</code>) only works on
+    the host it was minted for. An app version that does not announce it can
+    be served this way is never served under <code>/apps/</code> and stays reachable
+    from the gateway machine only.</li>
 <li><strong>engine and app installs for remote admins</strong>: <code>allow_engine_install</code>
     defaults to off on a non-loopback bind for callers on other computers.
     Someone at the gateway machine itself can still install (see
