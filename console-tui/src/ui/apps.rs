@@ -1051,8 +1051,11 @@ fn open_link_modal(cx: Scope, ctx: &Ctx, link: AppOpenLink) {
             buttons = buttons.child(
                 Button::new("Open in a browser here (o)")
                     .on_click(move || {
-                        ctx_open.screens.open_url(&l_open);
-                        close_open();
+                        // Not opened (e.g. NoDisplay): the modal stays, the
+                        // notice says why and the link is right here.
+                        if ctx_open.screens.open_url(&l_open).is_ok() {
+                            close_open();
+                        }
                     })
                     .element(mcx, &t)
                     .build(),
@@ -1084,8 +1087,9 @@ fn open_link_modal(cx: Scope, ctx: &Ctx, link: AppOpenLink) {
                         "not opening a browser: {why} — copy the link (y)"
                     ))),
                     None => {
-                        ctx_o.screens.open_url(&l_o);
-                        close_o();
+                        if ctx_o.screens.open_url(&l_o).is_ok() {
+                            close_o();
+                        }
                     }
                 }
             })

@@ -345,8 +345,16 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                 if warned == 1 { "" } else { "s" }
                             ));
                         }
+                        let missing = plan.iter().filter(|r| r.engine_missing.is_some()).count();
+                        if missing > 0 {
+                            head.push_str(&format!(
+                                " · {missing} engine{} missing (p says what to install)",
+                                if missing == 1 { "" } else { "s" }
+                            ));
+                        }
+                        let attention = warned > 0 || missing > 0;
                         rows.push(line(vec![
-                            span_bold(head, if warned > 0 { t.warn } else { t.text }),
+                            span_bold(head, if attention { t.warn } else { t.text }),
                             span("  ·  p plan · D download all · a apply", t.text_faint),
                         ]));
                         if wizard {
@@ -356,7 +364,11 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                     span(format!("{:<15}", r.status_label()), status_tone(&t, &r.status)),
                                     span(format!("{} {}", r.provider, r.artifact), t.text),
                                 ];
-                                if let Some(w) = &r.warning {
+                                if let Some(m) = &r.engine_missing {
+                                    spans.push(span(format!("  ⚠ {}", m.text()), t.warn));
+                                } else if let Some(g) = r.gpu_limit_text() {
+                                    spans.push(span(format!("  {g}"), t.info));
+                                } else if let Some(w) = &r.warning {
                                     spans.push(span(format!("  ⚠ {w}"), t.warn));
                                 }
                                 rows.push(line(spans));
@@ -428,6 +440,21 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                         broken_route_fix(&r.key, admin)
                                     ),
                                     t.error,
+                                ));
+                            } else if let Some(m) = r.engine_missing.as_ref().filter(|_| r.configured) {
+                                // Runnable here, engine not installed: the
+                                // reason and the exact command, never "fine".
+                                spans.push(span(
+                                    format!(
+                                        "{}{}  ",
+                                        m.text(),
+                                        if m.engine_row.is_some() {
+                                            " (0 Engines: i installs it)"
+                                        } else {
+                                            ""
+                                        }
+                                    ),
+                                    t.warn,
                                 ));
                             } else if let Some(u) = &r.recommendation_unavailable {
                                 // Host-aware recommendation: unset because
@@ -757,6 +784,16 @@ fn open_plan(cx: Scope, ctx: &Ctx) {
                     format!("  Chosen by memory: {tier}"),
                     t.text_faint,
                 )]));
+            }
+            if let Some(g) = r.gpu_limit_text() {
+                for l in super::util::wrap_text(&g, width.saturating_sub(4)) {
+                    rows.push(line(vec![span(format!("  {l}"), t.info)]));
+                }
+            }
+            if let Some(m) = &r.engine_missing {
+                for l in super::util::wrap_text(&m.text(), width.saturating_sub(4)) {
+                    rows.push(line(vec![span(format!("  {l}"), t.warn)]));
+                }
             }
             if let Some(w) = &r.warning {
                 for (i, l) in super::util::wrap_text(w, width.saturating_sub(4))

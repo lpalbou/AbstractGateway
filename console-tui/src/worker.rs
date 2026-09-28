@@ -863,6 +863,14 @@ pub fn applied_recommended_summary(payload: &Value) -> String {
             }
             _ => {}
         }
+        // Written or kept, but its engine is not installed here: said with
+        // the exact command (AbstractCore `engine_missing` on the entry).
+        if let Some(m) = row
+            .get("engine_missing")
+            .and_then(crate::store::EngineMissing::from_value)
+        {
+            flagged.push(format!("{key}: {}", m.text()));
+        }
     }
     let mut parts: Vec<String> = Vec::new();
     if !changed.is_empty() {

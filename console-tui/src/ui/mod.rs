@@ -1974,16 +1974,6 @@ pub fn screens_access_signal(
     access
 }
 
-/// The URL opener handed to the shared screens: the system opener, or —
-/// with no display in front of the person — a refusal that says why (the
-/// screens then tell the user to open the link themselves).
-pub fn url_opener(no_display: Option<String>) -> abstractcore_console::screens::Opener {
-    Rc::new(move |url: &str| match &no_display {
-        Some(reason) => Err(reason.clone()),
-        None => abstractcore_console::screens::system_open(url),
-    })
-}
-
 /// Scheme-default URL normalization, shared by the Probe button and the
 /// boot auto-probe (they must never disagree — a raw host that works on
 /// the button and fails at boot is a first-run contradiction).

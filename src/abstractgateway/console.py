@@ -8571,6 +8571,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // (`route_unavailable`) is not "configured" in the sense that matters:
 	      // calls to it fail. Warning tone; the reason sits under the pill.
 	      if (defaultRowConfigured(row) && defaultRowRouteUnavailableReason(row)) return { label: "cannot run here", cls: "off" };
+	      // The host CAN run it, but the engine's software is not installed in
+	      // this Python environment (AbstractCore `engine_missing`): a third
+	      // state, distinct from "cannot run here" and from "not downloaded".
+	      if (defaultRowConfigured(row) && engineMissingInfo(row)) return { label: "engine missing", cls: "off" };
 	      if (defaultRowConfigured(row)) return { label: "configured", cls: "ok" };
 	      // AN UNSET PARENT WHOSE TASK ROWS ARE ALL SET IS NOT A PROBLEM. Core
 	      // proves it (`capability_route_tasks_cover_broad`): the task rows are
@@ -8619,6 +8623,36 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const info = row.route_unavailable;
 	      const pair = [info.provider, info.model].filter(Boolean).join(" / ");
 	      return `<div class="ui-field-msg tone-warn capability-route-unavailable" role="note" title="${esc(pair)}">Configured but cannot run on this computer: ${esc(reason)}</div>`;
+	    }
+	    // AbstractCore `engine_missing` {engine, name, reason, install[, engine_row]}
+	    // on a capability-default row, an apply-recommended entry or a
+	    // recommended-plan row. Never combined with `route_unavailable`.
+	    function engineMissingInfo(rec) {
+	      const info = rec && rec.engine_missing;
+	      if (!info || typeof info !== "object" || !String(info.reason || "").trim()) return null;
+	      return { reason: String(info.reason).trim(), install: String(info.install || "").trim(), engineRow: String(info.engine_row || "").trim() };
+	    }
+	    function engineMissingText(rec) {
+	      const info = engineMissingInfo(rec);
+	      if (!info) return "";
+	      return `engine missing: ${info.reason}${info.install ? ` — install: ${info.install}` : ""}`;
+	    }
+	    function engineMissingMarkup(rec, cls = "ui-field-msg tone-warn") {
+	      const info = engineMissingInfo(rec);
+	      if (!info) return "";
+	      const engines = info.engineRow ? " (Engines tab: Install)" : "";
+	      return `<div class="${cls} capability-engine-missing" role="note">Engine missing: ${esc(info.reason)}${info.install ? ` — install: <code>${esc(info.install)}</code>` : ""}${esc(engines)}</div>`;
+	    }
+	    // AbstractCore's fit verdict `needs_gpu_limit`: the model fits once macOS
+	    // lets the GPU use more memory (`fit.gpu_limit` = the exact sysctl).
+	    function gpuLimitText(rec) {
+	      const fit = (rec && typeof rec.fit === "object" && rec.fit) || {};
+	      const verdict = rec && (rec.fit_verdict || fit.verdict);
+	      if (verdict !== "needs_gpu_limit") return "";
+	      const gl = (rec && rec.gpu_limit) || fit.gpu_limit || null;
+	      if (!gl || !gl.command) return "fits after raising the GPU memory limit";
+	      const cost = [gl.needs_admin ? "admin" : "", gl.resets_at_restart ? "resets at restart" : ""].filter(Boolean).join("; ");
+	      return `fits after raising the GPU memory limit: ${gl.command}${cost ? ` (${cost})` : ""}`;
 	    }
 	    function defaultRowActionLabel(row) {
 	      if (row?.covered_by === "input.text") return row?.overrideable ? "Override" : "Covered by input.text";
@@ -8769,6 +8803,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (changed.length) parts.push(changed.map((r) => `${r.key}: ${pair(r.before)} \u2192 ${pair(r.after)}`).join("; "));
 	      if (cleared.length) parts.push(cleared.map((r) => `${r.key}: removed ${pair(r.before)} \u2014 cannot run on this computer: ${r.route_unavailable.reason}`).join("; "));
 	      if (kept.length) parts.push(`kept yours on ${kept.map((r) => `${r.key} (${pair(r.before)}${brokenWhy(r)})`).join(", ")}`);
+	      // Written (or kept) but its engine is not installed here: said per
+	      // route, with the exact install command (AbstractCore `engine_missing`).
+	      const missing = rows.filter((r) => engineMissingInfo(r));
+	      if (missing.length) parts.push(missing.map((r) => `${r.key}: ${engineMissingText(r)}`).join("; "));
 	      if (unavailable.length) {
 	        parts.push(`${unavailable.length === 1 ? "1 route has" : `${unavailable.length} routes have`} no recommendation this computer can run: `
 	          + unavailable.map((r) => `${r.key}${r.reason ? ` \u2014 ${r.reason}` : ""}${r.route_unavailable ? ` (configured ${pair(r.route_unavailable)} cannot run here either${r.route_unavailable.inherited ? `; ${r.route_unavailable.note}` : ""})` : ""}`).join("; "));
@@ -10615,7 +10653,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <td>${row.model ? `<span class="ui-ellip" title="${esc(row.model)}">${esc(row.model)}</span>` + reasoningBadge : "-"}</td>
 	          <td>${weightsCellMarkup(row)}</td>
 	          <td>${source ? `<span class="badge">${esc(source)}</span>` : "-"}</td>
-	          <td><span class="state-pill ${esc(status.cls)}">${esc(status.label)}</span>${defaultRowUnavailableMarkup(row)}${defaultRowRouteUnavailableMarkup(row)}</td>
+	          <td><span class="state-pill ${esc(status.cls)}">${esc(status.label)}</span>${defaultRowUnavailableMarkup(row)}${defaultRowRouteUnavailableMarkup(row)}${defaultRowConfigured(row) ? engineMissingMarkup(row) : ""}</td>
 	        `;
 	        const actions = document.createElement("td");
 	        actions.className = "actions";
@@ -12188,7 +12226,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           + `<div class="ui-card__body"><ul class="ui-facts"><li><b>${esc(provider)}</b></li><li><code class="ui-ellip" title="${esc(r.artifact || "")}">${esc(r.artifact || "")}</code></li><li class="ui-advanced">Route <code>${esc(r.route || "")}</code></li>${r.tier ? `<li class="ui-advanced">Chosen by memory: ${esc(r.tier)}</li>` : ""}</ul>`
           // AbstractCore's fit estimate doubts the pick: say so on the card
           // (the recommendation itself never switches model on its own).
+          + (gpuLimitText(r) ? `<div class="ui-alert tone-info first-run-gpu-limit" role="note"><span>${esc(firstRunCap(gpuLimitText(r)))}</span></div>` : "")
           + (r.warning ? `<div class="ui-alert tone-warn" role="note"><span>${esc(r.warning)}</span></div>` : "")
+          + engineMissingMarkup(r, "ui-alert tone-warn")
           + firstRunRouteUnavailableAlert(r.route)
           + body + `</div>`
           + `<div class="ui-card__actions">${cancel}${canDownload ? `<button class="ui-btn is-primary first-run-download" data-provider="${esc(r.provider)}" data-artifact="${esc(r.artifact)}">Download</button>` : ""}</div>`

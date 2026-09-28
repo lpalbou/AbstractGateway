@@ -16,8 +16,6 @@
 pub mod api;
 /// The one table of local audio players (sandbox playback, auditions).
 pub mod audio;
-/// Is there a screen in front of the person (never a URL opener without).
-pub mod display;
 pub mod health;
 /// The About facts: the vendored AbstractFramework identity descriptor.
 pub mod identity;
@@ -240,7 +238,8 @@ pub fn run_cli(argv: &[String]) -> i32 {
     }
 
     // Headless / SSH: never run a URL opener (the link is shown instead).
-    let no_display = display::no_display_reason_now();
+    // AbstractCore's console owns the rule (one rule for both consoles).
+    let no_display = abstractcore_console::display_available().err();
 
     let env_token_set = std::env::var("ABSTRACTGATEWAY_AUTH_TOKEN")
         .map(|t| !t.trim().is_empty())
@@ -318,8 +317,6 @@ pub fn run_cli(argv: &[String]) -> i32 {
             access,
             abstractcore_console::screens::ScreensOptions {
                 notice: Some(store.notice),
-                // The shared screens' `o` goes through the same refusal.
-                opener: Some(ui::url_opener(no_display.clone())),
                 ..abstractcore_console::screens::ScreensOptions::default()
             },
         );

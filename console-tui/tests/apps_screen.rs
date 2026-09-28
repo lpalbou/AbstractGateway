@@ -598,13 +598,15 @@ fn with_a_display_o_opens_the_link() {
     );
 }
 
+/// The headless verdict is AbstractCore's rule (one rule for both
+/// consoles): an SSH session never opens a browser, on any OS.
 #[test]
-fn the_shared_screens_opener_refuses_without_a_display() {
-    let open = ui::url_opener(Some("this machine has no display".into()));
-    assert_eq!(
-        open("http://x/").unwrap_err(),
-        "this machine has no display"
-    );
+fn the_display_rule_is_abstractcores() {
+    let ssh =
+        |k: &str| (k == "SSH_CONNECTION").then(|| std::ffi::OsString::from("1.2.3.4 5 6.7.8.9 22"));
+    assert!(abstractcore_console::display_from("macos", &ssh).is_err());
+    assert!(abstractcore_console::display_from("unix", &|_| None).is_err());
+    assert!(abstractcore_console::display_from("macos", &|_| None).is_ok());
 }
 
 #[test]

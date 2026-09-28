@@ -294,9 +294,73 @@ pub struct PlanRow {
     pub warning: Option<String>,
     pub evidence: Option<String>,
     pub instruction: Option<String>,
+    /// The engine that runs it is not installed here (AbstractCore
+    /// `engine_missing`) — the other half of "ready" besides the weights.
+    pub engine_missing: Option<crate::store::EngineMissing>,
+    /// AbstractCore's fit verdict for the pick (`fit_verdict`).
+    pub fit_verdict: Option<String>,
+    /// `needs_gpu_limit`: the exact sysctl that makes it fit (`gpu_limit`,
+    /// on the row or under `fit`), when the payload carries it.
+    pub gpu_limit: Option<GpuLimit>,
+}
+
+/// AbstractCore's `fit.gpu_limit` (utils/model_fit.py `_gpu_limit_for`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct GpuLimit {
+    pub command: String,
+    pub required_mb: u64,
+    pub needs_admin: bool,
+    pub resets_at_restart: bool,
+}
+
+impl GpuLimit {
+    pub fn from_value(v: &Value) -> Option<GpuLimit> {
+        let command = s(v, "command").filter(|c| !c.trim().is_empty())?;
+        Some(GpuLimit {
+            command,
+            required_mb: v.get("required_mb").and_then(Value::as_u64).unwrap_or(0),
+            needs_admin: v
+                .get("needs_admin")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            resets_at_restart: v
+                .get("resets_at_restart")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        })
+    }
 }
 
 impl PlanRow {
+    /// `needs_gpu_limit`: "fits after raising the GPU memory limit: <command>
+    /// (admin; resets at restart)"; None for every other verdict.
+    pub fn gpu_limit_text(&self) -> Option<String> {
+        if self.fit_verdict.as_deref() != Some("needs_gpu_limit") {
+            return None;
+        }
+        Some(match &self.gpu_limit {
+            Some(g) => {
+                let cost: Vec<&str> = [
+                    g.needs_admin.then_some("admin"),
+                    g.resets_at_restart.then_some("resets at restart"),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                if cost.is_empty() {
+                    format!("fits after raising the GPU memory limit: {}", g.command)
+                } else {
+                    format!(
+                        "fits after raising the GPU memory limit: {} ({})",
+                        g.command,
+                        cost.join("; ")
+                    )
+                }
+            }
+            None => "fits after raising the GPU memory limit".to_string(),
+        })
+    }
+
     pub fn title(&self) -> &'static str {
         route_title(&self.route)
     }
@@ -344,6 +408,15 @@ pub fn plan_rows(availability: &Value) -> Vec<PlanRow> {
                     warning: s(r, "warning"),
                     evidence: s(r, "evidence"),
                     instruction: s(r, "instruction"),
+                    engine_missing: r
+                        .get("engine_missing")
+                        .and_then(crate::store::EngineMissing::from_value),
+                    fit_verdict: s(r, "fit_verdict")
+                        .or_else(|| r.get("fit").and_then(|f| s(f, "verdict"))),
+                    gpu_limit: r
+                        .get("gpu_limit")
+                        .or_else(|| r.get("fit").and_then(|f| f.get("gpu_limit")))
+                        .and_then(GpuLimit::from_value),
                 })
                 .collect()
         })

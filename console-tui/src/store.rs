@@ -406,6 +406,45 @@ pub struct RouteRow {
     /// host-aware recommendation still holding `output.image: mlx-gen` on
     /// Linux). Rendered as a warning, never as a working route.
     pub route_unavailable: Option<RecommendationUnavailable>,
+    /// The host CAN run it, but the engine's software is not installed in
+    /// this Python environment (AbstractCore `engine_missing`). Never set
+    /// together with `route_unavailable`; separate from "not downloaded".
+    pub engine_missing: Option<EngineMissing>,
+}
+
+/// AbstractCore's `engine_missing` {engine, name, reason, install[,
+/// engine_row]} — on capability-default rows, apply-recommended entries and
+/// recommended-plan rows (`config/route_engines.py`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EngineMissing {
+    pub engine: String,
+    pub name: String,
+    pub reason: String,
+    /// The exact install command (None when there is none to give).
+    pub install: Option<String>,
+    /// The Engines screen row that installs it (`i` there).
+    pub engine_row: Option<String>,
+}
+
+impl EngineMissing {
+    pub fn from_value(v: &Value) -> Option<EngineMissing> {
+        let reason = s(v, "reason").filter(|r| !r.trim().is_empty())?;
+        Some(EngineMissing {
+            engine: s(v, "engine").unwrap_or_default(),
+            name: s(v, "name").unwrap_or_default(),
+            reason,
+            install: s(v, "install").filter(|i| !i.trim().is_empty()),
+            engine_row: s(v, "engine_row").filter(|e| !e.trim().is_empty()),
+        })
+    }
+
+    /// "engine missing: <reason> — install: <command>".
+    pub fn text(&self) -> String {
+        match &self.install {
+            Some(cmd) => format!("engine missing: {} — install: {cmd}", self.reason),
+            None => format!("engine missing: {}", self.reason),
+        }
+    }
 }
 
 /// `recommendation_unavailable` on a capability-defaults row.
@@ -498,6 +537,7 @@ impl RouteRow {
             route_unavailable: v
                 .get("route_unavailable")
                 .and_then(RecommendationUnavailable::from_value),
+            engine_missing: v.get("engine_missing").and_then(EngineMissing::from_value),
             key,
         })
     }
@@ -550,6 +590,11 @@ impl RouteRow {
             // the selected-row line and the `p` plan.
             if self.route_unavailable.is_some() {
                 return "cannot run here".to_string();
+            }
+            // Runnable here, but its engine is not installed: the reason
+            // and the install command ride the selected-row line and `p`.
+            if self.engine_missing.is_some() {
+                return "engine missing".to_string();
             }
             return "configured".to_string();
         }

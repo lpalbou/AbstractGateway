@@ -9662,3 +9662,94 @@ fn the_voice_picker_shows_why_no_voices_are_listed() {
     );
     assert!(!s.contains("no voices reported"), "{s}");
 }
+
+// AbstractCore 2.18 shapes (config/route_engines.py, utils/model_fit.py):
+// `engine_missing` and the `needs_gpu_limit` fit verdict.
+fn mlx_engine_missing() -> Value {
+    json!({"engine": "mlx", "name": "MLX (mlx-lm)",
+        "reason": "MLX (mlx-lm) is not installed in this Python environment (mlx_lm missing); the mlx provider runs models with it. Install it with: pip install mlx-lm",
+        "install": "pip install mlx-lm", "engine_row": "mlx"})
+}
+
+/// A configured route whose engine is not installed reads "engine
+/// missing" (not "configured", not "cannot run here") and names the
+/// install command; `p` says it per recommended model, with the GPU-limit
+/// verdict in its own words.
+#[test]
+fn routes_and_plan_show_engine_missing_and_the_gpu_limit() {
+    let mut h = harness_sized(Size::new(200, 48));
+    h.connect_as_admin();
+    h.goto_screen(ui::SCREEN_ROUTES);
+    h.store
+        .routes
+        .set(Loadable::Ready(RoutesData::from_value(&json!({
+            "ok": true, "writable": true, "routes": [
+                {"key": "input.text", "kind": "input", "modality": "text", "label": "Text Input",
+                 "provider": "mlx", "model": "mlx-community/Qwen3.8-Flash-Next-4bit",
+                 "source": "abstractcore.capability_defaults", "configured": true,
+                 "engine_missing": mlx_engine_missing()}
+            ]
+        }))));
+    h.store.availability.set(Loadable::Ready(AvailabilityData::from_value(&json!({
+        "ok": true, "routes": [],
+        "recommended": {"recommended": [
+            {"route": "input.text", "provider": "mlx", "artifact": "mlx-community/Qwen3.8-Flash-Next-4bit",
+             "status": "absent", "downloadable": true, "fit_verdict": "needs_gpu_limit",
+             "gpu_limit": {"sysctl": "iogpu.wired_limit_mb", "current_mb": 0, "required_mb": 117760,
+                "command": "sudo sysctl iogpu.wired_limit_mb=117760", "needs_admin": true,
+                "resets_at_restart": true, "verdict_with_limit": "tight"},
+             "engine_missing": mlx_engine_missing()}
+        ], "total": 1, "installed": 0, "absent": 1, "unknown": 0, "gaps": []}
+    }))));
+    h.ui.route_sel.set(0);
+    let s = h.turns(3);
+    assert!(s.contains("engine missing"), "state column:\n{s}");
+    assert!(
+        s.contains("engine missing: MLX (mlx-lm) is not installed in this Python environment"),
+        "selected-row line:\n{s}"
+    );
+    assert!(
+        s.contains("1 engine missing (p says what to install)"),
+        "plan banner:\n{s}"
+    );
+    h.type_text("p");
+    let s = h.turns(3);
+    assert!(
+        s.contains("fits after raising the GPU memory limit: sudo sysctl iogpu.wired_limit_mb=117760 (admin; resets at restart)"),
+        "gpu limit:\n{s}"
+    );
+    assert!(
+        s.contains("— install: pip install mlx-lm"),
+        "install command:\n{s}"
+    );
+}
+
+#[test]
+fn engine_missing_is_its_own_state_and_rides_the_apply_report() {
+    use abstractgateway_console::store::RouteRow;
+    use abstractgateway_console::worker::applied_recommended_summary;
+    let row = RouteRow::from_value(&json!({"key": "output.voice", "kind": "output", "modality": "voice",
+        "provider": "supertonic", "model": "supertonic-3", "configured": true,
+        "engine_missing": {"engine": "supertonic", "name": "Supertonic",
+            "reason": "Supertonic is not installed", "install": "pip install \"abstractvoice[supertonic]\""}}))
+    .unwrap();
+    assert_eq!(row.state_label(), "engine missing");
+    // Never combined with route_unavailable, which wins as the harder fact.
+    let broken = RouteRow::from_value(&json!({"key": "output.image", "provider": "mlx-gen", "model": "m",
+        "configured": true, "route_unavailable": {"provider": "mlx-gen", "model": "m", "reason": "needs MLX"}}))
+    .unwrap();
+    assert_eq!(broken.state_label(), "cannot run here");
+    let summary = applied_recommended_summary(&json!({"applied_recommended": {"routes": [
+        {"key": "input.text", "action": "changed", "changed": true,
+         "before": {"provider": "ollama", "model": "a"}, "after": {"provider": "mlx", "model": "b"},
+         "engine_missing": mlx_engine_missing()}
+    ]}}));
+    assert!(
+        summary.contains("input.text: engine missing: MLX (mlx-lm) is not installed"),
+        "{summary}"
+    );
+    assert!(
+        summary.contains("— install: pip install mlx-lm"),
+        "{summary}"
+    );
+}
