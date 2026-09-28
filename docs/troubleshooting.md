@@ -325,6 +325,7 @@ See [model-downloads.md](./model-downloads.md).
 | `installs_not_allowed` | see "Install buttons are disabled" above |
 | `app_loopback_only` | the app listens on `127.0.0.1`; open it from the gateway machine |
 | `started_outside_gateway` | the app was started elsewhere (dev stack, `npx`); stop it there |
+| `foreign_binary` | another program holds the terminal app's name in the install folder (often the older Python `abstractcode` from PyPI); run `uv tool uninstall abstractcode` or remove the named file, then install again |
 
 See [apps.md](./apps.md).
 

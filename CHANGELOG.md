@@ -17,6 +17,12 @@ No dependency changes. The terminal console (`abstractgateway-console`) stays 0.
   it (a gateway started at login). A copy a gateway before 0.7.1 left in `<data dir>/apps/bin/` is still found and
   offered the update; the next install removes it. A gateway that is not a uv tool install keeps
   `<data dir>/apps/bin/`. `command` is the bare name when the app runs by name.
+- **Installing the terminal app never replaces another program.** When the install folder already holds a different
+  `abstractcode` (for example the older Python AbstractCode from PyPI, installed with `uv tool`), the install stops
+  with `foreign_binary` (409), names the file and says what to do (`uv tool uninstall abstractcode`, or remove it);
+  the file is left as it is. The gateway's own copy, or the installer's build, is still updated in place.
+- A `uv-receipt.toml` of an unexpected shape (no `[tool]` table, no `entrypoints` list, a relative `install-path`)
+  is ignored: the gateway uses `<data dir>/apps/bin/` and starts normally.
 
 ## [0.7.0] - 2026-09-28
 

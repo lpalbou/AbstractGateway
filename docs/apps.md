@@ -236,6 +236,8 @@ second entry of kind `"tui"`:
   `abstractcode` runs by name whichever of the two installed it. A gateway
   that is not a uv tool install (a development checkout, pip) uses
   `<data dir>/apps/bin/`, off `PATH` (`command` then carries the full path).
+  A receipt uv did not write (no `[tool]` table, no `entrypoints` list, a
+  relative `install-path`) is ignored and `<data dir>/apps/bin/` is used.
 - **Found by presence.** The gateway never imports or runs an app to detect
   it: it looks for the binary in that folder, in `<data dir>/apps/bin/`
   (where gateways before 0.7.1 put it; the next install or update moves it
@@ -251,6 +253,11 @@ second entry of kind `"tui"`:
   against `SHA256SUMS` and against the sha256 digest GitHub reports for the
   file (both must agree), unpacks the single binary into the folder above,
   makes it executable and runs `--version` before it replaces anything.
+  It replaces only a copy of the app itself (its own earlier install or the
+  installer's build). When another program already holds the name there, for
+  example the older Python `abstractcode` from PyPI, the install stops with
+  `foreign_binary`, names the file and leaves it: run
+  `uv tool uninstall abstractcode` (or remove the file), then install again.
   About 3 MB, no administrator rights, no terminal. `cargo`: there is no
   prebuilt binary for this computer (musl Linux, Windows on ARM, other CPUs),
   or the program is published as source only (the gateway console, crates.io).
@@ -468,7 +475,7 @@ The apps themselves, outside `/api/gateway`:
 Errors are `{"ok": false, "reason", "message", "hint"?, "details"?}` with
 404 (`unknown_app`, also for a terminal route on a browser-only app), 409
 (`not_installed`, `node_missing`, `not_running`, `app_loopback_only`,
-`toolchain_required`, `not_on_gateway_machine`, `no_terminal`,
+`toolchain_required`, `foreign_binary`, `not_on_gateway_machine`, `no_terminal`,
 `started_outside_gateway`), 403
 (`installs_not_allowed`), 502 (`integrity_mismatch`), 503
 (`network_unavailable`, `no_free_port`) or 500 (`launch_failed`, with the
