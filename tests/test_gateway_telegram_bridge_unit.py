@@ -123,7 +123,10 @@ def test_telegram_bridge_stores_media_and_starts_run(tmp_path: Path) -> None:
     assert isinstance(ctx, dict)
     assert "messages" not in ctx
     assert input_data.get("use_session_history") is True
-    assert input_data.get("session_history_max_messages") == 30
+    # No message-count cap rides the turn (operator ruling 2026-09-28): the
+    # gateway replays its one window, the most recent 50k tokens.
+    assert "session_history_max_messages" not in input_data
+    assert "max_history_messages" not in (input_data.get("_limits") or {})
 
 
 def test_telegram_bridge_multi_turn_uses_durable_session_replay(tmp_path: Path) -> None:
@@ -179,7 +182,8 @@ def test_telegram_bridge_multi_turn_uses_durable_session_replay(tmp_path: Path) 
     assert host.starts[1]["session_id"] == "telegram:99"
     input2 = host.starts[1]["input_data"]
     assert input2.get("use_session_history") is True
-    assert input2.get("session_history_max_messages") == 30
+    assert "session_history_max_messages" not in input2
+    assert "max_history_messages" not in (input2.get("_limits") or {})
     ctx2 = input2.get("context")
     assert isinstance(ctx2, dict)
     assert "messages" not in ctx2

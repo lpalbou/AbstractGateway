@@ -44,6 +44,12 @@ from .native_loop_bundles import (
 logger = logging.getLogger(__name__)
 
 
+# Per-run inputs that capped replayed history by message count / chars. Retired
+# 2026-09-28 (operator ruling: history replay is the most recent 50k tokens of
+# whole turns, nothing else); recorded as ignored when a client still sends them.
+_RETIRED_SESSION_HISTORY_INPUTS = ("session_history_max_messages", "session_history_max_chars")
+
+
 @dataclass(frozen=True)
 class _GatewayToolSpec:
     name: str
@@ -2059,7 +2065,12 @@ class WorkflowBundleGatewayHost:
             strict=True,
         )
         self._normalize_seeded_context(vars0, ctx0, messages=messages)
-        rt_ns["session_history"] = {"seeded": len(messages), "strict": True, "session_kind": attribution.get("kind")}
+        rt_ns["session_history"] = {
+            "seeded": len(messages),
+            **messages.report,
+            "strict": True,
+            "session_kind": attribution.get("kind"),
+        }
 
     def _seed_session_history(
         self,
@@ -2106,29 +2117,19 @@ class WorkflowBundleGatewayHost:
                 }
                 return
 
-            limit = _int_text(vars0.get("session_history_max_messages"))
-            if limit == 0:
-                # Explicit 0 = replay disabled for this run (audit #9); the
-                # empty-list normalization below still runs via the shared
-                # tail so turn classification stays stable.
-                self._normalize_seeded_context(vars0, ctx0, messages=[])
-                rt_ns["session_history"] = {
-                    "seeded": 0,
-                    "skipped": "disabled by session_history_max_messages=0",
-                }
-                return
-            if limit is None:
-                limit = _int_text(_env("ABSTRACTGATEWAY_SESSION_HISTORY_MAX_MESSAGES"))
-            if limit is None or limit <= 0:
-                limit = 40
-            limit = max(1, min(200, int(limit)))
-
-            max_chars = _int_text(vars0.get("session_history_max_chars"))
-            if max_chars is None or max_chars <= 0:
-                max_chars = _int_text(_env("ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS"))
-            if max_chars is None or max_chars <= 0:
-                max_chars = 24000
-            max_chars = max(1000, min(200000, int(max_chars)))
+            # THE history window (operator ruling 2026-09-28; ADR-0026): the
+            # most recent `HISTORY_REPLAY_MAX_TOKENS` (50k) tokens of whole
+            # turns, owned by abstractruntime.session_history. The retired
+            # message-count / char caps are not honored; a client still
+            # sending them is told so in the run record, never silently.
+            retired = [k for k in _RETIRED_SESSION_HISTORY_INPUTS if k in vars0]
+            if retired:
+                logger.warning(
+                    "session history: ignoring retired input(s) %s for session %s "
+                    "(history replay is the most recent 50k tokens of whole turns)",
+                    ", ".join(retired),
+                    session_id,
+                )
 
             from abstractruntime.session_history import session_chat_messages
 
@@ -2139,8 +2140,6 @@ class WorkflowBundleGatewayHost:
                 run_store=self.runtime.run_store,
                 ledger_store=self.runtime.ledger_store,
                 session_id=session_id,
-                max_messages=limit,
-                max_total_chars=max_chars,
             )
             # Normalize context.messages to a list even when the seed is
             # empty: turn classification treats a messages LIST as "chat",
@@ -2148,11 +2147,10 @@ class WorkflowBundleGatewayHost:
             # and be hidden by the chat-preference filter on later reads
             # (audit #5).
             self._normalize_seeded_context(vars0, ctx0, messages=messages)
-            rt_ns["session_history"] = {
-                "seeded": len(messages),
-                "max_messages": limit,
-                "max_total_chars": max_chars,
-            }
+            note: Dict[str, Any] = {"seeded": len(messages), **messages.report}
+            if retired:
+                note["ignored_inputs"] = retired
+            rt_ns["session_history"] = note
         except Exception as e:  # noqa: BLE001 - degrade, never block the start
             logger.warning(
                 "#FALLBACK: session history seed failed for session %s: %s",

@@ -175,56 +175,77 @@ def test_seed_skipped_without_session_id(tmp_path: Path) -> None:
     assert "session_history" not in (run.vars.get("_runtime") or {})
 
 
-def _strip_drop_marker(content: str) -> str:
-    """Drop Runtime's leading `[#TRUNCATION: N earlier turn(s) ...]` line."""
-    if content.startswith("[#TRUNCATION:") and "]\n" in content:
-        return content.split("]\n", 1)[1]
-    return content
+def _start_with_turns(tmp_path: Path, turns: list, input_data: Dict[str, Any]) -> RunState:
+    run_store = InMemoryRunStore()
+    for i, (prompt, answer) in enumerate(turns):
+        run_store.save(_prior_turn(f"turn-{i:03d}", prompt, answer, f"2026-01-01T{i // 60:02d}:{i % 60:02d}:00+00:00"))
+    host = _build_host(tmp_path, run_store)
+    run_id = host.start_run(flow_id="root", bundle_id="history-demo", input_data=dict(input_data), session_id=_SESSION)
+    run = run_store.load(run_id)
+    assert run is not None
+    return run
 
 
-def test_seed_honors_input_message_cap(tmp_path: Path) -> None:
+def test_seed_is_the_50k_token_window_without_message_or_char_caps(tmp_path: Path) -> None:
+    """Operator ruling 2026-09-28: 30 turns (60 messages, ~60,000 chars) are
+    far inside 50k tokens, so all of them replay, uncut — the old 40-message /
+    24,000-char caps are gone — and the run records the window."""
+    answer = "a long prior answer " * 100
+    run = _start_with_turns(
+        tmp_path, [(f"question {i}", answer) for i in range(30)], {"prompt": "next", "use_session_history": True}
+    )
+    messages = run.vars["context"]["messages"]
+    assert len(messages) == 60
+    assert all(m["content"] == answer.strip() for m in messages[1::2])
+    note = run.vars["_runtime"]["session_history"]
+    assert note["seeded"] == 60
+    assert note["max_tokens"] == 50_000 and note["policy"] == "most_recent_whole_turns"
+    assert note["replayed_messages"] == 60 and note["dropped_messages"] == 0 and note["dropped_tokens"] == 0
+    assert note["token_estimator"] == "abstractruntime.memory.token_budget.estimate_message_tokens"
+    for gone in ("max_messages", "max_total_chars"):
+        assert gone not in note
+
+
+def test_seed_drops_the_oldest_whole_turns_past_50k_tokens_and_says_so(tmp_path: Path) -> None:
+    from abstractruntime.memory.token_budget import estimate_message_tokens
+
+    answer = "an answer that fills the window " * 600  # ~19,000 chars per answer
+    run = _start_with_turns(
+        tmp_path, [(f"question {i}", answer) for i in range(20)], {"prompt": "next", "use_session_history": True}
+    )
+    messages = run.vars["context"]["messages"]
+    note = run.vars["_runtime"]["session_history"]
+    assert 0 < note["replayed_tokens"] <= 50_000
+    assert note["dropped_messages"] == 40 - len(messages) > 0
+    # Whole turns, newest kept: the next older turn would not have fit.
+    pair = estimate_message_tokens({"role": "user", "content": "question 0"}) + estimate_message_tokens(
+        {"role": "assistant", "content": answer.strip()}
+    )
+    assert note["replayed_tokens"] + pair > 50_000
+    assert messages[-2]["content"] == "question 19" and messages[-1]["content"] == answer.strip()
+    assert messages[0]["content"].startswith("[#TRUNCATION: ")
+    assert "the most recent 50000 tokens" in messages[0]["content"]
+
+
+def test_seed_ignores_retired_caps_and_records_them(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The retired per-run caps (and their env spellings) no longer change what
+    is replayed; a client still sending them is told so in the run record."""
+    monkeypatch.setenv("ABSTRACTGATEWAY_SESSION_HISTORY_MAX_MESSAGES", "2")
+    monkeypatch.setenv("ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS", "1000")
     run = _start(
         tmp_path,
         input_data={
             "prompt": "next",
             "use_session_history": True,
             "session_history_max_messages": 2,
+            "session_history_max_chars": 5000,
         },
     )
-
     messages = run.vars["context"]["messages"]
-    # Newest turn only, never split: [user, assistant] of turn-2. The replay
-    # labels the cut on the first kept message (Runtime #TRUNCATION marker).
-    assert [_strip_drop_marker(m["content"]) for m in messages] == ["explain simply", "In short: X."]
-    assert messages[0]["content"].startswith("[#TRUNCATION: 1 earlier turn(s)")
-    assert run.vars["_runtime"]["session_history"]["max_messages"] == 2
-
-
-def test_seed_honors_env_message_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ABSTRACTGATEWAY_SESSION_HISTORY_MAX_MESSAGES", "2")
-    run = _start(tmp_path, input_data={"prompt": "next", "use_session_history": True})
-
-    messages = run.vars["context"]["messages"]
-    assert [_strip_drop_marker(m["content"]) for m in messages] == ["explain simply", "In short: X."]
-
-
-def test_seed_zero_cap_disables_replay_but_normalizes_context(tmp_path: Path) -> None:
-    """Audit #9: an explicit 0 means 'no replay for this run' — and the
-    context still gets its messages list so turn classification stays
-    stable (audit #5)."""
-    run = _start(
-        tmp_path,
-        input_data={
-            "prompt": "next",
-            "use_session_history": True,
-            "session_history_max_messages": 0,
-        },
-    )
-
-    assert run.vars["context"]["messages"] == []
+    assert [m["content"] for m in messages] == ["analyze the report", "It concludes X.", "explain simply", "In short: X."]
     note = run.vars["_runtime"]["session_history"]
-    assert note["seeded"] == 0
-    assert "disabled" in str(note.get("skipped") or "")
+    assert note["seeded"] == 4
+    assert note["ignored_inputs"] == ["session_history_max_messages", "session_history_max_chars"]
 
 
 def test_seed_skips_non_dict_client_context(tmp_path: Path) -> None:
@@ -256,21 +277,6 @@ def test_seed_normalizes_empty_history_to_messages_list(tmp_path: Path) -> None:
 
     assert run.vars["context"]["messages"] == []
     assert run.vars["_runtime"]["session_history"]["seeded"] == 0
-
-
-def test_seed_records_char_budget_in_note(tmp_path: Path) -> None:
-    run = _start(
-        tmp_path,
-        input_data={
-            "prompt": "next",
-            "use_session_history": True,
-            "session_history_max_chars": 5000,
-        },
-    )
-
-    note = run.vars["_runtime"]["session_history"]
-    assert note["max_total_chars"] == 5000
-    assert note["seeded"] == 4
 
 
 def test_seed_failure_degrades_with_labeled_note_and_run_still_starts(

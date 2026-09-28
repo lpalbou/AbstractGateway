@@ -284,8 +284,6 @@ _EXPLICIT: Tuple[EnvVarSpec, ...] = (
     _spec("ABSTRACTGATEWAY_MAX_BACKLOG_ATTACHMENT_BYTES", BEHAVIOR, console_path="limits"),
     _spec("ABSTRACTGATEWAY_IMAGE_MAX_BYTES", BEHAVIOR, console_path="limits"),
     _spec("ABSTRACTCORE_IMAGE_MAX_BYTES", LEGACY_ALIAS, alias_of="ABSTRACTGATEWAY_IMAGE_MAX_BYTES"),
-    _spec("ABSTRACTGATEWAY_SESSION_HISTORY_MAX_MESSAGES", BEHAVIOR, console_path="sessions.history"),
-    _spec("ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS", BEHAVIOR, console_path="sessions.history"),
     _spec("ABSTRACTGATEWAY_VOICE_TTS_TIMEOUT_S", BEHAVIOR, console_path="multimodal.voice",
           note="request outcome (504) => behavior"),
     _spec("ABSTRACTGATEWAY_VOICE_MAX_CONCURRENCY", BEHAVIOR, console_path="multimodal.voice",

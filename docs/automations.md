@@ -203,7 +203,7 @@ server-owned keys at all: saving the workflow answers 422 with the `field`.
 | Mode | Each occurrence | Session |
 |---|---|---|
 | `independent` (default) | starts fresh, with no history | a new session per occurrence |
-| `growing` | receives the previous occurrences as conversation history: whole turns, at most 40 messages and 24,000 characters, not summarized | the automation's session, `automation:<automation_id>` |
+| `growing` | receives the previous occurrences as conversation history: the most recent 50,000 tokens of whole turns, never a cut message, not summarized; the occurrence run records what was replayed and dropped in `_runtime.session_history` | the automation's session, `automation:<automation_id>` |
 
 **`policy`.** `tool_approval` is `"auto"` (default) or `"ask"`
 ([Tool approval](#tool-approval-and-consent)). `retry` sets how a failed
@@ -643,8 +643,8 @@ python scripts/accept_automations_v1.py --data-dir /tmp/automation-acceptance
   or event triggers.
 - Occurrences run one at a time, missed ticks coalesce, and a failed
   occurrence never stops the automation. These policies cannot be changed.
-- Growing history is bounded (40 messages, 24,000 characters, whole turns)
-  and is not summarized.
+- Growing history is the most recent 50,000 tokens of whole turns and is not
+  summarized; older turns drop out of the replay (they stay in the store).
 - Under `tool_approval: "auto"`, tools outside AbstractRuntime's
   classification, such as third-party MCP tools, still ask for approval.
 - Retries repeat the external effects of the failed attempt.

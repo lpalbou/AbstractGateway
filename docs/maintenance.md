@@ -166,7 +166,7 @@ Enable (Telegram):
   - `ABSTRACTGATEWAY_TOOL_MODE=delegated`: tools are not executed locally; workflows enter a durable `JOB` wait for external executors.
 - optional knobs:
   - Telegram-only routing override: `ABSTRACT_TELEGRAM_MODEL` (and optionally `ABSTRACT_TELEGRAM_PROVIDER`)
-  - Durable history limit: `ABSTRACT_TELEGRAM_MAX_HISTORY_MESSAGES`
+  - Replayed history is the gateway's window (the most recent 50,000 tokens of whole turns); `ABSTRACT_TELEGRAM_MAX_HISTORY_MESSAGES` is retired and ignored (a warning is logged when it is set)
   - `/reset` controls: `ABSTRACT_TELEGRAM_RESET_DELETE_MESSAGES`, `ABSTRACT_TELEGRAM_RESET_DELETE_MAX`, `ABSTRACT_TELEGRAM_RESET_MESSAGE`
 
 Enable (Email):
