@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import sys
 import time
@@ -11,12 +10,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 
-@pytest.fixture(autouse=True)
-def _cleanup_optional_abstractflow_modules_after_test():
-    yield
-    for name in list(sys.modules):
-        if name == "abstractflow" or name.startswith("abstractflow."):
-            sys.modules.pop(name, None)
+# These tests are the gateway's side of the AbstractFlow editor contract, over
+# HTTP only; they import nothing from abstractflow. They used to skip unless
+# `importlib.util.find_spec("abstractflow")` found something, which happened
+# only when the working directory held a sibling `abstractflow/` checkout (a
+# namespace package): CI always skipped them, so their assertions went stale
+# when the editor fixture gained `reference_files`.
 
 
 def _editor_flow_payload() -> dict:
@@ -182,9 +181,6 @@ def test_editor_run_input_schema_preserves_artifact_pin_contract() -> None:
 
 @pytest.mark.basic
 def test_abstractflow_gateway_first_editor_contract_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    if importlib.util.find_spec("abstractflow") is None:
-        pytest.skip("abstractflow is not installed")
-
     runtime_dir = tmp_path / "runtime"
     bundles_dir = tmp_path / "bundles"
     token = "t"
@@ -297,7 +293,7 @@ def test_abstractflow_gateway_first_editor_contract_path(tmp_path: Path, monkeyp
         assert schema_body.get("workflow_id") == f"editor-contract@0.0.0:{flow_id}"
         inputs = schema_body.get("inputs")
         assert isinstance(inputs, list)
-        assert {item.get("id") for item in inputs if isinstance(item, dict)} == {"prompt", "max_iterations", "source_image"}
+        assert {item.get("id") for item in inputs if isinstance(item, dict)} == {"prompt", "max_iterations", "source_image", "reference_files"}
         assert schema_body.get("defaults") == {
             "prompt": "hello from the editor",
             "max_iterations": 3,
@@ -307,6 +303,10 @@ def test_abstractflow_gateway_first_editor_contract_path(tmp_path: Path, monkeyp
                 "run_id": "run-default",
                 "content_type": "image/png",
             },
+            "reference_files": [
+                {"$artifact": "doc-1", "artifact_id": "doc-1", "run_id": "run-default", "content_type": "text/plain"},
+                {"$artifact": "doc-2", "artifact_id": "doc-2", "run_id": "run-default", "content_type": "text/plain"},
+            ],
         }
         props = schema_body.get("input_data_schema", {}).get("properties")
         assert isinstance(props, dict)
@@ -316,6 +316,7 @@ def test_abstractflow_gateway_first_editor_contract_path(tmp_path: Path, monkeyp
         assert props.get("source_image", {}).get("x-abstract-type") == "artifact_image"
         assert props.get("source_image", {}).get("x-abstract-artifact-modality") == "image"
         assert props.get("source_image", {}).get("required") == ["$artifact"]
+        assert props.get("reference_files", {}).get("x-abstract-type") == "artifacts_text"
 
         start = client.post(
             "/api/gateway/runs/start",
@@ -357,7 +358,12 @@ def test_abstractflow_gateway_first_editor_contract_path(tmp_path: Path, monkeyp
         assert input_body.get("bundle_id") == "editor-contract"
         assert input_body.get("bundle_version") == "0.0.0"
         assert input_body.get("flow_id") == flow_id
-        assert input_body.get("input_data") == {"prompt": "run from editor", "max_iterations": 5}
+        # The run's inputs as sent (the unknown `extra` dropped), plus the
+        # server-written `workflow_selection` naming what ran.
+        run_inputs = dict(input_body.get("input_data") or {})
+        selection = run_inputs.pop("workflow_selection")
+        assert run_inputs == {"prompt": "run from editor", "max_iterations": 5}
+        assert (selection["bundle_id"], selection["bundle_version"], selection["flow_id"]) == ("editor-contract", "0.0.0", flow_id)
 
         artifacts = client.get(f"/api/gateway/runs/{run_id}/artifacts", headers=headers)
         assert artifacts.status_code == 200, artifacts.text
@@ -380,9 +386,6 @@ def test_abstractflow_gateway_first_editor_contract_path(tmp_path: Path, monkeyp
 
 @pytest.mark.basic
 def test_abstractflow_gateway_publish_fails_fast_when_reload_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    if importlib.util.find_spec("abstractflow") is None:
-        pytest.skip("abstractflow is not installed")
-
     runtime_dir = tmp_path / "runtime"
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
     monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(tmp_path / "flows"))
