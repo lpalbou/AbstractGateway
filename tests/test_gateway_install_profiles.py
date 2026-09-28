@@ -228,6 +228,26 @@ def test_basic_agent_bundle_is_packaged_as_default_gateway_entrypoint() -> None:
     )
 
 
+def test_docs_qa_bundle_is_packaged_at_the_console_pinned_version() -> None:
+    """docs-qa 0.1.1 (session-replayed history, no turn cap) ships in the wheel,
+    the sdist and both images, and it is the version both consoles pin."""
+    build = _pyproject()["tool"]["hatch"]["build"]["targets"]
+    wheel_force = build["wheel"]["force-include"]
+    sdist_force = build["sdist"]["force-include"]
+    name = "flows/bundles/docs-qa@0.1.1.flow"
+    assert (ROOT / name).is_file()
+    assert wheel_force[name] == "abstractgateway/" + name
+    assert sdist_force[name] == name
+    assert not [k for k in wheel_force if k.startswith("flows/bundles/docs-qa@") and k != name]
+    for dockerfile in ("Dockerfile", "Dockerfile.nvidia"):
+        assert name in (ROOT / "docker" / "abstractgateway-server" / dockerfile).read_text(encoding="utf-8")
+    assert f"!{name}" in (ROOT / ".gitignore").read_text(encoding="utf-8")
+    console = (ROOT / "src" / "abstractgateway" / "console.py").read_text(encoding="utf-8")
+    assert 'bundle_id: "docs-qa", bundle_version: "0.1.1"' in console
+    tui = (ROOT / "console-tui" / "src" / "ui" / "docs.rs").read_text(encoding="utf-8")
+    assert 'pub const BUNDLE_VERSION: &str = "0.1.1";' in tui
+
+
 def test_default_docker_image_uses_base_server_and_nvidia_uses_gpu_profile() -> None:
     dockerfile = (ROOT / "docker" / "abstractgateway-server" / "Dockerfile").read_text(encoding="utf-8")
     compose = (ROOT / "docker" / "abstractgateway-server" / "compose.yml").read_text(encoding="utf-8")

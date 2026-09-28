@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Docs assistant (F2): one gateway session per conversation. Questions run
+  docs-qa 0.1.1 with `use_session_history`, so the gateway replays earlier
+  turns (newest whole turns up to 50,000 tokens) instead of the console
+  sending its last 12 messages; **New conversation** starts a new session,
+  and the modal says when earlier messages were not replayed.
 - **N Network** screen: the saved exposure next to what is running now, the
   modes as a list (`(•)` marks the saved one; `Enter` saves the highlighted
   mode, internet after an acknowledgement), the addresses to copy, and the

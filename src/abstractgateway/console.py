@@ -2957,12 +2957,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     <div class="af-drawer__header">
       <div class="af-drawer__title">Docs assistant</div>
       <div class="af-drawer__header-actions">
-        <button id="assistant-clear" class="secondary" type="button" title="Clear conversation">Clear</button>
+        <button id="assistant-clear" class="secondary" type="button" title="Start a new conversation (nothing earlier is replayed)">New conversation</button>
         <button id="assistant-close" class="af-drawer__close" type="button" aria-label="Close assistant">×</button>
       </div>
     </div>
     <div class="af-drawer__body">
       <div id="assistant-messages" class="assistant-messages"></div>
+      <div id="assistant-replay" class="assistant-note" hidden></div>
       <div id="assistant-note" class="assistant-note">Answers are grounded on the gateway's own documentation (llms.txt) via the docs-qa workflow.</div>
       <form id="assistant-form" class="assistant-composer">
         <textarea id="assistant-input" rows="2" placeholder="Ask about the gateway…" aria-label="Question for the docs assistant"></textarea>
@@ -3364,8 +3365,35 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // ask() = start a catalog run of docs-qa with the gateway's OWN corpus
 	    // (GET /docs/corpus) and poll the run to completion. Never routes through
 	    // entity chat (a visit is billable and forms memories — kit contract).
-	    const ASSISTANT_BUNDLE = { registry_scope: "tenant_catalog", bundle_id: "docs-qa", bundle_version: "0.1.0", flow_id: "docsqa001" };
-	    const assistantState = { open: false, busy: false, corpus: null, corpusWarned: false, history: [] };
+	    // History (ADR-0026, operator ruling 2026-09-28): no client-side copy and
+	    // no turn cap. Each conversation is ONE gateway session; every question
+	    // starts with use_session_history, so the gateway replays the earlier
+	    // turns through the runtime's history window (newest whole turns up to
+	    // 50,000 tokens) and records the receipt (run.session_history), shown
+	    // when earlier messages were not replayed. New conversation = new session.
+	    const ASSISTANT_BUNDLE = { registry_scope: "tenant_catalog", bundle_id: "docs-qa", bundle_version: "0.1.1", flow_id: "docsqa001" };
+	    function assistantNewSessionId() {
+	      let id = "";
+	      try { if (typeof crypto !== "undefined" && crypto.randomUUID) id = crypto.randomUUID(); } catch {}
+	      return "gateway-docs-assistant:" + (id || (Date.now() + "-" + Math.random().toString(16).slice(2)));
+	    }
+	    const assistantState = { open: false, busy: false, corpus: null, corpusWarned: false, sessionId: assistantNewSessionId() };
+	    function assistantReplayNote(history) {
+	      const n = (v) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.trunc(v) : 0);
+	      const dropped = n(history && history.dropped_messages);
+	      if (!dropped) return "";
+	      const replayed = n(history.replayed_messages);
+	      const tokens = n(history.dropped_tokens);
+	      const budget = n(history.max_tokens);
+	      return `Earlier messages not replayed: ${dropped.toLocaleString("en-US")}${tokens ? ` (~${tokens.toLocaleString("en-US")} tokens)` : ""}. ` +
+	        `The model read the newest ${replayed.toLocaleString("en-US")} message${replayed === 1 ? "" : "s"}` +
+	        (budget ? ` (history window: the most recent ${budget.toLocaleString("en-US")} tokens of whole messages).` : ".");
+	    }
+	    function assistantShowReplay(history) {
+	      const text = assistantReplayNote(history);
+	      $("assistant-replay").textContent = text;
+	      $("assistant-replay").hidden = !text;
+	    }
 	    function assistantAppend(role, text, extraClass) {
 	      const div = document.createElement("div");
 	      div.className = `assistant-msg ${role}${extraClass ? ` ${extraClass}` : ""}`;
@@ -3406,11 +3434,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        body: JSON.stringify({
 	          ...ASSISTANT_BUNDLE,
 	          actor_id: "gateway",
+	          session_id: assistantState.sessionId,
 	          input_data: {
-	            question,
-	            history: assistantState.history.slice(-12),
+	            prompt: question,
 	            docs: corpus.text,
 	            app: corpus.app,
+	            use_session_history: true,
 	          },
 	        }),
 	      });
@@ -3424,7 +3453,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (status === "completed") {
 	          const out = run.output || {};
 	          const text = typeof out.response === "string" && out.response.trim() ? out.response : JSON.stringify(out);
-	          return text;
+	          return { text, history: run.session_history || null };
 	        }
 	        if (status === "failed" || status === "cancelled") {
 	          throw new Error(`docs-qa run ${status}: ${JSON.stringify(run.error || run.output || {}).slice(0, 300)}`);
@@ -3445,8 +3474,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      try {
 	        const answer = await assistantAsk(question);
 	        pending.classList.remove("pending");
-	        pending.textContent = answer;
-	        assistantState.history.push({ role: "user", content: question }, { role: "assistant", content: answer });
+	        pending.textContent = answer.text;
+	        assistantShowReplay(answer.history);
 	      } catch (err) {
 	        pending.classList.remove("pending");
 	        pending.classList.add("error");
@@ -3457,8 +3486,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	    }
 	    function assistantClear() {
-	      assistantState.history = [];
+	      assistantState.sessionId = assistantNewSessionId();
 	      $("assistant-messages").textContent = "";
+	      assistantShowReplay(null);
 	    }
 	    const TAB_TITLES = {
 	      users: ["Users & Entities", "People, tokens, and the summoned entities living on this gateway"],

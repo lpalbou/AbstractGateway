@@ -299,19 +299,30 @@ manual upload below then remains the path.
 curl -sS -H "$AUTH" -H "Content-Type: application/json" -d '{
   "registry_scope": "tenant_catalog",
   "bundle_id": "docs-qa",
-  "bundle_version": "0.1.0",
+  "bundle_version": "0.1.1",
   "flow_id": "docsqa001",
+  "session_id": "myapp-docs-assistant:<one id per conversation>",
   "input_data": {
-    "question": "How do I publish a workflow bundle?",
-    "history": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}],
+    "prompt": "How do I publish a workflow bundle?",
     "docs": "<your llms.txt text>",
-    "app": "MyApp"
+    "app": "MyApp",
+    "use_session_history": true
   }
 }' "$BASE_URL/api/gateway/runs/start"
 ```
 
+Conversation history comes from the run's session, never from the caller
+(0.1.1): start every question of one conversation with the same `session_id`
+and `use_session_history: true`. The gateway replays the session's earlier
+turns through the runtime's history window (the newest whole turns up to
+50,000 tokens) and the bundle's LLM call includes them; a new conversation is
+a new `session_id`. 0.1.0's `question` + `history` inputs (last 12 messages
+kept) are gone.
+
 Then poll `GET /runs/{run_id}` (or stream the ledger); the answer is
-`output.response`. `provider`/`model`/`temperature` may ride `input_data` to
+`output.response`, and `session_history` is the window's receipt
+(`replayed_messages`, `dropped_messages`, ...) to show when earlier messages
+were not replayed. `provider`/`model`/`temperature` may ride `input_data` to
 override gateway defaults. Answers cite section headings and say plainly when
 the docs do not answer — the bundle refuses to invent endpoints or behavior.
 Docs Q&A must never route through entity chat (a visit is billable and forms

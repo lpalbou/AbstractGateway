@@ -392,7 +392,7 @@ pub enum Cmd {
     /// Docs assistant: start the docs-qa run (`op` = its busy entry).
     DocsAsk {
         question: String,
-        history: Vec<Value>,
+        session_id: String,
         op: u64,
     },
     /// Docs assistant: one run poll (re-armed by a timer thread).
@@ -2401,11 +2401,11 @@ fn handle(
 
         Cmd::DocsAsk {
             question,
-            history,
+            session_id,
             op,
         } => {
             let r = require_client(client)
-                .and_then(|c| crate::ui::docs::start_ask(&c, &question, &history));
+                .and_then(|c| crate::ui::docs::start_ask(&c, &question, &session_id));
             crate::ui::docs::after_start(store, wake, tx, op, r);
         }
 

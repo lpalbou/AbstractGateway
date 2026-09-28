@@ -3750,19 +3750,30 @@ manual upload below then remains the path.
 curl -sS -H "$AUTH" -H "Content-Type: application/json" -d '{
   "registry_scope": "tenant_catalog",
   "bundle_id": "docs-qa",
-  "bundle_version": "0.1.0",
+  "bundle_version": "0.1.1",
   "flow_id": "docsqa001",
+  "session_id": "myapp-docs-assistant:<one id per conversation>",
   "input_data": {
-    "question": "How do I publish a workflow bundle?",
-    "history": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}],
+    "prompt": "How do I publish a workflow bundle?",
     "docs": "<your llms.txt text>",
-    "app": "MyApp"
+    "app": "MyApp",
+    "use_session_history": true
   }
 }' "$BASE_URL/api/gateway/runs/start"
 ```
 
+Conversation history comes from the run's session, never from the caller
+(0.1.1): start every question of one conversation with the same `session_id`
+and `use_session_history: true`. The gateway replays the session's earlier
+turns through the runtime's history window (the newest whole turns up to
+50,000 tokens) and the bundle's LLM call includes them; a new conversation is
+a new `session_id`. 0.1.0's `question` + `history` inputs (last 12 messages
+kept) are gone.
+
 Then poll `GET /runs/{run_id}` (or stream the ledger); the answer is
-`output.response`. `provider`/`model`/`temperature` may ride `input_data` to
+`output.response`, and `session_history` is the window's receipt
+(`replayed_messages`, `dropped_messages`, ...) to show when earlier messages
+were not replayed. `provider`/`model`/`temperature` may ride `input_data` to
 override gateway defaults. Answers cite section headings and say plainly when
 the docs do not answer — the bundle refuses to invent endpoints or behavior.
 Docs Q&A must never route through entity chat (a visit is billable and forms
@@ -5635,7 +5646,7 @@ you omit `flow_id`.
 | `deep-research` | 0.1.8 | `deep-research`* (`abstractcode.agent.v1`, `abstractresearch.deep.v1`) | Production research with adversarial review, a verified source ledger, and Markdown/PDF/DOCX export. See [deep-research.md](docs/deep-research.md). |
 | `co-scientist` | 0.2.0 | `co-scientist`* (`abstractresearch.coscientist.v1`) | Multi-agent hypothesis engine: literature grounding through the deep-research investigation flows, then cycles of generation, reflection, Elo-ranked pairwise debate, and evolution into a final reviewed research overview. |
 | `abstractassistant-orchestrator` | 0.0.0 | `d5d4e5a1`* (`abstractassistant.agent.v1`) | Orchestrator for the compact AbstractAssistant tray surface. |
-| `docs-qa` | 0.1.0 | `docsqa001`* | Documentation Q&A grounded on the asking app's `llms.txt` corpus; also auto-published into the tenant workflow catalog at boot. |
+| `docs-qa` | 0.1.1 | `docsqa001`* | Documentation Q&A grounded on the asking app's `llms.txt` corpus; history comes from the run's session (`use_session_history`); also auto-published into the tenant workflow catalog at boot. |
 | `react-agent` / `codeact-agent` / `memact-agent` | 0.1.0 | `react`* / `codeact`* / `memact`* (`abstractcode.agent.v1`) | Native ReAct / CodeAct / MemAct agent loops (abstractagent). |
 
 Interfaces are how clients pick workflows without knowing bundle internals:
@@ -7925,6 +7936,14 @@ history window. The terminal console builds on `abstractcore-console` 0.4.
   notice. Removed: the 12,000-character cut on every run-chat and backlog-assist message, the advisor's
   12,000-character cut and its "first 40 messages" cap (the newest question was dropped), maintain's 8,000-character
   cut, and the backlog assist/maintain draft and template cuts (500k/600k/220k/120k characters, 180k context).
+- **docs-qa 0.1.1 (replaces 0.1.0): conversation history comes from the run's session.** The question is the
+  `prompt` input; each question of a conversation starts with the same `session_id` and `use_session_history`, the
+  gateway replays the earlier turns through the runtime's history window and the bundle's LLM call includes them.
+  The `question`/`history` inputs and the bundle's "last 12 messages" cap are gone. The web console's and the
+  terminal console's docs assistants no longer send a history copy (they sent the last 12 messages): one session per
+  conversation, **New conversation** starts a new one, and the drawer says when earlier messages were not replayed.
+  Clients that pinned `docs-qa@0.1.0` keep working on installs whose catalog already holds it; fresh installs publish
+  0.1.1 only.
 
 - Every browser app is launched with `--port`, `--host`, `--gateway-url` flags (Observer, Code, Entity and Flow join
   Continuum). An installed version older than the flags (Observer 0.1.14, Code 0.5.0, Entity 0.2.2 or earlier) also

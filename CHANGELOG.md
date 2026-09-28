@@ -64,6 +64,14 @@ history window. The terminal console builds on `abstractcore-console` 0.4.
   notice. Removed: the 12,000-character cut on every run-chat and backlog-assist message, the advisor's
   12,000-character cut and its "first 40 messages" cap (the newest question was dropped), maintain's 8,000-character
   cut, and the backlog assist/maintain draft and template cuts (500k/600k/220k/120k characters, 180k context).
+- **docs-qa 0.1.1 (replaces 0.1.0): conversation history comes from the run's session.** The question is the
+  `prompt` input; each question of a conversation starts with the same `session_id` and `use_session_history`, the
+  gateway replays the earlier turns through the runtime's history window and the bundle's LLM call includes them.
+  The `question`/`history` inputs and the bundle's "last 12 messages" cap are gone. The web console's and the
+  terminal console's docs assistants no longer send a history copy (they sent the last 12 messages): one session per
+  conversation, **New conversation** starts a new one, and the drawer says when earlier messages were not replayed.
+  Clients that pinned `docs-qa@0.1.0` keep working on installs whose catalog already holds it; fresh installs publish
+  0.1.1 only.
 
 - Every browser app is launched with `--port`, `--host`, `--gateway-url` flags (Observer, Code, Entity and Flow join
   Continuum). An installed version older than the flags (Observer 0.1.14, Code 0.5.0, Entity 0.2.2 or earlier) also
