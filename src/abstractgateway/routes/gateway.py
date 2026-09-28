@@ -4063,8 +4063,9 @@ def _data_dir_workspace_problem(
         return f"it is the folder that holds every workspace in the gateway's data folder ({own}), not one workspace"
     if _gateway_folder_kind(own / rel.parts[0], principal=principal, session_id=session_id) is None:
         return (
-            f"it is inside the gateway's data folder ({data_root}) and is not a workspace the gateway made "
-            "for this conversation or one of your runs"
+            f"it is a folder the gateway made for another conversation, run or automation (inside its data "
+            f"folder {data_root}), and one workspace is never shared that way. Leave the workspace empty and the "
+            "gateway creates a folder of its own for this one"
         )
     return None
 
@@ -4218,7 +4219,7 @@ def _sanitize_run_workspace_policy(
         if data_problem:
             raise HTTPException(
                 status_code=400,
-                detail=f"workspace_root {str(resolved)!r} is refused: {data_problem}. The run was NOT started.",
+                detail=f"workspace_root {str(resolved)!r} is refused: {data_problem}. Nothing was started.",
             )
         if allow_overrides or blacklist_mode or trust_launch_folder or _is_under_allowed_roots(resolved, allowed_roots):
             input_data["workspace_root"] = str(resolved)
@@ -6658,8 +6659,6 @@ def _list_descendant_run_ids(run_store: Any, root_run_id: str, *, limit: int = 2
 
 def _generate_summary_text(*, provider: str, model: str, context: Dict[str, Any]) -> str:
     """Generate a human-readable summary for a run (patchable in tests)."""
-    from abstractruntime.integrations.abstractcore.llm_client import LocalAbstractCoreLLMClient
-
     system = (
         "You are AbstractObserver. You are given an execution digest derived from an append-only workflow ledger.\n"
         "Write a concise human-readable SUMMARY of what the workflow did.\n\n"
@@ -6674,7 +6673,7 @@ def _generate_summary_text(*, provider: str, model: str, context: Dict[str, Any]
     )
 
     user = json.dumps(context, ensure_ascii=False, indent=2)
-    llm = LocalAbstractCoreLLMClient(provider=str(provider), model=str(model))
+    llm, _routed, _profile = _gateway_llm_client(str(provider), str(model))
     res = llm.generate(
         prompt="",
         messages=[{"role": "user", "content": _clamp_text(user, max_len=180_000)}],
@@ -6687,8 +6686,6 @@ def _generate_summary_text(*, provider: str, model: str, context: Dict[str, Any]
 
 def _generate_chat_text(*, provider: str, model: str, context: Dict[str, Any], messages: list[Dict[str, Any]]) -> str:
     """Generate a read-only chat response grounded in a run ledger (patchable in tests)."""
-    from abstractruntime.integrations.abstractcore.llm_client import LocalAbstractCoreLLMClient
-
     system = (
         "You are AbstractObserver Chat.\n"
         "You are given:\n"
@@ -6717,7 +6714,7 @@ def _generate_chat_text(*, provider: str, model: str, context: Dict[str, Any], m
             continue
         prompt_msgs.append({"role": role, "content": _clamp_text(content.strip(), max_len=12_000)})
 
-    llm = LocalAbstractCoreLLMClient(provider=str(provider), model=str(model))
+    llm, _routed, _profile = _gateway_llm_client(str(provider), str(model))
     res = llm.generate(
         prompt="",
         messages=prompt_msgs,
@@ -8065,7 +8062,14 @@ def _restamp_discussion_turn(svc: Any, *, session_id: str, input_data: Dict[str,
     runtime_ns = input_data.get("_runtime") if isinstance(input_data.get("_runtime"), dict) else {}
     client_mounts = list(read_only_paths({"_runtime": runtime_ns}))
     input_data["_runtime"] = {**runtime_ns, READ_ONLY_PATHS_KEY: sorted(set(mounts) | set(client_mounts))}
+    # A discussion is a chat about the automation's timeline: its history is
+    # always read (the flow's `use_context` pin defaults to False), and a turn
+    # that names no model answers with the model the fork was started on.
     input_data["use_session_history"] = True
+    input_data["use_context"] = True
+    for key in ("provider", "model"):
+        if not str(input_data.get(key) or "").strip() and str(root_vars.get(key) or "").strip():
+            input_data[key] = root_vars[key]
     return mounts
 
 
@@ -9242,9 +9246,26 @@ async def get_run_input_data(run_id: str) -> Dict[str, Any]:
     workspace_defaults = _public_run_workspace_defaults(vars_obj)
     workflow_selection = _public_run_workflow_selection(svc=svc, vars_obj=vars_obj)
 
+    data_root = gateway_data_dir_from_env().expanduser().resolve()
+
     def _response(payload: Dict[str, Any]) -> Dict[str, Any]:
         if workflow_selection:
             payload["workflow_selection"] = dict(workflow_selection)
+        # `input_data` is what a client may START again. A folder inside the
+        # gateway's data folder is one the gateway made for THIS run, session
+        # or automation, never a start input: echoed into a new launch or
+        # automation it is refused (operator report 2026-09-28: the second
+        # automation carried the first one's folder). Where the run works
+        # stays readable in `workspace`.
+        inputs = payload.get("input_data")
+        ws = inputs.get("workspace_root") if isinstance(inputs, dict) else None
+        if isinstance(ws, str) and ws.strip():
+            try:
+                inside = _is_under_allowed_roots(_resolve_user_path(ws, base=_workspace_root()), [data_root])
+            except Exception:  # noqa: BLE001 - an unresolvable path is not a gateway folder
+                inside = False
+            if inside:
+                payload["input_data"] = {k: v for k, v in inputs.items() if k != "workspace_root"}
         return payload
 
     # Scheduled wrapper runs: expose the target bundle/flow + the target input payload.
@@ -10653,6 +10674,8 @@ async def generate_run_summary(run_id: str, req: GenerateRunSummaryRequest) -> G
 
     try:
         summary_text = await asyncio.to_thread(_generate_summary_text, provider=provider, model=model, context=context)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to generate summary: {e}")
 
@@ -10887,6 +10910,8 @@ async def run_chat(run_id: str, req: RunChatRequest) -> RunChatResponse:
 
     try:
         answer_text = await asyncio.to_thread(_generate_chat_text, provider=provider, model=model, context=context, messages=messages)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to generate chat answer: {e}")
 
@@ -22688,8 +22713,6 @@ def _generate_backlog_assist_json(
     messages: list[Dict[str, Any]],
 ) -> Dict[str, str]:
     """Generate a backlog-authoring assistant response (patchable in tests)."""
-    from abstractruntime.integrations.abstractcore.llm_client import LocalAbstractCoreLLMClient
-
     system = (
         "You are AbstractFramework Backlog Assistant.\n"
         "You help a human author a single backlog item that is clear, testable, and aligned with the framework conventions.\n\n"
@@ -22728,7 +22751,7 @@ def _generate_backlog_assist_json(
             continue
         prompt_msgs.append({"role": role, "content": _clamp_text(content.strip(), max_len=12_000)})
 
-    llm = LocalAbstractCoreLLMClient(provider=str(provider), model=str(model))
+    llm, _routed, _profile = _gateway_llm_client(str(provider), str(model))
     gen_params: Dict[str, Any] = {"temperature": 0.2}
     if str(thinking or "").strip():
         # Reasoning effort on the one wire name; absent means absent.
@@ -26017,11 +26040,41 @@ async def model_residency_loaded(
     return out
 
 
+def capability_defaults_route_problems(base_dir: Path) -> list[str]:
+    """Why the default TEXT route cannot be used right now, in words (an
+    `endpoint:<id>` default whose profile was deleted or disabled), or [].
+    Reported here, next to the control that fixes it; the host itself keeps
+    loading (hosts/bundle_host.py) and a call that uses it fails naming it."""
+    from ..provider_defaults import resolve_gateway_provider_model
+    from ..provider_endpoint_profiles import explain_endpoint_profile_miss
+
+    provider = str(resolve_gateway_provider_model(base_dir=base_dir, purpose="default text route").provider or "").strip()
+    if not provider.lower().startswith("endpoint:"):
+        return []
+    current, root = _gateway_profile_dirs()
+    try:
+        profile = resolve_effective_endpoint_profile(provider, base_dir=current, root_base_dir=root)
+    except ProviderEndpointProfileError as exc:
+        return [f"The default text model uses {provider!r}, which is invalid: {exc}. Choose another default."]
+    if profile is not None and profile.enabled:
+        return []
+    reason = explain_endpoint_profile_miss(provider, base_dir=current, root_base_dir=root) or (
+        f"the endpoint profile {provider!r} is not configured or is disabled"
+    )
+    return [f"The default text model cannot be used: {reason}. Runs and helpers that rely on the default fail until you choose another default or restore the profile."]
+
+
 @router.get("/config/capability-defaults")
 async def capability_defaults_get() -> Dict[str, Any]:
     """List execution-host Core/Runtime capability routing defaults for thin-client settings UIs."""
     svc = get_gateway_service()
-    return gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir))
+    payload = gateway_capability_defaults_payload(base_dir=Path(svc.config.data_dir))
+    problems = capability_defaults_route_problems(Path(svc.config.data_dir))
+    if problems:
+        payload = dict(payload)
+        existing = payload.get("warnings")
+        payload["warnings"] = ([*existing] if isinstance(existing, list) else []) + problems
+    return payload
 
 
 @router.get("/config/provider-endpoint-profiles")
@@ -26182,9 +26235,16 @@ async def provider_endpoint_profiles_discover_models(request: Request, req: _Gat
     return body
 
 
-def _sandbox_provider_resolution(request: Request, provider: str) -> tuple[str, Dict[str, Any], Optional[Dict[str, Any]]]:
+def _gateway_provider_resolution(provider: str) -> tuple[str, Dict[str, Any], Optional[Dict[str, Any]]]:
+    """(routed provider, in-process client kwargs, public profile | None) for
+    `provider`: a gateway endpoint profile (`endpoint:<id>`) routes to its
+    provider family with its base URL and key; a built-in provider gets the
+    key / base URL configured in the console (provider connections)."""
     current_base, root_base = _gateway_profile_dirs()
-    profile = _resolve_endpoint_profile_for_request(request, provider)
+    try:
+        profile = resolve_effective_endpoint_profile(provider, base_dir=current_base, root_base_dir=root_base)
+    except ProviderEndpointProfileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if profile is not None:
         kwargs: Dict[str, Any] = {}
         if profile.base_url:
@@ -26198,6 +26258,46 @@ def _sandbox_provider_resolution(request: Request, provider: str) -> tuple[str, 
         root_base_dir=root_base,
     )
     return str(provider or "").strip(), kwargs, None
+
+
+def _gateway_llm_client(provider: str, model: str) -> tuple[Any, str, Optional[Dict[str, Any]]]:
+    """(client, routed provider, public profile | None): THE LLM client of every
+    gateway-side generation (run summary, run chat, backlog assist, console
+    sandbox), resolved exactly like a run's: the gateway's endpoint profiles
+    (`endpoint:<id>`, also for nested calls through the resolver), the provider
+    connections configured in the console, this scope's Core store and
+    capability defaults. A bare `LocalAbstractCoreLLMClient(provider, model)`
+    knows none of these: Ask on a run failed at once with "Unknown provider:
+    endpoint:<id>" on a gateway whose runs used that default fine."""
+    from abstractruntime.integrations.abstractcore.llm_client import LocalAbstractCoreLLMClient
+
+    svc = get_gateway_service()
+    current_base, root_base = _gateway_profile_dirs()
+    routed_provider, llm_kwargs, profile_public = _gateway_provider_resolution(provider)
+    llm = LocalAbstractCoreLLMClient(
+        provider=routed_provider,
+        model=model,
+        llm_kwargs=llm_kwargs or None,
+        artifact_store=getattr(getattr(svc, "stores", None), "artifact_store", None),
+        # ONE STORE ON THE EXECUTION PATH TOO (operator ruling 2026-08-01):
+        # `runtime_core_config_file` is the seam the bundle host uses (this
+        # scope's overlay when it has one, else THE Core store), never the
+        # retired `<data_dir>/config/abstractcore.json`.
+        core_config_file=runtime_core_config_file(current_base),
+        capability_defaults=gateway_capability_defaults_payload(base_dir=current_base),
+    )
+
+    def _resolve_profile(provider_id: str) -> Optional[Dict[str, Any]]:
+        try:
+            profile = resolve_effective_endpoint_profile(provider_id, base_dir=current_base, root_base_dir=root_base)
+        except ProviderEndpointProfileError:
+            return None
+        if profile is None or not profile.enabled:
+            return None
+        return profile.private_resolution()
+
+    llm.set_provider_endpoint_profile_resolver(_resolve_profile)
+    return llm, routed_provider, profile_public
 
 
 def _sandbox_messages(req: _GatewaySandboxGenerateRequest) -> list[Dict[str, str]]:
@@ -26292,7 +26392,6 @@ async def gateway_sandbox_generate(request: Request, req: _GatewaySandboxGenerat
     model = str(req.model or "").strip()
     if not provider or not model:
         raise HTTPException(status_code=400, detail="provider and model are required")
-    routed_provider, llm_kwargs, profile_public = _sandbox_provider_resolution(request, provider)
     params: Dict[str, Any] = {"temperature": 0.2}
     if req.temperature is not None:
         params["temperature"] = float(req.temperature)
@@ -26317,42 +26416,8 @@ async def gateway_sandbox_generate(request: Request, req: _GatewaySandboxGenerat
         trace_metadata["client_context"] = client_context
     params["trace_metadata"] = trace_metadata
     try:
-        from abstractruntime.integrations.abstractcore.llm_client import LocalAbstractCoreLLMClient
-
-        svc = get_gateway_service()
-        current_base, root_base = _gateway_profile_dirs()
-        artifact_store = getattr(getattr(svc, "stores", None), "artifact_store", None)
         media = _sandbox_media_refs(req)
-        capability_defaults = gateway_capability_defaults_payload(base_dir=current_base)
-        llm = LocalAbstractCoreLLMClient(
-            provider=routed_provider,
-            model=model,
-            llm_kwargs=llm_kwargs or None,
-            artifact_store=artifact_store,
-            # ONE STORE ON THE EXECUTION PATH TOO (operator ruling
-            # 2026-08-01). `<data_dir>/config/abstractcore.json` is the
-            # RETIRED second store: after the migration that file does not
-            # exist, so the console's own smoke test was resolving providers
-            # and keys from a file neither `abstractcore` nor a real run
-            # opens — the sandbox could fail on a provider the gateway runs
-            # fine. `runtime_core_config_file` is the same seam the bundle
-            # host uses: this scope's overlay when it has one, else THE Core
-            # store.
-            core_config_file=runtime_core_config_file(current_base),
-            capability_defaults=capability_defaults,
-        )
-        resolver = getattr(llm, "set_provider_endpoint_profile_resolver", None)
-        if callable(resolver):
-            def _resolve_profile(provider_id: str) -> Optional[Dict[str, Any]]:
-                try:
-                    profile = resolve_effective_endpoint_profile(provider_id, base_dir=current_base, root_base_dir=root_base)
-                except ProviderEndpointProfileError:
-                    return None
-                if profile is None or not profile.enabled:
-                    return None
-                return profile.private_resolution()
-
-            resolver(_resolve_profile)
+        llm, routed_provider, profile_public = _gateway_llm_client(provider, model)
         result = await asyncio.to_thread(
             llm.generate,
             prompt="",

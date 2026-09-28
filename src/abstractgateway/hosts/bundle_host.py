@@ -1369,11 +1369,25 @@ class WorkflowBundleGatewayHost:
                         e,
                     )
 
-                provider_for_runtime, default_profile_kwargs, provider_override = _resolve_gateway_default_endpoint_profile(
-                    provider=provider,
-                    data_root=data_root,
-                    catalog_root=catalog_root,
-                )
+                default_route_error: Optional[str] = None
+                try:
+                    provider_for_runtime, default_profile_kwargs, provider_override = _resolve_gateway_default_endpoint_profile(
+                        provider=provider,
+                        data_root=data_root,
+                        catalog_root=catalog_root,
+                    )
+                except WorkflowBundleError as exc:
+                    # The DEFAULT names an endpoint profile that is gone or
+                    # disabled (operator deleted it). Loading a bundle calls no
+                    # model, so this must not take the host down: every read
+                    # (automations, runs, sessions) failed 500 while it did.
+                    # The default stays what the operator configured, unrouted:
+                    # a call that uses it fails at the call, naming the
+                    # profile, and the console reports it on the text route
+                    # (`capability_defaults_route_problems`).
+                    default_route_error = str(exc)
+                    logger.warning("default text route unavailable, host loads without it: %s", exc)
+                    provider_for_runtime, default_profile_kwargs, provider_override = provider, {}, provider
                 if core_server_base_url:
                     headers: Dict[str, str] = {}
                     token = core_server_token()
@@ -1443,6 +1457,7 @@ class WorkflowBundleGatewayHost:
                         setattr(runtime, "_gateway_default_provider_override", provider_override)
                     except Exception:
                         pass
+                setattr(runtime, "_gateway_default_route_error", default_route_error)
                 _attach_provider_endpoint_profile_resolver(runtime=runtime, data_root=data_root, catalog_root=catalog_root)
                 runtime.set_workflow_registry(wf_reg)
             else:
