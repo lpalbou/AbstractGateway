@@ -126,3 +126,16 @@ def test_serve_on_another_data_dir_leaves_no_pointer(monkeypatch: pytest.MonkeyP
         if t.name == "gateway-pointer":
             t.join(timeout=3.0)
     assert not gateway_pointer_path(home).exists()
+
+
+def test_pointer_status_for_network_status(tmp_path: Path) -> None:
+    from abstractgateway.gateway_pointer import pointer_status
+
+    p = tmp_path / ".abstractframework" / "gateway.json"
+    assert pointer_status(tmp_path / "d", running_port=8081, path=p)["present"] is False
+    write_gateway_pointer(url="http://127.0.0.1:8081", port=8081, data_dir=tmp_path / "d", written_by="serve", path=p)
+    st = pointer_status(tmp_path / "d", running_port=8081, path=p)
+    assert st["url"] == "http://127.0.0.1:8081" and st["this_data_dir"] is True and st["matches_running"] is True
+    st = pointer_status(tmp_path / "other", running_port=8095, path=p)
+    assert st["this_data_dir"] is False and st["matches_running"] is False
+    assert pointer_status(tmp_path / "d", running_port=None, path=p)["matches_running"] is None

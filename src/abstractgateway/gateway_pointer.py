@@ -113,3 +113,24 @@ def record_serve_pointer(*, host: str, port: int, data_dir: Path, path: Optional
         return False, f"gateway pointer {p} left unchanged: {why}"
     write_gateway_pointer(url=url, port=int(port), data_dir=Path(data_dir), written_by="serve", path=p)
     return True, f"gateway pointer {p} -> {url} ({why})"
+
+
+def pointer_status(data_dir: Path, *, running_port: Optional[int], path: Optional[Path] = None) -> Dict[str, Any]:
+    """For `abstractgateway network status`: the pointer's URL, whether it
+    names this data dir, and whether it matches the port this gateway runs
+    on. {path, present, url, port, written_by, this_data_dir, matches_running}."""
+    p = path or gateway_pointer_path()
+    data = read_gateway_pointer(p)
+    if data is None:
+        return {"path": str(p), "present": p.exists(), "readable": False, "url": None, "port": None, "written_by": None, "this_data_dir": False, "matches_running": None}
+    port = data.get("port")
+    return {
+        "path": str(p),
+        "present": True,
+        "readable": True,
+        "url": data.get("url"),
+        "port": port,
+        "written_by": data.get("written_by"),
+        "this_data_dir": _same_dir(data.get("data_dir"), data_dir),
+        "matches_running": None if running_port is None else (port == int(running_port)),
+    }
