@@ -1034,9 +1034,24 @@ def execute_plan(
             detail = (err or out).strip()
             message = f"service {plan.action} failed at: {' '.join(cmd[:4])}\n{detail}"
             if is_bootstrap:
+                if rc in LAUNCHD_RETRY_RC:
+                    why = (
+                        f"launchd did not load the login item after {attempt} attempt{'s' if attempt != 1 else ''} "
+                        f"(rc {rc}: the previous gateway may still have been stopping)"
+                    )
+                else:
+                    why = f"launchd refused to load the login item (rc {rc}; not retried: only 5 and 37 are retried)"
+                # One state, said as it is: a plist left in ~/Library/LaunchAgents would load at the
+                # next login while this command reports failure, so the item this plan wrote goes.
+                item = Path(cmd[3])
+                if any(Path(f["path"]) == item for f in plan.files):
+                    try:
+                        item.unlink()
+                    except FileNotFoundError:
+                        pass
                 message += (
-                    f"\nlaunchd did not load the login item after {attempts} attempts (the previous gateway may still "
-                    f"have been stopping). Run it by hand: launchctl bootstrap {shlex.quote(cmd[2])} {shlex.quote(cmd[3])}"
+                    f"\n{why}. Start at login is off: {item} was removed, so nothing loads at the next login. "
+                    "Fix the cause above, then run: abstractgateway service enable"
                 )
             raise SystemExit(message)
     for r in plan.remove:
