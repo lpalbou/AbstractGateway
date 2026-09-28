@@ -10313,6 +10313,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        setActiveTab(wantedTab);
 	        if (wantedTab === "models") { loadHostState(); startHostStatePoll(); }
 	        if (wantedTab === "catalog" || wantedTab === "engines" || wantedTab === "apps" || wantedTab === "network") openCoreTab(wantedTab);
+	        // `#apps?open=<id>&path=<p>` (app_proxy.py sends a signed-out page
+	        // load of /apps/<id>/... here): open that app, signed in.
+	        if (wantedTab === "apps") {
+	          const q = new URLSearchParams(String(location.hash || "").split("?").slice(1).join("?"));
+	          if (q.get("open")) appOpenFromLink(q.get("open"), q.get("path") || "/");
+	        }
 	      } else {
 	        setActiveTab(state.activeTab);
 	      }
