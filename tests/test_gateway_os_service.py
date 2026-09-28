@@ -399,3 +399,137 @@ def test_service_parser_accepts_pin_command_line_and_defaults_host_to_none() -> 
         assert ns.host is None and ns.port is None and ns.pin_command_line is False
         ns = parser.parse_args(["service", verb, "--host", "0.0.0.0", "--port", "9", "--pin-command-line"])
         assert (ns.host, ns.port, ns.pin_command_line) == ("0.0.0.0", 9, True)
+
+
+# ---------------------------------------------------------------------------
+# launchd: `bootout` returns before the job is gone (2026-09-28, a fresh macOS 27
+# upgrade: bootstrap -> "Bootstrap failed: 5: Input/output error", gateway left stopped)
+# ---------------------------------------------------------------------------
+
+
+class _Launchd:
+    """A launchd whose `bootout` of a RUNNING job takes `settle_s` (fake) seconds: until
+    then `print` still lists the label and `bootstrap` of the same label fails with 5
+    (EIO). The clock only moves through the patched os_service sleep."""
+
+    def __init__(self, *, loaded: bool = True, settle_s: float = 3.0, bootstrap_rc_after: int = 0) -> None:
+        self.now = 0.0
+        self.loaded = loaded
+        self.gone_at = None if loaded else 0.0
+        self.settle_s = settle_s
+        self.bootstrap_rc_after = bootstrap_rc_after
+        self.calls: List[List[str]] = []
+
+    def sleep(self, s: float) -> None:
+        self.now += float(s)
+
+    def monotonic(self) -> float:
+        return self.now
+
+    def _listed(self) -> bool:
+        return self.gone_at is None or self.now < self.gone_at
+
+    def __call__(self, argv):
+        argv = list(argv)
+        self.calls.append(argv)
+        verb = argv[1] if len(argv) > 1 else ""
+        rc, err = 0, ""
+        if verb == "bootout":
+            if self.gone_at is None:
+                self.gone_at = self.now + self.settle_s  # returns now; the job exits later
+            elif not self._listed():
+                rc, err = 113, "Boot-out failed: 113: Could not find specified service"
+        elif verb == "print":
+            rc, err = (0, "") if self._listed() else (113, "Could not find service")
+        elif verb == "bootstrap":
+            if self._listed():
+                rc, err = 5, "Bootstrap failed: 5: Input/output error"
+            else:
+                rc = self.bootstrap_rc_after
+                err = "" if rc == 0 else f"Bootstrap failed: {rc}: Input/output error"
+                if rc == 0:
+                    self.gone_at = None  # loaded again
+        return subprocess.CompletedProcess(argv, rc, stdout="", stderr=err)
+
+
+def _launchd(monkeypatch: pytest.MonkeyPatch, **kw) -> _Launchd:
+    fake = _Launchd(**kw)
+    monkeypatch.setattr(os_service, "_sleep", fake.sleep, raising=False)
+    monkeypatch.setattr(os_service, "_monotonic", fake.monotonic, raising=False)
+    return fake
+
+
+def test_launchd_reinstall_waits_for_the_running_job_to_go_before_bootstrap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _launchd(monkeypatch, settle_s=3.0)
+    home = tmp_path / "home"
+    plan = os_service.build_install_plan(platform="darwin", home=home, host="127.0.0.1", port=18080, data_dir=tmp_path / "d", exe_argv=_exe(home), uid=501)
+    lines: List[str] = []
+    os_service.execute_plan(plan, runner=fake, echo=lines.append)
+    verbs = [c[1] for c in fake.calls]
+    assert verbs[0] == "bootout" and verbs[-1] == "bootstrap" and "print" in verbs
+    # One bootstrap, issued only once launchd no longer listed the old job.
+    assert verbs.count("bootstrap") == 1 and fake.now >= 3.0
+    assert fake.calls[-1] == ["launchctl", "bootstrap", "gui/501", plan.files[0]["path"]]
+    assert any("waited" in l and "launchd" in l for l in lines), lines
+
+
+def test_launchd_bootstrap_eio_is_retried_then_named_with_the_command_to_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The label is gone but launchd still answers 5 (it keeps failing): a few retries, then a
+    # message that says exactly what to run by hand.
+    fake = _launchd(monkeypatch, loaded=False, bootstrap_rc_after=5)
+    home = tmp_path / "home"
+    plan = os_service.build_install_plan(platform="darwin", home=home, host="127.0.0.1", port=18080, data_dir=tmp_path / "d", exe_argv=_exe(home), uid=501)
+    with pytest.raises(SystemExit) as e:
+        os_service.execute_plan(plan, runner=fake, echo=lambda _l: None)
+    assert [c[1] for c in fake.calls].count("bootstrap") == os_service.LAUNCHD_BOOTSTRAP_ATTEMPTS > 1
+    msg = str(e.value)
+    assert "Bootstrap failed: 5" in msg
+    assert f"Run it by hand: launchctl bootstrap gui/501 {plan.files[0]['path']}" in msg or \
+        f"Run it by hand: launchctl bootstrap gui/501 '{plan.files[0]['path']}'" in msg
+
+
+def test_launchd_bootstrap_37_already_loaded_is_retried_until_it_loads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    answers = iter([37, 0])
+
+    class _Once(_Launchd):
+        def __call__(self, argv):
+            if list(argv[:2]) == ["launchctl", "bootstrap"]:
+                self.calls.append(list(argv))
+                return subprocess.CompletedProcess(list(argv), next(answers), stdout="", stderr="Bootstrap failed: 37: Operation already in progress")
+            return super().__call__(argv)
+
+    fake = _Once(loaded=False)
+    monkeypatch.setattr(os_service, "_sleep", fake.sleep, raising=False)
+    monkeypatch.setattr(os_service, "_monotonic", fake.monotonic, raising=False)
+    home = tmp_path / "home"
+    plan = os_service.build_install_plan(platform="darwin", home=home, host="127.0.0.1", port=18080, data_dir=tmp_path / "d", exe_argv=_exe(home), uid=501)
+    os_service.execute_plan(plan, runner=fake, echo=lambda _l: None)
+    assert [c[1] for c in fake.calls].count("bootstrap") == 2
+
+
+def test_launchd_not_loaded_bootout_does_not_wait(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _launchd(monkeypatch, loaded=False)
+    home = tmp_path / "home"
+    plan = os_service.build_install_plan(platform="darwin", home=home, host="127.0.0.1", port=18080, data_dir=tmp_path / "d", exe_argv=_exe(home), uid=501)
+    os_service.execute_plan(plan, runner=fake, echo=lambda _l: None)
+    assert [c[1] for c in fake.calls] == ["bootout", "bootstrap"] and fake.now == 0.0
+
+
+def test_launchd_uninstall_waits_until_the_job_is_gone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake = _launchd(monkeypatch, settle_s=2.0)
+    home, data = tmp_path / "home", tmp_path / "d"
+    un = os_service.build_uninstall_plan(platform="darwin", home=home, data_dir=data, uid=501)
+    os_service.execute_plan(un, runner=fake, echo=lambda _l: None)
+    assert [c[1] for c in fake.calls][0] == "bootout" and fake.calls[-1][1] == "print" and fake.now >= 2.0
+    assert not fake._listed()
+
+
+def test_launchd_settle_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A job that never goes: the wait stops at LAUNCHD_SETTLE_S and the install still tries
+    # (and names the failure) instead of hanging.
+    fake = _launchd(monkeypatch, settle_s=10_000.0)
+    home = tmp_path / "home"
+    plan = os_service.build_install_plan(platform="darwin", home=home, host="127.0.0.1", port=18080, data_dir=tmp_path / "d", exe_argv=_exe(home), uid=501)
+    with pytest.raises(SystemExit) as e:
+        os_service.execute_plan(plan, runner=fake, echo=lambda _l: None)
+    assert fake.now < 10_000.0 and "Run it by hand" in str(e.value)
