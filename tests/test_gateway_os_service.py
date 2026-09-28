@@ -167,9 +167,10 @@ def test_install_then_status_then_uninstall_with_a_recording_runner(tmp_path: Pa
     assert st["url"] == "http://127.0.0.1:18080"
 
     un = os_service.build_uninstall_plan(platform="darwin", home=home, data_dir=data, uid=501)
-    rec2 = _Recorder()
+    # launchd has removed the job once `print` no longer finds it (113).
+    rec2 = _Recorder({("launchctl", "print"): 113})
     os_service.execute_plan(un, runner=rec2, echo=lambda _l: None)
-    assert rec2.calls == [["launchctl", "bootout", "gui/501/ai.abstractframework.gateway"]]
+    assert rec2.calls == [["launchctl", "bootout", "gui/501/ai.abstractframework.gateway"], ["launchctl", "print", "gui/501/ai.abstractframework.gateway"]]
     assert not unit.exists() and not os_service.service_record_path(data).exists()
     assert data.is_dir()  # data is kept
 

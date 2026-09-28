@@ -77,6 +77,19 @@ SERVICE_RECORD = "service.json"
 SERVICE_SCHEMA = "gateway_service_v1"
 DEFAULT_PORT = 8080
 PORT_SEARCH_SPAN = 20
+# launchd: `launchctl bootout` of a RUNNING job returns before the job has exited and been
+# removed, and a `bootstrap` of the same label in that window fails with 5 (EIO) or 37
+# ("already in progress"). So a bootout that unloaded something is followed by a wait until
+# `launchctl print` no longer lists the label (bounded), and a bootstrap answering one of
+# those codes is retried after the same wait, a few times.
+LAUNCHD_SETTLE_S = 15.0
+LAUNCHD_POLL_S = 0.25
+LAUNCHD_RETRY_RC = (5, 37)
+LAUNCHD_BOOTSTRAP_ATTEMPTS = 4
+LAUNCHD_BACKOFF_S = 1.0
+# Clock seams (tests drive a fake launchd through them).
+_sleep = time.sleep
+_monotonic = time.monotonic
 
 Runner = Callable[[Sequence[str]], "subprocess.CompletedProcess[str]"]
 
@@ -924,6 +937,29 @@ def _start_detached(argv: Sequence[str]) -> None:  # pragma: no cover - spawns a
 StartDetached = Callable[[Sequence[str]], None]
 
 
+def _run_command(run: Runner, cmd: Sequence[str]) -> "tuple[int, str, str]":
+    try:
+        cp = run(cmd)
+        return int(cp.returncode), str(cp.stdout or ""), str(cp.stderr or "")
+    except FileNotFoundError as e:
+        return 127, "", str(e)
+    except subprocess.TimeoutExpired as e:
+        return 124, "", f"timed out: {e}"
+
+
+def _launchd_wait_gone(run: Runner, target: str) -> bool:
+    """Poll `launchctl print <domain>/<label>` until launchd no longer lists it (True), or
+    LAUNCHD_SETTLE_S passed (False)."""
+    deadline = _monotonic() + LAUNCHD_SETTLE_S
+    while True:
+        rc, _out, _err = _run_command(run, ["launchctl", "print", target])
+        if rc != 0:
+            return True
+        if _monotonic() >= deadline:
+            return False
+        _sleep(LAUNCHD_POLL_S)
+
+
 def execute_plan(
     plan: ServicePlan,
     *,
@@ -970,21 +1006,39 @@ def execute_plan(
             results.append({"argv": cmd, "returncode": 0})
             echo("started: " + " ".join(shlex.quote(c) for c in cmd[1:]))
             continue
-        try:
-            cp = run(cmd)
-            rc, out, err = int(cp.returncode), str(cp.stdout or ""), str(cp.stderr or "")
-        except FileNotFoundError as e:
-            rc, out, err = 127, "", str(e)
-        except subprocess.TimeoutExpired as e:
-            rc, out, err = 124, "", f"timed out: {e}"
-        results.append({"argv": list(cmd), "returncode": rc, "stdout": out[-2000:], "stderr": err[-2000:]})
+        is_bootout = list(cmd[:2]) == ["launchctl", "bootout"]
+        is_bootstrap = list(cmd[:2]) == ["launchctl", "bootstrap"] and len(cmd) >= 4
+        attempts = LAUNCHD_BOOTSTRAP_ATTEMPTS if is_bootstrap else 1
+        for attempt in range(1, attempts + 1):
+            rc, out, err = _run_command(run, cmd)
+            results.append({"argv": list(cmd), "returncode": rc, "stdout": out[-2000:], "stderr": err[-2000:]})
+            if not (is_bootstrap and rc in LAUNCHD_RETRY_RC and attempt < attempts):
+                break
+            # The previous job of this label is still being torn down: wait for it, then retry.
+            echo(f"ran: {' '.join(shlex.quote(c) for c in cmd[:4])} -> rc={rc} (launchd is still removing the previous gateway); retrying")
+            _launchd_wait_gone(run, f"{cmd[2]}/{LAUNCHD_LABEL}")
+            _sleep(LAUNCHD_BACKOFF_S * attempt)
         # `bootout` of a label that is not loaded fails; that is the state we want.
-        tolerated = list(cmd[:2]) == ["launchctl", "bootout"]
-        label = "ok" if rc == 0 else ("not loaded (fine)" if tolerated else f"FAILED rc={rc}")
+        label = "ok" if rc == 0 else ("not loaded (fine)" if is_bootout else f"FAILED rc={rc}")
         echo(f"ran: {' '.join(shlex.quote(c) for c in cmd[:6])}{' …' if len(cmd) > 6 else ''} -> {label}")
-        if rc != 0 and not tolerated:
+        if is_bootout and rc == 0 and len(cmd) >= 3:
+            # It unloaded a job: launchd removes it asynchronously.
+            started = _monotonic()
+            gone = _launchd_wait_gone(run, cmd[2])
+            waited = _monotonic() - started
+            if not gone:
+                echo(f"launchd still lists {cmd[2]} after {LAUNCHD_SETTLE_S:.0f} s")
+            elif waited > 0:
+                echo(f"waited {waited:.1f} s for launchd to finish stopping the previous gateway")
+        if rc != 0 and not is_bootout:
             detail = (err or out).strip()
-            raise SystemExit(f"service {plan.action} failed at: {' '.join(cmd[:4])}\n{detail}")
+            message = f"service {plan.action} failed at: {' '.join(cmd[:4])}\n{detail}"
+            if is_bootstrap:
+                message += (
+                    f"\nlaunchd did not load the login item after {attempts} attempts (the previous gateway may still "
+                    f"have been stopping). Run it by hand: launchctl bootstrap {shlex.quote(cmd[2])} {shlex.quote(cmd[3])}"
+                )
+            raise SystemExit(message)
     for r in plan.remove:
         p = Path(r)
         if p.exists():

@@ -101,7 +101,7 @@ def test_macos_enable_writes_the_exact_agent_registers_for_next_login_only_and_d
 
 
 def test_macos_cli_install_path_still_starts_now(tmp_path: Path) -> None:
-    run = Runner()
+    run = Runner({("launchctl", "print"): (113, "")})  # the unloaded job is gone at once
     out = autostart.enable_autostart(data_dir=tmp_path / "d", host="127.0.0.1", port=18840, platform="darwin", home=tmp_path / "h", exe_argv=[str(_exe(tmp_path))], runner=run, uid=501, env={}, start_now=True)
     assert out["ok"] and [c[:2] for c in run.mutating()] == [["launchctl", "bootout"], ["launchctl", "bootstrap"]]
 
