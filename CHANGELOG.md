@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No dependency changes: AbstractCore 2.18.0 or newer, as before. With AbstractCore 2.18.1 the first-run guide follows its
 recommendations (a Mac too small for the recommended image model shows it as not available here, with the reason). The
-terminal console (`abstractgateway-console`, see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md)) is 0.11.1.
+terminal console (`abstractgateway-console`, see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md)) is 0.11.1;
+0.11.0 sends no installer sha256, so it cannot start the update of an installer install (the gateway answers "check
+again first").
 
 ### Changed
 - **Updating an AbstractFramework installer install runs the installer.** When the gateway was installed by the
@@ -20,7 +22,10 @@ terminal console (`abstractgateway-console`, see [console-tui/CHANGELOG.md](cons
   `/bin/sh install.sh --yes --no-start --no-open --no-modify-path --data-dir <data dir>`: nothing is asked, start
   at login stays as it is, every package moves to the release's tested versions, and the running gateway is not
   stopped. The confirmation names the script's `main` address, the commit, its sha256 and the command, and the
-  update refuses a script other than the one shown (`installer_sha256` on `POST /host/update/start`). The job log
+  update runs only the script shown: `installer_sha256` on `POST /host/update/start` is required for an installer
+  install (409 "check again first" without it, 409 when it differs from the last check's). Each run executes its
+  own new copy of the script in `<data dir>/update/`, and one update runs at a time: a second start while one runs
+  is refused before anything is written. The job log
   streams the installer's output; the result lists what moved and offers the restart, says **already up to date**
   when nothing changed, or gives the installer's exit code and where its log is. On Windows the hint shows the
   PowerShell line (the installer stops and restarts the gateway there). The gateway no longer runs
@@ -36,8 +41,17 @@ terminal console (`abstractgateway-console`, see [console-tui/CHANGELOG.md](cons
 ### Fixed
 - **Start at login on macOS no longer fails with `5: Input/output error`.** Replacing a running login item
   (`launchctl bootout`, then `bootstrap`) now waits, up to 15 seconds, until launchd has removed the previous job,
-  and retries a `bootstrap` that answers 5 or 37. A final failure names the exact `launchctl bootstrap` command to
-  run by hand. `service uninstall` waits too.
+  and retries a `bootstrap` that answers 5 or 37. `service uninstall` waits too.
+- **A failed macOS login item leaves one clear state.** When `launchctl bootstrap` still fails, the message says how
+  many attempts were made and why (a code other than 5/37 is tried once and said to be not retried), and start at
+  login is off: the plist this command wrote is removed from `~/Library/LaunchAgents`, so nothing loads at the next
+  login. Turn it on again with `abstractgateway service enable` once the cause is fixed.
+- **An update that hangs without printing is stopped.** The 30-minute job limit is a watchdog that stops the whole
+  command (its process group), not a check made only when the command prints a line.
+- **A version the update check cannot read is an error**, never "up to date" (an unreadable AbstractFramework
+  release or PyPI version).
+- **The tray no longer sticks on a refused update.** When the gateway refuses to start an update (the installer
+  changed, one is already running, check again first), the offer is dropped and the next click checks again.
 - The tray reports an update that installed nothing newer as **Already up to date** instead of "The update didn't
   finish", and a failed update shows the job's reason and the last lines of its log.
 

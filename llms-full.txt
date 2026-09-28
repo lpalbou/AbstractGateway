@@ -3129,8 +3129,10 @@ terminal does the same thing:
   (`https://raw.githubusercontent.com/lpalbou/AbstractFramework/main/scripts/install.sh`),
   the commit and the script's sha256, and the command:
   `/bin/sh install.sh --yes --no-start --no-open --no-modify-path --data-dir <data folder>`.
-  The gateway runs exactly the file it checked; if a newer check fetched a
-  different script in between, **Update** refuses and asks you to check again.
+  The gateway runs exactly the file it checked, written to a new file of its own
+  for that run; the start must name the sha256 the confirmation showed, and if a
+  newer check fetched a different script in between, **Update** refuses and asks
+  you to check again. One update runs at a time.
 - **How it runs.** Nothing is asked and nothing is opened. Start at login stays
   as it is. The installer keeps your profile, port and the choices it remembers,
   moves every package to the release's tested versions, and does not stop the
@@ -5103,10 +5105,12 @@ any authenticated principal; writes require an admin principal.
   `{status, line, hint, offer, action: {label, confirm, command, source,
   installer_sha256} | null, checked_at}`, `status` one of `not_checked`,
   `available`, `not_possible`, `up_to_date`, `offline`, `error`, `running`,
-  `installed`, `no_change`, `failed`. `start` takes an optional
-  `{installer_sha256}` (the action's) and answers 409 when the install
-  cannot be upgraded in place, the installer changed since that sha256 was
-  shown, or a job is already running.
+  `installed`, `no_change`, `failed`. `start` takes `{installer_sha256}`
+  (the action's; required for an installer install, optional otherwise) and
+  answers 409 when the install cannot be upgraded in place, the sha256 is
+  missing ("check again first") or differs from the last check's, or a job is
+  already running. The job is killed after 30 minutes even when it prints
+  nothing. A version the check cannot compare is an `error`, never `up_to_date`.
 
 `GET /api/health` adds `"paused": true` while paused; `status` stays
 `"healthy"`.
@@ -7959,16 +7963,18 @@ then `launchctl bootstrap`. When the gateway was running, launchd stops it in th
 background after `bootout` answers, and a `bootstrap` of the same login item before
 it is gone fails with `5: Input/output error` (or `37`). The gateway waits up to
 15 seconds for launchd to finish and retries the `bootstrap` a few times, so this
-resolves by itself. If it still fails, the message names the command to run by hand:
+usually resolves by itself.
+
+If it still fails (or launchd refuses the login item with another code, which is
+not retried), the message says how many attempts were made and why, and start at
+login is **off**: the login item file is removed, so nothing starts at the next
+login. The gateway running now is not affected. Fix the cause the message shows,
+then turn it on again:
 
 ```bash
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.abstractframework.gateway.plist
-abstractgateway service status
+abstractgateway service enable
+abstractgateway service status     # reads "on"
 ```
-
-`service status` then reads `on`. If `bootstrap` keeps failing, run
-`launchctl bootout gui/$(id -u)/ai.abstractframework.gateway`, wait a few seconds
-and run the `bootstrap` line again.
 
 ### An update says "already up to date", or "didn't finish"
 
@@ -7984,6 +7990,15 @@ and run the `bootstrap` line again.
   gateway keeps working.
 - **The installer changed since it was checked**: a newer check fetched a
   different `install.sh`. Check again, review the confirmation, and update.
+- **Check again first**: an installer update runs only the `install.sh` whose
+  sha256 the confirmation showed, and the request named none (a client older than
+  the gateway, or an API call without `installer_sha256`). Check again and update
+  from the confirmation.
+- **An update is already running**: one update runs at a time; wait for it to
+  finish (its log is under the version line).
+- **Couldn't check for updates (cannot compare the versions …)**: the release or
+  PyPI named a version the gateway cannot read. Nothing is offered; check again
+  later.
 - An installer install on Windows is updated by pasting the PowerShell line
   the hint shows (the gateway cannot replace its own files while it runs).
 
@@ -8011,7 +8026,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 No dependency changes: AbstractCore 2.18.0 or newer, as before. With AbstractCore 2.18.1 the first-run guide follows its
 recommendations (a Mac too small for the recommended image model shows it as not available here, with the reason). The
-terminal console (`abstractgateway-console`, see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md)) is 0.11.1.
+terminal console (`abstractgateway-console`, see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md)) is 0.11.1;
+0.11.0 sends no installer sha256, so it cannot start the update of an installer install (the gateway answers "check
+again first").
 
 ### Changed
 - **Updating an AbstractFramework installer install runs the installer.** When the gateway was installed by the
@@ -8022,7 +8039,10 @@ terminal console (`abstractgateway-console`, see [console-tui/CHANGELOG.md](cons
   `/bin/sh install.sh --yes --no-start --no-open --no-modify-path --data-dir <data dir>`: nothing is asked, start
   at login stays as it is, every package moves to the release's tested versions, and the running gateway is not
   stopped. The confirmation names the script's `main` address, the commit, its sha256 and the command, and the
-  update refuses a script other than the one shown (`installer_sha256` on `POST /host/update/start`). The job log
+  update runs only the script shown: `installer_sha256` on `POST /host/update/start` is required for an installer
+  install (409 "check again first" without it, 409 when it differs from the last check's). Each run executes its
+  own new copy of the script in `<data dir>/update/`, and one update runs at a time: a second start while one runs
+  is refused before anything is written. The job log
   streams the installer's output; the result lists what moved and offers the restart, says **already up to date**
   when nothing changed, or gives the installer's exit code and where its log is. On Windows the hint shows the
   PowerShell line (the installer stops and restarts the gateway there). The gateway no longer runs
@@ -8038,8 +8058,17 @@ terminal console (`abstractgateway-console`, see [console-tui/CHANGELOG.md](cons
 ### Fixed
 - **Start at login on macOS no longer fails with `5: Input/output error`.** Replacing a running login item
   (`launchctl bootout`, then `bootstrap`) now waits, up to 15 seconds, until launchd has removed the previous job,
-  and retries a `bootstrap` that answers 5 or 37. A final failure names the exact `launchctl bootstrap` command to
-  run by hand. `service uninstall` waits too.
+  and retries a `bootstrap` that answers 5 or 37. `service uninstall` waits too.
+- **A failed macOS login item leaves one clear state.** When `launchctl bootstrap` still fails, the message says how
+  many attempts were made and why (a code other than 5/37 is tried once and said to be not retried), and start at
+  login is off: the plist this command wrote is removed from `~/Library/LaunchAgents`, so nothing loads at the next
+  login. Turn it on again with `abstractgateway service enable` once the cause is fixed.
+- **An update that hangs without printing is stopped.** The 30-minute job limit is a watchdog that stops the whole
+  command (its process group), not a check made only when the command prints a line.
+- **A version the update check cannot read is an error**, never "up to date" (an unreadable AbstractFramework
+  release or PyPI version).
+- **The tray no longer sticks on a refused update.** When the gateway refuses to start an update (the installer
+  changed, one is already running, check again first), the offer is dropped and the next click checks again.
 - The tray reports an update that installed nothing newer as **Already up to date** instead of "The update didn't
   finish", and a failed update shows the job's reason and the last lines of its log.
 

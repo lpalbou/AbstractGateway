@@ -386,16 +386,18 @@ then `launchctl bootstrap`. When the gateway was running, launchd stops it in th
 background after `bootout` answers, and a `bootstrap` of the same login item before
 it is gone fails with `5: Input/output error` (or `37`). The gateway waits up to
 15 seconds for launchd to finish and retries the `bootstrap` a few times, so this
-resolves by itself. If it still fails, the message names the command to run by hand:
+usually resolves by itself.
+
+If it still fails (or launchd refuses the login item with another code, which is
+not retried), the message says how many attempts were made and why, and start at
+login is **off**: the login item file is removed, so nothing starts at the next
+login. The gateway running now is not affected. Fix the cause the message shows,
+then turn it on again:
 
 ```bash
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.abstractframework.gateway.plist
-abstractgateway service status
+abstractgateway service enable
+abstractgateway service status     # reads "on"
 ```
-
-`service status` then reads `on`. If `bootstrap` keeps failing, run
-`launchctl bootout gui/$(id -u)/ai.abstractframework.gateway`, wait a few seconds
-and run the `bootstrap` line again.
 
 ### An update says "already up to date", or "didn't finish"
 
@@ -411,6 +413,15 @@ and run the `bootstrap` line again.
   gateway keeps working.
 - **The installer changed since it was checked**: a newer check fetched a
   different `install.sh`. Check again, review the confirmation, and update.
+- **Check again first**: an installer update runs only the `install.sh` whose
+  sha256 the confirmation showed, and the request named none (a client older than
+  the gateway, or an API call without `installer_sha256`). Check again and update
+  from the confirmation.
+- **An update is already running**: one update runs at a time; wait for it to
+  finish (its log is under the version line).
+- **Couldn't check for updates (cannot compare the versions …)**: the release or
+  PyPI named a version the gateway cannot read. Nothing is offered; check again
+  later.
 - An installer install on Windows is updated by pasting the PowerShell line
   the hint shows (the gateway cannot replace its own files while it runs).
 

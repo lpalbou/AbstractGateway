@@ -1578,10 +1578,12 @@ any authenticated principal; writes require an admin principal.
   `{status, line, hint, offer, action: {label, confirm, command, source,
   installer_sha256} | null, checked_at}`, `status` one of `not_checked`,
   `available`, `not_possible`, `up_to_date`, `offline`, `error`, `running`,
-  `installed`, `no_change`, `failed`. `start` takes an optional
-  `{installer_sha256}` (the action's) and answers 409 when the install
-  cannot be upgraded in place, the installer changed since that sha256 was
-  shown, or a job is already running.
+  `installed`, `no_change`, `failed`. `start` takes `{installer_sha256}`
+  (the action's; required for an installer install, optional otherwise) and
+  answers 409 when the install cannot be upgraded in place, the sha256 is
+  missing ("check again first") or differs from the last check's, or a job is
+  already running. The job is killed after 30 minutes even when it prints
+  nothing. A version the check cannot compare is an `error`, never `up_to_date`.
 
 `GET /api/health` adds `"paused": true` while paused; `status` stays
 `"healthy"`.

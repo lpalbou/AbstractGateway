@@ -363,8 +363,10 @@ terminal does the same thing:
   (`https://raw.githubusercontent.com/lpalbou/AbstractFramework/main/scripts/install.sh`),
   the commit and the script's sha256, and the command:
   `/bin/sh install.sh --yes --no-start --no-open --no-modify-path --data-dir <data folder>`.
-  The gateway runs exactly the file it checked; if a newer check fetched a
-  different script in between, **Update** refuses and asks you to check again.
+  The gateway runs exactly the file it checked, written to a new file of its own
+  for that run; the start must name the sha256 the confirmation showed, and if a
+  newer check fetched a different script in between, **Update** refuses and asks
+  you to check again. One update runs at a time.
 - **How it runs.** Nothing is asked and nothing is opened. Start at login stays
   as it is. The installer keeps your profile, port and the choices it remembers,
   moves every package to the release's tested versions, and does not stop the
