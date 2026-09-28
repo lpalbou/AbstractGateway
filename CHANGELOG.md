@@ -5,7 +5,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.2] - 2026-09-28
+
+No dependency changes: AbstractCore 2.18.0 or newer, as before. With AbstractCore 2.18.1 the first-run guide follows its
+recommendations (a Mac too small for the recommended image model shows it as not available here, with the reason). The
+terminal console (`abstractgateway-console`, see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md)) is 0.11.1.
 
 ### Changed
 - **Updating an AbstractFramework installer install runs the installer.** When the gateway was installed by the
@@ -36,10 +40,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run by hand. `service uninstall` waits too.
 - The tray reports an update that installed nothing newer as **Already up to date** instead of "The update didn't
   finish", and a failed update shows the job's reason and the last lines of its log.
-
-### Tests
-- The recommended-model tests read AbstractCore's `APPLE_TEXT_TIERS` (every tier's lower edge and just under its
-  upper bound) instead of copying its model names, so they follow a core release that moves the tiers.
 
 ## [0.7.1] - 2026-09-28
 

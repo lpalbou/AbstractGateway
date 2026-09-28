@@ -1,6 +1,9 @@
 # Changelog — abstractgateway-console
 
-## Unreleased
+## 0.11.1 (2026-09-28)
+
+Needs abstractcore-console 0.4; works with AbstractGateway 0.7.0 and newer (the gateway's own update rendering
+needs 0.7.2).
 
 ### Changed
 - F3 update: the version line, the hint and the confirmation are the gateway's own (`update` of
