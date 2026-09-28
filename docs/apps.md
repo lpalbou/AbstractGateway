@@ -218,27 +218,38 @@ second entry of kind `"tui"`:
 
 ```json
 {"kind": "tui", "name": "Code in the terminal", "binary": "abstractcode",
- "installed": true, "version": "0.5.1", "source": "gateway", "path": "<data dir>/apps/bin/abstractcode",
- "latest_version": "0.5.1", "update_available": false,
+ "installed": true, "version": "0.7.0", "source": "gateway", "path": "/home/me/.local/bin/abstractcode",
+ "latest_version": "0.7.0", "update_available": false,
  "install_available": false, "install_method": "release_binary", "install_blocked_reason": null,
  "install_command": "cargo install abstractcode", "download_page": "https://github.com/lpalbou/abstractcode/releases",
  "launch_available": true, "launch_blocked_reason": null, "launch_mode": "terminal",
- "command": "<data dir>/apps/bin/abstractcode --gateway http://127.0.0.1:8080",
+ "command": "abstractcode --gateway http://127.0.0.1:8080",
  "signin_command": null, "active_job": null}
 ```
 
+- **One folder, shared with the installer.** Terminal apps go where uv put
+  the gateway's own commands (`uv tool dir --bin`, usually `~/.local/bin`, on
+  Windows `%USERPROFILE%\.local\bin`), which the installer puts on `PATH`;
+  the gateway reads it from the receipt uv writes into its environment
+  (`uv-receipt.toml`). The installer builds `abstractcode` and the terminal
+  console into the same folder (`cargo install --root` its parent), so
+  `abstractcode` runs by name whichever of the two installed it. A gateway
+  that is not a uv tool install (a development checkout, pip) uses
+  `<data dir>/apps/bin/`, off `PATH` (`command` then carries the full path).
 - **Found by presence.** The gateway never imports or runs an app to detect
-  it: it looks for the binary in `<data dir>/apps/bin/`, on `PATH` and in
-  `~/.cargo/bin`, and accepts it only when its `--help` names the program
-  (PyPI's unrelated Python package `abstractcode` installs a script with the
-  same name). `source` says where it was found (`gateway` or `path`).
+  it: it looks for the binary in that folder, in `<data dir>/apps/bin/`
+  (where gateways before 0.7.1 put it; the next install or update moves it
+  and removes the old copy), on `PATH` and in `~/.cargo/bin`, and accepts it
+  only when its `--help` names the program (PyPI's unrelated Python package
+  `abstractcode` installs a script with the same name). `source` says where
+  it was found (`gateway`: one of the gateway's folders, `path`: elsewhere).
 - **Install (`install_method`).** `release_binary`: Code publishes prebuilt
   binaries for macOS (Apple silicon and Intel), Linux (x86_64 and arm64,
   glibc) and Windows (x86_64) on its GitHub release, with a `SHA256SUMS` file.
   The card's Install (and `install-tui` on its own) downloads the archive for
   this computer, checks it
   against `SHA256SUMS` and against the sha256 digest GitHub reports for the
-  file (both must agree), unpacks the single binary into `<data dir>/apps/bin/`,
+  file (both must agree), unpacks the single binary into the folder above,
   makes it executable and runs `--version` before it replaces anything.
   About 3 MB, no administrator rights, no terminal. `cargo`: there is no
   prebuilt binary for this computer (musl Linux, Windows on ARM, other CPUs),

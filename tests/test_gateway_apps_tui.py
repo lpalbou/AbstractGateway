@@ -112,6 +112,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def mgr(tmp_path: Path, home: Path):
     net = FakeNet()
     m = am.AppsManager(tmp_path / "data", urlopen=net)
+    m.tool_bin_dir = None  # not a uv tool install unless a test says so
     opened: List[List[str]] = []
     m.terminal_opener = lambda argv: opened.append(list(argv))
     return m, net, opened
@@ -225,6 +226,98 @@ def test_install_downloads_verifies_and_places_the_binary(mgr, monkeypatch: pyte
     assert not list(m.bin_dir.glob(".abstractcode.*")), "no staging leftovers"
     monkeypatch.setattr(am, "_is_script", lambda p: False)
     assert m.tui_status(am.CODE_TUI)["source"] == "gateway"
+
+
+# ---------------------------------------------------------------------------
+# ONE folder for terminal apps, shared with the installer (operator, fresh
+# macOS install 2026-09-28: the gateway put abstractcode in
+# <data>/apps/bin/, off PATH, so `abstractcode` was "not found").
+# ---------------------------------------------------------------------------
+
+
+def _receipt(prefix: Path, bindir: Path, *, exe: str = "abstractgateway") -> None:
+    prefix.mkdir(parents=True, exist_ok=True)
+    (prefix / "uv-receipt.toml").write_text(
+        "[tool]\n"
+        'requirements = [{ name = "abstractgateway" }]\n'
+        "entrypoints = [\n"
+        f'    {{ name = "abstractgateway", install-path = "{bindir / exe}", from = "abstractgateway" }},\n'
+        f'    {{ name = "abstractgateway-config", install-path = "{bindir / (exe + "-config")}", from = "abstractgateway" }},\n'
+        "]\n"
+    )
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="tomllib (3.11+); 3.10 keeps <data>/apps/bin")
+def test_the_tool_bin_dir_comes_from_uv_s_receipt(tmp_path: Path) -> None:
+    bindir = tmp_path / "home" / ".local" / "bin"
+    _receipt(tmp_path / "tool", bindir)
+    assert am.uv_tool_bin_dir(str(tmp_path / "tool")) == bindir
+    assert am.uv_tool_bin_dir(str(tmp_path / "no-such-tool")) is None  # dev venv / pip: no receipt
+    (tmp_path / "other").mkdir()
+    (tmp_path / "other" / "uv-receipt.toml").write_text('[tool]\nentrypoints = [{ name = "agora", install-path = "/x/bin/agora" }]\n')
+    assert am.uv_tool_bin_dir(str(tmp_path / "other")) is None  # not this gateway's receipt
+    (tmp_path / "broken").mkdir()
+    (tmp_path / "broken" / "uv-receipt.toml").write_text("[tool\n")
+    assert am.uv_tool_bin_dir(str(tmp_path / "broken")) is None
+
+
+def test_install_lands_in_the_shared_tool_bin_dir_and_removes_the_old_copy(mgr, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    m, net, _ = mgr
+    shared = home / ".local" / "bin"
+    shared.mkdir(parents=True)
+    m.tool_bin_dir = shared
+    old = m.legacy_bin_dir / "abstractcode"  # what a gateway before 0.7.1 left
+    old.parent.mkdir(parents=True)
+    old.write_text(_FAKE_BIN.replace("0.9.9", "0.6.0"))
+    old.chmod(0o755)
+    _publish(net, version="0.7.0")
+    d = m.start_tui_install("code", run_inline=True)[0].to_dict()
+    assert d["state"] == "succeeded", d
+    target = shared / "abstractcode"
+    assert target.is_file() and os.access(target, os.X_OK), "installed next to abstractgateway (on PATH)"
+    assert d["result"]["path"] == str(target) and m.app_state("code")["tui"]["path"] == str(target)
+    assert not old.exists(), "one copy only: the stale <data>/apps/bin one is removed"
+    assert not list(shared.glob(".abstractcode.*")), "no staging leftovers"
+    monkeypatch.setattr(am, "_is_script", lambda p: False)
+    # Found there even though this process's PATH lacks the folder (a gateway
+    # started at login has a minimal PATH) — the presence check agrees with
+    # the installer, and the command is the bare name.
+    assert str(shared) not in os.environ["PATH"]
+    st = m.tui_status(am.CODE_TUI)
+    assert st == {"installed": True, "version": "0.7.0", "source": "gateway", "path": str(target)}
+    t = m.tui_interface(am.CODE_TUI, caller={"local": True, "admin": True, "gateway_url": "http://127.0.0.1:8080"})
+    assert t["command"] == "abstractcode --gateway http://127.0.0.1:8080"
+
+
+def test_an_installer_built_copy_in_the_shared_folder_is_found(mgr, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The installer's `cargo install --root <parent of uv's tool bin dir>`
+    puts abstractcode where the gateway looks first: one place, both ways."""
+    m, _net, _ = mgr
+    shared = home / ".local" / "bin"
+    shared.mkdir(parents=True)
+    m.tool_bin_dir = shared
+    b = shared / "abstractcode"
+    b.write_text(_FAKE_BIN)
+    b.chmod(0o755)
+    monkeypatch.setattr(am, "_is_script", lambda p: False)
+    assert m.tui_status(am.CODE_TUI)["path"] == str(b)
+    assert am.AppsManager.install_includes_terminal(m, "code") is None, "already there: Install does not fetch a second copy"
+
+
+def test_a_pre_0_7_1_copy_in_data_apps_bin_is_still_found_and_updatable(mgr, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    m, net, _ = mgr
+    m.tool_bin_dir = home / ".local" / "bin"
+    old = m.legacy_bin_dir / "abstractcode"
+    old.parent.mkdir(parents=True)
+    old.write_text(_FAKE_BIN.replace("0.9.9", "0.6.0"))
+    old.chmod(0o755)
+    monkeypatch.setattr(am, "_is_script", lambda p: False)
+    st = m.tui_status(am.CODE_TUI)
+    assert st["path"] == str(old) and st["source"] == "gateway" and st["version"] == "0.6.0"
+    _publish(net, version="0.7.0")
+    t = m.tui_interface(am.CODE_TUI, release=m.tui_release(am.CODE_TUI), caller={"local": True, "admin": True, "gateway_url": "http://127.0.0.1:8080"})
+    assert t["update_available"] is True and t["latest_version"] == "0.7.0"
+    assert t["command"] == f"{old} --gateway http://127.0.0.1:8080", "off PATH: the full path"
 
 
 def test_install_refuses_a_checksum_mismatch_and_places_nothing(mgr) -> None:

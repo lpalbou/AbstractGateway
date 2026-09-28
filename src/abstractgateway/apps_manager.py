@@ -1401,13 +1401,22 @@ def detect_external_apps(
 # - a GitHub release with prebuilt binaries AND a SHA256SUMS file (Code): the
 #   gateway downloads the archive for this computer, checks it against the
 #   release's SHA256SUMS (and the per-asset sha256 digest GitHub reports, when
-#   present), unpacks the one binary into `<data>/apps/bin/`, sets the
-#   executable bit and runs `--version` before it replaces anything;
+#   present), unpacks the one binary into the terminal-apps folder (below),
+#   sets the executable bit and runs `--version` before it replaces anything;
 # - crates.io source only (the gateway console), or no binary for this
 #   platform: the gateway says so ("needs the Rust toolchain") and gives the
 #   exact `cargo install` command; there is no install button.
+# The terminal-apps folder is ONE place, shared with the installer: the folder
+# where uv put this gateway's own commands (`uv tool dir --bin`, usually
+# ~/.local/bin, which the installer puts on PATH), read from the receipt uv
+# writes into the tool's environment (`uv_tool_bin_dir`). The installer's
+# `cargo install --root <its parent>` builds `abstractcode` and the terminal
+# console into the same folder, so `abstractcode` runs by name whichever of
+# the two installed it. A gateway that is not a uv tool install (a
+# development checkout, pip) keeps `<data>/apps/bin/`.
 # Presence only: the gateway never imports an app, it looks for the binary in
-# `<data>/apps/bin/`, on PATH and in ~/.cargo/bin, and checks its `--help`
+# that folder, in `<data>/apps/bin/` (where gateways before 0.7.1 put it; the
+# next install moves it), on PATH and in ~/.cargo/bin, and checks its `--help`
 # names the program (PyPI's unrelated `abstractcode` package installs a
 # console script with the same name).
 #
@@ -1480,6 +1489,29 @@ def tui_for(app_id: str) -> TuiSpec:
     if tui is None:
         raise UnknownApp(f"{spec.name} has no terminal version; it runs in the browser only.")
     return tui
+
+
+def uv_tool_bin_dir(prefix: Optional[str] = None, *, entry: str = "abstractgateway") -> Optional[Path]:
+    """The folder where uv put this gateway's own `entry` command (`uv tool
+    dir --bin`, usually ~/.local/bin), from the receipt uv writes into the
+    tool's environment: `<sys.prefix>/uv-receipt.toml`, whose
+    `[tool] entrypoints` list each command's `install-path`. None when this
+    gateway is not a uv tool install (a development venv, pip), or on a
+    Python without tomllib (3.10)."""
+    try:
+        import tomllib
+    except ImportError:  # Python 3.10: no TOML reader in the standard library
+        return None
+    receipt = Path(prefix if prefix is not None else sys.prefix) / "uv-receipt.toml"
+    try:
+        data = tomllib.loads(receipt.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    tool = data.get("tool") if isinstance(data, dict) else None
+    for ep in (tool or {}).get("entrypoints") or []:
+        if isinstance(ep, dict) and ep.get("name") == entry and ep.get("install-path"):
+            return Path(str(ep["install-path"])).parent
+    return None
 
 
 def release_target(*, system: Optional[str] = None, machine: Optional[str] = None, libc: Optional[str] = None) -> Optional[str]:
@@ -1689,6 +1721,10 @@ class AppsManager:
         self._tui_handover: Dict[str, Tuple[float, str, Any, str]] = {}  # code -> (expires, app_id, principal, gateway_url)
         self._desktop_handover: Dict[str, Tuple[float, Any, str, str]] = {}  # code -> (expires, principal, base_url, file)
         self._tui_probe_cache: Dict[Tuple[str, int, int], Tuple[Optional[str]]] = {}
+        # The terminal-apps folder shared with the installer (see "Terminal
+        # apps"): None = not a uv tool install, <data>/apps/bin is used.
+        # Tests set it.
+        self.tool_bin_dir: Optional[Path] = uv_tool_bin_dir()
         # How a terminal window is opened (argv from `terminal_argv`); tests
         # replace it so no test ever opens a real window.
         self.terminal_opener: Callable[[Sequence[str]], None] = _open_terminal
@@ -2582,16 +2618,36 @@ class AppsManager:
 
     # -- terminal apps (TUIs) ----------------------------------------------------------
     @property
-    def bin_dir(self) -> Path:
+    def legacy_bin_dir(self) -> Path:
+        """<data>/apps/bin: where terminal apps go when this gateway is not a
+        uv tool install, and where gateways before 0.7.1 always put them."""
         return self.apps_root / "bin"
+
+    @property
+    def bin_dir(self) -> Path:
+        """Where the gateway installs terminal apps: the folder of its own
+        commands (uv's tool bin dir, on PATH, shared with the installer's
+        cargo builds), else <data>/apps/bin."""
+        return self.tool_bin_dir if self.tool_bin_dir is not None else self.legacy_bin_dir
 
     def managed_tui_path(self, tui: TuiSpec) -> Path:
         return self.bin_dir / tui.exe_name
 
+    def runs_by_name(self, path: Any) -> bool:
+        """A terminal app at `path` starts by its bare name in the user's
+        shell: it is in the gateway's own command folder (on PATH: that is how
+        `abstractgateway` itself runs), or this process's PATH finds it there."""
+        p = Path(str(path))
+        if self.tool_bin_dir is not None and p.parent == self.tool_bin_dir:
+            return True
+        found = shutil.which(p.name)
+        return bool(found) and Path(found) == p
+
     def _tui_candidates(self, tui: TuiSpec) -> List[Tuple[str, Path]]:
-        """(source, path) in preference order: the gateway's own copy, PATH,
-        then ~/.cargo/bin (a gateway started at login has a minimal PATH)."""
-        out: List[Tuple[str, Path]] = [("gateway", self.managed_tui_path(tui))]
+        """(source, path) in preference order: the gateway's terminal-apps
+        folder, the pre-0.7.1 <data>/apps/bin, PATH, then ~/.cargo/bin (a
+        gateway started at login has a minimal PATH)."""
+        out: List[Tuple[str, Path]] = [("gateway", self.managed_tui_path(tui)), ("gateway", self.legacy_bin_dir / tui.exe_name)]
         found = shutil.which(tui.binary)
         if found:
             out.append(("path", Path(found)))
@@ -2766,6 +2822,15 @@ class AppsManager:
         finally:
             staging.unlink(missing_ok=True)
         cache.unlink(missing_ok=True)
+        # ONE copy: the one a gateway before 0.7.1 left in <data>/apps/bin is
+        # now stale (it would shadow nothing, and confuse everything).
+        legacy = self.legacy_bin_dir / tui.exe_name
+        if legacy != target and legacy.exists():
+            try:
+                legacy.unlink()
+                job.log(f"removed the previous copy {legacy}")
+            except OSError as exc:
+                job.log(f"could not remove the previous copy {legacy}: {exc}")
         previous = (self.app_state(tui.id).get("tui") or {}).get("version")
         self._update_app_state(tui.id, tui={"version": ver, "sha256": expected, "asset": name, "tag": rel["tag"], "installed_at": _iso(_now()), "path": str(self.managed_tui_path(tui))})
         self._tui_probe_cache.clear()
@@ -2921,7 +2986,7 @@ class AppsManager:
             "interface": "tui",
             "version": st["version"],
             "signin_command": _quote_cmd(str(script)) if win else _quote_posix(str(script)),
-            "command": tui_command(tui, gateway_url, binary=str(st["path"]) if (st["source"] == "gateway" or shutil.which(tui.binary) is None) else None),
+            "command": tui_command(tui, gateway_url, binary=None if self.runs_by_name(st["path"]) else str(st["path"])),
             "expires_in_s": int(HANDOVER_TTL_S),
         }
 
@@ -3005,8 +3070,8 @@ class AppsManager:
         else:
             launch_available, launch_blocked = True, None
         # The full path when this computer's copy is not reachable by name
-        # (the gateway's own copy, or ~/.cargo/bin missing from PATH).
-        here = local and installed and (st["source"] == "gateway" or shutil.which(tui.binary) is None)
+        # (<data>/apps/bin, or ~/.cargo/bin missing from PATH).
+        here = local and installed and not self.runs_by_name(st["path"])
         return {
             "kind": "tui",
             "name": f"{tui.name} in the terminal",

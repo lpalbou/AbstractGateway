@@ -775,6 +775,12 @@ def _no_real_terminal_app(monkeypatch: pytest.MonkeyPatch, tmp_path_factory) -> 
             return found
 
     monkeypatch.setattr(_am, "shutil", _ShutilHidingRealTerminalApps())
+    # The terminal-apps folder comes from THIS Python's uv receipt: pytest run
+    # with an installed gateway tool's Python would otherwise install into the
+    # real ~/.local/bin. A test that wants the folder sets `m.tool_bin_dir`,
+    # or reads a receipt of its own (`uv_tool_bin_dir(prefix)`).
+    _real_tool_bin_dir = _am.uv_tool_bin_dir
+    monkeypatch.setattr(_am, "uv_tool_bin_dir", lambda prefix=None, **kw: None if prefix is None else _real_tool_bin_dir(prefix, **kw))
 
 
 def pytest_configure(config):

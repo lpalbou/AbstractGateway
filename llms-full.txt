@@ -2495,27 +2495,38 @@ second entry of kind `"tui"`:
 
 ```json
 {"kind": "tui", "name": "Code in the terminal", "binary": "abstractcode",
- "installed": true, "version": "0.5.1", "source": "gateway", "path": "<data dir>/apps/bin/abstractcode",
- "latest_version": "0.5.1", "update_available": false,
+ "installed": true, "version": "0.7.0", "source": "gateway", "path": "/home/me/.local/bin/abstractcode",
+ "latest_version": "0.7.0", "update_available": false,
  "install_available": false, "install_method": "release_binary", "install_blocked_reason": null,
  "install_command": "cargo install abstractcode", "download_page": "https://github.com/lpalbou/abstractcode/releases",
  "launch_available": true, "launch_blocked_reason": null, "launch_mode": "terminal",
- "command": "<data dir>/apps/bin/abstractcode --gateway http://127.0.0.1:8080",
+ "command": "abstractcode --gateway http://127.0.0.1:8080",
  "signin_command": null, "active_job": null}
 ```
 
+- **One folder, shared with the installer.** Terminal apps go where uv put
+  the gateway's own commands (`uv tool dir --bin`, usually `~/.local/bin`, on
+  Windows `%USERPROFILE%\.local\bin`), which the installer puts on `PATH`;
+  the gateway reads it from the receipt uv writes into its environment
+  (`uv-receipt.toml`). The installer builds `abstractcode` and the terminal
+  console into the same folder (`cargo install --root` its parent), so
+  `abstractcode` runs by name whichever of the two installed it. A gateway
+  that is not a uv tool install (a development checkout, pip) uses
+  `<data dir>/apps/bin/`, off `PATH` (`command` then carries the full path).
 - **Found by presence.** The gateway never imports or runs an app to detect
-  it: it looks for the binary in `<data dir>/apps/bin/`, on `PATH` and in
-  `~/.cargo/bin`, and accepts it only when its `--help` names the program
-  (PyPI's unrelated Python package `abstractcode` installs a script with the
-  same name). `source` says where it was found (`gateway` or `path`).
+  it: it looks for the binary in that folder, in `<data dir>/apps/bin/`
+  (where gateways before 0.7.1 put it; the next install or update moves it
+  and removes the old copy), on `PATH` and in `~/.cargo/bin`, and accepts it
+  only when its `--help` names the program (PyPI's unrelated Python package
+  `abstractcode` installs a script with the same name). `source` says where
+  it was found (`gateway`: one of the gateway's folders, `path`: elsewhere).
 - **Install (`install_method`).** `release_binary`: Code publishes prebuilt
   binaries for macOS (Apple silicon and Intel), Linux (x86_64 and arm64,
   glibc) and Windows (x86_64) on its GitHub release, with a `SHA256SUMS` file.
   The card's Install (and `install-tui` on its own) downloads the archive for
   this computer, checks it
   against `SHA256SUMS` and against the sha256 digest GitHub reports for the
-  file (both must agree), unpacks the single binary into `<data dir>/apps/bin/`,
+  file (both must agree), unpacks the single binary into the folder above,
   makes it executable and runs `--version` before it replaces anything.
   About 3 MB, no administrator rights, no terminal. `cargo`: there is no
   prebuilt binary for this computer (musl Linux, Windows on ARM, other CPUs),
@@ -2950,7 +2961,7 @@ not depend on its apps:
 | Observer, Continuum, Code, Entity, Flow | the gateway (`GET /api/gateway/apps`): its own installs, and apps started outside it (the dev stack, `npx`, a service) found on their usual port | **Open X** when running, whoever started it (a one-time signed-in handover); **Open X** when installed and stopped (starts it, then opens it); **Install X…** when it can be installed (the browser app and, for Code when a ready-made download exists for this computer, its terminal app, as one job; a notification when it is done, then **Open X**); otherwise **X**, greyed |
 | the same, installed globally | the app's command on PATH (`abstractobserver`, `abstractflow-editor`, `abstractcode-web`, `abstractcontinuum`, `abstractentity`) or the package under `npm root -g` | **Open X** — started by the tray with the gateway URL passed in and stopped when the tray exits; sign in inside the app (install it here instead for the one-click sign-in) |
 | Assistant | the same detection as the console's Assistant card (`apps_desktop.detect_assistant`): `AbstractAssistant.app` in /Applications or ~/Applications, the `abstractassistant` command (this Python's scripts folder, or PATH), or the package in this Python (`importlib.util.find_spec`, without importing it) | **Launch Assistant** when found (also while it runs): the gateway opens it (`POST /api/gateway/apps/assistant/launch`, the console's Open), connected and signed in to this gateway; **Install Assistant…** when the gateway can install it into its own Python (the console's Install); otherwise **Assistant**, greyed |
-| Code's terminal version (the only app with one today) | the gateway's presence check, reported as `interfaces[kind="tui"]` on the app row: its own copy in `<data dir>/apps/bin/`, `abstractcode` on PATH, or `~/.cargo/bin` | **Open Code in Terminal** — a new terminal window on this machine, signed in through a one-time code (`POST /api/gateway/apps/code/launch-tui`, the same route as the console's button). Shown only when the gateway reports it installed; greyed when the gateway would refuse (the console says why) |
+| Code's terminal version (the only app with one today) | the gateway's presence check, reported as `interfaces[kind="tui"]` on the app row: its terminal-apps folder (uv's tool bin dir, shared with the installer; `<data dir>/apps/bin/` for a gateway that is not a uv tool install), `abstractcode` on PATH, or `~/.cargo/bin` | **Open Code in Terminal** — a new terminal window on this machine, signed in through a one-time code (`POST /api/gateway/apps/code/launch-tui`, the same route as the console's button). Shown only when the gateway reports it installed; greyed when the gateway would refuse (the console says why) |
 
 When an app cannot be installed from here, ONE line near the bottom says so:
 "Installs are off for this gateway · Console → Apps" (the gateway's install
@@ -7877,6 +7888,18 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Fixed
+- **Terminal apps land on PATH.** The gateway installed Code's terminal app into `<data dir>/apps/bin/`, which is not
+  on PATH, so `abstractcode` was "not found" after an install from the console. It now installs terminal apps where
+  uv put the gateway's own commands (`uv tool dir --bin`, usually `~/.local/bin`, read from the tool's
+  `uv-receipt.toml`): the folder the installer puts on PATH and builds `abstractcode` and the terminal console into,
+  so there is one place whichever of the two installed it, and the presence check finds it there even when the
+  gateway's own PATH lacks it (a gateway started at login). A copy a previous gateway left in `<data dir>/apps/bin/`
+  is still found (and offered the update); the next install removes it. A gateway that is not a uv tool install
+  keeps `<data dir>/apps/bin/`. `command` is the bare name when the app runs by name.
 
 ## [0.7.0] - 2026-09-28
 

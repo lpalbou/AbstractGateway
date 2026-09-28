@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Terminal apps land on PATH.** The gateway installed Code's terminal app into `<data dir>/apps/bin/`, which is not
+  on PATH, so `abstractcode` was "not found" after an install from the console. It now installs terminal apps where
+  uv put the gateway's own commands (`uv tool dir --bin`, usually `~/.local/bin`, read from the tool's
+  `uv-receipt.toml`): the folder the installer puts on PATH and builds `abstractcode` and the terminal console into,
+  so there is one place whichever of the two installed it, and the presence check finds it there even when the
+  gateway's own PATH lacks it (a gateway started at login). A copy a previous gateway left in `<data dir>/apps/bin/`
+  is still found (and offered the update); the next install removes it. A gateway that is not a uv tool install
+  keeps `<data dir>/apps/bin/`. `command` is the bare name when the app runs by name.
+
 ## [0.7.0] - 2026-09-28
 
 Requires AbstractRuntime 0.7.0 (the session history window and its public `window_transcript`), AbstractCore 2.18.0
