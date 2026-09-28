@@ -9,6 +9,11 @@ defaults" (the routes the seed wrote) must all show that pick. These tests
 drive the Gateway's OWN functions against a synthetic host, and prove the
 Gateway holds no tier table of its own by swapping AbstractCore's table and
 watching every Gateway answer follow.
+
+The expected artifacts are READ from AbstractCore's tier table (the hosts tested
+are every tier's lower edge and just under its upper bound), never copied here:
+a core release that moves the tiers (2.18.1: Qwen3 1.7B below 16 GiB, Qwen3.5 9B
+16-32, Qwen3.8 27B 32-128, Flash-Next 128+) needs no edit to this file.
 """
 
 from __future__ import annotations
@@ -19,16 +24,33 @@ pytestmark = pytest.mark.basic
 
 GIB = 1024**3
 
-EXPECTED = {
-    # host GiB: (plain, mtp)
-    16: ("mlx-community/Qwen3.5-9B-MLX-4bit", "mlx-works/Qwen3.5-9B-oQ4e-mtp"),
-    23.9: ("mlx-community/Qwen3.5-9B-MLX-4bit", "mlx-works/Qwen3.5-9B-oQ4e-mtp"),
-    24: ("mlx-community/Qwen3.8-27B-4bit", "Jundot/Qwen3.8-27B-oQ4e-mtp"),
-    64: ("mlx-community/Qwen3.8-27B-4bit", "Jundot/Qwen3.8-27B-oQ4e-mtp"),
-    127: ("mlx-community/Qwen3.8-27B-4bit", "Jundot/Qwen3.8-27B-oQ4e-mtp"),
-    128: ("mlx-community/Qwen3.8-Flash-Next-4bit", "Jundot/Qwen3.8-Flash-Next-oQ4e-mtp"),
-    192: ("mlx-community/Qwen3.8-Flash-Next-4bit", "Jundot/Qwen3.8-Flash-Next-oQ4e-mtp"),
-}
+def _tiers():
+    from abstractcore.config import model_catalog
+
+    return model_catalog.APPLE_TEXT_TIERS
+
+
+def _expected(gib: float, mtp: bool) -> str:
+    """The artifact AbstractCore's table assigns to a Mac with `gib` GiB (each tier is
+    `below_gib` exclusive; the last one is unbounded)."""
+    for tier in _tiers():
+        if tier["below_gib"] is None or gib < tier["below_gib"]:
+            return tier["mtp"] if mtp and tier["mtp"] else tier["plain"]
+    raise AssertionError("AbstractCore's APPLE_TEXT_TIERS must end with an unbounded tier")
+
+
+def _tier_edges() -> list:
+    """Every tier's lower edge (8 GiB for the first: the smallest Mac) and 0.1 GiB under its
+    upper bound, plus one host well inside the unbounded tier."""
+    hosts, lower = [], 8.0
+    for tier in _tiers():
+        hosts.append(lower)
+        if tier["below_gib"] is None:
+            hosts.append(lower * 1.5)
+        else:
+            hosts.append(round(tier["below_gib"] - 0.1, 1))
+            lower = float(tier["below_gib"])
+    return sorted(set(hosts))
 
 
 def _host(gib: float, accelerator: str = "metal") -> dict:
@@ -84,13 +106,13 @@ def _text(items):
     return next(i for i in items if i["route"] == "input.text")
 
 
-@pytest.mark.parametrize("gib", sorted(EXPECTED))
+@pytest.mark.parametrize("gib", _tier_edges())
 def test_recommended_downloads_are_abstractcores_pick(on_host, mtp_switch, gib):
     from abstractcore.config.model_catalog import recommended_text_model
     from abstractgateway import core_config
 
     host = on_host(_host(gib))
-    expected = EXPECTED[gib][1 if mtp_switch else 0]
+    expected = _expected(gib, mtp_switch)
     item = _text(core_config.recommended_core_model_downloads())
     assert (item["provider"], item["artifact"]) == ("mlx", expected)
     pick = recommended_text_model(host)
@@ -117,27 +139,33 @@ def test_download_all_fetches_the_pick(on_host, mtp_switch, monkeypatch):
         lambda provider, artifact, dry_run=False: started.append((provider, artifact)) or {"job_id": f"j{len(started)}", "provider": provider, "artifact": artifact},
     )
     model_downloads.start_recommended_group(dry_run=True)
-    assert ("mlx", EXPECTED[64][1 if mtp_switch else 0]) in started
+    assert ("mlx", _expected(32, mtp_switch)) in started
 
 
 def test_the_guide_tile_carries_the_pick_and_its_fit_warning(on_host, mtp_switch, monkeypatch):
     """`/models/availability` -> `recommended.recommended[input.text]` is the
     tile: it names the tier artifact and, when the fit estimate doubts it,
-    says so (the tier is never swapped silently)."""
+    says so (the tier is never swapped silently). A Mac whose GPU limit is far
+    below its memory (a 64 GiB Mac that lets a model use 10 GiB) keeps its
+    memory tier, and the tile shows AbstractCore's own verdict and warning."""
 
+    from abstractcore.config.model_catalog import recommended_text_model
     from abstractgateway import core_config
 
-    on_host(_host(24))
+    host = dict(_host(64), ceiling_bytes=10 * GIB)
+    on_host(host)
     monkeypatch.setattr(core_config, "gateway_capability_defaults_payload", lambda **kw: {"ok": True, "routes": []})
     payload = core_config.gateway_model_availability_payload()
     tile = _text(payload["recommended"]["recommended"])
-    assert tile["artifact"] == EXPECTED[24][1 if mtp_switch else 0]
-    assert tile["catalog_id"] == "qwen3.8-27b" and tile["basis"] == "apple_silicon_tiers"
-    assert tile["fit_verdict"] == "too_large" and tile["fits"] is False
-    assert "may not fit" in tile["warning"]
+    pick = recommended_text_model(host)
+    assert tile["artifact"] == _expected(64, mtp_switch) == pick["artifact"]
+    assert tile["catalog_id"] == pick["catalog_id"] and tile["basis"] == "apple_silicon_tiers"
+    assert pick["fits"] is False and tile["fits"] is False
+    assert tile["fit_verdict"] == pick["fit"]["verdict"] and tile["fit_verdict"] != "fits"
+    assert tile["warning"] and tile["warning"] == pick["warning"]
 
 
-@pytest.mark.parametrize("gib", [23.9, 64, 128])
+@pytest.mark.parametrize("gib", _tier_edges())
 def test_apply_recommended_writes_the_pick(on_host, mtp_switch, gib):
     from abstractgateway import core_config
 
@@ -145,7 +173,7 @@ def test_apply_recommended_writes_the_pick(on_host, mtp_switch, gib):
     payload = core_config.apply_recommended_gateway_capability_defaults(dry_run=True)
     row = next(r for r in payload["applied_recommended"]["routes"] if r["key"] == "input.text")
     assert row["recommended"]["provider"] == "mlx"
-    assert row["recommended"]["model"] == EXPECTED[gib][1 if mtp_switch else 0]
+    assert row["recommended"]["model"] == _expected(gib, mtp_switch)
 
 
 def test_the_gateway_holds_no_tier_table(on_host, monkeypatch):
@@ -154,15 +182,20 @@ def test_the_gateway_holds_no_tier_table(on_host, monkeypatch):
     from abstractcore.config import model_catalog
     from abstractgateway import core_config
 
+    original = _expected(64, False)
     swapped = tuple(
         dict(t, plain=t["mtp"], mtp=t["plain"]) for t in model_catalog.APPLE_TEXT_TIERS
     )
     monkeypatch.setattr(model_catalog, "APPLE_TEXT_TIERS", swapped)
     monkeypatch.setattr(model_catalog, "MTP_RECOMMENDED", False)
     on_host(_host(64))
-    assert _text(core_config.recommended_core_model_downloads())["artifact"] == "Jundot/Qwen3.8-27B-oQ4e-mtp"
+    # A tier without an MTP build swaps to None: the pick falls back to the plain build.
+    swapped_pick = next(t for t in swapped if t["below_gib"] is None or 64 < t["below_gib"])
+    expected = swapped_pick["plain"] or swapped_pick["mtp"]
+    assert expected != original
+    assert _text(core_config.recommended_core_model_downloads())["artifact"] == expected
     report = core_config.apply_recommended_gateway_capability_defaults(dry_run=True)["applied_recommended"]
-    assert next(r for r in report["routes"] if r["key"] == "input.text")["recommended"]["model"] == "Jundot/Qwen3.8-27B-oQ4e-mtp"
+    assert next(r for r in report["routes"] if r["key"] == "input.text")["recommended"]["model"] == expected
 
 
 def test_tray_your_defaults_shows_the_seeded_pick_in_the_same_shape(on_host, mtp_switch, tmp_path, monkeypatch):
@@ -179,7 +212,7 @@ def test_tray_your_defaults_shows_the_seeded_pick_in_the_same_shape(on_host, mtp
     defaults = menu_model.parse_defaults({"routes": rows})
     text = next(d for d in defaults if d.task == "text_generation")
     assert type(text).__dataclass_fields__.keys() == {"capability", "task", "provider", "model", "status"}
-    assert (text.capability, text.provider, text.model) == ("Text", "mlx", EXPECTED[64][1 if mtp_switch else 0])
+    assert (text.capability, text.provider, text.model) == ("Text", "mlx", _expected(64, mtp_switch))
 
 
 def test_the_guide_card_renders_the_fit_warning():
