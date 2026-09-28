@@ -2198,7 +2198,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <span id="gateway-host-detail" class="muted"></span>
 	              </div>
 	              <div class="entity-overview">
-	                <div class="entity-kv"><span class="entity-kv-key">Version</span><span class="entity-kv-val"><span id="gateway-host-version">…</span> <span id="gateway-host-update-hint" class="muted"></span> <button id="gateway-host-update-check" class="secondary" type="button" title="Ask the update server whether a newer AbstractGateway exists (needs internet)">Check now</button> <button id="gateway-host-update-start" class="secondary hidden" type="button" title="Install the newer version in the background; restart to finish">Update</button></span></div>
+	                <div class="entity-kv"><span class="entity-kv-key">Version</span><span class="entity-kv-val"><span id="gateway-host-version">…</span> <span id="gateway-host-update-hint" class="muted"></span> <button id="gateway-host-update-check" class="secondary" type="button" title="Check for a newer release: an AbstractFramework installer install compares with the newest AbstractFramework release, any other install with the newest AbstractGateway on PyPI (needs internet)">Check now</button> <button id="gateway-host-update-start" class="secondary hidden" type="button" title="Install it in the background (an installer install runs the AbstractFramework installer); restart to finish">Update</button></span></div>
+	                <details id="gateway-host-update-log-box" class="entity-advanced hidden"><summary id="gateway-host-update-log-summary">Update log</summary><pre id="gateway-host-update-log" class="entity-prompt-preview"></pre></details>
 	                <!-- STATUS, NOT A SWITCH. The
 	                     icon is the gateway's presence on the desktop: while it
 	                     runs, it is there. The only reasons it can be absent are
@@ -10224,25 +10225,27 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        note.textContent = text;
 	      }
 	    }
+	    // The gateway renders the update state ONCE (`update`: status, line, hint, action with
+	    // its command, source and confirmation) for the web console, the terminal console and
+	    // the tray; this panel shows it and the job's log.
 	    function renderGatewayUpdate(upd) {
 	      state.hostUpdate = upd || null;
 	      const el = $("gateway-host-version"); if (!el || !upd) return;
-	      const chk = upd.check || null; const inst = upd.install || {}; const job = upd.job || {};
-	      let text = String(upd.current || "?");
-	      if (job.state === "running") text += " · installing…" + (job.log_tail && job.log_tail.length ? ` (${job.log_tail[job.log_tail.length - 1]})` : "");
-	      else if (job.state === "succeeded" || upd.restart_pending) text += ` · ${job.version_after || "the update"} is installed — restart to finish`;
-	      else if (job.state === "failed") text += ` · the update didn't finish (${job.error || "see logs"})`;
-	      else if (job.state === "succeeded_no_change") text += ` · ${job.error || "nothing changed"}`;
-	      else if (chk && chk.offline) text += " · couldn't reach the update server (offline?)";
-	      else if (chk && chk.update_available) text += ` · ${chk.latest} available`;
-	      else if (chk && chk.latest) text += ` · up to date, checked ${_gwFmtWhen(chk.checked_at)}`;
+	      const view = upd.update || {}; const job = upd.job || {};
+	      let text = String(view.line || upd.current || "?");
+	      if (view.status === "up_to_date" && view.checked_at) text += `, checked ${_gwFmtWhen(view.checked_at)}`;
 	      el.textContent = text;
+	      const action = view.action || null;
 	      const startBtn = $("gateway-host-update-start");
-	      const canStart = Boolean(chk && chk.update_available && inst.upgradable && job.state !== "running");
-	      startBtn.classList.toggle("hidden", !canStart);
-	      startBtn.textContent = chk && chk.latest ? `Update to ${chk.latest}` : "Update";
-	      const hint = $("gateway-host-update-hint");
-	      hint.textContent = (chk && chk.update_available && !inst.upgradable) ? String(inst.reason || "") : (inst.kind ? `installed with ${inst.kind}` : "");
+	      startBtn.classList.toggle("hidden", !(action && view.status === "available"));
+	      startBtn.textContent = action ? action.label : "Update";
+	      $("gateway-host-update-hint").textContent = String(view.hint || "");
+	      const log = Array.isArray(job.log_tail) ? job.log_tail : [];
+	      const box = $("gateway-host-update-log-box");
+	      box.classList.toggle("hidden", !log.length && !job.command);
+	      $("gateway-host-update-log-summary").textContent = job.state === "running" ? "Update log (running…)" : `Update log (${job.state || "idle"})`;
+	      $("gateway-host-update-log").textContent = [job.command ? "$ " + job.command.join(" ") : "", ...log, job.error ? "\\n" + job.error : ""].filter(Boolean).join("\\n");
+	      if (job.state === "failed") box.open = true;
 	    }
 	    async function loadGatewayHost() {
 	      if (!state.principal) return;
@@ -10329,10 +10332,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      finally { btn.disabled = false; }
 	    }
 	    async function startGatewayUpdate() {
-	      const upd = state.hostUpdate || {}; const latest = (upd.check && upd.check.latest) || "";
-	      const ok = await confirmAction({ title: "Update available", message: `AbstractGateway ${latest} is available (you have ${upd.current || "?"}). Installing takes a minute or two; workflows keep running until you restart.`, confirmLabel: "Update now" });
+	      const upd = state.hostUpdate || {}; const action = (upd.update && upd.update.action) || null;
+	      if (!action) return;
+	      const ok = await confirmAction({ title: "Update available", message: action.confirm, confirmLabel: "Update now" });
 	      if (!ok) return;
-	      try { renderGatewayUpdate(await api("/api/gateway/host/update/start", { method: "POST", body: JSON.stringify({}) })); _pollGatewayUpdate(); }
+	      const body = action.installer_sha256 ? { installer_sha256: action.installer_sha256 } : {};
+	      try { renderGatewayUpdate(await api("/api/gateway/host/update/start", { method: "POST", body: JSON.stringify(body) })); _gwMsg(""); _pollGatewayUpdate(); }
 	      catch (e) { _gwMsg(String(e.message || e), "error"); }
 	    }
 	    function _pollGatewayUpdate() {

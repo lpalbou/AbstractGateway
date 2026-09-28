@@ -59,16 +59,24 @@ impl GatewayClient {
         self.get("/host/update", false)
     }
 
-    /// `POST /host/update/check` (admin) — asks PyPI (5 s server-side);
-    /// offline is an in-band answer. Slow agent: the check blocks.
+    /// `POST /host/update/check` (admin) — the newest AbstractFramework
+    /// release for an installer install, PyPI's newest gateway otherwise
+    /// (5 s server-side); offline is an in-band answer. Slow agent: the
+    /// check blocks.
     pub fn host_update_check(&self) -> ApiResult<Value> {
         self.send("POST", "/host/update/check", &json!({}), true)
     }
 
-    /// `POST /host/update/start` (admin) — runs the upgrade in the
-    /// background; 409 when it cannot upgrade in place or a job runs.
-    pub fn host_update_start(&self) -> ApiResult<Value> {
-        self.send("POST", "/host/update/start", &json!({}), false)
+    /// `POST /host/update/start` (admin) — runs the update in the
+    /// background (an installer install runs the AbstractFramework
+    /// installer); 409 when it cannot upgrade in place, the installer
+    /// changed since `installer_sha256` was shown, or a job runs.
+    pub fn host_update_start(&self, installer_sha256: Option<&str>) -> ApiResult<Value> {
+        let body = match installer_sha256 {
+            Some(sha) => json!({ "installer_sha256": sha }),
+            None => json!({}),
+        };
+        self.send("POST", "/host/update/start", &body, false)
     }
 
     /// `GET /host/start-at-login` (admin) — would this gateway start at

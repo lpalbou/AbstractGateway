@@ -55,6 +55,7 @@ from .sampler import ModelRow, RunRow, Sampler, Snapshot, fmt_bytes, fmt_pct  # 
 logger = logging.getLogger("abstractgateway.tray")
 
 TWO_STEP_SECONDS = 8.0
+UPDATE_POLL_SECONDS = 3.0
 MENU_VALUE_REBUILD_MIN_S = 15.0
 MEMORY_WARN_PCT = 90.0
 MEMORY_WARN_SUSTAIN_S = 30
@@ -239,7 +240,8 @@ class TrayApp:
         self._mode = "neutral"
         self._mode_checked_at = 0.0
         self._update_phase = "idle"  # idle | checking | available | updating | installed | failed | not_possible
-        self._update_latest: Optional[str] = None
+        self._update_latest: Optional[str] = None  # the view's `offer`: what "Update to …" installs
+        self._update_action: Optional[Dict[str, Any]] = None  # the view's `action` (label, confirm, installer_sha256)
         self._update_frame = 0
         self._pending: Optional[Dict[str, Any]] = None  # two-step confirmation fallback
         self._activity_proc: Optional[subprocess.Popen] = None
@@ -1359,8 +1361,8 @@ class TrayApp:
         if phase == "installed":
             self.restart()
             return
-        if phase == "available" and self._update_latest:
-            self._offer_update(self._update_latest)
+        if phase == "available" and self._update_action:
+            self._offer_update(self._update_action)
             return
         self._update_phase = "checking"
         self._force_menu_rebuild()
@@ -1372,64 +1374,62 @@ class TrayApp:
         self._bg(_do, "tray-update-check")
 
     def _handle_check_result(self, r: Result) -> None:
-        if not r.ok or not isinstance(r.data, dict):
+        """Renders the gateway's own `update` view (`self_update.update_view`): the same
+        line, hint and confirmation the web and terminal consoles show. For an
+        AbstractFramework installer install the action runs the installer."""
+        view = r.data.get("update") if r.ok and isinstance(r.data, dict) and isinstance(r.data.get("update"), dict) else None
+        if view is None:
             self._update_phase = "idle"
             self._force_menu_rebuild()
-            self._info("Couldn't check for updates", r.detail, style="warning")
+            self._info("Couldn't check for updates", r.detail if not r.ok else "The gateway answered without an update state.", style="warning")
             return
-        check = r.data.get("check") if isinstance(r.data.get("check"), dict) else {}
-        install = r.data.get("install") if isinstance(r.data.get("install"), dict) else {}
-        current = str(r.data.get("current") or self.version)
-        if check.get("offline"):
-            self._update_phase = "idle"
+        status = str(view.get("status") or "")
+        line = str(view.get("line") or "")
+        self._update_latest = str(view.get("offer") or "") or None
+        self._update_action = view.get("action") if isinstance(view.get("action"), dict) else None
+        if status == "available" and self._update_action:
+            self._update_phase = "available"
             self._force_menu_rebuild()
-            self._info("Couldn't check for updates", f"{APP_NAME} couldn't reach the internet. It keeps working offline — try again when you're connected.")
+            self._offer_update(self._update_action)
             return
-        if check.get("error") and check.get("latest") is None:
-            self._update_phase = "idle"
+        if status == "running":
+            self._update_phase = "updating"
             self._force_menu_rebuild()
-            self._info("Couldn't check for updates", f"The update server didn't answer properly ({check.get('error')}). Try again later.", style="warning")
+            self._info("An update is being installed", line)
             return
-        latest = str(check.get("latest") or "")
-        if check.get("update_available") is not True:
-            self._update_phase = "idle"
+        if status == "installed":
+            self._update_phase = "installed"
             self._force_menu_rebuild()
-            self._info("You're up to date", f"{APP_NAME} {current} is the latest version.")
+            self._info("Update installed", f"{line}. Choose Restart to start using it.")
             return
-        self._update_latest = latest
-        if not install.get("upgradable"):
-            self._update_phase = "not_possible"
-            self._force_menu_rebuild()
-            kind = str(install.get("kind") or "unknown")
-            bodies = {
-                "editable": "This copy runs from a source folder, so the menu can't update it. Update the folder with git.",
-                "docker": "This copy runs in a container. Pull the new image to update.",
-                "local-file": "This copy was installed from a local file. Install the newer file to update.",
-            }
-            body = bodies.get(kind, f"Couldn't tell how {APP_NAME} was installed. The documentation lists the update steps.")
-            self._info(f"{latest} is available, but not from here", body)
-            return
-        self._update_phase = "available"
+        self._update_phase = "not_possible" if status == "not_possible" else "idle"
         self._force_menu_rebuild()
-        self._offer_update(latest)
+        if status == "offline":
+            self._info("Couldn't check for updates", f"{APP_NAME} couldn't reach the internet. It keeps working offline — try again when you're connected.")
+        elif status == "error":
+            self._info("Couldn't check for updates", line, style="warning")
+        elif status == "not_possible":
+            self._info(f"{self._update_latest or 'An update'} is available, but not from here", str(view.get("hint") or line))
+        else:
+            self._info("You're up to date", line)
 
-    def _offer_update(self, latest: str) -> None:
-        current = self.version or "the current version"
-        ok = dialogs.confirm("Update available", f"{APP_NAME} {latest} is available (you have {current}). Installing takes a minute or two; workflows keep running until you restart.", ok_label="Update Now", cancel_label="Later", danger=False)
+    def _offer_update(self, action: Dict[str, Any]) -> None:
+        ok = dialogs.confirm("Update available", str(action.get("confirm") or ""), ok_label="Update Now", cancel_label="Later", danger=False)
         if ok is None:
-            self._pending = {"key": "update", "label": f"Update to {latest}", "deadline": time.monotonic() + TWO_STEP_SECONDS, "action": self._start_update}
+            self._pending = {"key": "update", "label": str(action.get("label") or "Update"), "deadline": time.monotonic() + TWO_STEP_SECONDS, "action": self._start_update}
             self._force_menu_rebuild()
             return
         if ok:
             self._start_update()
 
     def _start_update(self) -> None:
+        action = self._update_action or {}
         self._update_phase = "updating"
         self.sampler.set_override("updating")
         self._force_menu_rebuild()
 
         def _do() -> None:
-            r = self.client.start_update()
+            r = self.client.start_update(installer_sha256=action.get("installer_sha256"))
             if not r.ok:
                 self._update_phase = "available"
                 self.sampler.set_override(None)
@@ -1438,33 +1438,50 @@ class TrayApp:
                 return
             # Poll the job until it settles.
             while not self._stopping:
-                time.sleep(3.0)
+                time.sleep(UPDATE_POLL_SECONDS)
                 st = self.client.update_state()
                 if not (st.ok and isinstance(st.data, dict)):
                     continue
                 job = st.data.get("job") if isinstance(st.data.get("job"), dict) else {}
+                view = st.data.get("update") if isinstance(st.data.get("update"), dict) else {}
                 state = str(job.get("state") or "")
                 if state == "running":
                     continue
                 self.sampler.set_override(None)
-                if state == "succeeded":
-                    self._update_phase = "installed"
-                    self._force_menu_rebuild()
-                    after = str(job.get("version_after") or self._update_latest or "")
-                    go = dialogs.confirm("Update installed", f"{APP_NAME} {after} is ready. Restart to start using it — running workflows continue after the restart.", ok_label="Restart Now", cancel_label="Later", danger=False)
-                    if go:
-                        self.sampler.set_override("restarting")
-                        r2 = self.client.restart(reason="update")
-                        if not r2.ok:
-                            self.sampler.set_override(None)
-                            self._info("Couldn't restart", r2.detail, style="warning")
-                else:
-                    self._update_phase = "failed"
-                    self._force_menu_rebuild()
-                    self._info("The update didn't finish", f"{APP_NAME} {self.version} is still installed and working. Details are in the console under Resources → Gateway.", style="warning")
+                self._settle_update(state, job, view)
                 return
 
         self._bg(_do, "tray-update")
+
+    def _settle_update(self, state: str, job: Dict[str, Any], view: Dict[str, Any]) -> None:
+        """Report the finished job honestly: installed (offer the restart), already up to
+        date (nothing to restart), or failed with the job's own reason."""
+        if state == "succeeded":
+            self._update_phase = "installed"
+            self._force_menu_rebuild()
+            what = str(job.get("message") or f"{APP_NAME} {job.get('version_after') or self._update_latest or ''} is installed")
+            go = dialogs.confirm("Update installed", f"{what}. Restart to start using it — running workflows continue after the restart.", ok_label="Restart Now", cancel_label="Later", danger=False)
+            if go:
+                self.sampler.set_override("restarting")
+                r2 = self.client.restart(reason="update")
+                if not r2.ok:
+                    self.sampler.set_override(None)
+                    self._info("Couldn't restart", r2.detail, style="warning")
+            return
+        if state == "succeeded_no_change":
+            self._update_phase = "idle"
+            self._update_action = None
+            self._force_menu_rebuild()
+            self._info("Already up to date", str(job.get("message") or job.get("error") or view.get("line") or "Nothing changed."))
+            return
+        self._update_phase = "failed"
+        self._force_menu_rebuild()
+        why = str(job.get("error") or "see the log in the console under Resources → Gateway")
+        tail = [str(x) for x in (job.get("log_tail") or [])][-5:]
+        body = f"{APP_NAME} {self.version} keeps running. {why}"
+        if tail:
+            body += "\n\nLast lines of the log:\n" + "\n".join(tail)
+        self._info("The update didn't finish", body, style="warning")
 
     # ------------------------------------------------------ activity window
 

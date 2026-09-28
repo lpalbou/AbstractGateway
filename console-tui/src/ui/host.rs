@@ -271,6 +271,8 @@ fn start_update(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
             "an update is already being installed".to_string()
         } else if !u.update_available {
             "no update is available — u checks again".to_string()
+        } else if let Some(view) = &u.view {
+            format!("this install cannot update itself: {}", view.hint)
         } else {
             format!("this install cannot update itself: {}", u.install_reason)
         };
@@ -279,17 +281,18 @@ fn start_update(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
     }
     close();
     let c = ctx.clone();
+    let installer_sha256 = u.installer_sha256();
     super::confirm_danger(
         cx,
         ctx.ui,
-        format!(
-            "AbstractGateway {} is available (you have {}). Installing takes a minute or two; \
-             workflows keep running until you restart.",
-            u.latest, u.current
-        ),
+        u.confirm_text(),
         "Update now",
         "Not now",
-        move || c.send(Cmd::Operator(OpCmd::UpdateStart)),
+        move || {
+            c.send(Cmd::Operator(OpCmd::UpdateStart {
+                installer_sha256: installer_sha256.clone(),
+            }))
+        },
     );
 }
 

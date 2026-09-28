@@ -414,6 +414,43 @@ pub struct HostUpdate {
     pub job_last_log: String,
     pub job_version_after: String,
     pub restart_pending: bool,
+    /// The gateway's own rendering (`update`, gateway 0.7.2+), shared with
+    /// the web console and the tray; empty from an older gateway, which
+    /// keeps the rendering below.
+    pub view: Option<UpdateView>,
+}
+
+/// `update` of `GET /host/update`: the status, the version line, the hint
+/// and the action (its label, the confirmation naming what runs and from
+/// where, and the installer's sha256 the start sends back).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UpdateView {
+    pub status: String,
+    pub line: String,
+    pub hint: String,
+    pub checked_at: String,
+    pub action_label: String,
+    pub action_confirm: String,
+    pub installer_sha256: Option<String>,
+}
+
+impl UpdateView {
+    fn from_value(v: &Value) -> Option<UpdateView> {
+        if !v.is_object() {
+            return None;
+        }
+        let null = Value::Null;
+        let action = v.get("action").filter(|a| a.is_object()).unwrap_or(&null);
+        Some(UpdateView {
+            status: s(v, "status").unwrap_or_default(),
+            line: s(v, "line").unwrap_or_default(),
+            hint: s(v, "hint").unwrap_or_default(),
+            checked_at: s(v, "checked_at").unwrap_or_default(),
+            action_label: s(action, "label").unwrap_or_default(),
+            action_confirm: s(action, "confirm").unwrap_or_default(),
+            installer_sha256: s(action, "installer_sha256"),
+        })
+    }
 }
 
 impl HostUpdate {
@@ -449,11 +486,19 @@ impl HostUpdate {
                 .get("restart_pending")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            view: v.get("update").and_then(UpdateView::from_value),
         }
     }
 
-    /// The version line (web `renderGatewayUpdate`, same precedence).
+    /// The version line: the gateway's `update.line` (the web console's),
+    /// else the older gateways' fields in the same precedence.
     pub fn version_text(&self) -> String {
+        if let Some(view) = &self.view {
+            if view.status == "up_to_date" && !view.checked_at.is_empty() {
+                return format!("{}, checked {}", view.line, when_text(&view.checked_at));
+            }
+            return view.line.clone();
+        }
         let mut text = self.current.clone();
         if self.job_state == "running" {
             text.push_str(" · installing…");
@@ -498,11 +543,35 @@ impl HostUpdate {
 
     /// Whether "Update to X" is offered (web `canStart`).
     pub fn can_start(&self) -> bool {
+        if let Some(view) = &self.view {
+            return view.status == "available" && !view.action_confirm.is_empty();
+        }
         self.update_available && self.upgradable && self.job_state != "running"
+    }
+
+    /// The confirmation shown before the update starts: the gateway's
+    /// (what runs and where it comes from), else the older generic text.
+    pub fn confirm_text(&self) -> String {
+        match &self.view {
+            Some(view) if !view.action_confirm.is_empty() => view.action_confirm.clone(),
+            _ => format!(
+                "AbstractGateway {} is available (you have {}). Installing takes a minute or two; \
+                 workflows keep running until you restart.",
+                self.latest, self.current
+            ),
+        }
+    }
+
+    /// The sha256 of the installer the confirmation names (installer installs).
+    pub fn installer_sha256(&self) -> Option<String> {
+        self.view.as_ref().and_then(|v| v.installer_sha256.clone())
     }
 
     /// The hint under the version line (web parity).
     pub fn hint_text(&self) -> String {
+        if let Some(view) = &self.view {
+            return view.hint.clone();
+        }
         if self.update_available && !self.upgradable {
             self.install_reason.clone()
         } else if !self.install_kind.is_empty() {
@@ -896,6 +965,57 @@ mod tests {
             offline.version_text(),
             "1 · couldn't reach the update server (offline?)"
         );
+    }
+
+    #[test]
+    fn update_renders_the_gateways_view_when_it_sends_one() {
+        // gateway 0.7.2+: an installer install; the line, hint and the
+        // confirmation (what runs, from where) are the gateway's, and the
+        // start sends back the sha256 of the installer it names.
+        let u = HostUpdate::from_value(&json!({
+            "current": "0.7.1", "install": {"kind": "installer", "upgradable": true},
+            "check": {"update_available": true, "latest": "0.7.2"},
+            "job": {"state": "idle"},
+            "update": {
+                "status": "available",
+                "line": "AbstractFramework 0.6.1 · gateway 0.7.1 · AbstractFramework 0.6.2 available",
+                "hint": "installed with the AbstractFramework installer",
+                "action": {"label": "Update to AbstractFramework 0.6.2",
+                           "confirm": "Update runs the AbstractFramework installer: https://raw.githubusercontent.com/lpalbou/AbstractFramework/main/scripts/install.sh",
+                           "installer_sha256": "ab12"}
+            }
+        }));
+        assert_eq!(
+            u.version_text(),
+            "AbstractFramework 0.6.1 · gateway 0.7.1 · AbstractFramework 0.6.2 available"
+        );
+        assert_eq!(
+            u.hint_text(),
+            "installed with the AbstractFramework installer"
+        );
+        assert!(u.can_start());
+        assert!(u.confirm_text().contains("main/scripts/install.sh"));
+        assert_eq!(u.installer_sha256().as_deref(), Some("ab12"));
+        // Already up to date: no action, nothing to start.
+        let done = HostUpdate::from_value(&json!({
+            "current": "0.7.2", "install": {"kind": "installer", "upgradable": true},
+            "check": {"update_available": false}, "job": {"state": "succeeded_no_change"},
+            "update": {"status": "no_change", "line": "x · already up to date: AbstractFramework 0.6.2", "hint": "h", "action": null}
+        }));
+        assert!(!done.can_start());
+        assert_eq!(
+            done.version_text(),
+            "x · already up to date: AbstractFramework 0.6.2"
+        );
+        // An older gateway (no `update`): the previous rendering and text.
+        let old = HostUpdate::from_value(&json!({
+            "current": "0.5.1", "install": {"kind": "pip", "upgradable": true},
+            "check": {"update_available": true, "latest": "0.6.0"}, "job": {"state": "idle"}
+        }));
+        assert!(old.view.is_none() && old.can_start() && old.installer_sha256().is_none());
+        assert!(old
+            .confirm_text()
+            .starts_with("AbstractGateway 0.6.0 is available (you have 0.5.1)"));
     }
 
     #[test]

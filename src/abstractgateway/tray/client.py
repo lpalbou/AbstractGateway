@@ -215,8 +215,11 @@ class GatewayClient:
     def check_update(self) -> Result:
         return self._request("POST", "/host/update/check", body={}, timeout=15.0)
 
-    def start_update(self) -> Result:
-        return self._request("POST", "/host/update/start", body={}, timeout=10.0)
+    def start_update(self, installer_sha256: Optional[str] = None) -> Result:
+        """Start the update the check offered; `installer_sha256` (the action's) makes the
+        gateway refuse an installer other than the one shown in the confirmation."""
+        body = {"installer_sha256": installer_sha256} if installer_sha256 else {}
+        return self._request("POST", "/host/update/start", body=body, timeout=15.0)
 
 
 def _parse_json(raw: bytes) -> Any:

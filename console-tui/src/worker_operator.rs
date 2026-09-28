@@ -79,7 +79,9 @@ pub enum OpCmd {
         start_again: String,
     },
     UpdateCheck,
-    UpdateStart,
+    UpdateStart {
+        installer_sha256: Option<String>,
+    },
     PollUpdate,
     /// Upload one LOCAL `.flow` file (the web console's Import).
     ImportWorkflow {
@@ -658,9 +660,10 @@ pub(super) fn handle(
             }
         }
 
-        OpCmd::UpdateStart => {
+        OpCmd::UpdateStart { installer_sha256 } => {
             let (write, verify) = with_busy(store, wake, "starting the gateway update", || {
-                let write = require_client(client).and_then(|c| c.host_update_start());
+                let write = require_client(client)
+                    .and_then(|c| c.host_update_start(installer_sha256.as_deref()));
                 let verify = require_client(client).and_then(|c| c.host_update());
                 (write, verify)
             });
