@@ -110,6 +110,7 @@ fn harness(size: Size) -> H {
             modal: Rc::new(RefCell::new(None)),
             entity_drawer: Rc::new(RefCell::new(None)),
             env_token_set: false,
+            no_display: None,
             prober: Rc::new(RefCell::new(None)),
             screens,
             screens_transport: transport,
@@ -434,7 +435,8 @@ fn m3_connection_keeps_its_top_rows_at_every_height() {
             "Admin token",
             "Re-probe (connected ✓)",
             "● connected",
-            "Network exposure: Localhost only",
+            // The Connection screen keeps ONE network line; N opens the screen.
+            "Network: Localhost only · running Localhost only 127.0.0.1:8080",
         ] {
             assert!(s.contains(needle), "[{w}x{hh}] {needle:?} on screen:\n{s}");
         }
@@ -452,8 +454,9 @@ fn m3_connection_keeps_its_top_rows_at_every_height() {
 }
 
 /// The live 80x24 shape (a `--port` gateway: the "not applied" banner,
-/// five addresses) plus a reverse proxy: taller than any 24-row screen.
-/// Whatever does not fit is cut — nothing paints over the bottom border.
+/// five addresses) plus a reverse proxy, on the Network screen: taller
+/// than any 24-row screen. Whatever does not fit is cut — nothing paints
+/// over the bottom border.
 #[test]
 fn m3_a_tall_network_panel_never_paints_over_the_border() {
     let mut v = network();
@@ -477,7 +480,7 @@ fn m3_a_tall_network_panel_never_paints_over_the_border() {
     let mut h = harness(Size::new(80, 24));
     h.connect();
     h.ui.wizard.set(false);
-    h.ui.screen.set(0);
+    h.ui.screen.set(ui::SCREEN_NETWORK);
     h.turns(3);
     h.store.network.set(Loadable::Ready(
         abstractgateway_console::store::NetworkData::from_value(&v),
@@ -489,10 +492,7 @@ fn m3_a_tall_network_panel_never_paints_over_the_border() {
             "content fused into the border: {l:?}\n{s}"
         );
     }
-    assert!(
-        s.contains("Gateway URL") && s.contains("● connected"),
-        "{s}"
-    );
+    assert!(s.contains("Saved:") && s.contains("Running now:"), "{s}");
 }
 
 /// At 80x24 the not-connected 401 (the tallest status block) keeps the
@@ -510,7 +510,7 @@ fn m3_signin_needed_fits_at_80x24() {
     for needle in [
         "Gateway URL",
         "sign-in needed (401)",
-        "auth/bootstrap-admin-token",
+        "`abstractgateway serve` prints it",
     ] {
         assert!(s.contains(needle), "{needle:?}:\n{s}");
     }
@@ -533,10 +533,11 @@ fn m6_401_says_whether_a_token_was_sent_and_where_the_admin_token_is() {
         "{s}"
     );
     assert!(
-        s.contains("admin token: <data dir>/auth/bootstrap-admin-token on the gateway host"),
+        s.contains("admin token: `abstractgateway serve` prints it when it starts"),
         "{s}"
     );
-    assert!(s.contains("--token-file PATH"), "{s}");
+    assert!(s.contains("launch with --token <token>"), "{s}");
+    assert!(!s.contains("bootstrap-admin-token"), "{s}");
     assert!(!s.contains("rejected"), "nothing was rejected:\n{s}");
 
     h.ui.token_source.set(Some("the field (12 chars)".into()));
@@ -549,7 +550,10 @@ fn m6_401_says_whether_a_token_was_sent_and_where_the_admin_token_is() {
         "{s}"
     );
     assert!(s.contains("token sent: the field (12 chars)"), "{s}");
-    assert!(s.contains("<data dir>/auth/bootstrap-admin-token"), "{s}");
+    assert!(
+        s.contains("`abstractgateway serve` prints it when it starts"),
+        "{s}"
+    );
     assert!(!s.contains("no token was sent"), "{s}");
 }
 

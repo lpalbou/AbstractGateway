@@ -47,7 +47,7 @@ use crate::worker::Cmd;
 use abstractcore_console::screens::Remote;
 use util::{hints, line, span, span_bold};
 
-pub const SCREENS: [&str; 12] = [
+pub const SCREENS: [&str; 13] = [
     "Connection",
     "Providers",
     "Routes",
@@ -65,9 +65,11 @@ pub const SCREENS: [&str; 12] = [
     abstractcore_console::screens::ENGINES_TITLE,
     // The web console's Apps tab (ui/apps.rs); key `A`.
     "Apps",
-    // The first-run guide's welcome step (no jump key: 1-9, 0 and A are
-    // taken; Ctrl+G opens the guide on it, Ctrl+N/P reach it in browse).
+    // The first-run guide's welcome step (no jump key; Ctrl+G opens the
+    // guide on it, Ctrl+N/P reach it in browse).
     "Setup",
+    // Who can reach the gateway (ui/network.rs); key `N`.
+    "Network",
 ];
 
 /// Screens with semantic weight get NAMES (round-4 P3-2): the bare
@@ -89,11 +91,10 @@ pub const SCREEN_ENGINES: usize = 9;
 pub const SCREEN_APPS: usize = 10;
 /// The setup guide's welcome step (page id `setup`), no jump key.
 pub const SCREEN_WELCOME: usize = 11;
+/// The Network screen (who can reach the gateway), key `N`.
+pub const SCREEN_NETWORK: usize = 12;
 /// Screens reachable by a digit key (1-9, then 0).
 pub const DIGIT_SCREENS: usize = 10;
-/// Screens reachable by a jump key: the digit screens, then Apps (`A`).
-/// Every screen at or past this index (Setup) has no jump key.
-pub const KEYED_SCREENS: usize = SCREEN_APPS + 1;
 
 /// The first-run wizard, in the web guide's order (`console.py`
 /// `FIRST_RUN_STEPS` = welcome → engines → model → apps → done), mapped
@@ -117,24 +118,24 @@ pub const WIZARD_STEPS: [usize; 8] = [
     SCREEN_REVIEW,
 ];
 
-/// The digit that jumps to screen `i` in browse mode: 1-9, then 0 for
-/// the tenth (PageHost's own number jump covers 1-9 only).
-pub fn screen_key(i: usize) -> char {
-    if i == SCREEN_APPS {
-        // The digits are spent: the Apps screen gets a LETTER (shifted,
-        // so no screen's own lowercase verb ever collides with it).
-        'A'
-    } else if i == 9 {
-        '0'
-    } else {
-        char::from_digit(i as u32 + 1, 10).expect("screens 1-9")
+/// The key that jumps to screen `i` in browse mode: 1-9, then 0 for the
+/// tenth (PageHost's own number jump covers 1-9 only), then LETTERS once
+/// the digits are spent — shifted, so no screen's own lowercase verb ever
+/// collides: `A` Apps, `N` Network. None: no jump key (Setup).
+pub fn screen_key(i: usize) -> Option<char> {
+    match i {
+        SCREEN_APPS => Some('A'),
+        SCREEN_NETWORK => Some('N'),
+        9 => Some('0'),
+        0..=8 => char::from_digit(i as u32 + 1, 10),
+        _ => None,
     }
 }
 
 /// Stable PageHost page ids, parallel to `SCREENS`. `ui.screen: usize`
 /// stays the source of truth (the wizard gate reads indexes); a two-way
 /// equality-guarded bridge keeps PageHost's string `active` in lockstep.
-pub const SCREEN_IDS: [&str; 12] = [
+pub const SCREEN_IDS: [&str; 13] = [
     "connection",
     "providers",
     "routes",
@@ -149,6 +150,7 @@ pub const SCREEN_IDS: [&str; 12] = [
     abstractcore_console::screens::ENGINES_ID,
     "apps",
     "setup",
+    "network",
 ];
 
 /// Durable per-screen UI state (Copy: all signals).
@@ -174,6 +176,15 @@ pub struct UiState {
     pub first_run_error: Signal<Option<String>>,
 
     pub conn_url: Signal<String>,
+    /// Where `conn_url` came from (`pointer::UrlSource`): only a URL from
+    /// the gateway pointer or the default follows the pointer when a
+    /// connection fails.
+    pub url_source: Signal<crate::pointer::UrlSource>,
+    /// The home the pointer is read under (None = never follow; the boot
+    /// sets it from the real HOME, tests from a scratch dir).
+    pub pointer_home: Signal<Option<std::path::PathBuf>>,
+    /// The last pointer notice shown (a bad file is said once).
+    pub pointer_notice: Signal<Option<String>>,
     pub conn_token: Signal<String>,
     /// Human description of the token the LAST probe actually sent
     /// ("field (44 chars)", "env ABSTRACTGATEWAY_AUTH_TOKEN (19 chars)",
@@ -282,6 +293,9 @@ impl UiState {
             first_run_pending: cx.signal(None),
             first_run_error: cx.signal(None),
             conn_url: cx.signal(url),
+            url_source: cx.signal(crate::pointer::UrlSource::Flag),
+            pointer_home: cx.signal(None),
+            pointer_notice: cx.signal(None),
             conn_token: cx.signal(token),
             token_source: cx.signal(None),
             profile_sel: cx.signal(0),
@@ -343,6 +357,9 @@ pub struct Ctx {
     pub entity_drawer: Rc<RefCell<Option<abstracttui::app::drawer::DrawerHandle>>>,
     /// Env-token presence (never its value) for honest connection copy.
     pub env_token_set: bool,
+    /// `Some(reason)`: no screen in front of the person (SSH, or Linux
+    /// without a display) — never run a URL opener; show the link.
+    pub no_display: Option<String>,
     /// The health authority's probe launcher (url, token, generation).
     /// Production installs a thread-spawning prober in lib.rs; the
     /// headless harness installs a recorder (or nothing) and calls
@@ -500,9 +517,10 @@ impl Ctx {
         // budgets (a fresh `r` means "try again", including the probe).
         s.conn_retry_spent.set(Vec::new());
         match screen {
-            0 => {
-                // Connection: the network exposure panel's read (the
-                // probe itself stays the Probe button's job).
+            // Connection (its Network summary line) and the Network
+            // screen: the network read (the probe itself stays the
+            // Probe button's job).
+            0 | SCREEN_NETWORK => {
                 if s.conn.with_untracked(crate::store::ConnPhase::is_connected) {
                     s.network.set(Loadable::Loading);
                     self.send(Cmd::LoadNetwork);
@@ -921,6 +939,57 @@ pub fn open_form_guarded(
 }
 
 /// The root component.
+/// Say a pointer notice once (a bad file is not repeated on every re-read).
+pub fn pointer_notice(ctx: &Ctx, warning: Option<String>) {
+    if let Some(w) = warning {
+        if ctx
+            .ui
+            .pointer_notice
+            .with_untracked(|p| p.as_deref() != Some(w.as_str()))
+        {
+            ctx.ui.pointer_notice.set(Some(w.clone()));
+            ctx.store.notice.set(Some(w));
+        }
+    }
+}
+
+/// A connection that never reached the gateway, on a URL that came from the
+/// gateway pointer or the default: re-read the pointer and, when it names
+/// another address (a gateway restarted on a new port), connect there.
+fn install_pointer_follow(cx: Scope, ctx: &Ctx) {
+    let ctx = ctx.clone();
+    let was_unreachable = Rc::new(std::cell::Cell::new(false));
+    cx.effect(move || {
+        let unreachable = ctx
+            .store
+            .conn
+            .with(|c| matches!(c, ConnPhase::Unreachable(_)));
+        let entered = unreachable && !was_unreachable.get();
+        was_unreachable.set(unreachable);
+        if !entered || !ctx.ui.url_source.get_untracked().follows_pointer() {
+            return;
+        }
+        let Some(home) = ctx.ui.pointer_home.get_untracked() else {
+            return;
+        };
+        let current = ctx.ui.conn_url.get_untracked();
+        if let Some(next) =
+            crate::pointer::follow_pointer(&current, Some(&home), crate::pointer::current_uid())
+        {
+            pointer_notice(&ctx, next.warning.clone());
+            ctx.ui.url_source.set(next.source);
+            ctx.ui.conn_url.set(next.url.clone());
+            if next.warning.is_none() {
+                ctx.store.notice.set(Some(format!(
+                    "{current} did not answer; the gateway pointer names {} — connecting there",
+                    next.url
+                )));
+            }
+            ctx.connect_now();
+        }
+    });
+}
+
 pub fn root(cx: Scope, ctx: Ctx) -> View {
     let theme = use_theme(cx);
     let ui = ctx.ui;
@@ -1065,20 +1134,20 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         .shortcut(KeyChord::plain(Key::F(2)), move |_| {
             docs::open(&ctx_docs, cx)
         });
-    // Screen keys (1-9, 0, A) at the root — the ONE jump surface. Wizard:
+    // Screen keys (1-9, 0, A, N) at the root — the ONE jump surface. Wizard:
     // a REFUSAL with a reason, so a swallowed digit never reads as a dead
     // app (F3). Browse: the jump. PageHost's own number_jump is off: it
     // re-anchors focus on the host root even when the digit names the
     // screen already shown, and that left the screen's keys dead (the
     // page is not on the root→focus path) — review 2 pty proof, `8` then
     // `w` on Resources. A same-screen key here changes nothing.
-    for i in 0..KEYED_SCREENS {
+    for i in 0..SCREENS.len() {
+        let Some(key) = screen_key(i) else { continue };
         let ctx_i = ctx.clone();
-        let key = screen_key(i);
         root_el = root_el.shortcut(KeyChord::plain(Key::Char(key)), move |_| {
             if ctx_i.ui.wizard.get_untracked() {
                 ctx_i.store.notice.set(Some(
-                    "screen jumps (1-9, 0, A) work in browse mode — in the guide Ctrl+N walks, Ctrl+G jumps to a step or leaves"
+                    "screen jumps (1-9, 0, A, N) work in browse mode — in the guide Ctrl+N walks, Ctrl+G jumps to a step or leaves"
                         .into(),
                 ));
             } else if ctx_i.ui.screen.get_untracked() != i {
@@ -1138,6 +1207,7 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         let c9 = host_ctx.clone();
         let c10 = host_ctx.clone();
         let c11 = host_ctx.clone();
+        let c12 = host_ctx.clone();
         PageHost::new()
             .page(SCREEN_IDS[0], "1 Connection", move |gcx| {
                 connection::view(gcx, &c0, &theme.get().tokens)
@@ -1175,6 +1245,9 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
             })
             .page(SCREEN_IDS[SCREEN_WELCOME], "Setup", move |gcx| {
                 welcome::view(gcx, &c11, &theme.get().tokens)
+            })
+            .page(SCREEN_IDS[SCREEN_NETWORK], "N Network", move |gcx| {
+                network::view(gcx, &c12, &theme.get().tokens)
             })
             .active(active)
             .number_jump(false)
@@ -1320,6 +1393,7 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
     welcome::install(cx, ctx);
     // The paused-banner poll (/host/runner, 15 s while connected).
     host::install(cx, ctx);
+    install_pointer_follow(cx, ctx);
 
     // Screen-entry data loading: when connected and a screen's domains
     // were never asked, ask. Loading is set synchronously in
@@ -1783,7 +1857,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 globals.push(("Ctrl+P/Esc", "back"));
             } else {
                 globals.push(("q/Ctrl+C", "quit"));
-                globals.push(("1-9,0,A", "screens"));
+                globals.push(("1-9,0,A,N", "screens"));
                 globals.push(("Ctrl+N/P", "next/prev"));
             }
             globals.push(("Tab", "focus"));
@@ -1888,6 +1962,11 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 }
                 SCREEN_APPS => pairs.extend_from_slice(apps::HINTS),
                 SCREEN_WELCOME => {
+                    pairs.push(("r", "refresh"));
+                }
+                SCREEN_NETWORK => {
+                    pairs.push(("↑↓ Enter", "save mode"));
+                    pairs.push(("c", "copy address"));
                     pairs.push(("r", "refresh"));
                 }
                 _ => {}

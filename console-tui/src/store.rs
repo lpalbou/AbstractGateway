@@ -406,6 +406,45 @@ pub struct RouteRow {
     /// host-aware recommendation still holding `output.image: mlx-gen` on
     /// Linux). Rendered as a warning, never as a working route.
     pub route_unavailable: Option<RecommendationUnavailable>,
+    /// The host CAN run it, but the engine's software is not installed in
+    /// this Python environment (AbstractCore `engine_missing`). Never set
+    /// together with `route_unavailable`; separate from "not downloaded".
+    pub engine_missing: Option<EngineMissing>,
+}
+
+/// AbstractCore's `engine_missing` {engine, name, reason, install[,
+/// engine_row]} — on capability-default rows, apply-recommended entries and
+/// recommended-plan rows (`config/route_engines.py`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EngineMissing {
+    pub engine: String,
+    pub name: String,
+    pub reason: String,
+    /// The exact install command (None when there is none to give).
+    pub install: Option<String>,
+    /// The Engines screen row that installs it (`i` there).
+    pub engine_row: Option<String>,
+}
+
+impl EngineMissing {
+    pub fn from_value(v: &Value) -> Option<EngineMissing> {
+        let reason = s(v, "reason").filter(|r| !r.trim().is_empty())?;
+        Some(EngineMissing {
+            engine: s(v, "engine").unwrap_or_default(),
+            name: s(v, "name").unwrap_or_default(),
+            reason,
+            install: s(v, "install").filter(|i| !i.trim().is_empty()),
+            engine_row: s(v, "engine_row").filter(|e| !e.trim().is_empty()),
+        })
+    }
+
+    /// "engine missing: <reason> — install: <command>".
+    pub fn text(&self) -> String {
+        match &self.install {
+            Some(cmd) => format!("engine missing: {} — install: {cmd}", self.reason),
+            None => format!("engine missing: {}", self.reason),
+        }
+    }
 }
 
 /// `recommendation_unavailable` on a capability-defaults row.
@@ -498,6 +537,7 @@ impl RouteRow {
             route_unavailable: v
                 .get("route_unavailable")
                 .and_then(RecommendationUnavailable::from_value),
+            engine_missing: v.get("engine_missing").and_then(EngineMissing::from_value),
             key,
         })
     }
@@ -550,6 +590,11 @@ impl RouteRow {
             // the selected-row line and the `p` plan.
             if self.route_unavailable.is_some() {
                 return "cannot run here".to_string();
+            }
+            // Runnable here, but its engine is not installed: the reason
+            // and the install command ride the selected-row line and `p`.
+            if self.engine_missing.is_some() {
+                return "engine missing".to_string();
             }
             return "configured".to_string();
         }
@@ -678,6 +723,8 @@ impl WeightsRow {
     pub fn label(&self) -> &str {
         match self.status.as_str() {
             "installed" => "installed",
+            // The verb rides in the row: absent AND this host can fetch it.
+            "absent" if self.downloadable => "not downloaded — w: download",
             "absent" => "not downloaded",
             "not_applicable" => "remote",
             "unknown" => "unknown",
@@ -789,6 +836,66 @@ pub struct DownloadStatus {
     pub message: String,
     pub percent: Option<f64>,
     pub elapsed_s: f64,
+}
+
+/// A `w` download target, with the size the catalog publishes for it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DownloadOffer {
+    pub provider: String,
+    pub artifact: String,
+    /// The catalog's `download_bytes`, when it lists the artifact.
+    pub bytes: Option<u64>,
+    /// `size_source` vouches for it (`catalog`, `hf_api`); else an estimate.
+    pub vouched: bool,
+    /// The catalog could not be read (the size is then unknown, said so).
+    pub catalog_error: Option<String>,
+}
+
+impl DownloadOffer {
+    /// Read the size for (provider, artifact) out of a `model_catalog_v1`
+    /// answer (`rows[].artifacts[]`); an unlisted artifact has no size.
+    pub fn from_catalog(provider: &str, artifact: &str, catalog: &Value) -> DownloadOffer {
+        let hit = catalog
+            .get("rows")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .flat_map(|m| {
+                m.get("artifacts")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+            })
+            .find(|a| {
+                s(a, "artifact").as_deref() == Some(artifact)
+                    && s(a, "provider").as_deref() == Some(provider)
+            });
+        DownloadOffer {
+            provider: provider.to_string(),
+            artifact: artifact.to_string(),
+            bytes: hit
+                .and_then(|a| a.get("download_bytes").and_then(Value::as_u64))
+                .filter(|n| *n > 0),
+            vouched: hit
+                .and_then(|a| s(a, "size_source"))
+                .is_some_and(|src| src == "catalog" || src == "hf_api"),
+            catalog_error: None,
+        }
+    }
+
+    /// The confirm: names the target, its provider and its size.
+    pub fn prompt(&self) -> String {
+        let size = match (self.bytes, self.vouched, &self.catalog_error) {
+            (Some(n), true, _) => format!("{} download", human_bytes(n)),
+            (Some(n), false, _) => format!("about {} (an estimate)", human_bytes(n)),
+            (None, _, Some(e)) => format!("size unknown — the catalog could not be read: {e}"),
+            (None, _, None) => "size not published by the catalog".to_string(),
+        };
+        format!(
+            "Download {} ({size}) with {} on the execution host? This runs the provider's own tool.",
+            self.artifact, self.provider
+        )
+    }
 }
 
 impl DownloadStatus {
@@ -1288,12 +1395,19 @@ pub struct NetworkData {
     pub configured_label: String,
     pub configured_port: u64,
     pub configured_source: String,
+    /// `configured.port_source`: stored | default.
+    pub configured_port_source: String,
     pub effective_mode: String,
     pub effective_label: String,
     pub effective_bind: String,
     pub effective_port: Option<u64>,
+    /// Where the running bind's host / port came from: cli | setting | default.
+    pub effective_host_source: String,
+    pub effective_port_source: String,
     pub overridden_by_cli: bool,
     pub restart_required: bool,
+    /// `restart.port`: the port a restart binds (stored, else running).
+    pub restart_port: Option<u64>,
     pub restart_applies: bool,
     pub restart_available: bool,
     /// Why a restart cannot apply the setting / cannot be done here.
@@ -1422,12 +1536,16 @@ impl NetworkData {
             configured_label: s(c, "label"),
             configured_port: c.get("port").and_then(Value::as_u64).unwrap_or(0),
             configured_source: s(c, "source"),
+            configured_port_source: s(c, "port_source"),
             effective_mode: s(e, "mode"),
             effective_label: s(e, "label"),
             effective_bind: s(e, "bind_host"),
             effective_port: e.get("port").and_then(Value::as_u64),
+            effective_host_source: s(e, "host_source"),
+            effective_port_source: s(e, "port_source"),
             overridden_by_cli: b(e, "overridden_by_cli"),
             restart_required: b(v, "restart_required"),
+            restart_port: r.get("port").and_then(Value::as_u64),
             restart_applies: b(r, "applies"),
             restart_available: b(r, "available"),
             restart_reason: opt(r, "reason").or_else(|| opt(r, "unavailable_reason")),
@@ -2579,6 +2697,9 @@ pub struct Store {
     /// The download job the operator most recently started, polled to
     /// completion by the worker. `None` = no download this session.
     pub download: Signal<Option<DownloadStatus>>,
+    /// `w` on a route: the target with its catalog size, read before the
+    /// confirm (the Routes screen takes it and asks). None = nothing asked.
+    pub download_offer: Signal<Option<DownloadOffer>>,
     /// The "Download all" parent job (`grp_…`) the operator started,
     /// polled until it ends. `None` = none this session.
     pub download_group: Signal<Option<crate::api::firstrun::GroupStatus>>,
@@ -2763,6 +2884,11 @@ pub struct VoicesData {
     pub provider: String,
     pub model: String,
     pub voices: Vec<String>,
+    /// Why the listing is empty, in the gateway's / AbstractVoice's words
+    /// (`unavailable_reason`, else `error`): "Supertonic is not installed:
+    /// … Install it with: …", "OpenAI: needs an API key (add it under
+    /// Providers)". None when voices are listed or nothing was said.
+    pub unavailable_reason: Option<String>,
 }
 
 impl VoicesData {
@@ -2787,10 +2913,18 @@ impl VoicesData {
                 }
             }
         }
+        let unavailable_reason = if voices.is_empty() {
+            s(v, "unavailable_reason")
+                .or_else(|| s(v, "error"))
+                .filter(|r| !r.trim().is_empty())
+        } else {
+            None
+        };
         VoicesData {
             provider: provider.to_string(),
             model: model.to_string(),
             voices,
+            unavailable_reason,
         }
     }
 }
@@ -3390,6 +3524,7 @@ impl Store {
             routes: cx.signal(Loadable::default()),
             availability: cx.signal(Loadable::default()),
             download: cx.signal(None),
+            download_offer: cx.signal(None),
             download_group: cx.signal(None),
             apply_followup: cx.signal(None),
             first_run: cx.signal(Loadable::default()),
@@ -3467,6 +3602,7 @@ impl Store {
             download: _,      // survives: the job is on the OLD host, and
             // its status line is the only record of it
             download_group: _, // survives: same reason as `download`
+            download_offer,
             apply_followup,
             first_run,
             welcome,
@@ -3514,6 +3650,8 @@ impl Store {
             reservations,
         } = *self;
         conn_retry_spent.set(Vec::new());
+        // A confirm for gateway A's host must never be answered on B.
+        download_offer.set(None);
         providers.set(Loadable::NotAsked);
         profiles.set(Loadable::NotAsked);
         routes.set(Loadable::NotAsked);

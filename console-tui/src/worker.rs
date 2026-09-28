@@ -31,9 +31,9 @@ pub mod entities;
 pub mod operator;
 use crate::store::{
     entities_from_payload, models_from_payload, runtimes_from_payload, users_from_payload,
-    AvailabilityData, ConnPhase, DiscoverOutcome, DownloadStatus, Identity, JournalEntry, Loadable,
-    NetworkData, ProbeReport, ProfilesData, ProvidersData, RouteTestOutcome, RoutesData,
-    RuntimeConfigData, Store, VoicesData,
+    AvailabilityData, ConnPhase, DiscoverOutcome, DownloadOffer, DownloadStatus, Identity,
+    JournalEntry, Loadable, NetworkData, ProbeReport, ProfilesData, ProvidersData,
+    RouteTestOutcome, RoutesData, RuntimeConfigData, Store, VoicesData,
 };
 
 /// Probe sequence — every probe gets a visible number so repeated
@@ -91,6 +91,12 @@ pub enum Cmd {
     /// operator took queued behind it. Now each poll is one short GET and
     /// the next one arrives on the channel afterwards, so navigation, edits
     /// and refreshes interleave with a running download.
+    /// `w`: read the target's catalog size, then offer the confirm
+    /// (`store.download_offer`).
+    PrepareDownload {
+        provider: String,
+        artifact: String,
+    },
     PollDownload {
         job: String,
         provider: String,
@@ -274,8 +280,6 @@ pub enum Cmd {
         mode: String,
         acknowledge_internet: bool,
     },
-    /// `POST /network/restart` (the gateway goes away for a few seconds).
-    RestartNetwork,
     /// Operator controls — see `worker::operator::OpCmd`.
     Operator(operator::OpCmd),
     /// `POST /network {allowed_origins?, trust_proxy?}` (reverse proxy,
@@ -859,6 +863,14 @@ pub fn applied_recommended_summary(payload: &Value) -> String {
             }
             _ => {}
         }
+        // Written or kept, but its engine is not installed here: said with
+        // the exact command (AbstractCore `engine_missing` on the entry).
+        if let Some(m) = row
+            .get("engine_missing")
+            .and_then(crate::store::EngineMissing::from_value)
+        {
+            flagged.push(format!("{key}: {}", m.text()));
+        }
     }
     let mut parts: Vec<String> = Vec::new();
     if !changed.is_empty() {
@@ -941,6 +953,21 @@ fn finish_busy<T>(store: &Store, wake: &WakeHandle, op: u64, f: impl FnOnce() ->
 
 /// The gateway's own words for a refusal: `refused_reason` (+ `fix`)
 /// from a 4xx body, else the error's text.
+/// The restart offer after a network save: Some(prompt) when the saved
+/// exposure differs from what runs AND a restart from here applies it;
+/// None when nothing needs a restart or one cannot apply it (the screen
+/// shows the gateway's reason instead).
+pub fn network_restart_offer(d: &NetworkData) -> Option<String> {
+    (d.restart_required && d.restart_applies && d.restart_available).then(|| {
+        format!(
+            "'{}' on port {} is saved but not running yet. Restart the gateway now to apply it? \
+             Running work pauses for a few seconds; the console reconnects by itself.",
+            d.configured_label,
+            d.restart_port.unwrap_or(d.configured_port)
+        )
+    })
+}
+
 pub fn refusal_text(e: &ApiError) -> String {
     let body = e.body.as_ref();
     let reason = body
@@ -1168,6 +1195,29 @@ fn handle(
 
         Cmd::DownloadModel { provider, artifact } => {
             handle_download(client, store, wake, tx, &provider, &artifact)
+        }
+
+        Cmd::PrepareDownload { provider, artifact } => {
+            // The size the confirm names: the catalog's entry for this
+            // artifact (an unlisted one says "size not published", an
+            // unreadable catalog says why; the download never depends on it).
+            let label = format!("reading the size of {artifact}");
+            let catalog = with_busy(store, wake, &label, || {
+                // The whole engine's rows (the free-text `q` matches model
+                // names, not artifact ids): the artifact is found below.
+                require_client(client).and_then(|c| c.models_catalog("", Some(&provider), false))
+            });
+            let offer = match &catalog {
+                Ok(v) => DownloadOffer::from_catalog(&provider, &artifact, v),
+                Err(e) => DownloadOffer {
+                    provider: provider.clone(),
+                    artifact: artifact.clone(),
+                    catalog_error: Some(e.to_string()),
+                    ..DownloadOffer::default()
+                },
+            };
+            let s = *store;
+            wake.post(move || s.download_offer.set(Some(offer.clone())));
         }
 
         Cmd::PollDownload {
@@ -1850,7 +1900,15 @@ fn handle(
             let s = *store;
             wake.post(move || s.notice.set(Some(note.clone())));
             if let Ok(v) = verify {
-                publish_ready(wake, store.network, NetworkData::from_value(&v));
+                let d = NetworkData::from_value(&v);
+                // Saved, and a restart here would apply it: the Network
+                // screen offers the restart (a confirm, never automatic).
+                if write.is_ok() {
+                    if let Some(offer) = network_restart_offer(&d) {
+                        wake.post(move || s.op.network_restart_offer.set(Some(offer.clone())));
+                    }
+                }
+                publish_ready(wake, store.network, d);
             }
         }
 
@@ -1870,18 +1928,6 @@ fn handle(
             if let Ok(v) = verify {
                 publish_ready(wake, store.network, NetworkData::from_value(&v));
             }
-        }
-
-        Cmd::RestartNetwork => {
-            let res = with_busy(store, wake, "restarting the gateway", || {
-                require_client(client).and_then(|c| c.restart_network())
-            });
-            let note = match &res {
-                Ok(_) => "gateway restarting to apply the network exposure — probe again in a few seconds (1 Connection → Enter)".to_string(),
-                Err(e) => format!("✗ restart refused: {}", refusal_text(e)),
-            };
-            let s = *store;
-            wake.post(move || s.notice.set(Some(note.clone())));
         }
 
         Cmd::Operator(op) => operator::handle(client, store, wake, tx, op, on_done),
@@ -3330,7 +3376,7 @@ fn handle_download(
                 true,
             );
         }
-        Err(e) => finish_download(store, wake, op, provider, artifact, Err(e)),
+        Err(e) => finish_download(store, wake, tx, op, provider, artifact, Err(e)),
     }
 }
 
@@ -3392,7 +3438,7 @@ fn handle_poll_download(
     let mut status = match polled {
         Ok(value) => DownloadStatus::from_job(&value.get("job").cloned().unwrap_or(Value::Null)),
         Err(e) => {
-            finish_download(store, wake, op, provider, artifact, Err(e));
+            finish_download(store, wake, tx, op, provider, artifact, Err(e));
             return;
         }
     };
@@ -3408,7 +3454,7 @@ fn handle_poll_download(
         let s = *store;
         let snapshot = status.clone();
         wake.post(move || s.download.set(Some(snapshot)));
-        finish_download(store, wake, op, provider, artifact, Ok(status));
+        finish_download(store, wake, tx, op, provider, artifact, Ok(status));
         return;
     }
 
@@ -3419,13 +3465,14 @@ fn handle_poll_download(
     if status.running() {
         schedule_poll(tx, target, false);
     } else {
-        finish_download(store, wake, op, provider, artifact, Ok(status));
+        finish_download(store, wake, tx, op, provider, artifact, Ok(status));
     }
 }
 
 fn finish_download(
     store: &Store,
     wake: &WakeHandle,
+    tx: &Sender<Cmd>,
     op: u64,
     provider: &str,
     artifact: &str,
@@ -3436,6 +3483,11 @@ fn finish_download(
         Ok(status) => (status.line(), Ok(status.status.clone())),
         Err(e) => (format!("{provider} {artifact}: {e}"), Err(e.to_string())),
     };
+    // The job ENDED (succeeded or failed — not "gave up watching"): the
+    // host's weights changed, so the routes' weights column and every
+    // voice list read before are stale. Re-read now, when it is true —
+    // never at the start, when the job had only just begun.
+    let ended = matches!(&outcome, Ok(status) if !status.running());
     let s = *store;
     wake.post(move || {
         s.end_busy(op);
@@ -3444,13 +3496,20 @@ fn finish_download(
             when: crate::store::now_hms(),
             action,
             outcome: journal,
-            // The download's OWN terminal status is the verification —
-            // the gateway re-probes availability on the next `r`, and a
-            // second GET here would only restate the job we just polled.
+            // The download's OWN terminal status is the verification; the
+            // availability re-read below is the column catching up.
             verified: None,
         });
         s.notice.set(Some(notice));
+        if ended {
+            // Cached voices were listed without this model's voices.
+            s.voices.set(Loadable::NotAsked);
+            s.availability.set(Loadable::Loading);
+        }
     });
+    if ended {
+        let _ = tx.send(Cmd::LoadAvailability);
+    }
 }
 
 /// "Download all": start the recommended group, then hand the lane back
@@ -3738,6 +3797,102 @@ fn finish_write_attention(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A mounted store + the UI thread's wake handle, driven headless:
+    /// posted closures run on `turn()` (the live-data law, in a test).
+    fn mounted() -> (
+        abstracttui::prelude::App,
+        abstracttui::testing::CaptureTerm,
+        abstracttui::app::Driver,
+        Store,
+        WakeHandle,
+    ) {
+        use abstracttui::prelude::*;
+        let size = Size::new(40, 10);
+        let mut app = App::new(size);
+        let slot: std::rc::Rc<std::cell::RefCell<Option<Store>>> = Default::default();
+        let out = slot.clone();
+        app.mount(move |cx| {
+            *out.borrow_mut() = Some(Store::create(cx));
+            Element::new().build()
+        })
+        .expect("mount");
+        let mut term = abstracttui::testing::CaptureTerm::new(size);
+        let cfg = RunConfig {
+            probe: false,
+            platform_clipboard: false,
+            ..RunConfig::default()
+        };
+        let driver = abstracttui::app::Driver::new(&mut app, &mut term, cfg).expect("driver");
+        let store = slot.borrow().expect("store");
+        (
+            app,
+            term,
+            driver,
+            store,
+            abstracttui::reactive::wake_handle(),
+        )
+    }
+
+    fn status(state: &str) -> DownloadStatus {
+        DownloadStatus::from_value_for_test(
+            "dl_1",
+            "supertonic",
+            "supertonic-3",
+            state,
+            "",
+            None,
+            1.0,
+        )
+    }
+
+    /// A `w` download that ENDS re-reads the weights and forgets the
+    /// cached voices (they were listed without this model); one the
+    /// console merely stopped watching (still running) or whose poll
+    /// failed re-reads nothing.
+    #[test]
+    fn a_finished_download_rereads_availability_and_clears_voices() {
+        let (mut app, mut term, mut driver, store, wake) = mounted();
+        for (outcome, rereads) in [
+            (Ok(status("succeeded")), true),
+            (Ok(status("failed")), true),
+            (Ok(status("running")), false),
+            (
+                Err(ApiError {
+                    kind: ApiErrorKind::Unreachable,
+                    message: "down".into(),
+                    body: None,
+                    timed_out: false,
+                }),
+                false,
+            ),
+        ] {
+            store.voices.set(Loadable::Ready(VoicesData::default()));
+            let (tx, rx) = std::sync::mpsc::channel::<Cmd>();
+            finish_download(
+                &store,
+                &wake,
+                &tx,
+                next_op(),
+                "supertonic",
+                "supertonic-3",
+                outcome,
+            );
+            driver.turn(&mut app, &mut term).expect("turn");
+            let sent: Vec<Cmd> = rx.try_iter().collect();
+            assert_eq!(
+                sent.iter().any(|c| matches!(c, Cmd::LoadAvailability)),
+                rereads,
+                "{sent:?}"
+            );
+            assert_eq!(
+                store
+                    .voices
+                    .with_untracked(|v| matches!(v, Loadable::NotAsked)),
+                rereads
+            );
+        }
+    }
 
     /// Export verify (review 2 N3): a failed download (a non-admin's 404)
     /// verifies nothing; a written file verifies only at the exact size.

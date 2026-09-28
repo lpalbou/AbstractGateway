@@ -85,6 +85,7 @@ from ..provider_connections import (
     builtin_provider_public_row,
     configured_builtin_provider_public_rows,
     configured_provider_request_kwargs,
+    providers_screen_api_key,
 )
 from .. import host_control, host_metrics, self_update
 from ..run_retention import (
@@ -14769,10 +14770,6 @@ def _builtin_voice_profile_records(engine: str) -> list[Dict[str, Any]]:
     return records
 
 
-def _has_builtin_voice_profiles(engine: str) -> bool:
-    return bool(_builtin_voice_profile_records(engine))
-
-
 def _utc_now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -15450,6 +15447,11 @@ def _compact_voice_catalog_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
         "tts_profiles_by_provider",
         "tts_formats_by_provider",
         "controls",
+        "cloud_providers",
+        # Why a provider is not listed / why the listing is empty
+        # (AbstractVoice's `unavailable_*`): the consoles show the reason.
+        "unavailable_providers",
+        "unavailable_reason",
     )
     return {key: payload[key] for key in keep_keys if key in payload}
 
@@ -15739,7 +15741,7 @@ def _static_voice_catalog_response(provider: Optional[str] = None) -> Dict[str, 
         tts_profiles_by_provider["openai"] = [str(item["id"]) for item in openai_profiles]
         tts_voices_by_provider["openai"] = [str(item["id"]) for item in openai_profiles]
 
-    if include("piper") and (_module_available("piper") or _module_available("piper_phonemize")):
+    if include("piper") and _voice_engine_installed("piper", "tts"):
         piper_profiles = _static_piper_profile_records()
         add_provider("piper")
         profiles.extend(piper_profiles)
@@ -15747,7 +15749,7 @@ def _static_voice_catalog_response(provider: Optional[str] = None) -> Dict[str, 
         tts_profiles_by_provider["piper"] = [str(item["id"]) for item in piper_profiles if str(item.get("id") or "").strip()]
         tts_voices_by_provider["piper"] = [str(item["id"]) for item in piper_profiles if str(item.get("id") or "").strip()]
 
-    if include("omnivoice") and _module_available("omnivoice"):
+    if include("omnivoice") and _voice_engine_installed("omnivoice", "tts"):
         omni_profiles = _builtin_voice_profile_records("omnivoice")
         add_provider("omnivoice")
         profiles.extend(omni_profiles)
@@ -15759,14 +15761,16 @@ def _static_voice_catalog_response(provider: Optional[str] = None) -> Dict[str, 
         supertonic_profiles = _builtin_voice_profile_records("supertonic")
     else:
         supertonic_profiles = []
-    if include("supertonic") and (supertonic_profiles or _module_available("onnxruntime")):
+    # Listed only when its runtime (onnxruntime) is installed: built-in voice
+    # styles without the runtime were a voice that could never speak.
+    if include("supertonic") and _voice_engine_installed("supertonic", "tts"):
         add_provider("supertonic")
         profiles.extend(supertonic_profiles)
         tts_models_by_provider["supertonic"] = _static_tts_model_ids_for_provider("supertonic")
         tts_profiles_by_provider["supertonic"] = [str(item["id"]) for item in supertonic_profiles]
         tts_voices_by_provider["supertonic"] = [str(item["id"]) for item in supertonic_profiles]
 
-    if include("audiodit") and _module_available("torch") and _module_available("transformers"):
+    if include("audiodit") and _voice_engine_installed("audiodit", "tts"):
         add_provider("audiodit")
         tts_models_by_provider["audiodit"] = _static_tts_model_ids_for_provider("audiodit")
 
@@ -15818,13 +15822,138 @@ def _static_voice_catalog_response(provider: Optional[str] = None) -> Dict[str, 
     }
 
 
-def _module_available(module_name: str) -> bool:
+def _voice_engine_runtime(engine: str, kind: str) -> Any:
+    """AbstractVoice's own answer to "is this engine's runtime installed?"
+    (`abstractvoice.engine_runtime`, find_spec only: no engine is imported).
+    The ONE source of truth for the static voice listings; a voice package
+    without that API fails loudly here (the release sets the floor)."""
     try:
-        import importlib.util
+        from abstractvoice.engine_runtime import engine_runtime_status
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "voice engine status needs AbstractVoice with abstractvoice.engine_runtime "
+                f"(install or upgrade abstractvoice): {exc}"
+            ),
+        ) from exc
+    return engine_runtime_status(engine, kind=kind)
 
-        return importlib.util.find_spec(module_name) is not None
-    except Exception:
-        return False
+
+def _voice_engine_installed(engine: str, kind: str) -> bool:
+    return bool(_voice_engine_runtime(engine, kind).installed)
+
+
+def _voice_runtime_unavailable(kind: str, listed: list[str]) -> Dict[str, Dict[str, Any]]:
+    """`unavailable_providers[kind]` for the static listings: every local
+    engine of `kind` whose runtime is not installed, in AbstractVoice's
+    record shape ({provider, code: runtime_missing, reason, runtime})."""
+    from abstractvoice.engine_runtime import known_engines
+
+    out: Dict[str, Dict[str, Any]] = {}
+    present = {str(p).strip().lower().replace("_", "-") for p in listed}
+    for engine in known_engines(kind):
+        status = _voice_engine_runtime(engine, kind)
+        if status.remote or status.installed or engine.replace("_", "-") in present:
+            continue
+        out[engine] = {"provider": engine, "code": "runtime_missing", "reason": status.reason, "runtime": status.to_dict()}
+    return out
+
+
+# Cloud voice providers (TTS and STT): ALWAYS listed, so a user can see they
+# exist before configuring them, marked `needs_key` until a key is configured
+# — in the environment, or through the Providers screen (AbstractCore's
+# `api_keys.<provider>` or an endpoint profile of that family with a key).
+_VOICE_CLOUD_PROVIDERS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("openai", "OpenAI", ("OPENAI_API_KEY", "ABSTRACTVOICE_OPENAI_API_KEY")),
+    ("openai-compatible", "OpenAI-compatible", ("ABSTRACTVOICE_REMOTE_API_KEY", "OPENAI_API_KEY")),
+)
+
+
+def _voice_cloud_provider_details(provider: Optional[str] = None) -> list[Dict[str, Any]]:
+    """[{provider, label, display_name, cloud, needs_key, key_source, state, reason}]
+    for the cloud voice providers (filtered to `provider` when given)."""
+    wanted = str(provider or "").strip().lower().replace("_", "-")
+    current_base, root_base = _gateway_profile_dirs()
+    out: list[Dict[str, Any]] = []
+    for provider_id, name, env_keys in _VOICE_CLOUD_PROVIDERS:
+        if wanted and wanted != provider_id:
+            continue
+        source: Optional[str] = "environment" if _env_first(*env_keys) else None
+        if source is None and providers_screen_api_key(
+            provider_id, current_base_dir=current_base, root_base_dir=root_base
+        ):
+            source = "providers"
+        needs_key = source is None
+        out.append(
+            {
+                "provider": provider_id,
+                "display_name": name,
+                "label": name,
+                "status": "needs an API key (add it under Providers)" if needs_key else "ready",
+                "cloud": True,
+                "needs_key": needs_key,
+                "key_source": source,
+                "state": "needs_key" if needs_key else "ready",
+                "reason": (
+                    f"{name} is a cloud service: add its API key under Providers to use it"
+                    if needs_key
+                    else f"API key configured ({'Providers screen' if source == 'providers' else 'environment'})"
+                ),
+            }
+        )
+    return out
+
+
+def _voice_openai_api_key() -> Optional[str]:
+    """The OpenAI key saved through the Providers screen, for AbstractVoice's
+    host setting `voice_openai_api_key` (None when none is saved). Resolved
+    per call, so a key rotated in Providers reaches the next listing."""
+    current_base, root_base = _gateway_profile_dirs()
+    return providers_screen_api_key("openai", current_base_dir=current_base, root_base_dir=root_base) or None
+
+
+def _with_voice_cloud_providers(
+    payload: Dict[str, Any], *, list_keys: tuple[str, ...], provider: Optional[str] = None
+) -> Dict[str, Any]:
+    """`payload` with the cloud voice providers appended to each list in
+    `list_keys` and their states under `cloud_providers`."""
+    details = _voice_cloud_provider_details(provider)
+    out = dict(payload)
+    for key in list_keys:
+        values = [str(x) for x in (out.get(key) or []) if isinstance(x, str) and str(x).strip()]
+        present = {v.strip().lower() for v in values}
+        values.extend(d["provider"] for d in details if d["provider"] not in present)
+        out[key] = values
+    out["cloud_providers"] = details
+    return out
+
+
+def _with_cloud_voice_reason(payload: Dict[str, Any], provider: Optional[str]) -> Dict[str, Any]:
+    """A voice listing filtered to a cloud provider that has no key: its
+    reason names where the key goes (the Providers screen), not only that
+    none is configured."""
+    wanted = str(provider or "").strip().lower().replace("_", "-")
+    if not wanted or wanted not in {pid for pid, _name, _env in _VOICE_CLOUD_PROVIDERS}:
+        return payload
+    detail = _voice_cloud_provider_details(wanted)[0]
+    if not detail["needs_key"]:
+        return payload
+    out = dict(payload)
+    out["unavailable_reason"] = f"{detail['display_name']}: needs an API key (add it under Providers)"
+    return out
+
+
+def _voice_provider_catalog_items(payload: Dict[str, Any], *, provider_keys: tuple[str, ...]) -> list[Dict[str, Any]]:
+    """Provider items with each cloud provider's state merged in (label,
+    needs_key, key_source, state, reason) — what both consoles render."""
+    by_id = {d["provider"]: d for d in (payload.get("cloud_providers") or []) if isinstance(d, dict)}
+    items = _gateway_catalog_provider_items(payload, provider_keys=provider_keys)
+    for item in items:
+        detail = by_id.get(str(item.get("id") or "").strip().lower())
+        if detail:
+            item.update(detail)
+    return items
 
 
 def _static_voice_providers_only_response() -> Dict[str, Any]:
@@ -15838,26 +15967,17 @@ def _static_voice_providers_only_response() -> Dict[str, Any]:
 
     add(tts_providers, _resolved_voice_engine("tts"))
     add(stt_providers, _resolved_voice_engine("stt"))
-    if _env_first("OPENAI_API_KEY", "ABSTRACTVOICE_OPENAI_API_KEY"):
-        add(tts_providers, "openai")
-        add(stt_providers, "openai")
-    if _env_first("ABSTRACTGATEWAY_VOICE_REMOTE_BASE_URL", "ABSTRACTVOICE_REMOTE_BASE_URL"):
-        add(tts_providers, "openai-compatible")
-        add(stt_providers, "openai-compatible")
-    if _module_available("piper") or _module_available("piper_phonemize"):
-        add(tts_providers, "piper")
-    if _module_available("omnivoice"):
-        add(tts_providers, "omnivoice")
-    if _module_available("onnxruntime") or _has_builtin_voice_profiles("supertonic"):
-        add(tts_providers, "supertonic")
-    if _module_available("torch") and _module_available("transformers"):
-        add(tts_providers, "audiodit")
-    if _module_available("f5_tts"):
-        add(tts_providers, "f5-tts")
-    if _module_available("faster_whisper") or _module_available("whisper"):
-        add(stt_providers, "faster-whisper")
-    if _module_available("torch") and _module_available("transformers") and _module_available("soundfile"):
-        add(stt_providers, "transformers-asr")
+    # openai / openai-compatible: always listed by the callers through
+    # `_with_voice_cloud_providers` (with their needs_key state).
+    # Local engines: listed when AbstractVoice says their runtime is
+    # installed (one source of truth); the rest are explained below.
+    from abstractvoice.engine_runtime import known_engines
+
+    for kind, target in (("tts", tts_providers), ("stt", stt_providers)):
+        for engine in known_engines(kind):
+            status = _voice_engine_runtime(engine, kind)
+            if not status.remote and status.installed:
+                add(target, engine)
 
     return {
         "kind": "voice_providers",
@@ -15866,6 +15986,10 @@ def _static_voice_providers_only_response() -> Dict[str, Any]:
         "providers": tts_providers,
         "tts_providers": tts_providers,
         "stt_providers": stt_providers,
+        "unavailable_providers": {
+            "tts": _voice_runtime_unavailable("tts", tts_providers),
+            "stt": _voice_runtime_unavailable("stt", stt_providers),
+        },
         "profiles": [],
         "voices": [],
         "cloned_voices": [],
@@ -15916,19 +16040,15 @@ def _static_speech_models_response(provider: Optional[str] = None) -> Dict[str, 
         openai_values = _dedupe_strings(values + ["tts-1", "tts-1-hd", "gpt-4o-mini-tts"])
         if openai_values and (_env_first("OPENAI_API_KEY", "ABSTRACTVOICE_OPENAI_API_KEY") or provider_key == "openai"):
             models_by_provider["openai"] = openai_values
-    if (not provider_key or provider_key == "supertonic") and (
-        _module_available("onnxruntime") or _has_builtin_voice_profiles("supertonic")
-    ):
+    if (not provider_key or provider_key == "supertonic") and _voice_engine_installed("supertonic", "tts"):
         models_by_provider["supertonic"] = _static_tts_model_ids_for_provider("supertonic")
-    if (not provider_key or provider_key == "piper") and (
-        _module_available("piper") or _module_available("piper_phonemize")
-    ):
+    if (not provider_key or provider_key == "piper") and _voice_engine_installed("piper", "tts"):
         piper_models = _static_tts_model_ids_for_provider("piper")
         if piper_models:
             models_by_provider["piper"] = piper_models
-    if (not provider_key or provider_key == "omnivoice") and _module_available("omnivoice"):
+    if (not provider_key or provider_key == "omnivoice") and _voice_engine_installed("omnivoice", "tts"):
         models_by_provider["omnivoice"] = _static_tts_model_ids_for_provider("omnivoice")
-    if (not provider_key or provider_key == "audiodit") and _module_available("torch") and _module_available("transformers"):
+    if (not provider_key or provider_key == "audiodit") and _voice_engine_installed("audiodit", "tts"):
         models_by_provider["audiodit"] = _static_tts_model_ids_for_provider("audiodit")
     if not provider_key and engine and values:
         models_by_provider.setdefault(engine.lower(), _dedupe_strings(values))
@@ -17660,8 +17780,12 @@ async def voice_voices_catalog(
             model=model,
             providers_only=providers_only,
         )
+        if providers_only:
+            out = _with_voice_cloud_providers(out, list_keys=("providers", "tts_providers"), provider=provider)
+        else:
+            out = _with_cloud_voice_reason(out, provider)
         items = (
-            _gateway_catalog_provider_items(out, provider_keys=("providers", "tts_providers"))
+            _voice_provider_catalog_items(out, provider_keys=("providers", "tts_providers"))
             if providers_only
             else _gateway_catalog_voice_items(out)
         )
@@ -17678,6 +17802,7 @@ async def voice_voices_catalog(
             discovery.get_voice_catalog,
             base_url=base_url,
             provider_api_key=_request_provider_api_key(request),
+            voice_openai_api_key=_voice_openai_api_key(),
             provider=provider,
             model=model,
             providers_only=providers_only,
@@ -17690,8 +17815,12 @@ async def voice_voices_catalog(
         model=model,
         providers_only=providers_only,
     )
+    if providers_only:
+        out = _with_voice_cloud_providers(out, list_keys=("providers", "tts_providers"), provider=provider)
+    else:
+        out = _with_cloud_voice_reason(out, provider)
     items = (
-        _gateway_catalog_provider_items(out, provider_keys=("providers", "tts_providers"))
+        _voice_provider_catalog_items(out, provider_keys=("providers", "tts_providers"))
         if providers_only
         else _gateway_catalog_voice_items(out)
     )
@@ -17733,6 +17862,7 @@ async def audio_speech_models_catalog(
                     discovery.get_voice_catalog,
                     base_url=base_url,
                     provider_api_key=_request_provider_api_key(request),
+                    voice_openai_api_key=_voice_openai_api_key(),
                     provider=provider,
                     model=None,
                     providers_only=True,
@@ -17747,6 +17877,7 @@ async def audio_speech_models_catalog(
                 )
             except Exception as e:
                 raise HTTPException(status_code=502, detail=str(e)) from e
+        out = _with_voice_cloud_providers(out, list_keys=("providers", "tts_providers"), provider=provider)
         out.setdefault("models", [])
         out["models"] = []
         out.setdefault("models_by_provider", {})
@@ -17755,7 +17886,7 @@ async def audio_speech_models_catalog(
             out,
             kind="providers",
             scope="tts",
-            items=_gateway_catalog_provider_items(out, provider_keys=("providers", "tts_providers")),
+            items=_voice_provider_catalog_items(out, provider_keys=("providers", "tts_providers")),
             provider=provider,
             metadata={"providers_only": True},
         )
@@ -17841,6 +17972,7 @@ async def audio_transcription_models_catalog(
                     discovery.get_voice_catalog,
                     base_url=base_url,
                     provider_api_key=_request_provider_api_key(request),
+                    voice_openai_api_key=_voice_openai_api_key(),
                     provider=provider,
                     model=None,
                     providers_only=True,
@@ -17870,11 +18002,12 @@ async def audio_transcription_models_catalog(
             out["stt_models_by_provider"] = {}
             out["provider_models"] = []
             out["active_provider"] = stt_providers[0] if stt_providers else None
+        out = _with_voice_cloud_providers(out, list_keys=("providers", "stt_providers", "available_providers"), provider=provider)
         return _gateway_catalog_response(
             out,
             kind="providers",
             scope="stt",
-            items=_gateway_catalog_provider_items(out, provider_keys=("providers", "stt_providers", "available_providers")),
+            items=_voice_provider_catalog_items(out, provider_keys=("providers", "stt_providers", "available_providers")),
             provider=provider,
             metadata={"providers_only": True},
         )

@@ -25,6 +25,46 @@ def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient
     return TestClient(app), {"Authorization": f"Bearer {token}"}
 
 
+# Cloud voice providers are ALWAYS listed (wave 2): marked needs_key until a
+# key is configured (environment or the Providers screen).
+def _cloud_items() -> list[dict[str, Any]]:
+    return [
+        {
+            "id": pid, "provider": pid, "name": pid, "display_name": name,
+            "label": name, "status": "needs an API key (add it under Providers)",
+            "cloud": True, "needs_key": True, "key_source": None, "state": "needs_key",
+            "reason": f"{name} is a cloud service: add its API key under Providers to use it",
+        }
+        for pid, name in (("openai", "OpenAI"), ("openai-compatible", "OpenAI-compatible"))
+    ]
+
+
+def _without_cloud_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("OPENAI_API_KEY", "ABSTRACTVOICE_OPENAI_API_KEY", "ABSTRACTVOICE_REMOTE_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+
+
+def _voice_runtimes(monkeypatch: pytest.MonkeyPatch, *installed: str) -> None:
+    """Only `installed` local voice engines have their runtime (AbstractVoice's
+    own status records, with `installed` and `reason` overridden)."""
+    import dataclasses
+
+    import abstractgateway.routes.gateway as gateway_routes
+    from abstractvoice import engine_runtime as er
+
+    def fake(engine: str, kind: str):
+        st = er.engine_runtime_status(engine, kind=kind)
+        on = st.remote or st.engine in installed
+        return dataclasses.replace(
+            st,
+            installed=on,
+            missing_modules=() if on else st.required_modules,
+            reason=None if on else f"{st.label} is not installed. Install it with: {st.install_command}",
+        )
+
+    monkeypatch.setattr(gateway_routes, "_voice_engine_runtime", fake)
+
+
 def _patch_discovery_facade(monkeypatch: pytest.MonkeyPatch, *, facade: object) -> None:
     import abstractgateway.routes.gateway as gateway_routes
 
@@ -106,16 +146,17 @@ def test_voice_catalog_static_fallback_surfaces_configured_env_voices(
     assert body["items"] == []
 
 
-def test_voice_catalog_static_fallback_surfaces_supertonic_builtin_profiles_without_runtime(
+def test_voice_static_listings_never_list_an_engine_whose_runtime_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Supertonic's built-in voice styles WITHOUT onnxruntime were listed as a
+    voice that could never speak (diag 2026-09-28: "Supertonic requires ONNX
+    Runtime" at synthesis). AbstractVoice's engine_runtime is the one truth:
+    missing runtime = not listed, and the reason is carried."""
     import abstractgateway.routes.gateway as gateway_routes
 
-    monkeypatch.setattr(gateway_routes, "_module_available", lambda _name: False)
-    # Isolate from the HOST's real abstractcore config (ambient-escape class):
-    # config-first resolution (env-kill wave) reads output.voice/input.voice
-    # from the real capability defaults — a machine with a configured engine
-    # would leak it into the static provider list under test.
+    _voice_runtimes(monkeypatch)  # nothing local installed
+    # Isolate from the HOST's real abstractcore config (ambient-escape class).
     monkeypatch.setattr(gateway_routes, "_configured_voice_engine", lambda _kind: None)
     monkeypatch.setattr(
         gateway_routes,
@@ -128,21 +169,47 @@ def test_voice_catalog_static_fallback_surfaces_supertonic_builtin_profiles_with
     )
 
     body = gateway_routes._static_voice_catalog_response(provider="supertonic")
-    profile_ids = {item.get("profile_id") for item in body["profiles"]}
+    assert body["tts_providers"] == [] and body["profiles"] == []
+    assert gateway_routes._static_speech_models_response(provider="supertonic")["providers"] == []
+    providers = gateway_routes._static_voice_providers_only_response()
+    assert "supertonic" not in providers["tts_providers"]
+    record = providers["unavailable_providers"]["tts"]["supertonic"]
+    assert record["code"] == "runtime_missing"
+    assert record["reason"] == 'Supertonic is not installed. Install it with: pip install "abstractvoice[supertonic]"'
+    assert record["runtime"]["extra"] == "supertonic"
 
-    assert body["source"] == "gateway_static"
-    assert body["available"] is True
+    # With its runtime: listed, with the built-in voices.
+    _voice_runtimes(monkeypatch, "supertonic")
+    body = gateway_routes._static_voice_catalog_response(provider="supertonic")
     assert body["tts_providers"] == ["supertonic"]
-    assert {"M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"} <= profile_ids
+    assert {"M1", "F5"} <= {item.get("profile_id") for item in body["profiles"]}
     assert body["tts_models_by_provider"] == {"supertonic": ["supertonic-3"]}
-    assert body["tts_voices_by_provider"]["supertonic"] == ["M1", "M2", "M3", "M4", "M5", "F1", "F2", "F3", "F4", "F5"]
-
-    speech_models = gateway_routes._static_speech_models_response(provider="supertonic")
-    assert speech_models["providers"] == ["supertonic"]
-    assert speech_models["models"] == ["supertonic-3"]
-
+    assert gateway_routes._static_speech_models_response(provider="supertonic")["models"] == ["supertonic-3"]
     providers = gateway_routes._static_voice_providers_only_response()
     assert "supertonic" in providers["tts_providers"]
+    assert "supertonic" not in providers["unavailable_providers"]["tts"]
+
+
+def test_voice_static_listing_fails_loudly_without_the_voice_runtime_api(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import builtins
+
+    from fastapi import HTTPException
+
+    import abstractgateway.routes.gateway as gateway_routes
+
+    real_import = builtins.__import__
+
+    def no_engine_runtime(name, *args, **kwargs):
+        if name == "abstractvoice.engine_runtime":
+            raise ImportError("No module named 'abstractvoice.engine_runtime'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_engine_runtime)
+    with pytest.raises(HTTPException) as err:
+        gateway_routes._voice_engine_installed("supertonic", "tts")
+    assert err.value.status_code == 503 and "abstractvoice.engine_runtime" in err.value.detail
 
 
 def test_voice_catalog_static_fallback_surfaces_omnivoice_model(
@@ -150,7 +217,7 @@ def test_voice_catalog_static_fallback_surfaces_omnivoice_model(
 ) -> None:
     import abstractgateway.routes.gateway as gateway_routes
 
-    monkeypatch.setattr(gateway_routes, "_module_available", lambda name: name == "omnivoice")
+    _voice_runtimes(monkeypatch, "omnivoice")
 
     body = gateway_routes._static_voice_catalog_response(provider="omnivoice")
     assert body["tts_providers"] == ["omnivoice"]
@@ -168,11 +235,7 @@ def test_voice_catalog_static_fallback_surfaces_piper_and_audiodit_models(
 ) -> None:
     import abstractgateway.routes.gateway as gateway_routes
 
-    monkeypatch.setattr(
-        gateway_routes,
-        "_module_available",
-        lambda name: name in {"piper", "torch", "transformers"},
-    )
+    _voice_runtimes(monkeypatch, "piper", "audiodit")
     monkeypatch.setattr(
         gateway_routes,
         "_static_tts_model_ids_for_provider",
@@ -235,6 +298,7 @@ def test_voice_catalog_proxies_configured_core_catalog_route(
         {
             "base_url": "http://provider.test/v1",
             "provider_api_key": "provider-secret",
+            "voice_openai_api_key": None,  # no OpenAI key saved in Providers
             "provider": None,
             "model": None,
             "providers_only": False,
@@ -269,8 +333,7 @@ def test_speech_provider_only_catalog_uses_fast_static_provider_path(
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("ABSTRACTVOICE_OPENAI_API_KEY", raising=False)
-    monkeypatch.setattr(gateway_routes, "_module_available", lambda name: name == "omnivoice")
-    monkeypatch.setattr(gateway_routes, "_has_builtin_voice_profiles", lambda _engine: False)
+    _voice_runtimes(monkeypatch, "omnivoice")
     # Host-config isolation (ambient-escape class): config-first engine
     # resolution reads the REAL capability defaults — a machine whose
     # output.voice names an engine (e.g. supertonic) would leak it into
@@ -288,8 +351,8 @@ def test_speech_provider_only_catalog_uses_fast_static_provider_path(
     assert body["catalog"]["scope"] == "tts"
     assert body["catalog"]["providers_only"] is True
     assert body["models"] == []
-    assert body["providers"] == ["omnivoice"]
-    assert body["items"] == [{"id": "omnivoice", "label": "omnivoice", "provider": "omnivoice", "name": "omnivoice"}]
+    assert body["providers"] == ["omnivoice", "openai", "openai-compatible"]
+    assert body["items"] == [{"id": "omnivoice", "label": "omnivoice", "provider": "omnivoice", "name": "omnivoice"}, *_cloud_items()]
 
 
 def test_speech_provider_only_catalog_uses_runtime_voice_catalog_when_available(
@@ -309,6 +372,7 @@ def test_speech_provider_only_catalog_uses_runtime_voice_catalog_when_available(
             }
 
     _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+    _without_cloud_keys(monkeypatch)
 
     client, headers = _client(tmp_path, monkeypatch)
     with client:
@@ -316,13 +380,14 @@ def test_speech_provider_only_catalog_uses_runtime_voice_catalog_when_available(
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["providers"] == ["remote-tts"]
-    assert body["tts_providers"] == ["remote-tts"]
-    assert body["items"] == [{"id": "remote-tts", "label": "remote-tts", "provider": "remote-tts", "name": "remote-tts"}]
+    assert body["providers"] == ["remote-tts", "openai", "openai-compatible"]
+    assert body["tts_providers"] == ["remote-tts", "openai", "openai-compatible"]
+    assert body["items"] == [{"id": "remote-tts", "label": "remote-tts", "provider": "remote-tts", "name": "remote-tts"}, *_cloud_items()]
     assert calls == [
         {
             "base_url": None,
             "provider_api_key": None,
+            "voice_openai_api_key": None,  # no OpenAI key saved in Providers
             "provider": None,
             "model": None,
             "providers_only": True,
@@ -342,8 +407,7 @@ def test_transcription_provider_only_catalog_uses_fast_static_stt_provider_path(
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("ABSTRACTVOICE_OPENAI_API_KEY", raising=False)
-    monkeypatch.setattr(gateway_routes, "_module_available", lambda name: name == "faster_whisper")
-    monkeypatch.setattr(gateway_routes, "_has_builtin_voice_profiles", lambda _engine: False)
+    _voice_runtimes(monkeypatch, "faster-whisper")
     # Host-config isolation (ambient-escape class): a machine with a
     # configured input.voice/output.voice route would leak its engine into
     # the exact provider-list assertions below (this test passes on an
@@ -361,11 +425,12 @@ def test_transcription_provider_only_catalog_uses_fast_static_stt_provider_path(
     assert body["catalog"]["scope"] == "stt"
     assert body["catalog"]["providers_only"] is True
     assert body["models"] == []
-    assert body["providers"] == ["faster-whisper"]
+    assert body["providers"] == ["faster-whisper", "openai", "openai-compatible"]
     assert body["tts_providers"] == []
-    assert body["stt_providers"] == ["faster-whisper"]
+    assert body["stt_providers"] == ["faster-whisper", "openai", "openai-compatible"]
     assert body["items"] == [
-        {"id": "faster-whisper", "label": "faster-whisper", "provider": "faster-whisper", "name": "faster-whisper"}
+        {"id": "faster-whisper", "label": "faster-whisper", "provider": "faster-whisper", "name": "faster-whisper"},
+        *_cloud_items(),
     ]
 
 
@@ -386,6 +451,7 @@ def test_transcription_provider_only_catalog_uses_runtime_voice_catalog_when_ava
             }
 
     _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+    _without_cloud_keys(monkeypatch)
 
     client, headers = _client(tmp_path, monkeypatch)
     with client:
@@ -393,15 +459,16 @@ def test_transcription_provider_only_catalog_uses_runtime_voice_catalog_when_ava
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["providers"] == ["remote-stt"]
-    assert body["available_providers"] == ["remote-stt"]
+    assert body["providers"] == ["remote-stt", "openai", "openai-compatible"]
+    assert body["available_providers"] == ["remote-stt", "openai", "openai-compatible"]
     assert body["tts_providers"] == []
-    assert body["stt_providers"] == ["remote-stt"]
-    assert body["items"] == [{"id": "remote-stt", "label": "remote-stt", "provider": "remote-stt", "name": "remote-stt"}]
+    assert body["stt_providers"] == ["remote-stt", "openai", "openai-compatible"]
+    assert body["items"] == [{"id": "remote-stt", "label": "remote-stt", "provider": "remote-stt", "name": "remote-stt"}, *_cloud_items()]
     assert calls == [
         {
             "base_url": None,
             "provider_api_key": None,
+            "voice_openai_api_key": None,  # no OpenAI key saved in Providers
             "provider": None,
             "model": None,
             "providers_only": True,
@@ -913,3 +980,162 @@ def test_embedding_provider_only_catalog_keeps_provider_items(
         {"provider": "huggingface", "label": "HuggingFace", "id": "huggingface", "name": "huggingface"},
         {"provider": "lmstudio", "label": "LMStudio", "id": "lmstudio", "name": "lmstudio"},
     ]
+
+
+def test_voice_providers_list_cloud_providers_needs_key_until_a_key_is_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GET /voice/voices?providers_only: openai / openai-compatible always
+    listed; a key in the environment, or one stored through the Providers
+    screen (an endpoint profile of that family), flips needs_key off."""
+
+    class StubDiscoveryFacade:
+        def get_voice_catalog(self, **_kwargs: Any) -> Dict[str, Any]:
+            return {"available": True, "providers": ["supertonic"], "tts_providers": ["supertonic"], "stt_providers": []}
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+    _without_cloud_keys(monkeypatch)
+    client, headers = _client(tmp_path, monkeypatch)
+    url = "/api/gateway/voice/voices?providers_only=true&compact=true"
+
+    def states(body: Dict[str, Any]) -> Dict[str, tuple]:
+        return {i["id"]: (i.get("needs_key"), i.get("key_source")) for i in body["items"]}
+
+    with client:
+        body = client.get(url, headers=headers).json()
+        assert body["tts_providers"] == ["supertonic", "openai", "openai-compatible"]
+        assert states(body) == {"supertonic": (None, None), "openai": (True, None), "openai-compatible": (True, None)}
+        assert [d["provider"] for d in body["cloud_providers"]] == ["openai", "openai-compatible"]
+
+        # A key stored through the Providers screen (endpoint profile, family openai).
+        created = client.post(
+            "/api/gateway/config/provider-endpoint-profiles",
+            headers=headers,
+            json={"id": "my-openai", "display_name": "My OpenAI", "provider_family": "openai",
+                  "base_url": "https://api.openai.com/v1", "api_key": "sk-scratch-not-real", "scope": "gateway"},
+        )
+        assert created.status_code == 200, created.text
+        try:
+            body = client.get(url, headers=headers).json()
+            assert states(body)["openai"] == (False, "providers")
+            item = next(i for i in body["items"] if i["id"] == "openai")
+            assert item["label"] == "OpenAI" and item["status"] == "ready" and item["state"] == "ready" and "Providers screen" in item["reason"]
+            assert states(body)["openai-compatible"] == (True, None)
+        finally:
+            assert client.delete("/api/gateway/config/provider-endpoint-profiles/my-openai", headers=headers).status_code == 200
+
+        monkeypatch.setenv("ABSTRACTVOICE_REMOTE_API_KEY", "scratch-not-real")
+        body = client.get(url, headers=headers).json()
+        assert states(body)["openai-compatible"] == (False, "environment")
+        assert states(body)["openai"] == (True, None)
+
+        # A provider filter keeps only that cloud provider.
+        body = client.get(url + "&provider=openai", headers=headers).json()
+        assert [i["id"] for i in body["items"]] == ["openai"]
+
+
+def test_voice_cloud_provider_counts_an_abstractcore_api_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import abstractgateway.routes.gateway as gateway_routes
+
+    _without_cloud_keys(monkeypatch)
+    seen: list[tuple] = []
+
+    def fake_key(provider_id: str, **kw: Any) -> tuple[str, str]:
+        seen.append((provider_id, kw.get("include_env")))
+        return ("sk-core", "abstractcore.config") if provider_id == "openai" else ("", "")
+
+    import abstractgateway.provider_connections as provider_connections
+
+    monkeypatch.setattr(provider_connections, "configured_provider_api_key", fake_key)
+    client, _headers = _client(tmp_path, monkeypatch)
+    with client:
+        details = {d["provider"]: d for d in gateway_routes._voice_cloud_provider_details()}
+    assert details["openai"]["needs_key"] is False and details["openai"]["key_source"] == "providers"
+    assert details["openai-compatible"]["needs_key"] is True
+    assert ("openai", False) in seen  # env is checked on its own, first
+
+
+def test_voice_listings_pass_abstractvoice_unavailable_reasons_through(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AbstractVoice's `unavailable_providers` / `unavailable_reason` reach the
+    consoles unchanged (compact included): they render the reason instead of
+    "no voices"."""
+    reason = 'Supertonic is not installed: the Python package onnxruntime is missing. Install it with: pip install "abstractvoice[supertonic]"'
+    unavailable = {"tts": {"supertonic": {"provider": "supertonic", "code": "runtime_missing", "reason": reason}}, "stt": {}, "cloning": {}}
+
+    class StubDiscoveryFacade:
+        def get_voice_catalog(self, **_kwargs: Any) -> Dict[str, Any]:
+            return {"available": False, "providers": [], "tts_providers": [], "profiles": [],
+                    "unavailable_providers": unavailable, "unavailable_reason": reason}
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+    _without_cloud_keys(monkeypatch)
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        for url in (
+            "/api/gateway/voice/voices?provider=supertonic&model=supertonic-3&compact=true",
+            "/api/gateway/voice/voices?provider=supertonic",
+            "/api/gateway/voice/voices?providers_only=true&compact=true",
+        ):
+            body = client.get(url, headers=headers).json()
+            assert body["unavailable_reason"] == reason, url
+            assert body["unavailable_providers"]["tts"]["supertonic"]["code"] == "runtime_missing", url
+
+
+def test_a_cloud_voice_without_a_key_says_where_the_key_goes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class StubDiscoveryFacade:
+        def get_voice_catalog(self, **_kwargs: Any) -> Dict[str, Any]:
+            return {"available": False, "profiles": [], "unavailable_reason": "no OpenAI API key is configured"}
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+    _without_cloud_keys(monkeypatch)
+    client, headers = _client(tmp_path, monkeypatch)
+    with client:
+        body = client.get("/api/gateway/voice/voices?provider=openai&model=tts-1&compact=true", headers=headers).json()
+        assert body["unavailable_reason"] == "OpenAI: needs an API key (add it under Providers)"
+        body = client.get("/api/gateway/voice/voices?provider=supertonic&compact=true", headers=headers).json()
+        assert body["unavailable_reason"] == "no OpenAI API key is configured"  # not a cloud filter: untouched
+
+
+
+def test_a_providers_openai_key_reaches_the_voice_catalog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Key saved through the Providers screen only (no env): every voice
+    catalog call hands it to the runtime as AbstractVoice's host setting
+    `voice_openai_api_key`, so OpenAI voices are listed; a key rotated in
+    Providers reaches the next call."""
+    seen: list = []
+
+    class StubDiscoveryFacade:  # the runtime + AbstractVoice, faked at the seam
+        def get_voice_catalog(self, **kwargs: Any) -> Dict[str, Any]:
+            seen.append(kwargs.get("voice_openai_api_key"))
+            if kwargs.get("voice_openai_api_key"):
+                return {"available": True, "providers": ["openai"], "tts_providers": ["openai"],
+                        "profiles": [{"id": "alloy", "profile_id": "alloy", "provider": "openai", "model": "tts-1"}]}
+            return {"available": False, "providers": [], "tts_providers": [], "profiles": [],
+                    "unavailable_reason": "no OpenAI API key is configured"}
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+    _without_cloud_keys(monkeypatch)
+    client, headers = _client(tmp_path, monkeypatch)
+    url = "/api/gateway/voice/voices?provider=openai&model=tts-1&compact=true"
+    profiles = "/api/gateway/config/provider-endpoint-profiles"
+    with client:
+        assert client.get(url, headers=headers).json()["items"] == [] and seen[-1] is None
+        assert client.post(profiles, headers=headers, json={
+            "id": "my-openai", "display_name": "My OpenAI", "provider_family": "openai",
+            "base_url": "https://api.openai.com/v1", "api_key": "sk-providers-only", "scope": "gateway"}).status_code == 200
+        try:
+            body = client.get(url, headers=headers).json()
+            assert seen[-1] == "sk-providers-only"
+            assert [i["id"] for i in body["items"]] == ["alloy"]
+            client.get("/api/gateway/audio/speech/models?providers_only=true", headers=headers)
+            assert seen[-1] == "sk-providers-only"
+            client.get("/api/gateway/audio/transcriptions/models?providers_only=true", headers=headers)
+            assert seen[-1] == "sk-providers-only"
+            # Rotated in Providers: the next call carries the new key.
+            assert client.put(f"{profiles}/my-openai", headers=headers, json={"api_key": "sk-rotated"}).status_code == 200
+            client.get(url, headers=headers)
+            assert seen[-1] == "sk-rotated"
+        finally:
+            client.delete(f"{profiles}/my-openai", headers=headers)

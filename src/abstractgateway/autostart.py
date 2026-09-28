@@ -533,6 +533,119 @@ def disable_autostart(
     return {"ok": ok, "action": "disable", "error": error, "before": before, "after": after, "plan": plan.public_dict(), "results": results}
 
 
+# ---------------------------------------------------------------------------
+# The consoles' switch: GET/PUT /api/gateway/host/start-at-login
+# ---------------------------------------------------------------------------
+
+START_AT_LOGIN_SCHEMA = "gateway_start_at_login_v1"
+
+
+def _has_desktop_session(env: Dict[str, str]) -> bool:
+    """A graphical session an XDG autostart entry would run in."""
+    return any(str(env.get(k) or "").strip() for k in ("DISPLAY", "WAYLAND_DISPLAY", "XDG_CURRENT_DESKTOP"))
+
+
+def start_at_login_status(
+    *,
+    data_dir: Path,
+    platform: Optional[str] = None,
+    home: Optional[Path] = None,
+    env: Optional[Dict[str, str]] = None,
+    runner: Optional[Runner] = None,
+    registry: Any = None,
+    uid: Optional[int] = None,
+) -> Dict[str, Any]:
+    """`gateway_start_at_login_v1`: {enabled, state, mechanism, can_change,
+    reason, summary, ...} — the toggle a console renders. `enabled` is the
+    truthful `on` (a broken registration is NOT enabled); `can_change: false`
+    carries the plain `reason` (nothing on this machine could start it)."""
+    plat = normalize_platform(platform)
+    env_d = dict(os.environ if env is None else env)
+    reg = registry if registry is not None else (os_service.default_registry(plat) if plat == "windows" else None)
+    st = autostart_status(data_dir=data_dir, platform=plat, home=home, env=env_d, runner=runner, registry=reg, uid=uid)
+    can_change, reason = True, None
+    if plat == "windows" and reg is None:
+        can_change = False
+        reason = "this Python cannot write the Windows registry (no winreg module), so no Run entry can be registered"
+    elif plat == "linux" and st["state"] == STATE_OFF and st["mechanism"] == "xdg-autostart" and not _has_desktop_session(env_d):
+        can_change = False
+        reason = (
+            "no systemd user manager answers on this machine and there is no desktop session, so nothing here would "
+            "start the gateway at login; start it from your init system or container instead"
+        )
+    out: Dict[str, Any] = {
+        "schema": START_AT_LOGIN_SCHEMA,
+        "enabled": st["state"] == STATE_ON,
+        "state": st["state"],
+        "mechanism": st["mechanism"],
+        "mechanism_label": MECHANISM_WORDS.get(st["mechanism"], st["mechanism"]),
+        "can_change": can_change,
+        "reason": reason,
+        "summary": st.get("summary") or "",
+        "problems": list(st.get("problems") or []),
+        "location": st.get("location"),
+        "platform": plat,
+        "experimental": bool(st.get("experimental")),
+    }
+    if st["state"] == STATE_OTHER:
+        out["other_data_dir"] = st.get("registered_data_dir")
+    return out
+
+
+def set_start_at_login(
+    *,
+    data_dir: Path,
+    enabled: bool,
+    replace_other: bool = False,
+    actor: str = "console",
+    platform: Optional[str] = None,
+    home: Optional[Path] = None,
+    env: Optional[Dict[str, str]] = None,
+    runner: Optional[Runner] = None,
+    registry: Any = None,
+    uid: Optional[int] = None,
+    exe_argv: Optional[Sequence[str]] = None,
+    linux_mechanism: Optional[str] = None,
+) -> "tuple[int, Dict[str, Any]]":
+    """Turn start-at-login on/off for THIS gateway; (http_status, body).
+
+    Registers for the NEXT login (never starts a second gateway) and
+    unregisters without stopping this one. 409 refused (nothing changed):
+    `can_change` is false, or another gateway's registration would be
+    replaced without `replace_other`. 500: the change did not read back.
+    200: `{ok, changed, start_at_login}` — the read-back, never the write."""
+    kw: Dict[str, Any] = dict(platform=platform, home=home, env=env, runner=runner, registry=registry, uid=uid)
+    before = start_at_login_status(data_dir=data_dir, **kw)
+    if not before["can_change"]:
+        return 409, {"ok": False, "reason_code": "cannot_change", "refused_reason": before["reason"], "start_at_login": before}
+    if enabled and before["state"] == STATE_OTHER and not replace_other:
+        return 409, {
+            "ok": False,
+            "reason_code": "other_gateway_registered",
+            "refused_reason": (
+                f"{before['summary']}. Turning it on for THIS gateway replaces that registration: "
+                "send replace_other: true to confirm"
+            ),
+            "start_at_login": before,
+        }
+    if bool(enabled) == before["enabled"]:
+        return 200, {"ok": True, "changed": False, "start_at_login": before}
+    reg = registry if registry is not None else os_service.default_registry(normalize_platform(platform))
+    if enabled:
+        res = enable_autostart(
+            data_dir=data_dir, actor=actor, platform=platform, home=home, env=env, runner=runner, registry=reg, uid=uid,
+            exe_argv=exe_argv, linux_mechanism=linux_mechanism, start_now=False,
+        )
+    else:
+        res = disable_autostart(data_dir=data_dir, platform=platform, home=home, env=env, runner=runner, registry=reg, uid=uid)
+    after = start_at_login_status(data_dir=data_dir, **kw)
+    body = {"ok": bool(res.get("ok")), "changed": after["enabled"] != before["enabled"], "start_at_login": after}
+    if not res.get("ok"):
+        body["error"] = str(res.get("error") or after["summary"])
+        return 500, body
+    return 200, body
+
+
 __all__ = [
     "STATE_ON",
     "STATE_OFF",
@@ -543,6 +656,9 @@ __all__ = [
     "enable_autostart",
     "disable_autostart",
     "detect_linux_mechanism",
+    "START_AT_LOGIN_SCHEMA",
+    "start_at_login_status",
+    "set_start_at_login",
 ]
 
 

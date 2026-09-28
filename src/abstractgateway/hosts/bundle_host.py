@@ -22,7 +22,7 @@ from ..core_config import (
 )
 from ..memory_store import build_gateway_memory_embedder, open_gateway_memory_store
 from ..provider_endpoint_profiles import ProviderEndpointProfileError, resolve_effective_endpoint_profile
-from ..provider_connections import configured_provider_request_kwargs
+from ..provider_connections import configured_provider_request_kwargs, providers_screen_api_key
 from ..provider_defaults import ProviderModelConfigError, resolve_gateway_provider_model
 from ..workflow_deprecations import WorkflowDeprecatedError, WorkflowDeprecationStore
 from ..workflow_catalog import (
@@ -189,6 +189,19 @@ def _resolve_gateway_default_endpoint_profile(
     if profile.api_key:
         llm_kwargs["api_key"] = profile.api_key
     return profile.provider_family, llm_kwargs, profile.virtual_provider_id
+
+
+def _with_voice_openai_key(llm_kwargs: Optional[Dict[str, Any]], data_root: Path, catalog_root: Path) -> Optional[Dict[str, Any]]:
+    """`llm_kwargs` plus AbstractVoice's host setting `voice_openai_api_key`:
+    the OpenAI key saved through the Providers screen, so voice generation
+    (TTS/STT runs) uses the key the consoles call configured. Resolved when
+    this runtime is built; None/unchanged when no key is saved."""
+    key = providers_screen_api_key("openai", current_base_dir=data_root, root_base_dir=catalog_root)
+    if not key:
+        return llm_kwargs or None
+    out = dict(llm_kwargs or {})
+    out["voice_openai_api_key"] = key
+    return out
 
 
 def _split_bundle_ref(raw: str) -> tuple[str, Optional[str]]:
@@ -1414,7 +1427,7 @@ class WorkflowBundleGatewayHost:
                         runtime = create_local_runtime(
                             provider=str(provider_for_runtime or ""),
                             model=str(model or ""),
-                            llm_kwargs=default_profile_kwargs or None,
+                            llm_kwargs=_with_voice_openai_key(default_profile_kwargs, data_root, catalog_root),
                             run_store=run_store,
                             ledger_store=ledger_store,
                             artifact_store=artifact_store,

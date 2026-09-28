@@ -47,6 +47,12 @@ pub struct OperatorStore {
     pub runner_poll_gen: Signal<u64>,
     /// `GET /workspace/policy/self` — the caller's own policy.
     pub my_policy: Signal<Loadable<MyPolicy>>,
+    /// `GET /host/start-at-login` (admin) — the F3 panel's and the
+    /// setup guide's toggle.
+    pub start_at_login: Signal<Loadable<StartAtLogin>>,
+    /// Set by the worker when a saved network mode needs a restart that
+    /// can apply it: the Network screen takes it and offers the restart.
+    pub network_restart_offer: Signal<Option<String>>,
 }
 
 impl OperatorStore {
@@ -58,6 +64,8 @@ impl OperatorStore {
             lifecycle: cx.signal(None),
             runner_poll_gen: cx.signal(0),
             my_policy: cx.signal(Loadable::default()),
+            start_at_login: cx.signal(Loadable::default()),
+            network_restart_offer: cx.signal(None),
         }
     }
 
@@ -70,7 +78,110 @@ impl OperatorStore {
         self.tray.set(Loadable::NotAsked);
         self.update.set(Loadable::NotAsked);
         self.my_policy.set(Loadable::NotAsked);
+        self.start_at_login.set(Loadable::NotAsked);
+        self.network_restart_offer.set(None);
         self.runner_poll_gen.update(|g| *g += 1);
+    }
+}
+
+// ---------------------------------------------------------------------
+// Start at login (`GET/PUT /host/start-at-login`, gateway_start_at_login_v1)
+// ---------------------------------------------------------------------
+
+/// Would THIS gateway start at the next login, and can it be changed
+/// from here — the gateway's verdict, rendered, never guessed.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StartAtLogin {
+    pub enabled: bool,
+    /// on | off | broken | other
+    pub state: String,
+    pub mechanism_label: String,
+    pub can_change: bool,
+    /// Why it cannot be changed here (when `can_change` is false).
+    pub reason: String,
+    pub summary: String,
+    pub other_data_dir: String,
+}
+
+impl StartAtLogin {
+    pub fn from_value(v: &Value) -> StartAtLogin {
+        StartAtLogin {
+            enabled: v.get("enabled").and_then(Value::as_bool).unwrap_or(false),
+            state: s(v, "state").unwrap_or_default(),
+            mechanism_label: s(v, "mechanism_label").unwrap_or_default(),
+            can_change: v
+                .get("can_change")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            reason: s(v, "reason").unwrap_or_default(),
+            summary: s(v, "summary").unwrap_or_default(),
+            other_data_dir: s(v, "other_data_dir").unwrap_or_default(),
+        }
+    }
+
+    /// One line: the state word, then the gateway's summary (or why it
+    /// cannot be changed here).
+    pub fn text(&self) -> String {
+        let lead = if self.enabled {
+            "on"
+        } else {
+            match self.state.as_str() {
+                "off" => "off",
+                "broken" => "needs repair",
+                "other" => "another gateway",
+                other => other,
+            }
+        };
+        if self.can_change {
+            format!("{lead} — {}", self.summary)
+        } else {
+            format!("{lead} — can't be changed here: {}", self.reason)
+        }
+    }
+
+    /// The verb the toggle performs (None: nothing to do from here).
+    pub fn verb(&self) -> Option<&'static str> {
+        if !self.can_change {
+            None
+        } else if self.enabled {
+            Some("Turn off")
+        } else {
+            Some(match self.state.as_str() {
+                "broken" => "Repair",
+                "other" => "Use this gateway",
+                _ => "Turn on",
+            })
+        }
+    }
+
+    /// The confirm sentence for the toggle.
+    pub fn confirm_text(&self) -> String {
+        if self.enabled {
+            "Stop starting AbstractGateway at login? It keeps running now; it will not start at your next login."
+                .to_string()
+        } else {
+            let other = if self.state == "other" {
+                format!(
+                    " It replaces the registration for another gateway ({}).",
+                    if self.other_data_dir.is_empty() {
+                        "another data folder"
+                    } else {
+                        self.other_data_dir.as_str()
+                    }
+                )
+            } else {
+                String::new()
+            };
+            format!(
+                "Start AbstractGateway at login? Registers {} so this gateway starts when you log in.{other} \
+                 The gateway running now is not restarted.",
+                if self.mechanism_label.is_empty() {
+                    "a login item"
+                } else {
+                    self.mechanism_label.as_str()
+                }
+            )
+        }
     }
 }
 

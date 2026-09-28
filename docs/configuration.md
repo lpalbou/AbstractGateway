@@ -213,9 +213,12 @@ runtime-config key (`network`); there is no environment variable for it.
   the status says `restart_required: true` with `configured` vs `effective`
   until the gateway restarts (`POST /api/gateway/network/restart`, the tray's
   *Restart AbstractGateway…*, `abstractgateway network restart`, or stop and
-  start `serve`).
-- **`serve --host/--port` win** over the setting and are reported as
-  `effective.overridden_by_cli: true`. A restart replays the same command
+  start `serve`). Only **saved** values are compared: with no port saved, a
+  gateway started with `--port N` needs no restart, and `restart.port` is the
+  port a restart binds (the saved one, else the running one).
+- **`serve --host/--port` win** over a saved value that differs and are then
+  reported as `effective.overridden_by_cli: true` (a flag that shadows nothing
+  saved overrides nothing). A restart replays the same command
   line, so it cannot apply the setting: the status says so
   (`restart.applies: false` + `restart.reason`) and the restart route refuses.
 - **The login service lets the setting apply.** The LaunchAgent,

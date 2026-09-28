@@ -481,9 +481,12 @@ runtime-config key (`network`); there is no environment variable for it.
   the status says `restart_required: true` with `configured` vs `effective`
   until the gateway restarts (`POST /api/gateway/network/restart`, the tray's
   *Restart AbstractGateway…*, `abstractgateway network restart`, or stop and
-  start `serve`).
-- **`serve --host/--port` win** over the setting and are reported as
-  `effective.overridden_by_cli: true`. A restart replays the same command
+  start `serve`). Only **saved** values are compared: with no port saved, a
+  gateway started with `--port N` needs no restart, and `restart.port` is the
+  port a restart binds (the saved one, else the running one).
+- **`serve --host/--port` win** over a saved value that differs and are then
+  reported as `effective.overridden_by_cli: true` (a flag that shadows nothing
+  saved overrides nothing). A restart replays the same command
   line, so it cannot apply the setting: the status says so
   (`restart.applies: false` + `restart.reason`) and the restart route refuses.
 - **The login service lets the setting apply.** The LaunchAgent,
@@ -964,20 +967,20 @@ as `env_shadowed`.
 |---|---|---|---|---|
 | `apps.node` | Node.js for apps | `auto` | `auto` (Node.js 18+ on this computer, else the gateway's own) · `managed` · `system` · an absolute path to `node` | `ABSTRACTGATEWAY_APPS_NODE` |
 | `apps.ports` | Ports for apps | (empty) | a port or `low-high`; empty = each app's usual port, else the next free one in 3100-3199 | `ABSTRACTGATEWAY_APPS_PORTS` |
-| `apps.host` | Where apps listen | `127.0.0.1` | an IP or host name; `0.0.0.0` opens the apps to every network this computer is on | `ABSTRACTGATEWAY_APPS_HOST` |
+| `apps.host` | Where apps listen (deprecated) | `127.0.0.1` | **deprecated**: apps always listen on `127.0.0.1` and open through the gateway at `/apps/<app>/` ([apps.md](docs/apps.md#apps-are-served-through-the-gateway)); only a loopback address is accepted, and an older saved `0.0.0.0` is ignored with one warning | `ABSTRACTGATEWAY_APPS_HOST` |
 | `apps.npm_registry` | npm registry | `https://registry.npmjs.org` | an http(s) URL (a mirror) | `ABSTRACTGATEWAY_APPS_NPM_REGISTRY` |
 | `apps.pypi_url` | Node.js download index | `https://pypi.org/pypi` | an http(s) URL (a mirror) | `ABSTRACTGATEWAY_APPS_PYPI_URL` |
 
 `GET /api/gateway/admin/runtime-config` returns them under `apps` as
 `{name: {key, label, help, placeholder, default, env_name, value, source,
-note?, env_shadowed?, invalid_stored?, invalid_env?}}` (the registry
+note?, env_shadowed?, invalid_stored?, invalid_env?, deprecated?}}` (the registry
 `runtime_config.APPS_SETTINGS`: a new knob is one row, and the TUI renders
 whatever the payload lists). Writes go through the generic door, admin-only
 and audit-logged (`setting_change` on the request's audit line):
-`POST /api/gateway/admin/runtime-config {"apps.host": "0.0.0.0"}` (or
-`{"apps": {"host": "0.0.0.0"}}`); an empty value clears back to env/default.
+`POST /api/gateway/admin/runtime-config {"apps.ports": "3200-3299"}` (or
+`{"apps": {"ports": "3200-3299"}}`); an empty value clears back to env/default.
 Each value is validated before anything is written (400 with the reason). Read
-at each use: a change applies at the next app start (`node`, `host`, `ports`)
+at each use: a change applies at the next app start (`node`, `ports`)
 or the next download (the two URLs).
 
 Three ways, same semantics:
@@ -2021,10 +2024,16 @@ your network:
   - **a smaller attack surface**: every admin route is reachable to whoever
     holds an admin credential. Give each person their own account, keep the
     admin token off other machines, and prefer non-admin accounts for daily use.
-  - **exposure of the browser apps**: apps started from the Apps page stay
-    bound to `127.0.0.1` (the `apps.host` setting, *Where apps listen*), and the sign-in
-    handover (`/apps/handover/{code}`) only works on the host it was minted
-    for and refuses a loopback-only app to a browser on another machine.
+  - **exposure of the browser apps**: apps always listen on `127.0.0.1` and
+    are reached through the gateway at `/apps/<app>/`, which requires a
+    gateway session for that app on every request (a signed-out page load
+    goes to the console, anything else gets 401), relays only the app's own
+    cookies (never the console's session or an `Authorization` header), and
+    tells the app the browser's real address (`X-Forwarded-For`, written by
+    the gateway). The sign-in handover (`/apps/handover/{code}`) only works on
+    the host it was minted for. An app version that does not announce it can
+    be served this way is never served under `/apps/` and stays reachable
+    from the gateway machine only.
   - **engine and app installs for remote admins**: `allow_engine_install`
     defaults to off on a non-loopback bind for callers on other computers.
     Someone at the gateway machine itself can still install (see
@@ -2315,7 +2324,9 @@ Stop, Show log, Update, versions, addresses and commands are under
 
 Install only installs: nothing starts and no tab opens. The card then shows
 **Open**, which starts the app on a free port when it is stopped, waits until
-it answers, and opens it in a new tab, already signed in.
+it answers, and opens it in a new tab, already signed in, at
+`<the gateway's address>/apps/<app>/` (see
+[Apps are served through the gateway](#apps-are-served-through-the-gateway)).
 
 Every step is a job with a percentage, downloaded bytes and a plain message.
 When a step fails, the job says why in one sentence and carries the full log
@@ -2335,10 +2346,54 @@ in its `details` field (`<data dir>/apps/jobs/<job>.log`).
   seconds). After more than 3 crashes in a minute it stops trying and shows
   "crash_loop" with the app's log.
 - Each app writes its output to `<data dir>/logs/apps/<app>.log`.
-- Apps listen on `127.0.0.1` (the `apps.host` setting changes this). Ports: the app's usual port when it is
+- Apps always listen on `127.0.0.1`: browsers reach them through the gateway
+  (next section), never directly. Ports: the app's usual port when it is
   free, else the first free port in 3100-3199. The usual ports are the
   framework's stack port map (`scripts/start-local.sh`): Observer 3001,
   Continuum 3002, Code 3003, Entity 3004, Flow 3005.
+
+## Apps are served through the gateway
+
+Every browser app opens at **`/apps/<app>/` on the gateway's own address**:
+`http://127.0.0.1:8080/apps/observer/` on the gateway machine,
+`https://gateway.example.com/apps/flow/` behind a reverse proxy, the same
+path through a tunnel. One address and one port serve the console, the API
+and every app, so a remote or headless gateway needs nothing more than the
+one address it already has.
+
+The gateway relays each request to the app's own server on `127.0.0.1`
+(app_proxy.py):
+
+- **Signed in, per app.** Every request under `/apps/<app>/` needs a valid
+  gateway session for that app: the app's own session cookie, set by the
+  one-time handover below with `Path=/apps/<app>/`. Without one, opening a
+  page sends the browser to the console (`/console#apps?open=<app>&path=…`),
+  which signs you in and opens the app on the page you asked for; any other
+  request gets 401 `app_sign_in_required`. A WebSocket without one is
+  refused. A request or WebSocket whose `Origin` is not the gateway's own
+  address (another site, or another port on the same host) is refused too
+  (403 `cross_origin`).
+- **Streaming.** Responses are relayed as they arrive (live updates, server-sent
+  events), and WebSockets frame by frame.
+- **What the app receives.** The path with `/apps/<app>` removed, plus
+  `X-Forwarded-Prefix: /apps/<app>`, `X-Forwarded-For: <the browser's
+  address>` (written by the gateway, never passed through from the
+  browser), `X-Forwarded-Proto` and `X-Forwarded-Host`. It receives only its
+  own cookies (`<app prefix>_*`): never the console's session cookie, never an
+  `Authorization` header. It can set only its own cookies in return.
+- **Only apps that say they can.** An app announces that it can be served
+  this way with a header on every response:
+  `X-AbstractFramework-App: <app>; mount=1` (the abstractuic app-server kit
+  does it). The row's `mounted` and `app_path` (`/apps/<app>/`) say whether it
+  does. An older app version does not: it would read every visitor as a
+  browser on the gateway machine (the gateway is its local peer), so the
+  gateway never serves it under `/apps/<app>/` (409 `not_mountable`), and it
+  opens by its own port from the gateway machine only (409
+  `app_loopback_only` from anywhere else, with the hint to update it).
+
+How an app uses these headers (base path, the browser's address, cookie
+paths, the identity header) is the app-server kit's contract:
+[abstractuic `app-server`](https://github.com/lpalbou/AbstractUIC/tree/main/app-server).
 
 ## Apps started outside the gateway
 
@@ -2357,8 +2412,9 @@ listening on the port, when this computer shows which program that is.
 Such an app is listed as installed and running, with `source: "external"`,
 `managed: false`, its `url`, `port` and `version`, and one action: **Open**.
 Opening it works exactly like opening an app the gateway started (the
-one-time sign-in link below): the app's server reads the same sign-in
-cookies whoever started it. The gateway does not stop, update or show the
+one-time sign-in link below, and `/apps/<app>/` when it announces it can be
+served there): the app's server reads the same sign-in cookies whoever
+started it. The gateway does not stop, update or show the
 log of an app it did not start; the console's **Technical details** says
 "Started outside the gateway on port 3001" instead, and `POST /apps/{id}/stop`
 answers 409 `started_outside_gateway`. Starting the gateway's own copy while
@@ -2378,16 +2434,25 @@ in [configuration.md](docs/configuration.md#allow_engine_install).
 ## Opening an app signed in
 
 The console asks the gateway for a one-time link
-(`POST /api/gateway/apps/{id}/open`) and opens it in a new tab. The link
-(`/apps/handover/<code>`) works once, for two minutes, and only on the address
-it was made for. The gateway creates a browser session for the person who
-clicked, puts it in the app's own sign-in cookies, and redirects to the app.
-Browsers keep cookies per machine name, not per port, so the app's server finds
-the session and the app opens connected. The gateway token never appears in
-the page, the link or the browser's storage.
+(`POST /api/gateway/apps/{id}/open`, sending the browser's `origin`) and
+opens it in a new tab. The link (`/apps/handover/<code>`) works once, for two
+minutes, and only on the address it was made for. The gateway creates a
+browser session for the person who clicked, puts it in the app's own sign-in
+cookies (`Path=/apps/<app>/`), and answers with a **relative** redirect to
+`/apps/<app>/`, so it lands on whatever address the browser used (a LAN
+address, a reverse proxy, a tunnel). The app's server finds the session and
+the app opens connected. The gateway token never appears in the page, the
+link or the browser's storage.
 
-A browser on another computer cannot reach an app that listens on
-`127.0.0.1`; the gateway says so instead of producing a broken link.
+The answer also carries `app_path` (`/apps/<app>/…`) and `app_url` (the
+`origin` you sent, or the address the request came in on, plus `app_path`).
+`origin` must be exactly `scheme://host[:port]` (400 `invalid_origin`
+otherwise).
+
+An older app version that cannot be served through the gateway keeps the
+direct link to its own port (`app_path: null`, cookies at `Path=/`), which
+works from the gateway machine only; from another computer the gateway says
+so (409 `app_loopback_only`) instead of producing a broken link.
 
 ### Landing somewhere inside the app
 
@@ -2511,25 +2576,26 @@ Each app runs its own small server, started by the gateway, rather than being
 served as static files by the gateway. The app's server does real work:
 
 - it holds the sign-in (`/api/connection/gateway`, HttpOnly session cookies,
-  CSRF) and forwards `/api/*` to the gateway on the same origin, which is how
-  live updates (server-sent events) reach the page;
-- four of the five apps load their files from absolute `/assets/...` paths,
-  and Code and Observer register a service worker at the site root, so they
-  cannot live under a sub-path of the gateway;
+  CSRF) and forwards `/api/*` to the gateway, which is how live updates
+  (server-sent events) reach the page;
 - Observer reveals local folders, Flow keeps its connection file, and
   Continuum proxies the agora hub.
 
-This is why each app has its own port. The gateway gives each server its
-port, bind address and gateway URL: Continuum as launch flags (`--port`,
-`--host`, `--gateway-url`), which win over its saved settings file; the
-other four apps in the environment (`PORT`, `HOST`, `<APP>_GATEWAY_URL`).
+The gateway serves them all on its own address at `/apps/<app>/` (above). It
+gives each server its port and gateway URL: Continuum as launch flags
+(`--port`, `--host`, `--gateway-url`), which win over its saved settings
+file; the other four apps in the environment (`PORT`, `HOST`,
+`<APP>_GATEWAY_URL`). The bind address is always `127.0.0.1`.
 
 ## Settings
 
-Five settings control the apps: `apps.node` (*Node.js for apps*),
-`apps.ports` (*Ports for apps*), `apps.host` (*Where apps listen*),
-`apps.npm_registry` (*npm registry*) and `apps.pypi_url` (*Node.js download
-index*). Change them from the Apps page (*Advanced: apps settings*), the
+Four settings control the apps: `apps.node` (*Node.js for apps*),
+`apps.ports` (*Ports for apps*), `apps.npm_registry` (*npm registry*) and
+`apps.pypi_url` (*Node.js download index*). `apps.host` (*Where apps
+listen*) is **deprecated**: apps always listen on `127.0.0.1` and open
+through the gateway. It accepts only a loopback address; an older saved
+`0.0.0.0` (or `ABSTRACTGATEWAY_APPS_HOST`) is ignored with one warning in the
+gateway's log, and clearing it removes the warning. Change them from the Apps page (*Advanced: apps settings*), the
 terminal console (Runtimes → *Runtime knobs* → *Edit apps settings*) or the
 CLI:
 
@@ -2642,7 +2708,7 @@ All routes are under `/api/gateway/apps` and need a signed-in principal, except 
 | `POST /apps/{id}/launch` | admin | Start the app (waits until it answers) and mark it enabled. For `assistant`: open it on the gateway's computer, signed in as the caller, `{ok, app, already_running, signed_in_by_gateway, message}`; from another computer 409 `not_on_gateway_machine`, and nothing starts. |
 | `POST /apps/desktop-handover` `{"code"}` | no sign-in; this computer only | The Assistant trades its one-time code for a remembered sign-in: `{base_url, session_id, csrf_token, user_id, expires_at}`. Answered only for a direct caller on this computer (no proxy headers, no app-server session header): 403 otherwise; 410 for a used or expired code. |
 | `POST /apps/{id}/stop` | admin | Stop the app and mark it disabled. 409 `started_outside_gateway` for an app the gateway did not start. |
-| `POST /apps/{id}/open` `{"remember"?, "path"?}` | any user | A one-time `open_url` (relative to the gateway) that opens the running app signed in, at `path` inside the app when given (e.g. `/#new`). 400 `invalid_app_path` for anything that is not a path inside the app. 409 `desktop_app` for the Assistant (use `/launch`). |
+| `POST /apps/{id}/open` `{"remember"?, "path"?, "origin"?}` | any user | A one-time `open_url` (relative to the gateway) that opens the running app signed in, at `path` inside the app when given (e.g. `/#new`): `{open_url, mounted, app_path, app_url, expires_in_s}`. `app_path` is `/apps/<id>/…` for an app served through the gateway (else `null`); `app_url` is `origin` (default: this request's address) + `app_path`. 400 `invalid_app_path` / `invalid_origin`. 409 `desktop_app` for the Assistant (use `/launch`). |
 | `GET /apps/{id}/logs?tail=200` | admin | The end of the app's log. |
 | `GET /apps/jobs`, `GET /apps/jobs/{job}` | any user | Jobs: `state` (queued, running, succeeded, failed, cancelled), `percent`, `bytes_done`, `bytes_total`, `message`, `steps`, `parts` (the child rows of an Install that covers two parts), `details` (full log on failure). |
 | `POST /apps/jobs/{job}/cancel` | admin | Cancel a job. |
@@ -2650,6 +2716,13 @@ All routes are under `/api/gateway/apps` and need a signed-in principal, except 
 | `POST /apps/{id}/launch-tui` | admin, on the gateway machine | Open the terminal version in a new terminal window, signed in as the caller: `{ok, app_id, interface: "tui", terminal, version, message, expires_in_s}`. From another computer (non-loopback peer or `Host`, or any proxy header): 409 `not_on_gateway_machine` with `command` and `signin_command`, and nothing opens. |
 | `POST /apps/{id}/tui-command` | admin, on the gateway machine | The same one-use launcher as launch-tui without opening a window: `{ok, app_id, interface, version, signin_command, command, expires_in_s}`. From another computer: 409 `not_on_gateway_machine` with `command` and `signin_command`. |
 | `POST /apps/tui-handover` `{"code"}` (outside `/api/gateway`) | the launcher script, loopback only | Trade a launcher's one-time code for `{token, token_env, url_env, gateway_url, gateway_flag, user}`. 403 `loopback_only`, 410 `handover_expired`. |
+
+The apps themselves, outside `/api/gateway`:
+
+| Method and path | Who | What |
+|---|---|---|
+| `GET /apps/handover/<code>` | the one-time code | Sets the app's sign-in cookies and redirects: relative `303` to `/apps/<id>/…` (cookies `Path=/apps/<id>/`), or to the app's own port for an older app. 410 used or expired, 400 another address. |
+| any `/apps/<id>/…` (HTTP, SSE, WebSocket) | the app's gateway session | The app, relayed (see [Apps are served through the gateway](#apps-are-served-through-the-gateway)). Without a session: `303` to `/console#apps?open=<id>&path=…` for a page load, else 401 `app_sign_in_required`. 404 `unknown_app`, 403 `cross_origin`, 409 `not_running` / `not_mountable`, 502 `app_not_answering`. `/apps/<id>` redirects to `/apps/<id>/`. |
 
 Errors are `{"ok": false, "reason", "message", "hint"?, "details"?}` with
 404 (`unknown_app`, also for a terminal route on a browser-only app), 409
@@ -4406,6 +4479,17 @@ Each route adds:
 
 Examples:
 
+- Voice provider listings (`/voice/voices?providers_only=true`,
+  `/audio/speech/models?providers_only=true`,
+  `/audio/transcriptions/models?providers_only=true`) always list the cloud
+  providers `openai` and `openai-compatible`; their `items` carry `needs_key`,
+  `key_source` (`environment` | `providers` | null), `state` and `reason`, and
+  `cloud_providers` repeats them. A key counts when it is in the environment or
+  saved through the Providers screen. Local engines are listed when
+  AbstractVoice reports their runtime installed; `unavailable_providers`
+  (per kind: `{provider, code: runtime_missing|model_not_downloaded|not_configured,
+  reason}`) and `unavailable_reason` say why others are missing, and a listing
+  filtered to a cloud provider without a key says where the key goes.
 - `/voice/voices`: `items` contain voice/profile records with `id`, `label`,
   optional `provider`, optional `model`, and `voice_kind`
 - `/audio/*/models`: `items` contain model records with `id`, `label`,
@@ -4896,6 +4980,21 @@ any authenticated principal; writes require an admin principal.
   `{"ok": true, "restart": true, "requested_by": "...", "reason": "..."}`;
   409 with a plain reason when unsupported (`--reload`, embedded server, an
   update is installing).
+- `GET /api/gateway/host/start-at-login`, `PUT /api/gateway/host/start-at-login
+  {enabled, replace_other?}` — admin. Would this gateway start at the next
+  login, and can it be changed from here: `{enabled, state: on|off|broken|other,
+  mechanism, mechanism_label, can_change, reason, summary, problems, location,
+  platform, experimental[, other_data_dir]}`. The mechanism is a LaunchAgent
+  (macOS), a systemd user unit or, without a systemd user manager, a desktop
+  autostart entry (Linux), or a `HKCU\…\Run` value (Windows). `can_change:
+  false` carries the reason (for example a Linux server with neither a systemd
+  user manager nor a desktop session). `PUT` registers for the next login
+  without starting a second gateway, or unregisters without stopping this one,
+  and answers the read-back under `start_at_login`; 409 when it cannot change
+  here or when another gateway's registration would be replaced without
+  `replace_other: true`; 500 when the change does not read back. The same
+  switch as the tray's *Start at login* and `abstractgateway service
+  enable|disable`.
 - `GET /api/gateway/host/update`, `POST /api/gateway/host/update/check`,
   `POST /api/gateway/host/update/start` — `{current, install: {kind,
   upgradable, reason, command, extras}, check: {latest, update_available,
@@ -5053,7 +5152,7 @@ a change made in one is immediately visible in the other.
 | | Web console | Terminal console |
 |---|---|---|
 | Delivery | served by the gateway at `GET /console` (part of the `abstractgateway` Python package) | Rust crate [`abstractgateway-console`](https://crates.io/crates/abstractgateway-console), installed with `cargo install` |
-| Sign-in | Gateway browser session (user id + token) | base URL + bearer token (`--token-file PATH`, the Connection screen, or `ABSTRACTGATEWAY_AUTH_TOKEN`) |
+| Sign-in | Gateway browser session (user id + token) | gateway URL + token (`--gateway-url URL --token <token>`, or the Connection screen) |
 | Best for | day-to-day administration in a browser, sandbox chat with media previews | SSH sessions, headless hosts, keyboard-only setup |
 
 For how the stores behind these screens are owned (Gateway vs AbstractCore),
@@ -5085,11 +5184,23 @@ The sidebar lists these tabs:
 | **Providers** | provider connections (OpenAI, Anthropic, OpenRouter, Portkey, LM Studio, Ollama, custom OpenAI-compatible endpoints) with write-only keys |
 | **Multimodal** | capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
 | **Sandbox** | quick chat and media generation against the configured defaults |
-| **Resources** | memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the **Gateway** card (pause, update, restart, desktop icon) |
+| **Resources** | memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the **Gateway** card (pause, update, restart, desktop icon, start at login) |
 | **Models** | browse models that fit this machine, download them, delete installed ones (below) |
 | **Engines** | the local engines on the gateway host: installed or not, running or not, install, start, stop (below) |
 | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), plus *Advanced: apps settings* and *Advanced: backlog settings (Continuum)* |
 | **Network** | who can reach the gateway (localhost only, local network, internet), its addresses, and *Advanced: reverse proxy* ([configuration.md](docs/configuration.md#network-exposure-localhost--local-network--internet)) |
+
+**Start at login** (the Gateway card, and the setup guide's last step) is a
+real switch for admins: it names the mechanism (a LaunchAgent, a systemd user
+unit, a desktop autostart entry, a Windows Run entry), asks before each change
+and shows the state read back from the gateway. Where nothing on the machine
+could start the gateway at login, it says why instead of offering the switch.
+
+In **Multimodal**, a configured route whose engine is not installed reads
+"engine missing" with the install command, and the voice pickers say why a
+provider lists no voices. The cloud voice providers (OpenAI,
+OpenAI-compatible) are always listed, marked "needs an API key" until you add
+one under **Providers**.
 
 The **Technical details** switch at the bottom of the sidebar shows commands,
 route ids and other technical information throughout the console. The top bar
@@ -5270,14 +5381,17 @@ themselves are described in [apps.md](docs/apps.md)). What a plain user sees on
 each card: the app's mark, name and status pill (Not installed, Installed,
 Running, Installing, Stopped unexpectedly, Keeps crashing), one line of
 description (hover it for the whole sentence), and one row of buttons. The
-button rows of the cards side by side are always at the same height.
+button rows of the cards side by side are always at the same height. Above
+the cards, one line names where the apps open: this browser's own address
+plus `/apps/` (for example `https://gateway.example.com/apps/…`), whatever
+address the browser used to reach the gateway.
 
 | The app is | The action row |
 |---|---|
 | not installed | **Install** (installs Node.js first when the gateway needs it, then the app and, for Code when a ready-made download exists for this computer, its terminal app too; nothing opens by itself) |
 | installing | a progress bar above the row (with one row per part: "Code in the browser", "Code in the terminal"), and **Cancel** (it stops both) |
 | an install failed | the reason, **Show details**, and **Install** again |
-| installed and running | **Open** (a new tab, already signed in) |
+| installed and running | **Open** (a new tab at `/apps/<app>/`, already signed in) |
 | installed but stopped, or crashed | **Open** (starts it, then opens it); a crash also shows the reason, with **Show details** |
 
 Code has a terminal version too. Next to Code's Open: **Open in Terminal**
@@ -5302,6 +5416,11 @@ not on the gateway's computer, then **Open** (it starts in the menu bar of the
 gateway's computer, or comes to the front when it already runs). From another
 computer the card says "The Assistant runs on the gateway's computer: open it
 there." with no button. See [apps.md](docs/apps.md#the-assistant-a-desktop-app).
+
+A link to `/apps/<app>/…` opened while signed out (a bookmark, a shared
+link) lands on the console (`/console#apps?open=<app>&path=…`): once you are
+signed in, the console opens that app in the same tab, on the page the link
+named.
 
 A result box appears only after something you did ("Code opened in a new
 Terminal window, signed in to this gateway.", "Flow Editor opened in a new
@@ -5342,26 +5461,29 @@ Install it from crates.io (Rust 1.87 or newer):
 cargo install abstractgateway-console
 ```
 
-Connect it to a running gateway. On the gateway host, sign in with the admin
-token file (`abstractgateway serve` prints its data dir):
+Connect it to a running gateway with its URL and your token. The admin token
+is printed by `abstractgateway serve` when it starts:
 
 ```bash
-abstractgateway-console --url http://127.0.0.1:8080 \
-  --token-file "<data dir>/auth/bootstrap-admin-token"
+abstractgateway-console --gateway-url http://127.0.0.1:8080 --token <token>
 abstractgateway-console --help
 ```
 
-`--token-file PATH` reads the token from a file; an unreadable or empty file
-stops the launch with the reason. `ABSTRACTGATEWAY_AUTH_TOKEN` is also read.
-Avoid `--token` on shared machines: the command line is visible in `ps`. When
-sign-in fails, the Connection screen says whether no token was sent or the
-token was rejected, and where the admin token lives.
+`--url` is an alias of `--gateway-url`. Without the flag, the console uses
+`ABSTRACTGATEWAY_URL` (legacy), else the address this computer's gateway
+records in `~/.abstractframework/gateway.json` (a loopback address only), else
+`http://127.0.0.1:8080`; when that gateway stops answering, the console reads
+the file again and follows it to a new port. `--token-file PATH` reads the token
+from a file instead; an unreadable or empty file stops the launch with the
+reason. When sign-in fails, the Connection screen says whether no token was
+sent or the token was rejected.
 
 ### Setup guide and browse mode
 
-The console has twelve screens: **1** Connection, **2** Providers, **3** Routes,
+The console has thirteen screens: **1** Connection, **2** Providers, **3** Routes,
 **4** Users & Entities, **5** Runtimes, **6** Workflows, **7** Review & Test,
-**8** Resources, **9** Models, **0** Engines, **A** Apps, and **Setup**.
+**8** Resources, **9** Models, **0** Engines, **A** Apps, **N** Network, and
+**Setup**.
 
 - **Setup guide.** For an admin whose first run is not completed, the console
   opens the setup guide: Connection → Setup → Engines → Providers → Routes →
@@ -5369,7 +5491,8 @@ The console has twelve screens: **1** Connection, **2** Providers, **3** Routes,
   Routes shows the recommended models for this computer with fit warnings
   (`a` applies them, `D` downloads all of them as one job, `C` cancels, `p`
   shows the plan). Review ends with **Finish** or **Skip setup**, recorded on
-  the gateway. No step is gated except signing in.
+  the gateway, and a **Start at login** switch. No step is gated except
+  signing in.
 - **Browse mode** (free tabs) opens otherwise. `--wizard` and `--browse` choose
   the mode at launch.
 - **`Ctrl+G`** reopens the guide from browse mode; inside the guide it opens
@@ -5380,7 +5503,21 @@ The console has twelve screens: **1** Connection, **2** Providers, **3** Routes,
 ### Screens and panels
 
 - **Routes** flags a route this computer cannot run (for example an MLX image
-  route on Linux) with the reason, like the web console.
+  route on Linux) with the reason, and a route whose engine is not installed
+  ("engine missing", with the install command), like the web console. A model
+  that is not on this computer reads "not downloaded — w: download"; `w` asks
+  first, naming the model and its size, and the row updates by itself when the
+  download finishes. The voice picker says why a provider lists no voices (for
+  example "Supertonic is not installed … Install it with: …", or "OpenAI:
+  needs an API key (add it under Providers)").
+- **N Network** shows who can reach the gateway: the **saved** exposure
+  (localhost only, local network, internet) next to what is **running now**,
+  and every address to copy (`c`). `(•)` marks the saved mode; move the cursor
+  and press `Enter` to save another (internet asks for an acknowledgement
+  first). When the saved mode needs a restart that can apply it, the console
+  offers the restart, reconnects when the gateway is back and reads the network
+  again. When a restart cannot apply it, the gateway's reason is shown. The
+  Connection screen keeps a one-line summary.
 - **Review & Test** holds the session's change journal and the sandbox: every
   output mode (text, image, voice, music, sound effects, video), file
   attachments and speak-this-reply.
@@ -5389,20 +5526,23 @@ The console has twelve screens: **1** Connection, **2** Providers, **3** Routes,
 - **Workflows** imports a `.flow` bundle (`i`) and reloads the registry (`L`).
 - **A Apps** is the web console's Apps tab: open browser apps signed in,
   install or update them, start and stop them, the desktop Assistant and
-  Node.js.
+  Node.js. Over SSH, or on a machine without a display, **Open** never starts
+  a browser: it shows the one-time link to copy (`y`) and the `ssh -L` port
+  forwards that make it work from your own computer.
 - **F2** opens the docs assistant (questions answered from the gateway's own
   documentation; signed in).
 - **F3** opens the gateway host panel: pause or resume workflows, restart,
-  quit, check for and install updates, the tray. A banner shows on every
-  screen while workflows are paused.
+  quit, check for and install updates, the tray, and **start at login** (`L`,
+  confirmed, then read back). A banner shows on every screen while workflows
+  are paused.
 - **About** (`F1`, or `?` outside a text field) shows this console, its
   version, the links and the connected gateway's versions from
-  `GET /api/gateway/about`. `abstractgateway-console --about --url <gateway>`
+  `GET /api/gateway/about`. `abstractgateway-console --about --gateway-url <gateway>`
   prints the same text without opening the interface.
 
 Keys: `Tab` focus, `Enter` activate, `Ctrl+N` / `Ctrl+P` next and previous
 step, `Esc` back (in a text field, the first `Esc` releases it so screen keys
-work again), `1`-`9`, `0` and `A` screens, `r` refresh, `q` quit. Each screen
+work again), `1`-`9`, `0`, `A` and `N` screens, `r` refresh, `q` quit. Each screen
 lists its own actions in the footer.
 
 **Admin rules.** Admin-only actions are refused before anything is sent for a
@@ -6458,6 +6598,79 @@ setting decides the bind (seeded to `localhost`, i.e. `127.0.0.1`, on install),
 with data in the per-user data folder. See [first-run.md](docs/first-run.md). Containers and
 servers use the explicit configuration shown on this page: the image sets
 `--host 0.0.0.0` with user accounts on.
+
+## Behind a reverse proxy (one block, apps included)
+
+The console, the API and every browser app share the gateway's one address:
+the apps are served at `/apps/<app>/` by the gateway itself
+([apps.md](docs/apps.md#apps-are-served-through-the-gateway)). So one proxy
+block covers everything. It must pass WebSocket upgrades (Flow's live
+editor), must not buffer (live updates are server-sent events), and must keep
+the `Host` the browser used (the sign-in handover is bound to it):
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name gateway.example.com;
+    # ssl_certificate ... ; ssl_certificate_key ... ;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_read_timeout 1h;
+        client_max_body_size 0;
+    }
+}
+
+# In the http {} block:
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+```
+
+Run nginx on the gateway machine, as here, so the gateway believes its
+`X-Forwarded-For` (it believes it from a loopback peer only). Then set the
+browser origin once:
+`abstractgateway network set --allowed-origins https://gateway.example.com`.
+`X-Forwarded-For $remote_addr` replaces anything the browser sent. The apps
+themselves always listen on `127.0.0.1`; nothing else needs to reach them,
+and no other port needs to be exposed. A tunnel (Cloudflare Tunnel,
+Tailscale Funnel, ngrok) to the gateway's port works the same way.
+
+## Where local clients find the gateway (`~/.abstractframework/gateway.json`)
+
+The gateway does not always listen on 8080 (the installer moves it when 8080
+is busy, and an admin can change the port). Clients that cannot ask
+`abstractgateway` (the terminal apps, the browser apps started by hand with
+`npx`, the frozen Assistant app) read one small file instead:
+
+```json
+{"schema": 1, "url": "http://127.0.0.1:8081", "port": 8081,
+ "data_dir": "/home/me/.local/share/abstractgateway",
+ "updated_at": "2026-09-27T12:00:00Z", "written_by": "serve"}
+```
+
+- `abstractgateway serve` writes it (mode 0600, atomically) once its listener
+  is bound, with the port it bound, but only when the file is absent and the
+  gateway uses the default data folder, or when the file names this
+  gateway's own data folder. A test or second gateway with its own data
+  folder never changes it. The installer writes it too
+  (`"written_by": "installer"`), and its uninstall deletes this one file.
+- `network set` does not change it: clients move when the gateway does, at the
+  restart that binds the new port. `serve` never deletes it.
+- It holds no token and no liveness information. Readers accept it only with
+  `schema` 1, a URL on `127.0.0.1`, `::1` or `localhost`, and (Linux, macOS)
+  when it belongs to them; anything else is ignored with one warning.
+- The order a client follows: its launch flag (`--gateway-url`), its legacy
+  environment variable, its saved sign-in (a saved `http://127.0.0.1:8080`
+  gives way to the file), this file, then `http://127.0.0.1:8080`.
 
 ## Cache and auth notes
 
@@ -7651,6 +7864,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Requires the next AbstractRuntime release (the session history window; `session_chat_messages` no longer accepts
 the old caps).
 
+### Added
+
+- `_runtime.session_history` records the history window for every seeded run: `seeded`, `policy`, `max_tokens`,
+  `token_estimator`, `replayed_messages`, `replayed_tokens`, `dropped_messages`, `dropped_tokens`,
+  `dropped_counts_complete`, `oversize_turn_kept`. Strict seeding (automation and discussion sessions) also adds
+  `strict` and `session_kind`.
+- **Start at login from the consoles.** `GET/PUT /api/gateway/host/start-at-login` (admin)
+  reports whether this gateway starts at the next login (`enabled`, `state`, the mechanism:
+  LaunchAgent, systemd user unit or desktop autostart entry, Windows Run value) and whether it
+  can be changed here (`can_change` with a plain `reason`), and turns it on or off without
+  starting or stopping the running gateway. The web console has the switch in the Gateway card
+  and on the setup guide's last step; the terminal console in F3 and on the Finish step.
+- **Cloud voice providers are always listed.** Voice provider listings include `openai` and
+  `openai-compatible` marked `needs_key` until a key is configured, in the environment or
+  through the Providers screen; both consoles show the state.
+- Voice listings pass AbstractVoice's `unavailable_providers` and `unavailable_reason` through,
+  and a listing filtered to a cloud provider without a key says where the key goes. Both
+  consoles' voice pickers show the reason instead of an empty list.
+- The consoles show AbstractCore's `engine_missing` (a route this computer can run whose engine
+  is not installed, with the install command) and the `needs_gpu_limit` fit verdict (the exact
+  command that raises the GPU memory limit).
+- An OpenAI key saved through the Providers screen reaches voice: the voice listings pass it to
+  AbstractVoice as `voice_openai_api_key` on every call, and the gateway's runtime is built with
+  it for voice generation.
+- `restart.port` in `GET /api/gateway/network`: the port a restart binds; the restart route
+  reconnects there.
+
 ### Changed
 
 - **Session history replay is the most recent 50,000 tokens of whole turns.** A run started with
@@ -7666,13 +7906,12 @@ the old caps).
   `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS` are no longer read and have been removed from the environment registry.
 - **Telegram bridge:** `ABSTRACT_TELEGRAM_MAX_HISTORY_MESSAGES` (default 30) is retired. The bridge no longer sends a
   message cap or `_limits.max_history_messages`, and it logs a warning when the variable is still set.
-
-### Added
-
-- `_runtime.session_history` records the history window for every seeded run: `seeded`, `policy`, `max_tokens`,
-  `token_estimator`, `replayed_messages`, `replayed_tokens`, `dropped_messages`, `dropped_tokens`,
-  `dropped_counts_complete`, `oversize_turn_kept`. Strict seeding (automation and discussion sessions) also adds
-  `strict` and `session_kind`.
+- `restart_required` compares **saved** values only: a gateway started with `--port N` and no
+  saved port needs no restart, and a command-line flag counts as overriding the setting only
+  when it shadows a saved value that differs.
+- The static voice listings decide which local engines are available from AbstractVoice's
+  `abstractvoice.engine_runtime` (a Supertonic voice without its runtime is no longer listed),
+  and answer 503 with the reason when AbstractVoice lacks that API.
 
 ## [0.6.0] - 2026-09-27
 

@@ -1035,6 +1035,17 @@ Each route adds:
 
 Examples:
 
+- Voice provider listings (`/voice/voices?providers_only=true`,
+  `/audio/speech/models?providers_only=true`,
+  `/audio/transcriptions/models?providers_only=true`) always list the cloud
+  providers `openai` and `openai-compatible`; their `items` carry `needs_key`,
+  `key_source` (`environment` | `providers` | null), `state` and `reason`, and
+  `cloud_providers` repeats them. A key counts when it is in the environment or
+  saved through the Providers screen. Local engines are listed when
+  AbstractVoice reports their runtime installed; `unavailable_providers`
+  (per kind: `{provider, code: runtime_missing|model_not_downloaded|not_configured,
+  reason}`) and `unavailable_reason` say why others are missing, and a listing
+  filtered to a cloud provider without a key says where the key goes.
 - `/voice/voices`: `items` contain voice/profile records with `id`, `label`,
   optional `provider`, optional `model`, and `voice_kind`
 - `/audio/*/models`: `items` contain model records with `id`, `label`,
@@ -1525,6 +1536,21 @@ any authenticated principal; writes require an admin principal.
   `{"ok": true, "restart": true, "requested_by": "...", "reason": "..."}`;
   409 with a plain reason when unsupported (`--reload`, embedded server, an
   update is installing).
+- `GET /api/gateway/host/start-at-login`, `PUT /api/gateway/host/start-at-login
+  {enabled, replace_other?}` — admin. Would this gateway start at the next
+  login, and can it be changed from here: `{enabled, state: on|off|broken|other,
+  mechanism, mechanism_label, can_change, reason, summary, problems, location,
+  platform, experimental[, other_data_dir]}`. The mechanism is a LaunchAgent
+  (macOS), a systemd user unit or, without a systemd user manager, a desktop
+  autostart entry (Linux), or a `HKCU\…\Run` value (Windows). `can_change:
+  false` carries the reason (for example a Linux server with neither a systemd
+  user manager nor a desktop session). `PUT` registers for the next login
+  without starting a second gateway, or unregisters without stopping this one,
+  and answers the read-back under `start_at_login`; 409 when it cannot change
+  here or when another gateway's registration would be replaced without
+  `replace_other: true`; 500 when the change does not read back. The same
+  switch as the tray's *Start at login* and `abstractgateway service
+  enable|disable`.
 - `GET /api/gateway/host/update`, `POST /api/gateway/host/update/check`,
   `POST /api/gateway/host/update/start` — `{current, install: {kind,
   upgradable, reason, command, extras}, check: {latest, update_available,

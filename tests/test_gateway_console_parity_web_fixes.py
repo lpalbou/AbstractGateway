@@ -132,26 +132,26 @@ _LINUX_REPORT = {
 
 
 def test_apply_summary_names_unavailable_routes_with_reason() -> None:
-    out = _run(["describeAppliedRecommended"], f"return describeAppliedRecommended({json.dumps(_LINUX_REPORT)});")
+    out = _run(_ENGINE_HELPERS + ["describeAppliedRecommended"], f"return describeAppliedRecommended({json.dumps(_LINUX_REPORT)});")
     assert "output.image" in out and _REASON in out, out
     assert "1 route has no recommendation this computer can run" in out, out
     # Nothing-but-unavailable must not read as "all matched" either.
     only = {"unavailable": 1, "routes": [_LINUX_REPORT["routes"][2], _LINUX_REPORT["routes"][1]]}
-    out_only = _run(["describeAppliedRecommended"], f"return describeAppliedRecommended({json.dumps(only)});")
+    out_only = _run(_ENGINE_HELPERS + ["describeAppliedRecommended"], f"return describeAppliedRecommended({json.dumps(only)});")
     assert "already matched" not in out_only, out_only
     assert _REASON in out_only
 
 
 def test_apply_summary_without_unavailable_rows_is_unchanged() -> None:
     old = {"routes": [_LINUX_REPORT["routes"][1]]}
-    out = _run(["describeAppliedRecommended"], f"return describeAppliedRecommended({json.dumps(old)});")
+    out = _run(_ENGINE_HELPERS + ["describeAppliedRecommended"], f"return describeAppliedRecommended({json.dumps(old)});")
     assert out == "every recommended route already matched"
 
 
 def test_apply_summary_counts_several_unavailable_routes() -> None:
     video = {"key": "output.video", "action": "unavailable", "changed": False, "before": {}, "after": {}, "reason": "no video engine here"}
     report = {"routes": [_LINUX_REPORT["routes"][2], video]}
-    out = _run(["describeAppliedRecommended"], f"return describeAppliedRecommended({json.dumps(report)});")
+    out = _run(_ENGINE_HELPERS + ["describeAppliedRecommended"], f"return describeAppliedRecommended({json.dumps(report)});")
     assert "2 routes have no recommendation this computer can run" in out, out
     assert "output.video \u2014 no video engine here" in out, out
 
@@ -192,7 +192,7 @@ _CARRIED_OVER_FORCED = {"routes": [
 
 def test_apply_summary_never_reports_a_configured_route_that_cannot_run_as_fine() -> None:
     out = _run(
-        ["describeAppliedRecommended"],
+        _ENGINE_HELPERS + ["describeAppliedRecommended"],
         f"return [describeAppliedRecommended({json.dumps(_CARRIED_OVER_PLAN)}), describeAppliedRecommended({json.dumps(_CARRIED_OVER_FORCED)})];",
     )
     plain, forced = out
@@ -220,7 +220,7 @@ const renderDefaults = async () => {};
 const refreshAvailability = async () => {};
 """
     return _run(
-        ["appliedRecommendedBrokenRows", "appliedRecommendedFixableRows", "describeAppliedRecommended", "applyRecommendedDefaults"],
+        _ENGINE_HELPERS + ["appliedRecommendedBrokenRows", "appliedRecommendedFixableRows", "describeAppliedRecommended", "applyRecommendedDefaults"],
         f"REPORT = {json.dumps(report)}; await applyRecommendedDefaults(null, false);"
         "const m = $('defaults-message'); const btn = m.children.find((c) => c.innerHTML !== undefined);"
         "return [m.className, m.textContent, btn ? btn.innerHTML : null];",
@@ -254,7 +254,10 @@ def test_apply_offers_the_forced_pass_for_a_route_that_cannot_run() -> None:
     assert cls == "message ok" and button is None, (cls, button)
 
 
-_GRID_HELPERS = ["defaultRowConfigured", "defaultRowUnavailableReason", "defaultRowUnavailableMarkup"]
+# AbstractCore `engine_missing` / `needs_gpu_limit` helpers (wave 2): the grid
+# status, the apply report and the model cards call them.
+_ENGINE_HELPERS = ["engineMissingInfo", "engineMissingText", "engineMissingMarkup", "gpuLimitText"]
+_GRID_HELPERS = ["defaultRowConfigured", "defaultRowUnavailableReason", "defaultRowUnavailableMarkup"] + _ENGINE_HELPERS
 
 
 def test_grid_row_shows_the_unavailable_reason() -> None:

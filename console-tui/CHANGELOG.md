@@ -1,5 +1,36 @@
 # Changelog — abstractgateway-console
 
+## Unreleased
+
+### Added
+- **N Network** screen: the saved exposure next to what is running now, the
+  modes as a list (`(•)` marks the saved one; `Enter` saves the highlighted
+  mode, internet after an acknowledgement), the addresses to copy, and the
+  reverse proxy. A save that needs a restart offers it; the console
+  reconnects when the gateway is back and reads the network again. The
+  Connection screen keeps a one-line summary.
+- **Start at login** in F3 (`L`) and on the setup guide's Finish step,
+  confirmed and read back from the gateway.
+- Routes: "not downloaded — w: download" in the weights column; `w` names
+  the model and its size before downloading, and the weights and voice lists
+  are read again when the download finishes. "engine missing" routes and the
+  GPU-memory-limit fit verdict show their reason and command.
+- The voice picker shows why a provider lists no voices.
+
+### Changed
+- `--gateway-url` is the flag for the gateway's address (`--url` stays as an
+  alias); `--help` gives the token directly (`--token <token>`).
+- Without the flag the console finds this computer's gateway: the legacy
+  `ABSTRACTGATEWAY_URL`, else the address the installer and `abstractgateway
+  serve` record in `~/.abstractframework/gateway.json` (believed only for a
+  loopback http(s) URL with schema 1, in a regular file owned by you; a bad
+  file is ignored with one visible line), else `http://127.0.0.1:8080`. When
+  a gateway found this way stops answering, the console reads the file again
+  and follows a gateway restarted on a new port.
+- Apps → Open never starts a browser over SSH or without a display: it shows
+  the link to copy and the SSH port forwards. The display rule is
+  AbstractCore's console (`display_available`); needs abstractcore-console 0.4.
+
 ## 0.10.0 (2026-09-27) — parity with the web console
 
 The terminal console now does what the web console (`/console`) does,

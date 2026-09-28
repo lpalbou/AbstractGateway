@@ -1009,6 +1009,20 @@ fn open_link_modal(cx: Scope, ctx: &Ctx, link: AppOpenLink) {
                 span(u.clone(), t.text_muted),
             ]));
         }
+        // No screen in front of the person (SSH, or Linux without a
+        // display): NEVER run a URL opener — say why, and the link to copy
+        // is the way (with the tunnel when it names a loopback address).
+        let no_display = ctx2.no_display.clone();
+        if let Some(why) = &no_display {
+            for l in wrap_text(
+                &format!(
+                    "No browser here: {why}. Copy the link (y) and open it on your own computer."
+                ),
+                wrap_w,
+            ) {
+                col = col.child(line(vec![span(l, t.warn)]));
+            }
+        }
         if let Some(h) = &link.tunnel_hint {
             for l in wrap_text(h, wrap_w) {
                 col = col.child(line(vec![span(l, t.warn)]));
@@ -1021,28 +1035,34 @@ fn open_link_modal(cx: Scope, ctx: &Ctx, link: AppOpenLink) {
         let close_btn = close.clone();
         let close_open = close.clone();
         col = col.child(line(vec![span(String::new(), t.text)]));
-        col = col.child(
-            Element::new()
-                .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                .child(
-                    Button::new("Copy link (y)")
-                        .on_click(move || {
-                            copy_to_clipboard(l_copy.clone());
-                            store.notice.set(Some("copied the one-time link".into()));
-                        })
-                        .element(mcx, &t)
-                        .autofocus()
-                        .build(),
-                )
-                .child(
-                    Button::new("Open in a browser here (o)")
-                        .on_click(move || {
-                            ctx_open.screens.open_url(&l_open);
+        let mut buttons = Element::new()
+            .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+            .child(
+                Button::new("Copy link (y)")
+                    .on_click(move || {
+                        copy_to_clipboard(l_copy.clone());
+                        store.notice.set(Some("copied the one-time link".into()));
+                    })
+                    .element(mcx, &t)
+                    .autofocus()
+                    .build(),
+            );
+        if no_display.is_none() {
+            buttons = buttons.child(
+                Button::new("Open in a browser here (o)")
+                    .on_click(move || {
+                        // Not opened (e.g. NoDisplay): the modal stays, the
+                        // notice says why and the link is right here.
+                        if ctx_open.screens.open_url(&l_open).is_ok() {
                             close_open();
-                        })
-                        .element(mcx, &t)
-                        .build(),
-                )
+                        }
+                    })
+                    .element(mcx, &t)
+                    .build(),
+            );
+        }
+        col = col.child(
+            buttons
                 .child(
                     Button::new("Close (Esc)")
                         .on_click(move || close_btn())
@@ -1062,8 +1082,16 @@ fn open_link_modal(cx: Scope, ctx: &Ctx, link: AppOpenLink) {
                 store.notice.set(Some("copied the one-time link".into()));
             })
             .shortcut(KeyChord::plain(Key::Char('o')), move |_| {
-                ctx_o.screens.open_url(&l_o);
-                close_o();
+                match &ctx_o.no_display {
+                    Some(why) => store.notice.set(Some(format!(
+                        "not opening a browser: {why} — copy the link (y)"
+                    ))),
+                    None => {
+                        if ctx_o.screens.open_url(&l_o).is_ok() {
+                            close_o();
+                        }
+                    }
+                }
             })
             .child(col.build())
             .build()

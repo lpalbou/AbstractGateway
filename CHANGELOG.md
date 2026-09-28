@@ -10,6 +10,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Requires the next AbstractRuntime release (the session history window; `session_chat_messages` no longer accepts
 the old caps).
 
+### Added
+
+- `_runtime.session_history` records the history window for every seeded run: `seeded`, `policy`, `max_tokens`,
+  `token_estimator`, `replayed_messages`, `replayed_tokens`, `dropped_messages`, `dropped_tokens`,
+  `dropped_counts_complete`, `oversize_turn_kept`. Strict seeding (automation and discussion sessions) also adds
+  `strict` and `session_kind`.
+- **Start at login from the consoles.** `GET/PUT /api/gateway/host/start-at-login` (admin)
+  reports whether this gateway starts at the next login (`enabled`, `state`, the mechanism:
+  LaunchAgent, systemd user unit or desktop autostart entry, Windows Run value) and whether it
+  can be changed here (`can_change` with a plain `reason`), and turns it on or off without
+  starting or stopping the running gateway. The web console has the switch in the Gateway card
+  and on the setup guide's last step; the terminal console in F3 and on the Finish step.
+- **Cloud voice providers are always listed.** Voice provider listings include `openai` and
+  `openai-compatible` marked `needs_key` until a key is configured, in the environment or
+  through the Providers screen; both consoles show the state.
+- Voice listings pass AbstractVoice's `unavailable_providers` and `unavailable_reason` through,
+  and a listing filtered to a cloud provider without a key says where the key goes. Both
+  consoles' voice pickers show the reason instead of an empty list.
+- The consoles show AbstractCore's `engine_missing` (a route this computer can run whose engine
+  is not installed, with the install command) and the `needs_gpu_limit` fit verdict (the exact
+  command that raises the GPU memory limit).
+- An OpenAI key saved through the Providers screen reaches voice: the voice listings pass it to
+  AbstractVoice as `voice_openai_api_key` on every call, and the gateway's runtime is built with
+  it for voice generation.
+- `restart.port` in `GET /api/gateway/network`: the port a restart binds; the restart route
+  reconnects there.
+
 ### Changed
 
 - **Session history replay is the most recent 50,000 tokens of whole turns.** A run started with
@@ -25,13 +52,12 @@ the old caps).
   `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS` are no longer read and have been removed from the environment registry.
 - **Telegram bridge:** `ABSTRACT_TELEGRAM_MAX_HISTORY_MESSAGES` (default 30) is retired. The bridge no longer sends a
   message cap or `_limits.max_history_messages`, and it logs a warning when the variable is still set.
-
-### Added
-
-- `_runtime.session_history` records the history window for every seeded run: `seeded`, `policy`, `max_tokens`,
-  `token_estimator`, `replayed_messages`, `replayed_tokens`, `dropped_messages`, `dropped_tokens`,
-  `dropped_counts_complete`, `oversize_turn_kept`. Strict seeding (automation and discussion sessions) also adds
-  `strict` and `session_kind`.
+- `restart_required` compares **saved** values only: a gateway started with `--port N` and no
+  saved port needs no restart, and a command-line flag counts as overriding the setting only
+  when it shadows a saved value that differs.
+- The static voice listings decide which local engines are available from AbstractVoice's
+  `abstractvoice.engine_runtime` (a Supertonic voice without its runtime is no longer listed),
+  and answer 503 with the reason when AbstractVoice lacks that API.
 
 ## [0.6.0] - 2026-09-27
 

@@ -71,6 +71,24 @@ impl GatewayClient {
         self.send("POST", "/host/update/start", &json!({}), false)
     }
 
+    /// `GET /host/start-at-login` (admin) — would this gateway start at
+    /// the next login, by which mechanism, and can it be changed here.
+    pub fn start_at_login(&self) -> ApiResult<Value> {
+        self.get("/host/start-at-login", false)
+    }
+
+    /// `PUT /host/start-at-login` (admin) — `{enabled, replace_other}`;
+    /// answers the read-back under `start_at_login`. 409 = refused
+    /// (cannot change here / another gateway's registration).
+    pub fn set_start_at_login(&self, enabled: bool, replace_other: bool) -> ApiResult<Value> {
+        self.send(
+            "PUT",
+            "/host/start-at-login",
+            &json!({"enabled": enabled, "replace_other": replace_other}),
+            false,
+        )
+    }
+
     /// The (base URL, token) this client talks with — the restart watcher
     /// re-probes the SAME gateway with the SAME credentials once it is back.
     pub fn credentials(&self) -> (String, Option<String>) {
