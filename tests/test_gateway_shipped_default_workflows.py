@@ -196,3 +196,29 @@ def test_fresh_install_serves_coder_deep_research_and_co_scientist(tmp_path: Pat
     # default entrypoint must keep declaring the same chat contract.
     version, fallback = _default_entrypoint(host, "basic-agent")
     assert "abstractcode.agent.v1" in (fallback.interfaces or [])
+
+
+@pytest.mark.parametrize(
+    "bundle_id, old_version, new_version, flow_id",
+    [
+        ("coding-agent", "0.2.6", "0.2.8", "coder"),
+        ("co-scientist", "0.2.0", "0.2.1", "co-scientist"),
+        ("docs-qa", "0.1.0", "0.1.1", "docsqa001"),
+    ],
+)
+def test_an_upgrade_keeps_runs_pinned_to_a_version_0_6_0_shipped(
+    tmp_path: Path, bundle_id: str, old_version: str, new_version: str, flow_id: str
+) -> None:
+    """Automations (and discussion roots, catalog records) store the concrete
+    version they were created with. After an upgrade from 0.6.0, a start
+    pinned to that version must still find its workflow, and an unpinned start
+    must get the newest shipped version."""
+    host = _load_shipped_host(tmp_path)
+
+    assert host.latest_bundle_versions[bundle_id] == new_version
+    pinned = host.start_run(flow_id=flow_id, bundle_id=bundle_id, bundle_version=old_version, input_data={"prompt": "hi"})
+    run = host.runtime.run_store.load(pinned)
+    assert run is not None and run.workflow_id == f"{bundle_id}@{old_version}:{flow_id}"
+
+    latest = host.start_run(flow_id=flow_id, bundle_id=bundle_id, input_data={"prompt": "hi"})
+    assert host.runtime.run_store.load(latest).workflow_id == f"{bundle_id}@{new_version}:{flow_id}"

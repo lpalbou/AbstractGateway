@@ -139,6 +139,15 @@ def _version_from_filename(path: Path, bundle_id: str) -> str:
     return stem[len(prefix):] if stem.startswith(prefix) else ""
 
 
+def _version_sort_key(version: str) -> tuple:
+    from packaging.version import InvalidVersion, Version
+
+    try:
+        return (1, Version(version))
+    except InvalidVersion:
+        return (0, version)
+
+
 def ensure_shipped_catalog_bundles(
     *,
     root_data_dir: Path,
@@ -199,7 +208,10 @@ def ensure_shipped_catalog_bundles(
             summary["skipped"].append({"bundle_id": bundle_id, "reason": "artifact_missing"})
             continue
 
-        for path in files:
+        # Newest version first: a fresh catalog's default pointer (assigned by
+        # the store only when none exists) names the newest shipped version,
+        # while older ones stay published for what pinned them.
+        for path in sorted(files, key=lambda p: _version_sort_key(_version_from_filename(p, bundle_id)), reverse=True):
             version = _version_from_filename(path, bundle_id)
             if not version:
                 continue

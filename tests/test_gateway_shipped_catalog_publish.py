@@ -63,7 +63,7 @@ def _isolated_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
 def _shipped_docs_qa() -> Path:
     files = _find_shipped_bundle_files("docs-qa")
     assert files, "the repo must carry flows/bundles/docs-qa@<ver>.flow (wheel force-include source)"
-    return files[0]
+    return next(p for p in files if _version(p) == _shipped_version())
 
 
 def _store(root: Path) -> WorkflowCatalogStore:
@@ -78,9 +78,15 @@ def _docs_qa_record(root: Path, version: str) -> dict:
     return rec
 
 
+def _version(path: Path) -> str:
+    return path.name[len("docs-qa@") : -len(".flow")]
+
+
 def _shipped_version() -> str:
-    name = _shipped_docs_qa().name
-    return name[len("docs-qa@") : -len(".flow")]
+    """The newest shipped docs-qa version (the one a fresh catalog defaults to)."""
+    from packaging.version import Version
+
+    return max((_version(p) for p in _find_shipped_bundle_files("docs-qa")), key=Version)
 
 
 # ------------------------------------------------------------- fresh install
@@ -594,3 +600,16 @@ def test_shipped_list_is_explicit_and_small() -> None:
     ride the private runtime registry, not the catalog. Growing this tuple
     is a deliberate act — this pin makes it one."""
     assert SHIPPED_CATALOG_BUNDLE_IDS == ("docs-qa",)
+
+
+def test_a_fresh_catalog_defaults_to_the_newest_shipped_docs_qa_and_keeps_the_older(tmp_path: Path) -> None:
+    """0.7.0 ships docs-qa 0.1.1 AND 0.1.0 (clients of 0.6.0 pin 0.1.0): both are
+    published, and a fresh catalog's default pointer names the newest."""
+    root = tmp_path / "runtime"
+    versions = sorted(_version(p) for p in _find_shipped_bundle_files("docs-qa"))
+    assert versions == ["0.1.0", "0.1.1"]
+    ensure_shipped_catalog_bundles(root_data_dir=root, tenant_id="default")
+    for v in versions:
+        assert _docs_qa_record(root, v)["status"] == "published"
+    default = _store(root).get_default_record(scope=CATALOG_SCOPE_TENANT, tenant_id="default", bundle_id="docs-qa")
+    assert default is not None and default["bundle_version"] == "0.1.1"

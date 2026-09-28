@@ -135,10 +135,16 @@ packages = ["src/abstractgateway"]
 # deep research, and co-scientist without any manual bundle install.
 "flows/bundles/coding-agent@0.2.8.flow" = "abstractgateway/flows/bundles/coding-agent@0.2.8.flow"
 "flows/bundles/co-scientist@0.2.1.flow" = "abstractgateway/flows/bundles/co-scientist@0.2.1.flow"
+# Kept after an upgrade: automations and catalog records pin the concrete version
+# they were created with (coding-agent@0.2.6, co-scientist@0.2.0, docs-qa@0.1.0
+# shipped in 0.6.0). Removing a shipped version breaks those on upgrade.
+"flows/bundles/coding-agent@0.2.6.flow" = "abstractgateway/flows/bundles/coding-agent@0.2.6.flow"
+"flows/bundles/co-scientist@0.2.0.flow" = "abstractgateway/flows/bundles/co-scientist@0.2.0.flow"
 # The console assistant drawer's transport bundle: boot ensure-publishes it
 # into the tenant catalog (shipped_catalog.py, card 013) — the wheel must
 # actually carry it or a fresh pip install has nothing to publish.
 "flows/bundles/docs-qa@0.1.1.flow" = "abstractgateway/flows/bundles/docs-qa@0.1.1.flow"
+"flows/bundles/docs-qa@0.1.0.flow" = "abstractgateway/flows/bundles/docs-qa@0.1.0.flow"
 "flows/bundles/react-agent@0.1.0.flow" = "abstractgateway/flows/bundles/react-agent@0.1.0.flow"
 "flows/bundles/codeact-agent@0.1.0.flow" = "abstractgateway/flows/bundles/codeact-agent@0.1.0.flow"
 "flows/bundles/memact-agent@0.1.0.flow" = "abstractgateway/flows/bundles/memact-agent@0.1.0.flow"
@@ -160,7 +166,10 @@ exclude = [
 "flows/bundles/deep-research@0.1.8.flow" = "flows/bundles/deep-research@0.1.8.flow"
 "flows/bundles/coding-agent@0.2.8.flow" = "flows/bundles/coding-agent@0.2.8.flow"
 "flows/bundles/co-scientist@0.2.1.flow" = "flows/bundles/co-scientist@0.2.1.flow"
+"flows/bundles/coding-agent@0.2.6.flow" = "flows/bundles/coding-agent@0.2.6.flow"
+"flows/bundles/co-scientist@0.2.0.flow" = "flows/bundles/co-scientist@0.2.0.flow"
 "flows/bundles/docs-qa@0.1.1.flow" = "flows/bundles/docs-qa@0.1.1.flow"
+"flows/bundles/docs-qa@0.1.0.flow" = "flows/bundles/docs-qa@0.1.0.flow"
 "flows/bundles/react-agent@0.1.0.flow" = "flows/bundles/react-agent@0.1.0.flow"
 "flows/bundles/codeact-agent@0.1.0.flow" = "flows/bundles/codeact-agent@0.1.0.flow"
 "flows/bundles/memact-agent@0.1.0.flow" = "flows/bundles/memact-agent@0.1.0.flow"

@@ -257,7 +257,6 @@ def test_docs_qa_bundle_is_packaged_at_the_console_pinned_version() -> None:
     assert (ROOT / name).is_file()
     assert wheel_force[name] == "abstractgateway/" + name
     assert sdist_force[name] == name
-    assert not [k for k in wheel_force if k.startswith("flows/bundles/docs-qa@") and k != name]
     for dockerfile in ("Dockerfile", "Dockerfile.nvidia"):
         assert name in (ROOT / "docker" / "abstractgateway-server" / dockerfile).read_text(encoding="utf-8")
     assert f"!{name}" in (ROOT / ".gitignore").read_text(encoding="utf-8")
@@ -265,6 +264,30 @@ def test_docs_qa_bundle_is_packaged_at_the_console_pinned_version() -> None:
     assert 'bundle_id: "docs-qa", bundle_version: "0.1.1"' in console
     tui = (ROOT / "console-tui" / "src" / "ui" / "docs.rs").read_text(encoding="utf-8")
     assert 'pub const BUNDLE_VERSION: &str = "0.1.1";' in tui
+
+
+# Every bundle version a released gateway shipped. Automations, discussion
+# roots and catalog records pin the CONCRETE version they were created with,
+# so an upgrade that stops shipping one breaks them ("Workflow
+# 'coding-agent@0.2.6:coder' not found"). Add a version here when a release
+# ships it; never remove one without a migration.
+PREVIOUSLY_SHIPPED_BUNDLES = (
+    "coding-agent@0.2.6.flow",
+    "co-scientist@0.2.0.flow",
+    "docs-qa@0.1.0.flow",
+)
+
+
+@pytest.mark.parametrize("name", PREVIOUSLY_SHIPPED_BUNDLES)
+def test_versions_shipped_by_0_6_0_are_still_shipped(name: str) -> None:
+    build = _pyproject()["tool"]["hatch"]["build"]["targets"]
+    rel = f"flows/bundles/{name}"
+    assert (ROOT / rel).is_file()
+    assert build["wheel"]["force-include"].get(rel) == "abstractgateway/" + rel
+    assert build["sdist"]["force-include"].get(rel) == rel
+    for dockerfile in ("Dockerfile", "Dockerfile.nvidia"):
+        assert rel in (ROOT / "docker" / "abstractgateway-server" / dockerfile).read_text(encoding="utf-8"), dockerfile
+    assert f"!{rel}" in (ROOT / ".gitignore").read_text(encoding="utf-8")
 
 
 def test_default_docker_image_uses_base_server_and_nvidia_uses_gpu_profile() -> None:
