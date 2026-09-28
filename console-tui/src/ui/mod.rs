@@ -47,7 +47,7 @@ use crate::worker::Cmd;
 use abstractcore_console::screens::Remote;
 use util::{hints, line, span, span_bold};
 
-pub const SCREENS: [&str; 12] = [
+pub const SCREENS: [&str; 13] = [
     "Connection",
     "Providers",
     "Routes",
@@ -65,9 +65,11 @@ pub const SCREENS: [&str; 12] = [
     abstractcore_console::screens::ENGINES_TITLE,
     // The web console's Apps tab (ui/apps.rs); key `A`.
     "Apps",
-    // The first-run guide's welcome step (no jump key: 1-9, 0 and A are
-    // taken; Ctrl+G opens the guide on it, Ctrl+N/P reach it in browse).
+    // The first-run guide's welcome step (no jump key; Ctrl+G opens the
+    // guide on it, Ctrl+N/P reach it in browse).
     "Setup",
+    // Who can reach the gateway (ui/network.rs); key `N`.
+    "Network",
 ];
 
 /// Screens with semantic weight get NAMES (round-4 P3-2): the bare
@@ -89,11 +91,10 @@ pub const SCREEN_ENGINES: usize = 9;
 pub const SCREEN_APPS: usize = 10;
 /// The setup guide's welcome step (page id `setup`), no jump key.
 pub const SCREEN_WELCOME: usize = 11;
+/// The Network screen (who can reach the gateway), key `N`.
+pub const SCREEN_NETWORK: usize = 12;
 /// Screens reachable by a digit key (1-9, then 0).
 pub const DIGIT_SCREENS: usize = 10;
-/// Screens reachable by a jump key: the digit screens, then Apps (`A`).
-/// Every screen at or past this index (Setup) has no jump key.
-pub const KEYED_SCREENS: usize = SCREEN_APPS + 1;
 
 /// The first-run wizard, in the web guide's order (`console.py`
 /// `FIRST_RUN_STEPS` = welcome → engines → model → apps → done), mapped
@@ -117,24 +118,24 @@ pub const WIZARD_STEPS: [usize; 8] = [
     SCREEN_REVIEW,
 ];
 
-/// The digit that jumps to screen `i` in browse mode: 1-9, then 0 for
-/// the tenth (PageHost's own number jump covers 1-9 only).
-pub fn screen_key(i: usize) -> char {
-    if i == SCREEN_APPS {
-        // The digits are spent: the Apps screen gets a LETTER (shifted,
-        // so no screen's own lowercase verb ever collides with it).
-        'A'
-    } else if i == 9 {
-        '0'
-    } else {
-        char::from_digit(i as u32 + 1, 10).expect("screens 1-9")
+/// The key that jumps to screen `i` in browse mode: 1-9, then 0 for the
+/// tenth (PageHost's own number jump covers 1-9 only), then LETTERS once
+/// the digits are spent — shifted, so no screen's own lowercase verb ever
+/// collides: `A` Apps, `N` Network. None: no jump key (Setup).
+pub fn screen_key(i: usize) -> Option<char> {
+    match i {
+        SCREEN_APPS => Some('A'),
+        SCREEN_NETWORK => Some('N'),
+        9 => Some('0'),
+        0..=8 => char::from_digit(i as u32 + 1, 10),
+        _ => None,
     }
 }
 
 /// Stable PageHost page ids, parallel to `SCREENS`. `ui.screen: usize`
 /// stays the source of truth (the wizard gate reads indexes); a two-way
 /// equality-guarded bridge keeps PageHost's string `active` in lockstep.
-pub const SCREEN_IDS: [&str; 12] = [
+pub const SCREEN_IDS: [&str; 13] = [
     "connection",
     "providers",
     "routes",
@@ -149,6 +150,7 @@ pub const SCREEN_IDS: [&str; 12] = [
     abstractcore_console::screens::ENGINES_ID,
     "apps",
     "setup",
+    "network",
 ];
 
 /// Durable per-screen UI state (Copy: all signals).
@@ -343,6 +345,9 @@ pub struct Ctx {
     pub entity_drawer: Rc<RefCell<Option<abstracttui::app::drawer::DrawerHandle>>>,
     /// Env-token presence (never its value) for honest connection copy.
     pub env_token_set: bool,
+    /// `Some(reason)`: no screen in front of the person (SSH, or Linux
+    /// without a display) — never run a URL opener; show the link.
+    pub no_display: Option<String>,
     /// The health authority's probe launcher (url, token, generation).
     /// Production installs a thread-spawning prober in lib.rs; the
     /// headless harness installs a recorder (or nothing) and calls
@@ -500,9 +505,10 @@ impl Ctx {
         // budgets (a fresh `r` means "try again", including the probe).
         s.conn_retry_spent.set(Vec::new());
         match screen {
-            0 => {
-                // Connection: the network exposure panel's read (the
-                // probe itself stays the Probe button's job).
+            // Connection (its Network summary line) and the Network
+            // screen: the network read (the probe itself stays the
+            // Probe button's job).
+            0 | SCREEN_NETWORK => {
                 if s.conn.with_untracked(crate::store::ConnPhase::is_connected) {
                     s.network.set(Loadable::Loading);
                     self.send(Cmd::LoadNetwork);
@@ -1065,20 +1071,20 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         .shortcut(KeyChord::plain(Key::F(2)), move |_| {
             docs::open(&ctx_docs, cx)
         });
-    // Screen keys (1-9, 0, A) at the root — the ONE jump surface. Wizard:
+    // Screen keys (1-9, 0, A, N) at the root — the ONE jump surface. Wizard:
     // a REFUSAL with a reason, so a swallowed digit never reads as a dead
     // app (F3). Browse: the jump. PageHost's own number_jump is off: it
     // re-anchors focus on the host root even when the digit names the
     // screen already shown, and that left the screen's keys dead (the
     // page is not on the root→focus path) — review 2 pty proof, `8` then
     // `w` on Resources. A same-screen key here changes nothing.
-    for i in 0..KEYED_SCREENS {
+    for i in 0..SCREENS.len() {
+        let Some(key) = screen_key(i) else { continue };
         let ctx_i = ctx.clone();
-        let key = screen_key(i);
         root_el = root_el.shortcut(KeyChord::plain(Key::Char(key)), move |_| {
             if ctx_i.ui.wizard.get_untracked() {
                 ctx_i.store.notice.set(Some(
-                    "screen jumps (1-9, 0, A) work in browse mode — in the guide Ctrl+N walks, Ctrl+G jumps to a step or leaves"
+                    "screen jumps (1-9, 0, A, N) work in browse mode — in the guide Ctrl+N walks, Ctrl+G jumps to a step or leaves"
                         .into(),
                 ));
             } else if ctx_i.ui.screen.get_untracked() != i {
@@ -1138,6 +1144,7 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         let c9 = host_ctx.clone();
         let c10 = host_ctx.clone();
         let c11 = host_ctx.clone();
+        let c12 = host_ctx.clone();
         PageHost::new()
             .page(SCREEN_IDS[0], "1 Connection", move |gcx| {
                 connection::view(gcx, &c0, &theme.get().tokens)
@@ -1175,6 +1182,9 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
             })
             .page(SCREEN_IDS[SCREEN_WELCOME], "Setup", move |gcx| {
                 welcome::view(gcx, &c11, &theme.get().tokens)
+            })
+            .page(SCREEN_IDS[SCREEN_NETWORK], "N Network", move |gcx| {
+                network::view(gcx, &c12, &theme.get().tokens)
             })
             .active(active)
             .number_jump(false)
@@ -1783,7 +1793,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 globals.push(("Ctrl+P/Esc", "back"));
             } else {
                 globals.push(("q/Ctrl+C", "quit"));
-                globals.push(("1-9,0,A", "screens"));
+                globals.push(("1-9,0,A,N", "screens"));
                 globals.push(("Ctrl+N/P", "next/prev"));
             }
             globals.push(("Tab", "focus"));
@@ -1890,6 +1900,11 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 SCREEN_WELCOME => {
                     pairs.push(("r", "refresh"));
                 }
+                SCREEN_NETWORK => {
+                    pairs.push(("↑↓ Enter", "save mode"));
+                    pairs.push(("c", "copy address"));
+                    pairs.push(("r", "refresh"));
+                }
                 _ => {}
             }
             let admin_keys: &[&str] = match screen {
@@ -1957,6 +1972,16 @@ pub fn screens_access_signal(
         }
     });
     access
+}
+
+/// The URL opener handed to the shared screens: the system opener, or —
+/// with no display in front of the person — a refusal that says why (the
+/// screens then tell the user to open the link themselves).
+pub fn url_opener(no_display: Option<String>) -> abstractcore_console::screens::Opener {
+    Rc::new(move |url: &str| match &no_display {
+        Some(reason) => Err(reason.clone()),
+        None => abstractcore_console::screens::system_open(url),
+    })
 }
 
 /// Scheme-default URL normalization, shared by the Probe button and the

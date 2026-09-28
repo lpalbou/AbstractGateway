@@ -17,7 +17,8 @@ use serde_json::Value;
 use super::{finish_write, load, publish_ready, require_client, with_busy, Body, Cmd, Secret};
 use crate::api::{ApiError, ApiErrorKind, GatewayClient};
 use crate::store::operator::{
-    my_policy_body, seed_report_text, start_again_hint, tray_note, HostRunner, HostUpdate, MyPolicy,
+    my_policy_body, seed_report_text, start_again_hint, tray_note, HostRunner, HostUpdate,
+    MyPolicy, StartAtLogin,
 };
 use crate::store::{JournalEntry, Loadable, NetworkData, RuntimeConfigData, Store};
 
@@ -94,6 +95,16 @@ pub enum OpCmd {
     ReseedSkills,
     /// GET /network?lookup_public=1.
     LookupPublic,
+    /// GET /host/start-at-login (admin).
+    LoadStartAtLogin,
+    /// PUT /host/start-at-login, verified by a GET.
+    SetStartAtLogin {
+        enabled: bool,
+        replace_other: bool,
+    },
+    /// POST /network/restart, then the restart watcher (reconnecting to
+    /// the address the new exposure serves on).
+    RestartNetwork,
     LoadMyPolicy,
     /// PUT /workspace/policy/self (`clear` = `{}` back to inherited).
     SaveMyPolicy {
@@ -196,6 +207,59 @@ fn reload<T: Clone + Send + 'static>(
 fn post_lifecycle(wake: &WakeHandle, store: &Store, line: String) {
     let s = *store;
     wake.post(move || s.op.lifecycle.set(Some(line.clone())));
+}
+
+/// Start the restart/quit watcher: the banner line, then the first probe.
+fn start_watch(
+    wake: &WakeHandle,
+    store: &Store,
+    tx: &Sender<Cmd>,
+    restart: bool,
+    url: String,
+    token: Option<String>,
+    start_again: String,
+) {
+    post_lifecycle(
+        wake,
+        store,
+        if restart {
+            "⟳ restarting — waiting for the gateway to go down and come back…".into()
+        } else {
+            "⟳ quitting — waiting for the gateway to stop…".into()
+        },
+    );
+    later(
+        tx,
+        LIFECYCLE_PROBE_INTERVAL,
+        Cmd::Operator(OpCmd::WatchLifecycle {
+            restart,
+            started_ms: now_ms(),
+            saw_down: false,
+            url,
+            token: Secret(token.unwrap_or_default()),
+            start_again,
+        }),
+    );
+}
+
+/// `url` with its port replaced by `port` (the port a network restart
+/// binds): scheme and host stay, a path is dropped (base URLs have none).
+pub fn url_with_port(url: &str, port: u64) -> String {
+    let (scheme, rest) = match url.split_once("://") {
+        Some((s, r)) => (s, r),
+        None => ("http", url),
+    };
+    let authority = rest.split('/').next().unwrap_or(rest);
+    // An IPv6 literal keeps its brackets; the port follows the last ']'.
+    let host = if let Some(end) = authority.rfind(']') {
+        &authority[..=end]
+    } else {
+        authority
+            .rsplit_once(':')
+            .map(|(h, _)| h)
+            .unwrap_or(authority)
+    };
+    format!("{scheme}://{host}:{port}")
 }
 
 fn journal(wake: &WakeHandle, store: &Store, action: String, outcome: Result<String, String>) {
@@ -357,29 +421,90 @@ pub(super) fn handle(
             if accepted {
                 if let Ok(c) = require_client(client) {
                     let (url, token) = c.credentials();
-                    post_lifecycle(
+                    start_watch(wake, store, tx, restart, url, token, start_again);
+                }
+            }
+        }
+
+        OpCmd::RestartNetwork => {
+            let res = with_busy(store, wake, "restarting the gateway", || {
+                require_client(client).and_then(|c| c.restart_network())
+            });
+            match res {
+                Ok(v) => {
+                    journal(
                         wake,
                         store,
-                        if restart {
-                            "⟳ restarting — waiting for the gateway to go down and come back…"
-                                .into()
-                        } else {
-                            "⟳ quitting — waiting for the gateway to stop…".into()
-                        },
+                        "RESTART gateway (apply the network exposure)".into(),
+                        Ok("accepted — watching it go down and come back".into()),
                     );
-                    later(
-                        tx,
-                        LIFECYCLE_PROBE_INTERVAL,
-                        Cmd::Operator(OpCmd::WatchLifecycle {
-                            restart,
-                            started_ms: now_ms(),
-                            saw_down: false,
-                            url,
-                            token: Secret(token.unwrap_or_default()),
-                            start_again,
-                        }),
-                    );
+                    if let Ok(c) = require_client(client) {
+                        let (url, token) = c.credentials();
+                        let port = v
+                            .get("next")
+                            .and_then(|n| n.get("port"))
+                            .and_then(Value::as_u64);
+                        let url = match port {
+                            Some(p) => url_with_port(&url, p),
+                            None => url,
+                        };
+                        start_watch(wake, store, tx, true, url, token, String::new());
+                    }
                 }
+                Err(e) => {
+                    let note = format!("✗ restart refused: {}", super::refusal_text(&e));
+                    let s = *store;
+                    wake.post(move || s.notice.set(Some(note.clone())));
+                }
+            }
+        }
+
+        OpCmd::LoadStartAtLogin => load(
+            store,
+            wake,
+            "reading start at login",
+            op.start_at_login,
+            || {
+                require_client(client)?
+                    .start_at_login()
+                    .map(|v| StartAtLogin::from_value(&v))
+            },
+        ),
+
+        OpCmd::SetStartAtLogin {
+            enabled,
+            replace_other,
+        } => {
+            let label = if enabled {
+                "turning start at login on"
+            } else {
+                "turning start at login off"
+            };
+            let (write, verify) = with_busy(store, wake, label, || {
+                let write = require_client(client)
+                    .and_then(|c| c.set_start_at_login(enabled, replace_other));
+                let verify = require_client(client).and_then(|c| c.start_at_login());
+                (write, verify)
+            });
+            let verified = verify.as_ref().ok().map(|v| {
+                let st = StartAtLogin::from_value(v);
+                if st.enabled == enabled {
+                    Ok(format!("GET /host/start-at-login: {}", st.text()))
+                } else {
+                    Err(format!("GET /host/start-at-login still says {}", st.text()))
+                }
+            });
+            finish_write(
+                store,
+                wake,
+                format!("START AT LOGIN {}", if enabled { "on" } else { "off" }),
+                write,
+                verified,
+                None,
+                on_done,
+            );
+            if let Ok(v) = verify {
+                publish_ready(wake, op.start_at_login, StartAtLogin::from_value(&v));
             }
         }
 

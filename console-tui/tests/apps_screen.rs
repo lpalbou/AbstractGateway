@@ -75,6 +75,12 @@ struct Harness {
 }
 
 fn harness() -> Harness {
+    harness_with(None, Rc::new(RefCell::new(Vec::new())))
+}
+
+/// `no_display`: the console's headless verdict; `opened`: every URL the
+/// opener was asked to open (recorded, never opened).
+fn harness_with(no_display: Option<String>, opened: Rc<RefCell<Vec<String>>>) -> Harness {
     let size = Size::new(150, 44);
     abstracttui::app::set_theme_by_id("abstract-dark");
     let mut app = App::new(size);
@@ -95,7 +101,13 @@ fn harness() -> Harness {
             cx.signal(abstractcore_console::screens::Access::Admin),
             ScreensOptions {
                 notice: Some(store.notice),
-                opener: Some(Rc::new(|_url: &str| Ok(()))),
+                opener: Some({
+                    let opened = opened.clone();
+                    Rc::new(move |url: &str| {
+                        opened.borrow_mut().push(url.to_string());
+                        Ok(())
+                    })
+                }),
                 ..ScreensOptions::default()
             },
         );
@@ -108,6 +120,7 @@ fn harness() -> Harness {
             modal: Rc::new(RefCell::new(None)),
             entity_drawer: Rc::new(RefCell::new(None)),
             env_token_set: false,
+            no_display: no_display.clone(),
             prober: Rc::new(RefCell::new(None)),
             screens,
             screens_transport: transport,
@@ -517,6 +530,81 @@ fn a_minted_link_opens_its_modal_with_the_tunnel_hint() {
         "{s}"
     );
     assert!(h.store.apps.open_link.get_untracked().is_none(), "consumed");
+}
+
+#[test]
+fn a_headless_or_ssh_session_never_runs_a_url_opener() {
+    let opened = Rc::new(RefCell::new(Vec::new()));
+    let why = "this is an SSH session: a browser opened here would appear on the remote machine, not in front of you";
+    let mut h = harness_with(Some(why.to_string()), opened.clone());
+    h.on_apps(true);
+    let link = AppOpenLink::from_value(
+        "http://127.0.0.1:8080",
+        "flow",
+        "Flow Editor",
+        false,
+        &json!({"open_url": "/apps/handover/abc123", "app_url": "http://127.0.0.1:3003/", "expires_in_s": 120}),
+    )
+    .unwrap();
+    h.store.apps.open_link.set(Some(link));
+    let s = h.turns(4);
+    // The link, the copy verb and the tunnel — never "Open in a browser here".
+    assert!(
+        s.contains("http://127.0.0.1:8080/apps/handover/abc123"),
+        "{s}"
+    );
+    assert!(s.contains("No browser here: this is an SSH session"), "{s}");
+    assert!(s.contains("Copy link (y)"), "{s}");
+    assert!(!s.contains("Open in a browser here"), "{s}");
+    assert!(
+        s.contains("ssh -L 8080:127.0.0.1:8080 -L 3003:127.0.0.1:3003"),
+        "{s}"
+    );
+    // `o` refuses with the reason; the opener is never called.
+    h.key(b"o");
+    assert!(
+        h.notice()
+            .starts_with("not opening a browser: this is an SSH session"),
+        "{}",
+        h.notice()
+    );
+    assert!(
+        opened.borrow().is_empty(),
+        "opener ran: {:?}",
+        opened.borrow()
+    );
+}
+
+#[test]
+fn with_a_display_o_opens_the_link() {
+    let opened = Rc::new(RefCell::new(Vec::new()));
+    let mut h = harness_with(None, opened.clone());
+    h.on_apps(true);
+    let link = AppOpenLink::from_value(
+        "http://127.0.0.1:8080",
+        "flow",
+        "Flow Editor",
+        false,
+        &json!({"open_url": "/apps/handover/abc123", "expires_in_s": 120}),
+    )
+    .unwrap();
+    h.store.apps.open_link.set(Some(link));
+    let s = h.turns(4);
+    assert!(s.contains("Open in a browser here (o)"), "{s}");
+    h.key(b"o");
+    assert_eq!(
+        *opened.borrow(),
+        vec!["http://127.0.0.1:8080/apps/handover/abc123".to_string()]
+    );
+}
+
+#[test]
+fn the_shared_screens_opener_refuses_without_a_display() {
+    let open = ui::url_opener(Some("this machine has no display".into()));
+    assert_eq!(
+        open("http://x/").unwrap_err(),
+        "this machine has no display"
+    );
 }
 
 #[test]

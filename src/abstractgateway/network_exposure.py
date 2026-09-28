@@ -1465,7 +1465,7 @@ def network_status(
         "configured": configured,
         "effective": effective_out,
         "restart_required": bool(restart_required),
-        "restart": _restart_story(effective, restart_required, bool(cur["ok"]), in_process),
+        "restart": {**_restart_story(effective, restart_required, bool(cur["ok"]), in_process), "port": restart_port},
         "auth": auth,
         "reverse_proxy": reverse_proxy,
         "modes": modes,

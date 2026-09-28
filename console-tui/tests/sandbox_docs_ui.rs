@@ -112,6 +112,7 @@ fn harness(size: Size) -> H {
             modal: Rc::new(RefCell::new(None)),
             entity_drawer: Rc::new(RefCell::new(None)),
             env_token_set: false,
+            no_display: None,
             prober: Rc::new(RefCell::new(None)),
             screens,
             screens_transport: transport,

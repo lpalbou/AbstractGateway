@@ -335,6 +335,7 @@ def test_status_restart_required_compares_stored_values_only(tmp_path) -> None:
     # applies the mode, and the warning names the port it binds (18882, not 8080).
     assert s["effective"]["overridden_by_cli"] is False and s["restart"]["applies"] is True
     assert s["warnings"][0] == "Restart the gateway to apply 'lan' on port 18882 (running: 127.0.0.1:18882)."
+    assert s["restart"]["port"] == 18882  # what the restart route reconnects to
 
 
 def test_status_stored_port_alone_is_compared(tmp_path) -> None:

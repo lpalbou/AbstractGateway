@@ -24,7 +24,7 @@ use abstracttui::prelude::*;
 
 use super::util::{ellipsize, line, span, span_bold};
 use super::{open_form, Ctx};
-use crate::store::operator::{paused_banner_text, HostRunner};
+use crate::store::operator::{paused_banner_text, HostRunner, StartAtLogin};
 use crate::store::{ConnPhase, Loadable};
 use crate::worker::operator::OpCmd;
 use crate::worker::Cmd;
@@ -89,6 +89,74 @@ pub fn refresh(ctx: &Ctx) {
         op.update.set(Loadable::Loading);
     }
     ctx.send(Cmd::Operator(OpCmd::LoadHost { admin: is_admin }));
+    if is_admin {
+        load_start_at_login(ctx);
+    }
+}
+
+// ---- Start at login (GET/PUT /host/start-at-login, admin) -------------
+// One toggle, two homes: this panel (F3, key `L`) and the setup guide's
+// Finish step. Every change is confirmed, then verified by a GET (the
+// worker's write law); the text shows the read-back, never the wish.
+
+/// Read (or re-read) the start-at-login state (admins only).
+pub fn load_start_at_login(ctx: &Ctx) {
+    if !admin(ctx) {
+        return;
+    }
+    let slot = ctx.store.op.start_at_login;
+    if slot.with_untracked(|r| r.ready().is_none()) {
+        slot.set(Loadable::Loading);
+    }
+    ctx.send(Cmd::Operator(OpCmd::LoadStartAtLogin));
+}
+
+/// The one line both homes show.
+pub fn start_at_login_text(slot: &Loadable<StartAtLogin>, is_admin: bool) -> String {
+    if !is_admin {
+        return "only an admin can see or change it".into();
+    }
+    match slot {
+        Loadable::Ready(st) => st.text(),
+        Loadable::Failed(e) => format!("unavailable: {e}"),
+        Loadable::Loading => "reading…".into(),
+        Loadable::NotAsked => "not read yet".into(),
+    }
+}
+
+/// The toggle: confirm (on the ROOT scope `cx`), then PUT + verify.
+pub fn toggle_start_at_login(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
+    if !guard(ctx) {
+        return;
+    }
+    let Some(st) = ctx
+        .store
+        .op
+        .start_at_login
+        .with_untracked(|r| r.ready().cloned())
+    else {
+        ctx.store
+            .notice
+            .set(Some("start at login is not read yet — r reloads it".into()));
+        return;
+    };
+    let Some(verb) = st.verb() else {
+        ctx.store.notice.set(Some(format!(
+            "start at login can't be changed here: {}",
+            st.reason
+        )));
+        return;
+    };
+    close();
+    let c = ctx.clone();
+    let enabled = !st.enabled;
+    let replace_other = st.state == "other";
+    super::confirm_danger(cx, ctx.ui, st.confirm_text(), verb, "Leave it", move || {
+        c.send(Cmd::Operator(OpCmd::SetStartAtLogin {
+            enabled,
+            replace_other,
+        }))
+    });
 }
 
 fn toggle_pause(ctx: &Ctx) {
@@ -241,7 +309,8 @@ pub fn open(ctx: &Ctx, cx: Scope) {
         let c_u = ctx2.clone();
         let c_s = ctx2.clone();
         let c_ref = ctx2.clone();
-        let (k_r, k_q, k_s) = (close.clone(), close.clone(), close.clone());
+        let c_l = ctx2.clone();
+        let (k_r, k_q, k_s, k_l) = (close.clone(), close.clone(), close.clone(), close.clone());
 
         let viewport = abstracttui::app::use_viewport(mcx);
         let body = dyn_view(LayoutStyle::column().gap(0).grow(1.0), move || {
@@ -306,6 +375,13 @@ pub fn open(ctx: &Ctx, cx: Scope) {
                 ])),
                 _ => {}
             }
+            rows.push(line(vec![
+                span(format!("{:>14}: ", "start at login"), t.text_muted),
+                span(
+                    ellipsize(&start_at_login_text(&op.start_at_login.get(), is_admin), 86),
+                    t.text,
+                ),
+            ]));
             if is_admin {
                 match op.update.get() {
                     Loadable::Ready(u) => {
@@ -340,7 +416,7 @@ pub fn open(ctx: &Ctx, cx: Scope) {
             // Wrapped to the panel (never cut): at 80 columns the one-line
             // key list lost "r reload · Esc close".
             let keys = if is_admin {
-                "p pause/resume · R restart · Q quit · u check for update · U install update · r reload · Esc close"
+                "p pause/resume · R restart · Q quit · u check for update · U install update · L start at login · r reload · Esc close"
             } else {
                 "only an admin can pause, restart, quit or update this gateway · r reload · Esc close"
             };
@@ -364,7 +440,9 @@ pub fn open(ctx: &Ctx, cx: Scope) {
                 c_u.clone(),
                 c_s.clone(),
             );
+            let b_l = c_l.clone();
             let (kb_r, kb_q, kb_s) = (k_r.clone(), k_q.clone(), k_s.clone());
+            let kb_l = k_l.clone();
             // Rebuilt when the runner answer changes: the pause button
             // names the verb it will perform (web parity).
             // TWO rows (process verbs, update verbs): one row of five ran
@@ -404,7 +482,11 @@ pub fn open(ctx: &Ctx, cx: Scope) {
                             .build(),
                     )
                     .build();
-                let update = Element::new()
+                let login_label = match op.start_at_login.get() {
+                    Loadable::Ready(st) => st.verb().map(|v| format!("Start at login: {v}…")),
+                    _ => None,
+                };
+                let mut update = Element::new()
                     .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
                     .child(
                         Button::new("Check for update")
@@ -417,8 +499,17 @@ pub fn open(ctx: &Ctx, cx: Scope) {
                             .on_click(move || start_update(cx, &b_s, &*kb_s))
                             .element(bcx, &t)
                             .build(),
-                    )
-                    .build();
+                    );
+                if let Some(label) = login_label {
+                    let (b_l, kb_l) = (b_l.clone(), kb_l.clone());
+                    update = update.child(
+                        Button::new(label)
+                            .on_click(move || toggle_start_at_login(cx, &b_l, &*kb_l))
+                            .element(bcx, &t)
+                            .build(),
+                    );
+                }
+                let update = update.build();
                 Element::new()
                     .style(LayoutStyle::column().gap(0).h(2).shrink(0.0))
                     .child(process)
@@ -444,6 +535,9 @@ pub fn open(ctx: &Ctx, cx: Scope) {
             .shortcut(KeyChord::plain(Key::Char('u')), move |_| check_update(&c_u))
             .shortcut(KeyChord::plain(Key::Char('U')), move |_| {
                 start_update(cx, &c_s, &*k_s)
+            })
+            .shortcut(KeyChord::plain(Key::Char('L')), move |_| {
+                toggle_start_at_login(cx, &c_l, &*k_l)
             })
             .shortcut(KeyChord::plain(Key::Char('r')), move |_| refresh(&c_ref))
             .child(line(vec![

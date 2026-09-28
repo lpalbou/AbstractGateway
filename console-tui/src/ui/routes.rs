@@ -80,6 +80,35 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         });
     }
 
+    // `w`: the worker read the target's catalog size; now confirm it.
+    {
+        let ctx_d = ctx.clone();
+        cx.effect(move || {
+            let Some(offer) = store.download_offer.get() else {
+                return;
+            };
+            store.download_offer.set(None);
+            let ctx_go = ctx_d.clone();
+            let (provider, artifact) = (offer.provider.clone(), offer.artifact.clone());
+            super::confirm_danger(
+                cx,
+                ctx_d.ui,
+                offer.prompt(),
+                "Download",
+                "Not now",
+                move || {
+                    // The weights column and the voice lists are re-read when
+                    // the job FINISHES (worker `finish_download`), not now:
+                    // the job has only just started.
+                    ctx_go.send(Cmd::DownloadModel {
+                        provider: provider.clone(),
+                        artifact: artifact.clone(),
+                    });
+                },
+            );
+        });
+    }
+
     super::util::clamp_selection(cx, ui.route_sel, move || {
         store
             .routes
@@ -109,7 +138,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         // the column the operator is looking at.
         .shortcut(KeyChord::plain(Key::Char('w')), {
             let ctx_dl = ctx.clone();
-            move |_| download_selected(cx, &ctx_dl)
+            move |_| download_selected(&ctx_dl)
         })
         // `a` for APPLY — the other half of the weights banner, and the
         // same key, prompt and vocabulary as the AbstractCore console-TUI
@@ -947,7 +976,7 @@ fn cancel_download_all(cx: Scope, ctx: &Ctx) {
 /// relay provider with nothing to fetch, and — the important one — an
 /// `unknown` answer, where guessing would spend the host's disk on a
 /// model that may already be there.
-fn download_selected(cx: Scope, ctx: &Ctx) {
+fn download_selected(ctx: &Ctx) {
     // `POST /models/download` spends the shared host's disk: admin-only
     // on the gateway (security/authorization.py, resource "models").
     if !super::util::admin_gate(&ctx.store, "downloading model weights") {
@@ -1018,29 +1047,12 @@ fn download_selected(cx: Scope, ctx: &Ctx) {
         return;
     }
 
-    let ctx2 = ctx.clone();
-    let provider = weights.provider.clone();
-    let artifact = weights.artifact.clone();
-    super::confirm_danger(
-        cx,
-        ctx.ui,
-        format!(
-            "Download {artifact} with {provider} on the execution host? This runs the \
-             provider's own tool and may fetch several gigabytes."
-        ),
-        "Download",
-        "Not now",
-        move || {
-            ctx2.send(Cmd::DownloadModel {
-                provider: provider.clone(),
-                artifact: artifact.clone(),
-            });
-            // The worker lane is SERIAL, so this re-probe runs after the
-            // job finishes — the weights column tells the truth the
-            // moment the operator looks back at it.
-            ctx2.send(Cmd::LoadAvailability);
-        },
-    );
+    // The confirm names the target AND its size: the worker reads the
+    // catalog first, then `store.download_offer` opens the confirm.
+    ctx.send(Cmd::PrepareDownload {
+        provider: weights.provider.clone(),
+        artifact: weights.artifact.clone(),
+    });
 }
 
 /// ONE confirm policy for clearing a route — shared by the table's `x`
