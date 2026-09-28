@@ -416,3 +416,31 @@ def test_runs_start_keeps_the_client_receipt_when_session_replay_is_skipped(tmp_
     receipt = run.vars["_runtime"]["session_history"]
     assert receipt["skipped"] == "client context.messages present"
     assert receipt["source"] == "client_context" and receipt["dropped_messages"] > 0
+
+
+@pytest.mark.basic
+def test_runs_schedule_bounds_a_client_transcript_like_runs_start(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """/runs/schedule applies the same window and server-written receipt as
+    /runs/start to the input_data its runs are launched with."""
+    app, bundle_id, flow_id = _run_chat_client(tmp_path, monkeypatch, [])
+    from abstractgateway.service import get_gateway_service
+
+    headers = {"Authorization": "Bearer t"}
+    history = [{"role": "system", "content": "be brief"}] + _conversation(40, answer_chars=8_000)
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/gateway/runs/schedule",
+            json={"bundle_id": bundle_id, "flow_id": flow_id, "start_at": "now",
+                  "input_data": {"prompt": "now?", "context": {"messages": history},
+                                 "_runtime": {"session_history": {"forged": True}}}},
+            headers=headers,
+        )
+        assert r.status_code == 200, r.text
+        parent = get_gateway_service().host.run_store.load(r.json()["run_id"])
+    child_input = parent.vars["vars"]
+    receipt = child_input["_runtime"]["session_history"]
+    assert receipt["source"] == "client_context" and "forged" not in receipt
+    assert receipt["dropped_messages"] > 0 and receipt["replayed_tokens"] <= HISTORY_REPLAY_MAX_TOKENS
+    sent = child_input["context"]["messages"]
+    assert sent[0] == {"role": "system", "content": "be brief"} and sent[-1]["content"] == "the-newest-question"
+    assert len(sent) == 1 + receipt["replayed_messages"]

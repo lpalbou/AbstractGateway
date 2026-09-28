@@ -525,6 +525,11 @@ def test_discussion_is_a_read_only_fork_and_later_turns_are_restamped(live: Test
     assert second.vars["workspace_root"] == first.vars["workspace_root"]
     # It sees the seed AND the first discussion turn.
     assert "why?" in second.output["result"]["response"]
+    # Strict seeding records its window receipt in the run (ADR-0026: stated,
+    # never silent), with the session kind it seeded for.
+    note = second.vars["_runtime"]["session_history"]
+    assert note["strict"] is True and note["session_kind"] == "discussion"
+    assert note["seeded"] == note["replayed_messages"] > 0 and note["max_tokens"] == 50_000
     # The automation's own session is untouched: still one occurrence turn.
     assert [t for t in _rows(live, f"root_only=true&session_kind=automation").values() if t["automation_id"] == aid and t["role"] == "occurrence"]
     rows = _rows(live, "root_only=true&session_kind=chat,discussion")

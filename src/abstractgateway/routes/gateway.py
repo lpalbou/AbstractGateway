@@ -8378,6 +8378,8 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
         schedule_input_data = _sanitize_run_workspace_policy(
             schedule_input_data, principal=principal, session_id=schedule_session_id
         )
+        # The same history window and server-written receipt as /runs/start.
+        _window_client_context_messages(schedule_input_data)
     except HTTPException:
         raise
     except Exception as e:
@@ -24851,7 +24853,9 @@ class _GatewayProviderEndpointProfileModelDiscoveryRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     profile_id: Optional[str] = Field(default=None, max_length=96, description="Optional existing endpoint profile id or virtual provider id.")
-    provider_family: Optional[str] = Field(default="openai-compatible", min_length=1, max_length=80)
+    # None = the saved profile's family (profile_id), else openai-compatible
+    # for a draft. A default here would override a saved `openai` profile.
+    provider_family: Optional[str] = Field(default=None, min_length=1, max_length=80)
     base_url: Optional[str] = Field(default=None, max_length=2048)
     api_key: Optional[str] = Field(default=None, max_length=65536)
 

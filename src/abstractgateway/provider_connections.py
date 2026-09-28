@@ -273,9 +273,20 @@ def providers_screen_api_key(provider_id: str, *, current_base_dir: Path, root_b
     from .provider_endpoint_profiles import effective_endpoint_profiles
 
     wanted = str(provider_id or "").strip().lower()
+    spec = _spec_for_provider(wanted)
+    default_base = (spec.default_base_url if spec is not None else "").rstrip("/").lower()
     for profile in effective_endpoint_profiles(base_dir=current_base_dir, root_base_dir=root_base_dir):
-        if profile.enabled and profile.provider_family.lower() == wanted and str(profile.api_key or "").strip():
-            return str(profile.api_key).strip()
+        if not (profile.enabled and profile.provider_family.lower() == wanted and str(profile.api_key or "").strip()):
+            continue
+        # A profile's key belongs to ITS endpoint. Only a profile on the
+        # provider's own default endpoint (no base URL, or exactly that one)
+        # is a key for the provider itself: a key for a proxy or a
+        # self-hosted endpoint of the same family must never be sent to the
+        # provider's API.
+        base = str(profile.base_url or "").strip().rstrip("/").lower()
+        if base and base != default_base:
+            continue
+        return str(profile.api_key).strip()
     return ""
 
 

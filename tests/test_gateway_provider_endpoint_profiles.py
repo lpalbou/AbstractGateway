@@ -509,6 +509,38 @@ def test_endpoint_profile_console_model_preview_can_use_saved_profile_key(tmp_pa
     ]
 
 
+def test_model_discovery_for_a_saved_openai_profile_uses_its_family(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A saved `openai` profile discovered by id alone must be listed as
+    openai, not as the draft default openai-compatible."""
+    calls: list[dict[str, Any]] = []
+
+    class StubDiscoveryFacade:
+        def list_provider_models(self, provider_name: str, **kwargs: Any) -> dict[str, Any]:
+            calls.append({"provider_name": provider_name, **kwargs})
+            return {"provider": provider_name, "models": ["gpt-x"]}
+
+    import abstractgateway.routes.gateway as gateway_routes
+
+    monkeypatch.setattr(gateway_routes, "_gateway_abstractcore_discovery_facade", lambda: (StubDiscoveryFacade(), None))
+    headers = {"Authorization": "Bearer admin-token"}
+    with _app_client(tmp_path, monkeypatch) as client:
+        created = client.post(
+            "/api/gateway/config/provider-endpoint-profiles",
+            headers=headers,
+            json={"id": "myopenai", "display_name": "My OpenAI", "provider_family": "openai",
+                  "api_key": "openai-key", "scope": "gateway"},
+        )
+        assert created.status_code == 200, created.text
+        preview = client.post("/api/gateway/config/provider-endpoint-profiles/discover-models", headers=headers,
+                              json={"profile_id": "myopenai"})
+        draft = client.post("/api/gateway/config/provider-endpoint-profiles/discover-models", headers=headers,
+                            json={"base_url": "https://draft.example.test/v1", "api_key": "draft-key"})
+    assert preview.status_code == 200, preview.text
+    assert preview.json()["provider"] == "openai"
+    assert [c["provider_name"] for c in _without_local_autoprobes(calls)] == ["openai", "openai-compatible"]
+    assert draft.json()["provider"] == "openai-compatible"
+
+
 def test_configured_builtin_provider_surfaces_without_manual_endpoint_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[dict[str, Any]] = []
 
