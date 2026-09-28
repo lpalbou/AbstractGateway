@@ -94,8 +94,9 @@ The gateway relays each request to the app's own server on `127.0.0.1`
   page sends the browser to the console (`/console#apps?open=<app>&path=…`),
   which signs you in and opens the app on the page you asked for; any other
   request gets 401 `app_sign_in_required`. A WebSocket without one is
-  refused, and so is a WebSocket opened by another site's page (its
-  `Origin` must name the gateway's own address).
+  refused. A request or WebSocket whose `Origin` is not the gateway's own
+  address (another site, or another port on the same host) is refused too
+  (403 `cross_origin`).
 - **Streaming.** Responses are relayed as they arrive (live updates, server-sent
   events), and WebSockets frame by frame.
 - **What the app receives.** The path with `/apps/<app>` removed, plus
@@ -445,7 +446,7 @@ The apps themselves, outside `/api/gateway`:
 | Method and path | Who | What |
 |---|---|---|
 | `GET /apps/handover/<code>` | the one-time code | Sets the app's sign-in cookies and redirects: relative `303` to `/apps/<id>/…` (cookies `Path=/apps/<id>/`), or to the app's own port for an older app. 410 used or expired, 400 another address. |
-| any `/apps/<id>/…` (HTTP, SSE, WebSocket) | the app's gateway session | The app, relayed (see [Apps are served through the gateway](#apps-are-served-through-the-gateway)). Without a session: `303` to `/console#apps?open=<id>&path=…` for a page load, else 401 `app_sign_in_required`. 404 `unknown_app`, 409 `not_running` / `not_mountable`, 502 `app_not_answering`. `/apps/<id>` redirects to `/apps/<id>/`. |
+| any `/apps/<id>/…` (HTTP, SSE, WebSocket) | the app's gateway session | The app, relayed (see [Apps are served through the gateway](#apps-are-served-through-the-gateway)). Without a session: `303` to `/console#apps?open=<id>&path=…` for a page load, else 401 `app_sign_in_required`. 404 `unknown_app`, 403 `cross_origin`, 409 `not_running` / `not_mountable`, 502 `app_not_answering`. `/apps/<id>` redirects to `/apps/<id>/`. |
 
 Errors are `{"ok": false, "reason", "message", "hint"?, "details"?}` with
 404 (`unknown_app`, also for a terminal route on a browser-only app), 409
