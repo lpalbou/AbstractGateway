@@ -141,11 +141,12 @@ from ..workflow_catalog import (
 from ..workflow_deprecations import WorkflowDeprecatedError
 from ..automation_command_types import AUTOMATION_COMMAND_TYPES, COMMAND_TYPES
 from ..automation_defaults import manifest_automation_defaults
-# The ONE history window (runtime 0.7.0): `fold_history_window` keeps the
-# newest whole turns up to HISTORY_REPLAY_MAX_TOKENS and `_announce_dropped`
-# writes its in-band #TRUNCATION notice. Client-sent chat histories go through
-# `_client_history_window` below — never a second window, never a message cap.
-from abstractruntime.session_history import SessionHistoryError, _announce_dropped, fold_history_window
+# The ONE history window (runtime 0.7.0): `window_transcript` keeps the newest
+# whole turns up to HISTORY_REPLAY_MAX_TOKENS (fold_history_window) and writes
+# the labeled #TRUNCATION notice (announce_dropped). Client-sent chat histories
+# go through `_client_history_window` below — never a second window, never a
+# message cap.
+from abstractruntime.session_history import SessionHistoryError, window_transcript
 
 
 router = APIRouter(prefix="/gateway", tags=["gateway"])
@@ -6703,15 +6704,17 @@ def _client_history_window(
 
     ADR-0026 + operator ruling 2026-09-28: no message-count or character caps;
     replayed history is the newest WHOLE messages up to 50,000 tokens, stated
-    and recorded. Messages are grouped into turns (a user message plus the
-    replies after it) so a reply never loses its question, then
-    `abstractruntime.session_history.fold_history_window` keeps the newest
-    turns that fit (the newest turn — the question being asked — is always
-    kept whole). When older turns were dropped, the oldest kept message carries
-    the runtime's labeled #TRUNCATION notice. Returns (messages, report); the
-    report is the window's receipt for the response / ledger.
+    and recorded. The client's messages are normalized to plain role/content
+    (unknown roles and empty messages skipped), then
+    `abstractruntime.session_history.window_transcript` groups them into turns
+    (a user message plus the replies after it, so a reply never loses its
+    question), keeps the newest turns that fit (the newest turn — the question
+    being asked — is always kept whole) and, when older turns were dropped,
+    prefixes the oldest kept message with the runtime's labeled #TRUNCATION
+    notice. Returns (messages, report); the report is the window's receipt for
+    the response / ledger.
     """
-    turns: list[list[Dict[str, str]]] = []
+    normalized: list[Dict[str, str]] = []
     for m in messages or []:
         if not isinstance(m, dict):
             continue
@@ -6719,15 +6722,9 @@ def _client_history_window(
         content = m.get("content")
         if role not in roles or not isinstance(content, str) or not content.strip():
             continue
-        msg = {"role": role, "content": content.strip()}
-        if role == "user" or not turns:
-            turns.append([msg])
-        else:
-            turns[-1].append(msg)
-    kept, report = fold_history_window(turns)
-    out: list[Dict[str, Any]] = [dict(m) for turn in kept for m in turn]
-    _announce_dropped(out, report)
-    return [{"role": m["role"], "content": m["content"]} for m in out], report
+        normalized.append({"role": role, "content": content.strip()})
+    windowed = window_transcript(normalized)
+    return list(windowed), windowed.report
 
 
 def _generate_chat_text(*, provider: str, model: str, context: Dict[str, Any], messages: list[Dict[str, Any]]) -> str:
