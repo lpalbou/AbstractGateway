@@ -306,10 +306,13 @@ served as static files by the gateway. The app's server does real work:
   Continuum proxies the agora hub.
 
 The gateway serves them all on its own address at `/apps/<app>/` (above). It
-gives each server its port and gateway URL: Continuum as launch flags
-(`--port`, `--host`, `--gateway-url`), which win over its saved settings
-file; the other four apps in the environment (`PORT`, `HOST`,
-`<APP>_GATEWAY_URL`). The bind address is always `127.0.0.1`.
+gives each server its port and gateway URL as launch flags (`--port`,
+`--host`, `--gateway-url`), which win over the environment and over any
+settings file the app keeps. An installed version older than the flags
+(Observer 0.1.14, Code 0.5.0 or Entity 0.2.2 and earlier), or a global
+install of unknown version started from the tray, also gets the legacy
+environment (`PORT`, `HOST`, `<APP>_GATEWAY_URL`), so it still listens on the
+port the gateway chose. The bind address is always `127.0.0.1`.
 
 ## Settings
 

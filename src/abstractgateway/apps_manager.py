@@ -153,20 +153,35 @@ APPS: Tuple[AppSpec, ...] = (
 )
 APP_BY_ID: Dict[str, AppSpec] = {a.id: a for a in APPS}
 
-# Apps whose server takes its address and gateway URL as launch flags
-# (`--port`, `--host`, `--gateway-url`). Continuum 0.3.1 reads a settings file
-# that beats the environment, so PORT/HOST/<APP>_GATEWAY_URL could lose to a
-# user's saved values; flags beat the file. The other apps still read the
-# environment.
-FLAG_CONFIGURED_APPS = frozenset({"continuum"})
+# Every app's server takes its address and gateway URL as launch flags
+# (`--port`, `--host`, `--gateway-url`: the abstractuic app-server kit's flag
+# parser; Continuum since 0.3.1, Flow since its own parser). Flags beat the
+# environment and any settings file an app keeps (Continuum's
+# ~/.abstractcontinuum/settings.json), so the gateway passes flags.
+FLAG_CONFIGURED_APPS = frozenset({"observer", "continuum", "code", "entity", "flow"})
+# The last released version of an app that IGNORES those flags (it reads
+# PORT / HOST / <APP>_GATEWAY_URL only; an unknown flag is skipped, so it
+# would bind its own default port and host). Such an install, or one whose
+# version is unknown (a global install started by the tray), also gets the
+# legacy environment, below the flags; an app that parses the flags never
+# reads it. Remove an entry once that version can no longer be installed.
+_ENV_ONLY_UP_TO = {"observer": "0.1.14", "code": "0.5.0", "entity": "0.2.2"}
 
 
-def app_launch_config(app_id: str, *, port: int, host: str, gateway_url: str, gateway_url_env: str) -> Tuple[List[str], Dict[str, str]]:
+def app_launch_config(
+    app_id: str, *, port: int, host: str, gateway_url: str, gateway_url_env: str, version: Optional[str] = None
+) -> Tuple[List[str], Dict[str, str]]:
     """(argv after `bin/cli.js`, environment to set) that give a web app its
-    port, bind host and gateway URL."""
-    if app_id in FLAG_CONFIGURED_APPS:
-        return ["--port", str(port), "--host", str(host), "--gateway-url", str(gateway_url)], {}
-    return [], {"PORT": str(port), "HOST": str(host), gateway_url_env: str(gateway_url)}
+    port, bind host and gateway URL. `version`: the installed version, when
+    known."""
+    legacy_env = {"PORT": str(port), "HOST": str(host), gateway_url_env: str(gateway_url)}
+    if app_id not in FLAG_CONFIGURED_APPS:
+        return [], legacy_env
+    flags = ["--port", str(port), "--host", str(host), "--gateway-url", str(gateway_url)]
+    last_env_only = _ENV_ONLY_UP_TO.get(app_id)
+    if last_env_only and (not version or not version_newer(version, last_env_only)):
+        return flags, legacy_env
+    return flags, {}
 
 
 # ---------------------------------------------------------------------------
@@ -944,7 +959,12 @@ class AppProcess:
         node_dir = str(Path(a["node"]).parent)
         env["PATH"] = node_dir + os.pathsep + env.get("PATH", "")
         flags, app_env = app_launch_config(
-            self.spec.id, port=a["port"], host=a["host"], gateway_url=a["gateway_url"], gateway_url_env=self.spec.gateway_url_env
+            self.spec.id,
+            port=a["port"],
+            host=a["host"],
+            gateway_url=a["gateway_url"],
+            gateway_url_env=self.spec.gateway_url_env,
+            version=str(a.get("version") or "") or None,
         )
         env.update({"NODE_ENV": "production", "ABSTRACTGATEWAY_URL": a["gateway_url"], **app_env})
         watch = m.parent_watch_script()
