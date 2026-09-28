@@ -1,6 +1,8 @@
 # Changelog — abstractgateway-console
 
-## Unreleased
+## 0.11.0 (2026-09-28)
+
+Needs abstractcore-console 0.4 and AbstractGateway 0.7.0.
 
 ### Added
 - Docs assistant (F2): one gateway session per conversation. Questions run

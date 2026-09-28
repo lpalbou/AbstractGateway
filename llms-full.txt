@@ -4953,8 +4953,8 @@ Evidence: `src/abstractgateway/routes/gateway.py` (`host_state`,
 Public (no sign-in): which versions this gateway runs, for About screens.
 
 ```json
-{"abstractframework": "0.5.0", "abstractgateway": "0.6.0",
- "packages": {"abstractcore": "2.17.0", "abstractruntime": "0.6.0", "abstractskill": "0.3.0"}}
+{"abstractframework": "0.5.0", "abstractgateway": "0.7.0",
+ "packages": {"abstractcore": "2.18.0", "abstractruntime": "0.7.0", "abstractskill": "0.3.0"}}
 ```
 
 `abstractframework` is null when the framework meta-package is not installed
@@ -5571,7 +5571,7 @@ follow-up read and recorded in the journal.
 ### Models and Engines in the terminal console
 
 Screens 9 (**Models**) and 0 (**Engines**) are AbstractCore's own screens,
-taken from the `abstractcore-console` crate (0.3) rather than rebuilt, so they look
+taken from the `abstractcore-console` crate (0.4) rather than rebuilt, so they look
 and behave the same in `abstractcore-console` and here. In the gateway console
 they act on the gateway's host, through the gateway's
 `/api/gateway/host/profile`, `/engines`, `/models/catalog`,
@@ -5788,8 +5788,8 @@ never schedules or runs anything itself.
     }
   ```
 
-- **Runtime.** Automations need AbstractRuntime 0.6.0 or later. A gateway installed against an older runtime does
-  not start ([troubleshooting.md](docs/troubleshooting.md#the-gateway-does-not-start-an-abstractruntime-module-is-missing)).
+- **Runtime.** Automations need AbstractRuntime 0.6.0 or later, and this gateway needs 0.7.0 or later. A gateway installed against
+  an older runtime does not start ([troubleshooting.md](docs/troubleshooting.md#the-gateway-does-not-start-an-abstractruntime-module-is-missing)).
 
 The examples below assume:
 
@@ -6421,7 +6421,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.6.0
+docker pull ghcr.io/lpalbou/abstractgateway:0.7.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -6429,7 +6429,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.6.0-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.7.0-gpu
 ```
 
 The image names `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -6711,7 +6711,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.6.0-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.7.0-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -6869,7 +6869,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.6.0
+docker pull ghcr.io/lpalbou/abstractgateway:0.7.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -6877,7 +6877,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.6.0-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.7.0-gpu
 ```
 
 The `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR names are
@@ -7400,7 +7400,7 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.6.0-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:0.7.0-gpu` with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -7527,7 +7527,7 @@ deny rules the gateway relies on; the message names what is missing. Upgrade
 it in the gateway's Python, then start again:
 
 ```bash
-pip install -U "abstractruntime>=0.6.0"
+pip install -U "abstractruntime>=0.7.0"
 ```
 
 ### The one-time sign-in link does not work
@@ -7567,7 +7567,7 @@ from the console's **Users & Entities** tab.
 
 `serve` or `runner` stops with `No module named 'abstractruntime.automation_queries'`
 (or `abstractruntime.automations`): the installed AbstractRuntime predates
-automations. Install AbstractRuntime 0.6.0 or later in the gateway's Python, then start again. See
+automations. Install AbstractRuntime 0.7.0 or later in the gateway's Python, then start again. See
 [automations.md](docs/automations.md#before-you-start).
 
 ## Network access
@@ -7877,7 +7877,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-09-28
 
 Requires AbstractRuntime 0.7.0 (the session history window and its public `window_transcript`), AbstractCore 2.18.0
 (`engine_missing`, `needs_gpu_limit`), AbstractVoice 0.13.0 (`abstractvoice.engine_runtime`, `voice_openai_api_key`,
@@ -7942,7 +7942,7 @@ refuses to build its workflow host on a runtime without the history window. The 
   `dropped_messages`, `dropped_tokens`, `max_tokens`, ...); run chat also records it in the persisted
   `abstract.chat` event. When older messages are dropped, the oldest kept one carries the runtime's `#TRUNCATION`
   notice. Removed: the 12,000-character cut on every run-chat and backlog-assist message, the advisor's
-  12,000-character cut and its "first 40 messages" cap (the newest question was dropped), maintain's 8,000-character
+  12,000-character cut and its "first 40 messages" cap, maintain's 8,000-character
   cut, and the backlog assist/maintain draft and template cuts (500k/600k/220k/120k characters, 180k context).
 - **`POST /runs/start` bounds a client-sent `input_data.context.messages` with the same history window** (older
   clients such as the AbstractCode web legacy REPL and older TUIs send their whole transcript there): leading system
@@ -7997,8 +7997,8 @@ refuses to build its workflow host on a runtime without the history window. The 
   and answer 503 with the reason when AbstractVoice lacks that API.
 - The web console's model cards show AbstractCore 2.18's `needs_gpu_limit` verdict as **Needs GPU limit** with the
   exact command to run (`sudo sysctl iogpu.wired_limit_mb=<MB>`, click to copy), instead of "Fit unknown", and the
-  **Fits this computer** filter keeps those models (AbstractCore's `FITS_FILTER_VERDICTS`): on a 128 GiB Mac the
-  recommended model was hidden by the filter.
+  **Fits this computer** filter keeps those models (AbstractCore's `FITS_FILTER_VERDICTS`), so the recommended model
+  for a 128 GiB Mac is listed.
 - The console's theme selector and connect control are re-vendored from the released `@abstractframework/ui-kit`
   0.1.14.
 
@@ -8014,10 +8014,11 @@ refuses to build its workflow host on a runtime without the history window. The 
 ### Fixed
 
 - The app proxy never relays a request without `X-Forwarded-Host`. A browser `Host` the proxy cannot forward (Chrome
-  accepts names such as `a_b.attacker.com`) is refused with 400 `invalid_host` (HTTP) or a closed WebSocket (1008);
-  before, the request reached the app with only the gateway's loopback `Host`, which an app that checks for a
-  loopback peer and a loopback host (abstractuic app-server kit 0.1.14) would have treated as a browser on this
-  machine.
+  accepts names such as `a_b.attacker.com`) is refused with 400 `invalid_host` (HTTP) or a closed WebSocket (1008),
+  so an app that checks for a loopback peer and a loopback host (abstractuic app-server kit 0.1.14) never sees a
+  remote page as a browser on this machine.
+- Retrying an automation command whose first attempt was already applied (for example a `PATCH` revise sent again
+  after a lost response) returns the duplicate receipt of the first attempt instead of `409 revision_conflict`.
 - A default text route naming a deleted or disabled endpoint profile no longer stops the workflow host from loading
   (every `/automations` and `/runs` read answered 500). The host loads with the default unrouted; a call that uses it
   fails naming the profile.

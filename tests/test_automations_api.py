@@ -414,6 +414,27 @@ def test_commands_door_revision_and_patch(live: TestClient) -> None:
     assert r.status_code == 404 and _envelope(r)["reason_code"] == "automation_not_found"
 
 
+def test_a_retried_revise_after_it_was_applied_is_a_duplicate_not_a_conflict(live: TestClient) -> None:
+    """A client that lost the first receipt retries the same PATCH after the
+    runner already applied it (revision 1 -> 2): the retry is the duplicate
+    receipt of the first, never 409 revision_conflict for its own revise. (The
+    commands-door test hit this as a timing flake whenever the runner won.)"""
+    aid = _create(live)["automation_id"]
+    body = {"command_id": "r1", "expected_revision": 1, "changes": {"title": "Renamed"}}
+    receipt = live.patch(f"/api/gateway/automations/{aid}", headers=HEADERS, json=body).json()
+    assert receipt["duplicate"] is False
+    wait_until(lambda: live.get(f"/api/gateway/automations/{aid}", headers=HEADERS).json()["definition"]["revision"] == 2)
+    retry = live.patch(f"/api/gateway/automations/{aid}", headers=HEADERS, json=body)
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["duplicate"] is True and retry.json()["seq"] == receipt["seq"]
+    # A NEW command with the stale revision is still a conflict.
+    stale = live.patch(f"/api/gateway/automations/{aid}", headers=HEADERS, json={**body, "command_id": "r2"})
+    assert stale.status_code == 409 and _envelope(stale)["reason_code"] == "revision_conflict"
+    # The same id for a different change is still an identity conflict.
+    other = live.patch(f"/api/gateway/automations/{aid}", headers=HEADERS, json={**body, "changes": {"title": "Other"}})
+    assert other.status_code == 409 and _envelope(other)["reason_code"] == "identity_conflict"
+
+
 def test_list_pages_status_filter_changed_since_and_legacy(live: TestClient) -> None:
     ids = [_create(live, request_id=f"L{i}")["automation_id"] for i in range(3)]
     legacy = legacy_schedule_run()

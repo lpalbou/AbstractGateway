@@ -125,7 +125,7 @@ leave (not recorded, it opens again next start) or skip (recorded).
    `o` opens the download page (LM Studio), `r` probes the local
    servers, `c` cancels. With a gateway that serves them, the screen
    also starts/stops engine servers, continues paused installs and
-   shows the install location (abstractcore-console 0.3 verbs).
+   shows the install location (abstractcore-console 0.4 verbs).
 - **A Apps** — the web console's Apps tab: browser apps (Flow, Code,
   Observer…), the desktop Assistant and Node.js. `Enter`/`o` opens an
   app signed in (a one-time link), `i`/`u` install/update, `s`/`x`

@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-09-28
 
 Requires AbstractRuntime 0.7.0 (the session history window and its public `window_transcript`), AbstractCore 2.18.0
 (`engine_missing`, `needs_gpu_limit`), AbstractVoice 0.13.0 (`abstractvoice.engine_runtime`, `voice_openai_api_key`,
@@ -70,7 +70,7 @@ refuses to build its workflow host on a runtime without the history window. The 
   `dropped_messages`, `dropped_tokens`, `max_tokens`, ...); run chat also records it in the persisted
   `abstract.chat` event. When older messages are dropped, the oldest kept one carries the runtime's `#TRUNCATION`
   notice. Removed: the 12,000-character cut on every run-chat and backlog-assist message, the advisor's
-  12,000-character cut and its "first 40 messages" cap (the newest question was dropped), maintain's 8,000-character
+  12,000-character cut and its "first 40 messages" cap, maintain's 8,000-character
   cut, and the backlog assist/maintain draft and template cuts (500k/600k/220k/120k characters, 180k context).
 - **`POST /runs/start` bounds a client-sent `input_data.context.messages` with the same history window** (older
   clients such as the AbstractCode web legacy REPL and older TUIs send their whole transcript there): leading system
@@ -125,8 +125,8 @@ refuses to build its workflow host on a runtime without the history window. The 
   and answer 503 with the reason when AbstractVoice lacks that API.
 - The web console's model cards show AbstractCore 2.18's `needs_gpu_limit` verdict as **Needs GPU limit** with the
   exact command to run (`sudo sysctl iogpu.wired_limit_mb=<MB>`, click to copy), instead of "Fit unknown", and the
-  **Fits this computer** filter keeps those models (AbstractCore's `FITS_FILTER_VERDICTS`): on a 128 GiB Mac the
-  recommended model was hidden by the filter.
+  **Fits this computer** filter keeps those models (AbstractCore's `FITS_FILTER_VERDICTS`), so the recommended model
+  for a 128 GiB Mac is listed.
 - The console's theme selector and connect control are re-vendored from the released `@abstractframework/ui-kit`
   0.1.14.
 
@@ -142,10 +142,11 @@ refuses to build its workflow host on a runtime without the history window. The 
 ### Fixed
 
 - The app proxy never relays a request without `X-Forwarded-Host`. A browser `Host` the proxy cannot forward (Chrome
-  accepts names such as `a_b.attacker.com`) is refused with 400 `invalid_host` (HTTP) or a closed WebSocket (1008);
-  before, the request reached the app with only the gateway's loopback `Host`, which an app that checks for a
-  loopback peer and a loopback host (abstractuic app-server kit 0.1.14) would have treated as a browser on this
-  machine.
+  accepts names such as `a_b.attacker.com`) is refused with 400 `invalid_host` (HTTP) or a closed WebSocket (1008),
+  so an app that checks for a loopback peer and a loopback host (abstractuic app-server kit 0.1.14) never sees a
+  remote page as a browser on this machine.
+- Retrying an automation command whose first attempt was already applied (for example a `PATCH` revise sent again
+  after a lost response) returns the duplicate receipt of the first attempt instead of `409 revision_conflict`.
 - A default text route naming a deleted or disabled endpoint profile no longer stops the workflow host from loading
   (every `/automations` and `/runs` read answered 500). The host loads with the default unrouted; a call that uses it
   fails naming the profile.

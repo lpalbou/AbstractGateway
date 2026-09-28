@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 try:
     import tomllib
@@ -19,6 +21,17 @@ WORKSPACE_ROOT = ROOT.parent
 
 def _pyproject() -> dict:
     return tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+
+def _floor(requirements: list, name: str) -> Version:
+    """The `>=` floor a requirement list gives `name` (it must name one)."""
+    for raw in requirements:
+        req = Requirement(raw)
+        if req.name.lower() == name.lower():
+            floors = [Version(spec.version) for spec in req.specifier if spec.operator == ">="]
+            assert floors, f"{raw!r} has no >= floor"
+            return max(floors)
+    raise AssertionError(f"{name} is not in {requirements!r}")
 
 
 def _sibling_pyproject(package_dir: str) -> dict:
@@ -60,7 +73,9 @@ def test_base_install_keeps_remote_light_multimodal_plugins_without_local_infere
     music_base = "\n".join(_sibling_pyproject("abstractmusic")["project"].get("dependencies", []))
 
     runtime_base = "\n".join(runtime_project["dependencies"])
-    assert "abstractcore[remote,tools,vision,voice,audio,music]>=2.16.0" in runtime_base
+    # The runtime's core floor moves with the gateway's own (one wave, one floor).
+    core_floor = next(d.split(">=", 1)[1] for d in _pyproject()["project"]["dependencies"] if d.startswith("abstractcore>="))
+    assert f"abstractcore[remote,tools,vision,voice,audio,music]>={core_floor}" in runtime_base
     assert "pypdf" in runtime_base
     assert "reportlab" in runtime_base
     assert "pymupdf" not in runtime_base.lower()
@@ -73,10 +88,14 @@ def test_base_install_keeps_remote_light_multimodal_plugins_without_local_infere
     assert "openai" in core_remote
     assert "anthropic" in core_remote
 
-    assert "abstractvision>=0.3.29" in "\n".join(core_extras["vision"])
-    assert "abstractvoice>=0.11.2" in "\n".join(core_extras["voice"])
-    assert "abstractvoice>=0.11.2" in "\n".join(core_extras["audio"])
-    assert "abstractmusic>=0.1.15" in "\n".join(core_extras["music"])
+    # Floors, not exact strings: the sibling checkouts move ahead of this repo.
+    # The voice floor must be at least the gateway's own (it imports
+    # abstractvoice directly); vision and music keep their remote-light floors.
+    voice_floor = next(d.split(">=", 1)[1] for d in _pyproject()["project"]["dependencies"] if d.startswith("abstractvoice>="))
+    assert _floor(core_extras["vision"], "abstractvision") >= Version("0.3.29")
+    assert _floor(core_extras["voice"], "abstractvoice") >= Version(voice_floor)
+    assert _floor(core_extras["audio"], "abstractvoice") >= Version(voice_floor)
+    assert _floor(core_extras["music"], "abstractmusic") >= Version("0.1.15")
     core_light_capabilities = "\n".join(
         [
             *core_extras["vision"],
@@ -260,11 +279,11 @@ def test_default_docker_image_uses_base_server_and_nvidia_uses_gpu_profile() -> 
     assert "ABSTRACTGATEWAY_DATA_DIR=/data" in dockerfile
     assert "ABSTRACTGATEWAY_FLOWS_DIR=/data/flows" not in dockerfile
     assert "ENTRYPOINT [\"abstractgateway-docker-entrypoint\"]" in dockerfile
-    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_IMAGE_TAG:-0.6.0}" in compose
+    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_IMAGE_TAG:-0.7.0}" in compose
     assert "ABSTRACTGATEWAY_EXTRAS: ${ABSTRACTGATEWAY_EXTRAS:-}" in compose
     assert "ABSTRACTGATEWAY_USER_AUTH: ${ABSTRACTGATEWAY_USER_AUTH:-1}" in compose
     assert "ABSTRACTGATEWAY_EXTRAS:-gpu" in nvidia_compose
-    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_NVIDIA_IMAGE_TAG:-0.6.0-gpu}" in nvidia_compose
+    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_NVIDIA_IMAGE_TAG:-0.7.0-gpu}" in nvidia_compose
     assert "context: ../.." in nvidia_compose
 
 

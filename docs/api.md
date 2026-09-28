@@ -1502,8 +1502,8 @@ Evidence: `src/abstractgateway/routes/gateway.py` (`host_state`,
 Public (no sign-in): which versions this gateway runs, for About screens.
 
 ```json
-{"abstractframework": "0.5.0", "abstractgateway": "0.6.0",
- "packages": {"abstractcore": "2.17.0", "abstractruntime": "0.6.0", "abstractskill": "0.3.0"}}
+{"abstractframework": "0.5.0", "abstractgateway": "0.7.0",
+ "packages": {"abstractcore": "2.18.0", "abstractruntime": "0.7.0", "abstractskill": "0.3.0"}}
 ```
 
 `abstractframework` is null when the framework meta-package is not installed

@@ -648,16 +648,18 @@ def _append_command(svc: Any, *, automation_id: str, command_id: str, type_: str
     return {"command_id": str(command_id), "accepted": bool(res.accepted), "duplicate": bool(res.duplicate), "seq": int(res.seq)}
 
 
-def _check_revise(svc: Any, principal: Any, controller: Any, payload: Dict[str, Any], *, command_id: str) -> Dict[str, Any]:
+def _check_revise(svc: Any, principal: Any, controller: Any, payload: Dict[str, Any], *, command_id: str, decided: bool = False) -> Dict[str, Any]:
     """Door checks for a revise: stale `expected_revision` (409) and invalid
     changes (422) are refused before the command is queued; the runtime
     re-checks both when it applies the command. A `target` change is resolved
-    to a concrete, protected target here, like at creation."""
+    to a concrete, protected target here, like at creation. `decided`: this
+    command_id was already applied, so the retry is answered as a duplicate
+    and the revision it moved past is not a conflict."""
     definition = (controller.vars.get("_meta") or {})["automation"]
     expected = payload.get("expected_revision")
     if expected is not None and (isinstance(expected, bool) or not isinstance(expected, int)):
         raise AutomationError(422, "invalid_request", "expected_revision must be an integer", field="expected_revision", command_id=command_id)
-    if expected is not None and int(expected) != int(definition["revision"]):
+    if not decided and expected is not None and int(expected) != int(definition["revision"]):
         raise AutomationError(409, "revision_conflict", f"Automation is at revision {definition['revision']}, not {expected}.", field="expected_revision", command_id=command_id)
     changes = payload.get("changes")
     if not isinstance(changes, dict) or not changes:
@@ -723,18 +725,20 @@ def _command(svc: Any, principal: Any, automation_id: str, command_id: str, type
         raise AutomationError(422, "invalid_request", "command_id is required", field="command_id")
     controller = load_automation_controller(svc, automation_id)
     payload = dict(payload or {})
+    # A retried command_id that the runtime already decided is answered by the
+    # command store as a duplicate. Look it up FIRST: a decided revise moved the
+    # revision past its own expected_revision, and a retry of it (a client that
+    # lost the first receipt) must get the duplicate receipt, not a 409.
+    decided = find_by_idempotency_key(
+        svc.host.ledger_store, str(controller.run_id), record_key("automation.command_result", str(controller.run_id), command_id)
+    )
     if type_ == "automation.revise":
-        payload = _check_revise(svc, principal, controller, payload, command_id=command_id)
-    else:
+        payload = _check_revise(svc, principal, controller, payload, command_id=command_id, decided=decided is not None)
+    elif decided is None:
         expected = payload.get("expected_revision")
         definition = (controller.vars.get("_meta") or {})["automation"]
         if expected is not None and expected != definition["revision"]:
             raise AutomationError(409, "revision_conflict", f"Automation is at revision {definition['revision']}, not {expected}.", field="expected_revision", command_id=command_id)
-    # A retried command_id that the runtime already decided is answered by the
-    # command store as a duplicate: the door checks the state BEFORE it.
-    decided = find_by_idempotency_key(
-        svc.host.ledger_store, str(controller.run_id), record_key("automation.command_result", str(controller.run_id), command_id)
-    )
     if decided is None:
         _refuse_at_the_door(controller, type_, command_id=command_id)
     else:

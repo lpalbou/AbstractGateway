@@ -408,7 +408,7 @@ follow-up read and recorded in the journal.
 ### Models and Engines in the terminal console
 
 Screens 9 (**Models**) and 0 (**Engines**) are AbstractCore's own screens,
-taken from the `abstractcore-console` crate (0.3) rather than rebuilt, so they look
+taken from the `abstractcore-console` crate (0.4) rather than rebuilt, so they look
 and behave the same in `abstractcore-console` and here. In the gateway console
 they act on the gateway's host, through the gateway's
 `/api/gateway/host/profile`, `/engines`, `/models/catalog`,

@@ -45,7 +45,7 @@ deny rules the gateway relies on; the message names what is missing. Upgrade
 it in the gateway's Python, then start again:
 
 ```bash
-pip install -U "abstractruntime>=0.6.0"
+pip install -U "abstractruntime>=0.7.0"
 ```
 
 ### The one-time sign-in link does not work
@@ -85,7 +85,7 @@ from the console's **Users & Entities** tab.
 
 `serve` or `runner` stops with `No module named 'abstractruntime.automation_queries'`
 (or `abstractruntime.automations`): the installed AbstractRuntime predates
-automations. Install AbstractRuntime 0.6.0 or later in the gateway's Python, then start again. See
+automations. Install AbstractRuntime 0.7.0 or later in the gateway's Python, then start again. See
 [automations.md](./automations.md#before-you-start).
 
 ## Network access

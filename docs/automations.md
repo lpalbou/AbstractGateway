@@ -47,8 +47,8 @@ never schedules or runs anything itself.
     }
   ```
 
-- **Runtime.** Automations need AbstractRuntime 0.6.0 or later. A gateway installed against an older runtime does
-  not start ([troubleshooting.md](./troubleshooting.md#the-gateway-does-not-start-an-abstractruntime-module-is-missing)).
+- **Runtime.** Automations need AbstractRuntime 0.6.0 or later, and this gateway needs 0.7.0 or later. A gateway installed against
+  an older runtime does not start ([troubleshooting.md](./troubleshooting.md#the-gateway-does-not-start-an-abstractruntime-module-is-missing)).
 
 The examples below assume:
 
