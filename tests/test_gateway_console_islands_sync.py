@@ -29,15 +29,25 @@ from abstractgateway import console_islands_sync
 from abstractgateway.console import gateway_console_html
 from abstractgateway.console_islands import ISLANDS_CSS, ISLANDS_JS, ISLANDS_PROVENANCE
 from abstractgateway.console_themes import KIT_THEME_SPECS
+from kit_release import explicit_kit_src, released_ui_kit, skip_reason
 
 pytestmark = pytest.mark.basic
 
 
-def test_vendored_islands_match_the_kit_sources() -> None:
-    """THE DRIFT PIN. Skips honestly outside the monorepo (no kit checkout)."""
+def test_vendored_islands_match_the_kit_sources(tmp_path: Path) -> None:
+    """THE DRIFT PIN, against the RELEASED kit the console pins (its tag in the
+    abstractuic checkout), never a checkout that moved ahead of it. Skips
+    honestly outside the monorepo (no kit checkout)."""
     kit = console_islands_sync.locate_kit()
     if kit is None:
         pytest.skip("abstractuic ui-kit not present (non-monorepo checkout)")
+    pinned = ISLANDS_PROVENANCE["kit_version"]
+    if not explicit_kit_src():
+        released = released_ui_kit(kit, pinned, tmp_path)
+        if released is not None:
+            kit = released
+        elif console_islands_sync.kit_version(kit) != pinned:
+            pytest.skip(skip_reason(console_islands_sync.kit_version(kit), pinned))
     assert console_islands_sync.kit_sources_sha256(kit) == ISLANDS_PROVENANCE["kit_sources_sha256"], (
         "the abstractuic kit changed since the console islands were vendored: run "
         "`(cd abstractuic/ui-kit && node scripts/build_islands.mjs)` then "

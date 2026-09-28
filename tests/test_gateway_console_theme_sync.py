@@ -20,6 +20,7 @@ import pytest
 pytestmark = pytest.mark.basic
 
 from abstractgateway import console_theme_sync  # noqa: E402
+from kit_release import explicit_kit_src, released_ui_kit, skip_reason  # noqa: E402
 from abstractgateway.console import gateway_console_html  # noqa: E402
 from abstractgateway.console_themes import (  # noqa: E402
     KIT_LIGHT_THEME_IDS,
@@ -28,7 +29,7 @@ from abstractgateway.console_themes import (  # noqa: E402
 )
 
 
-def test_generated_module_matches_the_kit_source_exactly() -> None:
+def test_generated_module_matches_the_kit_source_exactly(tmp_path: Path) -> None:
     """THE DRIFT PIN: regenerate from the kit checkout and compare byte-for-
     byte. Skips honestly when the kit source is absent (wheel/CI without the
     monorepo) — in the monorepo this is the belt that catches a kit-side
@@ -36,6 +37,21 @@ def test_generated_module_matches_the_kit_source_exactly() -> None:
     kit_src = console_theme_sync.locate_kit_src()
     if kit_src is None:
         pytest.skip("abstractuic kit source not present (non-monorepo checkout)")
+    # The released kit the console pins (the islands record its version), not
+    # a checkout that moved ahead of it.
+    from abstractgateway.console_islands import ISLANDS_PROVENANCE
+
+    pinned = ISLANDS_PROVENANCE["kit_version"]
+    if not explicit_kit_src():
+        released = released_ui_kit(kit_src, pinned, tmp_path)
+        if released is not None:
+            kit_src = released / "src"
+        else:
+            import json as _json
+
+            found = str(_json.loads((kit_src.parent / "package.json").read_text(encoding="utf-8")).get("version") or "")
+            if found != pinned:
+                pytest.skip(skip_reason(found, pinned))
     regenerated = console_theme_sync.generate_console_themes_module(kit_src)
     current = (Path(console_theme_sync.__file__).parent / console_theme_sync.GENERATED_MODULE).read_text(
         encoding="utf-8"
