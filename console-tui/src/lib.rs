@@ -56,9 +56,6 @@ OPTIONS:
   --token <token>
                  your token: the admin token `abstractgateway serve`
                  prints at start, or a user token from Users
-  --token-file PATH
-                 read the token from a file (surrounding whitespace
-                 trimmed) instead of --token
   --wizard       start in the setup guide (wizard), whatever the
                  gateway's first-run state
   --browse       start in browse mode (tabs, no step gating)
@@ -461,8 +458,17 @@ mod token_file_args {
         v.iter().map(|s| s.to_string()).collect()
     }
 
-    fn scratch(name: &str, content: &str) -> String {
-        // Inside the crate's own target dir: tests write nowhere else.
+    /// A token file inside the crate's own target dir (tests write nowhere
+    /// else); its directory is removed when the returned guard drops.
+    struct Scratch(std::path::PathBuf, String);
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn scratch(name: &str, content: &str) -> Scratch {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
             .join("test-scratch")
@@ -470,12 +476,14 @@ mod token_file_args {
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join("bootstrap-admin-token");
         std::fs::write(&p, content).unwrap();
-        p.to_string_lossy().into_owned()
+        let path = p.to_string_lossy().into_owned();
+        Scratch(dir, path)
     }
 
     #[test]
     fn token_file_reads_and_trims_the_token() {
-        let p = scratch("ok", "  s3cret-token\n");
+        let guard = scratch("ok", "  s3cret-token\n");
+        let p = guard.1.clone();
         let a = parse_args(&args(&["--token-file", &p])).unwrap().unwrap();
         assert_eq!(a.token, "s3cret-token");
         assert_eq!(a.token_file.as_deref(), Some(p.as_str()));
@@ -490,7 +498,8 @@ mod token_file_args {
             e.contains("/nonexistent/agc/token") && e.contains("cannot read"),
             "{e}"
         );
-        let p = scratch("empty", " \n");
+        let guard = scratch("empty", " \n");
+        let p = guard.1.clone();
         let e = parse_args(&args(&["--token-file", &p]))
             .err()
             .expect("empty is an error");
@@ -503,7 +512,8 @@ mod token_file_args {
 
     #[test]
     fn token_and_token_file_are_exclusive() {
-        let p = scratch("both", "t");
+        let guard = scratch("both", "t");
+        let p = guard.1.clone();
         let e = parse_args(&args(&["--token", "x", "--token-file", &p]))
             .err()
             .expect("both flags refused");
@@ -519,6 +529,7 @@ mod token_file_args {
         assert!(!super::HELP.contains("prefer"), "{}", super::HELP);
         assert!(!super::HELP.contains("ABSTRACTGATEWAY_AUTH_TOKEN"));
         assert!(!super::HELP.contains("bootstrap-admin-token"));
+        assert!(!super::HELP.contains("--token-file"), "{}", super::HELP);
     }
 
     #[test]

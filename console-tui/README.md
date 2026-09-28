@@ -36,8 +36,8 @@ otherwise. `Ctrl+G` reopens the guide from browse; in the guide it opens
 the guide menu, like the web guide's step list: go to any step directly,
 leave (not recorded, it opens again next start) or skip (recorded).
 
-1. **Connection** — base URL + admin token (masked; `--token-file PATH`
-   or the env fallback `ABSTRACTGATEWAY_AUTH_TOKEN`), probe via `/ping` +
+1. **Connection** — base URL + token (masked; or launch with
+   `--token <token>`), probe via `/ping` +
    `/me`, honest states: unreachable ≠ sign-in needed (no token sent) ≠
    token rejected ≠ connected — both 401s name where the admin token
    lives, `<data dir>/auth/bootstrap-admin-token` on the gateway host —
@@ -161,9 +161,10 @@ abstractgateway-console --gateway-url http://127.0.0.1:8080 --token <token>
 
 `--url` is an alias of `--gateway-url`. Without it the console uses
 `ABSTRACTGATEWAY_URL` (legacy alias), else `~/.abstractframework/gateway.json`
-(the address this computer's gateway records), else `http://127.0.0.1:8080`. `--token-file PATH` reads the token
-from a file instead (whitespace trimmed; an unreadable or empty file stops
-the launch with the reason).
+(the address this computer's gateway records), else `http://127.0.0.1:8080`.
+Give the token with `--token <token>` or paste it on the Connection screen.
+Legacy aliases, kept for existing scripts: `--token-file PATH` (the token read
+from a file) and the `ABSTRACTGATEWAY_AUTH_TOKEN` environment variable.
 
 The crate is released from the AbstractGateway repository
 (`console-tui/`); see [CHANGELOG.md](CHANGELOG.md). The gateway-side guide is

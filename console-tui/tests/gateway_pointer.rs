@@ -16,14 +16,30 @@ fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/gateway_pointer")
 }
 
-/// A scratch HOME inside the crate's target dir (tests write nowhere else).
-fn home(name: &str) -> PathBuf {
+/// A scratch HOME inside the crate's target dir (tests write nowhere else),
+/// removed when the test ends.
+struct Scratch(PathBuf);
+
+impl std::ops::Deref for Scratch {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn home(name: &str) -> Scratch {
     let h = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("target/test-scratch")
         .join(format!("pointer-{}-{name}", std::process::id()));
     let _ = std::fs::remove_dir_all(&h);
     std::fs::create_dir_all(h.join(".abstractframework")).unwrap();
-    h
+    Scratch(h)
 }
 
 fn put(home: &Path, text: &str) -> PathBuf {
@@ -46,7 +62,7 @@ fn the_shared_case_table() {
             let text = std::fs::read_to_string(fixtures().join(file)).unwrap();
             put(&h, &text);
         }
-        let r = resolve("", None, Some(&h), current_uid());
+        let r = resolve("", None, Some(&*h), current_uid());
         assert_eq!(r.url, c["expect"].as_str().unwrap(), "{name}");
         assert_eq!(
             r.warning.is_some(),
@@ -70,19 +86,19 @@ fn flag_then_env_then_pointer_then_default() {
     let r = resolve(
         "http://10.0.0.5:9000/",
         Some("http://127.0.0.1:7000"),
-        Some(&h),
+        Some(&*h),
         uid,
     );
     assert_eq!(
         (r.url.as_str(), r.source),
         ("http://10.0.0.5:9000", UrlSource::Flag)
     );
-    let r = resolve("", Some("http://127.0.0.1:7000"), Some(&h), uid);
+    let r = resolve("", Some("http://127.0.0.1:7000"), Some(&*h), uid);
     assert_eq!(
         (r.url.as_str(), r.source),
         ("http://127.0.0.1:7000", UrlSource::Env)
     );
-    let r = resolve("", Some("  "), Some(&h), uid);
+    let r = resolve("", Some("  "), Some(&*h), uid);
     assert_eq!(
         (r.url.as_str(), r.source),
         ("http://127.0.0.1:8081", UrlSource::Pointer)
@@ -126,6 +142,8 @@ fn url_rules() {
         "http://127.0.0.1:8081?x=1",
         "http://127.0.0.1:8081#a",
         "http://127.0.0.1:99999",
+        "http://[::1]evil.com:8080",
+        "http://[::1]evil.com",
         "127.0.0.1:8081",
         "",
     ] {
@@ -186,12 +204,12 @@ fn a_gateway_restarted_on_a_new_port_is_followed() {
     let uid = current_uid();
     put(&h, r#"{"schema": 1, "url": "http://127.0.0.1:18893"}"#);
     assert_eq!(
-        follow_pointer("http://127.0.0.1:18893", Some(&h), uid),
+        follow_pointer("http://127.0.0.1:18893", Some(&*h), uid),
         None,
         "unchanged: nothing to do"
     );
     put(&h, r#"{"schema": 1, "url": "http://127.0.0.1:18894"}"#);
-    let next = follow_pointer("http://127.0.0.1:18893", Some(&h), uid).expect("moved");
+    let next = follow_pointer("http://127.0.0.1:18893", Some(&*h), uid).expect("moved");
     assert_eq!(
         (next.url.as_str(), next.source),
         ("http://127.0.0.1:18894", UrlSource::Pointer)

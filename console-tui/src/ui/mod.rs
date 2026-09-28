@@ -462,6 +462,15 @@ impl Ctx {
         (url, token)
     }
 
+    /// Connect because the PERSON asked (Enter in the Connection form,
+    /// Probe): the address shown is now theirs, so a failed connection never
+    /// swaps it for the pointer's or the default address (their token would
+    /// follow it there).
+    pub fn connect_typed(&self) {
+        self.ui.url_source.set(crate::pointer::UrlSource::Typed);
+        self.connect_now();
+    }
+
     pub fn connect_now(&self) {
         let (url, token, source) = self.effective_credentials_with_source();
         self.ui.conn_url.set(url.clone());

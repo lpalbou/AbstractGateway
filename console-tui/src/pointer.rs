@@ -46,6 +46,9 @@ pub enum UrlSource {
     Env,
     Pointer,
     Default,
+    /// The person typed it in the Connection form, or submitted / probed the
+    /// address shown there: it is theirs, and their token goes only there.
+    Typed,
 }
 
 impl UrlSource {
@@ -257,6 +260,11 @@ pub fn loopback_origin(raw: &str) -> Result<String, String> {
         let Some((h, after)) = stripped.split_once(']') else {
             return Err(format!("url {raw:?} is not a URL"));
         };
+        // Only a port may follow the bracket: `[::1]evil.com:8080` is not
+        // [::1] (a URL parser rejects it), so neither is it here.
+        if !after.is_empty() && !after.starts_with(':') {
+            return Err(format!("url {raw:?} is not a URL"));
+        }
         (
             format!("[{}]", h.to_ascii_lowercase()),
             after.strip_prefix(':'),

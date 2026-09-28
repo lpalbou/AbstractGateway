@@ -9822,4 +9822,82 @@ fn an_unreachable_pointer_url_follows_the_pointer() {
         "{:?}",
         h.ui.pointer_notice.get_untracked()
     );
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+/// A URL the person typed, submitted or probed is theirs: when it does not
+/// answer, the console never swaps it for the pointer's (or the default)
+/// address — their token would be sent there.
+#[test]
+fn a_url_the_person_typed_never_follows_the_pointer() {
+    use abstractgateway_console::pointer::UrlSource;
+    let home = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target/test-scratch")
+        .join(format!("pointer-typed-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&home);
+    std::fs::create_dir_all(home.join(".abstractframework")).unwrap();
+    std::fs::write(
+        home.join(".abstractframework/gateway.json"),
+        r#"{"schema": 1, "url": "http://127.0.0.1:18894"}"#,
+    )
+    .unwrap();
+
+    for how in ["edit", "probe"] {
+        let mut h = harness_sized(Size::new(120, 40));
+        h.ui.wizard.set(false);
+        h.ui.screen.set(0);
+        h.ui.conn_url.set("http://127.0.0.1:1889".into());
+        h.ui.url_source.set(UrlSource::Pointer);
+        h.ui.pointer_home.set(Some(home.clone()));
+        h.turns(2);
+        match how {
+            // Typing in the Gateway URL field (it has the caret while
+            // disconnected) makes the address the person's.
+            "edit" => h.type_text("3"),
+            // Probe gateway: the person confirms the address shown.
+            _ => {
+                let s = h.turns(1);
+                let row = find_row(&s, "Probe gateway");
+                let col = s
+                    .lines()
+                    .nth(row - 1)
+                    .unwrap()
+                    .find("Probe gateway")
+                    .unwrap()
+                    + 3;
+                click_at(&mut h, col, row);
+            }
+        }
+        h.turns(2);
+        assert_eq!(h.ui.url_source.get_untracked(), UrlSource::Typed, "{how}");
+        h.drain_cmds();
+        h.store
+            .conn
+            .set(ConnPhase::Unreachable("connection refused".into()));
+        h.turns(2);
+        assert!(
+            h.find_cmd(|c| matches!(c, Cmd::Connect { .. })).is_none(),
+            "{how}: a typed URL must not follow the pointer"
+        );
+        assert_ne!(
+            h.ui.conn_url.get_untracked(),
+            "http://127.0.0.1:18894",
+            "{how}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&home);
+}
+
+/// The Connection screen teaches `--token <token>` (operator rule: the token
+/// is a direct parameter); it never steers to a token file or an env var.
+#[test]
+fn the_connection_screen_never_teaches_a_token_file_or_env_var() {
+    let mut h = harness_sized(Size::new(140, 40));
+    h.ui.wizard.set(false);
+    h.ui.screen.set(0);
+    let s = h.turns(3);
+    assert!(s.contains("--token <token>"), "{s}");
+    assert!(!s.contains("--token-file"), "{s}");
+    // The harness mounts without the legacy variable: nothing names it.
+    assert!(!s.contains("ABSTRACTGATEWAY_AUTH_TOKEN"), "{s}");
 }

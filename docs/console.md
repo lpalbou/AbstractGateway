@@ -328,9 +328,10 @@ abstractgateway-console --help
 `ABSTRACTGATEWAY_URL` (legacy), else the address this computer's gateway
 records in `~/.abstractframework/gateway.json` (a loopback address only), else
 `http://127.0.0.1:8080`; when that gateway stops answering, the console reads
-the file again and follows it to a new port. `--token-file PATH` reads the token
-from a file instead; an unreadable or empty file stops the launch with the
-reason. When sign-in fails, the Connection screen says whether no token was
+the file again and follows it to a new port. Give the token with `--token
+<token>` or paste it on the Connection screen (`--token-file PATH` and
+`ABSTRACTGATEWAY_AUTH_TOKEN` remain as legacy aliases for existing scripts).
+When sign-in fails, the Connection screen says whether no token was
 sent or the token was rejected.
 
 ### Setup guide and browse mode

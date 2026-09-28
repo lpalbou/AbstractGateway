@@ -85,7 +85,9 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 .value(ui.conn_url)
                 .placeholder("http://127.0.0.1:8080")
                 .placeholder_while_focused(true)
-                .on_submit(move |_| ctx_u.connect_now())
+                // Editing the address makes it the person's: never followed.
+                .on_change(move |_| ui.url_source.set(crate::pointer::UrlSource::Typed))
+                .on_submit(move |_| ctx_u.connect_typed())
                 .layout(LayoutStyle::default().w(46).h(1))
                 .element(gcx, &t);
             let el = esc_releases_focus(el, notice);
@@ -102,9 +104,9 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 TextInput::new()
                     .value(ui.conn_token)
                     .masked(true)
-                    .placeholder("bearer token — blank uses $ABSTRACTGATEWAY_AUTH_TOKEN")
+                    .placeholder("paste it, or launch with --token <token>")
                     .placeholder_while_focused(true)
-                    .on_submit(move |_| ctx_submit_tok.connect_now())
+                    .on_submit(move |_| ctx_submit_tok.connect_typed())
                     .layout(LayoutStyle::default().w(46).h(1))
                     .element(cx, t),
                 notice,
@@ -122,17 +124,17 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 let t = tt;
                 if env_set && ui.conn_token.get().is_empty() {
                     line(vec![span(
-                        "using $ABSTRACTGATEWAY_AUTH_TOKEN — type here only to switch identity · tokens stay in memory, never on disk",
+                        "using the legacy ABSTRACTGATEWAY_AUTH_TOKEN — type a token here to switch identity · tokens stay in memory, never on disk",
                         t.text_muted,
                     )])
                 } else if env_set {
                     line(vec![span(
-                        "env ABSTRACTGATEWAY_AUTH_TOKEN: set — the typed token wins while the field is non-empty",
+                        "legacy ABSTRACTGATEWAY_AUTH_TOKEN is set — the typed token wins while the field is non-empty",
                         t.text_faint,
                     )])
                 } else {
                     line(vec![span(
-                        "env ABSTRACTGATEWAY_AUTH_TOKEN: not set · the token stays in memory, never on disk",
+                        "the token stays in memory, never on disk",
                         t.text_faint,
                     )])
                 }
@@ -155,7 +157,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     &t,
                     "",
                     Button::new(label)
-                        .on_click(move || ctx_b.connect_now())
+                        .on_click(move || ctx_b.connect_typed())
                         .element(gcx, &t)
                         .build(),
                 )
