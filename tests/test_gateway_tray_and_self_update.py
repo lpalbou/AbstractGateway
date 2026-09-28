@@ -112,25 +112,25 @@ def test_detect_install_classifies_editable_docker_pipx_uv_and_pip(tmp_path: Pat
     monkeypatch.setattr(self_update.shutil, "which", lambda name: f"/bin/{name}")
 
     _fake_direct_url(monkeypatch, {"dir_info": {"editable": True}, "url": "file:///src"})
-    info = self_update.detect_install(executable="/py", prefix="/venv", env={})
+    info = self_update.detect_install(executable="/py", prefix="/venv", env={}, data_dir=tmp_path / "no-installer")
     assert info.kind == "editable" and info.upgradable is False and "git pull" in str(info.reason)
 
     _fake_direct_url(monkeypatch, None)
     monkeypatch.setattr(self_update, "_in_docker", lambda: True)
-    info = self_update.detect_install(executable="/py", prefix="/venv", env={})
+    info = self_update.detect_install(executable="/py", prefix="/venv", env={}, data_dir=tmp_path / "no-installer")
     assert info.kind == "docker" and info.upgradable is False
     monkeypatch.setattr(self_update, "_in_docker", lambda: False)
 
-    info = self_update.detect_install(executable="/py", prefix="/home/u/.local/pipx/venvs/abstractgateway", env={})
+    info = self_update.detect_install(executable="/py", prefix="/home/u/.local/pipx/venvs/abstractgateway", env={}, data_dir=tmp_path / "no-installer")
     assert info.kind == "pipx" and info.command == ["/bin/pipx", "upgrade", "abstractgateway"]
 
-    info = self_update.detect_install(executable="/py", prefix="/home/u/.local/share/uv/tools/abstractgateway", env={})
+    info = self_update.detect_install(executable="/py", prefix="/home/u/.local/share/uv/tools/abstractgateway", env={}, data_dir=tmp_path / "no-installer")
     assert info.kind == "uv-tool" and info.command == ["/bin/uv", "tool", "upgrade", "abstractgateway"]
 
     uv_venv = tmp_path / "uvenv"
     uv_venv.mkdir()
     (uv_venv / "pyvenv.cfg").write_text("home = /x\nuv = 0.5.1\n", encoding="utf-8")
-    info = self_update.detect_install(executable="/py", prefix=str(uv_venv), env={})
+    info = self_update.detect_install(executable="/py", prefix=str(uv_venv), env={}, data_dir=tmp_path / "no-installer")
     assert info.kind == "uv-venv" and info.command == ["/bin/uv", "pip", "install", "--python", "/py", "--upgrade", "abstractgateway[apple]"]
 
     plain = tmp_path / "venv"
@@ -139,12 +139,12 @@ def test_detect_install_classifies_editable_docker_pipx_uv_and_pip(tmp_path: Pat
     # Hermetic: the suite's own venv may have been populated by uv, which the
     # INSTALLER record would otherwise report for this "plain pip" case.
     monkeypatch.setattr(self_update, "_dist_installer", lambda: "pip")
-    info = self_update.detect_install(executable="/py", prefix=str(plain), env={})
+    info = self_update.detect_install(executable="/py", prefix=str(plain), env={}, data_dir=tmp_path / "no-installer")
     assert info.kind == "pip" and info.command == ["/py", "-m", "pip", "install", "--upgrade", "abstractgateway[apple]"]
     assert info.extras == ["apple"] and info.display_command
 
     monkeypatch.setattr(self_update, "_dist_installed", lambda name: False)
-    info = self_update.detect_install(executable="/py", prefix=str(plain), env={})
+    info = self_update.detect_install(executable="/py", prefix=str(plain), env={}, data_dir=tmp_path / "no-installer")
     assert info.kind == "unknown" and info.upgradable is False
 
 
