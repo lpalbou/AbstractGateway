@@ -378,6 +378,44 @@ abstractgateway service status
 `other` means the login item belongs to another data folder. See
 [first-run.md](./first-run.md#4-start-the-gateway-at-login-optional).
 
+### Turning on start at login fails with `5: Input/output error` (macOS)
+
+`abstractgateway service enable` (and the installer, the consoles' and the tray's
+**Start at login** switch) replaces the login item with `launchctl bootout` and
+then `launchctl bootstrap`. When the gateway was running, launchd stops it in the
+background after `bootout` answers, and a `bootstrap` of the same login item before
+it is gone fails with `5: Input/output error` (or `37`). The gateway waits up to
+15 seconds for launchd to finish and retries the `bootstrap` a few times, so this
+resolves by itself. If it still fails, the message names the command to run by hand:
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.abstractframework.gateway.plist
+abstractgateway service status
+```
+
+`service status` then reads `on`. If `bootstrap` keeps failing, run
+`launchctl bootout gui/$(id -u)/ai.abstractframework.gateway`, wait a few seconds
+and run the `bootstrap` line again.
+
+### An update says "already up to date", or "didn't finish"
+
+- **Already up to date** means the update ran and changed nothing: an
+  AbstractFramework installer install already has the newest release (the
+  check compares releases, not the newest gateway on PyPI), or the package
+  manager found nothing newer. No restart is needed.
+- **The update didn't finish** shows the exit code and the last lines of the
+  log (web console: **Update log** under the version line). For an installer
+  install, the installer's full log is the newest `install-*.log` in
+  `<data dir>/logs/`; fix the cause it names and update again, or run the
+  one-line install in a terminal, which does the same thing. The running
+  gateway keeps working.
+- **The installer changed since it was checked**: a newer check fetched a
+  different `install.sh`. Check again, review the confirmation, and update.
+- An installer install on Windows is updated by pasting the PowerShell line
+  the hint shows (the gateway cannot replace its own files while it runs).
+
+See [tray.md](./tray.md#restart-and-update).
+
 ## Related docs
 
 - [faq.md](./faq.md): conceptual questions and limits

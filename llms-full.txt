@@ -1200,7 +1200,7 @@ are user-level; every write is admin-only.
 | `POST /api/gateway/host/tray/show` | Retry the helper now (admin) — the escape hatch for one that crashed. There is no `hide`. |
 | `POST /api/gateway/host/restart` / `shutdown` | Graceful restart (same command, same environment) or stop; `409` with the reason when this process cannot (`--reload`, not started by `abstractgateway serve`, an update is installing). |
 | `GET /api/gateway/host/update` | How the gateway was installed (`install.kind`, `upgradable`, the command), the last update check, the upgrade job, `restart_pending`. |
-| `POST /api/gateway/host/update/check` / `start` | Ask pypi.org for the latest release (offline is an in-band answer) / run the upgrade in the background. |
+| `POST /api/gateway/host/update/check` / `start` | Check for a newer release (an AbstractFramework installer install: the newest AbstractFramework release; otherwise PyPI; offline is an in-band answer) / run the update in the background (the installer, or the package manager's upgrade). See [tray.md](docs/tray.md#restart-and-update). |
 
 The tray icon has **no setting**: while the gateway serves a desktop that can
 hold it, it is there. It is absent only for reasons that are facts about the
@@ -2851,7 +2851,8 @@ means a workflow step is executing right now; pause bars mean paused; a red
 ring with `!` means the gateway is not answering.
 
 Everything works offline except *Documentation*, *Report a Problem* and
-*Check for Updates*, which open a website or ask pypi.org. The documentation
+*Check for Updates*, which open a website or check for a newer release (see
+[Restart and update](#restart-and-update)). The documentation
 is online; the console's docs assistant answers from the `llms.txt` shipped
 with the gateway.
 
@@ -3087,25 +3088,80 @@ is refused (HTTP 409, greyed out in the tray) under `serve --reload`, when the
 server was not started by `abstractgateway serve`, or while an update is
 being installed.
 
-**Check for Updates** asks pypi.org for the latest release (5 s timeout, one
-check per hour). Offline is a normal answer, not an error. The one-click
-**Update** is offered only when the gateway can reproduce its own install:
+**Check for Updates** (the tray), **Check now** (web console, **Resources >
+Gateway > Version**) and `u` in the terminal console's **F3** panel all ask the
+gateway the same question and show its answer word for word: the version line,
+a hint, and **Update to …** with a confirmation that says exactly what runs.
+The check takes at most a few seconds, runs at most once per hour unless you ask
+again, and offline is a normal answer, not an error. Updating is for admins.
 
-| Install | Upgrade command used | One-click? |
-|---|---|---|
-| `pip` in a virtual environment | `python -m pip install --upgrade "abstractgateway[<your extras>]"` | yes |
-| `uv venv` / `uv pip` | `uv pip install --python … --upgrade …` | yes |
-| `pipx` | `pipx upgrade abstractgateway` | yes |
-| `uv tool` | `uv tool upgrade abstractgateway` | yes |
-| editable checkout (`pip install -e .`) | — update with `git pull` | no |
-| Docker image | — pull the newer image | no |
-| system Python (PEP 668 "externally managed") | — use pipx or a venv | no |
+What the check compares and what **Update** runs depends on how the gateway
+was installed:
+
+| Install | Compared with | Update runs | One-click? |
+|---|---|---|---|
+| AbstractFramework installer (the one-line install, the macOS double-click installer) | the newest **AbstractFramework release** | the AbstractFramework installer (`install.sh`), see below | yes on macOS and Linux; Windows shows the PowerShell line |
+| `pip` in a virtual environment | the newest `abstractgateway` on PyPI | `python -m pip install --upgrade "abstractgateway[<your extras>]"` | yes |
+| `uv venv` / `uv pip` | PyPI | `uv pip install --python … --upgrade …` | yes |
+| `pipx` | PyPI | `pipx upgrade abstractgateway` | yes |
+| `uv tool` (installed by hand, no version pin) | PyPI | `uv tool upgrade abstractgateway` | yes |
+| `uv tool` pinned to one version (`==X`) | PyPI | — reinstall without the pin (the hint gives the command) | no |
+| editable checkout (`pip install -e .`) | PyPI | — update with `git pull` | no |
+| Docker image | PyPI | — pull the newer image | no |
+| system Python (PEP 668 "externally managed") | PyPI | — use pipx or a venv | no |
+
+### An AbstractFramework installer install
+
+The gateway recognises an installer install by the installer's record in its
+data folder (`bootstrap.env`), which also names the AbstractFramework release
+installed. **Update** then runs the same installer as the one-line install,
+so updating from the tray, either console or by running the line again in a
+terminal does the same thing:
+
+- **The release.** The check reads the AbstractFramework repository's `main`
+  branch at one commit: its install manifest (`docs/installers/install-manifest.json`,
+  the release version and the gateway version it pins) and its
+  `scripts/install.sh`. The line reads `AbstractFramework 0.6.1 · gateway 0.7.1
+  · AbstractFramework 0.6.2 available`. An install made with `--pin` records
+  no release; it is offered the release only when the release's gateway is
+  newer than the one installed.
+- **What runs.** The confirmation names the script's address
+  (`https://raw.githubusercontent.com/lpalbou/AbstractFramework/main/scripts/install.sh`),
+  the commit and the script's sha256, and the command:
+  `/bin/sh install.sh --yes --no-start --no-open --no-modify-path --data-dir <data folder>`.
+  The gateway runs exactly the file it checked; if a newer check fetched a
+  different script in between, **Update** refuses and asks you to check again.
+- **How it runs.** Nothing is asked and nothing is opened. Start at login stays
+  as it is. The installer keeps your profile, port and the choices it remembers,
+  moves every package to the release's tested versions, and does not stop the
+  running gateway. Its output is the update log (console: **Update log** under the
+  version line; the tray shows its last lines if it fails). The installer's own
+  log is the newest `install-*.log` in `<data folder>/logs/`.
+- **The result.** What moved (`AbstractFramework 0.6.1 -> 0.6.2, abstractgateway
+  0.7.1 -> 0.7.2, …`) and **Restart** to finish; **Already up to date** when the
+  installer changed nothing (no restart is offered); or the installer's exit code
+  with the last lines of its log. The running gateway keeps working in every case.
+- **Windows** keeps a running program's files locked, so the gateway cannot
+  update itself in place. The hint shows the line to paste in PowerShell; the
+  installer stops the gateway, updates everything and starts it again:
+
+  ```powershell
+  powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/lpalbou/AbstractFramework/main/scripts/install.ps1 | iex"
+  ```
+
+The newest gateway outside a release is a command-line choice: run the installer
+with `--pin latest` (see the AbstractFramework install guide).
+
+### Other installs
 
 The installed extras (`apple`, `gpu`, `embeddings`) are detected and kept.
-The upgrade runs in the background (log tail on the console's Gateway card);
-when it finishes the tray offers **Restart to finish the update**. Restarting
-is what makes the new version run — until then the process keeps serving the
-old code.
+The upgrade runs in the background (its log is under the console's version
+line); **Already up to date** is reported when the package manager installed
+nothing newer.
+
+In every case the running process keeps serving the old code until it
+restarts: the tray offers **Restart Now**, the console's Gateway card
+**Restart gateway…**.
 
 ## Security
 
@@ -5032,12 +5088,25 @@ any authenticated principal; writes require an admin principal.
   switch as the tray's *Start at login* and `abstractgateway service
   enable|disable`.
 - `GET /api/gateway/host/update`, `POST /api/gateway/host/update/check`,
-  `POST /api/gateway/host/update/start` — `{current, install: {kind,
-  upgradable, reason, command, extras}, check: {latest, update_available,
-  offline, checked_at, error}, job: {state, log_tail, exit_code,
-  restart_recommended, version_before, version_after}, restart_pending}`.
-  `start` answers 409 when the install cannot be upgraded in place or a job
-  is already running.
+  `POST /api/gateway/host/update/start` (admin) — all three answer
+  `{current, install: {kind, path, upgradable, reason, command,
+  display_command, extras, data_dir, framework_version}, check: {source,
+  latest, update_available, offline, checked_at, error, release}, job:
+  {state, command, log_tail, exit_code, error, message, restart_recommended,
+  version_before, version_after, installer, framework_before,
+  framework_after, changes, other_changes}, restart_pending, update}`.
+  `install.kind` is `installer` for an AbstractFramework installer install
+  (`check.source: framework-release`, `check.release: {version,
+  gateway_version, installed, commit, manifest_url, installer: {url,
+  commit_url, sha256, size}}`); other kinds compare with PyPI
+  (`source: pypi`). `update` is the rendering every client shows:
+  `{status, line, hint, offer, action: {label, confirm, command, source,
+  installer_sha256} | null, checked_at}`, `status` one of `not_checked`,
+  `available`, `not_possible`, `up_to_date`, `offline`, `error`, `running`,
+  `installed`, `no_change`, `failed`. `start` takes an optional
+  `{installer_sha256}` (the action's) and answers 409 when the install
+  cannot be upgraded in place, the installer changed since that sha256 was
+  shown, or a job is already running.
 
 `GET /api/health` adds `"paused": true` while paused; `status` stays
 `"healthy"`.
@@ -5569,7 +5638,10 @@ The console has thirteen screens: **1** Connection, **2** Providers, **3** Route
 - **F2** opens the docs assistant (questions answered from the gateway's own
   documentation; signed in).
 - **F3** opens the gateway host panel: pause or resume workflows, restart,
-  quit, check for and install updates, the tray, and **start at login** (`L`,
+  quit, check for and install updates (the same answer and the same update as
+  the web console and the tray: an AbstractFramework installer install runs the
+  installer, see [tray.md](docs/tray.md#restart-and-update)), the tray, and
+  **start at login** (`L`,
   confirmed, then read back). A banner shows on every screen while workflows
   are paused.
 - **About** (`F1`, or `?` outside a text field) shows this console, its
@@ -7879,6 +7951,44 @@ abstractgateway service status
 `other` means the login item belongs to another data folder. See
 [first-run.md](docs/first-run.md#4-start-the-gateway-at-login-optional).
 
+### Turning on start at login fails with `5: Input/output error` (macOS)
+
+`abstractgateway service enable` (and the installer, the consoles' and the tray's
+**Start at login** switch) replaces the login item with `launchctl bootout` and
+then `launchctl bootstrap`. When the gateway was running, launchd stops it in the
+background after `bootout` answers, and a `bootstrap` of the same login item before
+it is gone fails with `5: Input/output error` (or `37`). The gateway waits up to
+15 seconds for launchd to finish and retries the `bootstrap` a few times, so this
+resolves by itself. If it still fails, the message names the command to run by hand:
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/ai.abstractframework.gateway.plist
+abstractgateway service status
+```
+
+`service status` then reads `on`. If `bootstrap` keeps failing, run
+`launchctl bootout gui/$(id -u)/ai.abstractframework.gateway`, wait a few seconds
+and run the `bootstrap` line again.
+
+### An update says "already up to date", or "didn't finish"
+
+- **Already up to date** means the update ran and changed nothing: an
+  AbstractFramework installer install already has the newest release (the
+  check compares releases, not the newest gateway on PyPI), or the package
+  manager found nothing newer. No restart is needed.
+- **The update didn't finish** shows the exit code and the last lines of the
+  log (web console: **Update log** under the version line). For an installer
+  install, the installer's full log is the newest `install-*.log` in
+  `<data dir>/logs/`; fix the cause it names and update again, or run the
+  one-line install in a terminal, which does the same thing. The running
+  gateway keeps working.
+- **The installer changed since it was checked**: a newer check fetched a
+  different `install.sh`. Check again, review the confirmation, and update.
+- An installer install on Windows is updated by pasting the PowerShell line
+  the hint shows (the gateway cannot replace its own files while it runs).
+
+See [tray.md](docs/tray.md#restart-and-update).
+
 ## Related docs
 
 - [faq.md](docs/faq.md): conceptual questions and limits
@@ -7896,6 +8006,42 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Changed
+- **Updating an AbstractFramework installer install runs the installer.** When the gateway was installed by the
+  AbstractFramework installer (its data folder holds the installer's `bootstrap.env`), **Check for Updates** (tray),
+  **Check now** (web console) and `u` in the terminal console's F3 compare the installed AbstractFramework release
+  with the newest one (the install manifest on the framework repository's `main`), not with the newest gateway on
+  PyPI. **Update** runs that commit's `scripts/install.sh`, the script of the one-line install, as
+  `/bin/sh install.sh --yes --no-start --no-open --no-modify-path --data-dir <data dir>`: nothing is asked, start
+  at login stays as it is, every package moves to the release's tested versions, and the running gateway is not
+  stopped. The confirmation names the script's `main` address, the commit, its sha256 and the command, and the
+  update refuses a script other than the one shown (`installer_sha256` on `POST /host/update/start`). The job log
+  streams the installer's output; the result lists what moved and offers the restart, says **already up to date**
+  when nothing changed, or gives the installer's exit code and where its log is. On Windows the hint shows the
+  PowerShell line (the installer stops and restarts the gateway there). The gateway no longer runs
+  `uv tool upgrade abstractgateway` for these installs (uv keeps the installer's `==` pin, so it changed nothing).
+- **One update rendering for every client.** `GET /host/update` carries `update`: the status, the version line, the
+  hint, what an update installs, and the action with its label, command, source and confirmation. The tray, the web
+  console (which also shows the update log) and the terminal console show it word for word; `POST
+  /host/update/start` answers the same payload as `GET /host/update`. A hand-made `uv tool` install pinned to one
+  version says it cannot be upgraded in place and gives the reinstall command.
+- The terminal console (`abstractgateway-console`) shows the gateway's update line, hint and confirmation and sends
+  back the installer's sha256; with an older gateway it keeps its own rendering.
+
+### Fixed
+- **Start at login on macOS no longer fails with `5: Input/output error`.** Replacing a running login item
+  (`launchctl bootout`, then `bootstrap`) now waits, up to 15 seconds, until launchd has removed the previous job,
+  and retries a `bootstrap` that answers 5 or 37. A final failure names the exact `launchctl bootstrap` command to
+  run by hand. `service uninstall` waits too.
+- The tray reports an update that installed nothing newer as **Already up to date** instead of "The update didn't
+  finish", and a failed update shows the job's reason and the last lines of its log.
+
+### Tests
+- The recommended-model tests read AbstractCore's `APPLE_TEXT_TIERS` (every tier's lower edge and just under its
+  upper bound) instead of copying its model names, so they follow a core release that moves the tiers.
 
 ## [0.7.1] - 2026-09-28
 

@@ -932,7 +932,7 @@ are user-level; every write is admin-only.
 | `POST /api/gateway/host/tray/show` | Retry the helper now (admin) — the escape hatch for one that crashed. There is no `hide`. |
 | `POST /api/gateway/host/restart` / `shutdown` | Graceful restart (same command, same environment) or stop; `409` with the reason when this process cannot (`--reload`, not started by `abstractgateway serve`, an update is installing). |
 | `GET /api/gateway/host/update` | How the gateway was installed (`install.kind`, `upgradable`, the command), the last update check, the upgrade job, `restart_pending`. |
-| `POST /api/gateway/host/update/check` / `start` | Ask pypi.org for the latest release (offline is an in-band answer) / run the upgrade in the background. |
+| `POST /api/gateway/host/update/check` / `start` | Check for a newer release (an AbstractFramework installer install: the newest AbstractFramework release; otherwise PyPI; offline is an in-band answer) / run the update in the background (the installer, or the package manager's upgrade). See [tray.md](./tray.md#restart-and-update). |
 
 The tray icon has **no setting**: while the gateway serves a desktop that can
 hold it, it is there. It is absent only for reasons that are facts about the

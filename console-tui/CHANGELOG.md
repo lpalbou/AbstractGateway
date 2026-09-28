@@ -1,5 +1,14 @@
 # Changelog — abstractgateway-console
 
+## Unreleased
+
+### Changed
+- F3 update: the version line, the hint and the confirmation are the gateway's own (`update` of
+  `GET /host/update`, AbstractGateway 0.7.2+), the same words as the web console and the tray. For an
+  AbstractFramework installer install the confirmation names the installer that runs (its address, commit, sha256
+  and command), and **Update** sends back that installer's sha256. With an older gateway the panel keeps its own
+  rendering.
+
 ## 0.11.0 (2026-09-28)
 
 Needs abstractcore-console 0.4 and AbstractGateway 0.7.0.

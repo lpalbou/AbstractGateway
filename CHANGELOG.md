@@ -5,6 +5,42 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Updating an AbstractFramework installer install runs the installer.** When the gateway was installed by the
+  AbstractFramework installer (its data folder holds the installer's `bootstrap.env`), **Check for Updates** (tray),
+  **Check now** (web console) and `u` in the terminal console's F3 compare the installed AbstractFramework release
+  with the newest one (the install manifest on the framework repository's `main`), not with the newest gateway on
+  PyPI. **Update** runs that commit's `scripts/install.sh`, the script of the one-line install, as
+  `/bin/sh install.sh --yes --no-start --no-open --no-modify-path --data-dir <data dir>`: nothing is asked, start
+  at login stays as it is, every package moves to the release's tested versions, and the running gateway is not
+  stopped. The confirmation names the script's `main` address, the commit, its sha256 and the command, and the
+  update refuses a script other than the one shown (`installer_sha256` on `POST /host/update/start`). The job log
+  streams the installer's output; the result lists what moved and offers the restart, says **already up to date**
+  when nothing changed, or gives the installer's exit code and where its log is. On Windows the hint shows the
+  PowerShell line (the installer stops and restarts the gateway there). The gateway no longer runs
+  `uv tool upgrade abstractgateway` for these installs (uv keeps the installer's `==` pin, so it changed nothing).
+- **One update rendering for every client.** `GET /host/update` carries `update`: the status, the version line, the
+  hint, what an update installs, and the action with its label, command, source and confirmation. The tray, the web
+  console (which also shows the update log) and the terminal console show it word for word; `POST
+  /host/update/start` answers the same payload as `GET /host/update`. A hand-made `uv tool` install pinned to one
+  version says it cannot be upgraded in place and gives the reinstall command.
+- The terminal console (`abstractgateway-console`) shows the gateway's update line, hint and confirmation and sends
+  back the installer's sha256; with an older gateway it keeps its own rendering.
+
+### Fixed
+- **Start at login on macOS no longer fails with `5: Input/output error`.** Replacing a running login item
+  (`launchctl bootout`, then `bootstrap`) now waits, up to 15 seconds, until launchd has removed the previous job,
+  and retries a `bootstrap` that answers 5 or 37. A final failure names the exact `launchctl bootstrap` command to
+  run by hand. `service uninstall` waits too.
+- The tray reports an update that installed nothing newer as **Already up to date** instead of "The update didn't
+  finish", and a failed update shows the job's reason and the last lines of its log.
+
+### Tests
+- The recommended-model tests read AbstractCore's `APPLE_TEXT_TIERS` (every tier's lower edge and just under its
+  upper bound) instead of copying its model names, so they follow a core release that moves the tiers.
+
 ## [0.7.1] - 2026-09-28
 
 No dependency changes. The terminal console (`abstractgateway-console`) stays 0.11.0.

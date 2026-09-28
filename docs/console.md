@@ -388,7 +388,10 @@ The console has thirteen screens: **1** Connection, **2** Providers, **3** Route
 - **F2** opens the docs assistant (questions answered from the gateway's own
   documentation; signed in).
 - **F3** opens the gateway host panel: pause or resume workflows, restart,
-  quit, check for and install updates, the tray, and **start at login** (`L`,
+  quit, check for and install updates (the same answer and the same update as
+  the web console and the tray: an AbstractFramework installer install runs the
+  installer, see [tray.md](./tray.md#restart-and-update)), the tray, and
+  **start at login** (`L`,
   confirmed, then read back). A banner shows on every screen while workflows
   are paused.
 - **About** (`F1`, or `?` outside a text field) shows this console, its

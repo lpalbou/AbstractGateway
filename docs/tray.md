@@ -85,7 +85,8 @@ means a workflow step is executing right now; pause bars mean paused; a red
 ring with `!` means the gateway is not answering.
 
 Everything works offline except *Documentation*, *Report a Problem* and
-*Check for Updates*, which open a website or ask pypi.org. The documentation
+*Check for Updates*, which open a website or check for a newer release (see
+[Restart and update](#restart-and-update)). The documentation
 is online; the console's docs assistant answers from the `llms.txt` shipped
 with the gateway.
 
@@ -321,25 +322,80 @@ is refused (HTTP 409, greyed out in the tray) under `serve --reload`, when the
 server was not started by `abstractgateway serve`, or while an update is
 being installed.
 
-**Check for Updates** asks pypi.org for the latest release (5 s timeout, one
-check per hour). Offline is a normal answer, not an error. The one-click
-**Update** is offered only when the gateway can reproduce its own install:
+**Check for Updates** (the tray), **Check now** (web console, **Resources >
+Gateway > Version**) and `u` in the terminal console's **F3** panel all ask the
+gateway the same question and show its answer word for word: the version line,
+a hint, and **Update to …** with a confirmation that says exactly what runs.
+The check takes at most a few seconds, runs at most once per hour unless you ask
+again, and offline is a normal answer, not an error. Updating is for admins.
 
-| Install | Upgrade command used | One-click? |
-|---|---|---|
-| `pip` in a virtual environment | `python -m pip install --upgrade "abstractgateway[<your extras>]"` | yes |
-| `uv venv` / `uv pip` | `uv pip install --python … --upgrade …` | yes |
-| `pipx` | `pipx upgrade abstractgateway` | yes |
-| `uv tool` | `uv tool upgrade abstractgateway` | yes |
-| editable checkout (`pip install -e .`) | — update with `git pull` | no |
-| Docker image | — pull the newer image | no |
-| system Python (PEP 668 "externally managed") | — use pipx or a venv | no |
+What the check compares and what **Update** runs depends on how the gateway
+was installed:
+
+| Install | Compared with | Update runs | One-click? |
+|---|---|---|---|
+| AbstractFramework installer (the one-line install, the macOS double-click installer) | the newest **AbstractFramework release** | the AbstractFramework installer (`install.sh`), see below | yes on macOS and Linux; Windows shows the PowerShell line |
+| `pip` in a virtual environment | the newest `abstractgateway` on PyPI | `python -m pip install --upgrade "abstractgateway[<your extras>]"` | yes |
+| `uv venv` / `uv pip` | PyPI | `uv pip install --python … --upgrade …` | yes |
+| `pipx` | PyPI | `pipx upgrade abstractgateway` | yes |
+| `uv tool` (installed by hand, no version pin) | PyPI | `uv tool upgrade abstractgateway` | yes |
+| `uv tool` pinned to one version (`==X`) | PyPI | — reinstall without the pin (the hint gives the command) | no |
+| editable checkout (`pip install -e .`) | PyPI | — update with `git pull` | no |
+| Docker image | PyPI | — pull the newer image | no |
+| system Python (PEP 668 "externally managed") | PyPI | — use pipx or a venv | no |
+
+### An AbstractFramework installer install
+
+The gateway recognises an installer install by the installer's record in its
+data folder (`bootstrap.env`), which also names the AbstractFramework release
+installed. **Update** then runs the same installer as the one-line install,
+so updating from the tray, either console or by running the line again in a
+terminal does the same thing:
+
+- **The release.** The check reads the AbstractFramework repository's `main`
+  branch at one commit: its install manifest (`docs/installers/install-manifest.json`,
+  the release version and the gateway version it pins) and its
+  `scripts/install.sh`. The line reads `AbstractFramework 0.6.1 · gateway 0.7.1
+  · AbstractFramework 0.6.2 available`. An install made with `--pin` records
+  no release; it is offered the release only when the release's gateway is
+  newer than the one installed.
+- **What runs.** The confirmation names the script's address
+  (`https://raw.githubusercontent.com/lpalbou/AbstractFramework/main/scripts/install.sh`),
+  the commit and the script's sha256, and the command:
+  `/bin/sh install.sh --yes --no-start --no-open --no-modify-path --data-dir <data folder>`.
+  The gateway runs exactly the file it checked; if a newer check fetched a
+  different script in between, **Update** refuses and asks you to check again.
+- **How it runs.** Nothing is asked and nothing is opened. Start at login stays
+  as it is. The installer keeps your profile, port and the choices it remembers,
+  moves every package to the release's tested versions, and does not stop the
+  running gateway. Its output is the update log (console: **Update log** under the
+  version line; the tray shows its last lines if it fails). The installer's own
+  log is the newest `install-*.log` in `<data folder>/logs/`.
+- **The result.** What moved (`AbstractFramework 0.6.1 -> 0.6.2, abstractgateway
+  0.7.1 -> 0.7.2, …`) and **Restart** to finish; **Already up to date** when the
+  installer changed nothing (no restart is offered); or the installer's exit code
+  with the last lines of its log. The running gateway keeps working in every case.
+- **Windows** keeps a running program's files locked, so the gateway cannot
+  update itself in place. The hint shows the line to paste in PowerShell; the
+  installer stops the gateway, updates everything and starts it again:
+
+  ```powershell
+  powershell -ExecutionPolicy ByPass -c "irm https://raw.githubusercontent.com/lpalbou/AbstractFramework/main/scripts/install.ps1 | iex"
+  ```
+
+The newest gateway outside a release is a command-line choice: run the installer
+with `--pin latest` (see the AbstractFramework install guide).
+
+### Other installs
 
 The installed extras (`apple`, `gpu`, `embeddings`) are detected and kept.
-The upgrade runs in the background (log tail on the console's Gateway card);
-when it finishes the tray offers **Restart to finish the update**. Restarting
-is what makes the new version run — until then the process keeps serving the
-old code.
+The upgrade runs in the background (its log is under the console's version
+line); **Already up to date** is reported when the package manager installed
+nothing newer.
+
+In every case the running process keeps serving the old code until it
+restarts: the tray offers **Restart Now**, the console's Gateway card
+**Restart gateway…**.
 
 ## Security
 

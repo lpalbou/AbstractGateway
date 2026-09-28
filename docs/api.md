@@ -1563,12 +1563,25 @@ any authenticated principal; writes require an admin principal.
   switch as the tray's *Start at login* and `abstractgateway service
   enable|disable`.
 - `GET /api/gateway/host/update`, `POST /api/gateway/host/update/check`,
-  `POST /api/gateway/host/update/start` — `{current, install: {kind,
-  upgradable, reason, command, extras}, check: {latest, update_available,
-  offline, checked_at, error}, job: {state, log_tail, exit_code,
-  restart_recommended, version_before, version_after}, restart_pending}`.
-  `start` answers 409 when the install cannot be upgraded in place or a job
-  is already running.
+  `POST /api/gateway/host/update/start` (admin) — all three answer
+  `{current, install: {kind, path, upgradable, reason, command,
+  display_command, extras, data_dir, framework_version}, check: {source,
+  latest, update_available, offline, checked_at, error, release}, job:
+  {state, command, log_tail, exit_code, error, message, restart_recommended,
+  version_before, version_after, installer, framework_before,
+  framework_after, changes, other_changes}, restart_pending, update}`.
+  `install.kind` is `installer` for an AbstractFramework installer install
+  (`check.source: framework-release`, `check.release: {version,
+  gateway_version, installed, commit, manifest_url, installer: {url,
+  commit_url, sha256, size}}`); other kinds compare with PyPI
+  (`source: pypi`). `update` is the rendering every client shows:
+  `{status, line, hint, offer, action: {label, confirm, command, source,
+  installer_sha256} | null, checked_at}`, `status` one of `not_checked`,
+  `available`, `not_possible`, `up_to_date`, `offline`, `error`, `running`,
+  `installed`, `no_change`, `failed`. `start` takes an optional
+  `{installer_sha256}` (the action's) and answers 409 when the install
+  cannot be upgraded in place, the installer changed since that sha256 was
+  shown, or a job is already running.
 
 `GET /api/health` adds `"paused": true` while paused; `status` stays
 `"healthy"`.
