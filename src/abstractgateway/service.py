@@ -1256,6 +1256,8 @@ def run_summary(run: Any) -> Dict[str, Any]:
         "run_lifecycle": None,
         "is_draft": False,
         "output": None,
+        # The session history window's receipt, when the run was seeded.
+        "session_history": None,
     }
     try:
         lifecycle = extract_run_lifecycle(getattr(run, "vars", None))
@@ -1275,6 +1277,13 @@ def run_summary(run: Any) -> Dict[str, Any]:
             out["resumed_at"] = control.get("resumed_at")
     except Exception:
         pass
+    # The session history window's receipt (`vars._runtime.session_history`:
+    # replayed/dropped messages and tokens, the budget) — counts only, never
+    # the replayed content. Clients show "earlier messages not replayed: N".
+    vars_obj = getattr(run, "vars", None)
+    runtime_ns = vars_obj.get("_runtime") if isinstance(vars_obj, dict) else None
+    session_history = runtime_ns.get("session_history") if isinstance(runtime_ns, dict) else None
+    out["session_history"] = dict(session_history) if isinstance(session_history, dict) else None
 
     try:
         vars_obj = getattr(run, "vars", None)

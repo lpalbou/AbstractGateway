@@ -294,3 +294,20 @@ def test_seed_failure_degrades_with_labeled_note_and_run_still_starts(
     note = run.vars["_runtime"]["session_history"]
     assert note["seeded"] == 0
     assert str(note.get("error") or "").startswith("#FALLBACK")
+
+
+def test_run_summary_carries_the_seed_receipt_counts_only(tmp_path: Path) -> None:
+    """GET /runs/{id} (run_summary) exposes the window's receipt so a client can
+    say "earlier messages not replayed: N" — counts only, never the content."""
+    from abstractgateway.service import run_summary
+
+    run = _start(tmp_path, input_data={"prompt": "and diagrams?", "use_session_history": True})
+    summary = run_summary(run)
+
+    receipt = summary["session_history"]
+    assert receipt == run.vars["_runtime"]["session_history"]
+    assert receipt["seeded"] == 4 and receipt["replayed_messages"] == 4 and receipt["dropped_messages"] == 0
+    assert "analyze the report" not in json.dumps(receipt)
+
+    unseeded = _start(tmp_path / "b", input_data={"prompt": "hi"}, session_id=None)
+    assert run_summary(unseeded)["session_history"] is None

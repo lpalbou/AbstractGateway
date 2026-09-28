@@ -7891,6 +7891,8 @@ history window. The terminal console builds on `abstractcore-console` 0.4.
   `token_estimator`, `replayed_messages`, `replayed_tokens`, `dropped_messages`, `dropped_tokens`,
   `dropped_counts_complete`, `oversize_turn_kept`. Strict seeding (automation and discussion sessions) also adds
   `strict` and `session_kind`.
+  `GET /runs/{id}` returns the same receipt as `session_history` (counts only, `null` for a run that was not
+  seeded), so a client can say how many earlier messages were not replayed.
 - **Start at login from the consoles.** `GET/PUT /api/gateway/host/start-at-login` (admin)
   reports whether this gateway starts at the next login (`enabled`, `state`, the mechanism:
   LaunchAgent, systemd user unit or desktop autostart entry, Windows Run value) and whether it
