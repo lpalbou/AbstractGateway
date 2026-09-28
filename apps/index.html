@@ -1488,28 +1488,46 @@ mentions once.</p>
 app (it mirrors the row's own fields), and apps with a terminal version have a
 second entry of kind <code>"tui"</code>:</p>
 <div class="highlight"><pre><span></span><code><span class="p">{</span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"tui"</span><span class="p">,</span><span class="w"> </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Code in the terminal"</span><span class="p">,</span><span class="w"> </span><span class="nt">"binary"</span><span class="p">:</span><span class="w"> </span><span class="s2">"abstractcode"</span><span class="p">,</span>
-<span class="w"> </span><span class="nt">"installed"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.5.1"</span><span class="p">,</span><span class="w"> </span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gateway"</span><span class="p">,</span><span class="w"> </span><span class="nt">"path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"&lt;data dir&gt;/apps/bin/abstractcode"</span><span class="p">,</span>
-<span class="w"> </span><span class="nt">"latest_version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.5.1"</span><span class="p">,</span><span class="w"> </span><span class="nt">"update_available"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"installed"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.7.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"source"</span><span class="p">:</span><span class="w"> </span><span class="s2">"gateway"</span><span class="p">,</span><span class="w"> </span><span class="nt">"path"</span><span class="p">:</span><span class="w"> </span><span class="s2">"/home/me/.local/bin/abstractcode"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"latest_version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"0.7.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"update_available"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span>
 <span class="w"> </span><span class="nt">"install_available"</span><span class="p">:</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w"> </span><span class="nt">"install_method"</span><span class="p">:</span><span class="w"> </span><span class="s2">"release_binary"</span><span class="p">,</span><span class="w"> </span><span class="nt">"install_blocked_reason"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span>
 <span class="w"> </span><span class="nt">"install_command"</span><span class="p">:</span><span class="w"> </span><span class="s2">"cargo install abstractcode"</span><span class="p">,</span><span class="w"> </span><span class="nt">"download_page"</span><span class="p">:</span><span class="w"> </span><span class="s2">"https://github.com/lpalbou/abstractcode/releases"</span><span class="p">,</span>
 <span class="w"> </span><span class="nt">"launch_available"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"launch_blocked_reason"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"launch_mode"</span><span class="p">:</span><span class="w"> </span><span class="s2">"terminal"</span><span class="p">,</span>
-<span class="w"> </span><span class="nt">"command"</span><span class="p">:</span><span class="w"> </span><span class="s2">"&lt;data dir&gt;/apps/bin/abstractcode --gateway http://127.0.0.1:8080"</span><span class="p">,</span>
+<span class="w"> </span><span class="nt">"command"</span><span class="p">:</span><span class="w"> </span><span class="s2">"abstractcode --gateway http://127.0.0.1:8080"</span><span class="p">,</span>
 <span class="w"> </span><span class="nt">"signin_command"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">,</span><span class="w"> </span><span class="nt">"active_job"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">}</span>
 </code></pre></div>
 <ul>
+<li><strong>One folder, shared with the installer.</strong> Terminal apps go where uv put
+  the gateway's own commands (<code>uv tool dir --bin</code>, usually <code>~/.local/bin</code>, on
+  Windows <code>%USERPROFILE%\.local\bin</code>), which the installer puts on <code>PATH</code>;
+  the gateway reads it from the receipt uv writes into its environment
+  (<code>uv-receipt.toml</code>). The installer builds <code>abstractcode</code> and the terminal
+  console into the same folder (<code>cargo install --root</code> its parent), so
+  <code>abstractcode</code> runs by name whichever of the two installed it. A gateway
+  that is not a uv tool install (a development checkout, pip) uses
+  <code>&lt;data dir&gt;/apps/bin/</code>, off <code>PATH</code> (<code>command</code> then carries the full path).
+  A receipt uv did not write (no <code>[tool]</code> table, no <code>entrypoints</code> list, a
+  relative <code>install-path</code>) is ignored and <code>&lt;data dir&gt;/apps/bin/</code> is used.</li>
 <li><strong>Found by presence.</strong> The gateway never imports or runs an app to detect
-  it: it looks for the binary in <code>&lt;data dir&gt;/apps/bin/</code>, on <code>PATH</code> and in
-  <code>~/.cargo/bin</code>, and accepts it only when its <code>--help</code> names the program
-  (PyPI's unrelated Python package <code>abstractcode</code> installs a script with the
-  same name). <code>source</code> says where it was found (<code>gateway</code> or <code>path</code>).</li>
+  it: it looks for the binary in that folder, in <code>&lt;data dir&gt;/apps/bin/</code>
+  (where gateways before 0.7.1 put it; the next install or update moves it
+  and removes the old copy), on <code>PATH</code> and in <code>~/.cargo/bin</code>, and accepts it
+  only when its <code>--help</code> names the program (PyPI's unrelated Python package
+  <code>abstractcode</code> installs a script with the same name). <code>source</code> says where
+  it was found (<code>gateway</code>: one of the gateway's folders, <code>path</code>: elsewhere).</li>
 <li><strong>Install (<code>install_method</code>).</strong> <code>release_binary</code>: Code publishes prebuilt
   binaries for macOS (Apple silicon and Intel), Linux (x86_64 and arm64,
   glibc) and Windows (x86_64) on its GitHub release, with a <code>SHA256SUMS</code> file.
   The card's Install (and <code>install-tui</code> on its own) downloads the archive for
   this computer, checks it
   against <code>SHA256SUMS</code> and against the sha256 digest GitHub reports for the
-  file (both must agree), unpacks the single binary into <code>&lt;data dir&gt;/apps/bin/</code>,
+  file (both must agree), unpacks the single binary into the folder above,
   makes it executable and runs <code>--version</code> before it replaces anything.
+  It replaces only a copy of the app itself (its own earlier install or the
+  installer's build). When another program already holds the name there, for
+  example the older Python <code>abstractcode</code> from PyPI, the install stops with
+  <code>foreign_binary</code>, names the file and leaves it: run
+  <code>uv tool uninstall abstractcode</code> (or remove the file), then install again.
   About 3 MB, no administrator rights, no terminal. <code>cargo</code>: there is no
   prebuilt binary for this computer (musl Linux, Windows on ARM, other CPUs),
   or the program is published as source only (the gateway console, crates.io).
@@ -1787,7 +1805,7 @@ Python environment as the gateway; a gateway-only install may not.</p>
 <p>Errors are <code>{"ok": false, "reason", "message", "hint"?, "details"?}</code> with
 404 (<code>unknown_app</code>, also for a terminal route on a browser-only app), 409
 (<code>not_installed</code>, <code>node_missing</code>, <code>not_running</code>, <code>app_loopback_only</code>,
-<code>toolchain_required</code>, <code>not_on_gateway_machine</code>, <code>no_terminal</code>,
+<code>toolchain_required</code>, <code>foreign_binary</code>, <code>not_on_gateway_machine</code>, <code>no_terminal</code>,
 <code>started_outside_gateway</code>), 403
 (<code>installs_not_allowed</code>), 502 (<code>integrity_mismatch</code>), 503
 (<code>network_unavailable</code>, <code>no_free_port</code>) or 500 (<code>launch_failed</code>, with the

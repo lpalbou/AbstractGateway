@@ -1386,7 +1386,7 @@ not depend on its apps:</p>
 </tr>
 <tr>
 <td>Code's terminal version (the only app with one today)</td>
-<td>the gateway's presence check, reported as <code>interfaces[kind="tui"]</code> on the app row: its own copy in <code>&lt;data dir&gt;/apps/bin/</code>, <code>abstractcode</code> on PATH, or <code>~/.cargo/bin</code></td>
+<td>the gateway's presence check, reported as <code>interfaces[kind="tui"]</code> on the app row: its terminal-apps folder (uv's tool bin dir, shared with the installer; <code>&lt;data dir&gt;/apps/bin/</code> for a gateway that is not a uv tool install), <code>abstractcode</code> on PATH, or <code>~/.cargo/bin</code></td>
 <td><strong>Open Code in Terminal</strong> — a new terminal window on this machine, signed in through a one-time code (<code>POST /api/gateway/apps/code/launch-tui</code>, the same route as the console's button). Shown only when the gateway reports it installed; greyed when the gateway would refuse (the console says why)</td>
 </tr>
 </tbody>

@@ -2141,6 +2141,10 @@ command the job shows and press <strong>Re-check</strong>. See <a href="../engin
 <td><code>started_outside_gateway</code></td>
 <td>the app was started elsewhere (dev stack, <code>npx</code>); stop it there</td>
 </tr>
+<tr>
+<td><code>foreign_binary</code></td>
+<td>another program holds the terminal app's name in the install folder (often the older Python <code>abstractcode</code> from PyPI); run <code>uv tool uninstall abstractcode</code> or remove the named file, then install again</td>
+</tr>
 </tbody>
 </table>
 <p>See <a href="../apps/">apps.md</a>.</p>
