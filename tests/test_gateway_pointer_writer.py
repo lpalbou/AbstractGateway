@@ -94,19 +94,21 @@ def test_serve_writes_the_pointer_after_bind_with_the_bound_port(monkeypatch: py
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(user_data_dir(home=home)))
-    seen_before_bind = {}
-    real_run = _FakeServer.run
+    import abstractgateway.gateway_pointer as gp
 
-    def run(self):
-        seen_before_bind["exists"] = gateway_pointer_path(home).exists()
-        real_run(self)
+    started_at_write = []
+    real_record = gp.record_serve_pointer
 
-    monkeypatch.setattr(_FakeServer, "run", run)
+    def record(**kw):
+        started_at_write.append(_FakeServer.instances[-1].started)
+        return real_record(**kw)
+
+    monkeypatch.setattr(gp, "record_serve_pointer", record)
     _serve(monkeypatch)
     for t in threading.enumerate():
         if t.name == "gateway-pointer":
             t.join(timeout=3.0)
-    assert seen_before_bind["exists"] is False, "never before the listener is bound"
+    assert started_at_write == [True], "written once, never before the listener is bound"
     data = read_gateway_pointer(gateway_pointer_path(home))
     assert data is not None and data["url"] == "http://127.0.0.1:9999" and data["written_by"] == "serve"
     assert "token" not in json.dumps(data).lower()

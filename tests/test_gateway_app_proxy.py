@@ -44,7 +44,8 @@ class Upstream:
 
         async def echo(request):
             body = await request.body()
-            rec = {"method": request.method, "path": request.scope["raw_path"].decode(), "query": request.url.query, "headers": headers_of(request.scope), "body": body.decode()}
+            rec = {"method": request.method, "path": request.scope["raw_path"].decode(), "query": request.url.query, "headers": headers_of(request.scope), "body": body.decode(),
+                   "xff_all": [v.decode() for k, v in request.scope["headers"] if k == b"x-forwarded-for"]}
             up.seen.append(rec)
             return JSONResponse(rec)
 
@@ -233,8 +234,8 @@ def test_root_without_slash_redirects_and_unknown_apps_are_404(env) -> None:
 def test_signed_in_requests_reach_the_app_prefix_stripped_with_only_its_cookies(env) -> None:
     app, _m, up = env
     browser = _signed_in(app)
-    browser.cookies.set("abstractgateway_session", "console-cookie", domain="127.0.0.1:18823", path="/")
-    browser.cookies.set("other_app", "1", domain="127.0.0.1:18823", path="/")
+    browser.cookies.set("abstractgateway_session", "console-cookie", domain="127.0.0.1", path="/")
+    browser.cookies.set("other_app", "1", domain="127.0.0.1", path="/")
     r = browser.post(
         "/apps/observer/api/thing%20one?q=1",
         content=b'{"a":1}',
@@ -252,9 +253,10 @@ def test_signed_in_requests_reach_the_app_prefix_stripped_with_only_its_cookies(
     h = seen["headers"]
     assert "authorization" not in h and "x-abstractgateway-session" not in h
     assert h["x-forwarded-prefix"] == "/apps/observer"
-    assert h["x-forwarded-for"] == "testclient"  # the peer, never the browser-sent value
+    assert seen["xff_all"] == ["testclient"]  # ONE value: the peer, never the browser-sent one
     assert h["x-forwarded-proto"] == "http" and h["x-forwarded-host"] == "127.0.0.1:18823"
     names = {c.split("=", 1)[0].strip() for c in h["cookie"].split(";")}
+    assert "console-cookie" not in h["cookie"] and "other_app" not in h["cookie"]
     assert names == {"abstractobserver_gateway_url", "abstractobserver_gateway_session", "abstractobserver_gateway_csrf"}
     assert h["host"] == f"127.0.0.1:{up.port}"
 
