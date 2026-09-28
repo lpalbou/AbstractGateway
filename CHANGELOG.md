@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The consoles show AbstractCore's `engine_missing` (a route this computer can run whose engine
   is not installed, with the install command) and the `needs_gpu_limit` fit verdict (the exact
   command that raises the GPU memory limit).
+- An OpenAI key saved through the Providers screen reaches voice: the voice listings pass it to
+  AbstractVoice as `voice_openai_api_key` on every call, and the gateway's runtime is built with
+  it for voice generation.
 - `restart.port` in `GET /api/gateway/network`: the port a restart binds; the restart route
   reconnects there.
 

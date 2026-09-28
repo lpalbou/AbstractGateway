@@ -298,6 +298,7 @@ def test_voice_catalog_proxies_configured_core_catalog_route(
         {
             "base_url": "http://provider.test/v1",
             "provider_api_key": "provider-secret",
+            "voice_openai_api_key": None,  # no OpenAI key saved in Providers
             "provider": None,
             "model": None,
             "providers_only": False,
@@ -386,6 +387,7 @@ def test_speech_provider_only_catalog_uses_runtime_voice_catalog_when_available(
         {
             "base_url": None,
             "provider_api_key": None,
+            "voice_openai_api_key": None,  # no OpenAI key saved in Providers
             "provider": None,
             "model": None,
             "providers_only": True,
@@ -466,6 +468,7 @@ def test_transcription_provider_only_catalog_uses_runtime_voice_catalog_when_ava
         {
             "base_url": None,
             "provider_api_key": None,
+            "voice_openai_api_key": None,  # no OpenAI key saved in Providers
             "provider": None,
             "model": None,
             "providers_only": True,
@@ -1041,7 +1044,9 @@ def test_voice_cloud_provider_counts_an_abstractcore_api_key(tmp_path: Path, mon
         seen.append((provider_id, kw.get("include_env")))
         return ("sk-core", "abstractcore.config") if provider_id == "openai" else ("", "")
 
-    monkeypatch.setattr(gateway_routes, "configured_provider_api_key", fake_key)
+    import abstractgateway.provider_connections as provider_connections
+
+    monkeypatch.setattr(provider_connections, "configured_provider_api_key", fake_key)
     client, _headers = _client(tmp_path, monkeypatch)
     with client:
         details = {d["provider"]: d for d in gateway_routes._voice_cloud_provider_details()}
@@ -1091,3 +1096,46 @@ def test_a_cloud_voice_without_a_key_says_where_the_key_goes(tmp_path: Path, mon
         assert body["unavailable_reason"] == "OpenAI: needs an API key (add it under Providers)"
         body = client.get("/api/gateway/voice/voices?provider=supertonic&compact=true", headers=headers).json()
         assert body["unavailable_reason"] == "no OpenAI API key is configured"  # not a cloud filter: untouched
+
+
+
+def test_a_providers_openai_key_reaches_the_voice_catalog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Key saved through the Providers screen only (no env): every voice
+    catalog call hands it to the runtime as AbstractVoice's host setting
+    `voice_openai_api_key`, so OpenAI voices are listed; a key rotated in
+    Providers reaches the next call."""
+    seen: list = []
+
+    class StubDiscoveryFacade:  # the runtime + AbstractVoice, faked at the seam
+        def get_voice_catalog(self, **kwargs: Any) -> Dict[str, Any]:
+            seen.append(kwargs.get("voice_openai_api_key"))
+            if kwargs.get("voice_openai_api_key"):
+                return {"available": True, "providers": ["openai"], "tts_providers": ["openai"],
+                        "profiles": [{"id": "alloy", "profile_id": "alloy", "provider": "openai", "model": "tts-1"}]}
+            return {"available": False, "providers": [], "tts_providers": [], "profiles": [],
+                    "unavailable_reason": "no OpenAI API key is configured"}
+
+    _patch_discovery_facade(monkeypatch, facade=StubDiscoveryFacade())
+    _without_cloud_keys(monkeypatch)
+    client, headers = _client(tmp_path, monkeypatch)
+    url = "/api/gateway/voice/voices?provider=openai&model=tts-1&compact=true"
+    profiles = "/api/gateway/config/provider-endpoint-profiles"
+    with client:
+        assert client.get(url, headers=headers).json()["items"] == [] and seen[-1] is None
+        assert client.post(profiles, headers=headers, json={
+            "id": "my-openai", "display_name": "My OpenAI", "provider_family": "openai",
+            "base_url": "https://api.openai.com/v1", "api_key": "sk-providers-only", "scope": "gateway"}).status_code == 200
+        try:
+            body = client.get(url, headers=headers).json()
+            assert seen[-1] == "sk-providers-only"
+            assert [i["id"] for i in body["items"]] == ["alloy"]
+            client.get("/api/gateway/audio/speech/models?providers_only=true", headers=headers)
+            assert seen[-1] == "sk-providers-only"
+            client.get("/api/gateway/audio/transcriptions/models?providers_only=true", headers=headers)
+            assert seen[-1] == "sk-providers-only"
+            # Rotated in Providers: the next call carries the new key.
+            assert client.put(f"{profiles}/my-openai", headers=headers, json={"api_key": "sk-rotated"}).status_code == 200
+            client.get(url, headers=headers)
+            assert seen[-1] == "sk-rotated"
+        finally:
+            client.delete(f"{profiles}/my-openai", headers=headers)

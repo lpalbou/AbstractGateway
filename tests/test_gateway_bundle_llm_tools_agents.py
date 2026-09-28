@@ -621,6 +621,121 @@ def test_gateway_bundle_auto_llm_runtime_prefers_gateway_capability_default_over
     assert runtime_ns["model"] == "qwen/qwen3.6-35b-a3b"
 
 
+def test_gateway_runtime_carries_the_providers_openai_key_for_voice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from abstractcore.config.manager import ConfigurationManager
+    from abstractruntime.core.config import RuntimeConfig
+    from abstractruntime.core.models import EffectType
+    from abstractruntime.core.runtime import EffectOutcome, Runtime
+    from abstractruntime.storage.artifacts import InMemoryArtifactStore
+    from abstractruntime.storage.in_memory import InMemoryLedgerStore, InMemoryRunStore
+
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+
+    # ONE STORE (operator ruling 2026-08-01): a gateway-wide capability default
+    # is a row in THE AbstractCore store, not in a second base under the data
+    # dir. tests/conftest.py points ABSTRACTCORE_CONFIG_FILE at a throwaway path.
+    gateway_core_config = Path(os.environ["ABSTRACTCORE_CONFIG_FILE"])
+    manager = ConfigurationManager(config_file=gateway_core_config, apply_env=False)
+    assert manager.set_capability_default("output.text", provider="lmstudio", model="qwen/qwen3.6-35b-a3b")
+    # An OpenAI key saved through the Providers screen ONLY (no env): voice
+    # generation must receive it as AbstractVoice's `voice_openai_api_key`.
+    for name in ("OPENAI_API_KEY", "ABSTRACTVOICE_OPENAI_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    from abstractgateway.provider_endpoint_profiles import ProviderEndpointProfileStore
+
+    ProviderEndpointProfileStore(base_dir=runtime_dir).upsert_profile(
+        profile_id="my-openai", display_name="My OpenAI", provider_family="openai",
+        base_url="https://api.openai.com/v1", api_key="sk-providers-only", scope="gateway",
+    )
+
+    flow_id = "root"
+    flow = {
+        "id": flow_id,
+        "name": "auto-default-test",
+        "description": "",
+        "interfaces": [],
+        "nodes": [
+            {
+                "id": "node-1",
+                "type": "on_flow_start",
+                "position": {"x": 32.0, "y": 224.0},
+                "data": {"nodeType": "on_flow_start", "label": "On Flow Start", "inputs": [], "outputs": [{"id": "exec-out", "label": "", "type": "execution"}]},
+            },
+            {
+                "id": "node-2",
+                "type": "llm_call",
+                "position": {"x": 288.0, "y": 224.0},
+                "data": {
+                    "nodeType": "llm_call",
+                    "label": "LLM Call",
+                    "inputs": [
+                        {"id": "exec-in", "label": "", "type": "execution"},
+                        {"id": "prompt", "label": "prompt", "type": "string"},
+                    ],
+                    "outputs": [
+                        {"id": "exec-out", "label": "", "type": "execution"},
+                        {"id": "response", "label": "response", "type": "string"},
+                    ],
+                    "pinDefaults": {"prompt": "hello"},
+                    # This simulates a stale saved Flow-level pair. It must not become
+                    # the runtime default when Gateway has a configured text default.
+                    "effectConfig": {"provider": "lmstudio", "model": "gemma-3-1b-it"},
+                },
+            },
+        ],
+        "edges": [
+            {"id": "e1", "source": "node-1", "sourceHandle": "exec-out", "target": "node-2", "targetHandle": "exec-in"},
+        ],
+        "entryNode": "node-1",
+    }
+    bundle_id, _entry = _write_bundle(bundles_dir=bundles_dir, bundle_id="bundle-defaults", flows={flow_id: flow}, entrypoint=flow_id)
+
+    calls: list[Dict[str, Any]] = []
+
+    def _fake_create_local_runtime(**kwargs: Any) -> Runtime:
+        calls.append(dict(kwargs))
+
+        def _llm_stub(run, effect, default_next_node):
+            del run, effect, default_next_node
+            return EffectOutcome.completed({"content": "ok"})
+
+        return Runtime(
+            run_store=kwargs["run_store"],
+            ledger_store=kwargs["ledger_store"],
+            artifact_store=kwargs.get("artifact_store") or InMemoryArtifactStore(),
+            effect_handlers={EffectType.LLM_CALL: _llm_stub},
+            config=RuntimeConfig(provider=kwargs.get("provider"), model=kwargs.get("model")),
+        )
+
+    from abstractruntime.integrations.abstractcore import factory as ac_factory
+
+    monkeypatch.setattr(ac_factory, "create_local_runtime", _fake_create_local_runtime)
+    monkeypatch.setenv("ABSTRACTGATEWAY_USER_AUTH", "1")
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.delenv("ABSTRACTCORE_SERVER_BASE_URL", raising=False)
+
+    import abstractgateway.hosts.bundle_host as bundle_host
+
+    run_store = InMemoryRunStore()
+    ledger_store = InMemoryLedgerStore()
+    artifact_store = InMemoryArtifactStore()
+    host = bundle_host.WorkflowBundleGatewayHost.load_from_dir(
+        bundles_dir=bundles_dir,
+        data_dir=runtime_dir,
+        run_store=run_store,
+        ledger_store=ledger_store,
+        artifact_store=artifact_store,
+    )
+
+    assert calls
+    assert calls[0]["llm_kwargs"]["voice_openai_api_key"] == "sk-providers-only"
+
+
 def test_gateway_bundle_model_residency_only_uses_remote_core_runtime(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

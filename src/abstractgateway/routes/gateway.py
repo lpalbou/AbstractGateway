@@ -84,8 +84,8 @@ from ..provider_connections import (
     builtin_provider_connection_specs,
     builtin_provider_public_row,
     configured_builtin_provider_public_rows,
-    configured_provider_api_key,
     configured_provider_request_kwargs,
+    providers_screen_api_key,
 )
 from .. import host_control, host_metrics, self_update
 from ..run_retention import (
@@ -15850,26 +15850,15 @@ def _voice_cloud_provider_details(provider: Optional[str] = None) -> list[Dict[s
     for the cloud voice providers (filtered to `provider` when given)."""
     wanted = str(provider or "").strip().lower().replace("_", "-")
     current_base, root_base = _gateway_profile_dirs()
-    profiles = None
     out: list[Dict[str, Any]] = []
     for provider_id, name, env_keys in _VOICE_CLOUD_PROVIDERS:
         if wanted and wanted != provider_id:
             continue
         source: Optional[str] = "environment" if _env_first(*env_keys) else None
-        if source is None:
-            key, _scope = configured_provider_api_key(
-                provider_id, current_base_dir=current_base, root_base_dir=root_base, include_env=False
-            )
-            if key:
-                source = "providers"
-        if source is None:
-            if profiles is None:
-                profiles = effective_endpoint_profiles(base_dir=current_base, root_base_dir=root_base)
-            if any(
-                p.enabled and p.provider_family.lower() == provider_id and str(p.api_key or "").strip()
-                for p in profiles
-            ):
-                source = "providers"
+        if source is None and providers_screen_api_key(
+            provider_id, current_base_dir=current_base, root_base_dir=root_base
+        ):
+            source = "providers"
         needs_key = source is None
         out.append(
             {
@@ -15889,6 +15878,14 @@ def _voice_cloud_provider_details(provider: Optional[str] = None) -> list[Dict[s
             }
         )
     return out
+
+
+def _voice_openai_api_key() -> Optional[str]:
+    """The OpenAI key saved through the Providers screen, for AbstractVoice's
+    host setting `voice_openai_api_key` (None when none is saved). Resolved
+    per call, so a key rotated in Providers reaches the next listing."""
+    current_base, root_base = _gateway_profile_dirs()
+    return providers_screen_api_key("openai", current_base_dir=current_base, root_base_dir=root_base) or None
 
 
 def _with_voice_cloud_providers(
@@ -17780,6 +17777,7 @@ async def voice_voices_catalog(
             discovery.get_voice_catalog,
             base_url=base_url,
             provider_api_key=_request_provider_api_key(request),
+            voice_openai_api_key=_voice_openai_api_key(),
             provider=provider,
             model=model,
             providers_only=providers_only,
@@ -17839,6 +17837,7 @@ async def audio_speech_models_catalog(
                     discovery.get_voice_catalog,
                     base_url=base_url,
                     provider_api_key=_request_provider_api_key(request),
+                    voice_openai_api_key=_voice_openai_api_key(),
                     provider=provider,
                     model=None,
                     providers_only=True,
@@ -17948,6 +17947,7 @@ async def audio_transcription_models_catalog(
                     discovery.get_voice_catalog,
                     base_url=base_url,
                     provider_api_key=_request_provider_api_key(request),
+                    voice_openai_api_key=_voice_openai_api_key(),
                     provider=provider,
                     model=None,
                     providers_only=True,
