@@ -488,7 +488,7 @@ def test_launchd_bootstrap_eio_is_retried_then_named_with_the_command_to_run(tmp
     assert f"after {os_service.LAUNCHD_BOOTSTRAP_ATTEMPTS} attempts" in msg
     # Clean state, said as it is: the login item is removed, so nothing loads at the next login.
     assert not Path(plan.files[0]["path"]).exists()
-    assert "Start at login is off" in msg and "abstractgateway service enable" in msg
+    assert "Start at login is off" in msg and "abstractgateway service install" in msg
     assert "Run it by hand" not in msg
 
 
@@ -515,7 +515,7 @@ def test_launchd_non_retryable_bootstrap_failure_says_one_attempt_and_removes_th
     assert "Bootstrap failed: 1: Operation not permitted" in msg
     assert "attempts" not in msg and "not retried" in msg
     assert not Path(plan.files[0]["path"]).exists()
-    assert "Start at login is off" in msg and "abstractgateway service enable" in msg
+    assert "Start at login is off" in msg and "abstractgateway service install" in msg
 
 
 def test_launchd_bootstrap_37_already_loaded_is_retried_until_it_loads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -562,4 +562,4 @@ def test_launchd_settle_is_bounded(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     plan = os_service.build_install_plan(platform="darwin", home=home, host="127.0.0.1", port=18080, data_dir=tmp_path / "d", exe_argv=_exe(home), uid=501)
     with pytest.raises(SystemExit) as e:
         os_service.execute_plan(plan, runner=fake, echo=lambda _l: None)
-    assert fake.now < 10_000.0 and "Start at login is off" in str(e.value) and "abstractgateway service enable" in str(e.value)
+    assert fake.now < 10_000.0 and "Start at login is off" in str(e.value) and "abstractgateway service install" in str(e.value)

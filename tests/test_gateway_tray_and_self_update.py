@@ -281,3 +281,20 @@ def test_tray_and_update_routes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         monkeypatch.setattr(self_update, "detect_install", lambda **kw: self_update.InstallInfo(kind="editable", upgradable=False, reason="checkout", command=None, display_command=None, python="/py", prefix="/v"))
         r = c.post("/api/gateway/host/update/start", headers=h)
         assert r.status_code == 409 and "checkout" in r.json()["detail"]
+
+
+def test_the_network_guard_accepts_this_macs_bonjour_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Teardown code that resolves this machine's own name must not depend on the network's
+    DHCP host name: on macOS the Bonjour name (`scutil --get LocalHostName` + ".local") is
+    this machine too."""
+    import subprocess as sp
+    import sys
+
+    if sys.platform != "darwin":
+        pytest.skip("macOS Bonjour name")
+    guard = next(m for n, m in sys.modules.items() if n.endswith("conftest") and hasattr(m, "_is_this_machine_name"))
+    local = sp.run(["scutil", "--get", "LocalHostName"], capture_output=True, text=True, timeout=5).stdout.strip()
+    assert local
+    monkeypatch.setattr(guard._socket, "gethostname", lambda: "dhcp-17-42.example.net")
+    assert guard._is_this_machine_name(f"{local}.local") and guard._is_this_machine_name(local.upper() + ".local.")
+    assert not guard._is_this_machine_name("someone-else.local")

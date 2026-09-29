@@ -504,3 +504,94 @@ def test_the_job_timeout_fires_on_a_silent_hang(monkeypatch: pytest.MonkeyPatch)
     st = _wait_job()
     assert time.time() - t0 < 8
     assert st["state"] == "failed" and any("timed out" in line for line in st["log_tail"])
+
+
+# ------------------------------------------------ tag-gate findings (0.7.2, round 2)
+
+
+def test_undecodable_output_never_ends_the_job_while_the_command_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A byte that is not UTF-8 (printf 'caf\\351') is logged with the replacement character, and
+    the job stays "running" until the command exits: a second installer can never start
+    next to a first one that is still running."""
+    if os.name == "nt":
+        pytest.skip("uses /bin/sh")
+    monkeypatch.setattr(self_update, "_installed_version_fresh", lambda python: "9.9.9")
+    info = self_update.InstallInfo(kind="pip", upgradable=True, reason=None, command=["/bin/sh", "-c", "printf 'caf\\351\\n'; sleep 1.5; echo done"], display_command="x", python=sys.executable, prefix="/v", version="0.7.1")
+    self_update.start_update(info=info)
+    time.sleep(0.6)
+    st = self_update.job_status()
+    assert st["state"] == "running", st
+    with pytest.raises(self_update.UpdateJobBusy):
+        self_update.start_update(info=info)
+    st = _wait_job()
+    assert st["state"] == "succeeded", st
+    assert st["log_tail"][:2] == ["caf�", "done"]
+
+
+def test_a_runner_failure_stops_the_command_before_the_job_leaves_running(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Any exception while reading the command's output kills its process group and waits
+    for it before the job says "failed"."""
+    if os.name == "nt":
+        pytest.skip("uses process groups")
+    import subprocess as sp
+
+    real_popen = sp.Popen
+    seen: Dict[str, Any] = {}
+
+    class _Broken:
+        def __init__(self, first: str) -> None:
+            self.first = first
+            self.n = 0
+
+        def __iter__(self):
+            return self
+
+        def __next__(self) -> str:
+            self.n += 1
+            if self.n == 1:
+                return self.first
+            raise OSError("the pipe broke")
+
+    def popen(*a: Any, **kw: Any):
+        proc = real_popen(*a, **kw)
+        seen["proc"] = proc
+        proc.stdout = _Broken("started\n")
+        return proc
+
+    monkeypatch.setattr(self_update.subprocess, "Popen", popen)
+    info = self_update.InstallInfo(kind="pip", upgradable=True, reason=None, command=["/bin/sh", "-c", "sleep 30; echo never"], display_command="x", python=sys.executable, prefix="/v", version="0.7.1")
+    t0 = time.time()
+    self_update.start_update(info=info)
+    st = _wait_job()
+    assert time.time() - t0 < 8
+    assert st["state"] == "failed" and "the pipe broke" in str(st["error"])
+    assert seen["proc"].poll() is not None, "the command was stopped and reaped"
+    with pytest.raises(ProcessLookupError):
+        os.killpg(seen["proc"].pid, 0)
+
+
+def test_the_windows_hint_never_says_update_runs_it(tmp_path: Path, hermetic: None) -> None:
+    data = tmp_path / "data"
+    _state(data)
+    win = self_update.detect_install(executable="/py", prefix=UV_TOOL_PREFIX, env={}, data_dir=data, platform="win32")
+    for check, job in ((None, {"state": "idle"}), ({"update_available": False, "latest": "0.7.1", "checked_at": "t", "release": None, "offline": False, "error": None}, {"state": "idle"})):
+        view = self_update.update_view(win, check, job, False)
+        assert "Update runs" not in view["hint"], view["hint"]
+        assert self_update.INSTALLER_ONE_LINER_WINDOWS in view["hint"]
+
+
+def test_a_leftover_temp_script_older_than_an_hour_is_removed_when_idle(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    _state(data)
+    folder = data / "update"
+    folder.mkdir(parents=True)
+    old, fresh = folder / ".install-abandoned.tmp", folder / ".install-recent.tmp"
+    old.write_bytes(b"x")
+    fresh.write_bytes(b"y")
+    two_hours_ago = time.time() - 7200
+    os.utime(old, (two_hours_ago, two_hours_ago))
+    info = _installer_info(data)
+    self_update.check_for_update(force=True, info=info, fetch=_pypi_must_not_be_asked, fetch_release=lambda: _release())
+    self_update.start_update(info=info, runner=lambda c, o: 0, snapshot=_snapshots({}, {}), installer_sha256=SHA)
+    _wait_job()
+    assert not old.exists() and fresh.exists()
