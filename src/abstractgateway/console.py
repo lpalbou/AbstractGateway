@@ -10338,7 +10338,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (!ok) return;
 	      const body = action.installer_sha256 ? { installer_sha256: action.installer_sha256 } : {};
 	      try { renderGatewayUpdate(await api("/api/gateway/host/update/start", { method: "POST", body: JSON.stringify(body) })); _gwMsg(""); _pollGatewayUpdate(); }
-	      catch (e) { _gwMsg(String(e.message || e), "error"); }
+	      catch (e) {
+	        // Refused (the installer changed, one already runs, check again first): the offer
+	        // is stale, so drop it like the tray does; the next step is a new check.
+	        if (upd.update) upd.update.action = null;
+	        $("gateway-host-update-start").classList.add("hidden");
+	        _gwMsg(`${String(e.message || e)}. Check now to check again.`, "error");
+	      }
 	    }
 	    function _pollGatewayUpdate() {
 	      if (typeof setTimeout === "undefined") return;
