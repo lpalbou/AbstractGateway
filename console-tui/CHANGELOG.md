@@ -1,6 +1,6 @@
 # Changelog — abstractgateway-console
 
-## 0.11.1 (2026-09-28)
+## 0.11.1 (2026-09-29)
 
 Needs abstractcore-console 0.4; works with AbstractGateway 0.7.0 and newer (the gateway's own update rendering
 needs 0.7.2).
@@ -17,6 +17,7 @@ needs 0.7.2).
   AbstractFramework installer install the confirmation names the installer that runs (its address, commit, sha256
   and command), and **Update** sends back that installer's sha256. With an older gateway the panel keeps its own
   rendering.
+- F3 `U` after a failed check shows the check's reason (the gateway's line), not "no update is available".
 
 ## 0.11.0 (2026-09-28)
 

@@ -378,24 +378,29 @@ abstractgateway service status
 `other` means the login item belongs to another data folder. See
 [first-run.md](./first-run.md#4-start-the-gateway-at-login-optional).
 
-### Turning on start at login fails with `5: Input/output error` (macOS)
+### Starting the login service fails with `5: Input/output error` (macOS)
 
-`abstractgateway service enable` (and the installer, the consoles' and the tray's
-**Start at login** switch) replaces the login item with `launchctl bootout` and
-then `launchctl bootstrap`. When the gateway was running, launchd stops it in the
-background after `bootout` answers, and a `bootstrap` of the same login item before
-it is gone fails with `5: Input/output error` (or `37`). The gateway waits up to
-15 seconds for launchd to finish and retries the `bootstrap` a few times, so this
-usually resolves by itself.
+`abstractgateway service install` (and `service enable --start-now`, and the
+installer, which runs `service install`) registers the login item and starts it
+now: it writes the LaunchAgent, then runs `launchctl bootout` (which stops a
+gateway already running as that login item) and `launchctl bootstrap`. launchd
+stops the old job in the background after `bootout` answers, and a `bootstrap` of
+the same login item before it is gone fails with `5: Input/output error` (or `37`).
+The gateway waits up to 15 seconds for launchd to finish and retries the
+`bootstrap` a few times, so this usually resolves by itself.
 
-If it still fails (or launchd refuses the login item with another code, which is
-not retried), the message says how many attempts were made and why, and start at
-login is **off**: the login item file is removed, so nothing starts at the next
-login. The gateway running now is not affected. Fix the cause the message shows,
-then turn it on again:
+`abstractgateway service enable` without `--start-now`, and the **Start at login**
+switch in the consoles and the tray, only write the LaunchAgent for the next login;
+they run no `launchctl` command, so they never hit this.
+
+If `service install` still fails (or launchd refuses the login item with another
+code, which is not retried), the message says how many attempts were made and why,
+and start at login is **off**: the LaunchAgent file is removed, so nothing starts
+at the next login. A gateway that was running as this login item was stopped by
+`bootout` and is not running now. Fix the cause the message shows, then:
 
 ```bash
-abstractgateway service enable
+abstractgateway service install    # registers the login item and starts it now
 abstractgateway service status     # reads "on"
 ```
 

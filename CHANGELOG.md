@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.2] - 2026-09-28
+## [0.7.2] - 2026-09-29
 
 No dependency changes: AbstractCore 2.18.0 or newer, as before. With AbstractCore 2.18.1 the first-run guide follows its
 recommendations (a Mac too small for the recommended image model shows it as not available here, with the reason). The
@@ -45,13 +45,22 @@ again first").
 - **A failed macOS login item leaves one clear state.** When `launchctl bootstrap` still fails, the message says how
   many attempts were made and why (a code other than 5/37 is tried once and said to be not retried), and start at
   login is off: the plist this command wrote is removed from `~/Library/LaunchAgents`, so nothing loads at the next
-  login. Turn it on again with `abstractgateway service enable` once the cause is fixed.
+  login. A gateway that ran as that login item was stopped by `launchctl bootout`; once the cause is fixed,
+  `abstractgateway service install` registers the login item and starts it again.
+- **An update whose output is not UTF-8 keeps running to its end.** The job reads the command's output with invalid
+  bytes replaced (U+FFFD in the log), and if reading fails anyway the gateway stops the command's whole process group
+  and waits for it before reporting the failure: the job never leaves "running" while the command runs, so a second
+  Update can never start a second installer next to the first.
 - **An update that hangs without printing is stopped.** The 30-minute job limit is a watchdog that stops the whole
   command (its process group), not a check made only when the command prints a line.
 - **A version the update check cannot read is an error**, never "up to date" (an unreadable AbstractFramework
   release or PyPI version).
-- **The tray no longer sticks on a refused update.** When the gateway refuses to start an update (the installer
-  changed, one is already running, check again first), the offer is dropped and the next click checks again.
+- **The tray and the web console no longer stick on a refused update.** When the gateway refuses to start an update
+  (the installer changed, one is already running, check again first), the offer is dropped and the next step is a new
+  check. The terminal console's `U` shows a failed check's reason instead of "no update is available".
+- On Windows, the hint of an installer install gives the PowerShell line to run; it no longer says Update runs the
+  installer. A temporary installer file a crashed write left behind (older than an hour) is removed at the next
+  update.
 - The tray reports an update that installed nothing newer as **Already up to date** instead of "The update didn't
   finish", and a failed update shows the job's reason and the last lines of its log.
 
