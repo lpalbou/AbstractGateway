@@ -1566,7 +1566,10 @@ sent or the token was rejected.</p>
 <li><strong>F2</strong> opens the docs assistant (questions answered from the gateway's own
   documentation; signed in).</li>
 <li><strong>F3</strong> opens the gateway host panel: pause or resume workflows, restart,
-  quit, check for and install updates, the tray, and <strong>start at login</strong> (<code>L</code>,
+  quit, check for and install updates (the same answer and the same update as
+  the web console and the tray: an AbstractFramework installer install runs the
+  installer, see <a href="../tray/#restart-and-update">tray.md</a>), the tray, and
+  <strong>start at login</strong> (<code>L</code>,
   confirmed, then read back). A banner shows on every screen while workflows
   are paused.</li>
 <li><strong>About</strong> (<code>F1</code>, or <code>?</code> outside a text field) shows this console, its
@@ -1578,6 +1581,15 @@ sent or the token was rejected.</p>
 step, <code>Esc</code> back (in a text field, the first <code>Esc</code> releases it so screen keys
 work again), <code>1</code>-<code>9</code>, <code>0</code>, <code>A</code> and <code>N</code> screens, <code>r</code> refresh, <code>q</code> quit. Each screen
 lists its own actions in the footer.</p>
+<p><code>←</code> / <code>→</code> switch to the previous and next screen, wrapping from the last screen
+to the first and back, like <code>Ctrl+P</code> / <code>Ctrl+N</code> in browse mode. The arrows keep
+their own meaning wherever the focused element uses them: a text field moves its
+caret, a choice list (radio buttons) or a tabs bar (the Runtimes inspector, the
+Resources Loaded/Caches tabs) changes its selection, the screen bar moves
+between screens, a focused scrolling text pane scrolls, and an open dialog keeps
+every key. Press <code>Esc</code> in a text field, or <code>Tab</code> away from the widget, and the
+arrows switch screens again. In the setup guide the arrows do not jump
+screens; <code>Ctrl+N</code> walks the guide.</p>
 <p><strong>Admin rules.</strong> Admin-only actions are refused before anything is sent for a
 non-admin sign-in, with the reason, and the footer marks them "admin only".
 The setup guide is admin-only, as on the web. Every write is verified with a

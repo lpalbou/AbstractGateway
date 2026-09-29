@@ -3563,12 +3563,27 @@ any authenticated principal; writes require an admin principal.</p>
   switch as the tray's <em>Start at login</em> and <code>abstractgateway service
   enable|disable</code>.</li>
 <li><code>GET /api/gateway/host/update</code>, <code>POST /api/gateway/host/update/check</code>,
-  <code>POST /api/gateway/host/update/start</code> — <code>{current, install: {kind,
-  upgradable, reason, command, extras}, check: {latest, update_available,
-  offline, checked_at, error}, job: {state, log_tail, exit_code,
-  restart_recommended, version_before, version_after}, restart_pending}</code>.
-  <code>start</code> answers 409 when the install cannot be upgraded in place or a job
-  is already running.</li>
+  <code>POST /api/gateway/host/update/start</code> (admin) — all three answer
+  <code>{current, install: {kind, path, upgradable, reason, command,
+  display_command, extras, data_dir, framework_version}, check: {source,
+  latest, update_available, offline, checked_at, error, release}, job:
+  {state, command, log_tail, exit_code, error, message, restart_recommended,
+  version_before, version_after, installer, framework_before,
+  framework_after, changes, other_changes}, restart_pending, update}</code>.
+  <code>install.kind</code> is <code>installer</code> for an AbstractFramework installer install
+  (<code>check.source: framework-release</code>, <code>check.release: {version,
+  gateway_version, installed, commit, manifest_url, installer: {url,
+  commit_url, sha256, size}}</code>); other kinds compare with PyPI
+  (<code>source: pypi</code>). <code>update</code> is the rendering every client shows:
+  <code>{status, line, hint, offer, action: {label, confirm, command, source,
+  installer_sha256} | null, checked_at}</code>, <code>status</code> one of <code>not_checked</code>,
+  <code>available</code>, <code>not_possible</code>, <code>up_to_date</code>, <code>offline</code>, <code>error</code>, <code>running</code>,
+  <code>installed</code>, <code>no_change</code>, <code>failed</code>. <code>start</code> takes <code>{installer_sha256}</code>
+  (the action's; required for an installer install, optional otherwise) and
+  answers 409 when the install cannot be upgraded in place, the sha256 is
+  missing ("check again first") or differs from the last check's, or a job is
+  already running. The job is killed after 30 minutes even when it prints
+  nothing. A version the check cannot compare is an <code>error</code>, never <code>up_to_date</code>.</li>
 </ul>
 <p><code>GET /api/health</code> adds <code>"paused": true</code> while paused; <code>status</code> stays
 <code>"healthy"</code>.</p>

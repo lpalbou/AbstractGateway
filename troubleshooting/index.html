@@ -1281,6 +1281,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#starting-the-login-service-fails-with-5-inputoutput-error-macos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Starting the login service fails with 5: Input/output error (macOS)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#an-update-says-already-up-to-date-or-didnt-finish" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An update says "already up to date", or "didn't finish"
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1791,6 +1813,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#starting-the-login-service-fails-with-5-inputoutput-error-macos" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Starting the login service fails with 5: Input/output error (macOS)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#an-update-says-already-up-to-date-or-didnt-finish" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An update says "already up to date", or "didn't finish"
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2207,6 +2251,53 @@ abstractgateway<span class="w"> </span>service<span class="w"> </span>status
 </code></pre></div>
 <p><code>other</code> means the login item belongs to another data folder. See
 <a href="../first-run/#4-start-the-gateway-at-login-optional">first-run.md</a>.</p>
+<h3 id="starting-the-login-service-fails-with-5-inputoutput-error-macos">Starting the login service fails with <code>5: Input/output error</code> (macOS)<a class="headerlink" href="#starting-the-login-service-fails-with-5-inputoutput-error-macos" title="Permanent link">&para;</a></h3>
+<p><code>abstractgateway service install</code> (and <code>service enable --start-now</code>, and the
+installer, which runs <code>service install</code>) registers the login item and starts it
+now: it writes the LaunchAgent, then runs <code>launchctl bootout</code> (which stops a
+gateway already running as that login item) and <code>launchctl bootstrap</code>. launchd
+stops the old job in the background after <code>bootout</code> answers, and a <code>bootstrap</code> of
+the same login item before it is gone fails with <code>5: Input/output error</code> (or <code>37</code>).
+The gateway waits up to 15 seconds for launchd to finish and retries the
+<code>bootstrap</code> a few times, so this usually resolves by itself.</p>
+<p><code>abstractgateway service enable</code> without <code>--start-now</code>, and the <strong>Start at login</strong>
+switch in the consoles and the tray, only write the LaunchAgent for the next login;
+they run no <code>launchctl</code> command, so they never hit this.</p>
+<p>If <code>service install</code> still fails (or launchd refuses the login item with another
+code, which is not retried), the message says how many attempts were made and why,
+and start at login is <strong>off</strong>: the LaunchAgent file is removed, so nothing starts
+at the next login. A gateway that was running as this login item was stopped by
+<code>bootout</code> and is not running now. Fix the cause the message shows, then:</p>
+<div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>service<span class="w"> </span>install<span class="w">    </span><span class="c1"># registers the login item and starts it now</span>
+abstractgateway<span class="w"> </span>service<span class="w"> </span>status<span class="w">     </span><span class="c1"># reads "on"</span>
+</code></pre></div>
+<h3 id="an-update-says-already-up-to-date-or-didnt-finish">An update says "already up to date", or "didn't finish"<a class="headerlink" href="#an-update-says-already-up-to-date-or-didnt-finish" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Already up to date</strong> means the update ran and changed nothing: an
+  AbstractFramework installer install already has the newest release (the
+  check compares releases, not the newest gateway on PyPI), or the package
+  manager found nothing newer. No restart is needed.</li>
+<li><strong>The update didn't finish</strong> shows the exit code and the last lines of the
+  log (web console: <strong>Update log</strong> under the version line). For an installer
+  install, the installer's full log is the newest <code>install-*.log</code> in
+  <code>&lt;data dir&gt;/logs/</code>; fix the cause it names and update again, or run the
+  one-line install in a terminal, which does the same thing. The running
+  gateway keeps working.</li>
+<li><strong>The installer changed since it was checked</strong>: a newer check fetched a
+  different <code>install.sh</code>. Check again, review the confirmation, and update.</li>
+<li><strong>Check again first</strong>: an installer update runs only the <code>install.sh</code> whose
+  sha256 the confirmation showed, and the request named none (a client older than
+  the gateway, or an API call without <code>installer_sha256</code>). Check again and update
+  from the confirmation.</li>
+<li><strong>An update is already running</strong>: one update runs at a time; wait for it to
+  finish (its log is under the version line).</li>
+<li><strong>Couldn't check for updates (cannot compare the versions …)</strong>: the release or
+  PyPI named a version the gateway cannot read. Nothing is offered; check again
+  later.</li>
+<li>An installer install on Windows is updated by pasting the PowerShell line
+  the hint shows (the gateway cannot replace its own files while it runs).</li>
+</ul>
+<p>See <a href="../tray/#restart-and-update">tray.md</a>.</p>
 <h2 id="related-docs">Related docs<a class="headerlink" href="#related-docs" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../faq/">faq.md</a>: conceptual questions and limits</li>

@@ -596,6 +596,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Restart and update">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#an-abstractframework-installer-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An AbstractFramework installer install
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#other-installs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Other installs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1086,6 +1114,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Restart and update">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#an-abstractframework-installer-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        An AbstractFramework installer install
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#other-installs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Other installs
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1223,7 +1279,8 @@ use (blue), the inner ring with GPU load (amber). A green dot in the centre
 means a workflow step is executing right now; pause bars mean paused; a red
 ring with <code>!</code> means the gateway is not answering.</p>
 <p>Everything works offline except <em>Documentation</em>, <em>Report a Problem</em> and
-<em>Check for Updates</em>, which open a website or ask pypi.org. The documentation
+<em>Check for Updates</em>, which open a website or check for a newer release (see
+<a href="#restart-and-update">Restart and update</a>). The documentation
 is online; the console's docs assistant answers from the <code>llms.txt</code> shipped
 with the gateway.</p>
 <h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
@@ -1513,60 +1570,128 @@ and terminal; on Windows a new process is spawned on the same console. Restart
 is refused (HTTP 409, greyed out in the tray) under <code>serve --reload</code>, when the
 server was not started by <code>abstractgateway serve</code>, or while an update is
 being installed.</p>
-<p><strong>Check for Updates</strong> asks pypi.org for the latest release (5 s timeout, one
-check per hour). Offline is a normal answer, not an error. The one-click
-<strong>Update</strong> is offered only when the gateway can reproduce its own install:</p>
+<p><strong>Check for Updates</strong> (the tray), <strong>Check now</strong> (web console, <strong>Resources &gt;
+Gateway &gt; Version</strong>) and <code>u</code> in the terminal console's <strong>F3</strong> panel all ask the
+gateway the same question and show its answer word for word: the version line,
+a hint, and <strong>Update to …</strong> with a confirmation that says exactly what runs.
+The check takes at most a few seconds, runs at most once per hour unless you ask
+again, and offline is a normal answer, not an error. Updating is for admins.</p>
+<p>What the check compares and what <strong>Update</strong> runs depends on how the gateway
+was installed:</p>
 <table>
 <thead>
 <tr>
 <th>Install</th>
-<th>Upgrade command used</th>
+<th>Compared with</th>
+<th>Update runs</th>
 <th>One-click?</th>
 </tr>
 </thead>
 <tbody>
 <tr>
+<td>AbstractFramework installer (the one-line install, the macOS double-click installer)</td>
+<td>the newest <strong>AbstractFramework release</strong></td>
+<td>the AbstractFramework installer (<code>install.sh</code>), see below</td>
+<td>yes on macOS and Linux; Windows shows the PowerShell line</td>
+</tr>
+<tr>
 <td><code>pip</code> in a virtual environment</td>
+<td>the newest <code>abstractgateway</code> on PyPI</td>
 <td><code>python -m pip install --upgrade "abstractgateway[&lt;your extras&gt;]"</code></td>
 <td>yes</td>
 </tr>
 <tr>
 <td><code>uv venv</code> / <code>uv pip</code></td>
+<td>PyPI</td>
 <td><code>uv pip install --python … --upgrade …</code></td>
 <td>yes</td>
 </tr>
 <tr>
 <td><code>pipx</code></td>
+<td>PyPI</td>
 <td><code>pipx upgrade abstractgateway</code></td>
 <td>yes</td>
 </tr>
 <tr>
-<td><code>uv tool</code></td>
+<td><code>uv tool</code> (installed by hand, no version pin)</td>
+<td>PyPI</td>
 <td><code>uv tool upgrade abstractgateway</code></td>
 <td>yes</td>
 </tr>
 <tr>
+<td><code>uv tool</code> pinned to one version (<code>==X</code>)</td>
+<td>PyPI</td>
+<td>— reinstall without the pin (the hint gives the command)</td>
+<td>no</td>
+</tr>
+<tr>
 <td>editable checkout (<code>pip install -e .</code>)</td>
+<td>PyPI</td>
 <td>— update with <code>git pull</code></td>
 <td>no</td>
 </tr>
 <tr>
 <td>Docker image</td>
+<td>PyPI</td>
 <td>— pull the newer image</td>
 <td>no</td>
 </tr>
 <tr>
 <td>system Python (PEP 668 "externally managed")</td>
+<td>PyPI</td>
 <td>— use pipx or a venv</td>
 <td>no</td>
 </tr>
 </tbody>
 </table>
+<h3 id="an-abstractframework-installer-install">An AbstractFramework installer install<a class="headerlink" href="#an-abstractframework-installer-install" title="Permanent link">&para;</a></h3>
+<p>The gateway recognises an installer install by the installer's record in its
+data folder (<code>bootstrap.env</code>), which also names the AbstractFramework release
+installed. <strong>Update</strong> then runs the same installer as the one-line install,
+so updating from the tray, either console or by running the line again in a
+terminal does the same thing:</p>
+<ul>
+<li><strong>The release.</strong> The check reads the AbstractFramework repository's <code>main</code>
+  branch at one commit: its install manifest (<code>docs/installers/install-manifest.json</code>,
+  the release version and the gateway version it pins) and its
+  <code>scripts/install.sh</code>. The line reads <code>AbstractFramework 0.6.1 · gateway 0.7.1
+  · AbstractFramework 0.6.2 available</code>. An install made with <code>--pin</code> records
+  no release; it is offered the release only when the release's gateway is
+  newer than the one installed.</li>
+<li><strong>What runs.</strong> The confirmation names the script's address
+  (<code>https://raw.githubusercontent.com/lpalbou/AbstractFramework/main/scripts/install.sh</code>),
+  the commit and the script's sha256, and the command:
+  <code>/bin/sh install.sh --yes --no-start --no-open --no-modify-path --data-dir &lt;data folder&gt;</code>.
+  The gateway runs exactly the file it checked, written to a new file of its own
+  for that run; the start must name the sha256 the confirmation showed, and if a
+  newer check fetched a different script in between, <strong>Update</strong> refuses and asks
+  you to check again. One update runs at a time.</li>
+<li><strong>How it runs.</strong> Nothing is asked and nothing is opened. Start at login stays
+  as it is. The installer keeps your profile, port and the choices it remembers,
+  moves every package to the release's tested versions, and does not stop the
+  running gateway. Its output is the update log (console: <strong>Update log</strong> under the
+  version line; the tray shows its last lines if it fails). The installer's own
+  log is the newest <code>install-*.log</code> in <code>&lt;data folder&gt;/logs/</code>.</li>
+<li><strong>The result.</strong> What moved (<code>AbstractFramework 0.6.1 -&gt; 0.6.2, abstractgateway
+  0.7.1 -&gt; 0.7.2, …</code>) and <strong>Restart</strong> to finish; <strong>Already up to date</strong> when the
+  installer changed nothing (no restart is offered); or the installer's exit code
+  with the last lines of its log. The running gateway keeps working in every case.</li>
+<li><strong>Windows</strong> keeps a running program's files locked, so the gateway cannot
+  update itself in place. The hint shows the line to paste in PowerShell; the
+  installer stops the gateway, updates everything and starts it again:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><span class="n">powershell</span> <span class="n">-ExecutionPolicy</span> <span class="n">ByPass</span> <span class="n">-c</span> <span class="s2">"irm https://raw.githubusercontent.com/lpalbou/AbstractFramework/main/scripts/install.ps1 | iex"</span>
+</code></pre></div>
+<p>The newest gateway outside a release is a command-line choice: run the installer
+with <code>--pin latest</code> (see the AbstractFramework install guide).</p>
+<h3 id="other-installs">Other installs<a class="headerlink" href="#other-installs" title="Permanent link">&para;</a></h3>
 <p>The installed extras (<code>apple</code>, <code>gpu</code>, <code>embeddings</code>) are detected and kept.
-The upgrade runs in the background (log tail on the console's Gateway card);
-when it finishes the tray offers <strong>Restart to finish the update</strong>. Restarting
-is what makes the new version run — until then the process keeps serving the
-old code.</p>
+The upgrade runs in the background (its log is under the console's version
+line); <strong>Already up to date</strong> is reported when the package manager installed
+nothing newer.</p>
+<p>In every case the running process keeps serving the old code until it
+restarts: the tray offers <strong>Restart Now</strong>, the console's Gateway card
+<strong>Restart gateway…</strong>.</p>
 <h2 id="security">Security<a class="headerlink" href="#security" title="Permanent link">&para;</a></h2>
 <p>The tray talks to the gateway over loopback HTTP with a <strong>per-process
 ephemeral admin token</strong> handed over on the helper's stdin — never on the
