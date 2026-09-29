@@ -181,8 +181,9 @@ never converted. See [automations.md](./automations.md#older-scheduled-runs-lega
 Not by default. An automation runs unattended, so creating it with
 `policy.tool_approval: "auto"` (the default) is the consent for its target's
 tools. With `"ask"`, every tool batch waits for approval. Third-party MCP
-tools still ask under `"auto"`, and questions the workflow asks a person wait
-in both modes. See [automations.md](./automations.md#tool-approval-and-consent).
+tools still ask under `"auto"`, and so does sending an email or message to
+anyone but your registered email address; questions the workflow asks a person
+wait in both modes. See [automations.md](./automations.md#tool-approval-and-consent).
 
 ### Why does an automation not notify me after every run?
 

@@ -5258,7 +5258,8 @@ curl -sS -H "$AUTH" -H "Content-Type: application/json" \
 Configuration notes (gateway host):
 - Multi-account: set `ABSTRACT_EMAIL_ACCOUNTS_CONFIG=/path/to/emails.yaml` (recommended).
 - Single-account env fallback: set `ABSTRACT_EMAIL_IMAP_*` and/or `ABSTRACT_EMAIL_SMTP_*`.
-- The secret itself must be present in the env var referenced by `*_PASSWORD_ENV_VAR` (e.g. `EMAIL_PASSWORD=...`).
+- The secret itself must be present in the env var referenced by `*_PASSWORD_ENV_VAR` (e.g. `EMAIL_PASSWORD=...`). That setting is the variable's NAME; a value that is not a variable name is refused, never used as the password.
+- Every IMAP/SMTP connection verifies the server's TLS certificate and host name; a failed check returns an error naming the host, the reason and the fix, and no password is sent. A server signed by a private CA is trusted through the accounts file's `ca_file` field.
 
 Evidence: `src/abstractgateway/routes/gateway.py` (`/email/accounts|messages|send`) which proxies to the Runtime AbstractCore comms facade.
 
@@ -6121,6 +6122,17 @@ An automation runs unattended, so it cannot stop to ask before every tool call.
   target's `_runtime.allowed_tools` when it has that list, and to the tools
   AbstractRuntime classifies otherwise; a tool outside that classification
   (a third-party MCP tool, for example) still asks.
+  **Sending a message is never pre-approved** (framework backlog 0992 WP0):
+  `send_email`, `send_whatsapp_message` and `send_telegram_*` stay out of the
+  grant even when `allowed_tools` names them. A `send_email` whose every
+  recipient is your registered email runs unattended; any other recipient
+  parks the occurrence on a `tool_approval` wait until someone approves or
+  refuses it. Text an occurrence reads (an inbound email, a web page) therefore
+  cannot make it mail your data to an address that text names. The gateway
+  freezes your registered email (account email, or the gateway's
+  `operator_email` setting without accounts) into the target's inputs when the
+  automation is created or its target revised; after changing that email,
+  revise the target to refresh it. Without a registered email every send asks.
 - **`"ask"`.** Every tool batch that needs approval waits on a
   `tool_approval` wait, as in an ordinary chat, and someone must answer it
   ([Waits](#waits-on-a-person)).
@@ -6508,7 +6520,9 @@ python scripts/accept_automations_v1.py --data-dir /tmp/automation-acceptance
 - Growing history is the most recent 50,000 tokens of whole turns and is not
   summarized; older turns drop out of the replay (they stay in the store).
 - Under `tool_approval: "auto"`, tools outside AbstractRuntime's
-  classification, such as third-party MCP tools, still ask for approval.
+  classification, such as third-party MCP tools, still ask for approval, and
+  messages to anyone but your registered email always ask. Recipients named in
+  an automation's definition are not pre-approved yet (backlog 0992).
 - Retries repeat the external effects of the failed attempt.
 - A `@default` target must resolve to a workflow of the gateway's own
   registry, not the shared catalog.
@@ -8077,6 +8091,24 @@ is 0.11.2.
   the terminal console's Models screen treats speech input as a recommended route (`a` offers **Replace mine too**).
 - A fresh image-model load reports `loaded` (`loaded_new: true`) instead of `already_loaded` (AbstractVision 0.3.33).
 - Unloading a Diffusers image model releases its memory (AbstractVision 0.3.33).
+- The email bridge passes message bodies whole (ADR-0026: no character caps on model inputs). It clamped text and
+  HTML bodies at 20,000 characters by default; `ABSTRACT_EMAIL_MAX_BODY_CHARS` / `ABSTRACT_EMAIL_MAX_HTML_CHARS`
+  still set an explicit bound when given.
+
+### Security
+- **Email connections verify TLS** (framework backlog 0992 WP0). The email bridge opened IMAP with no SSL context,
+  which on CPython 3.12 checks neither the certificate nor the host name, so anyone on the network path could read
+  the password. It now uses `ssl.create_default_context()` and a bounded connect, and a failed check is refused
+  before login with the host, the reason and the fix. The `/api/gateway/email/*` routes and the maintenance
+  notifier use AbstractCore's mail tools, which verify TLS from AbstractCore 2.19.2.
+- **Automations no longer email anyone the model chooses.** With the default `policy.tool_approval: "auto"`, the
+  grant pre-approved `send_email`, so an occurrence that read an inbound email or a web page could mail data to an
+  address that text named. From AbstractRuntime 0.7.3 message-sending tools are never in the grant: a
+  `send_email` to your registered email runs unattended, any other recipient waits for approval. The gateway
+  freezes the registered email (the account's email, or the `operator_email` setting without accounts) into the
+  automation's target inputs at creation and on a target revision; a value a client sends is never trusted.
+- The email bridge's `imap_password_env_var` is always the name of an environment variable; a value that is not a
+  variable name was read as the password itself and is now refused with the fix (never echoed).
 
 ## [0.7.3] - 2026-09-29
 
@@ -10597,8 +10629,9 @@ never converted. See [automations.md](docs/automations.md#older-scheduled-runs-l
 Not by default. An automation runs unattended, so creating it with
 `policy.tool_approval: "auto"` (the default) is the consent for its target's
 tools. With `"ask"`, every tool batch waits for approval. Third-party MCP
-tools still ask under `"auto"`, and questions the workflow asks a person wait
-in both modes. See [automations.md](docs/automations.md#tool-approval-and-consent).
+tools still ask under `"auto"`, and so does sending an email or message to
+anyone but your registered email address; questions the workflow asks a person
+wait in both modes. See [automations.md](docs/automations.md#tool-approval-and-consent).
 
 ### Why does an automation not notify me after every run?
 
@@ -11014,6 +11047,11 @@ Enable (Telegram):
 Enable (Email):
 - `ABSTRACT_EMAIL_BRIDGE=1`
 - IMAP credentials + polling config (see `src/abstractgateway/integrations/email_bridge.py`)
+- TLS is always verified (certificate chain and host name, `ssl.create_default_context()`); a failed check is refused
+  before login. `ABSTRACT_EMAIL_IMAP_PASSWORD_ENV_VAR` / `imap_password_env_var` is the NAME of the variable holding the
+  password, never the password itself (a value that is not a variable name is refused).
+- Message bodies are passed whole (ADR-0026); `ABSTRACT_EMAIL_MAX_BODY_CHARS` / `ABSTRACT_EMAIL_MAX_HTML_CHARS` set an
+  explicit bound only when given.
 
 Evidence: bridge startup in `src/abstractgateway/service.py` (`start_gateway_runner`).
 
@@ -11030,6 +11068,8 @@ These endpoints proxy through Gateway's Runtime comms facade and never accept ar
 Configuration notes:
 - Multi-account: set `ABSTRACT_EMAIL_ACCOUNTS_CONFIG=/path/to/emails.yaml` (recommended).
 - Single-account env fallback: `ABSTRACT_EMAIL_IMAP_*` / `ABSTRACT_EMAIL_SMTP_*`.
+- Connections use AbstractCore's mail tools, which verify TLS certificates and host names; a server signed by a
+  private CA is trusted through the accounts file's `ca_file` field (see AbstractCore's tool-calling docs).
 
 Evidence: `/api/gateway/email/*` routes in `src/abstractgateway/routes/gateway.py` which call the Runtime AbstractCore comms facade.
 

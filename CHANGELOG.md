@@ -29,6 +29,24 @@ is 0.11.2.
   the terminal console's Models screen treats speech input as a recommended route (`a` offers **Replace mine too**).
 - A fresh image-model load reports `loaded` (`loaded_new: true`) instead of `already_loaded` (AbstractVision 0.3.33).
 - Unloading a Diffusers image model releases its memory (AbstractVision 0.3.33).
+- The email bridge passes message bodies whole (ADR-0026: no character caps on model inputs). It clamped text and
+  HTML bodies at 20,000 characters by default; `ABSTRACT_EMAIL_MAX_BODY_CHARS` / `ABSTRACT_EMAIL_MAX_HTML_CHARS`
+  still set an explicit bound when given.
+
+### Security
+- **Email connections verify TLS** (framework backlog 0992 WP0). The email bridge opened IMAP with no SSL context,
+  which on CPython 3.12 checks neither the certificate nor the host name, so anyone on the network path could read
+  the password. It now uses `ssl.create_default_context()` and a bounded connect, and a failed check is refused
+  before login with the host, the reason and the fix. The `/api/gateway/email/*` routes and the maintenance
+  notifier use AbstractCore's mail tools, which verify TLS from AbstractCore 2.19.2.
+- **Automations no longer email anyone the model chooses.** With the default `policy.tool_approval: "auto"`, the
+  grant pre-approved `send_email`, so an occurrence that read an inbound email or a web page could mail data to an
+  address that text named. From AbstractRuntime 0.7.3 message-sending tools are never in the grant: a
+  `send_email` to your registered email runs unattended, any other recipient waits for approval. The gateway
+  freezes the registered email (the account's email, or the `operator_email` setting without accounts) into the
+  automation's target inputs at creation and on a target revision; a value a client sends is never trusted.
+- The email bridge's `imap_password_env_var` is always the name of an environment variable; a value that is not a
+  variable name was read as the password itself and is now refused with the fix (never echoed).
 
 ## [0.7.3] - 2026-09-29
 

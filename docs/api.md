@@ -1722,7 +1722,8 @@ curl -sS -H "$AUTH" -H "Content-Type: application/json" \
 Configuration notes (gateway host):
 - Multi-account: set `ABSTRACT_EMAIL_ACCOUNTS_CONFIG=/path/to/emails.yaml` (recommended).
 - Single-account env fallback: set `ABSTRACT_EMAIL_IMAP_*` and/or `ABSTRACT_EMAIL_SMTP_*`.
-- The secret itself must be present in the env var referenced by `*_PASSWORD_ENV_VAR` (e.g. `EMAIL_PASSWORD=...`).
+- The secret itself must be present in the env var referenced by `*_PASSWORD_ENV_VAR` (e.g. `EMAIL_PASSWORD=...`). That setting is the variable's NAME; a value that is not a variable name is refused, never used as the password.
+- Every IMAP/SMTP connection verifies the server's TLS certificate and host name; a failed check returns an error naming the host, the reason and the fix, and no password is sent. A server signed by a private CA is trusted through the accounts file's `ca_file` field.
 
 Evidence: `src/abstractgateway/routes/gateway.py` (`/email/accounts|messages|send`) which proxies to the Runtime AbstractCore comms facade.
 

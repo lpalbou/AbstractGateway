@@ -14,6 +14,7 @@ from __future__ import annotations
 import copy
 import datetime
 import logging
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -476,10 +477,27 @@ def _guarded_input_data(svc: Any, principal: Any, input_data: Dict[str, Any], *,
     # history and a discussion's seed, so it is server-owned here.
     data["use_context"] = True
     tenant, user = _principal_tuple(principal)
+    root_data_dir = getattr(svc.config, "root_data_dir", None) or svc.config.data_dir
+    # The registered user's email, the one address the send_email recipient
+    # refiner treats as "self" (framework backlog 0992 WP0). The automation
+    # grant never pre-approves send_email, so without this value an
+    # occurrence's mail to its own owner would wait for approval. Chat runs
+    # get it from `host.start_run`; occurrences are started by the runtime,
+    # so it is frozen here with the rest of the protected inputs (a client
+    # value was dropped above; a revision of the target refreshes it). No
+    # registered email = key absent = every send asks.
+    from ..runtime_config import resolve_operator_email
+
+    runtime_ns = data.get("_runtime") if isinstance(data.get("_runtime"), dict) else {}
+    operator_email = resolve_operator_email(Path(root_data_dir), tenant_id=tenant, user_id=user).get("value")
+    if isinstance(operator_email, str) and operator_email:
+        runtime_ns["operator_email"] = operator_email
+    if runtime_ns:
+        data["_runtime"] = runtime_ns
     guard_run_vars(
         data,
         data_dir=svc.config.data_dir,
-        root_data_dir=getattr(svc.config, "root_data_dir", None) or svc.config.data_dir,
+        root_data_dir=root_data_dir,
         session_id=session_id,
         tenant_id=tenant,
         user_id=user,

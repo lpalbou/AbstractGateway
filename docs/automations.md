@@ -259,6 +259,17 @@ An automation runs unattended, so it cannot stop to ask before every tool call.
   target's `_runtime.allowed_tools` when it has that list, and to the tools
   AbstractRuntime classifies otherwise; a tool outside that classification
   (a third-party MCP tool, for example) still asks.
+  **Sending a message is never pre-approved** (framework backlog 0992 WP0):
+  `send_email`, `send_whatsapp_message` and `send_telegram_*` stay out of the
+  grant even when `allowed_tools` names them. A `send_email` whose every
+  recipient is your registered email runs unattended; any other recipient
+  parks the occurrence on a `tool_approval` wait until someone approves or
+  refuses it. Text an occurrence reads (an inbound email, a web page) therefore
+  cannot make it mail your data to an address that text names. The gateway
+  freezes your registered email (account email, or the gateway's
+  `operator_email` setting without accounts) into the target's inputs when the
+  automation is created or its target revised; after changing that email,
+  revise the target to refresh it. Without a registered email every send asks.
 - **`"ask"`.** Every tool batch that needs approval waits on a
   `tool_approval` wait, as in an ordinary chat, and someone must answer it
   ([Waits](#waits-on-a-person)).
@@ -646,7 +657,9 @@ python scripts/accept_automations_v1.py --data-dir /tmp/automation-acceptance
 - Growing history is the most recent 50,000 tokens of whole turns and is not
   summarized; older turns drop out of the replay (they stay in the store).
 - Under `tool_approval: "auto"`, tools outside AbstractRuntime's
-  classification, such as third-party MCP tools, still ask for approval.
+  classification, such as third-party MCP tools, still ask for approval, and
+  messages to anyone but your registered email always ask. Recipients named in
+  an automation's definition are not pre-approved yet (backlog 0992).
 - Retries repeat the external effects of the failed attempt.
 - A `@default` target must resolve to a workflow of the gateway's own
   registry, not the shared catalog.

@@ -172,6 +172,11 @@ Enable (Telegram):
 Enable (Email):
 - `ABSTRACT_EMAIL_BRIDGE=1`
 - IMAP credentials + polling config (see `src/abstractgateway/integrations/email_bridge.py`)
+- TLS is always verified (certificate chain and host name, `ssl.create_default_context()`); a failed check is refused
+  before login. `ABSTRACT_EMAIL_IMAP_PASSWORD_ENV_VAR` / `imap_password_env_var` is the NAME of the variable holding the
+  password, never the password itself (a value that is not a variable name is refused).
+- Message bodies are passed whole (ADR-0026); `ABSTRACT_EMAIL_MAX_BODY_CHARS` / `ABSTRACT_EMAIL_MAX_HTML_CHARS` set an
+  explicit bound only when given.
 
 Evidence: bridge startup in `src/abstractgateway/service.py` (`start_gateway_runner`).
 
@@ -188,6 +193,8 @@ These endpoints proxy through Gateway's Runtime comms facade and never accept ar
 Configuration notes:
 - Multi-account: set `ABSTRACT_EMAIL_ACCOUNTS_CONFIG=/path/to/emails.yaml` (recommended).
 - Single-account env fallback: `ABSTRACT_EMAIL_IMAP_*` / `ABSTRACT_EMAIL_SMTP_*`.
+- Connections use AbstractCore's mail tools, which verify TLS certificates and host names; a server signed by a
+  private CA is trusted through the accounts file's `ca_file` field (see AbstractCore's tool-calling docs).
 
 Evidence: `/api/gateway/email/*` routes in `src/abstractgateway/routes/gateway.py` which call the Runtime AbstractCore comms facade.
 

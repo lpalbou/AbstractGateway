@@ -8,6 +8,7 @@ import imaplib
 import json
 import os
 import re
+import ssl
 import threading
 import time
 from dataclasses import dataclass
@@ -198,8 +199,10 @@ class EmailBridgeConfig:
     store_raw_message: bool = True
     store_attachments: bool = True
     max_raw_bytes: int = 2 * 1024 * 1024
-    max_body_chars: int = 20_000
-    max_html_chars: int = 20_000
+    # 0 = the whole body (ADR-0026: no character caps on model inputs). A positive value is an
+    # explicit operator bound (ABSTRACT_EMAIL_MAX_BODY_CHARS / _MAX_HTML_CHARS), marked when it bites.
+    max_body_chars: int = 0
+    max_html_chars: int = 0
     max_attachments: int = 20
     max_attachment_bytes: int = 5 * 1024 * 1024
     max_total_attachment_bytes: int = 15 * 1024 * 1024
@@ -250,8 +253,8 @@ class EmailBridgeConfig:
         store_attachments = _as_bool(os.getenv("ABSTRACT_EMAIL_STORE_ATTACHMENTS"), True)
 
         max_raw_bytes = _as_int(os.getenv("ABSTRACT_EMAIL_MAX_RAW_BYTES"), 2 * 1024 * 1024)
-        max_body_chars = _as_int(os.getenv("ABSTRACT_EMAIL_MAX_BODY_CHARS"), 20_000)
-        max_html_chars = _as_int(os.getenv("ABSTRACT_EMAIL_MAX_HTML_CHARS"), 20_000)
+        max_body_chars = _as_int(os.getenv("ABSTRACT_EMAIL_MAX_BODY_CHARS"), 0)
+        max_html_chars = _as_int(os.getenv("ABSTRACT_EMAIL_MAX_HTML_CHARS"), 0)
         max_attachments = _as_int(os.getenv("ABSTRACT_EMAIL_MAX_ATTACHMENTS"), 20)
         max_attachment_bytes = _as_int(os.getenv("ABSTRACT_EMAIL_MAX_ATTACHMENT_BYTES"), 5 * 1024 * 1024)
         max_total_attachment_bytes = _as_int(os.getenv("ABSTRACT_EMAIL_MAX_TOTAL_ATTACHMENT_BYTES"), 15 * 1024 * 1024)
@@ -447,29 +450,41 @@ class EmailBridge:
     # ---------------------------------------------------------------------
 
     def _resolve_password(self) -> tuple[Optional[str], Optional[str]]:
+        """The IMAP password from the environment variable NAMED by `imap_password_env_var`.
+
+        Typed (framework backlog 0992 WP0): the field is always a variable name. A value that is not
+        one used to be read as the password itself; it is refused with the fix and never echoed.
+        """
         ref = str(self._cfg.imap_password_env_var or "").strip() or "EMAIL_PASSWORD"
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", ref):
+            return None, (
+                "IMAP password: imap_password_env_var must be the NAME of an environment variable (letters, "
+                "digits and underscores, not starting with a digit) that holds the password; the configured "
+                "value is not a variable name, so it is not used. Fix: put the password in an environment "
+                "variable, e.g. EMAIL_PASSWORD, and set imap_password_env_var to EMAIL_PASSWORD."
+            )
         v = os.getenv(ref)
         if v is not None and str(v).strip():
             return str(v).strip(), None
+        return None, f"Missing IMAP password env var {ref}"
 
-        # Fail fast for conventional env var names (avoid silently using a name as a password).
-        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", ref):
-            return None, f"Missing IMAP password env var {ref}"
-
-        # Otherwise: treat the reference as a literal secret.
-        return ref, None
+    def _tls_context(self) -> ssl.SSLContext:
+        """Verified TLS (certificate chain + host name). Without an explicit context,
+        `imaplib.IMAP4_SSL` uses `ssl._create_stdlib_context()`, which verifies nothing on CPython 3.12."""
+        return ssl.create_default_context()
 
     def _connect_imap(self) -> tuple[Optional[imaplib.IMAP4_SSL], Optional[str]]:
         password, err = self._resolve_password()
         if err is not None:
             return None, err
         try:
-            client = imaplib.IMAP4_SSL(self._cfg.imap_host, int(self._cfg.imap_port))
-            try:
-                if getattr(client, "sock", None) is not None:
-                    client.sock.settimeout(float(self._cfg.imap_timeout_s))  # type: ignore[attr-defined]
-            except Exception:
-                pass
+            # Bounded connect (the timeout also covers the TLS handshake) and verified TLS.
+            client = imaplib.IMAP4_SSL(
+                self._cfg.imap_host,
+                int(self._cfg.imap_port),
+                ssl_context=self._tls_context(),
+                timeout=float(self._cfg.imap_timeout_s),
+            )
             client.login(self._cfg.imap_username, password)
             typ, _ = client.select(self._cfg.imap_folder, readonly=True)
             if typ != "OK":
@@ -479,6 +494,13 @@ class EmailBridge:
                     pass
                 return None, f"Failed to select mailbox: {self._cfg.imap_folder}"
             return client, None
+        except ssl.SSLCertVerificationError as e:
+            reason = str(getattr(e, "verify_message", "") or e)
+            return None, (
+                f"IMAP TLS certificate verification failed for {self._cfg.imap_host}:{self._cfg.imap_port} "
+                f"({reason}). The connection was refused before login. Fix: use the host name printed on "
+                "the provider's certificate (the one its setup guide gives)."
+            )
         except Exception as e:
             return None, str(e)
 

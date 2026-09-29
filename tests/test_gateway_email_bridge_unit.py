@@ -223,3 +223,43 @@ def test_a_gateway_environment_variable_still_overrides_the_stored_connection(mo
     config = bridge.EmailBridgeConfig.from_env(base_dir=Path(tmp_path))
     assert config.imap_host == "imap.override.test"
     assert config.imap_port == 2993
+
+
+def test_email_bridge_passes_the_whole_body_by_default(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADR-0026 (no character caps on model inputs): the bridge used to clamp bodies at 20,000 chars."""
+    from abstractgateway.integrations.email_bridge import EmailBridge, EmailBridgeConfig
+
+    monkeypatch.setenv("EMAIL_PASSWORD", "pw")
+    monkeypatch.delenv("ABSTRACT_EMAIL_MAX_BODY_CHARS", raising=False)
+    monkeypatch.delenv("ABSTRACT_EMAIL_MAX_HTML_CHARS", raising=False)
+    defaults = EmailBridgeConfig.from_env(base_dir=tmp_path)
+    assert (defaults.max_body_chars, defaults.max_html_chars) == (0, 0)
+
+    runner = _FakeRunner()
+    cfg = EmailBridgeConfig(
+        enabled=True,
+        event_name="email.message",
+        session_prefix="email:",
+        account="me@example.com",
+        imap_host="imap.example.com",
+        imap_username="me@example.com",
+        imap_password_env_var="EMAIL_PASSWORD",
+        imap_folder="INBOX",
+        state_dir=tmp_path / "email_bridge",
+    )
+    bridge = EmailBridge(config=cfg, host=_FakeHost(), runner=runner, artifact_store=InMemoryArtifactStore())
+    bridge._load_state()  # type: ignore[attr-defined]
+
+    long_body = "line of a long newsletter\n" * 1500  # ~39,000 chars
+    msg = EmailMessage()
+    msg["Subject"] = "Long"
+    msg["From"] = "Alice <alice@example.com>"
+    msg["To"] = "me@example.com"
+    msg["Message-ID"] = "<long@example.com>"
+    msg.set_content(long_body)
+
+    with patch("imaplib.IMAP4_SSL", return_value=_FakeImap({"1": msg.as_bytes()})):
+        assert bridge.poll_once() == 1
+
+    body = runner.emits[0].payload["email"]["body_text"]
+    assert len(body) > 20_000 and body == long_body.strip()
