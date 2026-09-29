@@ -1776,8 +1776,8 @@ sentence-transformer embeddings on the Gateway host.</p>
 - <code>abstractgateway[docs]</code>: MkDocs site tooling
 - <code>abstractgateway[dev]</code>: local dev/test deps</p>
 <p>Default dependency floors (see <code>pyproject.toml</code>):
-- <code>AbstractRuntime&gt;=0.7.0</code>
-- <code>abstractcore&gt;=2.18.0</code>
+- <code>AbstractRuntime&gt;=0.7.2</code>
+- <code>abstractcore&gt;=2.19.1</code>
 - <code>abstractvoice&gt;=0.13.0</code> (the voice listings import <code>abstractvoice.engine_runtime</code>)
 - <code>abstractagent&gt;=0.3.17</code>
 - <code>AbstractMemory[lancedb]&gt;=0.3.0</code></p>
@@ -2464,7 +2464,7 @@ standing action in the section head (<code>a</code> on the TUI Routes screen), a
 whether or not the banner has anything to say.</p>
 <p><strong>The artifact is not the model id.</strong> A route stores the id the provider
 <em>serves</em> (<code>qwen/qwen3.5-9b</code>); the download names the exact weights,
-quantization included (<code>qwen/qwen3.5-9b@4bit</code>). The availability payload
+quantization included (<code>qwen/qwen3.5-9b@q4_k_m</code>). The availability payload
 carries <code>download_artifact</code> on any row where these differ — post that, not the
 row's <code>model</code>.</p>
 <p><strong>Single-flight.</strong> A second request for an artifact already downloading joins

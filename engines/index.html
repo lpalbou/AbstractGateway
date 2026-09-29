@@ -1053,38 +1053,43 @@ renders.</p>
 </tr>
 <tr>
 <td><strong>MLX</strong></td>
-<td>Prebuilt <code>mlx</code> and <code>mlx-lm</code> wheels into the gateway's own Python</td>
+<td><code>abstractcore[apple]</code> at the installed AbstractCore version (MLX as prebuilt wheels) into the gateway's own Python</td>
 <td>not supported</td>
 <td>no</td>
 </tr>
 <tr>
 <td><strong>llama.cpp</strong></td>
-<td>Upstream's prebuilt Metal wheel (<code>llama-cpp-python</code> 0.3.28) into the gateway's own Python; no compiler</td>
-<td>prebuilt CPU wheel (0.3.35)</td>
+<td><code>abstractcore[apple]</code>, with its llama.cpp taken from upstream's prebuilt Metal wheel (<code>llama-cpp-python</code> 0.3.28); no compiler</td>
+<td><code>abstractcore[gpu]</code> with the prebuilt CPU wheel (0.3.35)</td>
 <td>no</td>
 </tr>
 <tr>
 <td><strong>vLLM</strong></td>
 <td>not supported (the row says why; no Install button)</td>
-<td>Linux with an NVIDIA GPU: the vLLM wheels into the gateway's Python</td>
+<td>Linux with an NVIDIA GPU: <code>abstractcore[gpu]</code> into the gateway's Python</td>
 <td>no</td>
 </tr>
 <tr>
 <td><strong>Hugging Face</strong></td>
-<td><code>abstractcore[huggingface]</code> at the installed AbstractCore version (several GB)</td>
-<td>same</td>
+<td><code>abstractcore[apple]</code> at the installed AbstractCore version (several GB)</td>
+<td><code>abstractcore[gpu]</code></td>
 <td>no</td>
 </tr>
 </tbody>
 </table>
-<p>On Windows (experimental), installs use the vendor commands AbstractCore
-plans (winget, the vendor PowerShell installers, pip).</p>
+<p>Python engines only ever arrive with one of AbstractCore's install settings (<code>abstractcore[apple]</code>
+on Apple silicon, <code>abstractcore[gpu]</code> on Linux), never as a bare package, so each one installs the
+whole setting (several GB). An Intel Mac, a Python under Rosetta, and Windows have no such setting:
+their llama.cpp and Hugging Face rows say the engine is not available on this machine with the
+install settings and offer no Install button; use Ollama, LM Studio or a remote provider there.</p>
+<p>On Windows (experimental), Ollama and LM Studio installs use the vendor commands AbstractCore
+plans (winget, the vendor PowerShell installers).</p>
 <p>Everything the gateway's own Python receives is installed with the gateway's
 <code>abstract*</code> packages pinned to the versions it runs, so an engine install can
 never change the gateway itself.</p>
 <h3 id="when-the-apple-command-line-tools-are-needed">When the Apple command-line tools are needed<a class="headerlink" href="#when-the-apple-command-line-tools-are-needed" title="Permanent link">&para;</a></h3>
-<p>Only for llama.cpp when no prebuilt wheel fits (an Intel Mac, a Python under
-Rosetta, or a broken wheel): it must then be built from source, which needs a
+<p>Only for llama.cpp when no prebuilt wheel fits (a Linux machine outside x86_64/arm64,
+or a broken wheel): the setting's llama.cpp must then be built from source, which needs a
 C compiler. The job stops <strong>before</strong> the build, in the <code>needs_tools</code> state,
 with the reason in plain words, for example:</p>
 <blockquote>
