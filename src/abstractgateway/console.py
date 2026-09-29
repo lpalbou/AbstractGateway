@@ -2102,7 +2102,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                   host just to keep the button reachable — and a banner that
 	                   always renders ends up always saying something. Here it is
 	                   a standing action, and the banner is free to stay silent. -->
-	              <button id="defaults-apply-recommended" class="secondary" title="Set the recommended provider/model on the text, voice, image and video routes this computer can run. Routes you configured differently are kept." aria-label="Apply recommended routes"><span class="button-icon" aria-hidden="true">◆</span><span>Apply recommended</span></button>
+	              <button id="defaults-apply-recommended" class="secondary" title="Set the recommended provider/model on the text, voice, transcription, image and video routes this computer can run. Routes you configured differently are kept." aria-label="Apply recommended routes"><span class="button-icon" aria-hidden="true">◆</span><span>Apply recommended</span></button>
 	              <button id="refresh-catalog" class="secondary" title="Reload providers and capability defaults" aria-label="Refresh catalog"><span class="button-icon icon-refresh" aria-hidden="true">↻</span><span>Refresh</span></button>
 	            </div>
 	          </div>
@@ -12169,7 +12169,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       "input.text": { mark: "Aa", title: "Chat and text", what: "Answers, agents and workflows" },
       "output.text": { mark: "Aa", title: "Chat and text", what: "Answers, agents and workflows" },
       "output.voice": { mark: "Vo", title: "Voice", what: "Reads answers aloud" },
-      "input.audio": { mark: "Mi", title: "Transcription", what: "Turns speech into text" },
+      "input.voice": { mark: "Mi", title: "Transcription", what: "Turns speech into text" },
       "output.image": { mark: "Im", title: "Images", what: "Creates pictures from a description" },
       "input.image": { mark: "Vi", title: "Vision", what: "Understands pictures" },
       "output.video": { mark: "Vd", title: "Video", what: "Creates short videos from a description or a picture" },
@@ -12293,7 +12293,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         + (cards ? `<div class="ui-card-grid is-fit is-aligned">${cards}</div>` : `<div class="ui-empty">This gateway reported no recommended downloads.</div>`)
         + `<div class="ui-toolbar"><button id="first-run-apply-recommended" class="ui-btn is-primary">Use recommended defaults</button>`
         + (canDownloadAll ? `<button id="first-run-download-all" class="ui-btn is-ghost">Download all</button>` : "")
-        + `<span>Sets the recommended models for text, voice, images and video, where this computer can run them. Choices you already made are kept.</span>`
+        + `<span>Sets the recommended models for text, voice, transcription, images and video, where this computer can run them. Choices you already made are kept.</span>`
         + `<span class="ui-advanced">CLI: <code>abstractgateway-config defaults</code>, <code>abstractcore models download --recommended</code></span></div>`;
       $("first-run-apply-recommended").onclick = async () => {
         await applyRecommendedDefaults($("first-run-apply-recommended"), false);

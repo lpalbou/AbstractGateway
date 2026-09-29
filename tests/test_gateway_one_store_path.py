@@ -167,7 +167,7 @@ def test_a_fresh_install_has_no_file_at_the_core_path(tmp_path: Path, monkeypatc
 
     payload = gateway_capability_defaults_payload(base_dir=tmp_path / "runtime")
 
-    assert payload.get("seeded") == "recommended-v1"
+    assert payload.get("seeded") == "recommended-v2"
     assert Path(payload["config_file"]) == store
     assert not (tmp_path / "runtime" / "config" / "abstractcore.json").exists(), (
         "a fresh read must never materialize the retired gateway store"

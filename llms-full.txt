@@ -53,7 +53,7 @@ The guide has five steps. Every step is optional:
 |---|---|
 | Welcome | This machine (memory, GPU), the data folder and why it was chosen, the sign-in mode, whether the gateway starts at login |
 | Local engines | The engines found on this machine (Ollama, LM Studio, MLX, llama.cpp, ...), whether each is installed and running, and an **Install** button. The confirmation shows the exact command before anything runs |
-| Default model | The text model currently configured, **Use recommended defaults** (the same action as the Multimodal tab's *Apply recommended*: text, voice, images and video, where this computer can run them), a **Download** button for each recommended model that is missing, a card with the reason for each route this computer cannot run (*Not available here* for a recommendation, *Cannot run here* for a route already configured with a provider that does not run on this computer), and the Models tab's catalog cards with **Fits this computer** on (one card per model, every 4-bit and 8-bit build, filters, **Open in the Models tab**). A downloaded text model's **Use as default** makes it the default text model |
+| Default model | The text model currently configured, **Use recommended defaults** (the same action as the Multimodal tab's *Apply recommended*: text, voice, transcription (speech input), images and video, where this computer can run them), a **Download** button for each recommended model that is missing, a card with the reason for each route this computer cannot run (*Not available here* for a recommendation, *Cannot run here* for a route already configured with a provider that does not run on this computer), and the Models tab's catalog cards with **Fits this computer** on (one card per model, every 4-bit and 8-bit build, filters, **Open in the Models tab**). A downloaded text model's **Use as default** makes it the default text model |
 | Apps | "Apps that work with this gateway": one card per browser app (Observer, Continuum, Code, Entity, Flow Editor), then the desktop **Assistant**: name, status, one line of description and one row of buttons at the same height on every card: **Install** when it is not installed (on Code it installs the terminal app too, when a ready-made download exists for this computer; nothing opens by itself), then **Open** (Open also starts a stopped app), plus **Open in Terminal** on Code when its terminal app is installed. The Assistant opens on the gateway's computer only. Stop, Show log, Update, versions and commands appear with **Technical details** (see [console.md](docs/console.md#apps-tab)) |
 | Done | How to reopen the console, the login-service status, one line saying the console also exists as a terminal app, and (with **Technical details**) the CLI equivalents and the terminal console's install and open commands |
 
@@ -310,8 +310,8 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.7.2`
-- `abstractcore>=2.19.1`
+- `AbstractRuntime>=0.7.3`
+- `abstractcore>=2.19.2`
 - `abstractvoice>=0.13.0` (the voice listings import `abstractvoice.engine_runtime`)
 - `abstractagent>=0.3.17`
 - `AbstractMemory[lancedb]>=0.3.0`
@@ -4948,7 +4948,14 @@ lock support never turns the successful load into a failure). `POST
 /models/unload` selects the runtime by `runtime_id` or by
 `task`/`provider`/`model`. Both relay Runtime's host facade and return the
 normalized residency response (`operation`, affected records, and in-band
-`ok=false` errors instead of opaque failures).
+`ok=false` errors instead of opaque failures). A load response carries
+`loaded_new` (`true` when the call loaded the model, `false` when it was
+already in memory) and the matching action (`loaded` / `already_loaded`).
+
+A local image or video model loaded with `task: "image_generation"` (or
+`"video_generation"`) serves the following requests for that model on the loaded
+pipeline, in the gateway process; a model that was not loaded runs each
+request in an isolated worker process that loads it for that request.
 
 One unload failure gets a real status code: when the target model is locked,
 `POST /models/unload` answers **HTTP 409** with the normalized refusal payload
@@ -6535,7 +6542,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.7.3
+docker pull ghcr.io/lpalbou/abstractgateway:0.7.4
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -6543,7 +6550,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.7.3-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.7.4-gpu
 ```
 
 The image names `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -6825,7 +6832,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.7.3-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.7.4-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -6983,7 +6990,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.7.3
+docker pull ghcr.io/lpalbou/abstractgateway:0.7.4
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -6991,7 +6998,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.7.3-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.7.4-gpu
 ```
 
 The `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR names are
@@ -7514,7 +7521,7 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.7.3-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:0.7.4-gpu` with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -8047,6 +8054,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.7.4] - 2026-09-29
+
+Dependencies: AbstractCore 2.19.2 or newer and AbstractRuntime 0.7.3 or newer (also in the `apple` and `gpu`
+settings). The terminal console (`abstractgateway-console`, see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md))
+is 0.11.2.
+
+### Changed
+- **Speech input is part of the fresh setup.** With AbstractCore 2.19.2 a fresh install seeds `input.voice`
+  (faster-whisper `base`) with text, voice and image, and **Use recommended defaults** / *Apply recommended* set it
+  too, so transcription runs locally without an OpenAI key. The capability-defaults payload reports
+  `seeded: "recommended-v2"`; a store seeded by an earlier release gains the speech-input route once. The
+  `apply-recommended` endpoint's `only` selector accepts `stt` for speech input.
+- **A loaded image or video model is reused.** After **Load** in the console (or `POST /models/load`), image and
+  video requests for that model run on the loaded pipeline instead of loading the model again for each request
+  (AbstractRuntime 0.7.3). Measured with FLUX.2 [klein] 4B on a 16 GB NVIDIA card: 17-19 s per image instead of
+  54-59 s.
+
+### Fixed
+- The setup guide's speech-input card is titled **Transcription** in the web console and the terminal console, and
+  the terminal console's Models screen treats speech input as a recommended route (`a` offers **Replace mine too**).
+- A fresh image-model load reports `loaded` (`loaded_new: true`) instead of `already_loaded` (AbstractVision 0.3.33).
+- Unloading a Diffusers image model releases its memory (AbstractVision 0.3.33).
 
 ## [0.7.3] - 2026-09-29
 

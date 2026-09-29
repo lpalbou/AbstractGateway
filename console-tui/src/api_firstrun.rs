@@ -383,7 +383,7 @@ pub fn route_title(route: &str) -> &'static str {
     match route {
         "input.text" | "output.text" => "Chat and text",
         "output.voice" => "Voice",
-        "input.audio" => "Transcription",
+        "input.voice" => "Transcription",
         "output.image" => "Images",
         "input.image" => "Vision",
         "output.video" => "Video",

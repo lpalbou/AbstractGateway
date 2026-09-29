@@ -39,8 +39,8 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.7.2`
-- `abstractcore>=2.19.1`
+- `AbstractRuntime>=0.7.3`
+- `abstractcore>=2.19.2`
 - `abstractvoice>=0.13.0` (the voice listings import `abstractvoice.engine_runtime`)
 - `abstractagent>=0.3.17`
 - `AbstractMemory[lancedb]>=0.3.0`

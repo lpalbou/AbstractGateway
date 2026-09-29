@@ -1120,10 +1120,10 @@ def _unreadable_store_errors(config_file: Any) -> list[str]:
 
 
 def _seed_marker(**kwargs: Any) -> Optional[str]:
-    """`"recommended-v1"` when this store's routes came from the fresh-install
-    seed, else ``None``. Provenance only -- see
+    """The seed version (`"recommended-v2"` since AbstractCore 2.19.2) when this
+    store's routes came from the fresh-install seed, else ``None``. Provenance only -- see
     `config_facade.capability_defaults_seed_marker`. Surfaced on the payload so
-    a console can label the three seeded rows "recommended" instead of letting
+    a console can label the seeded rows "recommended" instead of letting
     them read as values the operator chose."""
     try:
         return config_facade.capability_defaults_seed_marker(**kwargs)

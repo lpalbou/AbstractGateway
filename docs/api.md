@@ -1412,7 +1412,14 @@ lock support never turns the successful load into a failure). `POST
 /models/unload` selects the runtime by `runtime_id` or by
 `task`/`provider`/`model`. Both relay Runtime's host facade and return the
 normalized residency response (`operation`, affected records, and in-band
-`ok=false` errors instead of opaque failures).
+`ok=false` errors instead of opaque failures). A load response carries
+`loaded_new` (`true` when the call loaded the model, `false` when it was
+already in memory) and the matching action (`loaded` / `already_loaded`).
+
+A local image or video model loaded with `task: "image_generation"` (or
+`"video_generation"`) serves the following requests for that model on the loaded
+pipeline, in the gateway process; a model that was not loaded runs each
+request in an isolated worker process that loads it for that request.
 
 One unload failure gets a real status code: when the target model is locked,
 `POST /models/unload` answers **HTTP 409** with the normalized refusal payload

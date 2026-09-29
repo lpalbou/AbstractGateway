@@ -27,10 +27,16 @@ pub const ADMIN_KEYS: &[&str] = &["w", "a", "D", "C"];
 
 /// The route keys apply-recommended plans — AbstractCore's
 /// `RECOMMENDED_SELECTORS` (config/capability_defaults.py: text, voice,
-/// image, video). A task row (`output.image.text_to_image`) is not among
-/// them: `a` never replaces it, only an edit does.
-pub const RECOMMENDED_ROUTE_KEYS: [&str; 4] =
-    ["input.text", "output.voice", "output.image", "output.video"];
+/// stt, image, video; `stt` is speech input, `input.voice`). A task row
+/// (`output.image.text_to_image`) is not among them: `a` never replaces
+/// it, only an edit does.
+pub const RECOMMENDED_ROUTE_KEYS: [&str; 5] = [
+    "input.text",
+    "output.voice",
+    "input.voice",
+    "output.image",
+    "output.video",
+];
 
 /// What fixes a configured route this computer cannot run — the truth
 /// per row and per principal: `a` → "Replace mine too" only for a key the
@@ -697,7 +703,7 @@ fn apply_recommended(cx: Scope, ctx: &Ctx) {
     }
     let ctx_keep = ctx.clone();
     let prompt = abstracttui::app::ChoicePrompt::new(
-        "Apply the framework's recommended routes (text, voice, images, video — what this computer can run) on the execution host?"
+        "Apply the framework's recommended routes (text, voice, transcription, images, video — what this computer can run) on the execution host?"
             .to_string(),
     )
     .option("keep", "Apply — keep routes I configured")

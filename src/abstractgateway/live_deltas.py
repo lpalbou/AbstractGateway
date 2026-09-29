@@ -86,7 +86,8 @@ _role_lock = threading.Lock()
 # silently start without its session history. 0.7.2: the local STT model list
 # names each engine's own models (the Voice screen), and Runtime depends on
 # AbstractCore's three install settings (the release matrix moves together).
-ABSTRACTRUNTIME_FLOOR = "0.7.2"
+# 0.7.3: an explicitly loaded image/video model serves generation in-process.
+ABSTRACTRUNTIME_FLOOR = "0.7.3"
 
 
 class LiveDeltaError(RuntimeError):

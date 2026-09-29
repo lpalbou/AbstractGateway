@@ -514,6 +514,15 @@ def test_first_run_names_the_video_route() -> None:
     assert "61.4 GiB" in card and "first-run-download" not in card
 
 
+def test_first_run_transcription_card_is_keyed_by_the_speech_input_route() -> None:
+    """AbstractCore's speech-input route is `input.voice` (recommended-v2 seeds it): the
+    Transcription card must be found under that key, or the card falls back to the raw key."""
+    out = _run([], "return [FIRST_RUN_ROUTE_COPY['input.voice'] || null, FIRST_RUN_ROUTE_COPY['input.audio'] || null];", _first_run_extra())
+    voice, audio = out
+    assert voice is not None and voice["title"] == "Transcription", voice
+    assert audio is None, audio
+
+
 # --- route_unavailable (lead's contract, REVIEW-1 "Shared contract") ----------
 # A CONFIGURED row whose provider cannot run here. Shape = recommendation_unavailable;
 # the flag is AbstractCore's `configured_routes_unavailable(routes, cuda24)`
@@ -627,7 +636,7 @@ def test_first_run_recommended_card_carries_the_route_warning() -> None:
     html = _render_first_run_model([_BROKEN_IMAGE_ROW], rec)
     assert html.count("cannot run on this computer") == 1, html
     assert "Configured now (mlx-gen / AbstractFramework/flux.2-klein-4b-8bit)" in html
-    assert "Sets the recommended models for text, voice, images and video" in html
+    assert "Sets the recommended models for text, voice, transcription, images and video" in html
 
 
 def test_catalog_use_as_default_sets_exactly_the_chosen_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

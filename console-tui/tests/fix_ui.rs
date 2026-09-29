@@ -829,6 +829,8 @@ fn apply_report_needs_attention_and_offers_the_web_second_pass() {
 fn broken_route_fix_says_the_truth() {
     use abstractgateway_console::ui::routes::broken_route_fix;
     assert!(broken_route_fix("output.image", true).contains("Replace mine too"));
+    // Speech input is part of AbstractCore's recommendation (selector `stt`, 2.19.2).
+    assert!(broken_route_fix("input.voice", true).contains("Replace mine too"));
     assert!(broken_route_fix("output.image.text_to_image", true).contains("Enter edits it"));
     let na = broken_route_fix("output.image", false);
     assert!(!na.contains("a,") && na.contains("an admin"), "{na}");

@@ -284,6 +284,8 @@ def test_a_fresh_install_serves_the_three_recommended_routes_with_their_provenan
     for key, provider, model in (
         ("output.text", "lmstudio", "qwen/qwen3.5-9b"),
         ("output.voice", "supertonic", "supertonic-3"),
+        # Speech input joined the starter set in AbstractCore 2.19.2 (seed recommended-v2).
+        ("input.voice", "faster-whisper", "base"),
     ):
         assert rows[key]["configured"] is True, f"{key} must be an ordinary configured row"
         assert rows[key]["provider"] == provider
@@ -294,7 +296,7 @@ def test_a_fresh_install_serves_the_three_recommended_routes_with_their_provenan
     assert image["configured"] is True
     assert (image["provider"], image["model"]) == ("diffusers", "black-forest-labs/FLUX.2-klein-4B")
 
-    assert payload.get("seeded") == "recommended-v1", "the payload must carry the seed provenance"
+    assert payload.get("seeded") == "recommended-v2", "the payload must carry the seed provenance"
 
 
 def test_provider_model_resolver_uses_execution_host_capability_default(

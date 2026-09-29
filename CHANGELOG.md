@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-09-29
+
+Dependencies: AbstractCore 2.19.2 or newer and AbstractRuntime 0.7.3 or newer (also in the `apple` and `gpu`
+settings). The terminal console (`abstractgateway-console`, see [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md))
+is 0.11.2.
+
+### Changed
+- **Speech input is part of the fresh setup.** With AbstractCore 2.19.2 a fresh install seeds `input.voice`
+  (faster-whisper `base`) with text, voice and image, and **Use recommended defaults** / *Apply recommended* set it
+  too, so transcription runs locally without an OpenAI key. The capability-defaults payload reports
+  `seeded: "recommended-v2"`; a store seeded by an earlier release gains the speech-input route once. The
+  `apply-recommended` endpoint's `only` selector accepts `stt` for speech input.
+- **A loaded image or video model is reused.** After **Load** in the console (or `POST /models/load`), image and
+  video requests for that model run on the loaded pipeline instead of loading the model again for each request
+  (AbstractRuntime 0.7.3). Measured with FLUX.2 [klein] 4B on a 16 GB NVIDIA card: 17-19 s per image instead of
+  54-59 s.
+
+### Fixed
+- The setup guide's speech-input card is titled **Transcription** in the web console and the terminal console, and
+  the terminal console's Models screen treats speech input as a recommended route (`a` offers **Replace mine too**).
+- A fresh image-model load reports `loaded` (`loaded_new: true`) instead of `already_loaded` (AbstractVision 0.3.33).
+- Unloading a Diffusers image model releases its memory (AbstractVision 0.3.33).
+
 ## [0.7.3] - 2026-09-29
 
 Dependencies: AbstractCore 2.19.1 or newer and AbstractRuntime 0.7.2 or newer (also in the `apple` and `gpu`

@@ -1,5 +1,17 @@
 # Changelog — abstractgateway-console
 
+## 0.11.2 (2026-09-29)
+
+Needs abstractcore-console 0.4; works with AbstractGateway 0.7.0 and newer (speech input in the recommendation
+needs AbstractGateway 0.7.4 with AbstractCore 2.19.2).
+
+### Fixed
+- Models: speech input (`input.voice`) is one of the routes the recommendation plans, so a configured transcription
+  route this computer cannot run offers `a`, then **Replace mine too**, like text, voice, image and video.
+- Setup guide: the speech-input download card is titled **Transcription** (it was keyed to a route name the gateway
+  never sends, so it read **Model**).
+- The apply-recommended confirmation lists transcription with text, voice, images and video.
+
 ## 0.11.1 (2026-09-29)
 
 Needs abstractcore-console 0.4; works with AbstractGateway 0.7.0 and newer (the gateway's own update rendering
