@@ -871,6 +871,14 @@ def _write_installer_script(folder: Path, data: bytes, sha256: str) -> Path:
             old.unlink()
         except OSError:
             pass
+    # A temporary file a crashed write left behind (older than an hour: never one being written).
+    stale_before = time.time() - 3600.0
+    for tmp_old in folder.glob(".install-*.tmp"):
+        try:
+            if tmp_old.stat().st_mtime < stale_before:
+                tmp_old.unlink()
+        except OSError:
+            pass
     fd, tmp = tempfile.mkstemp(dir=str(folder), prefix=".install-", suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as fh:
@@ -995,7 +1003,10 @@ def _start_update_locked(*, info: Optional[InstallInfo], runner: Any, installer_
             stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True,
+            # Any byte sequence the command prints is logged (a byte that is not UTF-8 becomes
+            # U+FFFD), never a decode error that would end the job while the command runs on.
+            encoding="utf-8",
+            errors="replace",
             bufsize=1,
             env=env,
             # Its own process group, so the watchdog stops the whole tree (the installer's uv,
@@ -1009,8 +1020,7 @@ def _start_update_locked(*, info: Optional[InstallInfo], runner: Any, installer_
         timeout_s = float(JOB_TIMEOUT_S)
         timed_out = threading.Event()
 
-        def _kill() -> None:
-            timed_out.set()
+        def _kill_group() -> None:
             try:
                 if os.name != "nt":
                     import signal
@@ -1021,6 +1031,10 @@ def _start_update_locked(*, info: Optional[InstallInfo], runner: Any, installer_
             except Exception:
                 pass
 
+        def _kill() -> None:
+            timed_out.set()
+            _kill_group()
+
         watchdog = threading.Timer(timeout_s, _kill)
         watchdog.daemon = True
         watchdog.start()
@@ -1028,6 +1042,13 @@ def _start_update_locked(*, info: Optional[InstallInfo], runner: Any, installer_
             for line in proc.stdout:
                 on_line(line.rstrip("\n")[:LOG_LINE_MAX_CHARS])
             code = int(proc.wait())
+        except BaseException:
+            # Whatever went wrong here, the job must not leave "running" while the command
+            # still runs (a second Update would start a second installer next to it): stop
+            # the whole group and reap it, then report the error.
+            _kill_group()
+            proc.wait()
+            raise
         finally:
             watchdog.cancel()
         if timed_out.is_set():
@@ -1043,11 +1064,12 @@ def _start_update_locked(*, info: Optional[InstallInfo], runner: Any, installer_
         before = take_snapshot(inst.python) if inst.kind == "installer" else None
         try:
             code = int((runner or _default_runner)(list(command), on_line))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - the runner stopped and reaped the command first
             with _job_lock:
                 job.state = "failed"
                 job.error = f"{type(exc).__name__}: {exc}"
                 job.finished_at = _utc_now_iso()
+                job.proc = None
             return
         if inst.kind == "installer":
             _finish_installer_job(job, inst, code, before, take_snapshot(inst.python) if code == 0 else None, named)
@@ -1182,6 +1204,9 @@ def update_view(inst: InstallInfo, check: Optional[Dict[str, Any]], job: Dict[st
         hint = str(inst.reason or "")
         if inst.display_command:
             hint += f" — run: {inst.display_command}"
+    elif installer and not inst.upgradable:
+        # Windows: the gateway cannot run the installer, so the hint says what the person runs.
+        hint = f"installed with the {FRAMEWORK_NAME} installer; to update, run in PowerShell: {inst.display_command}"
     elif installer:
         hint = f"installed with the {FRAMEWORK_NAME} installer; Update runs it again (the same script as the one-line install)"
     elif inst.kind:
