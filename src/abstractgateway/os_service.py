@@ -1051,7 +1051,8 @@ def execute_plan(
                         pass
                 message += (
                     f"\n{why}. Start at login is off: {item} was removed, so nothing loads at the next login. "
-                    "Fix the cause above, then run: abstractgateway service enable"
+                    "If the gateway was running as this login item, `launchctl bootout` stopped it. Fix the cause "
+                    "above, then run: abstractgateway service install (registers the login item and starts it now)"
                 )
             raise SystemExit(message)
     for r in plan.remove:
