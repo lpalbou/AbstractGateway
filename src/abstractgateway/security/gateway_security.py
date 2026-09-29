@@ -808,6 +808,15 @@ class GatewaySecurityMiddleware:
         if method == "POST" and p in {"/api/gateway/session/login", "/api/gateway/session/claim"}:
             # /session/claim enforces its own loopback-peer rule in the route.
             return True
+        if method == "POST" and p in {"/api/gateway/session/recovery/request", "/api/gateway/session/recovery/redeem"}:
+            # Account recovery by email (mail/recovery.py): single-use hashed
+            # codes, rate-limited per account and client address, a constant
+            # answer (no enumeration).
+            return True
+        if method in {"GET", "HEAD"} and p == "/api/gateway/session/recovery":
+            # Whether the sign-in page offers the email options: one gateway-wide
+            # boolean, never per account.
+            return True
         if method == "POST" and p == "/api/gateway/apps/desktop-handover":
             # The desktop Assistant has no credentials yet: the route itself
             # answers direct loopback callers only, with a one-time code.

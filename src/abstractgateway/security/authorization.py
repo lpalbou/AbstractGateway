@@ -81,8 +81,12 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
     GatewayRoutePolicy(resource="backlog", reason_code="admin_required", prefixes=("/api/gateway/backlog",)),
     GatewayRoutePolicy(resource="triage", reason_code="admin_required", prefixes=("/api/gateway/triage",)),
     GatewayRoutePolicy(resource="reports", reason_code="admin_required", prefixes=("/api/gateway/reports",)),
-    # Bridges currently read process/global configuration and provider credentials.
-    # Keep them operator-only until per-principal bridge config exists.
+    # Legacy aliases of the retired process-wide email routes: they now act on
+    # the CALLING admin's own account (routes/email.py) and are removed one
+    # minor later. Per-user email lives at /api/gateway/me/email* — self-only
+    # BY CONSTRUCTION (the plane is resolved from the authenticated principal,
+    # never from a path or body id), so no row is needed there; the admin's
+    # per-user switch (/api/gateway/admin/users/{id}/email) rides the admin row.
     GatewayRoutePolicy(resource="email", reason_code="admin_required", prefixes=("/api/gateway/email",)),
     # Host/model MUTATIONS are operator surfaces; the READ side (which models
     # are resident, how much memory is left — /models/loaded, /host/state,

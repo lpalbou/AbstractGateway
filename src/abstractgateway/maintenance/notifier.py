@@ -48,46 +48,41 @@ def send_telegram_notification(*, text: str) -> Tuple[bool, Optional[str]]:
     return False, str(err or "Telegram send failed")
 
 
-def _email_recipients() -> List[str]:
-    raw = (
-        _env("ABSTRACT_BACKLOG_EMAIL_TO", "ABSTRACTGATEWAY_BACKLOG_EMAIL_TO")
-        or _env("ABSTRACT_TRIAGE_EMAIL_TO", "ABSTRACTGATEWAY_TRIAGE_EMAIL_TO")
-        or ""
-    )
-    parts = [p.strip() for p in raw.replace(";", ",").split(",") if p.strip()]
-    return parts
-
-
-def _email_account() -> Optional[str]:
-    return (
-        _env("ABSTRACT_BACKLOG_EMAIL_ACCOUNT", "ABSTRACTGATEWAY_BACKLOG_EMAIL_ACCOUNT")
-        or _env("ABSTRACT_TRIAGE_EMAIL_ACCOUNT", "ABSTRACTGATEWAY_TRIAGE_EMAIL_ACCOUNT")
-        or _env("ABSTRACT_EMAIL_DEFAULT_ACCOUNT")
-        or _env("ABSTRACT_EMAIL_ACCOUNT_NAME")
-    )
-
-
 def send_email_notification(*, subject: str, body_text: str) -> Tuple[bool, Optional[str]]:
-    to = _email_recipients()
-    if not to:
-        return False, "Missing EMAIL_TO recipients"
+    """Email the gateway operator through the notification dispatcher (framework backlog 0992).
+
+    The notice goes to the admin's registered address, sent by the admin's own email account
+    (Settings -> My email) through the durable outbox: the recipient policy and send limits
+    apply, a retry never sends it twice. The retired recipient/account variables
+    (ABSTRACT_BACKLOG_EMAIL_TO, ABSTRACT_TRIAGE_EMAIL_TO, *_EMAIL_ACCOUNT, ABSTRACT_EMAIL_*)
+    are ignored. Returns (sent, error).
+    """
+
+    import hashlib
 
     try:
-        from abstractruntime.integrations.abstractcore import send_email
-    except Exception as e:
-        return False, f"Email helpers unavailable: {e}"
-
+        from ..mail.accounts import admin_plane, email_usable
+        from ..mail.notifications import SUBJECT_PREFIX, NotificationOutbox, idempotency_key
+    except Exception as e:  # noqa: BLE001
+        return False, f"Email notifications unavailable: {e}"
     try:
-        out: Dict[str, Any] = send_email(
-            account=_email_account(),
-            to=to,
-            subject=str(subject or ""),
-            body_text=str(body_text or ""),
-        )
-    except Exception as e:
+        plane = admin_plane()
+        if not email_usable(plane):
+            return False, "The admin has no connected, turned-on email account (Settings -> My email)."
+        body = str(body_text or "").rstrip() + "\n\nSent by your AbstractFramework gateway (maintenance notice).\n"
+        subj0 = str(subject or "").strip() or "Maintenance notice"
+        subj = subj0 if subj0.startswith(SUBJECT_PREFIX) else f"{SUBJECT_PREFIX} {subj0}"
+        key = idempotency_key("maintenance", subj, hashlib.sha256(body.encode("utf-8")).hexdigest())
+        outbox = NotificationOutbox(plane)
+        outbox.enqueue(key, "maintenance", subj, body)
+        outbox.deliver()
+        row = next((r for r in outbox.rows(limit=200) if r["idempotency_key"] == key), None)
+    except Exception as e:  # noqa: BLE001
         return False, str(e)
-
-    if isinstance(out, dict) and out.get("success") is True:
+    if row is None:
+        return False, "The notice was not recorded."
+    if row["state"] == "sent":
         return True, None
-    err = out.get("error") if isinstance(out, dict) else None
-    return False, str(err or "Email send failed")
+    if row["state"] == "queued":
+        return False, f"Queued: {row.get('error_cause') or 'waiting for the send window'}"
+    return False, str(row.get("error_cause") or row["state"])

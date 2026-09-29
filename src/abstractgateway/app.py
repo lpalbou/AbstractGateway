@@ -11,7 +11,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from .console import gateway_console_html
 
-from .routes import automations_router, engines_router, entities_router, entity_replay_router, gateway_router, triage_router
+from .routes import automations_router, email_router, engines_router, entities_router, entity_replay_router, gateway_router, triage_router
 from .security import GatewaySecurityMiddleware, load_gateway_auth_policy_from_env
 
 
@@ -173,6 +173,9 @@ app.include_router(start_at_login_router, prefix="/api")
 # Automations v1 façade (routes/automations.py): literal /gateway/automations...
 # and /gateway/trigger-sources paths, before the parametrized gateway router.
 app.include_router(automations_router, prefix="/api")
+# Per-user email (framework backlog 0992): /gateway/me/email*, /me/notifications,
+# /admin/users/{id}/email, the sign-in recovery routes and the legacy /email/* aliases.
+app.include_router(email_router, prefix="/api")
 app.include_router(gateway_router, prefix="/api")
 app.include_router(triage_router, prefix="/api")
 

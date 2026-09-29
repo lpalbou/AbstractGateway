@@ -9,6 +9,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 
+@pytest.fixture(autouse=True)
+def _managed_test_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The allowlist is empty in the product since the email variables were retired
+    (framework backlog 0992); these tests exercise the mechanism with one test key."""
+    import abstractgateway.maintenance.process_manager as pm
+
+    spec = pm.ManagedEnvVarSpec(key="ABSTRACT_TEST_MANAGED_VAR", label="test", description="test variable", category="test")
+    spec_cfg = pm.ManagedEnvVarSpec(key="ABSTRACT_TEST_MANAGED_PATH", label="test path", description="test path variable", category="test")
+    monkeypatch.setattr(pm, "managed_env_var_allowlist", lambda: {spec.key: spec, spec_cfg.key: spec_cfg})
+
+
 def _wait_until(predicate, *, timeout_s: float = 6.0, poll_s: float = 0.05) -> None:
     end = time.time() + float(timeout_s)
     while time.time() < end:
@@ -83,7 +94,7 @@ def test_process_manager_list_is_gracefully_disabled_without_repo_root(tmp_path:
         body2 = r2.json()
         assert body2.get("enabled") is True
         keys = {it.get("key") for it in (body2.get("vars") or []) if isinstance(it, dict)}
-        assert "ABSTRACT_EMAIL_FROM" in keys
+        assert "ABSTRACT_TEST_MANAGED_VAR" in keys
 
 
 @pytest.mark.integration

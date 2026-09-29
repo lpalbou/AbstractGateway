@@ -1,0 +1,208 @@
+"""Per-user email accounts over HTTP (framework backlog 0992 WP3): connect / test / disconnect,
+typed failures with cause and fix, RBAC (a user reaches only their own account), the admin's
+per-user switch without content, the sentinel-password sweep.
+
+Every test drives the real email + gateway routers behind the real security middleware,
+against AbstractCore's hermetic IMAP/SMTP servers (verified TLS, throwaway CA)."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from email_fixtures import *  # noqa: F401,F403 - fixtures
+from email_fixtures import ADMIN, ALICE, BOB, PASSWORDS, all_files_bytes, connect_body, plane_of
+
+pytestmark = pytest.mark.integration
+
+
+def test_connect_test_disconnect_round_trip(gateway, imap, smtp) -> None:
+    c = gateway["client"]
+    r = c.get("/api/gateway/me/email", headers=gateway["alice"])
+    assert r.status_code == 200, r.text
+    assert r.json()["configured"] is False
+
+    r = c.put("/api/gateway/me/email", headers=gateway["alice"], json=connect_body(ALICE, imap, smtp))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["configured"] is True and body["address"] == ALICE
+    assert body["secret_set"] is True
+    assert body["effective_enabled"] is True
+    assert body["registered_address"] == ALICE
+    # The default recipient policy: an allowlist holding the registered address.
+    assert body["policy"]["mode"] == "allowlist" and body["policy"]["entries"] == [ALICE]
+    assert body["limits"]["per_hour"] == 20 and body["limits"]["per_day"] == 100
+    assert PASSWORDS[ALICE] not in r.text
+    assert "config_file" not in body
+
+    r = c.post("/api/gateway/me/email/test", headers=gateway["alice"])
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is True and r.json()["imap"]["ok"] is True and r.json()["smtp"]["ok"] is True
+
+    plane = plane_of("alice")
+    assert (plane.email_dir / "account" / "email" / "secret.enc").is_file()
+
+    r = c.delete("/api/gateway/me/email", headers=gateway["alice"])
+    assert r.status_code == 200, r.text
+    assert r.json()["configured"] is False and r.json()["secret_set"] is False
+    assert not (plane.email_dir / "account" / "email" / "secret.enc").exists()
+
+
+def test_wrong_password_names_cause_and_fix_and_stores_nothing(gateway, imap, smtp) -> None:
+    c = gateway["client"]
+    r = c.put("/api/gateway/me/email", headers=gateway["alice"], json=connect_body(ALICE, imap, smtp, password="wrong-password"))
+    assert r.status_code == 422, r.text
+    detail = r.json()["detail"]
+    assert detail["reason_code"] == "email_auth_failed"
+    assert detail["cause"] and detail["fix"]
+    assert "wrong-password" not in r.text
+    assert c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["configured"] is False
+
+
+def test_user_reaches_only_their_own_account(gateway, imap, smtp) -> None:
+    c = gateway["client"]
+    assert c.put("/api/gateway/me/email", headers=gateway["alice"], json=connect_body(ALICE, imap, smtp)).status_code == 200
+
+    # Bob's /me is Bob's plane: nothing of Alice's is visible, testable or removable.
+    bob_view = c.get("/api/gateway/me/email", headers=gateway["bob"]).json()
+    assert bob_view["configured"] is False and bob_view["address"] == ""
+    assert ALICE not in json.dumps(bob_view)
+    r = c.post("/api/gateway/me/email/test", headers=gateway["bob"])
+    assert r.status_code == 404 and r.json()["detail"]["reason_code"] == "email_not_configured"
+    c.delete("/api/gateway/me/email", headers=gateway["bob"])
+    assert c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["configured"] is True
+
+    # No path or body id selects another user's account: admin routes refuse non-admins,
+    # the legacy aliases are admin-only and act on the CALLER's own account.
+    assert c.get("/api/gateway/admin/users/alice/email", headers=gateway["bob"]).status_code == 403
+    assert c.put("/api/gateway/admin/users/alice/email", headers=gateway["bob"], json={"enabled": False}).status_code == 403
+    assert c.get("/api/gateway/email/accounts", headers=gateway["bob"]).status_code == 403
+    assert c.get("/api/gateway/email/messages", headers=gateway["bob"]).status_code == 403
+    assert c.post("/api/gateway/email/send", headers=gateway["bob"], json={"to": ALICE, "subject": "x"}).status_code == 403
+
+    # The two planes are different directories.
+    assert plane_of("alice").root != plane_of("bob").root
+
+
+def test_entities_have_no_mailbox(gateway) -> None:
+    from abstractgateway.users import GatewayUserRegistry
+
+    _rec, token = GatewayUserRegistry().create_user(user_id="luna", roles=["entity"])
+    r = gateway["client"].get("/api/gateway/me/email", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 403, r.text
+    assert r.json()["detail"]["reason_code"] == "email_principal_refused"
+
+
+def test_admin_sees_status_never_content_or_correspondents(gateway, imap, smtp) -> None:
+    c = gateway["client"]
+    assert c.put("/api/gateway/me/email", headers=gateway["alice"], json=connect_body(ALICE, imap, smtp)).status_code == 200
+    assert c.put("/api/gateway/me/email/policy", headers=gateway["alice"], json={"mode": "allowlist", "entries": [ALICE, "friend@example.test"]}).status_code == 200
+
+    r = c.get("/api/gateway/admin/users/alice/email", headers=ADMIN)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert set(body) == {
+        "tenant_id", "user_id", "configured", "address", "auth_kind", "user_enabled", "admin_enabled",
+        "effective_enabled", "status", "watcher", "state",
+    }
+    assert body["configured"] is True and body["address"] == ALICE and body["state"] == "connected"
+    text = r.text
+    assert "friend@example.test" not in text  # the user's correspondents stay private
+    assert PASSWORDS[ALICE] not in text
+    assert "policy" not in body and "imap" not in body
+
+    # The admin's legacy mail routes read the ADMIN's own mailbox (none here), never Alice's.
+    r = c.get("/api/gateway/email/messages", headers=ADMIN)
+    assert r.status_code == 404 and r.json()["detail"]["reason_code"] == "email_not_configured"
+    assert c.get("/api/gateway/admin/users/nobody/email", headers=ADMIN).status_code == 404
+
+
+def test_admin_switch_turns_email_off_and_keeps_settings(gateway, imap, smtp) -> None:
+    c = gateway["client"]
+    assert c.put("/api/gateway/me/email", headers=gateway["alice"], json=connect_body(ALICE, imap, smtp)).status_code == 200
+    r = c.put("/api/gateway/admin/users/alice/email", headers=ADMIN, json={"enabled": False})
+    assert r.status_code == 200, r.text
+    assert r.json()["admin_enabled"] is False and r.json()["state"] == "turned off by an administrator"
+
+    me = c.get("/api/gateway/me/email", headers=gateway["alice"]).json()
+    assert me["configured"] is True and me["admin_enabled"] is False and me["effective_enabled"] is False
+    assert me["admin_disabled"]["cause"] and me["admin_disabled"]["fix"]
+
+    # Sending (a test notification) refuses with the admin's cause.
+    r = c.post("/api/gateway/me/notifications/test", headers=gateway["alice"])
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is False and r.json()["error"]["code"] == "email_disabled"
+    assert smtp.messages == []
+
+    # The user cannot turn it back on themselves: their switch is a separate one.
+    c.put("/api/gateway/me/email/enabled", headers=gateway["alice"], json={"enabled": True})
+    assert c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["effective_enabled"] is False
+
+    assert c.put("/api/gateway/admin/users/alice/email", headers=ADMIN, json={"enabled": True}).status_code == 200
+    assert c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["effective_enabled"] is True
+
+    audit = (gateway["data_dir"] / "audit_log.jsonl").read_text(encoding="utf-8")
+    events = [json.loads(line) for line in audit.splitlines() if '"event"' in line]
+    assert any(e["event"] == "email.capability_changed" and e["user_id"] == "alice" and e["enabled"] is False for e in events)
+
+
+def test_policy_limits_and_user_switch(gateway, imap, smtp) -> None:
+    c = gateway["client"]
+    assert c.put("/api/gateway/me/email", headers=gateway["alice"], json=connect_body(ALICE, imap, smtp)).status_code == 200
+
+    r = c.put("/api/gateway/me/email/policy", headers=gateway["alice"], json={"mode": "allowlist", "entries": [ALICE, "example.org"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["policy"] == {"mode": "allowlist", "entries": [ALICE, "example.org"], "default": False}
+    r = c.post("/api/gateway/me/email/policy/check", headers=gateway["alice"], json={"addresses": ["a@example.org", "x@elsewhere.test"]})
+    assert r.status_code == 200, r.text
+    verdicts = {v["address"]: v["allowed"] for v in r.json()["recipients"]}
+    assert verdicts == {"a@example.org": True, "x@elsewhere.test": False}
+
+    r = c.put("/api/gateway/me/email/policy", headers=gateway["alice"], json={"mode": "nonsense", "entries": []})
+    assert r.status_code == 400 and r.json()["detail"]["reason_code"] == "email_invalid_settings"
+
+    r = c.put("/api/gateway/me/email/limits", headers=gateway["alice"], json={"per_hour": 5, "per_day": 50})
+    assert r.status_code == 200 and r.json()["limits"]["per_hour"] == 5 and r.json()["limits"]["per_day"] == 50
+
+    r = c.put("/api/gateway/me/email/enabled", headers=gateway["alice"], json={"enabled": False})
+    assert r.status_code == 200 and r.json()["enabled"] is False and r.json()["effective_enabled"] is False
+
+
+def test_ca_file_is_an_admin_setting(gateway, imap, smtp, ca) -> None:
+    body = connect_body(ALICE, imap, smtp)
+    body["imap"]["ca_file"] = str(ca.ca_pem)
+    r = gateway["client"].put("/api/gateway/me/email", headers=gateway["alice"], json=body)
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"]["reason_code"] == "email_invalid_settings"
+
+
+def test_sentinel_password_never_leaves_the_sealed_file(gateway, imap, smtp) -> None:
+    sentinel = "S3NTINEL-pw-7f3a9c"
+    imap.users[ALICE] = sentinel
+    smtp.users[ALICE] = sentinel
+    c = gateway["client"]
+    responses = []
+    r = c.put("/api/gateway/me/email", headers=gateway["alice"], json=connect_body(ALICE, imap, smtp, password=sentinel))
+    assert r.status_code == 200, r.text
+    responses.append(r.text)
+    for method, path in (("get", "/api/gateway/me/email"), ("post", "/api/gateway/me/email/test"), ("get", "/api/gateway/me/notifications")):
+        responses.append(getattr(c, method)(path, headers=gateway["alice"]).text)
+    responses.append(c.get("/api/gateway/admin/users/alice/email", headers=ADMIN).text)
+    for text in responses:
+        assert sentinel not in text
+    hits = [str(p) for p, data in all_files_bytes(Path(gateway["data_dir"])) if sentinel.encode() in data]
+    assert hits == [], f"the password appears in clear in: {hits}"
+    # And the sealed file does exist (the check above is not vacuous).
+    assert (plane_of("alice").email_dir / "account" / "email" / "secret.enc").is_file()
+
+
+def test_bob_connects_his_own_account_independently(gateway, imap, imap_bob, smtp) -> None:
+    c = gateway["client"]
+    assert c.put("/api/gateway/me/email", headers=gateway["alice"], json=connect_body(ALICE, imap, smtp)).status_code == 200
+    assert c.put("/api/gateway/me/email", headers=gateway["bob"], json=connect_body(BOB, imap_bob, smtp)).status_code == 200
+    assert c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["address"] == ALICE
+    assert c.get("/api/gateway/me/email", headers=gateway["bob"]).json()["address"] == BOB
+    c.delete("/api/gateway/me/email", headers=gateway["bob"])
+    assert c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["configured"] is True

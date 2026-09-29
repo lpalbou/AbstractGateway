@@ -35,106 +35,13 @@ def managed_env_var_allowlist() -> Dict[str, ManagedEnvVarSpec]:
     - Disallow arbitrary env var editing (PATH, LD_PRELOAD, PYTHONPATH, NODE_OPTIONS, etc).
     - Treat stored values as secrets: never return them to HTTP clients.
     """
-    specs = [
-        # Email (framework tools + bridges).
-        ManagedEnvVarSpec(
-            key="ABSTRACT_EMAIL_ACCOUNTS_CONFIG",
-            label="Email accounts config path",
-            description="Path to a YAML/JSON multi-account config file (e.g. /path/to/emails.yaml).",
-            category="email",
-        ),
-        ManagedEnvVarSpec(
-            key="ABSTRACT_EMAIL_SMTP_HOST",
-            label="SMTP host",
-            description="SMTP server hostname (e.g. smtp.gmail.com).",
-            category="email",
-        ),
-        ManagedEnvVarSpec(
-            key="ABSTRACT_EMAIL_SMTP_PORT",
-            label="SMTP port",
-            description="SMTP port (e.g. 587 for STARTTLS, 465 for implicit TLS).",
-            category="email",
-        ),
-        ManagedEnvVarSpec(
-            key="ABSTRACT_EMAIL_SMTP_USERNAME",
-            label="SMTP username",
-            description="SMTP username (often the email address).",
-            category="email",
-        ),
-        ManagedEnvVarSpec(
-            key="ABSTRACT_EMAIL_SMTP_PASSWORD_ENV_VAR",
-            label="SMTP password env var",
-            description="Name of the env var that contains the SMTP password (default: EMAIL_PASSWORD).",
-            category="email",
-        ),
-        ManagedEnvVarSpec(
-            key="ABSTRACT_EMAIL_SMTP_STARTTLS",
-            label="SMTP STARTTLS",
-            description="Whether to use STARTTLS for SMTP (true/false).",
-            category="email",
-        ),
-        ManagedEnvVarSpec(
-            key="ABSTRACT_EMAIL_FROM",
-            label="From email",
-            description="Default From address (used when the tool doesn't specify one).",
-            category="email",
-        ),
-        ManagedEnvVarSpec(
-            key="ABSTRACT_EMAIL_REPLY_TO",
-            label="Reply-To",
-            description="Optional default Reply-To address.",
-            category="email",
-        ),
-        ManagedEnvVarSpec(
-            key="ABSTRACT_EMAIL_DEFAULT_ACCOUNT",
-            label="Default account",
-            description="Default email account name (when multiple accounts exist).",
-            category="email",
-        ),
-        ManagedEnvVarSpec(
-            key="ABSTRACT_EMAIL_ACCOUNT_NAME",
-            label="Account name",
-            description="Optional account name label for env-based config (default: 'default').",
-            category="email",
-        ),
-        ManagedEnvVarSpec(
-            key="ABSTRACT_EMAIL_IMAP_HOST",
-            label="IMAP host",
-            description="IMAP server hostname.",
-            category="email",
-        ),
-        ManagedEnvVarSpec(
-            key="ABSTRACT_EMAIL_IMAP_PORT",
-            label="IMAP port",
-            description="IMAP port (default: 993).",
-            category="email",
-        ),
-        ManagedEnvVarSpec(
-            key="ABSTRACT_EMAIL_IMAP_USERNAME",
-            label="IMAP username",
-            description="IMAP username (often the email address).",
-            category="email",
-        ),
-        ManagedEnvVarSpec(
-            key="ABSTRACT_EMAIL_IMAP_PASSWORD_ENV_VAR",
-            label="IMAP password env var",
-            description="Name of the env var that contains the IMAP password (default: EMAIL_PASSWORD).",
-            category="email",
-        ),
-        ManagedEnvVarSpec(
-            key="ABSTRACT_EMAIL_IMAP_FOLDER",
-            label="IMAP folder",
-            description="Mailbox folder to poll (default: INBOX).",
-            category="email",
-        ),
-        ManagedEnvVarSpec(
-            key="EMAIL_PASSWORD",
-            label="EMAIL_PASSWORD",
-            description="Email account password (referenced by *_PASSWORD_ENV_VAR by default).",
-            category="email",
-            secret=True,
-        ),
-    ]
+    # EMPTY since framework backlog 0992 (operator decision 2026-09-29: "no
+    # environment variables" for email). The ABSTRACT_EMAIL_* / EMAIL_PASSWORD
+    # entries that lived here configured the retired process-wide account; email
+    # is now configured per user (Settings -> My email, PUT /api/gateway/me/email)
+    # and a value persisted here earlier is imported ONCE into the admin's
+    # account at boot (mail/accounts.py `import_legacy_env_once`), then ignored.
+    specs: List[ManagedEnvVarSpec] = []
 
     out: Dict[str, ManagedEnvVarSpec] = {}
     for s in specs:

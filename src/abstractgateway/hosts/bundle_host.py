@@ -2560,6 +2560,25 @@ class WorkflowBundleGatewayHost:
         except Exception:  # noqa: BLE001 - identity injection is additive
             rt_ns.pop("operator_email", None)
 
+        # "Email me when this run finishes / fails" (framework backlog 0992 C5):
+        # `_runtime.notify = {on: [finished|failed], channels: [email]}` is
+        # HOST-VALIDATED — unknown values dropped, an empty request removed —
+        # and read by the plane's notification collector (mail/notifications.py).
+        # The recipient is never client-chosen: it is the user's own address.
+        try:
+            notify = rt_ns.get("notify")
+            if notify is not None:
+                on = notify.get("on") if isinstance(notify, dict) else None
+                channels = notify.get("channels") if isinstance(notify, dict) else None
+                on_ok = sorted({str(x) for x in (on if isinstance(on, (list, tuple)) else []) if str(x) in ("finished", "failed")})
+                ch_ok = sorted({str(x) for x in (channels if isinstance(channels, (list, tuple)) else []) if str(x) in ("email",)})
+                if on_ok and ch_ok:
+                    rt_ns["notify"] = {"on": on_ok, "channels": ch_ok}
+                else:
+                    rt_ns.pop("notify", None)
+        except Exception:  # noqa: BLE001
+            rt_ns.pop("notify", None)
+
         # Durable session conversation replay (agora `durable-sessions` contract v1):
         # when the caller opts in (`input_data.use_session_history`) and the run
         # belongs to a session, seed the run's `context.messages` from the

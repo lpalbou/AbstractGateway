@@ -44,7 +44,10 @@ class GatewayService:
     embedding_error: Optional[str] = None
     embeddings_client: Optional[Any] = None
     telegram_bridge: Optional[Any] = None
-    email_bridge: Optional[Any] = None
+    # Per-user email (framework backlog 0992 WP3): the plane's mail watcher +
+    # notification dispatcher (mail/worker.py). Replaces the retired
+    # env-configured `email_bridge`.
+    email_worker: Optional[Any] = None
     agora_bridge: Optional[Any] = None
     entity_registry: Optional[Any] = None
     entity_chat_host: Optional[Any] = None
@@ -336,6 +339,9 @@ def get_gateway_service_for_principal(principal: GatewayPrincipal) -> GatewaySer
                 except Exception:
                     _services_by_principal.pop(key, None)
                     raise
+                # The mail watcher + notification dispatcher of this plane start
+                # with its runner (the multi-user path used to never start mail).
+                _start_email_worker(svc)
         elif getattr(svc.config, "runner_enabled", False) and _runner_needs_restart(svc.runner):
             # Self-healing (backlog 0063): a cached service whose runner lost
             # the lock race and returned dead used to be returned as-is
@@ -586,20 +592,17 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
             boot_warnings.append(f"#FALLBACK telegram bridge disabled: {type(e).__name__}: {e}")
             telegram_bridge = None
 
-    email_bridge = None
-    email_enabled_raw = os.getenv("ABSTRACT_EMAIL_BRIDGE")
-    if email_enabled_raw is not None and str(email_enabled_raw).strip().lower() in {"1", "true", "yes", "on"}:
-        try:
-            from .integrations.email_bridge import EmailBridge, EmailBridgeConfig
+    # The retired email bridge (ABSTRACT_EMAIL_*) is gone: mail is configured per
+    # user (mail/accounts.py). The one-time import of that configuration into the
+    # admin's account runs at boot (`begin_gateway_boot`); here only its notices
+    # ride the boot warnings so a still-set variable is visible, never silent.
+    try:
+        from .mail.accounts import boot_notices
 
-            ecfg = EmailBridgeConfig.from_env(base_dir=cfg.data_dir)
-            email_bridge = EmailBridge(config=ecfg, host=host, runner=runner, artifact_store=stores.artifact_store)
-        except Exception as e:
-            import logging
-
-            logging.getLogger("abstractgateway.service").exception("Email bridge failed to boot; disabled")
-            boot_warnings.append(f"#FALLBACK email bridge disabled: {type(e).__name__}: {e}")
-            email_bridge = None
+        for note in boot_notices():
+            boot_warnings.append(f"email: {note}")
+    except Exception:  # noqa: BLE001 - notices are visibility, never a boot blocker
+        pass
 
     # Agora hub bridge (hooks plan P2): identity-carrying transport that wakes
     # gateway-hosted resident runs on hub traffic. Disabled = None (normal).
@@ -735,7 +738,7 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
             logging.getLogger(__name__).exception("entity self-repair sweeper failed to start")
             boot_warnings.append(f"#FALLBACK entity self-repair sweeper not running: {type(e).__name__}: {e}")
 
-    return GatewayService(
+    service = GatewayService(
         config=cfg,
         stores=stores,
         host=host,
@@ -747,7 +750,6 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
         embedding_error=embedding_error,
         embeddings_client=embeddings_client,
         telegram_bridge=telegram_bridge,
-        email_bridge=email_bridge,
         agora_bridge=agora_bridge,
         entity_registry=entity_registry,
         entity_chat_host=entity_chat_host,
@@ -756,6 +758,15 @@ def create_default_gateway_service(*, config: Optional[GatewayHostConfig] = None
         boot_warnings=tuple(boot_warnings),
         env_scan=env_scan_report or None,
     )
+    try:
+        from .mail.worker import build_email_worker
+
+        object.__setattr__(service, "email_worker", build_email_worker(service))
+    except Exception:  # noqa: BLE001 - email is optional (D5); the service still serves
+        import logging
+
+        logging.getLogger("abstractgateway.service").exception("email worker could not be built; email is off for this plane")
+    return service
 
 
 def reload_gateway_workflow_bundles() -> Dict[str, Any]:
@@ -872,6 +883,16 @@ def begin_gateway_boot() -> None:
                     )
             except Exception:  # noqa: BLE001 - the pause file is a courtesy, never a boot blocker
                 logging.getLogger("abstractgateway.service").warning("host pause state could not be loaded", exc_info=True)
+            # Retired ABSTRACT_EMAIL_* configuration (framework backlog 0992, D10):
+            # imported ONCE into the admin's email account, then ignored; each
+            # variable still set is named with the setting that replaced it.
+            try:
+                from .mail.accounts import import_legacy_env_once
+
+                for note in import_legacy_env_once():
+                    print(f"[WARN] email: {note}", file=sys.stderr, flush=True)
+            except Exception:  # noqa: BLE001 - never a boot blocker
+                logging.getLogger("abstractgateway.service").warning("email legacy import failed", exc_info=True)
             start_gateway_runner()
             _boot_state = "ready"
         except Exception as e:
@@ -1083,12 +1104,20 @@ def start_gateway_runner() -> None:
     bridge = getattr(svc, "telegram_bridge", None)
     if bridge is not None:
         bridge.start()
-    email_bridge = getattr(svc, "email_bridge", None)
-    if email_bridge is not None:
-        email_bridge.start()
+    _start_email_worker(svc)
     agora_bridge = getattr(svc, "agora_bridge", None)
     if agora_bridge is not None:
         agora_bridge.start()
+
+
+def _start_email_worker(svc: GatewayService) -> None:
+    worker = getattr(svc, "email_worker", None)
+    if worker is None:
+        return
+    try:
+        worker.start()
+    except Exception:  # noqa: BLE001 - email is optional; never blocks a runner start
+        logging.getLogger("abstractgateway.service").warning("email worker failed to start", exc_info=True)
 
 
 def stop_gateway_runner() -> None:
@@ -1164,9 +1193,9 @@ def _stop_gateway_service_instance(service: GatewayService) -> None:
         bridge = getattr(service, "telegram_bridge", None)
         if bridge is not None:
             _stage("telegram bridge stop", bridge.stop)
-        bridge2 = getattr(service, "email_bridge", None)
-        if bridge2 is not None:
-            _stage("email bridge stop", bridge2.stop)
+        email_worker = getattr(service, "email_worker", None)
+        if email_worker is not None:
+            _stage("email worker stop", email_worker.stop)
         bridge3 = getattr(service, "agora_bridge", None)
         if bridge3 is not None:
             _stage("agora bridge stop", bridge3.stop)

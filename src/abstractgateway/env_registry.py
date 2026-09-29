@@ -96,8 +96,12 @@ _FAMILY_RULES: Tuple[Tuple[str, EnvVarSpec], ...] = (
     ("ABSTRACT_TELEGRAM_", _spec("*", BEHAVIOR, console_path="bridges.telegram",
                                  effective="restart-required",
                                  note="bridge config snapshots at boot (P0-1 effectiveness contract)")),
-    ("ABSTRACT_EMAIL_", _spec("*", BEHAVIOR, console_path="bridges.email",
-                              effective="restart-required")),
+    # RETIRED (framework backlog 0992, operator 2026-09-29 "no environment
+    # variables"): the process-wide email account and bridge. Read ONCE by the
+    # boot import into the admin's per-user email settings, then ignored with
+    # a notice naming the setting (mail/accounts.py `import_legacy_env_once`).
+    ("ABSTRACT_EMAIL_", _spec("*", LEGACY_ALIAS, alias_of="per-user email settings (PUT /api/gateway/me/email)",
+                              note="retired 0992: imported once, then ignored")),
     # Backlog/exec + triage-LLM: BEHAVIOR (which executor/model/policy).
     ("ABSTRACTGATEWAY_BACKLOG_", _spec("*", BEHAVIOR, console_path="backlog")),
     ("ABSTRACTGATEWAY_TRIAGE_", _spec("*", BEHAVIOR, console_path="triage")),
@@ -175,8 +179,8 @@ _EXPLICIT: Tuple[EnvVarSpec, ...] = (
     _spec("ABSTRACTGATEWAY_TRIAGE_ACTION_SECRET", SECRET),
     _spec("ABSTRACTGATEWAY_TRIAGE_LLM_API_KEY", SECRET),
     _spec("ABSTRACT_TELEGRAM_BOT_TOKEN", SECRET),
-    _spec("ABSTRACT_EMAIL_IMAP_PASSWORD_ENV_VAR", SECRET, note="indirection var naming the secret var"),
-    _spec("ABSTRACT_EMAIL_SMTP_PASSWORD_ENV_VAR", SECRET),
+    _spec("ABSTRACT_EMAIL_IMAP_PASSWORD_ENV_VAR", SECRET, note="retired 0992: read once by the legacy email import"),
+    _spec("ABSTRACT_EMAIL_SMTP_PASSWORD_ENV_VAR", SECRET, note="retired 0992: read once by the legacy email import"),
     # Cloud API keys: RULED exception (dm#201) — env-inheritable by default,
     # config-set key ALWAYS supersedes (pinned in test_gateway_api_key_precedence).
     _spec("OPENAI_API_KEY", SECRET, owner="shared", note="dm#201 ruled: inherit by default, config supersedes"),
@@ -331,10 +335,11 @@ _EXPLICIT: Tuple[EnvVarSpec, ...] = (
           effective="restart-required", note="bridge enable toggle"),
     _spec("ABSTRACT_TELEGRAM_BRIDGE", BEHAVIOR, console_path="bridges.telegram",
           effective="restart-required", note="bridge enable toggle"),
-    _spec("ABSTRACT_EMAIL_BRIDGE", BEHAVIOR, console_path="bridges.email",
-          effective="restart-required", note="bridge enable toggle"),
+    _spec("ABSTRACT_EMAIL_BRIDGE", LEGACY_ALIAS, alias_of="the per-user mail watcher (starts by itself)",
+          note="retired 0992: the email bridge is gone"),
     _spec("ABSTRACT_TELEGRAM_STATE_PATH", DEPLOYMENT, note="state file path"),
-    _spec("ABSTRACT_EMAIL_ACCOUNTS_CONFIG", DEPLOYMENT, note="config file path"),
+    _spec("ABSTRACT_EMAIL_ACCOUNTS_CONFIG", LEGACY_ALIAS, alias_of="per-user email settings (PUT /api/gateway/me/email)",
+          note="retired 0992: imported once, then ignored"),
     # Desktop session + per-OS user directories (READS OF THE OS, not settings):
     # the gateway asks the operating system where the user's session and
     # directories are. Nothing here is a gateway knob and nothing migrates to
