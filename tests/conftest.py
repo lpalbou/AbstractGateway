@@ -163,17 +163,41 @@ def _is_loopback_host(host) -> bool:
     return bool(ip.is_loopback or ip.is_unspecified)
 
 
+def _macos_local_host_name() -> str:
+    """macOS's Bonjour name (`scutil --get LocalHostName`), which differs from
+    `gethostname()` when the network hands out a DHCP host name. Read once, before
+    the subprocess guard is installed."""
+    if sys.platform != "darwin":
+        return ""
+    import subprocess as _sp
+
+    try:
+        out = _sp.run(["scutil", "--get", "LocalHostName"], capture_output=True, text=True, timeout=5, check=False)
+    except (OSError, _sp.SubprocessError):
+        return ""
+    return out.stdout.strip().lower().rstrip(".") if out.returncode == 0 else ""
+
+
+_LOCAL_HOST_NAME = _macos_local_host_name()
+
+
 def _is_this_machine_name(host) -> bool:
-    """This machine's own host name (and its Bonjour `<name>.local`) resolves to itself."""
+    """This machine's own host name (and its Bonjour `<name>.local`, including macOS's
+    LocalHostName) resolves to itself."""
     if isinstance(host, (bytes, bytearray)):
         host = bytes(host).decode("ascii", "replace")
     text = str(host or "").strip().lower().rstrip(".")
+    names = set()
     try:
         own = _socket.gethostname().strip().lower().rstrip(".")
     except OSError:
-        return False
-    short = own[: -len(".local")] if own.endswith(".local") else own.split(".", 1)[0]
-    return bool(own) and text in {own, short, f"{short}.local"}
+        own = ""
+    if own:
+        short = own[: -len(".local")] if own.endswith(".local") else own.split(".", 1)[0]
+        names |= {own, short, f"{short}.local"}
+    if _LOCAL_HOST_NAME:
+        names |= {_LOCAL_HOST_NAME, f"{_LOCAL_HOST_NAME}.local"}
+    return bool(text) and text in names
 
 
 def _is_ip_literal(host) -> bool:
