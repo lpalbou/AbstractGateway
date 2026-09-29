@@ -324,7 +324,9 @@ def test_llamacpp_installs_the_metal_wheel_without_a_compiler(tmp_path) -> None:
     job = reg.get(snap["job_id"]).snapshot()
     assert job["state"] == "done" and job["result"] == {"installed": True, "version": "0.3.28", "gpu_offload": True, "location": "/gw/bin/python", "method": "metal wheel"}
     pip = [c for c in sysd.calls if c[:3] == ["/fake/uv", "pip", "install"]]
-    assert pip == [["/fake/uv", "pip", "install", "--python", "/gw/bin/python", "llama-cpp-python==0.3.28", "--find-links",
+    # AbstractCore's apple setting (ruling 2026-09-29: never a bare engine package), its
+    # llama-cpp-python taken from upstream's prebuilt Metal wheel.
+    assert pip == [["/fake/uv", "pip", "install", "--python", "/gw/bin/python", "abstractcore[apple]", "llama-cpp-python==0.3.28", "--find-links",
                     "https://abetlen.github.io/llama-cpp-python/whl/metal/llama-cpp-python/", "--only-binary", "llama-cpp-python"]]
     assert ["xcode-select", "-p"] not in sysd.calls  # no compiler question when a wheel exists
 
@@ -353,7 +355,7 @@ def test_engine_installs_pin_the_gateway_packages_when_the_cache_path_has_a_spac
     job = reg.get(snap["job_id"]).snapshot()
     assert job["state"] == "done", job
     pip = [c for c in sysd.calls if c[:3] == ["/fake/uv", "pip", "install"]]
-    assert pip == [["/fake/uv", "pip", "install", "--python", "/gw/bin/python", "mlx-lm", "--only-binary", "mlx",
+    assert pip == [["/fake/uv", "pip", "install", "--python", "/gw/bin/python", "abstractcore[apple]", "--only-binary", "mlx",
                     "AbstractRuntime==0.4.34", "abstractcore==2.15.1", "abstractgateway==0.4.2"]]
 
 
@@ -474,7 +476,50 @@ def test_vllm_on_linux_with_cuda_is_a_user_level_wheel(tmp_path) -> None:
     host = ei.HostFacts(os_id="linux", arch="x86_64", accelerator="cuda", libc="glibc")
     plan = _installer(tmp_path, FakeSystem(tmp_path), host=host).plan("vllm")
     assert plan.available and plan.method == "wheel" and not plan.needs_admin
-    assert plan.command_preview == ["/fake/uv", "pip", "install", "--python", "/gw/bin/python", "vllm", "--torch-backend=auto"]
+    assert plan.command_preview == ["/fake/uv", "pip", "install", "--python", "/gw/bin/python", "abstractcore[gpu]", "--torch-backend=auto"]
+
+
+@pytest.mark.parametrize("engine", ["llamacpp", "huggingface"])
+@pytest.mark.parametrize(
+    "host",
+    [ei.HostFacts(os_id="darwin", arch="x86_64", macos_version=(14, 5)),
+     ei.HostFacts(os_id="darwin", arch="arm64", macos_version=(14, 5), translated=True)],
+)
+def test_hosts_without_an_install_setting_get_no_bare_engine_install(tmp_path, host, engine) -> None:
+    """Ruling 2026-09-29: only `abstractcore`, `abstractcore[apple]`, `abstractcore[gpu]`.
+    An Intel Mac (or a Rosetta Python) has no setting that carries the engine: the row says so
+    plainly and offers no pip command (never `llama-cpp-python` / the transformers stack alone)."""
+    sysd = FakeSystem(tmp_path)
+    inst = _installer(tmp_path, sysd, host=host)
+    plan = inst.plan(engine)
+    assert plan.available is False and plan.method == "unsupported"
+    assert "not available on this machine" in plan.notes and "pip install" not in plan.notes
+    with pytest.raises(ei.JobStateError):
+        _registry(inst, tmp_path).start(engine)
+    assert not [c for c in sysd.calls if "install" in c]
+
+
+@pytest.mark.parametrize(
+    "host, engine, setting",
+    [(MAC, "llamacpp", "apple"), (MAC, "mlx", "apple"), (MAC, "huggingface", "apple"),
+     (ei.HostFacts(os_id="linux", arch="x86_64", libc="glibc"), "llamacpp", "gpu"),
+     (ei.HostFacts(os_id="linux", arch="x86_64", libc="glibc"), "huggingface", "gpu"),
+     (ei.HostFacts(os_id="linux", arch="x86_64", accelerator="cuda", libc="glibc"), "vllm", "gpu")],
+)
+def test_python_engine_plans_install_only_an_abstractcore_setting(tmp_path, host, engine, setting) -> None:
+    plan = _installer(tmp_path, FakeSystem(tmp_path), host=host).plan(engine)
+    packages, argv = [], plan.command_preview[5:]
+    i = 0
+    while i < len(argv):
+        if argv[i] in {"--only-binary", "--find-links"}:
+            i += 2  # option values, not requirements
+            continue
+        if not argv[i].startswith("-"):
+            packages.append(argv[i])
+        i += 1
+    assert packages and packages[0].startswith(f"abstractcore[{setting}]")
+    # The only other requirement allowed is the prebuilt-wheel pin of the setting's own llama.cpp.
+    assert all(p.startswith("abstractcore[") or p.startswith("llama-cpp-python==") for p in packages), packages
 
 
 CONTRACT_ROW_KEYS = {"id", "name", "description", "supported", "support_reason", "installed", "version", "running", "reachable",

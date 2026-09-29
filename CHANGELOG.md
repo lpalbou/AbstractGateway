@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- Engine installs name only AbstractCore's install settings (operator ruling 2026-09-29): MLX,
+  llama.cpp, Hugging Face and vLLM install `abstractcore[apple]` (Apple silicon) or
+  `abstractcore[gpu]` (Linux) at the installed AbstractCore version, never `mlx-lm`,
+  `llama-cpp-python`, `vllm` or the deprecated `abstractcore[huggingface]` alone (llama.cpp still
+  takes upstream's prebuilt wheel). On an Intel Mac or a Rosetta Python the llama.cpp and
+  Hugging Face rows say the engine is not available on this machine with the install settings.
+
 ## [0.7.2] - 2026-09-29
 
 No dependency changes: AbstractCore 2.18.0 or newer, as before. With AbstractCore 2.18.1 the first-run guide follows its

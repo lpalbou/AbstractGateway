@@ -100,6 +100,27 @@ LMSTUDIO_DEFAULT_URL = "http://127.0.0.1:1234"
 
 _USER_AGENT = "abstractgateway-engine-installer"
 
+# --- Python engines arrive ONLY with an AbstractCore install setting ---------------------
+# Operator ruling (2026-09-29): users are only ever advised to install `abstractcore`,
+# `abstractcore[apple]` (Apple silicon) or `abstractcore[gpu]` (GPU machines), never a bare
+# engine package. MLX, llama.cpp, Hugging Face and vLLM rows therefore install this host's
+# setting; a host with no setting (an Intel Mac, Windows, Rosetta) is told plainly that the
+# engine is not available there. The sentence mirrors
+# `abstractcore.utils.install_settings.not_available_here` (AbstractCore > 2.19.0); it is
+# spelled here so the gateway keeps working on the released 2.19.0 floor.
+def _not_available_here(what: str) -> str:
+    return (
+        f"{what} is not available on this machine with AbstractCore's install settings "
+        "(light: every remote provider; apple: Apple silicon; gpu: Linux with an NVIDIA or AMD GPU); "
+        "use a remote provider or a local server such as Ollama or LM Studio"
+    )
+
+
+_SETTING_ENGINE_WHAT = {
+    "llamacpp": "The in-process llama.cpp engine (GGUF models)",
+    "huggingface": "The Hugging Face Transformers engine",
+}
+
 ENGINE_TEXT: Dict[str, Dict[str, str]] = {
     "ollama": {
         "name": "Ollama",
@@ -892,10 +913,33 @@ class EngineInstaller:
                 return True, None
             return False, f"Ollama has no build for {h.os_id}."
         if eid in {"llamacpp", "huggingface"}:
-            if h.os_id in {"darwin", "linux", "windows"}:
-                return True, None
-            return False, f"no supported build for {h.os_id}"
+            if h.os_id not in {"darwin", "linux", "windows"}:
+                return False, f"no supported build for {h.os_id}"
+            if self.local_setting() is None:
+                return False, _not_available_here(_SETTING_ENGINE_WHAT[eid])
+            return True, None
         return False, f"unknown engine {eid!r}"
+
+    def local_setting(self) -> Optional[str]:
+        """This host's AbstractCore local-engine setting: ``apple`` (native Apple silicon),
+        ``gpu`` (Linux) or None (Intel Mac, a Rosetta Python, Windows)."""
+
+        h = self.host
+        if h.os_id == "darwin":
+            return "apple" if h.arch == "arm64" and not h.translated else None
+        if h.os_id == "linux":
+            return "gpu"
+        return None
+
+    def _core_version(self) -> Optional[str]:
+        """The AbstractCore version installed in the gateway's Python (kept as it is)."""
+
+        rc, out = self.system.run([self.python, "-c", "import importlib.metadata as m; print(m.version('abstractcore'))"], timeout=30)
+        return out.strip().splitlines()[-1] if rc == 0 and out and out.strip() else None
+
+    @staticmethod
+    def _core_spec(setting: str, version: Optional[str] = None) -> str:
+        return f"abstractcore[{setting}]" + (f"=={version}" if version else "")
 
     # -- app locations ---------------------------------------------------------
     def user_apps_dir(self) -> Path:
@@ -948,9 +992,12 @@ class EngineInstaller:
             return LLAMA_CPU_PIN, "cpu", f"{self.llama_index}/cpu/llama-cpp-python/"
         return None
 
-    def _llama_wheel_argv(self, pin: str, links: str) -> List[str]:
-        # `--only-binary` (uv pip and pip alike): the PyPI sdist is never built on this path.
-        return [*self.pip_prefix(), f"llama-cpp-python=={pin}", "--find-links", links, "--only-binary", "llama-cpp-python"]
+    def _llama_wheel_argv(self, pin: str, links: str, version: Optional[str] = None) -> List[str]:
+        # The host's setting, with its llama-cpp-python taken from upstream's prebuilt wheel
+        # (`--only-binary`, uv pip and pip alike): the PyPI sdist is never built on this path.
+        setting = self.local_setting() or "apple"
+        return [*self.pip_prefix(), self._core_spec(setting, version), f"llama-cpp-python=={pin}",
+                "--find-links", links, "--only-binary", "llama-cpp-python"]
 
     def _compiler_present(self) -> bool:
         if self.host.os_id == "darwin":
@@ -977,12 +1024,14 @@ class EngineInstaller:
             argv = self.legacy_argv(eid) if self.legacy_argv else []
             return InstallPlan(eid, bool(argv), "script" if eid in SERVER_ENGINES else "wheel", notes="Windows: runs the vendor command AbstractCore plans (unchanged).", command_preview=argv, steps=["run the vendor command"])
         if eid == "llamacpp":
+            setting = self.local_setting()
             wheel = self._llama_wheel()
             if wheel:
                 pin, backend, links = wheel
                 return InstallPlan(
                     eid, True, "wheel", target=self.python,
-                    notes=f"Installs the prebuilt llama.cpp {backend} wheel {pin} into the gateway's Python; no compiler, no admin.",
+                    notes=(f"Installs AbstractCore's {setting} setting (every local engine for this machine; several GB) "
+                           f"into the gateway's Python, with the prebuilt llama.cpp {backend} wheel {pin}; no compiler, no admin."),
                     command_preview=self._llama_wheel_argv(pin, links),
                     steps=["download the prebuilt wheel", "install into the gateway's Python", "check that it loads"],
                 )
@@ -993,21 +1042,24 @@ class EngineInstaller:
             return InstallPlan(
                 eid, True, "wheel", target=self.python, needs_tools=not present,
                 tools_action=prompt.public()["action"] if not present else None,
-                notes="Builds llama.cpp from source (5-15 minutes)." + ("" if present else " " + reason_text),
-                command_preview=[*self.pip_prefix(), "llama-cpp-python"],
+                notes=(f"Installs AbstractCore's {setting} setting and builds its llama.cpp from source (5-15 minutes)."
+                       + ("" if present else " " + reason_text)),
+                command_preview=[*self.pip_prefix(), self._core_spec(setting)],
                 steps=["check the compiler", "build llama.cpp from source", "check that it loads"],
             )
         if eid == "mlx":
-            return InstallPlan(eid, True, "wheel", target=self.python, notes="Installs mlx and mlx-lm (prebuilt wheels) into the gateway's Python; no admin.",
-                               command_preview=self._mlx_argv(), steps=["install mlx-lm", "check that MLX sees the GPU"])
+            return InstallPlan(eid, True, "wheel", target=self.python,
+                               notes="Installs AbstractCore's apple setting (every local engine for Apple silicon, including mlx and mlx-lm as prebuilt wheels; several GB) into the gateway's Python; no admin.",
+                               command_preview=self._mlx_argv(), steps=["install the apple setting", "check that MLX sees the GPU"])
         if eid == "huggingface":
-            return InstallPlan(eid, True, "wheel", target=self.python, notes="Installs transformers, torch and huggingface_hub into the gateway's Python; several GB, no admin.",
-                               command_preview=[*self.pip_prefix(), "abstractcore[huggingface]==<installed>"], steps=["install", "check that it loads"])
+            setting = self.local_setting()
+            return InstallPlan(eid, True, "wheel", target=self.python,
+                               notes=f"Installs AbstractCore's {setting} setting (every local engine for this machine, including transformers, torch and huggingface_hub) into the gateway's Python; several GB, no admin.",
+                               command_preview=[*self.pip_prefix(), self._core_spec(setting or "gpu", "<installed>")], steps=["install", "check that it loads"])
         if eid == "vllm":
-            base = self.pip_prefix()
-            extra = ["--torch-backend=auto"] if base[1:3] == ["pip", "install"] else []
-            return InstallPlan(eid, True, "wheel", target=self.python, notes="Installs vLLM (PyTorch + CUDA wheels, several GB) into the gateway's Python; no admin.",
-                               command_preview=[*base, "vllm", *extra], steps=["install", "check that it loads"])
+            return InstallPlan(eid, True, "wheel", target=self.python,
+                               notes="Installs AbstractCore's gpu setting (every local engine for GPU machines, including vLLM: PyTorch + CUDA wheels, several GB) into the gateway's Python; no admin.",
+                               command_preview=self._vllm_argv(), steps=["install", "check that it loads"])
         if eid == "ollama":
             if h.os_id == "darwin":
                 apps, admin = self.app_target(location)
@@ -1042,8 +1094,13 @@ class EngineInstaller:
                                command_preview=["bash", "-c", LMSTUDIO_LINUX_SCRIPT], steps=["run the vendor installer", "start the local server"])
         return InstallPlan(eid, False, "unsupported", notes=f"unknown engine {eid}")
 
-    def _mlx_argv(self) -> List[str]:
-        return [*self.pip_prefix(), "mlx-lm", "--only-binary", "mlx"]
+    def _mlx_argv(self, version: Optional[str] = None) -> List[str]:
+        return [*self.pip_prefix(), self._core_spec("apple", version), "--only-binary", "mlx"]
+
+    def _vllm_argv(self, version: Optional[str] = None) -> List[str]:
+        base = self.pip_prefix()
+        extra = ["--torch-backend=auto"] if base[1:3] == ["pip", "install"] else []
+        return [*base, self._core_spec("gpu", version), *extra]
 
     # -- detection this module adds --------------------------------------------------
     def app_version(self, app: Path) -> Optional[str]:
@@ -1147,10 +1204,14 @@ class EngineInstaller:
         wheel = self._llama_wheel()
         pins = self._abstract_pins(ctx)
         wheel_error = ""
+        setting = self.local_setting()
+        if setting is None:
+            raise InstallFailed(_not_available_here(_SETTING_ENGINE_WHAT["llamacpp"]), code="unsupported")
+        version = self._core_version()
         if wheel:
             pin, backend, links = wheel
-            ctx.state("downloading", f"Installing the prebuilt llama.cpp {backend} wheel {pin}", percent=5)
-            rc, out = self._pip(ctx, [*self._llama_wheel_argv(pin, links), *pins], lo=5, hi=90)
+            ctx.state("downloading", f"Installing AbstractCore's {setting} setting with the prebuilt llama.cpp {backend} wheel {pin}", percent=5)
+            rc, out = self._pip(ctx, [*self._llama_wheel_argv(pin, links, version), *pins], lo=5, hi=90)
             if rc == 0:
                 info = self._verify_import(ctx, "import json, llama_cpp; print(json.dumps({'version': llama_cpp.__version__, 'gpu_offload': bool(llama_cpp.llama_supports_gpu_offload())}))", "llama.cpp")
                 if h.os_id == "darwin" and h.arch == "arm64" and not info.get("gpu_offload"):
@@ -1167,7 +1228,7 @@ class EngineInstaller:
         ctx.require_tools(self._compiler_present, self._tools_prompt(tools_reason))
         ctx.state("installing", why + ". Building llama.cpp from source instead (5-15 minutes).", percent=20)
         env = {"CMAKE_ARGS": "-DGGML_METAL=on"} if h.os_id == "darwin" and h.arch == "arm64" else {}
-        rc, out = self._pip(ctx, [*self.pip_prefix(), "llama-cpp-python", *pins], lo=20, hi=92, env=env)
+        rc, out = self._pip(ctx, [*self.pip_prefix(), self._core_spec(setting, version), *pins], lo=20, hi=92, env=env)
         if rc != 0:
             raise InstallFailed(
                 why + ", and building it from source failed: " + (_last_error_line(out) or "see the log") + ". The full build log is in the details.",
@@ -1178,8 +1239,8 @@ class EngineInstaller:
         return {"installed": True, "version": info.get("version"), "gpu_offload": info.get("gpu_offload"), "location": self.python, "method": "source build"}
 
     def _install_mlx(self, ctx: _JobContext) -> Dict[str, Any]:
-        ctx.state("downloading", "Installing MLX (prebuilt wheels)", percent=5)
-        rc, out = self._pip(ctx, [*self._mlx_argv(), *self._abstract_pins(ctx)], lo=5, hi=90)
+        ctx.state("downloading", "Installing AbstractCore's apple setting (MLX as prebuilt wheels)", percent=5)
+        rc, out = self._pip(ctx, [*self._mlx_argv(self._core_version()), *self._abstract_pins(ctx)], lo=5, hi=90)
         if rc != 0:
             raise InstallFailed("MLX could not be installed: " + (_last_error_line(out) or "see the log"), code="pip_failed")
         info = self._verify_import(ctx, "import json, mlx.core as mx, importlib.metadata as m; print(json.dumps({'version': m.version('mlx'), 'mlx_lm': m.version('mlx-lm'), 'device': str(mx.default_device())}))", "MLX")
@@ -1187,9 +1248,11 @@ class EngineInstaller:
         return {"installed": True, "version": info.get("version"), "mlx_lm_version": info.get("mlx_lm"), "device": info.get("device"), "location": self.python, "method": "wheel"}
 
     def _install_huggingface(self, ctx: _JobContext) -> Dict[str, Any]:
-        rc, out = self.system.run([self.python, "-c", "import importlib.metadata as m; print(m.version('abstractcore'))"], timeout=30)
-        spec = f"abstractcore[huggingface]=={out.strip().splitlines()[-1]}" if rc == 0 and out.strip() else "abstractcore[huggingface]"
-        ctx.state("downloading", "Installing transformers and PyTorch (several GB)", percent=5)
+        setting = self.local_setting()
+        if setting is None:
+            raise InstallFailed(_not_available_here(_SETTING_ENGINE_WHAT["huggingface"]), code="unsupported")
+        spec = self._core_spec(setting, self._core_version())
+        ctx.state("downloading", f"Installing AbstractCore's {setting} setting: transformers and PyTorch (several GB)", percent=5)
         rc, out = self._pip(ctx, [*self.pip_prefix(), spec, *self._abstract_pins(ctx)], lo=5, hi=90)
         if rc != 0:
             raise InstallFailed("The Hugging Face stack could not be installed: " + (_last_error_line(out) or "see the log"), code="pip_failed")
@@ -1198,8 +1261,8 @@ class EngineInstaller:
         return {"installed": True, "version": info.get("version"), "location": self.python, "method": "wheel"}
 
     def _install_vllm(self, ctx: _JobContext) -> Dict[str, Any]:
-        ctx.state("downloading", "Installing vLLM (PyTorch + CUDA wheels, several GB)", percent=5)
-        rc, out = self._pip(ctx, [*self.plan("vllm").command_preview, *self._abstract_pins(ctx)], lo=5, hi=90)
+        ctx.state("downloading", "Installing AbstractCore's gpu setting: vLLM (PyTorch + CUDA wheels, several GB)", percent=5)
+        rc, out = self._pip(ctx, [*self._vllm_argv(self._core_version()), *self._abstract_pins(ctx)], lo=5, hi=90)
         if rc != 0:
             raise InstallFailed("vLLM could not be installed: " + (_last_error_line(out) or "see the log"), code="pip_failed")
         info = self._verify_import(ctx, "import json, importlib.metadata as m; import vllm; print(json.dumps({'version': m.version('vllm')}))", "vLLM")
