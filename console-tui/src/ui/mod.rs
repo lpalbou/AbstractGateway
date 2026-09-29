@@ -1012,6 +1012,8 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
     let ctx_back = ctx.clone();
     let ctx_next2 = ctx.clone();
     let ctx_back2 = ctx.clone();
+    let ctx_left = ctx.clone();
+    let ctx_right = ctx.clone();
     let ctx_refresh = ctx.clone();
     let ctx_about = ctx.clone();
     let ctx_about2 = ctx.clone();
@@ -1060,6 +1062,14 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         })
         .shortcut(KeyChord::new(Mods::CTRL, Key::Char('p')), move |_| {
             wizard_back(&ctx_back2);
+        })
+        // ←/→: previous/next global tab, only when the focused element
+        // does not use the arrows (see `arrow_tab`).
+        .shortcut(KeyChord::plain(Key::Left), move |_| {
+            arrow_tab(&ctx_left, -1)
+        })
+        .shortcut(KeyChord::plain(Key::Right), move |_| {
+            arrow_tab(&ctx_right, 1)
         })
         .shortcut(KeyChord::plain(Key::Char('r')), move |_| {
             let s = ui.screen.get_untracked();
@@ -1602,6 +1612,26 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
     }
 }
 
+/// Left/Right (backlog 0984): the previous/next global tab, wrapping at
+/// both ends — the Ctrl+P/Ctrl+N cycle on the arrows. These are ROOT
+/// shortcuts, so they fire only for an arrow nobody under the focus used:
+/// a focused text field moves its caret, a radio group or tabs bar moves
+/// its choice, a focused scroll pane scrolls (routing law: handlers
+/// before shortcuts). The guide gates its order: there the arrows refuse
+/// with the keys that walk it.
+fn arrow_tab(ctx: &Ctx, dir: isize) {
+    if ctx.ui.wizard.get_untracked() {
+        ctx.store.notice.set(Some(
+            "←/→ switch screens in browse mode — in the guide Ctrl+N walks, Ctrl+G jumps to a step or leaves"
+                .into(),
+        ));
+        return;
+    }
+    let n = SCREENS.len() as isize;
+    let cur = ctx.ui.screen.get_untracked().min(SCREENS.len() - 1) as isize;
+    ctx.ui.screen.set((cur + dir).rem_euclid(n) as usize);
+}
+
 fn wizard_next(ctx: &Ctx, cx: Scope) {
     if !ctx.ui.wizard.get_untracked() {
         // Browse: ] is simply next tab — a refused step SAYS why (F3).
@@ -1867,7 +1897,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
             } else {
                 globals.push(("q/Ctrl+C", "quit"));
                 globals.push(("1-9,0,A,N", "screens"));
-                globals.push(("Ctrl+N/P", "next/prev"));
+                globals.push(("←/→ Ctrl+P/N", "prev/next"));
             }
             globals.push(("Tab", "focus"));
             match screen {

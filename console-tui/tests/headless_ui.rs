@@ -9901,3 +9901,234 @@ fn the_connection_screen_never_teaches_a_token_file_or_env_var() {
     // The harness mounts without the legacy variable: nothing names it.
     assert!(!s.contains("ABSTRACTGATEWAY_AUTH_TOKEN"), "{s}");
 }
+
+// =======================================================================
+// 0984: Left/Right switch the global tab (browse mode)
+// =======================================================================
+
+const RIGHT: &[u8] = b"\x1b[C";
+const LEFT: &[u8] = b"\x1b[D";
+
+/// Left = previous screen, Right = next, one step per press, wrapping at
+/// both ends — the same cycle as Ctrl+P / Ctrl+N.
+#[test]
+fn arrows_switch_the_global_tab_and_wrap() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.goto_screen(ui::SCREEN_PROVIDERS);
+    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
+    h.store.providers.set(Loadable::Ready(providers_fixture()));
+    h.turns(2);
+    h.key(RIGHT);
+    h.turns(2);
+    assert_eq!(h.ui.screen.get_untracked(), 2, "Right → the next screen");
+    h.key(LEFT);
+    h.turns(2);
+    assert_eq!(h.ui.screen.get_untracked(), 1, "Left → the previous screen");
+    h.key(LEFT);
+    h.turns(2);
+    assert_eq!(h.ui.screen.get_untracked(), 0, "Left → Connection");
+    // Connected: the URL field does not hold the caret, so the arrow is
+    // the root's — Left on the first screen wraps to the last.
+    h.key(LEFT);
+    h.turns(2);
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREENS.len() - 1,
+        "Left on the first screen wraps to the last"
+    );
+    h.key(RIGHT);
+    h.turns(2);
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        0,
+        "Right on the last screen wraps to the first"
+    );
+}
+
+/// Every screen, at the focus it lands with, passes Right on: thirteen
+/// presses walk the whole bar in page order and come back to the start.
+/// A screen whose landing focus swallowed the arrow would stop the walk.
+#[test]
+fn right_walks_every_screen_in_order() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.goto_screen(0);
+    for step in 1..=ui::SCREENS.len() {
+        h.key(RIGHT);
+        h.turns(3);
+        assert_eq!(
+            h.ui.screen.get_untracked(),
+            step % ui::SCREENS.len(),
+            "Right from {} must reach the next screen",
+            ui::SCREENS[step - 1]
+        );
+    }
+    for step in (0..ui::SCREENS.len()).rev() {
+        h.key(LEFT);
+        h.turns(3);
+        assert_eq!(
+            h.ui.screen.get_untracked(),
+            step,
+            "Left walks back through {}",
+            ui::SCREENS[step]
+        );
+    }
+}
+
+/// A focused text field keeps Left/Right for its caret; once the field
+/// lets go of the caret (Esc), the same key switches the tab.
+#[test]
+fn arrows_move_the_caret_in_a_focused_text_field() {
+    let mut h = harness();
+    h.ui.wizard.set(false);
+    h.ui.screen.set(0);
+    h.turns(3);
+    // Not connected: the URL field holds the caret (autofocus).
+    h.key(b"\x05"); // Ctrl+E: caret to the end
+    h.turns(1);
+    h.key(LEFT);
+    h.turns(1);
+    h.type_text("X");
+    h.turns(2);
+    assert_eq!(h.ui.screen.get_untracked(), 0, "Left stayed in the field");
+    assert_eq!(
+        h.ui.conn_url.get_untracked(),
+        "http://127.0.0.1:808X0",
+        "Left moved the caret one cluster back"
+    );
+    h.key(RIGHT);
+    h.turns(1);
+    h.type_text("Y");
+    h.turns(2);
+    assert_eq!(h.ui.screen.get_untracked(), 0, "Right stayed in the field");
+    assert_eq!(h.ui.conn_url.get_untracked(), "http://127.0.0.1:808X0Y");
+    // Positive control: Esc releases the caret, and Right is global.
+    h.press_escape();
+    h.key(RIGHT);
+    h.turns(2);
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        1,
+        "with no field focused, Right switches the tab"
+    );
+}
+
+/// A widget that uses Left/Right keeps them: the Runtimes inspector's
+/// tabs bar switches its own tabs (and clamps at its edge) instead of
+/// the global tab. Off the bar, the same key is global again.
+#[test]
+fn arrows_stay_with_a_focused_tabs_bar() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.goto_screen(4);
+    h.store
+        .runtimes
+        .set(Loadable::Ready(runtimes_from_payload(&runtimes_fixture())));
+    h.turns(2);
+    h.key(b"\x1b[B"); // choose the entity plane (focus on the inventory)
+    h.turns(2);
+    h.store.runs.set(Loadable::Ready(RunsData {
+        status: String::new(),
+        query: String::new(),
+        root_only: true,
+        offset: 0,
+        has_more: false,
+        scope: RunScope::Plane {
+            kind: "entity".into(),
+            tenant_id: "default".into(),
+            runtime_id: "runtime_testor".into(),
+            label: "Testor".into(),
+        },
+        rows: vec![],
+    }));
+    h.turns(2);
+    h.key(b"\t"); // focus the inspector's tabs bar
+    h.turns(1);
+    h.key(RIGHT);
+    h.turns(2);
+    assert_eq!(
+        h.ui.rt_tab.get_untracked(),
+        1,
+        "Right switched the inner tab"
+    );
+    assert_eq!(h.ui.screen.get_untracked(), 4, "…not the global tab");
+    h.key(LEFT);
+    h.turns(2);
+    h.key(LEFT); // the bar's first tab: clamps, still the bar's key
+    h.turns(2);
+    assert_eq!(h.ui.rt_tab.get_untracked(), 0);
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        4,
+        "Left at the bar's edge is not global"
+    );
+    let _ = h.drain_cmds();
+    // Positive control: back on the inventory table, Right is global.
+    h.key(b"\x1b[Z"); // Shift+Tab
+    h.turns(1);
+    h.key(RIGHT);
+    h.turns(2);
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_WORKFLOWS,
+        "off the tabs bar, Right switches the global tab"
+    );
+}
+
+/// The guide gates its order: the arrows do not jump screens there, and
+/// the refusal says what walks the guide.
+#[test]
+fn arrows_refuse_with_a_reason_in_the_guide() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.ui.wizard.set(true);
+    h.ui.screen.set(ui::SCREEN_PROVIDERS);
+    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
+    h.store.providers.set(Loadable::Ready(providers_fixture()));
+    h.turns(3);
+    h.key(RIGHT);
+    h.turns(2);
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_PROVIDERS);
+    let notice = h.store.notice.get_untracked().unwrap_or_default();
+    assert!(
+        notice.contains("Ctrl+N"),
+        "the refusal names the walk: {notice:?}"
+    );
+}
+
+/// An open modal owns the keyboard: the arrows never switch the screen
+/// behind it (About, opened with `?`).
+#[test]
+fn arrows_do_not_switch_the_screen_behind_a_modal() {
+    let mut h = harness();
+    h.connect_as_admin();
+    h.goto_screen(ui::SCREEN_PROVIDERS);
+    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
+    h.store.providers.set(Loadable::Ready(providers_fixture()));
+    h.turns(2);
+    h.type_text("?");
+    let s = h.turns(2);
+    assert!(s.contains("About"), "the About modal is open:\n{s}");
+    h.key(RIGHT);
+    h.turns(2);
+    h.key(LEFT);
+    h.key(LEFT);
+    h.turns(2);
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_PROVIDERS);
+    // Positive control: closed, Right is global again.
+    h.press_escape();
+    h.key(RIGHT);
+    h.turns(2);
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_ROUTES);
+}
+
+/// The footer teaches the arrows beside Ctrl+P/N in browse mode.
+#[test]
+fn footer_lists_the_arrow_keys_for_screens() {
+    let mut h = harness_sized(Size::new(200, 34));
+    h.connect_as_admin();
+    h.goto_screen(ui::SCREEN_WELCOME);
+    let s = h.turns(2);
+    assert!(s.contains("←/→ Ctrl+P/N prev/next"), "footer:\n{s}");
+}

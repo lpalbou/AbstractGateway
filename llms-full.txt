@@ -5658,6 +5658,16 @@ step, `Esc` back (in a text field, the first `Esc` releases it so screen keys
 work again), `1`-`9`, `0`, `A` and `N` screens, `r` refresh, `q` quit. Each screen
 lists its own actions in the footer.
 
+`←` / `→` switch to the previous and next screen, wrapping from the last screen
+to the first and back, like `Ctrl+P` / `Ctrl+N` in browse mode. The arrows keep
+their own meaning wherever the focused element uses them: a text field moves its
+caret, a choice list (radio buttons) or a tabs bar (the Runtimes inspector, the
+Resources Loaded/Caches tabs) changes its selection, the screen bar moves
+between screens, a focused scrolling text pane scrolls, and an open dialog keeps
+every key. Press `Esc` in a text field, or `Tab` away from the widget, and the
+arrows switch screens again. In the setup guide the arrows do not jump
+screens; `Ctrl+N` walks the guide.
+
 **Admin rules.** Admin-only actions are refused before anything is sent for a
 non-admin sign-in, with the reason, and the footer marks them "admin only".
 The setup guide is admin-only, as on the web. Every write is verified with a

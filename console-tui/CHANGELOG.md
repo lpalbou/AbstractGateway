@@ -5,6 +5,12 @@
 Needs abstractcore-console 0.4; works with AbstractGateway 0.7.0 and newer (the gateway's own update rendering
 needs 0.7.2).
 
+### Added
+- `←` / `→` switch to the previous and next screen in browse mode, wrapping at both ends, like `Ctrl+P` / `Ctrl+N`.
+  The arrows stay with the focused element when it uses them: a text field moves its caret, a radio list or tabs bar
+  changes its selection, a focused scrolling pane scrolls, and a dialog keeps every key. In the setup guide the arrows
+  do not jump screens and say that `Ctrl+N` walks the guide. The footer lists `←/→ Ctrl+P/N`.
+
 ### Changed
 - F3 update: the version line, the hint and the confirmation are the gateway's own (`update` of
   `GET /host/update`, AbstractGateway 0.7.2+), the same words as the web console and the tray. For an

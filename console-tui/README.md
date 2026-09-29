@@ -183,6 +183,8 @@ cargo run < /dev/null   # headless: prints a skip line, exits 0
 
 Keys: `Tab` focus · `Enter` activate · `Ctrl+N` next step / `Ctrl+P`
 back (always work — `]`/`[` are alternates that text fields swallow) ·
+`←` / `→` previous / next screen, wrapping (browse; a focused text field,
+radio list, tabs bar or scrolling pane keeps the arrows for itself) ·
 `Esc` back / close modal (in a screen's text field, the first `Esc`
 releases the caret so screen keys work again; page text fields never
 take the caret by themselves once connected) · `1-9`, `0`, `A` (Apps), `N` (Network) screens (browse; the
