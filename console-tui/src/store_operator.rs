@@ -53,6 +53,12 @@ pub struct OperatorStore {
     /// Set by the worker when a saved network mode needs a restart that
     /// can apply it: the Network screen takes it and offers the restart.
     pub network_restart_offer: Signal<Option<String>>,
+    /// `GET /me/email` — the caller's own mailbox (framework backlog 0992).
+    pub my_email: Signal<Loadable<super::email::MyEmail>>,
+    /// `GET /me/notifications` — the caller's notification preferences.
+    pub my_notifications: Signal<Loadable<super::email::MyNotifications>>,
+    /// The OAuth2 sign-in being awaited: `(flow_id, what to do)`.
+    pub email_oauth: Signal<Option<(String, String)>>,
 }
 
 impl OperatorStore {
@@ -66,6 +72,9 @@ impl OperatorStore {
             my_policy: cx.signal(Loadable::default()),
             start_at_login: cx.signal(Loadable::default()),
             network_restart_offer: cx.signal(None),
+            my_email: cx.signal(Loadable::default()),
+            my_notifications: cx.signal(Loadable::default()),
+            email_oauth: cx.signal(None),
         }
     }
 
@@ -80,6 +89,9 @@ impl OperatorStore {
         self.my_policy.set(Loadable::NotAsked);
         self.start_at_login.set(Loadable::NotAsked);
         self.network_restart_offer.set(None);
+        self.my_email.set(Loadable::NotAsked);
+        self.my_notifications.set(Loadable::NotAsked);
+        self.email_oauth.set(None);
         self.runner_poll_gen.update(|g| *g += 1);
     }
 }

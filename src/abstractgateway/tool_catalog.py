@@ -84,7 +84,16 @@ _WHY_BY_TOOLSET = {
 # core here. DRIFT-PINNED: a test enables all comms kinds and asserts this
 # map equals runtime's composed toolset names — never sync-by-vigilance.
 _COMMS_KIND_TOOLS: Dict[str, Tuple[str, ...]] = {
-    "email": ("list_email_accounts", "send_email", "list_emails", "read_email"),
+    # AbstractRuntime 0.8 (framework backlog 0992): reply/search/attachment joined.
+    "email": (
+        "list_email_accounts",
+        "send_email",
+        "reply_email",
+        "list_emails",
+        "search_emails",
+        "read_email",
+        "get_email_attachment",
+    ),
     "whatsapp": ("send_whatsapp_message", "list_whatsapp_messages", "read_whatsapp_message"),
     "telegram": ("send_telegram_message", "send_telegram_artifact"),
 }

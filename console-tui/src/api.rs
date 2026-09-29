@@ -25,6 +25,9 @@ pub mod apps;
 /// The optional Models/Engines verbs of the shared screens (engine server
 /// start/stop, paused-install continue, install location, hub search,
 /// downloads feed).
+#[path = "api_email.rs"]
+mod email;
+
 #[path = "api_engines.rs"]
 mod engines;
 /// Entities: summon, templates, card, talk, voice audition.

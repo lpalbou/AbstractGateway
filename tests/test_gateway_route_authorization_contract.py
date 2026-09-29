@@ -109,6 +109,31 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # "user-level by design — every principal may read their own policy"; the
     # PUT writes that same per-user entry and nobody else's.
     ("PUT", "/api/gateway/workspace/policy/self"),
+    # The caller's OWN email account and notification preferences (framework
+    # backlog 0992). Every handler resolves the plane from the authenticated
+    # principal (mail/accounts.py `plane_for_principal`), never from a path or
+    # body id, and refuses entities: a principal can only connect, test,
+    # disconnect, configure or sign in to ITS OWN mailbox; test notifications
+    # go to its own registered address through its own account.
+    ("PUT", "/api/gateway/me/email"),
+    ("DELETE", "/api/gateway/me/email"),
+    ("POST", "/api/gateway/me/email/test"),
+    ("PUT", "/api/gateway/me/email/policy"),
+    ("POST", "/api/gateway/me/email/policy/check"),
+    ("PUT", "/api/gateway/me/email/limits"),
+    ("PUT", "/api/gateway/me/email/enabled"),
+    ("POST", "/api/gateway/me/email/oauth/start"),
+    ("POST", "/api/gateway/me/email/oauth/poll"),
+    ("POST", "/api/gateway/me/email/oauth/finish"),
+    ("POST", "/api/gateway/me/email/oauth/cancel"),
+    ("PUT", "/api/gateway/me/notifications"),
+    ("POST", "/api/gateway/me/notifications/test"),
+    # Account recovery by email (framework backlog 0992): the public writes
+    # below — single-use HMAC-stored codes, 10-minute expiry, rate-limited
+    # per account and client address, a constant answer (no enumeration);
+    # see test_gateway_email_recovery.py.
+    ("POST", "/api/gateway/session/recovery/request"),
+    ("POST", "/api/gateway/session/recovery/redeem"),
     # Opening a RUNNING browser app mints a one-time sign-in link for the
     # CALLER only (routes/apps.py); it starts nothing and installs nothing.
     ("POST", "/api/gateway/apps/{app_id}/open"),
@@ -298,6 +323,15 @@ PUBLIC_WRITES = {
     # Not a write: the one public READ inside the boundary (versions only,
     # no paths or secrets; see test_gateway_about.py).
     ("GET", "/api/gateway/about"),
+    # Account recovery by email (framework backlog 0992; see
+    # test_gateway_email_recovery.py): a constant answer whether or not the
+    # account exists or has email, the mail sent off the request thread;
+    # single-use HMAC-stored codes, 10-minute expiry, 5 tries, rate limits per
+    # account and client address. The GET is one gateway-wide boolean
+    # ("does any account here have email"), never per account.
+    ("POST", "/api/gateway/session/recovery/request"),
+    ("POST", "/api/gateway/session/recovery/redeem"),
+    ("GET", "/api/gateway/session/recovery"),
 }
 
 

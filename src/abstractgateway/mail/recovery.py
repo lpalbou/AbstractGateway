@@ -36,7 +36,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from abstractcore.comms.email import EmailError, OutgoingMessage, guarded_send
+from .core_mail import EmailError, OutgoingMessage, guarded_send
 
 from ..users import gateway_data_dir_from_env
 from .accounts import EmailPrincipalRefused, _read_json, _write_private_json, email_context, email_usable, plane_for_principal

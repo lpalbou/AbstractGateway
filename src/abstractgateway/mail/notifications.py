@@ -7,8 +7,9 @@ by the user or by an administrator: no email notifications (no gateway-wide send
 
 Events (each one switchable in the preferences):
 
-    automation_result   an automation occurrence asked to notify (`notify` in its output)
-    automation_failed   an occurrence failed after its retries
+    automation_result   an occurrence asked to notify (`notify` in its output) and the automation
+                        delivers to email (`notify.channels` holds "email", schema v2)
+    automation_failed   an occurrence failed after its retries (same channel rule)
     approval_needed     a run of this user waits on a person (tool approval, question)
     job_finished        a run started with `_runtime.notify = {on: ["finished"], channels: ["email"]}`
     job_failed          same, `on: ["failed"]`
@@ -41,7 +42,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
-from abstractcore.comms.email import EmailError, EmailRateLimited, OutgoingMessage, guarded_send
+from .core_mail import EmailError, EmailRateLimited, OutgoingMessage, guarded_send
 
 from .accounts import (
     EmailPlane,
@@ -63,8 +64,8 @@ DEFAULT_PREFERENCES = {
     "job_failed": True,
 }
 EVENT_LABELS = {
-    "automation_result": "Automation results (when an automation asks to notify you)",
-    "automation_failed": "Automation failures (after the retries)",
+    "automation_result": "Automation results (automations set to “email me the result”)",
+    "automation_failed": "Automation failures after the retries (automations set to “email me the result”)",
     "approval_needed": "Approval or answer needed",
     "job_finished": "Job finished (runs started with “email me when done”)",
     "job_failed": "Job failed (runs started with “email me when done”)",
@@ -580,6 +581,34 @@ def _run_error(run: Any) -> Tuple[str, str]:
     return "", ""
 
 
+def _attention_items(ledger_store: Any, automation_id: str, *, after_seq: int) -> List[Dict[str, Any]]:
+    """Attention items (`automation.completed` records carrying `attention`) after `after_seq`,
+    oldest first, with the delivery channels the runtime stamped on each."""
+
+    from abstractruntime.automations.ledger import automation_records
+
+    out: List[Dict[str, Any]] = []
+    for rec in automation_records(ledger_store, automation_id, "automation.completed"):
+        p = rec["payload"]
+        att = p.get("attention")
+        if not isinstance(att, dict) or int(att.get("seq") or 0) <= int(after_seq):
+            continue
+        channels = att.get("channels")
+        out.append(
+            {
+                "kind": att.get("kind"),
+                "seq": int(att["seq"]),
+                "title": att.get("title"),
+                "body": att.get("body"),
+                "index": p.get("index"),
+                "run_id": p.get("run_id"),
+                "channels": [str(c) for c in channels] if isinstance(channels, list) else ["console"],
+            }
+        )
+    out.sort(key=lambda it: it["seq"])
+    return out
+
+
 class NotificationCollector:
     """Turns the plane's ledger / run facts into queued notices (never sends)."""
 
@@ -607,7 +636,7 @@ class NotificationCollector:
         # Automations: notify / failure attention items (ledger), human waits (run state).
         try:
             from abstractruntime.automation_queries import list_automations
-            from abstractruntime.automations.attention import list_attention, pending_waits
+            from abstractruntime.automations.attention import pending_waits
 
             cursor = None
             while True:
@@ -618,7 +647,7 @@ class NotificationCollector:
                         continue
                     title = str(item.get("title") or "Automation")
                     floor = att.get(aid)
-                    items = list_attention(ledger_store, aid, after_seq=floor or 0, limit=500)["items"] if ledger_store is not None else []
+                    items = _attention_items(ledger_store, aid, after_seq=floor or 0) if ledger_store is not None else []
                     if floor is None and first:
                         # Baseline: never mail the history that existed before notifications were on.
                         att[aid] = max([int(i["seq"]) for i in items] or [0])
@@ -627,6 +656,10 @@ class NotificationCollector:
                         seq = int(it["seq"])
                         att[aid] = max(att.get(aid, 0), seq)
                         kind = "automation_failed" if str(it.get("kind")) == "failure" else "automation_result"
+                        # The automation asks for email delivery (`notify.channels`, schema v2;
+                        # the runtime stamps the channels on the attention item; v1 = console only).
+                        if "email" not in it["channels"]:
+                            continue
                         if usable and prefs.get(kind):
                             facts = {"title": title, "model_title": it.get("title"), "ref": f"automation {aid}, occurrence {it.get('index')}"}
                             if kind == "automation_result":

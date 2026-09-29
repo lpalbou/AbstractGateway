@@ -1823,6 +1823,21 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        </div>
 	      </form>
 	      <div id="login-message" class="message"></div>
+      <div id="recovery-section" class="hidden">
+        <div class="af-gateway-signin__actions">
+          <button id="recovery-forgot" class="af-gateway-signin__secondary" type="button" title="Email a code to the user's registered address; the code sets a new token">Forgot your token?</button>
+          <button id="recovery-code" class="af-gateway-signin__secondary" type="button" title="Email a one-time sign-in code to the user's registered address">Email me a sign-in code</button>
+        </div>
+        <div id="recovery-redeem" class="af-gateway-signin__form hidden">
+          <label class="af-gateway-signin__label" for="recovery-code-input">Code from the email</label>
+          <input id="recovery-code-input" autocomplete="one-time-code" inputmode="numeric" placeholder="8 digits">
+        </div>
+        <div id="recovery-redeem-actions" class="af-gateway-signin__actions hidden">
+          <button id="recovery-use" class="af-gateway-signin__primary" type="button">Use code</button>
+        </div>
+        <div id="recovery-message" class="message" role="status" aria-live="polite"></div>
+        <div id="recovery-token" class="issued hidden"></div>
+      </div>
 	    </section>
 
 	    <div id="workspace-shell" class="workspace-shell session-only">
@@ -2312,7 +2327,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <div id="issued-token" class="issued hidden"></div>
 	              <div id="users-message" class="message"></div>
 	              <table>
-	                <thead><tr><th>User</th><th>Email</th><th>Runtime</th><th>Roles</th><th>State</th><th>Actions</th></tr></thead>
+	                <thead><tr><th>User</th><th>Email</th><th>Mailbox</th><th>Runtime</th><th>Roles</th><th>State</th><th>Actions</th></tr></thead>
 	                <tbody id="users-table"></tbody>
 	              </table>
 	              <div id="users-entity-note" class="section-note hidden"></div>
@@ -2340,6 +2355,90 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <div id="my-workspace-policy-current" class="section-note"></div>
 	              </div>
 	            </details>
+            <details id="my-email-section" class="entity-advanced session-only">
+              <summary>My email <span id="my-email-summary" class="entity-config-hint">your own mailbox: automations on new mail, emailed notifications, sign-in codes</span></summary>
+              <div class="entity-config-block">
+                <div class="section-head">
+                  <div>
+                    <p class="section-note">One account per user, stored encrypted in your own data home. The mailbox is only read (never marked read, moved or deleted). Administrators can turn email on or off for you, never read it. Without an account there is no sending and no email notification.</p>
+                  </div>
+                  <button id="my-email-refresh" class="secondary icon-only" title="Reload my email settings" aria-label="Refresh my email"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
+                </div>
+                <div id="my-email-message" class="message" role="status" aria-live="polite"></div>
+                <div id="my-email-notices" class="message"></div>
+                <div id="my-email-status" class="section-note">Loading…</div>
+                <h3 class="section-subtitle">Account</h3>
+                <div class="provider-config-form">
+                  <label>Address <input id="my-email-address" autocomplete="off" placeholder="me@example.com"></label>
+                  <label>Display name <input id="my-email-display-name" autocomplete="off"></label>
+                  <label>User name <input id="my-email-username" autocomplete="off" placeholder="(the address)"></label>
+                  <label>Password <input id="my-email-password" type="password" autocomplete="new-password" placeholder="app password"></label>
+                  <label>IMAP host <input id="my-email-imap-host" autocomplete="off" placeholder="imap.example.com"></label>
+                  <label>IMAP port <input id="my-email-imap-port" inputmode="numeric" placeholder="993"></label>
+                  <label>IMAP security <select id="my-email-imap-security"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option></select></label>
+                  <label>Folder <input id="my-email-imap-folder" placeholder="INBOX"></label>
+                  <label>SMTP host <input id="my-email-smtp-host" autocomplete="off" placeholder="smtp.example.com"></label>
+                  <label>SMTP port <input id="my-email-smtp-port" inputmode="numeric" placeholder="465"></label>
+                  <label>SMTP security <select id="my-email-smtp-security"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option></select></label>
+                </div>
+                <div class="inline">
+                  <button id="my-email-save" type="button">Save and test</button>
+                  <button id="my-email-test" class="secondary" type="button">Test</button>
+                  <button id="my-email-toggle" class="secondary" type="button">Turn off</button>
+                  <button id="my-email-disconnect" class="danger" type="button">Disconnect</button>
+                </div>
+                <div id="my-email-disconnect-confirm" class="inline hidden">
+                  <span class="section-note">Disconnect deletes the stored password or tokens (policy and limits are kept).</span>
+                  <button id="my-email-disconnect-now" class="danger" type="button">Disconnect now</button>
+                  <button id="my-email-disconnect-cancel" class="secondary" type="button">Cancel</button>
+                </div>
+                <p class="section-note">Passwords are stored encrypted and never shown again. Many providers need an app password when two-step verification is on.</p>
+                <h3 class="section-subtitle">Sign in with OAuth2</h3>
+                <div class="provider-config-form">
+                  <label>Provider <select id="my-email-oauth-provider"><option value="microsoft">Microsoft (Outlook, Microsoft 365)</option><option value="google">Google (Gmail)</option></select></label>
+                  <label>Address <input id="my-email-oauth-address" autocomplete="off" placeholder="me@outlook.com"></label>
+                  <label>Client id <input id="my-email-oauth-client-id" autocomplete="off" placeholder="(the gateway's or the built-in client)"></label>
+                  <label>Client secret <input id="my-email-oauth-client-secret" type="password" autocomplete="new-password" placeholder="(none)"></label>
+                  <label>Tenant <input id="my-email-oauth-tenant" autocomplete="off" placeholder="common (Microsoft only)"></label>
+                  <label>Sign-in flow <select id="my-email-oauth-flow"><option value="">provider default</option><option value="device">device code</option><option value="loopback">browser on the gateway's computer</option></select></label>
+                </div>
+                <div class="inline">
+                  <button id="my-email-oauth-start" type="button">Start sign-in</button>
+                  <button id="my-email-oauth-cancel" class="secondary hidden" type="button">Cancel sign-in</button>
+                </div>
+                <div id="my-email-oauth-prompt" class="message" role="status" aria-live="polite"></div>
+                <p id="my-email-oauth-clients" class="section-note">Without a client id, the gateway's OAuth client (set by an administrator) or the built-in AbstractFramework client signs in. Microsoft defaults to a device code (any browser, any machine); Google to a browser on the gateway's own computer. Tokens are stored encrypted, like passwords.</p>
+                <h3 class="section-subtitle">Recipient policy</h3>
+                <div class="provider-config-form">
+                  <label>Mode <select id="my-email-policy-mode"><option value="allowlist">allowlist: only these recipients</option><option value="denylist">denylist: everyone except these</option></select></label>
+                  <label class="field-span-2">Entries (one address or domain per line) <textarea id="my-email-policy-entries" rows="3" spellcheck="false" placeholder="me@example.com&#10;example.org"></textarea></label>
+                  <label>Check a recipient <input id="my-email-policy-check" autocomplete="off" placeholder="recipient to check"></label>
+                </div>
+                <div class="inline">
+                  <button id="my-email-policy-save" type="button">Save policy</button>
+                  <button id="my-email-policy-check-button" class="secondary" type="button">Check</button>
+                  <span id="my-email-policy-check-result" class="section-note"></span>
+                </div>
+                <p class="section-note">Entries are exact addresses (name@example.com) or domains (example.com; a subdomain only when written as its own entry). The policy applies to To, Cc and Bcc of every send (agents, automations, notifications); a message with any refused recipient is not sent.</p>
+                <h3 class="section-subtitle">Send limits</h3>
+                <div class="provider-config-form">
+                  <label>Per hour <input id="my-email-per-hour" inputmode="numeric"></label>
+                  <label>Per day <input id="my-email-per-day" inputmode="numeric"></label>
+                </div>
+                <div class="inline">
+                  <button id="my-email-limits-save" type="button">Save limits</button>
+                  <span id="my-email-usage" class="section-note"></span>
+                </div>
+                <h3 class="section-subtitle">Notifications</h3>
+                <p id="my-email-notify-note" class="section-note"></p>
+                <div id="my-email-notify-events" class="provider-config-form"></div>
+                <div class="inline">
+                  <button id="my-email-notify-save" type="button">Save notifications</button>
+                  <button id="my-email-notify-test" class="secondary" type="button">Send test notification</button>
+                  <span id="my-email-outbox" class="section-note"></span>
+                </div>
+              </div>
+            </details>
 	            <section id="entities-list-section" class="session-only">
 	              <div class="section-head">
 	                <div>
@@ -5997,7 +6096,268 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        msg.className = "message error";
 	      }
 	    }
-	    function _wspSetMode(mode) {
+	    // ------------------------------------------------------------ My email
+    // Framework backlog 0992: the signed-in user's OWN mailbox (/me/email*),
+    // notification preferences (/me/notifications). Same fields and words as
+    // AbstractCore's Email page and the terminal console's My email screen.
+    function mailboxCell(acc) {
+      if (!acc) return "—";
+      const tone = acc.state === "connected" ? "ok" : (acc.state === "not connected" ? "" : "off");
+      const who = acc.address ? `<div class="section-note">${esc(acc.address)}</div>` : "";
+      return `<span class="state-pill ${tone}">${esc(acc.state || "—")}</span>${who}`;
+    }
+    async function setUserEmailEnabled(u, enabled) {
+      const msg = $("users-message");
+      try {
+        await api(`/api/gateway/admin/users/${encodeURIComponent(u.user_id)}/email?tenant_id=${encodeURIComponent(u.tenant_id || "default")}`, { method: "PUT", body: JSON.stringify({ enabled }) });
+        msg.textContent = enabled ? `Email turned on for ${u.user_id}.` : `Email turned off for ${u.user_id}: no watcher, no sending, no notifications (settings kept).`;
+        msg.className = "message ok";
+        await refresh();
+      } catch (e) {
+        msg.textContent = emailErrorText(e);
+        msg.className = "message error";
+      }
+    }
+    function emailErrorText(e) {
+      const d = e && e.detail;
+      if (d && typeof d === "object" && d.cause) return d.fix ? `${d.cause} Fix: ${d.fix}` : String(d.cause);
+      return String((e && e.message) || e);
+    }
+    function myEmailMessage(text, tone) {
+      const m = $("my-email-message");
+      m.textContent = text || "";
+      m.className = tone ? `message ${tone}` : "message";
+    }
+    function myEmailSet(id, v) { $(id).value = v === null || v === undefined ? "" : String(v); }
+    function myEmailVal(id) { return String($(id).value || "").trim(); }
+    function myEmailNum(id) { const v = myEmailVal(id); return v === "" ? null : Number(v); }
+    function emailLegText(leg) {
+      if (!leg || leg.ok === undefined) return "-";
+      if (leg.ok === null) return "not configured";
+      return leg.ok ? "ok" : `failed: ${leg.cause || leg.code}`;
+    }
+    function renderMyEmail(d) {
+      state.myEmail = d || null;
+      d = d || {};
+      const imap = d.imap || {};
+      const smtp = d.smtp || {};
+      myEmailSet("my-email-address", d.address);
+      myEmailSet("my-email-display-name", d.display_name);
+      myEmailSet("my-email-username", d.username && d.username !== d.address ? d.username : "");
+      myEmailSet("my-email-password", "");
+      myEmailSet("my-email-imap-host", imap.host);
+      myEmailSet("my-email-imap-port", imap.port);
+      $("my-email-imap-security").value = imap.security || "ssl";
+      myEmailSet("my-email-imap-folder", imap.folder || "");
+      myEmailSet("my-email-smtp-host", smtp.host);
+      myEmailSet("my-email-smtp-port", smtp.port);
+      $("my-email-smtp-security").value = smtp.security || "ssl";
+      const pol = d.policy || { mode: "allowlist", entries: [] };
+      $("my-email-policy-mode").value = pol.mode || "allowlist";
+      $("my-email-policy-entries").value = (pol.entries || []).join(String.fromCharCode(10));
+      const lim = d.limits || {};
+      myEmailSet("my-email-per-hour", lim.per_hour);
+      myEmailSet("my-email-per-day", lim.per_day);
+      $("my-email-usage").textContent = lim.per_hour !== undefined ? `${lim.used_last_hour} sent in the last hour, ${lim.used_last_day} in the last day` : "";
+      $("my-email-toggle").textContent = d.enabled === false ? "Turn on" : "Turn off";
+      let label = "not connected";
+      if (d.configured && d.admin_enabled === false) label = "turned off by an administrator";
+      else if (d.configured && d.enabled === false) label = "off";
+      else if (d.configured && d.status && d.status.last_error) label = "needs action";
+      else if (d.configured) label = "connected";
+      $("my-email-summary").textContent = d.configured ? `${label} · ${d.address}` : label;
+      const st = d.status || {};
+      const legs = st.legs || {};
+      const w = d.watcher || {};
+      const rows = [
+        ["State", label],
+        ["Address", d.address || "not connected"],
+        ["Sign-in", d.auth_kind || "-"],
+        ["IMAP (read)", d.imap ? `${imap.host}:${imap.port} ${imap.security}` : "not configured"],
+        ["SMTP (send)", d.smtp ? `${smtp.host}:${smtp.port} ${smtp.security}` : "not configured"],
+        ["Last test", st.last_test || "never"],
+        ["IMAP test", emailLegText(legs.imap)],
+        ["SMTP test", emailLegText(legs.smtp)],
+        ["Watcher", `${w.state || "idle"}${w.last_poll ? ` · last check ${w.last_poll}` : ""}`],
+        ["Credentials", d.secret_storage === "os-keychain" ? "encrypted, key in the OS keychain" : d.secret_storage === "key-file" ? "encrypted, key in a 0600 file" : "none stored"],
+      ];
+      const lines = rows.map(([k, v]) => `<div><strong>${esc(k)}:</strong> ${esc(v)}</div>`);
+      if (st.last_error) lines.push(`<div class="message error">${esc(st.last_error.cause || st.last_error.code)} Fix: ${esc(st.last_error.fix || "")}</div>`);
+      if (d.admin_disabled) lines.push(`<div class="message error">${esc(d.admin_disabled.cause)} ${esc(d.admin_disabled.fix)}</div>`);
+      $("my-email-status").innerHTML = lines.join("");
+      const notices = (Array.isArray(d.notices) ? d.notices : []).concat(d.secret_warning ? [d.secret_warning] : []);
+      $("my-email-notices").textContent = notices.join(" ");
+      $("my-email-disconnect-confirm").classList.add("hidden");
+    }
+    function renderMyNotifications(n) {
+      state.myNotifications = n || null;
+      n = n || {};
+      const box = $("my-email-notify-events");
+      box.textContent = "";
+      for (const ev of n.events || []) {
+        const label = document.createElement("label");
+        label.className = "af-gateway-signin__checkbox";
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.checked = Boolean(ev.email);
+        input.setAttribute("data-event", ev.id);
+        input.id = `my-email-notify-${ev.id}`;
+        label.append(input, document.createTextNode(` ${ev.label}`));
+        box.append(label);
+      }
+      const ch = (n.channels && n.channels.email) || {};
+      $("my-email-notify-note").textContent = ch.available
+        ? `Notifications are emailed to ${ch.to}, sent by your own account (your recipient policy and send limits apply). Automations email a result only when set to “email me the result”.`
+        : (n.unavailable_reason || "Email notifications need a connected, turned-on email account.");
+      const ob = n.outbox || {};
+      const fail = ob.last_failure ? ` Last failure: ${ob.last_failure.cause} Fix: ${ob.last_failure.fix}` : "";
+      $("my-email-outbox").textContent = `${ob.sent || 0} sent, ${ob.queued || 0} waiting, ${ob.failed || 0} failed.${fail}`;
+    }
+    async function loadMyEmail() {
+      myEmailMessage("Loading…");
+      try {
+        renderMyEmail(await api("/api/gateway/me/email"));
+        renderMyNotifications(await api("/api/gateway/me/notifications"));
+        myEmailMessage("");
+      } catch (e) {
+        myEmailMessage(emailErrorText(e), "error");
+      }
+    }
+    async function myEmailRun(label, fn, okText) {
+      myEmailMessage(`${label}…`);
+      try {
+        const out = await fn();
+        if (out && out.schema === "email_settings_v1") renderMyEmail({ ...out, notices: (state.myEmail && state.myEmail.notices) || [] });
+        if (okText) myEmailMessage(typeof okText === "function" ? okText(out) : okText, "ok");
+        else myEmailMessage("");
+        return out;
+      } catch (e) {
+        myEmailMessage(`${label}: ${emailErrorText(e)}`, "error");
+        return null;
+      }
+    }
+    function myEmailServer(prefix, withFolder) {
+      const host = myEmailVal(`my-email-${prefix}-host`);
+      if (!host) return null;
+      const out = { host, port: myEmailNum(`my-email-${prefix}-port`), security: $(`my-email-${prefix}-security`).value };
+      if (withFolder) out.folder = myEmailVal("my-email-imap-folder") || "INBOX";
+      return out;
+    }
+    async function saveMyEmail() {
+      const body = {
+        address: myEmailVal("my-email-address"),
+        display_name: myEmailVal("my-email-display-name"),
+        username: myEmailVal("my-email-username"),
+        password: String($("my-email-password").value || ""),
+        imap: myEmailServer("imap", true),
+        smtp: myEmailServer("smtp", false),
+        test: true,
+      };
+      if (!body.password) { myEmailMessage("Give the password (or app password): it is never shown again once stored.", "error"); return; }
+      await myEmailRun("Save and test", () => api("/api/gateway/me/email", { method: "PUT", body: JSON.stringify(body), slow: true }), (out) => `Connected ${out.address} (connection test passed).`);
+      await loadMyEmail();
+    }
+    async function testMyEmail() {
+      const out = await myEmailRun("Test", () => api("/api/gateway/me/email/test", { method: "POST", slow: true }));
+      if (out) {
+        const failed = ["imap", "smtp"].map((k) => out[k]).filter((l) => l && l.ok === false);
+        myEmailMessage(failed.length ? `Test failed: ${failed[0].cause} Fix: ${failed[0].fix}` : "Test passed.", failed.length ? "error" : "ok");
+        await loadMyEmail();
+      }
+    }
+    async function toggleMyEmail() {
+      const on = !(state.myEmail && state.myEmail.enabled === false);
+      await myEmailRun(on ? "Turn off" : "Turn on", () => api("/api/gateway/me/email/enabled", { method: "PUT", body: JSON.stringify({ enabled: !on }) }), on ? "Email is off: no watcher, no sending, no notifications." : "Email is on.");
+    }
+    async function disconnectMyEmail() {
+      await myEmailRun("Disconnect", () => api("/api/gateway/me/email", { method: "DELETE" }), "Disconnected: the stored password or tokens are deleted.");
+      await loadMyEmail();
+    }
+    async function saveMyEmailPolicy() {
+      const entries = String($("my-email-policy-entries").value || "").split(String.fromCharCode(10)).map((x) => x.trim()).filter(Boolean);
+      await myEmailRun("Save policy", () => api("/api/gateway/me/email/policy", { method: "PUT", body: JSON.stringify({ mode: $("my-email-policy-mode").value, entries }) }), "Policy saved.");
+    }
+    async function checkMyEmailPolicy() {
+      const who = myEmailVal("my-email-policy-check");
+      if (!who) return;
+      try {
+        const out = await api("/api/gateway/me/email/policy/check", { method: "POST", body: JSON.stringify({ addresses: [who] }) });
+        const v = (out.recipients || [])[0] || {};
+        $("my-email-policy-check-result").textContent = v.allowed ? `${who}: allowed` : `${who}: refused (${v.reason || v.rule || "policy"})`;
+      } catch (e) {
+        $("my-email-policy-check-result").textContent = emailErrorText(e);
+      }
+    }
+    async function saveMyEmailLimits() {
+      await myEmailRun("Save limits", () => api("/api/gateway/me/email/limits", { method: "PUT", body: JSON.stringify({ per_hour: myEmailNum("my-email-per-hour"), per_day: myEmailNum("my-email-per-day") }) }), "Limits saved.");
+    }
+    async function saveMyNotifications() {
+      const email = {};
+      for (const ev of (state.myNotifications && state.myNotifications.events) || []) {
+        email[ev.id] = Boolean($(`my-email-notify-${ev.id}`).checked);
+      }
+      const out = await myEmailRun("Save notifications", () => api("/api/gateway/me/notifications", { method: "PUT", body: JSON.stringify({ email }) }), "Notifications saved.");
+      if (out) renderMyNotifications(out);
+    }
+    async function testMyNotifications() {
+      const out = await myEmailRun("Send test notification", () => api("/api/gateway/me/notifications/test", { method: "POST", slow: true }));
+      if (out) {
+        myEmailMessage(out.ok ? "Test notification sent." : `Not sent: ${(out.error && out.error.cause) || out.state} ${(out.error && out.error.fix) ? `Fix: ${out.error.fix}` : ""}`, out.ok ? "ok" : "error");
+        try { renderMyNotifications(await api("/api/gateway/me/notifications")); } catch {}
+      }
+    }
+    let myEmailOAuthFlow = null;
+    async function startMyEmailOAuth() {
+      const body = {
+        provider: $("my-email-oauth-provider").value,
+        address: myEmailVal("my-email-oauth-address"),
+        client_id: myEmailVal("my-email-oauth-client-id"),
+        client_secret: String($("my-email-oauth-client-secret").value || ""),
+        tenant: myEmailVal("my-email-oauth-tenant"),
+        flow: $("my-email-oauth-flow").value,
+      };
+      const prompt = $("my-email-oauth-prompt");
+      let out;
+      try {
+        out = await api("/api/gateway/me/email/oauth/start", { method: "POST", body: JSON.stringify(body), slow: true });
+      } catch (e) {
+        prompt.textContent = `Start sign-in: ${emailErrorText(e)}`;
+        prompt.className = "message error";
+        return;
+      }
+      const flow = { id: out.flow_id, cancelled: false };
+      myEmailOAuthFlow = flow;
+      $("my-email-oauth-cancel").classList.remove("hidden");
+      prompt.className = "message";
+      prompt.textContent = out.flow === "device"
+        ? `Open ${out.verification_uri} in any browser and enter the code ${out.user_code}. Waiting for the approval…`
+        : `Open this link in a browser on the gateway's computer: ${out.authorization_url} — waiting for the sign-in…`;
+      while (!flow.cancelled) {
+        let res;
+        try {
+          res = await api("/api/gateway/me/email/oauth/finish", { method: "POST", body: JSON.stringify({ flow_id: flow.id, wait_s: 20 }), timeoutMs: 70000 });
+        } catch (e) {
+          if (!flow.cancelled) { prompt.textContent = `Sign-in: ${emailErrorText(e)}`; prompt.className = "message error"; }
+          break;
+        }
+        if (res && res.pending) continue;
+        prompt.textContent = `Signed in: ${res.address} (connection test passed).`;
+        prompt.className = "message ok";
+        renderMyEmail(res);
+        break;
+      }
+      if (myEmailOAuthFlow === flow) myEmailOAuthFlow = null;
+      $("my-email-oauth-cancel").classList.add("hidden");
+    }
+    async function cancelMyEmailOAuth() {
+      const flow = myEmailOAuthFlow;
+      if (!flow) return;
+      flow.cancelled = true;
+      try { await api("/api/gateway/me/email/oauth/cancel", { method: "POST", body: JSON.stringify({ flow_id: flow.id }) }); } catch {}
+      $("my-email-oauth-prompt").textContent = "Sign-in cancelled.";
+      $("my-email-oauth-cancel").classList.add("hidden");
+    }
+    function _wspSetMode(mode) {
 	      for (const card of document.querySelectorAll("#wsp-mode-cards .wsp-card")) {
 	        const input = card.querySelector("input");
 	        const on = input.value === (mode || "");
@@ -10510,7 +10870,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       }
       if (!humans.length) {
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td colspan="6" class="empty">No users registered.</td>`;
+        tr.innerHTML = `<td colspan="7" class="empty">No users registered.</td>`;
         tbody.append(tr);
         return;
       }
@@ -10519,7 +10879,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         // Tenant is demoted (single-tenant installs only ever have
         // "default"): it renders as a prefix ONLY when it says something.
         const shownUser = (u.tenant_id && u.tenant_id !== "default") ? `${u.tenant_id}/${u.user_id}` : u.user_id;
-        tr.innerHTML = `<td>${esc(shownUser)}</td><td>${esc(u.email || "—")}</td><td>${esc(u.runtime_id || u.user_id)}</td><td>${esc((u.roles || []).join(", "))}</td><td><span class="state-pill ${u.enabled ? "ok" : "off"}">${u.enabled ? "enabled" : "disabled"}</span></td>`;
+        tr.innerHTML = `<td>${esc(shownUser)}</td><td>${esc(u.email || "—")}</td><td>${mailboxCell(u.email_account)}</td><td>${esc(u.runtime_id || u.user_id)}</td><td>${esc((u.roles || []).join(", "))}</td><td><span class="state-pill ${u.enabled ? "ok" : "off"}">${u.enabled ? "enabled" : "disabled"}</span></td>`;
         const actions = document.createElement("td");
         actions.className = "actions";
         const wsp = document.createElement("button");
@@ -10548,7 +10908,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         del.title = "Delete this account and its token — the runtime data is retained and stays reserved (see Retained runtimes)";
         del.setAttribute("aria-label", `Delete ${u.user_id}`);
         del.onclick = () => deleteUser(u);
-        actions.append(wsp, rotate, toggle, del);
+        const mail = document.createElement("button");
+        const mailOn = !(u.email_account && u.email_account.admin_enabled === false);
+        mail.innerHTML = `<span class="button-icon" aria-hidden="true">✉</span><span>${mailOn ? "Email off" : "Email on"}</span>`;
+        mail.className = "secondary";
+        mail.title = mailOn
+          ? "Turn email off for this user: no mailbox watcher, no sending, no email notifications (settings are kept; you never see their mail)"
+          : "Turn email back on for this user";
+        mail.setAttribute("aria-label", `${mailOn ? "Turn email off" : "Turn email on"} for ${u.user_id}`);
+        mail.onclick = () => setUserEmailEnabled(u, !mailOn);
+        actions.append(wsp, mail, rotate, toggle, del);
         tr.append(actions);
         tbody.append(tr);
       }
@@ -12473,6 +12842,59 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        $("login-button").disabled = false;
 	      }
 	    }
+    // Account recovery by email (framework backlog 0992): shown only when at
+    // least one account of this gateway has email configured; the answer to a
+    // request never says whether THIS account has (no enumeration).
+    let recoveryPurpose = "";
+    function recoveryMessage(text, tone) {
+      const m = $("recovery-message");
+      m.textContent = text || "";
+      m.className = tone ? `message ${tone}` : "message";
+    }
+    async function loadRecoveryOptions() {
+      try {
+        const out = await api("/api/gateway/session/recovery");
+        $("recovery-section").classList.toggle("hidden", !(out && out.available));
+      } catch {
+        $("recovery-section").classList.add("hidden");
+      }
+    }
+    async function requestRecoveryCode(purpose) {
+      const user = $("login-user").value.trim();
+      if (!user) { recoveryMessage("Enter your Gateway user first.", "error"); return; }
+      recoveryPurpose = purpose;
+      try {
+        const out = await api("/api/gateway/session/recovery/request", { method: "POST", body: JSON.stringify({ user_id: user, purpose }) });
+        recoveryMessage(out.message || "If this account has email configured, a code is on its way.", "ok");
+        $("recovery-redeem").classList.remove("hidden");
+        $("recovery-redeem-actions").classList.remove("hidden");
+      } catch (e) {
+        recoveryMessage(String((e && e.message) || e), "error");
+      }
+    }
+    async function useRecoveryCode() {
+      const user = $("login-user").value.trim();
+      const code = $("recovery-code-input").value.trim();
+      if (!user || !code || !recoveryPurpose) { recoveryMessage("Enter your Gateway user and the code from the email.", "error"); return; }
+      try {
+        const out = await api("/api/gateway/session/recovery/redeem", {
+          method: "POST",
+          body: JSON.stringify({ user_id: user, purpose: recoveryPurpose, code, remember: $("login-remember").checked }),
+        });
+        $("recovery-code-input").value = "";
+        if (out.token) {
+          renderIssuedToken($("recovery-token"), user, out.token);
+          $("recovery-token").classList.remove("hidden");
+          recoveryMessage("Your new token is shown once: keep it. Your old token no longer works. You are signed in.", "ok");
+        } else {
+          recoveryMessage("Signed in.", "ok");
+        }
+        setLoginStatus("Signed in", "ok", "token: browser session");
+        await refresh();
+      } catch (e) {
+        recoveryMessage(String((e && e.message) || e), "error");
+      }
+    }
     async function signOut() {
       try { await api("/api/gateway/session/logout", { method: "POST" }); } catch {}
       location.reload();
@@ -12798,6 +13220,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      await renderDefaults(await api("/api/gateway/config/capability-defaults"));
 	    }
     $("login-form").onsubmit = (event) => { event.preventDefault(); login(); };
+    $("recovery-forgot").onclick = () => requestRecoveryCode("reset_token");
+    $("recovery-code").onclick = () => requestRecoveryCode("sign_in");
+    $("recovery-use").onclick = useRecoveryCode;
+    loadRecoveryOptions();
 	    $("toggle-token").onclick = () => {
 	      const input = $("login-token");
 	      const visible = input.type === "text";
@@ -12965,6 +13391,23 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("my-workspace-policy-refresh").onclick = loadMyWorkspacePolicy;
 	    $("my-workspace-policy-save").onclick = () => saveMyWorkspacePolicy(false);
 	    $("my-workspace-policy-clear").onclick = () => saveMyWorkspacePolicy(true);
+    $("my-email-section").ontoggle = () => {
+      if ($("my-email-section").open && !state.myEmail) loadMyEmail();
+    };
+    $("my-email-refresh").onclick = loadMyEmail;
+    $("my-email-save").onclick = saveMyEmail;
+    $("my-email-test").onclick = testMyEmail;
+    $("my-email-toggle").onclick = toggleMyEmail;
+    $("my-email-disconnect").onclick = () => $("my-email-disconnect-confirm").classList.remove("hidden");
+    $("my-email-disconnect-cancel").onclick = () => $("my-email-disconnect-confirm").classList.add("hidden");
+    $("my-email-disconnect-now").onclick = disconnectMyEmail;
+    $("my-email-policy-save").onclick = saveMyEmailPolicy;
+    $("my-email-policy-check-button").onclick = checkMyEmailPolicy;
+    $("my-email-limits-save").onclick = saveMyEmailLimits;
+    $("my-email-notify-save").onclick = saveMyNotifications;
+    $("my-email-notify-test").onclick = testMyNotifications;
+    $("my-email-oauth-start").onclick = startMyEmailOAuth;
+    $("my-email-oauth-cancel").onclick = cancelMyEmailOAuth;
 	    $("wsp-cancel").onclick = closeWorkspacePolicyModal;
 	    $("wsp-save").onclick = () => saveWorkspacePolicyModal(false);
 	    $("wsp-reset").onclick = () => saveWorkspacePolicyModal(true);

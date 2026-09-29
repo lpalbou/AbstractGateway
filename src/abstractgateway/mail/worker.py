@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
 from .accounts import EmailPlane, email_usable, plane_for_service_config
 
@@ -28,32 +28,34 @@ TICK_S = 15.0
 
 class EmailWorker:
     def __init__(self, svc: Any, plane: EmailPlane, *, tick_s: float = TICK_S) -> None:
-        from .watcher import MailWatcher, plane_has_email_automations
-
         self.svc = svc
         self.plane = plane
         self.tick_s = float(tick_s)
-        self.watcher = MailWatcher(plane, has_consumers=lambda: plane_has_email_automations(svc), on_event=self._on_event)
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
-        self._event_hooks: list[Callable[[Dict[str, Any]], None]] = []
         self._recovered = False
 
     @property
     def name(self) -> str:
         return f"email:{self.plane.tenant_id}:{self.plane.user_id}"
 
-    def add_event_hook(self, fn: Callable[[Dict[str, Any]], None]) -> None:
-        """Called after each NEW durable inbox event (the trigger integration nudges here)."""
+    @property
+    def runtime(self) -> Any:
+        # Read per use: a host rebuild (publish, reload) swaps the runtime.
+        return self.svc.host.runtime
 
-        self._event_hooks.append(fn)
+    def _watcher(self) -> Any:
+        from abstractruntime.email import wake_email_automations
 
-    def _on_event(self, event: Dict[str, Any]) -> None:
-        for fn in list(self._event_hooks):
-            try:
-                fn(event)
-            except Exception:  # noqa: BLE001
-                logger.warning("email event hook failed", exc_info=True)
+        from .watcher import MailWatcher, plane_has_email_automations
+
+        runtime = self.runtime
+        return MailWatcher(
+            self.plane,
+            inbox=runtime.event_inbox,
+            has_consumers=lambda: plane_has_email_automations(self.svc),
+            on_appended=lambda _ids: wake_email_automations(runtime),
+        )
 
     def tick(self) -> Dict[str, Any]:
         from .notifications import NotificationCollector, NotificationOutbox
@@ -67,8 +69,15 @@ class EmailWorker:
                 logger.warning("email outbox recovery failed", exc_info=True)
             self._recovered = True
         try:
-            if self.watcher.due():
-                out["watcher"] = self.watcher.poll_once()
+            from .runtime_wiring import refresh_runtime_binding
+
+            refresh_runtime_binding(self.runtime, self.plane)
+        except Exception:  # noqa: BLE001
+            logger.warning("email binding refresh failed for %s", self.name, exc_info=True)
+        try:
+            watcher = self._watcher()
+            if watcher.due():
+                out["watcher"] = watcher.poll_once()
         except Exception:  # noqa: BLE001
             logger.warning("email watcher tick failed for %s", self.name, exc_info=True)
         try:

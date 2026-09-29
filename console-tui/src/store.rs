@@ -21,6 +21,11 @@ pub mod apps;
 #[path = "store_operator.rs"]
 pub mod operator;
 
+// "My email" (framework backlog 0992): the caller's own mailbox and
+// notification preferences; the signals ride `OperatorStore`.
+#[path = "store_email.rs"]
+pub mod email;
+
 /// Remote data honesty: never render a guess.
 #[derive(Clone, Debug, Default)]
 pub enum Loadable<T> {
@@ -970,6 +975,12 @@ pub struct UserRow {
     /// `None` = pre-contract gateway; the partition falls back to the
     /// documented roles convention.
     pub principal_kind: Option<String>,
+    /// The mailbox cell (framework backlog 0992): the gateway's state words
+    /// (`connected`, `not connected`, `needs action`, `turned off by an
+    /// administrator`, …) — status only, never content.
+    pub mailbox: String,
+    /// The admin's per-user email switch (`false` = turned off).
+    pub mailbox_admin_enabled: bool,
 }
 
 impl UserRow {
@@ -983,6 +994,8 @@ impl UserRow {
             runtime_id: s(v, "runtime_id").unwrap_or_default(),
             created_at: s(v, "created_at").unwrap_or_default(),
             principal_kind: s(v, "principal_kind"),
+            mailbox: email::mailbox_state(v).0,
+            mailbox_admin_enabled: email::mailbox_state(v).1,
         })
     }
 

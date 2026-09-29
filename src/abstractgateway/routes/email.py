@@ -50,7 +50,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from abstractcore.comms.email import EmailError, EmailInvalidMessage, SearchCriteria, OutgoingMessage, evaluate, parse_recipients
+from ..mail.core_mail import EmailError, EmailInvalidMessage, OutgoingMessage, SearchCriteria, evaluate, parse_recipients
 
 from ..mail import accounts as mail_accounts
 from ..mail.accounts import EmailPlane, EmailPrincipalRefused
@@ -309,6 +309,7 @@ async def me_email_enabled(request: Request, body: EnabledBody) -> Any:
 
     def run() -> Dict[str, Any]:
         mail_accounts.account_store(plane).set_enabled(body.enabled)
+        mail_accounts.rebind_live_runtime(plane)
         from ..mail.audit import audit_email_event
 
         audit_email_event("email.user_switch", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=_actor(principal), enabled=bool(body.enabled))

@@ -51,10 +51,23 @@ def _abstractcore_imports(path: Path) -> list[str]:
 # API for the descriptor): presentation text only, no config/LLM/tool surface.
 # The web console's About (console.py `console_about_config`) formats the
 # gateway-version rows with the same helper (contract A-9: formatted ONCE).
+#
+# The mail seam (mail/core_mail.py, framework backlog 0992): AbstractCore's mail
+# library is the ONE mail implementation (the gateway never talks IMAP/SMTP
+# itself), imported in exactly this one module until AbstractRuntime ships its
+# email facade (WP3 -> WP2 ask); then the import moves there and this row goes.
 _BOOTSTRAP_EXEMPTIONS = frozenset({
     ("cli.py", "import abstractcore"),
     ("app.py", "from abstractcore.utils.identity import about_lines, app_identity, gateway_version_rows"),
     ("console.py", "from abstractcore.utils.identity import gateway_version_rows"),
+    (
+        "core_mail.py",
+        "from abstractcore.comms.email import EmailAccount, EmailAccountStore, EmailContext, EmailDisabled, EmailError, "
+        "EmailInvalidMessage, EmailInvalidSettings, EmailNotConfigured, EmailOAuthFailed, EmailOAuthPending, "
+        "EmailRateLimited, EmailSecret, ImapSettings, LoopbackAuthorization, MailCursor, OAuthSettings, OAuthTokenClient, "
+        "OutgoingMessage, SearchCriteria, SecretVault, SmtpSettings, builtin_client, evaluate, guarded_send, legacy, "
+        "parse_recipients, provider_preset, resolve_oauth_client, tls_context",
+    ),
 })
 
 

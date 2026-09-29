@@ -32,7 +32,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from abstractcore.comms.email import (
+from .core_mail import (
     EmailAccount,
     EmailAccountStore,
     EmailContext,
@@ -52,7 +52,7 @@ from abstractcore.comms.email import (
     resolve_oauth_client,
     tls_context,
 )
-from abstractcore.comms.email import legacy as core_legacy
+from .core_mail import legacy as core_legacy
 
 from ..security.principal import GatewayPrincipal, local_admin_principal, safe_principal_component
 from ..users import gateway_data_dir_from_env
@@ -228,6 +228,17 @@ def sync_registered_address(plane: EmailPlane, store: Optional[EmailAccountStore
     return store
 
 
+def rebind_live_runtime(plane: EmailPlane) -> None:
+    """After a settings change, re-bind the plane's live runtime (if its service is built)."""
+
+    try:
+        from .runtime_wiring import refresh_cached_service_binding
+
+        refresh_cached_service_binding(plane)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 # ---------------------------------------------------------------------------------------
 # The admin's per-user switch (D3: admins enable/disable, never read)
 # ---------------------------------------------------------------------------------------
@@ -254,6 +265,7 @@ def set_admin_email_enabled(plane: EmailPlane, enabled: bool, *, actor: str) -> 
         users = doc.get("users") if isinstance(doc.get("users"), dict) else {}
         users[plane.key] = {"enabled": bool(enabled), "by": str(actor or ""), "at": _now_iso()}
         _write_private_json(path, {"version": 1, "users": users})
+    rebind_live_runtime(plane)
     audit_email_event(
         "email.capability_changed",
         tenant_id=plane.tenant_id,
@@ -434,6 +446,7 @@ def connect_password(
         reset_watcher_cursor(plane)
     except Exception:  # noqa: BLE001
         pass
+    rebind_live_runtime(plane)
     audit_email_event(
         "email.connected", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=actor or plane.user_id, auth_kind="password",
         outcome="tested" if test else "untested",
@@ -466,6 +479,7 @@ def disconnect(plane: EmailPlane, *, actor: str = "") -> Dict[str, Any]:
         reset_watcher_cursor(plane)
     except Exception:  # noqa: BLE001
         pass
+    rebind_live_runtime(plane)
     audit_email_event("email.disconnected", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=actor or plane.user_id)
     return public_status(plane)
 
@@ -506,7 +520,7 @@ def oauth_clients_public() -> Dict[str, Any]:
         row = raw.get(prov)
         builtin = None
         try:
-            from abstractcore.comms.email import builtin_client
+            from .core_mail import builtin_client
 
             builtin = builtin_client(prov)
         except Exception:  # noqa: BLE001
@@ -725,6 +739,7 @@ def oauth_finish(plane: EmailPlane, flow_id: str, *, wait_s: float = 0.0, actor:
         reset_watcher_cursor(plane)
     except Exception:  # noqa: BLE001
         pass
+    rebind_live_runtime(plane)
     audit_email_event(
         "email.connected", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=actor or plane.user_id,
         auth_kind="oauth2", provider=entry["account"].oauth.provider if entry["account"].oauth else None, outcome="tested",

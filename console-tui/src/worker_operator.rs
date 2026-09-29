@@ -20,6 +20,7 @@ use crate::store::operator::{
     my_policy_body, seed_report_text, start_again_hint, tray_note, HostRunner, HostUpdate,
     MyPolicy, StartAtLogin,
 };
+use crate::store::email::{email_error_text, notifications_body, MyEmail, MyNotifications};
 use crate::store::{JournalEntry, Loadable, NetworkData, RuntimeConfigData, Store};
 
 /// A failed `/host/runner` poll (UI thread). It never erases a held
@@ -114,13 +115,56 @@ pub enum OpCmd {
         clear: bool,
         form_id: Option<u64>,
     },
+    /// GET /me/email + GET /me/notifications (framework backlog 0992).
+    LoadMyEmail,
+    /// One "My email" write, verified by a GET (the worker's write law).
+    Email {
+        action: EmailAction,
+        form_id: Option<u64>,
+    },
+}
+
+/// The "My email" writes (web parity: the Users tab's My email section,
+/// and the admin's per-user switch on the Users table).
+#[derive(Clone, Debug)]
+pub enum EmailAction {
+    /// PUT /me/email — test, then store.
+    Connect(Body),
+    /// POST /me/email/test.
+    Test,
+    /// DELETE /me/email.
+    Disconnect,
+    /// PUT /me/email/policy.
+    Policy(Body),
+    /// PUT /me/email/limits.
+    Limits(Body),
+    /// PUT /me/email/enabled — the user's own switch.
+    Enabled(bool),
+    /// PUT /me/notifications.
+    Notifications(Body),
+    /// POST /me/notifications/test.
+    TestNotification,
+    /// POST /me/email/oauth/start, then poll the flow.
+    OAuthStart(Body),
+    /// One poll of the awaited OAuth2 sign-in (rescheduled while pending).
+    OAuthPoll(String),
+    /// POST /me/email/oauth/cancel.
+    OAuthCancel(String),
+    /// PUT /admin/users/{id}/email (admin) — on/off only.
+    AdminSetEnabled {
+        user_id: String,
+        tenant_id: String,
+        enabled: bool,
+    },
 }
 
 impl OpCmd {
     /// The form awaiting this command (released on a worker panic).
     pub fn form_id(&self) -> Option<u64> {
         match self {
-            OpCmd::ImportWorkflow { form_id, .. } | OpCmd::SaveMyPolicy { form_id, .. } => *form_id,
+            OpCmd::ImportWorkflow { form_id, .. }
+            | OpCmd::SaveMyPolicy { form_id, .. }
+            | OpCmd::Email { form_id, .. } => *form_id,
             _ => None,
         }
     }
@@ -926,6 +970,283 @@ pub(super) fn handle(
             finish_write(store, wake, action, write, verified, form_id, on_done);
             if let (true, Ok(v)) = (wrote, verify) {
                 publish_ready(wake, op.my_policy, MyPolicy::from_value(&v));
+            }
+        }
+
+        OpCmd::LoadMyEmail => {
+            load(store, wake, "reading my email", op.my_email, || {
+                require_client(client)?
+                    .my_email()
+                    .map(|v| MyEmail::from_value(&v))
+            });
+            load(
+                store,
+                wake,
+                "reading my notifications",
+                op.my_notifications,
+                || {
+                    require_client(client)?
+                        .my_notifications()
+                        .map(|v| MyNotifications::from_value(&v))
+                },
+            );
+        }
+
+        OpCmd::Email { action, form_id } => email_write(client, store, wake, tx, action, form_id, on_done),
+    }
+}
+
+/// A typed refusal keeps its words (`cause Fix: fix`), not a JSON dump.
+fn email_err(e: ApiError) -> ApiError {
+    let message = email_error_text(&e);
+    ApiError { message, ..e }
+}
+
+/// `{ok:false, ...}` answers (a failed test leg, an unsent test notice) as
+/// a body-level failure carrying the cause and the fix.
+fn email_outcome(v: Value) -> Value {
+    if v.get("ok").and_then(Value::as_bool) != Some(false) {
+        return v;
+    }
+    let from_leg = ["imap", "smtp"]
+        .iter()
+        .filter_map(|k| v.get(*k))
+        .find(|leg| leg.get("ok").and_then(Value::as_bool) == Some(false))
+        .cloned();
+    let err = from_leg.or_else(|| v.get("error").cloned()).unwrap_or(Value::Null);
+    let cause = err.get("cause").and_then(Value::as_str).unwrap_or("");
+    let fix = err.get("fix").and_then(Value::as_str).unwrap_or("");
+    let text = match (cause.is_empty(), fix.is_empty()) {
+        (true, _) => v
+            .get("state")
+            .and_then(Value::as_str)
+            .map(|s| format!("not sent ({s})"))
+            .unwrap_or_else(|| "failed".into()),
+        (false, true) => cause.to_string(),
+        (false, false) => format!("{cause} Fix: {fix}"),
+    };
+    serde_json::json!({"ok": false, "error": text})
+}
+
+/// The OAuth2 poll gap (the gateway answers at once while pending).
+const OAUTH_POLL_INTERVAL: Duration = Duration::from_secs(3);
+
+#[allow(clippy::too_many_arguments)]
+fn email_write(
+    client: &Option<GatewayClient>,
+    store: &Store,
+    wake: &WakeHandle,
+    tx: &Sender<Cmd>,
+    action: EmailAction,
+    form_id: Option<u64>,
+    on_done: &(impl Fn(u64, Result<String, String>) + Send + 'static),
+) {
+    let op = store.op;
+    match action {
+        EmailAction::OAuthStart(body) => {
+            let started = with_busy(store, wake, "starting the OAuth2 sign-in", || {
+                require_client(client).and_then(|c| c.my_email_oauth_start(&body))
+            })
+            .map_err(email_err);
+            match started {
+                Ok(v) => {
+                    let flow_id = v.get("flow_id").and_then(Value::as_str).unwrap_or("").to_string();
+                    let prompt = if v.get("flow").and_then(Value::as_str) == Some("device") {
+                        format!(
+                            "Open {} in any browser and enter the code {}. Waiting for the approval…",
+                            v.get("verification_uri").and_then(Value::as_str).unwrap_or("?"),
+                            v.get("user_code").and_then(Value::as_str).unwrap_or("?"),
+                        )
+                    } else {
+                        format!(
+                            "Open this link in a browser on the gateway's computer: {} — waiting for the sign-in…",
+                            v.get("authorization_url").and_then(Value::as_str).unwrap_or("?"),
+                        )
+                    };
+                    let (fid, p) = (flow_id.clone(), prompt);
+                    wake.post(move || op.email_oauth.set(Some((fid.clone(), p.clone()))));
+                    later(tx, OAUTH_POLL_INTERVAL, Cmd::Operator(OpCmd::Email { action: EmailAction::OAuthPoll(flow_id), form_id: None }));
+                    finish_write(
+                        store,
+                        wake,
+                        "START OAuth2 sign-in".into(),
+                        Ok(v),
+                        Some(Ok("sign-in started — follow the prompt".into())),
+                        form_id,
+                        on_done,
+                    );
+                }
+                Err(e) => {
+                    finish_write(store, wake, "START OAuth2 sign-in".into(), Err(e), None, form_id, on_done);
+                }
+            }
+        }
+
+        EmailAction::OAuthPoll(flow_id) => {
+            // Only the flow still awaited is polled (a cancel or a new start ends this chain).
+            let awaited = flow_id.clone();
+            let result = require_client(client)
+                .and_then(|c| c.my_email_oauth_finish(&awaited, 0.0))
+                .map_err(email_err);
+            let s = *store;
+            let tx2 = tx.clone();
+            wake.post(move || {
+                let still = s.op.email_oauth.with_untracked(|f| f.as_ref().map(|(id, _)| id.clone()));
+                if still.as_deref() != Some(flow_id.as_str()) {
+                    return;
+                }
+                match &result {
+                    Ok(v) if v.get("pending").and_then(Value::as_bool) == Some(true) => {
+                        later(&tx2, OAUTH_POLL_INTERVAL, Cmd::Operator(OpCmd::Email { action: EmailAction::OAuthPoll(flow_id.clone()), form_id: None }));
+                    }
+                    Ok(v) => {
+                        s.op.email_oauth.set(None);
+                        let e = MyEmail::from_value(v);
+                        s.notice.set(Some(format!("signed in: {} (connection test passed)", e.address)));
+                        s.op.my_email.set(Loadable::Ready(e));
+                    }
+                    Err(e) => {
+                        s.op.email_oauth.set(None);
+                        s.notice.set(Some(format!("OAuth2 sign-in failed: {}", e.message)));
+                    }
+                }
+            });
+        }
+
+        EmailAction::OAuthCancel(flow_id) => {
+            let _ = require_client(client).and_then(|c| c.my_email_oauth_cancel(&flow_id));
+            let s = *store;
+            wake.post(move || {
+                s.op.email_oauth.set(None);
+                s.notice.set(Some("OAuth2 sign-in cancelled".into()));
+            });
+        }
+
+        EmailAction::Notifications(body) => {
+            let (write, verify) = with_busy(store, wake, "saving my notifications", || {
+                let write = require_client(client).and_then(|c| c.set_my_notifications(&body)).map_err(email_err);
+                let verify = require_client(client).and_then(|c| c.my_notifications());
+                (write, verify)
+            });
+            let verified = verify.as_ref().ok().map(|v| {
+                let got = notifications_body(&MyNotifications::from_value(v).events);
+                if got == body.0 {
+                    Ok("GET /me/notifications holds the saved choices".to_string())
+                } else {
+                    Err(format!("GET /me/notifications holds {got}, not {}", body.0))
+                }
+            });
+            let wrote = write.is_ok();
+            finish_write(store, wake, "PUT my notifications".into(), write, verified, form_id, on_done);
+            if let (true, Ok(v)) = (wrote, verify) {
+                publish_ready(wake, op.my_notifications, MyNotifications::from_value(&v));
+            }
+        }
+
+        EmailAction::TestNotification => {
+            let write = with_busy(store, wake, "sending a test notification", || {
+                require_client(client).and_then(|c| c.test_my_notifications())
+            })
+            .map_err(email_err)
+            .map(email_outcome);
+            let verified = write
+                .as_ref()
+                .ok()
+                .filter(|v| v.get("ok").and_then(Value::as_bool) == Some(true))
+                .map(|_| Ok("the gateway sent it (state: sent)".to_string()));
+            finish_write(store, wake, "SEND test notification".into(), write, verified, form_id, on_done);
+            if let Ok(v) = require_client(client).and_then(|c| c.my_notifications()) {
+                publish_ready(wake, op.my_notifications, MyNotifications::from_value(&v));
+            }
+        }
+
+        EmailAction::AdminSetEnabled { user_id, tenant_id, enabled } => {
+            let (write, verify) = with_busy(store, wake, "switching email for the user", || {
+                let write = require_client(client)
+                    .and_then(|c| c.set_user_email_enabled(&user_id, &tenant_id, enabled))
+                    .map_err(email_err);
+                let verify = require_client(client).and_then(|c| c.user_email_status(&user_id, &tenant_id));
+                (write, verify)
+            });
+            let verified = verify.as_ref().ok().map(|v| {
+                let got = v.get("admin_enabled").and_then(Value::as_bool);
+                if got == Some(enabled) {
+                    Ok(format!(
+                        "GET /admin/users/{user_id}/email — {}",
+                        v.get("state").and_then(Value::as_str).unwrap_or("?")
+                    ))
+                } else {
+                    Err(format!("GET /admin/users/{user_id}/email still says admin_enabled={got:?}"))
+                }
+            });
+            let verb = if enabled { "TURN ON" } else { "TURN OFF" };
+            finish_write(store, wake, format!("{verb} email for {user_id}"), write, verified, form_id, on_done);
+            let _ = tx.send(Cmd::LoadUsers);
+        }
+
+        other => {
+            let (label, action_text) = match &other {
+                EmailAction::Connect(_) => ("connecting my email (test, then store)", "CONNECT my email"),
+                EmailAction::Test => ("testing my email", "TEST my email"),
+                EmailAction::Disconnect => ("disconnecting my email", "DISCONNECT my email"),
+                EmailAction::Policy(_) => ("saving my recipient policy", "PUT my recipient policy"),
+                EmailAction::Limits(_) => ("saving my send limits", "PUT my send limits"),
+                EmailAction::Enabled(true) => ("turning my email on", "TURN ON my email"),
+                EmailAction::Enabled(false) => ("turning my email off", "TURN OFF my email"),
+                _ => ("writing my email settings", "WRITE my email"),
+            };
+            let (write, verify) = with_busy(store, wake, label, || {
+                let write = require_client(client)
+                    .and_then(|c| match &other {
+                        EmailAction::Connect(body) => c.connect_my_email(body),
+                        EmailAction::Test => c.test_my_email(),
+                        EmailAction::Disconnect => c.disconnect_my_email(),
+                        EmailAction::Policy(body) => c.set_my_email_policy(body),
+                        EmailAction::Limits(body) => c.set_my_email_limits(body),
+                        EmailAction::Enabled(on) => c.set_my_email_enabled(*on),
+                        _ => unreachable!("handled above"),
+                    })
+                    .map_err(email_err)
+                    .map(email_outcome);
+                let verify = require_client(client).and_then(|c| c.my_email());
+                (write, verify)
+            });
+            let verified = verify.as_ref().ok().map(|v| {
+                let got = MyEmail::from_value(v);
+                let ok = match &other {
+                    EmailAction::Connect(body) => got.configured && body.get("address").and_then(Value::as_str) == Some(got.address.as_str()),
+                    EmailAction::Test => got.last_error.is_none(),
+                    EmailAction::Disconnect => !got.configured,
+                    EmailAction::Policy(body) => {
+                        body.get("mode").and_then(Value::as_str) == Some(got.policy_mode.as_str())
+                            && body
+                                .get("entries")
+                                .and_then(Value::as_array)
+                                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect::<Vec<_>>())
+                                .unwrap_or_default()
+                                == got.policy_entries
+                    }
+                    EmailAction::Limits(body) => {
+                        let want = |k: &str, have: Option<i64>| body.get(k).and_then(Value::as_i64).is_none_or(|w| Some(w) == have);
+                        want("per_hour", got.per_hour) && want("per_day", got.per_day)
+                    }
+                    EmailAction::Enabled(on) => got.enabled == *on,
+                    _ => true,
+                };
+                if ok {
+                    Ok(format!("GET /me/email — {}", got.state_label()))
+                } else {
+                    Err(format!("GET /me/email says {}", got.state_label()))
+                }
+            });
+            let wrote = write.as_ref().map(|v| v.get("ok").and_then(Value::as_bool) != Some(false)).unwrap_or(false);
+            finish_write(store, wake, action_text.into(), write, verified, form_id, on_done);
+            if let Ok(v) = verify {
+                let _ = wrote;
+                publish_ready(wake, op.my_email, MyEmail::from_value(&v));
+            }
+            if let Ok(v) = require_client(client).and_then(|c| c.my_notifications()) {
+                publish_ready(wake, op.my_notifications, MyNotifications::from_value(&v));
             }
         }
     }

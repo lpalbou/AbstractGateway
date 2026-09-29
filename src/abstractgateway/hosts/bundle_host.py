@@ -997,6 +997,14 @@ class WorkflowBundleGatewayHost:
         catalog_runtime = safe_principal_component(catalog_runtime_id, default=catalog_tenant)
         catalog_user = safe_principal_component(catalog_user_id, default="admin")
         catalog_policy_secret = load_or_create_workflow_policy_secret(catalog_root)
+        from ..mail.accounts import email_usable
+        from ..mail.runtime_wiring import plane_for_host
+
+        email_plane = plane_for_host(data_root=data_root, tenant_id=catalog_tenant, user_id=catalog_user, runtime_id=catalog_runtime)
+        # Email tools: the executor always knows them (a call from a run without a
+        # connected account answers `email_not_configured` through the resolver);
+        # the agents' tool lists carry them when this user's account is usable.
+        email_tools_listed = email_usable(email_plane)
 
         def _bundle_paths_from_dir(path: Path) -> list[Path]:
             if path.is_file():
@@ -1307,7 +1315,7 @@ class WorkflowBundleGatewayHost:
             tool_mode = str(_env("ABSTRACTGATEWAY_TOOL_MODE") or "approval").strip().lower()
             # Always build a concrete in-process executor so thin-client approvals can execute tools
             # inside the runtime (no bridge-owned tool execution).
-            gateway_tool_map = build_default_tool_map()
+            gateway_tool_map = build_default_tool_map(email_enabled=True)
 
             # read_skill execution half (card 0087; agent's progressive-
             # disclosure contract needs BOTH halves — the skills_block index
@@ -1624,7 +1632,7 @@ class WorkflowBundleGatewayHost:
                         out.append(t.strip())
                 return out
 
-            all_tool_defs = _tool_defs_from_specs(list_default_tool_specs())
+            all_tool_defs = _tool_defs_from_specs(list_default_tool_specs(email_enabled=email_tools_listed))
             # Schema-only builtins (executed as runtime effects by AbstractAgent adapters).
             try:
                 from abstractagent.logic.builtins import (  # type: ignore
@@ -1731,6 +1739,19 @@ class WorkflowBundleGatewayHost:
 
         controller_spec = register_controller_bundle(wf_reg)
         specs[str(controller_spec.workflow_id)] = controller_spec
+
+        # Per-user email (framework backlog 0992): the send-email action workflow
+        # (no-model automations) and THIS principal's account on the runtime —
+        # the durable event inbox, the in-memory credential resolver (this
+        # plane's account only) and the occurrence binding. Every host build
+        # re-wires, so a rebuilt runtime is never left without its account.
+        from abstractruntime.email import register_email_action_workflow
+
+        from ..mail.runtime_wiring import wire_runtime_email
+
+        email_action_spec = register_email_action_workflow(wf_reg)
+        specs[str(email_action_spec.workflow_id)] = email_action_spec
+        wire_runtime_email(runtime, email_plane)
 
         _install_catalog_subworkflow_guard(
             runtime=runtime,
@@ -2442,6 +2463,15 @@ class WorkflowBundleGatewayHost:
         sid = str(session_id).strip() if isinstance(session_id, str) and session_id.strip() else None
         vars0 = dict(input_data or {})
         self._complete_workflow_selection(vars0, workflow_id)
+        rt_ns = _ensure_runtime_namespace(vars0)
+
+        # Email account binding (framework backlog 0992 B1): a client never
+        # chooses the account a run uses nor widens who it may mail unasked —
+        # pop both keys, then SET the binding from THIS runtime's account.
+        from abstractruntime.email import bind_email_account, strip_client_email_keys
+
+        strip_client_email_keys(vars0)
+        bind_email_account(vars0, binding=self.runtime.email_binding)
         rt_ns = _ensure_runtime_namespace(vars0)
 
         # Gateway-owned deployment settings are handed to Runtime explicitly as

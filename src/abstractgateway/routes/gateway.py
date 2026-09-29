@@ -512,7 +512,32 @@ async def gateway_admin_list_users(
     rows = [record.public_dict() for record in registry.list_users()]
     if kind_s != "all":
         rows = [r for r in rows if r.get("principal_kind") == kind_s]
+    # Per-user email (framework backlog 0992): status only — configured /
+    # address / state / the admin switch; never content, never the policy.
+    rows = await _off_the_event_loop(_with_email_account_status, rows)
     return {"users": rows, "kind": kind_s}
+
+
+def _with_email_account_status(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    from ..mail.accounts import EmailPrincipalRefused, admin_status, plane_for_user
+
+    for row in rows:
+        if row.get("principal_kind") == "entity":
+            continue
+        try:
+            st = admin_status(plane_for_user(str(row.get("user_id") or ""), tenant_id=str(row.get("tenant_id") or "default")))
+        except (KeyError, EmailPrincipalRefused):
+            continue
+        except Exception:  # noqa: BLE001 - one unreadable plane never hides the users list
+            row["email_account"] = {"state": "unknown"}
+            continue
+        row["email_account"] = {
+            "configured": st["configured"],
+            "address": st["address"],
+            "state": st["state"],
+            "admin_enabled": st["admin_enabled"],
+        }
+    return rows
 
 
 def _roles_grant_admin(roles: Any) -> bool:
