@@ -69,8 +69,11 @@ computer's memory:
 | 128 GB or more | `mlx-community/Qwen3.8-Flash-Next-4bit` (Qwen3.8 Flash-Next) |
 
 LM Studio and Ollama builds stay in the catalog and can be downloaded, but on
-a Mac they are not the recommendation. Other computers keep the LM Studio
-build `qwen/qwen3.5-9b@4bit`. When AbstractCore's memory estimate says the
+a Mac they are not the recommendation. Other computers get the LM Studio
+build `qwen/qwen3.5-9b@q4_k_m`. On a computer with an NVIDIA GPU, the
+recommended image model is FLUX.2 [klein] 4B through Diffusers
+(`black-forest-labs/FLUX.2-klein-4B`; it fits a 16 GB card, and an 8 GB card
+is reported as not available); video generation is not recommended there. When AbstractCore's memory estimate says the
 recommended model may not fit, the **Chat and text** card says so with the
 estimate; the recommendation does not quietly switch to another model.
 
@@ -307,8 +310,8 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.7.0`
-- `abstractcore>=2.18.0`
+- `AbstractRuntime>=0.7.2`
+- `abstractcore>=2.19.1`
 - `abstractvoice>=0.13.0` (the voice listings import `abstractvoice.engine_runtime`)
 - `abstractagent>=0.3.17`
 - `AbstractMemory[lancedb]>=0.3.0`
@@ -876,7 +879,7 @@ whether or not the banner has anything to say.
 
 **The artifact is not the model id.** A route stores the id the provider
 *serves* (`qwen/qwen3.5-9b`); the download names the exact weights,
-quantization included (`qwen/qwen3.5-9b@4bit`). The availability payload
+quantization included (`qwen/qwen3.5-9b@q4_k_m`). The availability payload
 carries `download_artifact` on any row where these differ — post that, not the
 row's `model`.
 
@@ -3470,7 +3473,7 @@ One job per state, key fields only (sizes are illustrative).
 `installing`:
 
 ```json
-{"job_id": "dl_faa442ea7875", "provider": "lmstudio", "artifact": "qwen/qwen3.5-9b@4bit", "status": "running", "state": "installing", "bytes_done": 6000000000, "bytes_total": 6000000000, "size_unknown": false, "percent": 100.0, "bytes_per_second": 466469568.4, "eta_s": 0, "updated_at": "2026-09-24T03:26:40.607Z", "current_file": null, "message": "Installing · Finalizing download... · 6.0 GB of 6.0 GB", "error": null, "stalled_for_s": null}
+{"job_id": "dl_faa442ea7875", "provider": "lmstudio", "artifact": "qwen/qwen3.5-9b@q4_k_m", "status": "running", "state": "installing", "bytes_done": 6000000000, "bytes_total": 6000000000, "size_unknown": false, "percent": 100.0, "bytes_per_second": 466469568.4, "eta_s": 0, "updated_at": "2026-09-24T03:26:40.607Z", "current_file": null, "message": "Installing · Finalizing download... · 6.0 GB of 6.0 GB", "error": null, "stalled_for_s": null}
 ```
 
 `done`:
@@ -3494,13 +3497,13 @@ One job per state, key fields only (sizes are illustrative).
 `download_group (downloading)`:
 
 ```json
-{"job_id": "grp_080bae3c6d3e", "status": "running", "state": "downloading", "bytes_done": 0, "bytes_total": null, "size_unknown": true, "percent": null, "bytes_per_second": null, "eta_s": null, "updated_at": "2026-09-24T03:26:26.753Z", "message": "Downloading 3 models · 0 of 3 ready · 3 of 3 sources cannot report their size yet", "error": null, "kind": "download_group", "files": [{"bytes_done": null, "bytes_total": null, "job_id": "dl_faa442ea7875", "name": "lmstudio qwen/qwen3.5-9b@4bit", "state": "downloading"}, {"bytes_done": null, "bytes_total": null, "job_id": "dl_e36dca05d05c", "name": "supertonic supertonic-3", "state": "resolving"}, {"bytes_done": null, "bytes_total": null, "job_id": "dl_8dde3c3f4834", "name": "mlx-gen AbstractFramework/flux.2-klein-4b-8bit", "state": "resolving"}], "children": "[3 child jobs]"}
+{"job_id": "grp_080bae3c6d3e", "status": "running", "state": "downloading", "bytes_done": 0, "bytes_total": null, "size_unknown": true, "percent": null, "bytes_per_second": null, "eta_s": null, "updated_at": "2026-09-24T03:26:26.753Z", "message": "Downloading 3 models · 0 of 3 ready · 3 of 3 sources cannot report their size yet", "error": null, "kind": "download_group", "files": [{"bytes_done": null, "bytes_total": null, "job_id": "dl_faa442ea7875", "name": "lmstudio qwen/qwen3.5-9b@q4_k_m", "state": "downloading"}, {"bytes_done": null, "bytes_total": null, "job_id": "dl_e36dca05d05c", "name": "supertonic supertonic-3", "state": "resolving"}, {"bytes_done": null, "bytes_total": null, "job_id": "dl_8dde3c3f4834", "name": "mlx-gen AbstractFramework/flux.2-klein-4b-8bit", "state": "resolving"}], "children": "[3 child jobs]"}
 ```
 
 `download_group (stalled)`:
 
 ```json
-{"job_id": "grp_a1e3f58d4cd0", "status": "running", "state": "stalled", "bytes_done": 6090947408, "bytes_total": 6121191129, "size_unknown": false, "percent": 99.51, "bytes_per_second": 0.0, "eta_s": null, "updated_at": "2026-09-24T03:25:34.055Z", "message": "Stalled: no data for 16 s from supertonic supertonic-3 · 2 of 3 ready · 6.1 GB of 6.1 GB · 0 B/s", "error": null, "kind": "download_group", "files": [{"bytes_done": 6000000000, "bytes_total": 6000000000, "job_id": "dl_ec66382e80a1", "name": "lmstudio qwen/qwen3.5-9b@4bit", "state": "done"}, {"bytes_done": 25942208, "bytes_total": 56185929, "job_id": "dl_2b7360ab34fe", "name": "supertonic supertonic-3", "state": "stalled"}, {"bytes_done": 65005200, "bytes_total": 65005200, "job_id": "dl_f46f63c01098", "name": "mlx-gen AbstractFramework/flux.2-klein-4b-8bit", "state": "done"}], "children": "[3 child jobs]"}
+{"job_id": "grp_a1e3f58d4cd0", "status": "running", "state": "stalled", "bytes_done": 6090947408, "bytes_total": 6121191129, "size_unknown": false, "percent": 99.51, "bytes_per_second": 0.0, "eta_s": null, "updated_at": "2026-09-24T03:25:34.055Z", "message": "Stalled: no data for 16 s from supertonic supertonic-3 · 2 of 3 ready · 6.1 GB of 6.1 GB · 0 B/s", "error": null, "kind": "download_group", "files": [{"bytes_done": 6000000000, "bytes_total": 6000000000, "job_id": "dl_ec66382e80a1", "name": "lmstudio qwen/qwen3.5-9b@q4_k_m", "state": "done"}, {"bytes_done": 25942208, "bytes_total": 56185929, "job_id": "dl_2b7360ab34fe", "name": "supertonic supertonic-3", "state": "stalled"}, {"bytes_done": 65005200, "bytes_total": 65005200, "job_id": "dl_f46f63c01098", "name": "mlx-gen AbstractFramework/flux.2-klein-4b-8bit", "state": "done"}], "children": "[3 child jobs]"}
 ```
 
 ## What each source reports
@@ -6532,7 +6535,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.7.2
+docker pull ghcr.io/lpalbou/abstractgateway:0.7.3
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -6540,7 +6543,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.7.2-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.7.3-gpu
 ```
 
 The image names `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -6822,7 +6825,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.7.2-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.7.3-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -6980,7 +6983,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.7.2
+docker pull ghcr.io/lpalbou/abstractgateway:0.7.3
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -6988,7 +6991,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.7.2-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.7.3-gpu
 ```
 
 The `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR names are
@@ -7511,7 +7514,7 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.7.2-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:0.7.3-gpu` with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -8045,13 +8048,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-09-29
+
+Dependencies: AbstractCore 2.19.1 or newer and AbstractRuntime 0.7.2 or newer (also in the `apple` and `gpu`
+settings). The terminal console (`abstractgateway-console`) is unchanged at 0.11.1.
+
 ### Changed
-- Engine installs name only AbstractCore's install settings (operator ruling 2026-09-29): MLX,
-  llama.cpp, Hugging Face and vLLM install `abstractcore[apple]` (Apple silicon) or
-  `abstractcore[gpu]` (Linux) at the installed AbstractCore version, never `mlx-lm`,
-  `llama-cpp-python`, `vllm` or the deprecated `abstractcore[huggingface]` alone (llama.cpp still
-  takes upstream's prebuilt wheel). On an Intel Mac or a Rosetta Python the llama.cpp and
-  Hugging Face rows say the engine is not available on this machine with the install settings.
+- **Linux + NVIDIA recommendations.** With AbstractCore 2.19.1 the first-run guide and **Use recommended defaults**
+  follow its recommendations for NVIDIA hosts: the LM Studio text download is `qwen/qwen3.5-9b@q4_k_m`, and
+  `output.image` is FLUX.2 [klein] 4B through Diffusers (`black-forest-labs/FLUX.2-klein-4B`, fits a 16 GB card);
+  video stays not available there.
+- **Engine installs name only AbstractCore's install settings.** MLX, llama.cpp, Hugging Face and vLLM install
+  `abstractcore[apple]` (Apple silicon) or `abstractcore[gpu]` (Linux) at the installed AbstractCore version,
+  never `mlx-lm`, `llama-cpp-python`, `vllm` or the deprecated `abstractcore[huggingface]` alone (llama.cpp still
+  takes upstream's prebuilt wheel). On an Intel Mac or a Rosetta Python the llama.cpp and Hugging Face rows say the
+  engine is not available on this machine with the install settings.
+- `abstractgateway models download --help` shows `qwen/qwen3.5-9b@q4_k_m` as its LM Studio example.
+
+### Fixed
+- Transcription runs on the configured `input.voice` route (for example local faster-whisper) without an OpenAI key,
+  and the Voice screen's transcription model list names each engine's own models (AbstractCore 2.19.1,
+  AbstractVoice 0.13.1, AbstractRuntime 0.7.2).
 
 ## [0.7.2] - 2026-09-29
 

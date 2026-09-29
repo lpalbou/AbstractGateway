@@ -83,8 +83,10 @@ _role_lock = threading.Lock()
 # (`abstractruntime.session_history.HISTORY_REPLAY_MAX_TOKENS`,
 # `session_chat_messages` returning a reported window): on an older runtime
 # the gateway's seed call fails and would only be logged, so every run would
-# silently start without its session history.
-ABSTRACTRUNTIME_FLOOR = "0.7.0"
+# silently start without its session history. 0.7.2: the local STT model list
+# names each engine's own models (the Voice screen), and Runtime depends on
+# AbstractCore's three install settings (the release matrix moves together).
+ABSTRACTRUNTIME_FLOOR = "0.7.2"
 
 
 class LiveDeltaError(RuntimeError):

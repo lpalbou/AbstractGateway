@@ -39,8 +39,8 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.7.0`
-- `abstractcore>=2.18.0`
+- `AbstractRuntime>=0.7.2`
+- `abstractcore>=2.19.1`
 - `abstractvoice>=0.13.0` (the voice listings import `abstractvoice.engine_runtime`)
 - `abstractagent>=0.3.17`
 - `AbstractMemory[lancedb]>=0.3.0`
@@ -608,7 +608,7 @@ whether or not the banner has anything to say.
 
 **The artifact is not the model id.** A route stores the id the provider
 *serves* (`qwen/qwen3.5-9b`); the download names the exact weights,
-quantization included (`qwen/qwen3.5-9b@4bit`). The availability payload
+quantization included (`qwen/qwen3.5-9b@q4_k_m`). The availability payload
 carries `download_artifact` on any row where these differ — post that, not the
 row's `model`.
 

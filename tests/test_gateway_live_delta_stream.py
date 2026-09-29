@@ -718,7 +718,7 @@ def test_the_runtime_floor_is_declared_once_and_checked_at_host_build(tmp_path: 
     import abstractruntime.session_history as sh
 
     monkeypatch.delattr(sh, "HISTORY_REPLAY_MAX_TOKENS")
-    with pytest.raises(ld.RuntimeTooOld, match=r"abstractruntime>=0\.7\.0.*HISTORY_REPLAY_MAX_TOKENS"):
+    with pytest.raises(ld.RuntimeTooOld, match=r"abstractruntime>=" + re.escape(ld.ABSTRACTRUNTIME_FLOOR) + r".*HISTORY_REPLAY_MAX_TOKENS"):
         WorkflowBundleGatewayHost.load_from_dir(
             bundles_dir=bundles, data_dir=tmp_path / "data2", run_store=InMemoryRunStore(),
             ledger_store=InMemoryLedgerStore(), artifact_store=None,

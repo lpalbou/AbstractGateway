@@ -47,7 +47,7 @@ def test_base_install_is_remote_light_server() -> None:
     from abstractgateway.live_deltas import ABSTRACTRUNTIME_FLOOR
 
     assert f"AbstractRuntime>={ABSTRACTRUNTIME_FLOOR}" in deps
-    assert "abstractcore>=2.18.0" in deps
+    assert "abstractcore>=2.19.1" in deps
     assert "abstractvoice>=0.13.0" in deps
     assert "abstractagent>=0.3.17" in deps
     assert "AbstractMemory[lancedb]>=0.3.0" in deps
@@ -67,15 +67,18 @@ def test_base_install_is_remote_light_server() -> None:
 
 def test_base_install_keeps_remote_light_multimodal_plugins_without_local_inferencers() -> None:
     runtime_project = _sibling_pyproject("abstractruntime")["project"]
-    core_extras = _sibling_pyproject("abstractcore")["project"]["optional-dependencies"]
+    core_project = _sibling_pyproject("abstractcore")["project"]
     vision_base = "\n".join(_sibling_pyproject("abstractvision")["project"].get("dependencies", []))
     voice_base = "\n".join(_sibling_pyproject("abstractvoice")["project"].get("dependencies", []))
     music_base = "\n".join(_sibling_pyproject("abstractmusic")["project"].get("dependencies", []))
 
     runtime_base = "\n".join(runtime_project["dependencies"])
-    # The runtime's core floor moves with the gateway's own (one wave, one floor).
+    # Runtime depends on AbstractCore's light install (no extra) at a floor the
+    # gateway's own core floor satisfies; it names none of core's deprecated extras.
     core_floor = next(d.split(">=", 1)[1] for d in _pyproject()["project"]["dependencies"] if d.startswith("abstractcore>="))
-    assert f"abstractcore[remote,tools,vision,voice,audio,music]>={core_floor}" in runtime_base
+    runtime_core_floor = _floor(runtime_project["dependencies"], "abstractcore")
+    assert runtime_core_floor is not None and runtime_core_floor <= Version(core_floor)
+    assert "abstractcore[" not in runtime_base
     assert "pypdf" in runtime_base
     assert "reportlab" in runtime_base
     assert "pymupdf" not in runtime_base.lower()
@@ -84,30 +87,24 @@ def test_base_install_keeps_remote_light_multimodal_plugins_without_local_infere
     assert "mlx" not in runtime_base
     assert "vllm" not in runtime_base
 
-    core_remote = "\n".join(core_extras["remote"])
-    assert "openai" in core_remote
-    assert "anthropic" in core_remote
+    # AbstractCore's light install carries the remote providers and the
+    # voice/vision/music plugins (their remote-light bases) as base dependencies.
+    core_base = core_project["dependencies"]
+    core_light = "\n".join(core_base)
+    assert "openai" in core_light
+    assert "anthropic" in core_light
 
     # Floors, not exact strings: the sibling checkouts move ahead of this repo.
     # The voice floor must be at least the gateway's own (it imports
     # abstractvoice directly); vision and music keep their remote-light floors.
     voice_floor = next(d.split(">=", 1)[1] for d in _pyproject()["project"]["dependencies"] if d.startswith("abstractvoice>="))
-    assert _floor(core_extras["vision"], "abstractvision") >= Version("0.3.29")
-    assert _floor(core_extras["voice"], "abstractvoice") >= Version(voice_floor)
-    assert _floor(core_extras["audio"], "abstractvoice") >= Version(voice_floor)
-    assert _floor(core_extras["music"], "abstractmusic") >= Version("0.1.15")
-    core_light_capabilities = "\n".join(
-        [
-            *core_extras["vision"],
-            *core_extras["voice"],
-            *core_extras["audio"],
-            *core_extras["music"],
-        ]
-    )
-    assert "omnivoice" not in core_light_capabilities
-    assert "torch" not in core_light_capabilities
-    assert "torchaudio" not in core_light_capabilities
-    assert "sentence-transformers" not in core_light_capabilities
+    assert _floor(core_base, "abstractvision") >= Version("0.3.29")
+    assert _floor(core_base, "abstractvoice") >= Version(voice_floor)
+    assert _floor(core_base, "abstractmusic") >= Version("0.1.15")
+    assert "omnivoice" not in core_light
+    assert "torch" not in core_light
+    assert "torchaudio" not in core_light
+    assert "sentence-transformers" not in core_light
 
     remote_light_bases = "\n".join([vision_base, voice_base, music_base])
     assert "torch" not in remote_light_bases
@@ -150,7 +147,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "docs" in extras
 
     apple = "\n".join(extras["apple"])
-    assert "AbstractRuntime[apple]>=0.7.0" in apple
+    assert "AbstractRuntime[apple]>=0.7.2" in apple
     assert "abstractagent[apple]>=0.3.17" in apple
     assert "abstractagent[all-apple]" not in apple
     assert "AbstractMemory[all-apple]>=0.3.0" in apple
@@ -159,7 +156,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "abstractvoice" not in apple
     assert "abstractmusic" not in apple
     gpu = "\n".join(extras["gpu"])
-    assert "AbstractRuntime[gpu]>=0.7.0" in gpu
+    assert "AbstractRuntime[gpu]>=0.7.2" in gpu
     assert "abstractagent[gpu]>=0.3.17" in gpu
     assert "AbstractMemory[all-gpu]>=0.3.0" in gpu
     assert "abstractcore[" not in gpu
@@ -302,11 +299,11 @@ def test_default_docker_image_uses_base_server_and_nvidia_uses_gpu_profile() -> 
     assert "ABSTRACTGATEWAY_DATA_DIR=/data" in dockerfile
     assert "ABSTRACTGATEWAY_FLOWS_DIR=/data/flows" not in dockerfile
     assert "ENTRYPOINT [\"abstractgateway-docker-entrypoint\"]" in dockerfile
-    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_IMAGE_TAG:-0.7.2}" in compose
+    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_IMAGE_TAG:-0.7.3}" in compose
     assert "ABSTRACTGATEWAY_EXTRAS: ${ABSTRACTGATEWAY_EXTRAS:-}" in compose
     assert "ABSTRACTGATEWAY_USER_AUTH: ${ABSTRACTGATEWAY_USER_AUTH:-1}" in compose
     assert "ABSTRACTGATEWAY_EXTRAS:-gpu" in nvidia_compose
-    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_NVIDIA_IMAGE_TAG:-0.7.2-gpu}" in nvidia_compose
+    assert "ghcr.io/lpalbou/abstractgateway:${ABSTRACTGATEWAY_NVIDIA_IMAGE_TAG:-0.7.3-gpu}" in nvidia_compose
     assert "context: ../.." in nvidia_compose
 
 

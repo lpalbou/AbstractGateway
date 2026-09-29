@@ -59,8 +59,11 @@ computer's memory:
 | 128 GB or more | `mlx-community/Qwen3.8-Flash-Next-4bit` (Qwen3.8 Flash-Next) |
 
 LM Studio and Ollama builds stay in the catalog and can be downloaded, but on
-a Mac they are not the recommendation. Other computers keep the LM Studio
-build `qwen/qwen3.5-9b@4bit`. When AbstractCore's memory estimate says the
+a Mac they are not the recommendation. Other computers get the LM Studio
+build `qwen/qwen3.5-9b@q4_k_m`. On a computer with an NVIDIA GPU, the
+recommended image model is FLUX.2 [klein] 4B through Diffusers
+(`black-forest-labs/FLUX.2-klein-4B`; it fits a 16 GB card, and an 8 GB card
+is reported as not available); video generation is not recommended there. When AbstractCore's memory estimate says the
 recommended model may not fit, the **Chat and text** card says so with the
 estimate; the recommendation does not quietly switch to another model.
 

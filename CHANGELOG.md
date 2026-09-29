@@ -7,13 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-09-29
+
+Dependencies: AbstractCore 2.19.1 or newer and AbstractRuntime 0.7.2 or newer (also in the `apple` and `gpu`
+settings). The terminal console (`abstractgateway-console`) is unchanged at 0.11.1.
+
 ### Changed
-- Engine installs name only AbstractCore's install settings (operator ruling 2026-09-29): MLX,
-  llama.cpp, Hugging Face and vLLM install `abstractcore[apple]` (Apple silicon) or
-  `abstractcore[gpu]` (Linux) at the installed AbstractCore version, never `mlx-lm`,
-  `llama-cpp-python`, `vllm` or the deprecated `abstractcore[huggingface]` alone (llama.cpp still
-  takes upstream's prebuilt wheel). On an Intel Mac or a Rosetta Python the llama.cpp and
-  Hugging Face rows say the engine is not available on this machine with the install settings.
+- **Linux + NVIDIA recommendations.** With AbstractCore 2.19.1 the first-run guide and **Use recommended defaults**
+  follow its recommendations for NVIDIA hosts: the LM Studio text download is `qwen/qwen3.5-9b@q4_k_m`, and
+  `output.image` is FLUX.2 [klein] 4B through Diffusers (`black-forest-labs/FLUX.2-klein-4B`, fits a 16 GB card);
+  video stays not available there.
+- **Engine installs name only AbstractCore's install settings.** MLX, llama.cpp, Hugging Face and vLLM install
+  `abstractcore[apple]` (Apple silicon) or `abstractcore[gpu]` (Linux) at the installed AbstractCore version,
+  never `mlx-lm`, `llama-cpp-python`, `vllm` or the deprecated `abstractcore[huggingface]` alone (llama.cpp still
+  takes upstream's prebuilt wheel). On an Intel Mac or a Rosetta Python the llama.cpp and Hugging Face rows say the
+  engine is not available on this machine with the install settings.
+- `abstractgateway models download --help` shows `qwen/qwen3.5-9b@q4_k_m` as its LM Studio example.
+
+### Fixed
+- Transcription runs on the configured `input.voice` route (for example local faster-whisper) without an OpenAI key,
+  and the Voice screen's transcription model list names each engine's own models (AbstractCore 2.19.1,
+  AbstractVoice 0.13.1, AbstractRuntime 0.7.2).
 
 ## [0.7.2] - 2026-09-29
 

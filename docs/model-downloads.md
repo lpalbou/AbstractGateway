@@ -124,7 +124,7 @@ One job per state, key fields only (sizes are illustrative).
 `installing`:
 
 ```json
-{"job_id": "dl_faa442ea7875", "provider": "lmstudio", "artifact": "qwen/qwen3.5-9b@4bit", "status": "running", "state": "installing", "bytes_done": 6000000000, "bytes_total": 6000000000, "size_unknown": false, "percent": 100.0, "bytes_per_second": 466469568.4, "eta_s": 0, "updated_at": "2026-09-24T03:26:40.607Z", "current_file": null, "message": "Installing · Finalizing download... · 6.0 GB of 6.0 GB", "error": null, "stalled_for_s": null}
+{"job_id": "dl_faa442ea7875", "provider": "lmstudio", "artifact": "qwen/qwen3.5-9b@q4_k_m", "status": "running", "state": "installing", "bytes_done": 6000000000, "bytes_total": 6000000000, "size_unknown": false, "percent": 100.0, "bytes_per_second": 466469568.4, "eta_s": 0, "updated_at": "2026-09-24T03:26:40.607Z", "current_file": null, "message": "Installing · Finalizing download... · 6.0 GB of 6.0 GB", "error": null, "stalled_for_s": null}
 ```
 
 `done`:
@@ -148,13 +148,13 @@ One job per state, key fields only (sizes are illustrative).
 `download_group (downloading)`:
 
 ```json
-{"job_id": "grp_080bae3c6d3e", "status": "running", "state": "downloading", "bytes_done": 0, "bytes_total": null, "size_unknown": true, "percent": null, "bytes_per_second": null, "eta_s": null, "updated_at": "2026-09-24T03:26:26.753Z", "message": "Downloading 3 models · 0 of 3 ready · 3 of 3 sources cannot report their size yet", "error": null, "kind": "download_group", "files": [{"bytes_done": null, "bytes_total": null, "job_id": "dl_faa442ea7875", "name": "lmstudio qwen/qwen3.5-9b@4bit", "state": "downloading"}, {"bytes_done": null, "bytes_total": null, "job_id": "dl_e36dca05d05c", "name": "supertonic supertonic-3", "state": "resolving"}, {"bytes_done": null, "bytes_total": null, "job_id": "dl_8dde3c3f4834", "name": "mlx-gen AbstractFramework/flux.2-klein-4b-8bit", "state": "resolving"}], "children": "[3 child jobs]"}
+{"job_id": "grp_080bae3c6d3e", "status": "running", "state": "downloading", "bytes_done": 0, "bytes_total": null, "size_unknown": true, "percent": null, "bytes_per_second": null, "eta_s": null, "updated_at": "2026-09-24T03:26:26.753Z", "message": "Downloading 3 models · 0 of 3 ready · 3 of 3 sources cannot report their size yet", "error": null, "kind": "download_group", "files": [{"bytes_done": null, "bytes_total": null, "job_id": "dl_faa442ea7875", "name": "lmstudio qwen/qwen3.5-9b@q4_k_m", "state": "downloading"}, {"bytes_done": null, "bytes_total": null, "job_id": "dl_e36dca05d05c", "name": "supertonic supertonic-3", "state": "resolving"}, {"bytes_done": null, "bytes_total": null, "job_id": "dl_8dde3c3f4834", "name": "mlx-gen AbstractFramework/flux.2-klein-4b-8bit", "state": "resolving"}], "children": "[3 child jobs]"}
 ```
 
 `download_group (stalled)`:
 
 ```json
-{"job_id": "grp_a1e3f58d4cd0", "status": "running", "state": "stalled", "bytes_done": 6090947408, "bytes_total": 6121191129, "size_unknown": false, "percent": 99.51, "bytes_per_second": 0.0, "eta_s": null, "updated_at": "2026-09-24T03:25:34.055Z", "message": "Stalled: no data for 16 s from supertonic supertonic-3 · 2 of 3 ready · 6.1 GB of 6.1 GB · 0 B/s", "error": null, "kind": "download_group", "files": [{"bytes_done": 6000000000, "bytes_total": 6000000000, "job_id": "dl_ec66382e80a1", "name": "lmstudio qwen/qwen3.5-9b@4bit", "state": "done"}, {"bytes_done": 25942208, "bytes_total": 56185929, "job_id": "dl_2b7360ab34fe", "name": "supertonic supertonic-3", "state": "stalled"}, {"bytes_done": 65005200, "bytes_total": 65005200, "job_id": "dl_f46f63c01098", "name": "mlx-gen AbstractFramework/flux.2-klein-4b-8bit", "state": "done"}], "children": "[3 child jobs]"}
+{"job_id": "grp_a1e3f58d4cd0", "status": "running", "state": "stalled", "bytes_done": 6090947408, "bytes_total": 6121191129, "size_unknown": false, "percent": 99.51, "bytes_per_second": 0.0, "eta_s": null, "updated_at": "2026-09-24T03:25:34.055Z", "message": "Stalled: no data for 16 s from supertonic supertonic-3 · 2 of 3 ready · 6.1 GB of 6.1 GB · 0 B/s", "error": null, "kind": "download_group", "files": [{"bytes_done": 6000000000, "bytes_total": 6000000000, "job_id": "dl_ec66382e80a1", "name": "lmstudio qwen/qwen3.5-9b@q4_k_m", "state": "done"}, {"bytes_done": 25942208, "bytes_total": 56185929, "job_id": "dl_2b7360ab34fe", "name": "supertonic supertonic-3", "state": "stalled"}, {"bytes_done": 65005200, "bytes_total": 65005200, "job_id": "dl_f46f63c01098", "name": "mlx-gen AbstractFramework/flux.2-klein-4b-8bit", "state": "done"}], "children": "[3 child jobs]"}
 ```
 
 ## What each source reports

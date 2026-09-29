@@ -93,7 +93,7 @@ def add_models_verbs(models_sub: Any) -> None:
 
     p = models_sub.add_parser("download", help="Download one model onto the gateway host (admin)")
     p.add_argument("provider", help="ollama | lmstudio | mlx | huggingface | mlx-gen | supertonic ...")
-    p.add_argument("artifact", help="Exact artifact reference, quantization included (qwen3:8b, qwen/qwen3.5-9b@4bit)")
+    p.add_argument("artifact", help="Exact artifact reference, quantization included (qwen3:8b, qwen/qwen3.5-9b@q4_k_m)")
     p.add_argument("--dry-run", action="store_true", help="Show the command without downloading")
     p.add_argument("--no-wait", action="store_true", help="Start the job and exit (follow it with `models jobs <id>`)")
     _connection_args(p)
