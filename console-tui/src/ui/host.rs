@@ -266,16 +266,7 @@ fn start_update(cx: Scope, ctx: &Ctx, close: &dyn Fn()) {
             .set(Some("check for an update first (u)".into()));
         return;
     };
-    if !u.can_start() {
-        let why = if u.job_state == "running" {
-            "an update is already being installed".to_string()
-        } else if !u.update_available {
-            "no update is available — u checks again".to_string()
-        } else if let Some(view) = &u.view {
-            format!("this install cannot update itself: {}", view.hint)
-        } else {
-            format!("this install cannot update itself: {}", u.install_reason)
-        };
+    if let Some(why) = u.start_refusal() {
         ctx.store.notice.set(Some(why));
         return;
     }

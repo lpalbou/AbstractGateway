@@ -549,6 +549,32 @@ impl HostUpdate {
         self.update_available && self.upgradable && self.job_state != "running"
     }
 
+    /// Why `U` starts nothing, or None when it can start: the job runs, the
+    /// check failed (the gateway's `error`/`offline` line, never "no update
+    /// is available"), nothing is available, or this install cannot update
+    /// itself.
+    pub fn start_refusal(&self) -> Option<String> {
+        if self.can_start() {
+            return None;
+        }
+        if self.job_state == "running" {
+            return Some("an update is already being installed".to_string());
+        }
+        if let Some(view) = &self.view {
+            if view.status == "error" || view.status == "offline" {
+                return Some(format!("{} — u checks again", view.line));
+            }
+        }
+        if !self.update_available {
+            return Some("no update is available — u checks again".to_string());
+        }
+        let why = match &self.view {
+            Some(view) => view.hint.clone(),
+            None => self.install_reason.clone(),
+        };
+        Some(format!("this install cannot update itself: {why}"))
+    }
+
     /// The confirmation shown before the update starts: the gateway's
     /// (what runs and where it comes from), else the older generic text.
     pub fn confirm_text(&self) -> String {
@@ -965,6 +991,34 @@ mod tests {
             offline.version_text(),
             "1 · couldn't reach the update server (offline?)"
         );
+    }
+
+    #[test]
+    fn update_start_refusal_names_a_failed_check() {
+        let err = HostUpdate::from_value(&json!({
+            "current": "0.7.2", "install": {"kind": "installer", "upgradable": true},
+            "check": {"update_available": null, "latest": null, "error": "cannot compare the versions 'next' and '0.6.2'"},
+            "job": {"state": "idle"},
+            "update": {"status": "error", "line": "AbstractFramework 0.6.2 · gateway 0.7.2 · couldn't check for updates (cannot compare the versions 'next' and '0.6.2')", "hint": "h", "action": null}
+        }));
+        let why = err.start_refusal().expect("nothing to start");
+        assert!(why.contains("couldn't check for updates"), "{why}");
+        assert!(!why.contains("no update is available"), "{why}");
+        let none = HostUpdate::from_value(&json!({
+            "current": "0.7.2", "install": {"kind": "installer", "upgradable": true},
+            "check": {"update_available": false, "latest": "0.7.2"}, "job": {"state": "idle"},
+            "update": {"status": "up_to_date", "line": "x · up to date", "hint": "h", "action": null}
+        }));
+        assert_eq!(
+            none.start_refusal().as_deref(),
+            Some("no update is available — u checks again")
+        );
+        let avail = HostUpdate::from_value(&json!({
+            "current": "0.7.1", "install": {"kind": "installer", "upgradable": true},
+            "check": {"update_available": true, "latest": "0.7.2"}, "job": {"state": "idle"},
+            "update": {"status": "available", "line": "l", "hint": "h", "action": {"label": "Update", "confirm": "c", "installer_sha256": "ab"}}
+        }));
+        assert_eq!(avail.start_refusal(), None);
     }
 
     #[test]
