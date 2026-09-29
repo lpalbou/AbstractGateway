@@ -1048,11 +1048,13 @@ def test_a_fresh_gateway_serves_the_recommended_seed_and_users_inherit_it(tmp_pa
     ):
         assert rows[key]["configured"] is True, f"{key} must be an ordinary configured row"
         assert (rows[key]["provider"], rows[key]["model"]) == (provider, model)
-    # Linux/CUDA host (pinned above): the MLX-Gen image recommendation cannot run
-    # here, so it is not seeded and the row says why.
-    assert rows["output.image"]["configured"] is False
-    assert rows["output.image"]["recommendation_unavailable"]["provider"] == "mlx-gen"
-    assert rows["output.image"]["recommendation_unavailable"]["reason"]
+    # Linux/CUDA host (pinned above): the image recommendation is Diffusers' FLUX.2 [klein] 4B
+    # (framework backlog 0989); video has no engine there, so it is not seeded and says why.
+    assert rows["output.image"]["configured"] is True
+    assert (rows["output.image"]["provider"], rows["output.image"]["model"]) == ("diffusers", "black-forest-labs/FLUX.2-klein-4B")
+    assert rows["output.video"]["configured"] is False
+    assert rows["output.video"]["recommendation_unavailable"]["provider"] == "mlx-gen"
+    assert rows["output.video"]["recommendation_unavailable"]["reason"]
     assert body.get("seeded") == "recommended-v1", "the payload must carry the seed provenance"
 
     # The operator overrides the recommendation gateway-wide...

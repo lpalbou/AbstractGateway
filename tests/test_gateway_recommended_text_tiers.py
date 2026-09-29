@@ -125,7 +125,7 @@ def test_other_hosts_keep_the_portable_text_download(on_host, mtp_switch, accele
 
     on_host(_host(24, accelerator))
     item = _text(core_config.recommended_core_model_downloads())
-    assert (item["provider"], item["artifact"]) == ("lmstudio", "qwen/qwen3.5-9b@4bit")
+    assert (item["provider"], item["artifact"]) == ("lmstudio", "qwen/qwen3.5-9b@q4_k_m")
 
 
 def test_download_all_fetches_the_pick(on_host, mtp_switch, monkeypatch):

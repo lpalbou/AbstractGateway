@@ -528,11 +528,15 @@ def test_the_gateway_applies_the_recommendation_to_the_store_it_edits(scoped_sto
     stored = _stored_routes(scoped_store)
     assert stored["input.text"]["model"] == "qwen/qwen3.5-9b"
     assert stored["output.voice"]["provider"] == "supertonic"
-    # Linux/CUDA host (pinned above): MLX-Gen cannot run here, so the image route
-    # is reported unavailable with the reason and never written.
-    assert "output.image" not in stored
+    # Linux/CUDA host (pinned above): the image recommendation is Diffusers' FLUX.2 [klein] 4B
+    # (MLX-Gen is the Apple silicon pick; framework backlog 0989), written like the others.
+    assert stored["output.image"] == {"provider": "diffusers", "model": "black-forest-labs/FLUX.2-klein-4B"}
     image = next(r for r in report["routes"] if r["key"] == "output.image")
-    assert image["action"] == "unavailable" and image["reason"]
+    assert image["action"] in {"apply", "already"}
+    # Video has no engine on CUDA: reported unavailable with the reason and never written.
+    assert "output.video" not in stored
+    video = next(r for r in report["routes"] if r["key"] == "output.video")
+    assert video["action"] == "unavailable" and video["reason"]
     # The refreshed grid rides along, so the console never renders a stale row.
     assert any(row.get("key") == "output.text" for row in payload.get("routes", []))
 

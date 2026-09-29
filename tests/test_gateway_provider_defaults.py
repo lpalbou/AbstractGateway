@@ -288,13 +288,11 @@ def test_a_fresh_install_serves_the_three_recommended_routes_with_their_provenan
         assert rows[key]["configured"] is True, f"{key} must be an ordinary configured row"
         assert rows[key]["provider"] == provider
         assert rows[key]["model"] == model
-    # The pinned host is Linux/CUDA: the MLX-Gen image recommendation cannot run
-    # here, so AbstractCore (2.17.0) does not seed it and says why on the row.
+    # The pinned host is Linux/CUDA: AbstractCore recommends Diffusers' FLUX.2 [klein] 4B there
+    # (MLX-Gen stays the Apple silicon pick; framework backlog 0989), so it is seeded like the rest.
     image = rows["output.image"]
-    assert image["configured"] is False, "a route this host cannot run must not be seeded"
-    unavailable = image["recommendation_unavailable"]
-    assert (unavailable["provider"], unavailable["model"]) == ("mlx-gen", "AbstractFramework/flux.2-klein-4b-8bit")
-    assert unavailable["reason"]
+    assert image["configured"] is True
+    assert (image["provider"], image["model"]) == ("diffusers", "black-forest-labs/FLUX.2-klein-4B")
 
     assert payload.get("seeded") == "recommended-v1", "the payload must carry the seed provenance"
 
