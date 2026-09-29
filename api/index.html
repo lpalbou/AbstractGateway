@@ -3427,7 +3427,13 @@ lock support never turns the successful load into a failure). <code>POST
 /models/unload</code> selects the runtime by <code>runtime_id</code> or by
 <code>task</code>/<code>provider</code>/<code>model</code>. Both relay Runtime's host facade and return the
 normalized residency response (<code>operation</code>, affected records, and in-band
-<code>ok=false</code> errors instead of opaque failures).</p>
+<code>ok=false</code> errors instead of opaque failures). A load response carries
+<code>loaded_new</code> (<code>true</code> when the call loaded the model, <code>false</code> when it was
+already in memory) and the matching action (<code>loaded</code> / <code>already_loaded</code>).</p>
+<p>A local image or video model loaded with <code>task: "image_generation"</code> (or
+<code>"video_generation"</code>) serves the following requests for that model on the loaded
+pipeline, in the gateway process; a model that was not loaded runs each
+request in an isolated worker process that loads it for that request.</p>
 <p>One unload failure gets a real status code: when the target model is locked,
 <code>POST /models/unload</code> answers <strong>HTTP 409</strong> with the normalized refusal payload
 as the body (<code>ok: false</code>, <code>error: "model_locked"</code>, plus whatever detail the
@@ -3697,7 +3703,8 @@ later <code>LLM_CALL.params.prompt_cache_binding</code> used inside real Runtime
 <p>Configuration notes (gateway host):
 - Multi-account: set <code>ABSTRACT_EMAIL_ACCOUNTS_CONFIG=/path/to/emails.yaml</code> (recommended).
 - Single-account env fallback: set <code>ABSTRACT_EMAIL_IMAP_*</code> and/or <code>ABSTRACT_EMAIL_SMTP_*</code>.
-- The secret itself must be present in the env var referenced by <code>*_PASSWORD_ENV_VAR</code> (e.g. <code>EMAIL_PASSWORD=...</code>).</p>
+- The secret itself must be present in the env var referenced by <code>*_PASSWORD_ENV_VAR</code> (e.g. <code>EMAIL_PASSWORD=...</code>). That setting is the variable's NAME; a value that is not a variable name is refused, never used as the password.
+- Every IMAP/SMTP connection verifies the server's TLS certificate and host name; a failed check returns an error naming the host, the reason and the fix, and no password is sent. A server signed by a private CA is trusted through the accounts file's <code>ca_file</code> field.</p>
 <p>Evidence: <code>src/abstractgateway/routes/gateway.py</code> (<code>/email/accounts|messages|send</code>) which proxies to the Runtime AbstractCore comms facade.</p>
 <p>Troubleshooting and common questions: <a href="../faq/">faq.md</a>.</p>
 

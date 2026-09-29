@@ -2034,8 +2034,9 @@ never converted. See <a href="../automations/#older-scheduled-runs-legacy">autom
 <p>Not by default. An automation runs unattended, so creating it with
 <code>policy.tool_approval: "auto"</code> (the default) is the consent for its target's
 tools. With <code>"ask"</code>, every tool batch waits for approval. Third-party MCP
-tools still ask under <code>"auto"</code>, and questions the workflow asks a person wait
-in both modes. See <a href="../automations/#tool-approval-and-consent">automations.md</a>.</p>
+tools still ask under <code>"auto"</code>, and so does sending an email or message to
+anyone but your registered email address; questions the workflow asks a person
+wait in both modes. See <a href="../automations/#tool-approval-and-consent">automations.md</a>.</p>
 <h3 id="why-does-an-automation-not-notify-me-after-every-run">Why does an automation not notify me after every run?<a class="headerlink" href="#why-does-an-automation-not-notify-me-after-every-run" title="Permanent link">&para;</a></h3>
 <p>Automations are quiet. A run raises attention only when its output carries
 <code>notify: true</code> or <code>notify: {title, body}</code>, when it fails after its last retry,
