@@ -10132,3 +10132,204 @@ fn footer_lists_the_arrow_keys_for_screens() {
     let s = h.turns(2);
     assert!(s.contains("←/→ Ctrl+P/N prev/next"), "footer:\n{s}");
 }
+
+// ---------------------------------------------------------------------
+// My email (framework backlog 0992): the caller's own mailbox, the admin's
+// per-user switch — web parity (console.py "My email", Users "Mailbox").
+// ---------------------------------------------------------------------
+
+fn click_text(h: &mut Harness, screen: &str, text: &str) {
+    let (row, col) = screen
+        .lines()
+        .enumerate()
+        .find_map(|(i, l)| l.find(text).map(|c| (i, l[..c].chars().count())))
+        .unwrap_or_else(|| panic!("{text:?} not on screen:\n{screen}"));
+    let click = format!(
+        "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+        col + 3,
+        row + 1,
+        col + 3,
+        row + 1
+    );
+    h.key(click.as_bytes());
+}
+
+fn my_email_fixture() -> Value {
+    json!({
+        "schema": "email_settings_v1", "configured": true, "enabled": true,
+        "admin_enabled": true, "effective_enabled": true,
+        "address": "me@example.test", "username": "me@example.test", "auth_kind": "password",
+        "imap": {"host": "imap.example.test", "port": 993, "security": "ssl", "folder": "INBOX"},
+        "smtp": {"host": "smtp.example.test", "port": 587, "security": "starttls"},
+        "secret_storage": "os-keychain",
+        "policy": {"mode": "allowlist", "entries": ["me@example.test"], "default": false},
+        "limits": {"per_hour": 20, "per_day": 100, "used_last_hour": 0, "used_last_day": 2},
+        "status": {"last_test": "2026-09-30T00:00:00+00:00", "legs": {"imap": {"ok": true}, "smtp": {"ok": true}}},
+        "watcher": {"state": "watching", "last_poll": "2026-09-30T00:01:00+00:00"}
+    })
+}
+
+#[test]
+fn users_at_opens_my_email_with_the_web_words() {
+    use abstractgateway_console::store::email::{MyEmail, MyNotifications};
+    use abstractgateway_console::worker::operator::OpCmd;
+    let mut h = harness_sized(Size::new(140, 44));
+    h.connect_as_admin();
+    h.goto_screen(3);
+    h.store
+        .users
+        .set(Loadable::Ready(users_from_payload(&users_fixture())));
+    h.turns(2);
+    let _ = h.drain_cmds();
+    h.type_text("@");
+    let s = h.turns(2);
+    assert!(s.contains("My email"), "form opens:\n{s}");
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::LoadMyEmail)))
+            .is_some(),
+        "it reads GET /me/email and /me/notifications"
+    );
+    h.store
+        .op
+        .my_email
+        .set(Loadable::Ready(MyEmail::from_value(&my_email_fixture())));
+    h.store
+        .op
+        .my_notifications
+        .set(Loadable::Ready(MyNotifications::from_value(&json!({
+            "channels": {"email": {"available": true, "to": "me@example.test"}},
+            "events": [
+                {"id": "automation_result", "label": "Automation results", "email": true},
+                {"id": "job_failed", "label": "Job failed", "email": false}
+            ],
+            "outbox": {"sent": 3, "queued": 0, "failed": 0, "unknown": 0, "last_failure": null}
+        }))));
+    let s = h.turns(2);
+    assert!(s.contains("state: connected"), "state line:\n{s}");
+    assert!(s.contains("me@example.test"), "address:\n{s}");
+    assert!(
+        s.contains("encrypted, key in the OS keychain"),
+        "credentials:\n{s}"
+    );
+    assert!(s.contains("watcher: watching"), "watcher:\n{s}");
+    assert!(s.contains("Save and test"), "account verbs:\n{s}");
+    assert!(s.contains("Disconnect"), "disconnect:\n{s}");
+
+    // Disconnect asks once more inside the form (no confirm dialog), then sends.
+    let _ = h.drain_cmds();
+    click_text(&mut h, &s, "Disconnect");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Disconnect now (deletes the credentials)"),
+        "armed:\n{s}"
+    );
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::Email { .. })))
+            .is_none(),
+        "nothing sent yet"
+    );
+    click_text(&mut h, &s, "Disconnect now");
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(
+            o,
+            OpCmd::Email {
+                action: abstractgateway_console::worker::operator::EmailAction::Disconnect,
+                ..
+            }
+        )))
+        .is_some(),
+        "the second press sends DELETE /me/email"
+    );
+
+    // The notifications section lists the gateway's events and the channel.
+    let s = h.turns(1);
+    click_text(&mut h, &s, "Notifications");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Notifications are emailed to me@example.test"),
+        "channel:\n{s}"
+    );
+    assert!(
+        s.contains("Automation results") && s.contains("Job failed"),
+        "events:\n{s}"
+    );
+    assert!(s.contains("3 sent, 0 waiting, 0 failed."), "outbox:\n{s}");
+    assert!(s.contains("Send test notification"), "test verb:\n{s}");
+}
+
+#[test]
+fn my_email_save_refuses_without_a_password_and_sends_the_web_body() {
+    use abstractgateway_console::store::email::MyEmail;
+    use abstractgateway_console::worker::operator::{EmailAction, OpCmd};
+    let mut h = harness_sized(Size::new(140, 44));
+    h.connect_as_admin();
+    h.goto_screen(3);
+    h.turns(2);
+    h.type_text("@");
+    h.turns(1);
+    h.store
+        .op
+        .my_email
+        .set(Loadable::Ready(MyEmail::from_value(&my_email_fixture())));
+    let s = h.turns(2);
+    let _ = h.drain_cmds();
+    click_text(&mut h, &s, "Save and test");
+    let s = h.turns(2);
+    assert!(
+        s.contains("give the password"),
+        "refused before sending:\n{s}"
+    );
+    assert!(h
+        .find_cmd(|c| is_op(c, |o| matches!(
+            o,
+            OpCmd::Email {
+                action: EmailAction::Connect(_),
+                ..
+            }
+        )))
+        .is_none());
+}
+
+#[test]
+fn users_table_shows_the_mailbox_and_x_switches_email_for_the_user() {
+    use abstractgateway_console::worker::operator::{EmailAction, OpCmd};
+    let mut h = harness_sized(Size::new(160, 44));
+    h.connect_as_admin();
+    h.goto_screen(3);
+    let mut users = users_fixture();
+    users["users"][1]["email_account"] = json!({"configured": true, "address": "a@x.io", "state": "connected", "admin_enabled": true});
+    h.store
+        .users
+        .set(Loadable::Ready(users_from_payload(&users)));
+    let s = h.turns(2);
+    assert!(s.contains("mailbox"), "column header:\n{s}");
+    assert!(s.contains("connected"), "alice's mailbox state:\n{s}");
+    let _ = h.drain_cmds();
+    h.key(b"\x1b[B"); // select alice (second row)
+    h.turns(1);
+    h.type_text("x");
+    h.turns(2);
+    let sent = h.find_cmd(|c| {
+        is_op(c, |o| {
+            matches!(
+                o,
+                OpCmd::Email {
+                    action: EmailAction::AdminSetEnabled { .. },
+                    ..
+                }
+            )
+        })
+    });
+    let Some(Cmd::Operator(OpCmd::Email {
+        action: EmailAction::AdminSetEnabled {
+            user_id, enabled, ..
+        },
+        ..
+    })) = sent
+    else {
+        panic!("x sends PUT /admin/users/{{id}}/email");
+    };
+    assert_eq!(user_id, "alice");
+    assert!(!enabled, "a connected mailbox is switched OFF");
+}

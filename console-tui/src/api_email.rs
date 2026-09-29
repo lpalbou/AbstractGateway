@@ -43,7 +43,12 @@ impl GatewayClient {
 
     /// `PUT /me/email/enabled` — the user's own switch.
     pub fn set_my_email_enabled(&self, enabled: bool) -> ApiResult<Value> {
-        self.send("PUT", "/me/email/enabled", &json!({ "enabled": enabled }), false)
+        self.send(
+            "PUT",
+            "/me/email/enabled",
+            &json!({ "enabled": enabled }),
+            false,
+        )
     }
 
     /// `GET /me/notifications`.
@@ -78,14 +83,28 @@ impl GatewayClient {
 
     /// `POST /me/email/oauth/cancel`.
     pub fn my_email_oauth_cancel(&self, flow_id: &str) -> ApiResult<Value> {
-        self.send("POST", "/me/email/oauth/cancel", &json!({"flow_id": flow_id}), false)
+        self.send(
+            "POST",
+            "/me/email/oauth/cancel",
+            &json!({"flow_id": flow_id}),
+            false,
+        )
     }
 
     /// `PUT /admin/users/{id}/email` (admin) — turn email on/off for a user.
-    pub fn set_user_email_enabled(&self, user_id: &str, tenant_id: &str, enabled: bool) -> ApiResult<Value> {
+    pub fn set_user_email_enabled(
+        &self,
+        user_id: &str,
+        tenant_id: &str,
+        enabled: bool,
+    ) -> ApiResult<Value> {
         self.send(
             "PUT",
-            &format!("/admin/users/{}/email?tenant_id={}", urlencode(user_id), urlencode(tenant_id)),
+            &format!(
+                "/admin/users/{}/email?tenant_id={}",
+                urlencode(user_id),
+                urlencode(tenant_id)
+            ),
             &json!({ "enabled": enabled }),
             false,
         )
@@ -94,7 +113,11 @@ impl GatewayClient {
     /// `GET /admin/users/{id}/email` (admin) — status only.
     pub fn user_email_status(&self, user_id: &str, tenant_id: &str) -> ApiResult<Value> {
         self.get(
-            &format!("/admin/users/{}/email?tenant_id={}", urlencode(user_id), urlencode(tenant_id)),
+            &format!(
+                "/admin/users/{}/email?tenant_id={}",
+                urlencode(user_id),
+                urlencode(tenant_id)
+            ),
             false,
         )
     }

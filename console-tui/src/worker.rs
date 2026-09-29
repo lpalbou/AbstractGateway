@@ -568,7 +568,14 @@ pub struct Body(pub Value);
 impl std::fmt::Debug for Body {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         fn scrub(obj: &mut serde_json::Map<String, Value>) {
-            for key in ["api_key", "token", "secret", "authorization", "password", "client_secret"] {
+            for key in [
+                "api_key",
+                "token",
+                "secret",
+                "authorization",
+                "password",
+                "client_secret",
+            ] {
                 if obj.contains_key(key) {
                     obj.insert(key.into(), Value::String("«redacted»".into()));
                 }

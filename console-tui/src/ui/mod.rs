@@ -17,6 +17,8 @@ pub mod entity_manage;
 /// Gateway host panel (F3) + the paused / restart banner.
 pub mod host;
 pub mod models;
+/// The caller's own mailbox and notifications (Users screen, `@`).
+pub mod my_email;
 /// The caller's own workspace policy (Users screen, `w`).
 pub mod my_policy;
 pub mod network;
@@ -1936,6 +1938,8 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     pairs.push(("i", "inspect"));
                     pairs.push(("v", "kept data of deleted users"));
                     pairs.push(("w", "my workspace policy"));
+                    pairs.push(("@", "my email"));
+                    pairs.push(("x", "email on/off (user)"));
                     pairs.push(("r", "refresh"));
                 }
                 // The whole Runtimes screen is admin-only: no verbs.

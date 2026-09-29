@@ -46,6 +46,8 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ctx_resv = ctx.clone();
     let ctx_inspect = ctx.clone();
     let ctx_mypolicy = ctx.clone();
+    let ctx_myemail = ctx.clone();
+    let ctx_mail = ctx.clone();
     let ctx_summon = ctx.clone();
     let ctx_talk = ctx.clone();
     let ctx_tpl = ctx.clone();
@@ -150,6 +152,30 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         // The caller's OWN workspace policy (web: "My workspace policy"
         // on the Users tab) — any principal, see ui/my_policy.rs.
         .shortcut(KeyChord::plain(Key::Char('w')), move |_| super::my_policy::open(cx, &ctx_mypolicy))
+        // The caller's OWN mailbox (web: "My email" on the Users tab) — any
+        // human principal, see ui/my_email.rs.
+        .shortcut(KeyChord::plain(Key::Char('@')), move |_| super::my_email::open(cx, &ctx_myemail))
+        // The admin's per-user email switch (status + on/off only; the admin
+        // never reads a user's mail).
+        .shortcut(KeyChord::plain(Key::Char('x')), move |_| {
+            if !super::util::admin_gate(&store, "turning email on or off for a user") {
+                return;
+            }
+            if let Some(u) = selected_user(&ctx_mail) {
+                ctx_mail.send(crate::worker::Cmd::Operator(crate::worker::operator::OpCmd::Email {
+                    action: crate::worker::operator::EmailAction::AdminSetEnabled {
+                        user_id: u.user_id.clone(),
+                        tenant_id: u.tenant_id.clone(),
+                        enabled: !u.mailbox_admin_enabled,
+                    },
+                    form_id: None,
+                }));
+            } else {
+                store
+                    .notice
+                    .set(Some("no user selected — nobody to switch email for".into()));
+            }
+        })
         .shortcut(KeyChord::plain(Key::Char('i')), move |_| {
             // Toggle the entity-inspector drawer (passive: the roster
             // keeps the keyboard; i again closes; leaving the screen
@@ -653,6 +679,7 @@ fn users_table(
                 } else {
                     u.email.clone()
                 });
+                row.push(u.mailbox.clone());
                 row.push(u.created_at.chars().take(10).collect());
             }
             row
@@ -669,6 +696,7 @@ fn users_table(
     ];
     if wide {
         rules.push(widths::ColRule::tail("email", 16));
+        rules.push(widths::ColRule::head("mailbox", 12));
         rules.push(widths::ColRule::head("created", 10));
     }
     let cols = widths::columns(&rules, &mut rows, vw - widths::BLOCK_CHROME);

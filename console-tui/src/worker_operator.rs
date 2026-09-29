@@ -16,11 +16,11 @@ use serde_json::Value;
 
 use super::{finish_write, load, publish_ready, require_client, with_busy, Body, Cmd, Secret};
 use crate::api::{ApiError, ApiErrorKind, GatewayClient};
+use crate::store::email::{email_error_text, notifications_body, MyEmail, MyNotifications};
 use crate::store::operator::{
     my_policy_body, seed_report_text, start_again_hint, tray_note, HostRunner, HostUpdate,
     MyPolicy, StartAtLogin,
 };
-use crate::store::email::{email_error_text, notifications_body, MyEmail, MyNotifications};
 use crate::store::{JournalEntry, Loadable, NetworkData, RuntimeConfigData, Store};
 
 /// A failed `/host/runner` poll (UI thread). It never erases a held
@@ -992,7 +992,9 @@ pub(super) fn handle(
             );
         }
 
-        OpCmd::Email { action, form_id } => email_write(client, store, wake, tx, action, form_id, on_done),
+        OpCmd::Email { action, form_id } => {
+            email_write(client, store, wake, tx, action, form_id, on_done)
+        }
     }
 }
 
@@ -1013,7 +1015,9 @@ fn email_outcome(v: Value) -> Value {
         .filter_map(|k| v.get(*k))
         .find(|leg| leg.get("ok").and_then(Value::as_bool) == Some(false))
         .cloned();
-    let err = from_leg.or_else(|| v.get("error").cloned()).unwrap_or(Value::Null);
+    let err = from_leg
+        .or_else(|| v.get("error").cloned())
+        .unwrap_or(Value::Null);
     let cause = err.get("cause").and_then(Value::as_str).unwrap_or("");
     let fix = err.get("fix").and_then(Value::as_str).unwrap_or("");
     let text = match (cause.is_empty(), fix.is_empty()) {
@@ -1050,7 +1054,11 @@ fn email_write(
             .map_err(email_err);
             match started {
                 Ok(v) => {
-                    let flow_id = v.get("flow_id").and_then(Value::as_str).unwrap_or("").to_string();
+                    let flow_id = v
+                        .get("flow_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
                     let prompt = if v.get("flow").and_then(Value::as_str) == Some("device") {
                         format!(
                             "Open {} in any browser and enter the code {}. Waiting for the approval…",
@@ -1065,7 +1073,14 @@ fn email_write(
                     };
                     let (fid, p) = (flow_id.clone(), prompt);
                     wake.post(move || op.email_oauth.set(Some((fid.clone(), p.clone()))));
-                    later(tx, OAUTH_POLL_INTERVAL, Cmd::Operator(OpCmd::Email { action: EmailAction::OAuthPoll(flow_id), form_id: None }));
+                    later(
+                        tx,
+                        OAUTH_POLL_INTERVAL,
+                        Cmd::Operator(OpCmd::Email {
+                            action: EmailAction::OAuthPoll(flow_id),
+                            form_id: None,
+                        }),
+                    );
                     finish_write(
                         store,
                         wake,
@@ -1077,7 +1092,15 @@ fn email_write(
                     );
                 }
                 Err(e) => {
-                    finish_write(store, wake, "START OAuth2 sign-in".into(), Err(e), None, form_id, on_done);
+                    finish_write(
+                        store,
+                        wake,
+                        "START OAuth2 sign-in".into(),
+                        Err(e),
+                        None,
+                        form_id,
+                        on_done,
+                    );
                 }
             }
         }
@@ -1091,23 +1114,36 @@ fn email_write(
             let s = *store;
             let tx2 = tx.clone();
             wake.post(move || {
-                let still = s.op.email_oauth.with_untracked(|f| f.as_ref().map(|(id, _)| id.clone()));
+                let still =
+                    s.op.email_oauth
+                        .with_untracked(|f| f.as_ref().map(|(id, _)| id.clone()));
                 if still.as_deref() != Some(flow_id.as_str()) {
                     return;
                 }
                 match &result {
                     Ok(v) if v.get("pending").and_then(Value::as_bool) == Some(true) => {
-                        later(&tx2, OAUTH_POLL_INTERVAL, Cmd::Operator(OpCmd::Email { action: EmailAction::OAuthPoll(flow_id.clone()), form_id: None }));
+                        later(
+                            &tx2,
+                            OAUTH_POLL_INTERVAL,
+                            Cmd::Operator(OpCmd::Email {
+                                action: EmailAction::OAuthPoll(flow_id.clone()),
+                                form_id: None,
+                            }),
+                        );
                     }
                     Ok(v) => {
                         s.op.email_oauth.set(None);
                         let e = MyEmail::from_value(v);
-                        s.notice.set(Some(format!("signed in: {} (connection test passed)", e.address)));
+                        s.notice.set(Some(format!(
+                            "signed in: {} (connection test passed)",
+                            e.address
+                        )));
                         s.op.my_email.set(Loadable::Ready(e));
                     }
                     Err(e) => {
                         s.op.email_oauth.set(None);
-                        s.notice.set(Some(format!("OAuth2 sign-in failed: {}", e.message)));
+                        s.notice
+                            .set(Some(format!("OAuth2 sign-in failed: {}", e.message)));
                     }
                 }
             });
@@ -1124,7 +1160,9 @@ fn email_write(
 
         EmailAction::Notifications(body) => {
             let (write, verify) = with_busy(store, wake, "saving my notifications", || {
-                let write = require_client(client).and_then(|c| c.set_my_notifications(&body)).map_err(email_err);
+                let write = require_client(client)
+                    .and_then(|c| c.set_my_notifications(&body))
+                    .map_err(email_err);
                 let verify = require_client(client).and_then(|c| c.my_notifications());
                 (write, verify)
             });
@@ -1137,7 +1175,15 @@ fn email_write(
                 }
             });
             let wrote = write.is_ok();
-            finish_write(store, wake, "PUT my notifications".into(), write, verified, form_id, on_done);
+            finish_write(
+                store,
+                wake,
+                "PUT my notifications".into(),
+                write,
+                verified,
+                form_id,
+                on_done,
+            );
             if let (true, Ok(v)) = (wrote, verify) {
                 publish_ready(wake, op.my_notifications, MyNotifications::from_value(&v));
             }
@@ -1154,18 +1200,31 @@ fn email_write(
                 .ok()
                 .filter(|v| v.get("ok").and_then(Value::as_bool) == Some(true))
                 .map(|_| Ok("the gateway sent it (state: sent)".to_string()));
-            finish_write(store, wake, "SEND test notification".into(), write, verified, form_id, on_done);
+            finish_write(
+                store,
+                wake,
+                "SEND test notification".into(),
+                write,
+                verified,
+                form_id,
+                on_done,
+            );
             if let Ok(v) = require_client(client).and_then(|c| c.my_notifications()) {
                 publish_ready(wake, op.my_notifications, MyNotifications::from_value(&v));
             }
         }
 
-        EmailAction::AdminSetEnabled { user_id, tenant_id, enabled } => {
+        EmailAction::AdminSetEnabled {
+            user_id,
+            tenant_id,
+            enabled,
+        } => {
             let (write, verify) = with_busy(store, wake, "switching email for the user", || {
                 let write = require_client(client)
                     .and_then(|c| c.set_user_email_enabled(&user_id, &tenant_id, enabled))
                     .map_err(email_err);
-                let verify = require_client(client).and_then(|c| c.user_email_status(&user_id, &tenant_id));
+                let verify =
+                    require_client(client).and_then(|c| c.user_email_status(&user_id, &tenant_id));
                 (write, verify)
             });
             let verified = verify.as_ref().ok().map(|v| {
@@ -1176,17 +1235,29 @@ fn email_write(
                         v.get("state").and_then(Value::as_str).unwrap_or("?")
                     ))
                 } else {
-                    Err(format!("GET /admin/users/{user_id}/email still says admin_enabled={got:?}"))
+                    Err(format!(
+                        "GET /admin/users/{user_id}/email still says admin_enabled={got:?}"
+                    ))
                 }
             });
             let verb = if enabled { "TURN ON" } else { "TURN OFF" };
-            finish_write(store, wake, format!("{verb} email for {user_id}"), write, verified, form_id, on_done);
+            finish_write(
+                store,
+                wake,
+                format!("{verb} email for {user_id}"),
+                write,
+                verified,
+                form_id,
+                on_done,
+            );
             let _ = tx.send(Cmd::LoadUsers);
         }
 
         other => {
             let (label, action_text) = match &other {
-                EmailAction::Connect(_) => ("connecting my email (test, then store)", "CONNECT my email"),
+                EmailAction::Connect(_) => {
+                    ("connecting my email (test, then store)", "CONNECT my email")
+                }
                 EmailAction::Test => ("testing my email", "TEST my email"),
                 EmailAction::Disconnect => ("disconnecting my email", "DISCONNECT my email"),
                 EmailAction::Policy(_) => ("saving my recipient policy", "PUT my recipient policy"),
@@ -1214,7 +1285,11 @@ fn email_write(
             let verified = verify.as_ref().ok().map(|v| {
                 let got = MyEmail::from_value(v);
                 let ok = match &other {
-                    EmailAction::Connect(body) => got.configured && body.get("address").and_then(Value::as_str) == Some(got.address.as_str()),
+                    EmailAction::Connect(body) => {
+                        got.configured
+                            && body.get("address").and_then(Value::as_str)
+                                == Some(got.address.as_str())
+                    }
                     EmailAction::Test => got.last_error.is_none(),
                     EmailAction::Disconnect => !got.configured,
                     EmailAction::Policy(body) => {
@@ -1222,12 +1297,21 @@ fn email_write(
                             && body
                                 .get("entries")
                                 .and_then(Value::as_array)
-                                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect::<Vec<_>>())
+                                .map(|a| {
+                                    a.iter()
+                                        .filter_map(Value::as_str)
+                                        .map(str::to_string)
+                                        .collect::<Vec<_>>()
+                                })
                                 .unwrap_or_default()
                                 == got.policy_entries
                     }
                     EmailAction::Limits(body) => {
-                        let want = |k: &str, have: Option<i64>| body.get(k).and_then(Value::as_i64).is_none_or(|w| Some(w) == have);
+                        let want = |k: &str, have: Option<i64>| {
+                            body.get(k)
+                                .and_then(Value::as_i64)
+                                .is_none_or(|w| Some(w) == have)
+                        };
                         want("per_hour", got.per_hour) && want("per_day", got.per_day)
                     }
                     EmailAction::Enabled(on) => got.enabled == *on,
@@ -1239,8 +1323,19 @@ fn email_write(
                     Err(format!("GET /me/email says {}", got.state_label()))
                 }
             });
-            let wrote = write.as_ref().map(|v| v.get("ok").and_then(Value::as_bool) != Some(false)).unwrap_or(false);
-            finish_write(store, wake, action_text.into(), write, verified, form_id, on_done);
+            let wrote = write
+                .as_ref()
+                .map(|v| v.get("ok").and_then(Value::as_bool) != Some(false))
+                .unwrap_or(false);
+            finish_write(
+                store,
+                wake,
+                action_text.into(),
+                write,
+                verified,
+                form_id,
+                on_done,
+            );
             if let Ok(v) = verify {
                 let _ = wrote;
                 publish_ready(wake, op.my_email, MyEmail::from_value(&v));
@@ -1268,6 +1363,40 @@ mod tests {
         assert_eq!(bad["ok"], json!(false));
         assert_eq!(bad["error"], json!("installed a@1 but NOT running"));
         assert_eq!(bad["detail"], json!("requires runtime >= 9"));
+    }
+
+    #[test]
+    fn email_outcomes_keep_the_cause_and_the_fix() {
+        let leg = email_outcome(json!({
+            "ok": false,
+            "imap": {"ok": true},
+            "smtp": {"ok": false, "code": "email_auth_failed", "cause": "rejected", "fix": "use an app password"}
+        }));
+        assert_eq!(
+            leg,
+            json!({"ok": false, "error": "rejected Fix: use an app password"})
+        );
+        let notice = email_outcome(json!({
+            "ok": false, "state": "failed",
+            "error": {"code": "email_disabled", "cause": "turned off", "fix": "ask an admin"}
+        }));
+        assert_eq!(notice["error"], json!("turned off Fix: ask an admin"));
+        let fine = json!({"ok": true, "imap": {"ok": true}});
+        assert_eq!(email_outcome(fine.clone()), fine);
+    }
+
+    #[test]
+    fn email_bodies_never_print_the_password() {
+        let body = Body(
+            json!({"address": "me@example.test", "password": "pw-SENTINEL", "client_secret": "cs-SENTINEL"}),
+        );
+        let shown = format!("{body:?}");
+        assert!(!shown.contains("SENTINEL"), "{shown}");
+        let cmd = OpCmd::Email {
+            action: EmailAction::Connect(body),
+            form_id: None,
+        };
+        assert!(!format!("{cmd:?}").contains("SENTINEL"));
     }
 
     #[test]

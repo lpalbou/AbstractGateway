@@ -127,7 +127,11 @@ fn leg_text(v: Option<&Value>) -> String {
                 let cause = s(leg, "cause");
                 format!(
                     "failed: {}",
-                    if cause.is_empty() { s(leg, "code") } else { cause }
+                    if cause.is_empty() {
+                        s(leg, "code")
+                    } else {
+                        cause
+                    }
                 )
             }
             Some(Value::Null) => "not configured".into(),
@@ -145,7 +149,11 @@ impl MyEmail {
         let watcher = v.get("watcher").cloned().unwrap_or(Value::Null);
         let admin_disabled = v
             .get("admin_disabled")
-            .map(|d| format!("{} {}", s(d, "cause"), s(d, "fix")).trim().to_string())
+            .map(|d| {
+                format!("{} {}", s(d, "cause"), s(d, "fix"))
+                    .trim()
+                    .to_string()
+            })
             .unwrap_or_default();
         MyEmail {
             configured: b(v, "configured").unwrap_or(false),
@@ -170,7 +178,12 @@ impl MyEmail {
             policy_entries: policy
                 .get("entries")
                 .and_then(Value::as_array)
-                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
                 .unwrap_or_default(),
             per_hour: n(&limits, "per_hour"),
             per_day: n(&limits, "per_day"),
@@ -193,7 +206,12 @@ impl MyEmail {
             notices: v
                 .get("notices")
                 .and_then(Value::as_array)
-                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
                 .unwrap_or_default(),
         }
     }
@@ -344,7 +362,9 @@ pub fn connect_body(
         return Err("the address is required".into());
     }
     if password.is_empty() {
-        return Err("give the password (or app password): it is never shown again once stored".into());
+        return Err(
+            "give the password (or app password): it is never shown again once stored".into(),
+        );
     }
     let (ih, ip, isec, ifolder) = imap;
     let (sh, sp, ssec) = smtp;
@@ -368,7 +388,9 @@ pub fn connect_body(
         })
     };
     if imap_v.is_null() && smtp_v.is_null() {
-        return Err("give at least the IMAP host (to read mail) or the SMTP host (to send mail)".into());
+        return Err(
+            "give at least the IMAP host (to read mail) or the SMTP host (to send mail)".into(),
+        );
     }
     Ok(json!({
         "address": address.trim(),
@@ -458,39 +480,79 @@ mod tests {
         assert_eq!(e.state_label(), "needs action");
         assert_eq!(e.imap.as_ref().unwrap().text(), "imap.example.test:993 ssl");
         assert_eq!(e.smtp_test, "failed: rejected");
-        assert_eq!(e.last_error.as_ref().unwrap().text(), "rejected Fix: update it");
+        assert_eq!(
+            e.last_error.as_ref().unwrap().text(),
+            "rejected Fix: update it"
+        );
         assert_eq!(e.policy_entries, vec!["me@example.test".to_string()]);
         assert_eq!(e.usage_text(), "1 sent in the last hour, 3 in the last day");
         assert_eq!(e.credentials_text(), "encrypted, key in the OS keychain");
-        let off = MyEmail::from_value(&json!({"configured": true, "enabled": true, "admin_enabled": false}));
+        let off = MyEmail::from_value(
+            &json!({"configured": true, "enabled": true, "admin_enabled": false}),
+        );
         assert_eq!(off.state_label(), "turned off by an administrator");
-        assert_eq!(MyEmail::from_value(&json!({})).state_label(), "not connected");
+        assert_eq!(
+            MyEmail::from_value(&json!({})).state_label(),
+            "not connected"
+        );
     }
 
     #[test]
     fn builds_the_web_bodies() {
         let body = connect_body(
-            " me@example.test ", "", "", "pw",
+            " me@example.test ",
+            "",
+            "",
+            "pw",
             ("imap.example.test", "993", "ssl", ""),
             ("smtp.example.test", "", "starttls"),
         )
         .unwrap();
-        assert_eq!(body["imap"], json!({"host": "imap.example.test", "port": 993, "security": "ssl", "folder": "INBOX"}));
+        assert_eq!(
+            body["imap"],
+            json!({"host": "imap.example.test", "port": 993, "security": "ssl", "folder": "INBOX"})
+        );
         assert_eq!(body["smtp"]["port"], Value::Null);
         assert_eq!(body["address"], json!("me@example.test"));
         assert!(connect_body("a@b.test", "", "", "", ("h", "", "ssl", ""), ("", "", "")).is_err());
-        assert!(connect_body("a@b.test", "", "", "pw", ("h", "x", "ssl", ""), ("", "", "")).is_err());
-        assert_eq!(policy_body("denylist", " a@b.test \n\nexample.org"), json!({"mode": "denylist", "entries": ["a@b.test", "example.org"]}));
-        assert_eq!(limits_body("5", "").unwrap(), json!({"per_hour": 5, "per_day": null}));
+        assert!(connect_body(
+            "a@b.test",
+            "",
+            "",
+            "pw",
+            ("h", "x", "ssl", ""),
+            ("", "", "")
+        )
+        .is_err());
+        assert_eq!(
+            policy_body("denylist", " a@b.test \n\nexample.org"),
+            json!({"mode": "denylist", "entries": ["a@b.test", "example.org"]})
+        );
+        assert_eq!(
+            limits_body("5", "").unwrap(),
+            json!({"per_hour": 5, "per_day": null})
+        );
         assert!(limits_body("-1", "").is_err());
-        let evs = vec![NotifyEvent { id: "job_failed".into(), label: "x".into(), email: true }];
-        assert_eq!(notifications_body(&evs), json!({"email": {"job_failed": true}}));
+        let evs = vec![NotifyEvent {
+            id: "job_failed".into(),
+            label: "x".into(),
+            email: true,
+        }];
+        assert_eq!(
+            notifications_body(&evs),
+            json!({"email": {"job_failed": true}})
+        );
     }
 
     #[test]
     fn mailbox_cell_reads_the_admin_row() {
-        assert_eq!(mailbox_state(&json!({"email_account": {"state": "connected", "admin_enabled": true}})), ("connected".to_string(), true));
-        assert_eq!(mailbox_state(&json!({"email_account": {"state": "turned off by an administrator", "admin_enabled": false}})).1, false);
+        assert_eq!(
+            mailbox_state(&json!({"email_account": {"state": "connected", "admin_enabled": true}})),
+            ("connected".to_string(), true)
+        );
+        assert!(
+            !mailbox_state(&json!({"email_account": {"state": "turned off by an administrator", "admin_enabled": false}})).1
+        );
         assert_eq!(mailbox_state(&json!({})), ("—".to_string(), true));
     }
 }
