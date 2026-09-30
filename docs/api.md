@@ -1713,6 +1713,7 @@ Your email address and mailbox (`/api/gateway/me/...`, every signed-in human):
 | `PUT /me/email/policy` | `{mode: "allowlist" \| "denylist", entries: [address \| domain]}` |
 | `POST /me/email/policy/check` | `{addresses}` → per-recipient verdicts |
 | `PUT /me/email/limits` | `{per_hour, per_day}` |
+| `PUT /me/email/folder` | `{folder}` — the folder your mailbox is read from (empty = INBOX); the connection is kept and nothing is tested; 404 `email_not_configured` without a mailbox |
 | `PUT /me/email/enabled` | `{enabled}` — "Use this mailbox" (off keeps the settings; stops watching, sending and notifications) |
 | `PUT /me/email/agent-tools` | `{enabled}` — your agents' email tools (default off; 409 `email_disabled` while "Agent email tools for users" is off for you; active only with a connected, allowed mailbox); reloads your workflows so toolsets follow (`tools_reloaded`) |
 | `GET /me/email/oauth/clients` | which providers have a gateway OAuth client (no secrets) |
@@ -1728,7 +1729,7 @@ Administrators (status and the switch only; administrators never read mail):
 
 | Route | Purpose |
 |---|---|
-| `GET /admin/users` | each human row carries `email_account: {configured, address, state, admin_enabled, agent_tools_available}` |
+| `GET /admin/users` | each human row carries `email_account: {configured, address, state, admin_enabled, agent_tools_available, capabilities}` (`capabilities`: `{email, email_agent_tools}` as `{value, source: user \| gateway \| built-in}`; `user` = a per-user override) |
 | `GET /admin/users/{user_id}/email` | `configured`, `address`, `auth_kind`, `user_enabled`, `admin_enabled`, `effective_enabled`, `status` (last test / last error), `capabilities` (`{value, source: user \| gateway \| built-in}`), `agent_tools` (`available`, `user_enabled`, `active`), `watcher`, `state` |
 | `PUT /admin/users/{user_id}/email` | `{enabled?, agent_tools?, inherit?: ["email", "email_agent_tools"]}` — per-user capabilities; `enabled: false` = no watcher, no sending, no notifications (settings kept); `agent_tools` = Agent email tools available |
 | `GET /admin/email/capabilities` | `capabilities[{id, label, description, per_user, advanced, default, built_in_default}]`: `email` "Mailboxes for users" (on), under Advanced `email_agent_tools` "Agent email tools for users" (on) and `email_recovery` "Sign-in by email" (on) |

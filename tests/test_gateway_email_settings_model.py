@@ -339,3 +339,43 @@ def test_openapi_summaries_use_the_two_words(gateway) -> None:
         for op in ops.values():
             text = f"{op.get('summary') or ''}"
             assert "Turn on" not in text and "Turn off" not in text and "Save and test" not in text, (path, text)
+
+
+# ---------------------------------------------------------------------------------------
+# Users table: per-user overrides visible; Advanced → Folder
+# ---------------------------------------------------------------------------------------
+
+
+def test_users_rows_carry_capabilities_so_a_pinned_user_shows_reset(gateway) -> None:
+    c = gateway["client"]
+    _write_caps(gateway, {"version": 2, "defaults": {}, "users": {}})
+    _switch_on("bob")  # pinned off by the v3 migration
+    rows = {u["user_id"]: u for u in c.get("/api/gateway/admin/users", headers=ADMIN).json()["users"]}
+    assert rows["bob"]["email_account"]["capabilities"]["email_agent_tools"] == {"value": False, "source": "user"}
+    assert rows["alice"]["email_account"]["capabilities"] == {
+        "email": {"value": True, "source": "built-in"},
+        "email_agent_tools": {"value": True, "source": "built-in"},
+    }
+    # Reset clears the override; the row follows the default again.
+    c.put("/api/gateway/admin/users/bob/email", headers=ADMIN, json={"inherit": ["email", "email_agent_tools"]})
+    rows = {u["user_id"]: u for u in c.get("/api/gateway/admin/users", headers=ADMIN).json()["users"]}
+    assert rows["bob"]["email_account"]["capabilities"]["email_agent_tools"]["source"] == "built-in"
+
+
+def test_folder_is_set_without_reconnecting(gateway, imap, smtp) -> None:
+    c = gateway["client"]
+    r = c.put("/api/gateway/me/email/folder", headers=gateway["alice"], json={"folder": "Archive"})
+    assert r.status_code == 404 and r.json()["detail"]["reason_code"] == "email_not_configured"
+    assert c.put("/api/gateway/me/email", headers=gateway["alice"], json=connect_body(ALICE, imap, smtp)).status_code == 200
+    logins = len(imap.logins)
+    r = c.put("/api/gateway/me/email/folder", headers=gateway["alice"], json={"folder": "Archive"})
+    assert r.status_code == 200, r.text
+    assert r.json()["imap"]["folder"] == "Archive" and r.json()["configured"] is True and r.json()["secret_set"] is True
+    assert len(imap.logins) == logins  # nothing tested, nothing reconnected
+    assert c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["imap"]["folder"] == "Archive"
+    assert c.get("/api/gateway/me/email", headers=gateway["bob"]).json()["configured"] is False  # only her own
+    r = c.put("/api/gateway/me/email/folder", headers=gateway["alice"], json={"folder": ""})
+    assert r.status_code == 200 and r.json()["imap"]["folder"] == "INBOX"
+    r = c.put("/api/gateway/me/email/folder", headers=gateway["alice"], json={"folder": "bad\nname"})
+    assert r.status_code == 400 and r.json()["detail"]["reason_code"] == "email_invalid_settings"
+    assert any(e["event"] == "email.folder_changed" and e.get("folder") == "INBOX" for e in _audit(gateway))

@@ -5302,6 +5302,7 @@ Your email address and mailbox (`/api/gateway/me/...`, every signed-in human):
 | `PUT /me/email/policy` | `{mode: "allowlist" \| "denylist", entries: [address \| domain]}` |
 | `POST /me/email/policy/check` | `{addresses}` → per-recipient verdicts |
 | `PUT /me/email/limits` | `{per_hour, per_day}` |
+| `PUT /me/email/folder` | `{folder}` — the folder your mailbox is read from (empty = INBOX); the connection is kept and nothing is tested; 404 `email_not_configured` without a mailbox |
 | `PUT /me/email/enabled` | `{enabled}` — "Use this mailbox" (off keeps the settings; stops watching, sending and notifications) |
 | `PUT /me/email/agent-tools` | `{enabled}` — your agents' email tools (default off; 409 `email_disabled` while "Agent email tools for users" is off for you; active only with a connected, allowed mailbox); reloads your workflows so toolsets follow (`tools_reloaded`) |
 | `GET /me/email/oauth/clients` | which providers have a gateway OAuth client (no secrets) |
@@ -5317,7 +5318,7 @@ Administrators (status and the switch only; administrators never read mail):
 
 | Route | Purpose |
 |---|---|
-| `GET /admin/users` | each human row carries `email_account: {configured, address, state, admin_enabled, agent_tools_available}` |
+| `GET /admin/users` | each human row carries `email_account: {configured, address, state, admin_enabled, agent_tools_available, capabilities}` (`capabilities`: `{email, email_agent_tools}` as `{value, source: user \| gateway \| built-in}`; `user` = a per-user override) |
 | `GET /admin/users/{user_id}/email` | `configured`, `address`, `auth_kind`, `user_enabled`, `admin_enabled`, `effective_enabled`, `status` (last test / last error), `capabilities` (`{value, source: user \| gateway \| built-in}`), `agent_tools` (`available`, `user_enabled`, `active`), `watcher`, `state` |
 | `PUT /admin/users/{user_id}/email` | `{enabled?, agent_tools?, inherit?: ["email", "email_agent_tools"]}` — per-user capabilities; `enabled: false` = no watcher, no sending, no notifications (settings kept); `agent_tools` = Agent email tools available |
 | `GET /admin/email/capabilities` | `capabilities[{id, label, description, per_user, advanced, default, built_in_default}]`: `email` "Mailboxes for users" (on), under Advanced `email_agent_tools` "Agent email tools for users" (on) and `email_recovery` "Sign-in by email" (on) |
@@ -6785,7 +6786,10 @@ Besides the mailbox settings and status (never a secret):
 | `oauth_providers` | `[{"id": "google" \| "microsoft", "available", "reason"}]` |
 
 **Use this mailbox** (`PUT /api/gateway/me/email/enabled {"enabled": false}`) keeps the settings but
-stops watching, sending and notifications until you switch it back on.
+stops watching, sending and notifications until you switch it back on. **Folder**
+(`PUT /api/gateway/me/email/folder {"folder": "Archive"}`, empty = INBOX) changes the folder your
+agents and the mail watcher read without reconnecting; the watcher starts that folder from mail that
+arrives after the change.
 
 ## Agent email tools (off by default)
 
@@ -6952,8 +6956,9 @@ curl -sS -X PUT -H "$ADMIN" "$BASE_URL/api/gateway/admin/email/capabilities" -d 
 ```
 
 Per-user overrides (`PUT /api/gateway/admin/users/{user_id}/email {"enabled"?, "agent_tools"?}`)
-are still honoured; the consoles no longer create them and show an existing one as "not allowed
-for this user" with a **Reset** action (`{"inherit": ["email", "email_agent_tools"]}`).
+are still honoured; the consoles no longer create them and show an existing one (a `user` source in
+the `email_account.capabilities` of `GET /api/gateway/admin/users`) as "not allowed for this user"
+with a **Reset** action (`{"inherit": ["email", "email_agent_tools"]}`).
 
 Agent email tools became available by default with `capabilities.json` version 3. On the first
 start, the gateway upgrades the file so that nobody gains tools they could not use before: a user
@@ -8564,10 +8569,14 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
 - `PUT /api/gateway/me/email/notifications {"job_failed"?, "approval_needed"?}` sets the two
   notification switches.
 - `GET /api/gateway/me/email` also returns `email_address` (your email address as stored),
-  `email_available`,
-  `notifications`, `notifications_unavailable_reason`, `oauth_providers` and, in `agent_tools`,
-  `on`, `unavailable_reason` and `admin_available`.
+  `email_available`, `notifications`, `notifications_unavailable_reason`, `oauth_providers` and,
+  in `agent_tools`, `on`, `unavailable_reason` and `admin_available`; `registered_address` is
+  filled before a mailbox is connected too.
 - `GET /api/gateway/admin/email/capabilities` returns each capability's `advanced` flag.
+- `PUT /api/gateway/me/email/folder {"folder"}` sets the folder your mailbox is read from (empty =
+  INBOX) without reconnecting; `404 email_not_configured` without a mailbox.
+- `GET /api/gateway/admin/users` rows carry `email_account.capabilities` (`{value, source}` for
+  `email` and `email_agent_tools`), so the Users table can show a per-user override with a Reset.
 
 ### Changed
 - The administrator's one switch is **Mailboxes for users** (capability `email`, on by default).

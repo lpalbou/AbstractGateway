@@ -968,6 +968,27 @@ def test_account(plane: EmailPlane, *, actor: str = "") -> Dict[str, Any]:
     return result
 
 
+def set_folder(plane: EmailPlane, folder: str, *, actor: str = "") -> Dict[str, Any]:
+    """The IMAP folder the mailbox is read from (agents' list/search, the mail watcher); empty =
+    INBOX. The connection is kept and nothing is tested; the watcher starts the new folder from a
+    fresh baseline (only mail that arrives after). No mailbox: `email_not_configured` (404)."""
+
+    account_store(plane).set_folder(folder)
+    try:
+        from .watcher import reset_watcher_cursor
+
+        reset_watcher_cursor(plane)
+    except Exception:  # noqa: BLE001
+        pass
+    rebind_live_runtime(plane)
+    out = public_status(plane)
+    audit_email_event(
+        "email.folder_changed", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=actor or plane.user_id,
+        folder=str(((out.get("imap") or {}).get("folder")) or ""),
+    )
+    return out
+
+
 def disconnect(plane: EmailPlane, *, actor: str = "") -> Dict[str, Any]:
     account_store(plane).disconnect()
     try:
