@@ -159,6 +159,7 @@ packages = ["src/abstractgateway"]
 # into the tenant catalog (shipped_catalog.py, card 013) — the wheel must
 # actually carry it or a fresh pip install has nothing to publish.
 "flows/bundles/docs-qa@0.1.1.flow" = "abstractgateway/flows/bundles/docs-qa@0.1.1.flow"
+"flows/bundles/docs-qa@0.1.2.flow" = "abstractgateway/flows/bundles/docs-qa@0.1.2.flow"
 "flows/bundles/docs-qa@0.1.0.flow" = "abstractgateway/flows/bundles/docs-qa@0.1.0.flow"
 "flows/bundles/react-agent@0.1.0.flow" = "abstractgateway/flows/bundles/react-agent@0.1.0.flow"
 "flows/bundles/codeact-agent@0.1.0.flow" = "abstractgateway/flows/bundles/codeact-agent@0.1.0.flow"
@@ -184,6 +185,7 @@ exclude = [
 "flows/bundles/coding-agent@0.2.6.flow" = "flows/bundles/coding-agent@0.2.6.flow"
 "flows/bundles/co-scientist@0.2.0.flow" = "flows/bundles/co-scientist@0.2.0.flow"
 "flows/bundles/docs-qa@0.1.1.flow" = "flows/bundles/docs-qa@0.1.1.flow"
+"flows/bundles/docs-qa@0.1.2.flow" = "flows/bundles/docs-qa@0.1.2.flow"
 "flows/bundles/docs-qa@0.1.0.flow" = "flows/bundles/docs-qa@0.1.0.flow"
 "flows/bundles/react-agent@0.1.0.flow" = "flows/bundles/react-agent@0.1.0.flow"
 "flows/bundles/codeact-agent@0.1.0.flow" = "flows/bundles/codeact-agent@0.1.0.flow"
