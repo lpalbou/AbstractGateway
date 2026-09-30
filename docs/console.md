@@ -349,7 +349,12 @@ the file again and follows it to a new port. Give the token with `--token
 <token>` or paste it on the Connection screen (`--token-file PATH` and
 `ABSTRACTGATEWAY_AUTH_TOKEN` remain as legacy aliases for existing scripts).
 When sign-in fails, the Connection screen says whether no token was
-sent or the token was rejected.
+sent or the token was rejected. When the gateway offers sign-in by email, the
+screen shows **Forgot your token? Email me a sign-in code** under your gateway
+user: the gateway emails an 8-digit code to the account's email address and the
+screen says where it went (or why none was sent); **Use code** gives the console
+a new token, shown once to copy (the old one stops working). A new code can be
+requested after 30 seconds.
 
 ### Setup guide and browse mode
 
@@ -395,11 +400,17 @@ The console has thirteen screens: **1** Connection, **2** Providers, **3** Route
   output mode (text, image, voice, music, sound effects, video), file
   attachments and speak-this-reply.
 - **Users & Entities** summons entities (`n`), manages spark templates (`s`),
-  talks with an entity (`c`), edits your own workspace policy (`w`) and your
-  own mailbox (`@`: account, OAuth2 sign-in, recipient policy, send limits and
-  agent email tools, notifications — [email.md](./email.md)). Administrators switch email on or
-  off for the selected user with `x`; the table's **mailbox** column shows each
-  user's state.
+  talks with an entity (`c`), edits your own workspace policy (`w`) and opens
+  **My email** (`@`): your **Email address**, your **Mailbox** (Google,
+  Microsoft or Other — address and password, the servers are looked up; one
+  **Connect**), the **Job failed** and **Approval needed** notifications, the
+  **Agent email tools** switch and Advanced (recipient rules, send limits,
+  folder, **Use this mailbox**) — see [email.md](./email.md). For
+  administrators the screen starts with the **Mailboxes for users** switch
+  (Advanced: **Agent email tools for users**, **Sign-in by email**), and the
+  users table reads User, Role, Email address, Mailbox, Runtime and **Active**:
+  Space switches the selected user's Active (turning it off asks first; your
+  own row can't be switched), `x` resets an old per-user mailbox override.
 - **Workflows** imports a `.flow` bundle (`i`) and reloads the registry (`L`).
 - **A Apps** is the web console's Apps tab: open browser apps signed in,
   install or update them, start and stop them, the desktop Assistant and
@@ -408,7 +419,7 @@ The console has thirteen screens: **1** Connection, **2** Providers, **3** Route
   forwards that make it work from your own computer.
 - **F2** opens the docs assistant (questions answered from the gateway's own
   documentation; signed in).
-- **F3** opens the gateway host panel: pause or resume workflows, restart,
+- **F3** opens the gateway host panel: the **Workflows paused** switch, restart,
   quit, check for and install updates (the same answer and the same update as
   the web console and the tray: an AbstractFramework installer install runs the
   installer, see [tray.md](./tray.md#restart-and-update)), the tray, and
@@ -419,6 +430,11 @@ The console has thirteen screens: **1** Connection, **2** Providers, **3** Route
   version, the links and the connected gateway's versions from
   `GET /api/gateway/about`. `abstractgateway-console --about --gateway-url <gateway>`
   prints the same text without opening the interface.
+
+Every on/off setting is a switch: `[x] Feature` on (highlighted), `[ ] Feature`
+off, `[-] Feature — reason` when it can't be used here. `Space` (or `Enter`)
+switches the focused one; it applies at once and the status line names the new
+state.
 
 Keys: `Tab` focus, `Enter` activate, `Ctrl+N` / `Ctrl+P` next and previous
 step, `Esc` back (in a text field, the first `Esc` releases it so screen keys

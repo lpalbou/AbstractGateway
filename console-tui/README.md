@@ -59,8 +59,11 @@ leave (not recorded, it opens again next start) or skip (recorded).
    production lane (voice → `/runs/{…}/voice/tts`, everything else →
    `/sandbox/generate` with the route's own capability key).
 4. **Users & Entities** — gateway user CRUD (create shows the token
-   exactly once, with clipboard copy; advanced tenant/runtime bindings;
-   user/admin/readonly roles), token rotation, your own workspace
+   exactly once, with clipboard copy; the email address at the top level,
+   runtime and tenant under Advanced; user/admin/readonly roles; the
+   **Active** switch on the table, Space), the **Mailboxes for users**
+   switch, **My email** (`@`: email address, mailbox, two notification
+   switches, agent email tools), token rotation, your own workspace
    policy (`w`, as the web console's "My workspace"), runtime reservations
    (transfer/purge retained planes of deleted users, `v`), and the
    entity roster with a per-entity **manage menu** (`m`): state
@@ -191,8 +194,9 @@ take the caret by themselves once connected) · `1-9`, `0`, `A` (Apps), `N` (Net
 screen bar is also clickable in browse) · `Ctrl+G` setup guide (browse:
 reopen; guide: go to any step, leave or Skip setup) · `r` refresh · `F1` / `?` About ·
 `F2` docs assistant (signed in; the web top bar's ✦ drawer) · `F3`
-gateway host panel (pause/resume, restart, quit, update check/install,
-tray, start at login; a paused banner shows on every screen) · `Ctrl+L` repaint · `q`
+gateway host panel (**Workflows paused** and **Start at login** switches,
+restart, quit, update check/install, tray; a paused banner shows on every
+screen) · `Ctrl+L` repaint · `q`
 (browse) / `Ctrl+C` quit. Per-screen actions sit in the footer, and a
 refused action always SAYS why (toast + footer) instead of doing
 nothing.
