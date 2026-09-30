@@ -979,9 +979,12 @@ pub struct UserRow {
     /// connection in words ("connected as me@x.com" / "not connected") —
     /// status only, never content.
     pub mailbox: String,
-    /// An old per-user override turned mailboxes off for this user: the
-    /// cell says "not allowed for this user" and `x` resets it.
-    pub mailbox_override: bool,
+    /// Mailboxes are off for this user (`email_account.admin_enabled:
+    /// false`) — by an old per-user override or by the gateway-wide switch
+    /// (`email::mailbox_cell_text` tells which).
+    pub mailbox_not_allowed: bool,
+    /// `email_account.override` when the gateway sends it.
+    pub mailbox_override_flag: Option<bool>,
 }
 
 impl UserRow {
@@ -996,8 +999,20 @@ impl UserRow {
             created_at: s(v, "created_at").unwrap_or_default(),
             principal_kind: s(v, "principal_kind"),
             mailbox: email::mailbox_cell(v).0,
-            mailbox_override: email::mailbox_cell(v).1,
+            mailbox_not_allowed: email::mailbox_cell(v).1,
+            mailbox_override_flag: email::mailbox_cell(v).2,
         })
+    }
+
+    /// The Mailbox cell as shown and whether `x` has an override to reset
+    /// (`mailboxes_on`: the gateway-wide "Mailboxes for users", when read).
+    pub fn mailbox_view(&self, mailboxes_on: Option<bool>) -> (String, bool) {
+        email::mailbox_cell_text(
+            &self.mailbox,
+            self.mailbox_not_allowed,
+            self.mailbox_override_flag,
+            mailboxes_on,
+        )
     }
 
     /// The kind partition, contract-first: `principal_kind` is the ONE

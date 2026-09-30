@@ -163,7 +163,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 return;
             }
             match selected_user(&ctx_mail) {
-                Some(u) if u.mailbox_override => {
+                Some(u) if u.mailbox_view(mailboxes_on(&store)).1 => {
                     ctx_mail.send(crate::worker::Cmd::Operator(crate::worker::operator::OpCmd::Email {
                         action: crate::worker::operator::EmailAction::AdminResetMailbox {
                             user_id: u.user_id.clone(),
@@ -258,6 +258,9 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                             )]);
                         }
                         let data = store.users.get();
+                        // The Mailbox cell's note depends on the gateway-wide
+                        // switch (tracked: the table re-renders when it lands).
+                        let global = store.op.email_caps.with(|c| c.ready().map(|c| c.email));
                         // Empty-state honesty: 0 humans with N hidden
                         // entity principals is NOT an empty registry.
                         let empty_text = match &data {
@@ -285,6 +288,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                     &d.humans,
                                     ui.user_sel,
                                     me,
+                                    global,
                                     move |_| {
                                         // Activation (Enter / double-click) =
                                         // the `e` edit path, one body.
@@ -331,7 +335,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                     .build(),
                             )
                             .child(line(vec![span(
-                                if u.mailbox_override {
+                                if u.mailbox_view(mailboxes_on(&store)).1 {
                                     "  space switches Active · e edits · x resets the mailbox override"
                                 } else {
                                     "  space switches Active · e edits"
@@ -717,6 +721,14 @@ fn selected_user(ctx: &Ctx) -> Option<UserRow> {
         .with_untracked(|d| d.ready().and_then(|d| d.humans.get(idx).cloned()))
 }
 
+/// The gateway-wide "Mailboxes for users" once read (None before).
+fn mailboxes_on(store: &crate::store::Store) -> Option<bool> {
+    store
+        .op
+        .email_caps
+        .with_untracked(|c| c.ready().map(|c| c.email))
+}
+
 /// "Mailboxes for users" — the administrator's one email switch.
 pub const MAILBOXES_LABEL: &str = "Mailboxes for users";
 pub const MAILBOXES_HELP: &str = "Users may connect their own mailbox for their agents, automations and notifications. You never see anyone's mail.";
@@ -954,6 +966,7 @@ fn users_table(
     data: &[UserRow],
     sel: Signal<usize>,
     me: Option<(String, String)>,
+    global_mailboxes: Option<bool>,
     on_activate: impl FnMut(usize) + 'static,
     mut on_space: impl FnMut() + 'static,
 ) -> View {
@@ -974,7 +987,7 @@ fn users_table(
                 } else {
                     u.email.clone()
                 },
-                u.mailbox.clone(),
+                u.mailbox_view(global_mailboxes).0,
                 u.runtime_id.clone(),
                 // The Active switch's marker (the row below the table
                 // carries the highlighted switch of the selected user).

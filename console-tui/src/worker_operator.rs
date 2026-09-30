@@ -1488,7 +1488,7 @@ fn email_write(
                 (write, verify)
             });
             let verified = verify.as_ref().ok().map(|v| {
-                let got = MyEmail::from_value(v).registered_address;
+                let got = MyEmail::from_value(v).email_address();
                 if got.eq_ignore_ascii_case(&want) {
                     Ok("GET /me/email holds it".to_string())
                 } else {

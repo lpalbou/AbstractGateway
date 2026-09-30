@@ -123,9 +123,12 @@ pub struct MyEmail {
     pub agent_tools_reason: String,
     /// Which account this is (the admin's gateway account vs AbstractCore's local one).
     pub store_label: String,
-    /// The user's Email address (sign-in codes, notifications, "self"):
-    /// `registered_address`; empty on a gateway that predates the field.
+    /// `registered_address`: "self" for runs (the stored email address,
+    /// else the connected mailbox's own); empty before the field existed.
     pub registered_address: String,
+    /// `email_address`: the user's Email address as stored ("" = none) —
+    /// the account page's field. `None` on a gateway that predates it.
+    pub stored_email_address: Option<String>,
     /// The two notification switches (`notifications`), `None` on a gateway
     /// whose `/me/email` does not carry them (read from `/me/notifications`).
     pub notify_job_failed: Option<bool>,
@@ -241,6 +244,10 @@ impl MyEmail {
             agent_tools_active: b(&agent, "active").unwrap_or(false),
             store_label: v.get("store").map(|st| s(st, "label")).unwrap_or_default(),
             registered_address: s(v, "registered_address"),
+            stored_email_address: v
+                .get("email_address")
+                .and_then(Value::as_str)
+                .map(str::to_string),
             notify_job_failed: v.get("notifications").and_then(|n| b(n, "job_failed")),
             notify_approval_needed: v.get("notifications").and_then(|n| b(n, "approval_needed")),
             notifications_unavailable_reason: s(v, "notifications_unavailable_reason"),
@@ -350,9 +357,13 @@ impl MyEmail {
         }
     }
 
-    /// The Email address field's value: the registered address, else (a
-    /// gateway without the field) the mailbox's own.
+    /// The Email address field's value: `email_address` (the stored one,
+    /// possibly empty); on an older gateway the registered address, else
+    /// the mailbox's own.
     pub fn email_address(&self) -> String {
+        if let Some(stored) = &self.stored_email_address {
+            return stored.clone();
+        }
         if self.registered_address.is_empty() {
             self.address.clone()
         } else {
@@ -650,14 +661,13 @@ pub fn caps_state_text(body: &Value) -> String {
 
 /// The admin Users table's Mailbox cell (`/admin/users` rows carry
 /// `email_account: {configured, address, state, admin_enabled}`): the
-/// connection in words — "connected as me@x.com", "not connected" — and,
-/// when the administrator turned mailboxes off for this user through the
-/// old per-user switch, the note "not allowed for this user" (a Reset
-/// clears that override; no new overrides are made from the console).
-/// Returns `(cell text, override note shown)`.
-pub fn mailbox_cell(user: &Value) -> (String, bool) {
+/// connection in words — "connected as me@x.com", "not connected" — and
+/// whether mailboxes are off for this user (`admin_enabled: false`).
+/// Returns `(connection text, mailboxes off for this user, explicit
+/// per-user override flag when the gateway sends one)`.
+pub fn mailbox_cell(user: &Value) -> (String, bool, Option<bool>) {
     let Some(acc) = user.get("email_account").filter(|a| a.is_object()) else {
-        return ("—".into(), false);
+        return ("—".into(), false, None);
     };
     let state = s(acc, "state");
     let address = s(acc, "address");
@@ -678,10 +688,30 @@ pub fn mailbox_cell(user: &Value) -> (String, bool) {
     } else {
         format!("connected as {address}")
     };
-    if not_allowed {
+    (conn, not_allowed, b(acc, "override"))
+}
+
+/// The cell as shown, with the note: an old per-user override reads "not
+/// allowed for this user" (`x` resets it); mailboxes off for everyone (the
+/// admin's "Mailboxes for users" switch) reads "mailboxes off" — that is
+/// not an override, there is nothing to reset. `mailboxes_on` is the
+/// gateway-wide switch when known. Returns `(text, resettable override)`.
+pub fn mailbox_cell_text(
+    conn: &str,
+    not_allowed: bool,
+    override_flag: Option<bool>,
+    mailboxes_on: Option<bool>,
+) -> (String, bool) {
+    let is_override = match override_flag {
+        Some(flag) => flag && not_allowed,
+        None => not_allowed && mailboxes_on != Some(false),
+    };
+    if is_override {
         (format!("{conn} · not allowed for this user"), true)
+    } else if not_allowed {
+        (format!("{conn} · mailboxes off"), false)
     } else {
-        (conn, false)
+        (conn.to_string(), false)
     }
 }
 
@@ -1071,23 +1101,135 @@ mod tests {
             mailbox_cell(
                 &json!({"email_account": {"configured": true, "address": "a@x.io", "state": "connected", "admin_enabled": true}})
             ),
-            ("connected as a@x.io".to_string(), false)
+            ("connected as a@x.io".to_string(), false, None)
         );
         assert_eq!(
             mailbox_cell(
                 &json!({"email_account": {"configured": false, "state": "not connected", "admin_enabled": true}})
             ),
-            ("not connected".to_string(), false)
+            ("not connected".to_string(), false, None)
+        );
+        let (conn, off, flag) = mailbox_cell(
+            &json!({"email_account": {"configured": true, "address": "b@x.io", "state": "turned off by an administrator", "admin_enabled": false}}),
         );
         assert_eq!(
-            mailbox_cell(
-                &json!({"email_account": {"configured": true, "address": "b@x.io", "state": "turned off by an administrator", "admin_enabled": false}})
-            ),
+            (conn.as_str(), off, flag),
+            ("connected as b@x.io", true, None)
+        );
+        // Mailboxes on for everyone, off for b: an old override (Reset).
+        assert_eq!(
+            mailbox_cell_text(&conn, off, flag, Some(true)),
             (
                 "connected as b@x.io · not allowed for this user".to_string(),
                 true
             )
         );
-        assert_eq!(mailbox_cell(&json!({})), ("—".to_string(), false));
+        // Mailboxes off for everyone: not an override, nothing to reset.
+        assert_eq!(
+            mailbox_cell_text(&conn, off, flag, Some(false)),
+            ("connected as b@x.io · mailboxes off".to_string(), false)
+        );
+        // An explicit flag from the gateway wins.
+        assert_eq!(
+            mailbox_cell_text(&conn, true, Some(true), Some(false)),
+            (
+                "connected as b@x.io · not allowed for this user".to_string(),
+                true
+            )
+        );
+        assert_eq!(mailbox_cell(&json!({})), ("—".to_string(), false, None));
+    }
+
+    #[test]
+    fn the_account_page_reads_the_new_fields_and_tolerates_old_gateways() {
+        let e = MyEmail::from_value(&json!({
+            "configured": false, "address": "", "registered_address": "box@x.io", "email_address": ""
+        }));
+        assert_eq!(e.email_address(), "", "email_address wins, even empty");
+        let old = MyEmail::from_value(&json!({"configured": true, "address": "box@x.io"}));
+        assert_eq!(old.email_address(), "box@x.io");
+        assert_eq!(old.notify_job_failed, None);
+        assert_eq!(
+            MyEmail::from_value(&json!({"configured": false}))
+                .agent_tools_unavailable()
+                .as_deref(),
+            Some(REASON_CONNECT_MAILBOX)
+        );
+        assert_eq!(
+            MyEmail::from_value(
+                &json!({"configured": true, "enabled": true, "email_available": false})
+            )
+            .notifications_unavailable()
+            .as_deref(),
+            Some(REASON_ADMIN_MAILBOXES_OFF)
+        );
+    }
+
+    #[test]
+    fn discovery_summary_and_the_one_connect_body() {
+        let d = Discovery::from_value(&json!({
+            "address": "me@fastmail.test", "domain": "fastmail.test", "found": true,
+            "imap": {"host": "imap.fastmail.com", "port": 993, "security": "ssl"},
+            "smtp": {"host": "smtp.fastmail.com", "port": 465, "security": "ssl"}
+        }));
+        assert_eq!(
+            d.summary().as_deref(),
+            Some("imap.fastmail.com · 993 · SSL  ·  smtp.fastmail.com · 465 · SSL")
+        );
+        let none = Discovery::from_value(&json!({"address": "me@nowhere.test", "found": false}));
+        assert_eq!(none.summary(), None);
+        assert_eq!(
+            none.not_found_text(),
+            "Couldn't find the mail servers for nowhere.test. Enter them here."
+        );
+        assert_eq!(address_domain("me@x.io").as_deref(), Some("x.io"));
+        assert_eq!(address_domain("me@x"), None);
+        let body = other_connect_body(" me@x.io ", "pw", None).unwrap();
+        assert_eq!(
+            body,
+            json!({"address": "me@x.io", "password": "pw", "test": true})
+        );
+        assert!(other_connect_body("me@x.io", "", None).is_err());
+        let sv = ServerSettings {
+            imap_host: "imap.x.io".into(),
+            imap_port: "993".into(),
+            smtp_host: "smtp.x.io".into(),
+            smtp_port: "465".into(),
+            ..ServerSettings::default()
+        };
+        let body = other_connect_body("me@x.io", "pw", Some(&sv)).unwrap();
+        assert_eq!(body["imap"]["folder"], json!("INBOX"));
+        assert_eq!(body["smtp"]["port"], json!(465));
+        assert_eq!(
+            notification_switch_body("job_failed", false),
+            json!({"job_failed": false})
+        );
+    }
+
+    #[test]
+    fn recovery_answers_codes_and_admin_state_texts() {
+        let legacy = RecoveryAnswer::from_value("a", &json!({"ok": true}), 0);
+        assert!(
+            legacy.sent,
+            "an old constant answer still opens the code step"
+        );
+        assert!(legacy
+            .message
+            .starts_with("If this account has an email address"));
+        let a = RecoveryAnswer::from_value("a", &json!({"sent": true, "message": "m"}), 10_000);
+        assert_eq!(a.resend_wait_s(10_000), 30);
+        assert_eq!(a.resend_wait_s(25_000), 15);
+        assert_eq!(a.resend_wait_s(41_000), 0);
+        assert!(code_complete(" 12345678 "));
+        assert!(!code_complete("1234567"));
+        assert!(!code_complete("1234567a"));
+        assert_eq!(
+            caps_state_text(&json!({"email": true})),
+            "Mailboxes are on for all users."
+        );
+        assert_eq!(
+            caps_state_text(&json!({"email_recovery": false})),
+            "Sign-in by email is off."
+        );
     }
 }
