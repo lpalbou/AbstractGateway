@@ -151,9 +151,11 @@ pub fn workflows_screen(size: (i32, i32)) -> Harness {
     h.store
         .workflows
         .set(Loadable::Ready(workflows_from_payload(&bundles_payload())));
-    h.store.runtime_config.set(Loadable::Ready(RuntimeConfigData::from_value(
-        &runtime_config_payload(),
-    )));
+    h.store
+        .runtime_config
+        .set(Loadable::Ready(RuntimeConfigData::from_value(
+            &runtime_config_payload(),
+        )));
     h.turns(3);
     h
 }

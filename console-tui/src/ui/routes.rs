@@ -174,7 +174,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .child(
             Block::new()
                 .border(BorderKind::Rounded)
-                .title("Routes — which provider & model serve each input/output")
+                .title("Multimodal — which provider & model serve each input/output")
                 .fill(t.surface)
                 .layout(
                     LayoutStyle::column()
@@ -382,6 +382,38 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         }
                     }
                     Element::new().style(LayoutStyle::column()).children(rows).build()
+                }))
+                // TRANSCRIPTION (the web's Multimodal card, item 1): the
+                // engine that turns speech into text, by the name the row
+                // carries, and "Engine missing" only with the reason Core
+                // gave. Nothing when the gateway has no input.voice row.
+                .child(dyn_view_scoped(LayoutStyle::column().shrink(0.0), move |lcx| {
+                    let t = tt;
+                    let found = store
+                        .routes
+                        .with(|d| d.ready().and_then(|d| transcription_line(&d.rows)));
+                    let Some((text, level)) = found else {
+                        return Element::new().style(LayoutStyle::default().h(0)).build();
+                    };
+                    let ink = match level {
+                        TranscriptionLevel::Ready => t.ok,
+                        TranscriptionLevel::Unset => t.text_muted,
+                        TranscriptionLevel::Warn => t.warn,
+                        TranscriptionLevel::Error => t.error,
+                    };
+                    // Wrapped, never cut: the reason is the point.
+                    let w = (abstracttui::app::use_viewport(lcx).get().w - BLOCK_CHROME - 14)
+                        .max(20) as usize;
+                    let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+                    for (i, l) in super::util::wrap_text(&text, w).into_iter().enumerate() {
+                        let lead = if i == 0 {
+                            span_bold("Transcription ", t.text)
+                        } else {
+                            span(" ".repeat(14), t.text)
+                        };
+                        col = col.child(line(vec![lead, span(l, ink)]));
+                    }
+                    col.build()
                 }))
                 .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), {
                     let ctx_act = ctx.clone();
@@ -2475,4 +2507,86 @@ mod speculation_tests {
         assert!(route_save_body("p", "m", None, ("", ""), ("[1]", "[1]")).is_err());
         assert!(route_save_body("p", "m", None, ("", ""), ("{nope", "")).is_err());
     }
+}
+
+/// How the transcription line reads (its ink).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TranscriptionLevel {
+    Ready,
+    Unset,
+    Warn,
+    Error,
+}
+
+/// The transcription (speech → text, `input.voice`) line: the engine by
+/// the name the payload carries (`engine_missing.name` when Core judged
+/// the engine, else the route's provider id) and the model, then the
+/// state — "Engine missing: <Core's reason>" only when the row carries
+/// `engine_missing`. None when the gateway serves no `input.voice` row.
+pub fn transcription_line(rows: &[RouteRow]) -> Option<(String, TranscriptionLevel)> {
+    let r = rows.iter().find(|r| r.key == "input.voice")?;
+    let model = r.model.clone().unwrap_or_default();
+    let pair = |engine: &str| {
+        if model.is_empty() {
+            engine.to_string()
+        } else {
+            format!("{engine} · {model}")
+        }
+    };
+    let provider = r.provider.clone().unwrap_or_default();
+    if let Some(by) = &r.covered_by {
+        return Some((
+            format!("(speech → text): served by {by} — {}", pair(&provider)),
+            TranscriptionLevel::Ready,
+        ));
+    }
+    if r.configured {
+        if let Some(u) = &r.route_unavailable {
+            return Some((
+                format!(
+                    "(speech → text): {} — cannot run on this computer: {}",
+                    pair(&provider),
+                    u.reason
+                ),
+                TranscriptionLevel::Error,
+            ));
+        }
+        if let Some(m) = &r.engine_missing {
+            let engine = if m.name.trim().is_empty() {
+                provider.as_str()
+            } else {
+                m.name.as_str()
+            };
+            let fix = match &m.install {
+                Some(cmd) => format!(" — install: {cmd}"),
+                None => " — pick a transcription engine (Enter on input.voice)".to_string(),
+            };
+            return Some((
+                format!(
+                    "(speech → text): {} — Engine missing: {}{fix}",
+                    pair(engine),
+                    m.reason
+                ),
+                TranscriptionLevel::Warn,
+            ));
+        }
+        return Some((
+            format!("(speech → text): {} — ready", pair(&provider)),
+            TranscriptionLevel::Ready,
+        ));
+    }
+    if let Some(u) = &r.recommendation_unavailable {
+        return Some((
+            format!(
+                "(speech → text): not set — the recommended {} cannot run on this computer: {}",
+                u.pair_text(),
+                u.reason
+            ),
+            TranscriptionLevel::Warn,
+        ));
+    }
+    Some((
+        "(speech → text): not set — pick a transcription engine (Enter on input.voice)".to_string(),
+        TranscriptionLevel::Unset,
+    ))
 }
