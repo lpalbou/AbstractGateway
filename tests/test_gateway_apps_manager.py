@@ -418,6 +418,101 @@ def test_managed_node_install_verifies_sha256(tmp_path: Path, monkeypatch: pytes
     assert job2.state == "failed" and job2.error["reason"] == "integrity_mismatch"
 
 
+def test_two_node_installs_at_once_share_one_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two installs that need Node.js at the same moment (two app installs, or
+    the Install Node.js button during an app install) used to run side by side
+    on one `<wheel>.part` file: the second truncated the first's download and
+    one of them failed (retry worked). Now the second waits for the first and
+    reuses what it installed: one download, both succeed, no partial file left.
+
+    Deterministic: the fake file server holds the first download half-way until
+    the second install has either started its own download (the old race) or
+    said it is waiting for the first (the fix)."""
+    import threading
+
+    doc = _pypi_doc()
+    monkeypatch.setattr(am, "_wheel_platform_match", lambda fn, **k: fn.endswith("macosx_13_0_arm64.whl"))
+    wheel = io.BytesIO()
+    with zipfile.ZipFile(wheel, "w") as zf:
+        zi = zipfile.ZipInfo("nodejs_wheel/bin/node")
+        zi.external_attr = (stat.S_IFREG | 0o755) << 16
+        zf.writestr(zi, "#!/bin/sh\necho v24.19.0\n")
+        zf.writestr("nodejs_wheel/lib/node_modules/npm/bin/npm-cli.js", "")
+        zf.writestr("nodejs_wheel/padding.bin", os.urandom(4096))
+    data = wheel.getvalue()
+    wheel_url = ""
+    for f in doc["releases"]["24.19.0"]:
+        f["digests"]["sha256"] = hashlib.sha256(data).hexdigest()
+        f["size"] = len(data)
+        if f["filename"].endswith("macosx_13_0_arm64.whl"):
+            wheel_url = f["url"]
+    second_arrived = threading.Event()
+
+    class HalfWay(_Resp):
+        """Serves half the wheel, then waits for the second install."""
+
+        def __init__(self, payload: bytes, hold: bool) -> None:
+            super().__init__(payload)
+            self.hold = hold
+            self.reads = 0
+
+        def read(self, n=-1):  # noqa: ANN001
+            self.reads += 1
+            if self.reads == 1:
+                return super().read(len(data) // 2)
+            if self.hold and self.reads == 2:
+                assert second_arrived.wait(10), "the second install never reached the download nor waited"
+            return super().read(n)
+
+    class Server(FakeNet):
+        def __call__(self, req, timeout=None):
+            url = req.full_url if hasattr(req, "full_url") else str(req)
+            if url == wheel_url:
+                self.calls.append(url)
+                first = self.calls.count(wheel_url) == 1
+                if not first:
+                    second_arrived.set()
+                return HalfWay(data, hold=first)
+            return super().__call__(req, timeout)
+
+    net = Server()
+    m = am.AppsManager(tmp_path / "d", urlopen=net, install_allowed=lambda: True)
+    net.routes[m.pypi_url + "/nodejs-wheel-binaries/json"] = json.dumps(doc).encode()
+    monkeypatch.setenv(am.ENV_NODE, "managed")
+
+    class Watched(am.Job):
+        def say(self, message, **kw):  # noqa: ANN001
+            if "Waiting for another Node.js install" in message:
+                second_arrived.set()
+            super().say(message, **kw)
+
+    results: dict = {}
+
+    def run(name: str) -> None:
+        job = Watched(kind="runtime_install", target=f"t:{name}", app_id=None, log_dir=tmp_path / "jobs", title=name)
+        try:
+            results[name] = m.install_node(job, am._Phase(job, 0.0, 100.0))
+        except BaseException as exc:  # noqa: BLE001
+            results[name] = exc
+
+    t1 = threading.Thread(target=run, args=("first",))
+    t1.start()
+    while not net.calls.count(wheel_url):  # the first download is under way
+        time.sleep(0.005)
+    t2 = threading.Thread(target=run, args=("second",))
+    t2.start()
+    t1.join(30)
+    t2.join(30)
+    assert not t1.is_alive() and not t2.is_alive()
+    for name in ("first", "second"):
+        assert isinstance(results[name], dict), f"{name}: {results[name]!r}"
+        assert results[name]["node_version"] == "24.19.0"
+    assert net.calls.count(wheel_url) == 1  # the second reused the first's install
+    st = m.node_status(refresh=True)
+    assert st["available"] and st["source"] == "managed" and st["version"] == "24.19.0"
+    assert not list(m.node_root.rglob("*.part")) and not list(m.node_root.glob(".staging-*"))
+
+
 # ---------------------------------------------------------------------------
 # Ports
 # ---------------------------------------------------------------------------

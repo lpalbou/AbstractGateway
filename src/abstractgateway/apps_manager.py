@@ -1738,6 +1738,13 @@ class AppsManager:
         self._state_lock = threading.Lock()
         self._registry_cache: Dict[str, Tuple[float, Any]] = {}
         self._node_cache: Optional[Tuple[float, Dict[str, Any]]] = None
+        # One Node.js install at a time: two app installs that both need Node
+        # (or the Install Node.js button during an app install) used to run
+        # `install_node` side by side on the same download cache and target
+        # folder, and the loser failed. The second waits for the first and
+        # reuses what it installed (`_node_installs` counts completed installs).
+        self._node_install_lock = threading.Lock()
+        self._node_installs = 0
         self._handover: Dict[str, Tuple[float, str, Any, str, str]] = {}  # code -> (expires, app_id, principal, host, path)
         self._tui_handover: Dict[str, Tuple[float, str, Any, str]] = {}  # code -> (expires, app_id, principal, gateway_url)
         self._desktop_handover: Dict[str, Tuple[float, Any, str, str]] = {}  # code -> (expires, principal, base_url, file)
@@ -1995,7 +2002,9 @@ class AppsManager:
     def _download(self, job: Job, url: str, dest: Path, *, expected_size: Optional[int], phase: _Phase, what: str) -> Tuple[bytes, bytes]:
         """Stream `url` to `dest`; returns (sha256, sha512) digests."""
         dest.parent.mkdir(parents=True, exist_ok=True)
-        part = dest.with_name(dest.name + ".part")
+        # A private partial file per download, renamed into place at the end:
+        # two downloads of the same file never write into one another.
+        part = dest.with_name(f"{dest.name}.{secrets.token_hex(4)}.part")
         h256, h512 = hashlib.sha256(), hashlib.sha512()
         req = urllib.request.Request(url, headers={"User-Agent": "abstractgateway-apps"})
         job.indeterminate = False
@@ -2158,6 +2167,26 @@ class AppsManager:
         size = int(file.get("size") or 0) or None
         sha256 = str((file.get("digests") or {}).get("sha256") or "")
         job.log(f"Node.js {version}: {file.get('filename')} ({_mb(size)}), sha256 {sha256}")
+        seen = self._node_installs
+        if not self._node_install_lock.acquire(blocking=False):
+            job.say("Waiting for another Node.js install to finish…")
+            while not self._node_install_lock.acquire(timeout=0.2):
+                job.check_cancel()
+        try:
+            if self._node_installs != seen:
+                managed = self._managed_node()
+                if managed and managed.get("version") == version and managed.get("npm") and _run_version([managed["path"]]):
+                    job.log(f"Node.js {version} was installed by the install that ran first; using it")
+                    self._node_cache = None
+                    job.say(f"Node.js {version} installed in {self.node_root / version}", percent=phase.hi)
+                    return {"node_version": version, "node_path": managed["path"]}
+            res = self._install_node_locked(job, phase, version, file, size, sha256)
+            self._node_installs += 1
+            return res
+        finally:
+            self._node_install_lock.release()
+
+    def _install_node_locked(self, job: Job, phase: _Phase, version: str, file: Dict[str, Any], size: Optional[int], sha256: str) -> Dict[str, Any]:
         target = self.node_root / version
         cache = self.node_root / "downloads" / str(file.get("filename"))
         dl = _Phase(job, phase.lo, phase.at(0.85))
