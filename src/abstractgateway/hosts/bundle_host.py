@@ -2589,15 +2589,21 @@ class WorkflowBundleGatewayHost:
         # payload widen "self" to an attacker address (the actor-strings
         # class); absent email = key absent (refiner deny-safe: no
         # self-value -> everything asks; notifications simply off).
+        # The value is the one the user's email settings show (registered email, else the
+        # connected mailbox's own address: mail/accounts.py `self_address`, 0.7.0 E2E F1a).
         try:
-            from ..runtime_config import resolve_operator_email
+            from ..mail.accounts import self_address
+            from ..mail.runtime_wiring import plane_for_host
 
             rt_ns.pop("operator_email", None)
-            op_email = resolve_operator_email(
-                Path(self.catalog_root_data_dir or self.data_dir),
-                tenant_id=self.catalog_tenant_id,
-                user_id=self.catalog_user_id,
-            ).get("value")
+            op_email = self_address(
+                plane_for_host(
+                    data_root=Path(self.data_dir).expanduser().resolve(),
+                    tenant_id=self.catalog_tenant_id,
+                    user_id=self.catalog_user_id,
+                    runtime_id=self.catalog_runtime_id,
+                )
+            )
             if isinstance(op_email, str) and op_email:
                 rt_ns["operator_email"] = op_email
         except Exception:  # noqa: BLE001 - identity injection is additive

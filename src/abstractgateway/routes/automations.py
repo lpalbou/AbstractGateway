@@ -486,10 +486,15 @@ def _guarded_input_data(svc: Any, principal: Any, input_data: Dict[str, Any], *,
     # so it is frozen here with the rest of the protected inputs (a client
     # value was dropped above; a revision of the target refreshes it). No
     # registered email = key absent = every send asks.
-    from ..runtime_config import resolve_operator_email
+    # Same value as the user's email settings (registered email, else the connected mailbox's
+    # own address: mail/accounts.py `self_address`, 0.7.0 E2E F1a).
+    from ..mail.accounts import plane_for_service_config, self_address
 
     runtime_ns = data.get("_runtime") if isinstance(data.get("_runtime"), dict) else {}
-    operator_email = resolve_operator_email(Path(root_data_dir), tenant_id=tenant, user_id=user).get("value")
+    try:
+        operator_email = self_address(plane_for_service_config(svc.config))
+    except Exception:  # noqa: BLE001 - no plane: no "self" (every send asks)
+        operator_email = ""
     if isinstance(operator_email, str) and operator_email:
         runtime_ns["operator_email"] = operator_email
     if runtime_ns:

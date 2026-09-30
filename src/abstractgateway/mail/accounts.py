@@ -210,6 +210,29 @@ def registered_address(plane: EmailPlane) -> str:
     return str(value or "").strip().lower()
 
 
+def self_address(plane: EmailPlane) -> str:
+    """"Self" for runs (the send_email recipient refiner, `_runtime.operator_email`): exactly the
+    address the user's email settings show as `registered_address` - the registered email, else
+    the connected mailbox's own address (operator D4: "the runtime's registered email account").
+
+    Before 0.8.1 runs read only the registered email, so an administrator without an email on
+    their user record got no "self" in runs while /me/email showed one, and every send to their
+    own mailbox waited for approval (0.7.0 Linux end-to-end, F1a). The mailbox fallback is the
+    user's OWN connected account, never another principal's address.
+    """
+
+    reg = registered_address(plane)
+    if reg:
+        return reg
+    try:
+        st = account_store(plane).settings()
+    except EmailError:
+        return ""
+    if st.account is None:
+        return ""
+    return str(st.self_address or "").strip().lower()
+
+
 def sync_registered_address(plane: EmailPlane, store: Optional[EmailAccountStore] = None) -> EmailAccountStore:
     """Keep the store's registered address equal to the user's registered email."""
 
