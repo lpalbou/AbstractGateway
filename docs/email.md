@@ -141,6 +141,13 @@ on three polls in a row is recorded and passed, so one bad message never blocks 
 Connection problems back off from 60 seconds to 15 minutes; nothing is paused, and the status
 shows the cause and the fix.
 
+Mail that is already in your mailbox when the watcher starts is never an event. The watcher marks
+where new mail starts when you connect an account and whenever an email automation becomes active
+after a time with none (creating one takes that mark within seconds, so a message you send to test
+it right after counts); mail that arrived while none of your email automations was active is not
+processed later. A gateway restart keeps the mark: mail that arrives while the gateway is down is
+read when it is back.
+
 How often an automation **runs** on new mail is its own trigger setting: every 60 seconds when it
 needs no model (`"uses_model": false`), once an hour by default when it runs a model (summarise,
 classify, draft replies, AI triage), on the batch of messages received since its last run. Each

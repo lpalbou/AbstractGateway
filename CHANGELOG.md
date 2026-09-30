@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-09-30
+
+Same dependencies as 0.8.1 (AbstractCore 2.20.2, AbstractRuntime 0.8.1; the terminal console stays
+0.12.0).
+
 ### Fixed
 - Mail sent to test a new "When an email arrives" automation right after creating it triggers it.
   The mail watcher reads nothing until an email automation exists and its first read only marks
