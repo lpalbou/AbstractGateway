@@ -857,7 +857,7 @@ _boot_done = threading.Event()
 _boot_thread: Optional[threading.Thread] = None
 _boot_cancel: Optional[threading.Event] = None
 _boot_local = threading.local()
-BOOT_STOP_WAIT_S = 300.0
+BOOT_STOP_WAIT_S = 60.0  # the runner drain (30 s) and visit reflections follow; a process exit ends a straggler anyway
 _rehydrate_thread: Optional[threading.Thread] = None
 REHYDRATE_STOP_WAIT_S = 60.0
 
