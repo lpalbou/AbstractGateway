@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Email settings follow one model across the consoles: your **email address** (where sign-in codes and
+notifications go) and your **mailbox** (the connection your agents and automations use) are named
+apart, the administrator has one switch, notifications are two switches, and the sign-in page says
+what happened to a code request. Needs AbstractCore with mailbox server discovery
+(`abstractcore.comms.email.discover_servers`).
+
+### Added
+- `POST /api/gateway/me/email/discover {"address"}` finds a mailbox's IMAP and SMTP servers from its
+  address (known providers, the domain's autoconfig file, the Thunderbird ISPDB, DNS SRV, MX) and
+  lists every step it tried.
+- `PUT /api/gateway/me/email` without `imap` and `smtp` discovers the servers; when none are found it
+  answers `400 email_discovery_failed` with `tried`. `username` defaults to the discovered form,
+  else the address.
+- `PUT /api/gateway/me/email/address {"address"}` sets your own email address on your user record
+  (`""` clears it).
+- `PUT /api/gateway/me/email/notifications {"job_failed"?, "approval_needed"?}` sets the two
+  notification switches.
+- `GET /api/gateway/me/email` also returns `registered_address`, `email_available`,
+  `notifications`, `notifications_unavailable_reason`, `oauth_providers` and, in `agent_tools`,
+  `on`, `unavailable_reason` and `admin_available`.
+- `GET /api/gateway/admin/email/capabilities` returns each capability's `advanced` flag.
+
+### Changed
+- The administrator's one switch is **Mailboxes for users** (capability `email`, on by default).
+  **Agent email tools for users** (`email_agent_tools`) is now on by default, next to **Sign-in by
+  email** under Advanced; each user still switches their own agent email tools on. On the first
+  start `capabilities.json` moves to version 3: a user whose own switch was on while the tools were
+  not available to them gets a per-user override that keeps them off, recorded in the audit log.
+- Notifications are two switches, **Job failed** (an automation failed after its retries) and
+  **Approval needed**, both on by default and sent once a mailbox is connected. An automation's
+  "Email me the result" and a run's "email me when done" deliver on their own. Saved preferences
+  carry over (`job_failed` = job failed or automation failed); the earlier five-event body of
+  `PUT /api/gateway/me/notifications` is still accepted.
+- `POST /api/gateway/session/recovery/request` answers what happened: `sent` with the masked
+  address (`l•••@•••`), `no_email_address` (also for an unknown account) or `too_many_requests`
+  with `retry_after_s`; `404 recovery_off` when sign-in by email is off. `purpose` defaults to
+  `sign_in`. Rate limits and audit events are unchanged. See docs/email.md for the trade-off.
+- A failed mailbox connect names the step: `detail.step` (`imap` or `smtp`) and a message such as
+  "Sign-in refused by imap.example.com — check the password." or "Couldn't reach
+  smtp.example.com:465."
+- `PATCH /api/gateway/admin/users/{user_id}` refuses to deactivate the caller's own account
+  (`409 cannot_deactivate_self`, "You can't deactivate your own account.").
+- Route summaries, error messages and docs say "email address" or "mailbox"; unavailable switches
+  give their reason ("Connect a mailbox first.", "Your admin turned mailboxes off.", "Your admin
+  turned agent email tools off.").
+
 ## [0.9.0] - 2026-09-30
 
 The web console works on phones, tablets and any window size. It follows the AbstractFramework

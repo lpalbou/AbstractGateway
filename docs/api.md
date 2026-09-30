@@ -1695,26 +1695,33 @@ Per-user email ([email.md](./email.md)): every route acts on the **caller's own*
 from the authenticated principal (never from a path or body id); entities are refused (403). No
 response ever carries a password, token or OAuth client secret.
 
-Your mailbox (`/api/gateway/me/...`, every signed-in human):
+The **email address** is the user's own address (sign-in codes, notifications, the default allowed
+recipient; no password); the **mailbox** is the connection the user makes so their agents and
+automations can read and send mail as them.
+
+Your email address and mailbox (`/api/gateway/me/...`, every signed-in human):
 
 | Route | Purpose |
 |---|---|
-| `GET /me/email` | settings and status: `configured`, `address`, `imap`, `smtp`, `auth_kind`, `secret_set`, `policy`, `limits` (+ usage), `status{last_test, last_ok, last_error{code, cause, fix}}`, `watcher{state, last_poll, cursor, received}`, `admin_enabled`, `effective_enabled` |
-| `PUT /me/email` | connect: `{address, password, username?, display_name?, imap{host, port, security, folder}, smtp{host, port, security}, test}`; signs in to both legs first (unless `test: false`) and stores nothing on a failure |
+| `GET /me/email` | settings and status: `configured`, `address`, `imap`, `smtp`, `auth_kind`, `secret_set`, `policy`, `limits` (+ usage), `status{last_test, last_ok, last_error{code, cause, fix}}`, `watcher{state, last_poll, cursor, received}`, `admin_enabled`, `effective_enabled`; for the account page: `registered_address` (your email address), `email_available`, `notifications{job_failed, approval_needed}` + `notifications_unavailable_reason`, `agent_tools{on, available, unavailable_reason, active}`, `oauth_providers[{id, available, reason}]` |
+| `POST /me/email/discover` | `{address}` → `{address, domain, found, source, provider, imap, smtp, username, tried}` (known providers, autoconfig, ISPDB, SRV, MX); 400 for a non-address |
+| `PUT /me/email` | connect (save + test): `{address, password, username?, display_name?, imap?{host, port, security, folder}, smtp?{host, port, security}, test}`; without `imap` and `smtp` the servers are discovered (`discovery{source, provider, tried}` in the answer; none found = 400 `email_discovery_failed` with `tried`); signs in to both servers first (unless `test: false`), stores nothing on a failure and names the failing step (`detail.step`: `imap` \| `smtp`, `detail.message`) |
+| `PUT /me/email/address` | `{address}` — your email address, stored on your user record (`""` clears it; 400 `email_invalid_settings` for anything but one plain address) |
+| `PUT /me/email/notifications` | `{job_failed?, approval_needed?}` — the two notification switches (both on by default); the earlier `{email: {...}}` body is accepted and mapped; answers like `GET /me/email` |
 | `POST /me/email/test` | per-leg result `{imap, smtp, ok}` |
 | `DELETE /me/email` | disconnect: credentials and cursor deleted (policy and limits kept) |
 | `PUT /me/email/policy` | `{mode: "allowlist" \| "denylist", entries: [address \| domain]}` |
 | `POST /me/email/policy/check` | `{addresses}` → per-recipient verdicts |
 | `PUT /me/email/limits` | `{per_hour, per_day}` |
-| `PUT /me/email/enabled` | `{enabled}` — your own switch |
-| `PUT /me/email/agent-tools` | `{enabled}` — your agents' email tools (default off; 409 `email_disabled` "not available" unless an administrator made them available; active only with a connected, allowed account); reloads your workflows so toolsets follow (`tools_reloaded`). `GET /me/email` reports `agent_tools: {enabled, available, active, reason}` and `store.label` (which account this is) |
+| `PUT /me/email/enabled` | `{enabled}` — "Use this mailbox" (off keeps the settings; stops watching, sending and notifications) |
+| `PUT /me/email/agent-tools` | `{enabled}` — your agents' email tools (default off; 409 `email_disabled` while "Agent email tools for users" is off for you; active only with a connected, allowed mailbox); reloads your workflows so toolsets follow (`tools_reloaded`) |
 | `GET /me/email/oauth/clients` | which providers have a gateway OAuth client (no secrets) |
 | `POST /me/email/oauth/start` | `{address, provider: google \| microsoft, client_id?, client_secret?, tenant?, flow?: device \| loopback}` → device code (`user_code`, `verification_uri`) or `authorization_url`. `token_endpoint`, `authorization_endpoint`, `device_authorization_endpoint` and `scopes` are accepted only from an administrator with `provider: "custom"` (own client id); otherwise 403 `email_oauth_override_refused` |
 | `POST /me/email/oauth/poll` | `{flow_id}` → `{pending: true}` or the connected account |
 | `POST /me/email/oauth/finish` | `{flow_id, wait_s}` — waits up to 60 s for the approval |
 | `POST /me/email/oauth/cancel` | `{flow_id}` |
 | `GET /me/notifications` | events and choices, channel availability, outbox summary |
-| `PUT /me/notifications` | `{email: {automation_result, automation_failed, approval_needed, job_finished, job_failed: bool}}` (all off by default) |
+| `PUT /me/notifications` | `{email: {job_failed, approval_needed: bool}}`; the earlier kinds are accepted (`automation_failed` counts for `job_failed`; `automation_result` and `job_finished` are per-automation / per-run options now) |
 | `POST /me/notifications/test` | sends one test notification now → `{ok, state, error?}` |
 
 Administrators (status and the switch only; administrators never read mail):
@@ -1724,7 +1731,7 @@ Administrators (status and the switch only; administrators never read mail):
 | `GET /admin/users` | each human row carries `email_account: {configured, address, state, admin_enabled, agent_tools_available}` |
 | `GET /admin/users/{user_id}/email` | `configured`, `address`, `auth_kind`, `user_enabled`, `admin_enabled`, `effective_enabled`, `status` (last test / last error), `capabilities` (`{value, source: user \| gateway \| built-in}`), `agent_tools` (`available`, `user_enabled`, `active`), `watcher`, `state` |
 | `PUT /admin/users/{user_id}/email` | `{enabled?, agent_tools?, inherit?: ["email", "email_agent_tools"]}` — per-user capabilities; `enabled: false` = no watcher, no sending, no notifications (settings kept); `agent_tools` = Agent email tools available |
-| `GET /admin/email/capabilities` | gateway-wide defaults: `email` (on), `email_agent_tools` (off), `email_recovery` (on) |
+| `GET /admin/email/capabilities` | `capabilities[{id, label, description, per_user, advanced, default, built_in_default}]`: `email` "Mailboxes for users" (on), under Advanced `email_agent_tools` "Agent email tools for users" (on) and `email_recovery` "Sign-in by email" (on) |
 | `PUT /admin/email/capabilities` | `{email?, email_agent_tools?, email_recovery?, reset?: [...]}` |
 | `GET /admin/email/oauth-clients` | bring-your-own OAuth clients: `client_id`, `client_secret_set`, `tenant` per provider |
 | `PUT /admin/email/oauth-clients/{provider}` | `{client_id, client_secret?, tenant?}`; an empty `client_id` removes the provider's client; omitting `client_secret` keeps the stored one for the same id |
@@ -1734,8 +1741,8 @@ Sign-in page (public):
 | Route | Purpose |
 |---|---|
 | `GET /session/recovery` | `{available}` — true when sign-in by email is on (`email_recovery`, default on) and at least one account of this gateway has email |
-| `POST /session/recovery/request` | `{user_id, tenant_id?, purpose: sign_in \| reset_token}` → the same answer for every account |
-| `POST /session/recovery/redeem` | `{user_id, tenant_id?, purpose, code, remember?}` → a browser session; `reset_token` also returns the new `token` once. A wrong, expired or used code answers 401 `recovery_code_refused` |
+| `POST /session/recovery/request` | `{user_id, tenant_id?, purpose?: sign_in (default) \| reset_token}` → `{sent: true, to: "l•••@•••", expires_in_s, message}`, `{sent: false, reason_code: "no_email_address", message}` (also for an unknown account) or `{sent: false, reason_code: "too_many_requests", retry_after_s, message}`; 404 `recovery_off` when sign-in by email is off ([email.md](./email.md#sign-in-by-email)) |
+| `POST /session/recovery/redeem` | `{user_id, tenant_id?, purpose?, code, remember?}` → a browser session; `reset_token` also returns the new `token` once. A wrong, expired or used code answers 401 `recovery_code_refused` |
 
 Errors carry `{"detail": {"reason_code", "message", "cause", "fix", "retryable"}}`: 400 invalid
 settings or a policy refusal (`email_policy_refused`), 403 entity or a refused OAuth override (`email_oauth_override_refused`), 404 no account

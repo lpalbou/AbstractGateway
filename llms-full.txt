@@ -1776,7 +1776,10 @@ is set for compatibility. Admin principals can manage users through:
 - `GET /api/gateway/admin/users?kind=human|entity|all` (default `all`)
 - `POST /api/gateway/admin/users`
 - `GET /api/gateway/admin/users/{user_id}?tenant_id=...`
-- `PATCH /api/gateway/admin/users/{user_id}?tenant_id=...`
+- `PATCH /api/gateway/admin/users/{user_id}?tenant_id=...` (`enabled` is the Active switch:
+  false = signed out and unable to sign in; an admin cannot deactivate their own account,
+  `409 cannot_deactivate_self`, nor the last active admin, `409 last_admin`; `email` is the
+  user's email address)
 - `DELETE /api/gateway/admin/users/{user_id}?tenant_id=...`
 - `GET /api/gateway/admin/runtime-reservations`
 - `POST /api/gateway/admin/runtime-reservations/{runtime_id}/transfer`
@@ -5281,26 +5284,33 @@ Per-user email ([email.md](docs/email.md)): every route acts on the **caller's o
 from the authenticated principal (never from a path or body id); entities are refused (403). No
 response ever carries a password, token or OAuth client secret.
 
-Your mailbox (`/api/gateway/me/...`, every signed-in human):
+The **email address** is the user's own address (sign-in codes, notifications, the default allowed
+recipient; no password); the **mailbox** is the connection the user makes so their agents and
+automations can read and send mail as them.
+
+Your email address and mailbox (`/api/gateway/me/...`, every signed-in human):
 
 | Route | Purpose |
 |---|---|
-| `GET /me/email` | settings and status: `configured`, `address`, `imap`, `smtp`, `auth_kind`, `secret_set`, `policy`, `limits` (+ usage), `status{last_test, last_ok, last_error{code, cause, fix}}`, `watcher{state, last_poll, cursor, received}`, `admin_enabled`, `effective_enabled` |
-| `PUT /me/email` | connect: `{address, password, username?, display_name?, imap{host, port, security, folder}, smtp{host, port, security}, test}`; signs in to both legs first (unless `test: false`) and stores nothing on a failure |
+| `GET /me/email` | settings and status: `configured`, `address`, `imap`, `smtp`, `auth_kind`, `secret_set`, `policy`, `limits` (+ usage), `status{last_test, last_ok, last_error{code, cause, fix}}`, `watcher{state, last_poll, cursor, received}`, `admin_enabled`, `effective_enabled`; for the account page: `registered_address` (your email address), `email_available`, `notifications{job_failed, approval_needed}` + `notifications_unavailable_reason`, `agent_tools{on, available, unavailable_reason, active}`, `oauth_providers[{id, available, reason}]` |
+| `POST /me/email/discover` | `{address}` → `{address, domain, found, source, provider, imap, smtp, username, tried}` (known providers, autoconfig, ISPDB, SRV, MX); 400 for a non-address |
+| `PUT /me/email` | connect (save + test): `{address, password, username?, display_name?, imap?{host, port, security, folder}, smtp?{host, port, security}, test}`; without `imap` and `smtp` the servers are discovered (`discovery{source, provider, tried}` in the answer; none found = 400 `email_discovery_failed` with `tried`); signs in to both servers first (unless `test: false`), stores nothing on a failure and names the failing step (`detail.step`: `imap` \| `smtp`, `detail.message`) |
+| `PUT /me/email/address` | `{address}` — your email address, stored on your user record (`""` clears it; 400 `email_invalid_settings` for anything but one plain address) |
+| `PUT /me/email/notifications` | `{job_failed?, approval_needed?}` — the two notification switches (both on by default); the earlier `{email: {...}}` body is accepted and mapped; answers like `GET /me/email` |
 | `POST /me/email/test` | per-leg result `{imap, smtp, ok}` |
 | `DELETE /me/email` | disconnect: credentials and cursor deleted (policy and limits kept) |
 | `PUT /me/email/policy` | `{mode: "allowlist" \| "denylist", entries: [address \| domain]}` |
 | `POST /me/email/policy/check` | `{addresses}` → per-recipient verdicts |
 | `PUT /me/email/limits` | `{per_hour, per_day}` |
-| `PUT /me/email/enabled` | `{enabled}` — your own switch |
-| `PUT /me/email/agent-tools` | `{enabled}` — your agents' email tools (default off; 409 `email_disabled` "not available" unless an administrator made them available; active only with a connected, allowed account); reloads your workflows so toolsets follow (`tools_reloaded`). `GET /me/email` reports `agent_tools: {enabled, available, active, reason}` and `store.label` (which account this is) |
+| `PUT /me/email/enabled` | `{enabled}` — "Use this mailbox" (off keeps the settings; stops watching, sending and notifications) |
+| `PUT /me/email/agent-tools` | `{enabled}` — your agents' email tools (default off; 409 `email_disabled` while "Agent email tools for users" is off for you; active only with a connected, allowed mailbox); reloads your workflows so toolsets follow (`tools_reloaded`) |
 | `GET /me/email/oauth/clients` | which providers have a gateway OAuth client (no secrets) |
 | `POST /me/email/oauth/start` | `{address, provider: google \| microsoft, client_id?, client_secret?, tenant?, flow?: device \| loopback}` → device code (`user_code`, `verification_uri`) or `authorization_url`. `token_endpoint`, `authorization_endpoint`, `device_authorization_endpoint` and `scopes` are accepted only from an administrator with `provider: "custom"` (own client id); otherwise 403 `email_oauth_override_refused` |
 | `POST /me/email/oauth/poll` | `{flow_id}` → `{pending: true}` or the connected account |
 | `POST /me/email/oauth/finish` | `{flow_id, wait_s}` — waits up to 60 s for the approval |
 | `POST /me/email/oauth/cancel` | `{flow_id}` |
 | `GET /me/notifications` | events and choices, channel availability, outbox summary |
-| `PUT /me/notifications` | `{email: {automation_result, automation_failed, approval_needed, job_finished, job_failed: bool}}` (all off by default) |
+| `PUT /me/notifications` | `{email: {job_failed, approval_needed: bool}}`; the earlier kinds are accepted (`automation_failed` counts for `job_failed`; `automation_result` and `job_finished` are per-automation / per-run options now) |
 | `POST /me/notifications/test` | sends one test notification now → `{ok, state, error?}` |
 
 Administrators (status and the switch only; administrators never read mail):
@@ -5310,7 +5320,7 @@ Administrators (status and the switch only; administrators never read mail):
 | `GET /admin/users` | each human row carries `email_account: {configured, address, state, admin_enabled, agent_tools_available}` |
 | `GET /admin/users/{user_id}/email` | `configured`, `address`, `auth_kind`, `user_enabled`, `admin_enabled`, `effective_enabled`, `status` (last test / last error), `capabilities` (`{value, source: user \| gateway \| built-in}`), `agent_tools` (`available`, `user_enabled`, `active`), `watcher`, `state` |
 | `PUT /admin/users/{user_id}/email` | `{enabled?, agent_tools?, inherit?: ["email", "email_agent_tools"]}` — per-user capabilities; `enabled: false` = no watcher, no sending, no notifications (settings kept); `agent_tools` = Agent email tools available |
-| `GET /admin/email/capabilities` | gateway-wide defaults: `email` (on), `email_agent_tools` (off), `email_recovery` (on) |
+| `GET /admin/email/capabilities` | `capabilities[{id, label, description, per_user, advanced, default, built_in_default}]`: `email` "Mailboxes for users" (on), under Advanced `email_agent_tools` "Agent email tools for users" (on) and `email_recovery` "Sign-in by email" (on) |
 | `PUT /admin/email/capabilities` | `{email?, email_agent_tools?, email_recovery?, reset?: [...]}` |
 | `GET /admin/email/oauth-clients` | bring-your-own OAuth clients: `client_id`, `client_secret_set`, `tenant` per provider |
 | `PUT /admin/email/oauth-clients/{provider}` | `{client_id, client_secret?, tenant?}`; an empty `client_id` removes the provider's client; omitting `client_secret` keeps the stored one for the same id |
@@ -5320,8 +5330,8 @@ Sign-in page (public):
 | Route | Purpose |
 |---|---|
 | `GET /session/recovery` | `{available}` — true when sign-in by email is on (`email_recovery`, default on) and at least one account of this gateway has email |
-| `POST /session/recovery/request` | `{user_id, tenant_id?, purpose: sign_in \| reset_token}` → the same answer for every account |
-| `POST /session/recovery/redeem` | `{user_id, tenant_id?, purpose, code, remember?}` → a browser session; `reset_token` also returns the new `token` once. A wrong, expired or used code answers 401 `recovery_code_refused` |
+| `POST /session/recovery/request` | `{user_id, tenant_id?, purpose?: sign_in (default) \| reset_token}` → `{sent: true, to: "l•••@•••", expires_in_s, message}`, `{sent: false, reason_code: "no_email_address", message}` (also for an unknown account) or `{sent: false, reason_code: "too_many_requests", retry_after_s, message}`; 404 `recovery_off` when sign-in by email is off ([email.md](docs/email.md#sign-in-by-email)) |
+| `POST /session/recovery/redeem` | `{user_id, tenant_id?, purpose?, code, remember?}` → a browser session; `reset_token` also returns the new `token` once. A wrong, expired or used code answers 401 `recovery_code_refused` |
 
 Errors carry `{"detail": {"reason_code", "message", "cause", "fix", "retryable"}}`: 400 invalid
 settings or a policy refusal (`email_policy_refused`), 403 entity or a refused OAuth override (`email_oauth_override_refused`), 404 no account
@@ -6664,18 +6674,26 @@ python scripts/accept_automations_v1.py --data-dir /tmp/automation-acceptance
 
 # Email: one user, one runtime, one mailbox
 
-Every signed-in person on an AbstractGateway can connect **their own** mailbox. The account is
-stored encrypted in that user's data home and is used for three things:
+Two things carry the word "email", and the gateway names them differently everywhere:
+
+- your **email address** — where sign-in codes, "Forgot your token?" and notifications go, and the
+  first address your agents may write to. It has no password. An administrator sets it when
+  creating your user, or you set it yourself (`PUT /api/gateway/me/email/address`);
+- your **mailbox** — a connection you make (Google or Microsoft sign-in, or address + password for
+  other providers) so that your agents and automations can read and send mail as you. Only you
+  connect it; administrators never see or touch it.
+
+Every signed-in person on an AbstractGateway can connect **their own** mailbox. It is stored
+encrypted in that user's data home and is used for:
 
 - **automations on new mail** — the `email.received@1` trigger (for example "forward invoices",
   "tell me when X writes", or an AI triage that opens a session with you);
-- **email notifications** — job finished/failed, approval needed and automation results, emailed
-  to you through your own account;
-- **account recovery** — "Forgot your token?" and "Email me a sign-in code" on the sign-in page.
+- **notifications** — "Job failed" and "Approval needed", emailed to you through your own mailbox,
+  plus the automation results and job completions you ask for per automation or per run;
+- **sign-in by email** — "Forgot your token? Email me a sign-in code" on the sign-in page.
 
-Email is optional and nothing is active by default: no watcher runs until you create an
-email-triggered automation, notifications stay in the console until you choose email, and your
-agents get no email tools until you turn them on. Without an account there is no sending and no
+Nothing reads your mail by default: no watcher runs until you create an email-triggered
+automation, and your agents get no email tools until you switch **Agent email tools** on. Without an account there is no sending and no
 email notification; the gateway has no shared "system" sender. The mailbox is only read: nothing marks messages read, moves or
 deletes them.
 
@@ -6691,22 +6709,29 @@ You can connect from any of these surfaces; they share the same fields and words
 - **Terminal console** (`abstractgateway-console`) → Users screen → `@`.
 - **HTTP**: `PUT /api/gateway/me/email`.
 
-Give the address, the password (or app password), and the IMAP and SMTP servers:
+Give the address and the password (or app password). The gateway finds the IMAP and SMTP servers
+from the address — a table of common providers, the domain's own autoconfig file, the Thunderbird
+ISPDB, DNS SRV records, then the domain's MX hosts (AbstractCore's deterministic discovery):
 
 ```bash
 curl -sS -X PUT -H "Authorization: Bearer <your gateway token>" -H "Content-Type: application/json" \
-  "$BASE_URL/api/gateway/me/email" -d '{
-    "address": "me@example.com",
-    "password": "<app password>",
-    "imap": {"host": "imap.example.com", "port": 993, "security": "ssl"},
-    "smtp": {"host": "smtp.example.com", "port": 587, "security": "starttls"}
-  }'
+  "$BASE_URL/api/gateway/me/email" -d '{"address": "me@fastmail.com", "password": "<app password>"}'
 ```
 
-The gateway signs in to both servers first and stores nothing when a leg fails; the answer names
-the cause and the fix (for example `email_auth_failed`: "The IMAP server rejected the user name or
-password … many providers need an app password when two-step verification is on"). TLS
-certificates and host names are always verified; there is no unencrypted mode.
+`POST /api/gateway/me/email/discover {"address": "..."}` shows what discovery finds without
+connecting (`found`, `source`, `imap`, `smtp`, `username`, and `tried`: every step with its result).
+When no step finds both servers, the connect answers `400 email_discovery_failed` with the same
+`tried` list and the message "Couldn't find the mail servers for <domain>. Open Server settings and
+enter them."; give the servers yourself then (`imap` and `smtp`: `host`, `port`, `security`).
+`username` defaults to the form the provider's configuration names, else the address;
+`display_name` is optional.
+
+Connect saves and tests in one call: the gateway signs in to both servers first and stores nothing
+when a step fails. The error names the step (`detail.step`: `imap` or `smtp`) and says it the way
+the consoles show it — "Sign-in refused by imap.example.com — check the password." or "Couldn't
+reach smtp.example.com:465." — next to the cause and the fix (for example `email_auth_failed`:
+"many providers need an app password when two-step verification is on"). TLS certificates and
+host names are always verified; there is no unencrypted mode.
 
 Many providers (Gmail, iCloud, Fastmail, most hosted IMAP) accept an **app password** when
 two-step verification is on.
@@ -6739,9 +6764,27 @@ Administrators set a bring-your-own client per provider over HTTP with
 `tenant`); the consoles do not edit OAuth clients yet. The secret is sealed at rest and never
 returned; the read shows `client_secret_set`.
 
-While an administrator has email turned off for a user, that user's **Connect**, **Test** and
-OAuth sign-in are refused (`409 email_disabled`) before any connection is made; the stored
-settings are kept.
+`GET /api/gateway/me/email` lists `oauth_providers` (`[{id, available, reason}]`): a provider is
+available with the gateway's own client or a built-in one; otherwise `reason` says so.
+
+While mailboxes are off for a user, that user's **Connect**, **Test** and OAuth sign-in are refused
+(`409 email_disabled`, "Your admin turned mailboxes off for your account.") before any connection is
+made; the stored settings are kept.
+
+### What `GET /me/email` tells the account page
+
+Besides the mailbox settings and status (never a secret):
+
+| Field | Meaning |
+|---|---|
+| `registered_address` | your email address (from your user record) |
+| `email_available` | your administrator allows mailboxes ("Mailboxes for users") |
+| `notifications` | `{"job_failed": bool, "approval_needed": bool}`; `notifications_unavailable_reason` says why they cannot send yet ("Connect a mailbox first.") |
+| `agent_tools` | `{"on", "available", "unavailable_reason", "active"}`: your switch, whether it can be switched on now, and why not ("Connect a mailbox first.", "Your admin turned mailboxes off.", "Your admin turned agent email tools off.") |
+| `oauth_providers` | `[{"id": "google" \| "microsoft", "available", "reason"}]` |
+
+**Use this mailbox** (`PUT /api/gateway/me/email/enabled {"enabled": false}`) keeps the settings but
+stops watching, sending and notifications until you switch it back on.
 
 ## Agent email tools (off by default)
 
@@ -6749,11 +6792,11 @@ Your agents and workflows — chats, workflow runs and automations, from every c
 Assistant, Observer, the consoles) — get the email tools (list and search mail, read a message,
 list folders, send, reply, download an attachment) only when **all** of these hold:
 
-1. an administrator made **Agent email tools** available to you (they are not, by default);
-2. your account is connected and turned on, and email is allowed for you;
-3. you turned on **Agent email tools** (My email in the web console, **Policy, limits & tools** in
-   the terminal console, or `PUT /api/gateway/me/email/agent-tools {"enabled": true}`). When they
-   are not available the switch reads "not available — ask your admin".
+1. **Agent email tools for users** is on (the administrator's Advanced setting; on by default);
+2. your mailbox is connected and in use, and mailboxes are allowed for you;
+3. you switched **Agent email tools** on (your account page in the web console, the terminal
+   console, or `PUT /api/gateway/me/email/agent-tools {"enabled": true}`). Your own switch is off
+   by default; while it cannot be switched on, it shows the reason.
 
 The rule is applied twice: when your toolsets are built (the tools are listed only then; turning
 the switch reloads your workflows so the change applies at once) and again when a tool runs (a
@@ -6833,16 +6876,27 @@ configuration to run on those too.
 
 ## Notifications
 
-Email notifications are opt-in: every event is off until you turn it on, and the console stays
-the default channel. **My email → Notifications** (or `GET/PUT /api/gateway/me/notifications`)
-chooses which events email you:
+Two switches, both on by default; nothing is sent until your mailbox is connected and in use.
+Set them on your account page or with `PUT /api/gateway/me/email/notifications`
+(`{"job_failed"?: bool, "approval_needed"?: bool}`):
 
-| Event | When |
+| Switch | Emails you when |
 |---|---|
-| `automation_result` | an automation occurrence asked to notify, and the automation is set to "email me the result" (`notify.channels` holds `email`) |
-| `automation_failed` | an occurrence failed after its retries (same channel rule) |
-| `approval_needed` | one of your runs waits for your approval or answer |
-| `job_finished` / `job_failed` | a run started with `_runtime.notify = {"on": ["finished", "failed"], "channels": ["email"]}` |
+| **Job failed** (`job_failed`) | an automation of yours failed after its retries |
+| **Approval needed** (`approval_needed`) | one of your runs waits for your approval or answer |
+
+Two options stand on their own, with no switch involved:
+
+| Option | Emails you when |
+|---|---|
+| an automation's **Email me the result** (`notify.channels` holds `email`) | an occurrence of that automation asked to notify |
+| a run's **email me when done** (`_runtime.notify = {"on": ["finished", "failed"], "channels": ["email"]}`) | that run finished or failed, as asked |
+
+`GET/PUT /api/gateway/me/notifications` keep working: the earlier five-event body is accepted,
+`automation_failed` counts for `job_failed`, and `automation_result` / `job_finished` are ignored
+as preferences (the per-automation and per-run options above decide). Saved preferences carry
+over the same way: `job_failed` is on when `job_failed` or `automation_failed` was on,
+`approval_needed` keeps its value, and preferences never saved take the new defaults.
 
 Notices go to your registered address (else your mailbox address), sent by your own account, from
 a durable outbox: each notice is queued once and sent once. If the gateway stops in the middle of a
@@ -6853,37 +6907,63 @@ notification** checks the whole path. Notification emails use fixed templates; t
 model-written text is an automation's own `notify` title and body, labelled as such. Replying to a
 notification does nothing.
 
-## Account recovery by email
+## Sign-in by email
 
-When at least one account on the gateway has email configured, the sign-in page offers
-**Forgot your token?** and **Email me a sign-in code**. Enter your Gateway user and choose one; an
-8-digit code is sent to your registered address through your own account. The code works once,
-expires after 10 minutes and allows 5 tries. "Forgot your token?" issues a new token (shown once;
-the old one stops working) and signs you in; "Email me a sign-in code" signs you in.
+When at least one account on the gateway has a connected mailbox, the sign-in page offers
+**Forgot your token? Email me a sign-in code**. Enter your Gateway user and follow the link; an
+8-digit code is sent to your email address through your own mailbox. The code works once, expires
+after 10 minutes and allows 5 tries; it signs you in (`purpose: "sign_in"`, the default), and your
+account page can then rotate your token. Clients may also ask for `purpose: "reset_token"`, which
+issues a new token (shown once; the old one stops working) with the session.
 
-The answer is the same whether or not the account exists or has email, requests are rate-limited
-per account (3 per 15 minutes) and per client address (10 per 15 minutes) before any work starts
-(a flood of requests costs no background sends), codes are stored only as keyed hashes, and every issue and use
-is recorded in the audit log without the code. Users without email use the administrator's token
-rotation as before.
+`POST /api/gateway/session/recovery/request {"user_id": "..."}` answers what happened:
+
+| Answer | Body |
+|---|---|
+| sent | `{"sent": true, "to": "l•••@•••", "expires_in_s": 600, "message": "A sign-in code is on its way to l•••@•••. It expires in 10 minutes."}` — the first character of the address, never the domain |
+| no address | `{"sent": false, "reason_code": "no_email_address", "message": "This account has no email address, so a code can't be sent. Ask your gateway admin for a token."}` — also for an unknown account, a deactivated one, or one without a mailbox to send with |
+| rate limited | `{"sent": false, "reason_code": "too_many_requests", "retry_after_s": N, "message": "Too many codes requested for this account. Try again in N minutes."}` |
+| sign-in by email off | `404 recovery_off` |
+
+The trade-off is deliberate: a requester can learn that an account id has an email address, which
+makes the page honest ("a code is on its way" or "ask your admin"). Requests are rate-limited per
+account (3 per 15 minutes) and per client address (10 per 15 minutes) before any lookup or
+background send, codes are stored only as keyed hashes, and every request, issue and use is
+recorded in the audit log without the code. An administrator who prefers no such answer turns
+**Sign-in by email** off under Advanced; users without an email address use the administrator's
+token rotation.
 
 ## Administrators
 
-Administrators decide what is **available** to users, with a gateway-wide default and per-user
-overrides (web console Users tab → **Email for users** and the row buttons; terminal console Users
-screen → `@` → **Email for users (admin)**, `x` and `X`; or the HTTP routes):
+Administrators decide what is **available** to users. The Users tab has one switch,
+**Mailboxes for users**; two more sit under its Advanced disclosure
+(`GET/PUT /api/gateway/admin/email/capabilities`, which returns each one's label and description):
 
-| Capability | Default | Meaning |
-|---|---|---|
-| `email` | on | users may connect their own mailbox (off: no watcher, no sending, no email notifications; settings are kept) |
-| `email_agent_tools` | off | users may turn on Agent email tools for their own agents |
-| `email_recovery` | on (gateway-wide only) | "Forgot your token?" and "Email me a sign-in code" on the sign-in page |
+| Capability | Label | Default | Meaning |
+|---|---|---|---|
+| `email` | Mailboxes for users | on | users may connect their own mailbox for their agents, automations and notifications (off: no watcher, no sending, no notifications; settings are kept) |
+| `email_agent_tools` | Agent email tools for users (Advanced) | on | users may let their agents use their mailbox; each user still switches it on for themselves |
+| `email_recovery` | Sign-in by email (Advanced) | on (gateway-wide only) | "Forgot your token? Email me a sign-in code" on the sign-in page |
 
 ```bash
-curl -sS -X PUT -H "$ADMIN" "$BASE_URL/api/gateway/admin/email/capabilities" -d '{"email_agent_tools": true}'
-curl -sS -X PUT -H "$ADMIN" "$BASE_URL/api/gateway/admin/users/alice/email" -d '{"enabled": true, "agent_tools": false}'
-curl -sS -X PUT -H "$ADMIN" "$BASE_URL/api/gateway/admin/users/alice/email" -d '{"inherit": ["email_agent_tools"]}'
+curl -sS -X PUT -H "$ADMIN" "$BASE_URL/api/gateway/admin/email/capabilities" -d '{"email": false}'
+curl -sS -X PUT -H "$ADMIN" "$BASE_URL/api/gateway/admin/email/capabilities" -d '{"reset": ["email"]}'
 ```
+
+Per-user overrides (`PUT /api/gateway/admin/users/{user_id}/email {"enabled"?, "agent_tools"?}`)
+are still honoured; the consoles no longer create them and show an existing one as "not allowed
+for this user" with a **Reset** action (`{"inherit": ["email", "email_agent_tools"]}`).
+
+Agent email tools became available by default with `capabilities.json` version 3. On the first
+start, the gateway upgrades the file so that nobody gains tools they could not use before: a user
+whose own agent-tools switch was on while the tools were not available to them gets a per-user
+`email_agent_tools: false` override, recorded in the audit log as `email.capabilities_migrated`.
+
+An administrator creates a user with their email address (`POST /api/gateway/admin/users`,
+`"email"`) and changes it with `PATCH /api/gateway/admin/users/{user_id}` (`"email"`); the user can
+set it too. **Active** is `"enabled"` in the same PATCH (false = signed out and unable to sign in);
+an administrator cannot deactivate their own account (`409 cannot_deactivate_self`, "You can't
+deactivate your own account.") nor the last active administrator (`409 last_admin`).
 
 Sign-in by email means that whoever controls a user's mailbox can sign in as that user; turn it off
 where mailboxes are not as well protected as gateway tokens. The Users table
@@ -8464,6 +8544,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+Email settings follow one model across the consoles: your **email address** (where sign-in codes and
+notifications go) and your **mailbox** (the connection your agents and automations use) are named
+apart, the administrator has one switch, notifications are two switches, and the sign-in page says
+what happened to a code request. Needs AbstractCore with mailbox server discovery
+(`abstractcore.comms.email.discover_servers`).
+
+### Added
+- `POST /api/gateway/me/email/discover {"address"}` finds a mailbox's IMAP and SMTP servers from its
+  address (known providers, the domain's autoconfig file, the Thunderbird ISPDB, DNS SRV, MX) and
+  lists every step it tried.
+- `PUT /api/gateway/me/email` without `imap` and `smtp` discovers the servers; when none are found it
+  answers `400 email_discovery_failed` with `tried`. `username` defaults to the discovered form,
+  else the address.
+- `PUT /api/gateway/me/email/address {"address"}` sets your own email address on your user record
+  (`""` clears it).
+- `PUT /api/gateway/me/email/notifications {"job_failed"?, "approval_needed"?}` sets the two
+  notification switches.
+- `GET /api/gateway/me/email` also returns `registered_address`, `email_available`,
+  `notifications`, `notifications_unavailable_reason`, `oauth_providers` and, in `agent_tools`,
+  `on`, `unavailable_reason` and `admin_available`.
+- `GET /api/gateway/admin/email/capabilities` returns each capability's `advanced` flag.
+
+### Changed
+- The administrator's one switch is **Mailboxes for users** (capability `email`, on by default).
+  **Agent email tools for users** (`email_agent_tools`) is now on by default, next to **Sign-in by
+  email** under Advanced; each user still switches their own agent email tools on. On the first
+  start `capabilities.json` moves to version 3: a user whose own switch was on while the tools were
+  not available to them gets a per-user override that keeps them off, recorded in the audit log.
+- Notifications are two switches, **Job failed** (an automation failed after its retries) and
+  **Approval needed**, both on by default and sent once a mailbox is connected. An automation's
+  "Email me the result" and a run's "email me when done" deliver on their own. Saved preferences
+  carry over (`job_failed` = job failed or automation failed); the earlier five-event body of
+  `PUT /api/gateway/me/notifications` is still accepted.
+- `POST /api/gateway/session/recovery/request` answers what happened: `sent` with the masked
+  address (`l•••@•••`), `no_email_address` (also for an unknown account) or `too_many_requests`
+  with `retry_after_s`; `404 recovery_off` when sign-in by email is off. `purpose` defaults to
+  `sign_in`. Rate limits and audit events are unchanged. See docs/email.md for the trade-off.
+- A failed mailbox connect names the step: `detail.step` (`imap` or `smtp`) and a message such as
+  "Sign-in refused by imap.example.com — check the password." or "Couldn't reach
+  smtp.example.com:465."
+- `PATCH /api/gateway/admin/users/{user_id}` refuses to deactivate the caller's own account
+  (`409 cannot_deactivate_self`, "You can't deactivate your own account.").
+- Route summaries, error messages and docs say "email address" or "mailbox"; unavailable switches
+  give their reason ("Connect a mailbox first.", "Your admin turned mailboxes off.", "Your admin
+  turned agent email tools off.").
 
 ## [0.9.0] - 2026-09-30
 
