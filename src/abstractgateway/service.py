@@ -845,10 +845,55 @@ def sync_backlog_exec_runner(*, data_dir: Optional[Path] = None) -> Dict[str, An
 _boot_state: str = "idle"
 _boot_error: Optional[str] = None
 _boot_done = threading.Event()
+# A stop that lands while the boot is still running (lifespan shutdown on
+# SIGTERM/Ctrl-C a few seconds after start, a TestClient that leaves at once)
+# used to return while the boot thread kept going: it then built the service,
+# cached it AFTER the stop's clear and started the runner, the email worker
+# and the bridges of a gateway that had already shut down. Each boot now has
+# its own cancel event; `stop_gateway_runner` sets it and waits for the boot
+# thread, which stops at its next checkpoint (`_boot_checkpoint`) and cleans
+# up whatever it had built. A boot still busy after BOOT_STOP_WAIT_S (one
+# long build) is left to finish: it cancels and stops itself.
+_boot_thread: Optional[threading.Thread] = None
+_boot_cancel: Optional[threading.Event] = None
+_boot_local = threading.local()
+BOOT_STOP_WAIT_S = 300.0
+_rehydrate_thread: Optional[threading.Thread] = None
+REHYDRATE_STOP_WAIT_S = 60.0
+
+
+class _BootCancelled(Exception):
+    """The gateway is stopping: the boot thread stops starting things."""
+
+
+def _boot_checkpoint() -> None:
+    """Raise _BootCancelled when THIS thread is a boot whose gateway is
+    stopping (no-op anywhere else, e.g. the split `runner` process)."""
+    ev = getattr(_boot_local, "cancel", None)
+    if ev is not None and ev.is_set():
+        raise _BootCancelled()
+
+
+def _cancel_and_wait_for_boot(timeout_s: Optional[float] = None) -> None:
+    """Stop side of the boot race: cancel the running boot and wait for its
+    thread (never the calling thread itself)."""
+    t, ev = _boot_thread, _boot_cancel
+    if ev is not None:
+        ev.set()
+    if t is None or t is threading.current_thread() or not t.is_alive():
+        return
+    wait_s = BOOT_STOP_WAIT_S if timeout_s is None else float(timeout_s)
+    print("shutdown: waiting for the gateway startup still in progress ...", file=sys.stderr, flush=True)
+    t.join(timeout=max(0.0, wait_s))
+    if t.is_alive():
+        logging.getLogger("abstractgateway.service").warning(
+            "shutdown: the gateway startup is still running after %.0fs; it will stop itself when its current step ends",
+            wait_s,
+        )
 
 
 def gateway_boot_state() -> Dict[str, Any]:
-    """{"state": idle|starting|ready|failed, "error": str|None} — pure read."""
+    """{"state": idle|starting|ready|failed|stopped, "error": str|None} — pure read."""
     return {"state": _boot_state, "error": _boot_error}
 
 
@@ -856,15 +901,18 @@ def begin_gateway_boot() -> None:
     """Start the heavy service boot on a background thread (idempotent while
     starting; a failed/idle state boots fresh). Lifespan calls this and
     yields immediately so the listener opens and health probes answer."""
-    global _boot_state, _boot_error
+    global _boot_state, _boot_error, _boot_thread, _boot_cancel
     if _boot_state == "starting":
         return
     _boot_state = "starting"
     _boot_error = None
     _boot_done.clear()
+    cancel = threading.Event()
 
     def _boot() -> None:
         global _boot_state, _boot_error
+        _boot_local.cancel = cancel
+        current = lambda: _boot_thread is threading.current_thread()  # noqa: E731
         try:
             # Host pause (tray/console, 2026-09-05): a persisted pause must
             # be in force BEFORE the first runner schedules a tick.
@@ -893,18 +941,33 @@ def begin_gateway_boot() -> None:
                     print(f"[WARN] email: {note}", file=sys.stderr, flush=True)
             except Exception:  # noqa: BLE001 - never a boot blocker
                 logging.getLogger("abstractgateway.service").warning("email legacy import failed", exc_info=True)
+            _boot_checkpoint()
             start_gateway_runner()
-            _boot_state = "ready"
+            _boot_checkpoint()
+            if current():
+                _boot_state = "ready"
+        except _BootCancelled:
+            # Stopped during startup: stop what this boot already built or
+            # started (the stopper may have given up waiting).
+            try:
+                stop_gateway_runner()
+            except Exception:  # noqa: BLE001
+                logging.getLogger("abstractgateway.service").warning("cleanup after a cancelled boot failed", exc_info=True)
+            if current():
+                _boot_state = "stopped"
         except Exception as e:
+            if not current():
+                return
             _boot_state = "failed"
             _boot_error = f"{type(e).__name__}: {e}"
-            import logging
-
             logging.getLogger("abstractgateway.service").exception("gateway boot failed")
         finally:
-            _boot_done.set()
+            if current():
+                _boot_done.set()
 
-    threading.Thread(target=_boot, name="gateway-boot", daemon=True).start()
+    t = threading.Thread(target=_boot, name="gateway-boot", daemon=True)
+    _boot_thread, _boot_cancel = t, cancel
+    t.start()
 
 
 def wait_for_gateway_boot(timeout_s: float = 300.0) -> str:
@@ -1052,6 +1115,7 @@ def _eager_rehydrate_principal_runners() -> Dict[str, Any]:
 
 
 def start_gateway_runner() -> None:
+    global _rehydrate_thread
     # Effective-spec crash-window reconcile (structural-edit build c4859):
     # the blueprint overlay + derived effective file are two atomic writes;
     # a crash between them (or a re-vendor under a standing overlay) leaves
@@ -1075,12 +1139,14 @@ def start_gateway_runner() -> None:
         host_control.configure(Path(GatewayHostConfig.from_env().data_dir))
     except Exception:  # noqa: BLE001 - the pause file is a courtesy, never a boot blocker
         logger.warning("host pause state could not be loaded", exc_info=True)
+    _boot_checkpoint()
     if gateway_multi_user_enabled():
         # Per-principal services are created and started lazily on first
         # request; the BACKLOG EXEC RUNNER lives at the base data dir and is
         # NOT per-principal — under user-auth the old early return silently
         # never started it (the "no execution agent" incident 2026-07-14).
         sync_backlog_exec_runner()
+        _boot_checkpoint()
         # Eager re-arm (backlog 0063): warm every registered runtime's runner
         # so parked/scheduled runs resume on boot. Runs on its OWN daemon
         # thread, NOT inline (adversary P0-1: the sweep does N heavy builds
@@ -1090,22 +1156,31 @@ def start_gateway_runner() -> None:
         # false-recycle window the background-boot fix just closed). The
         # sweep is best-effort and every service insert is serialized by
         # _service_lock, so racing live prewarms is already safe.
-        _rehydrate_shutdown.clear()
-        threading.Thread(
-            target=_eager_rehydrate_principal_runners,
-            name="gateway-eager-rehydrate",
-            daemon=True,
-        ).start()
+        with _service_lock:
+            _boot_checkpoint()
+            _rehydrate_shutdown.clear()
+            _rehydrate_thread = threading.Thread(
+                target=_eager_rehydrate_principal_runners,
+                name="gateway-eager-rehydrate",
+                daemon=True,
+            )
+            _rehydrate_thread.start()
         return
+    _boot_checkpoint()
     svc = get_gateway_service()
+    _boot_checkpoint()
     svc.runner.start()
     # Optional: backlog execution runner (consumes backlog_exec_queue and executes requests).
+    _boot_checkpoint()
     sync_backlog_exec_runner(data_dir=Path(svc.stores.base_dir))
     bridge = getattr(svc, "telegram_bridge", None)
+    _boot_checkpoint()
     if bridge is not None:
         bridge.start()
+    _boot_checkpoint()
     _start_email_worker(svc)
     agora_bridge = getattr(svc, "agora_bridge", None)
+    _boot_checkpoint()
     if agora_bridge is not None:
         agora_bridge.start()
 
@@ -1122,11 +1197,21 @@ def _start_email_worker(svc: GatewayService) -> None:
 
 def stop_gateway_runner() -> None:
     global _service, _backlog_exec_runner, _backlog_exec_runner_error
+    # A startup still in progress is cancelled and waited for FIRST, so no
+    # boot step starts a runner/worker after this stop (see _boot_cancel).
+    _cancel_and_wait_for_boot()
     # Tell the eager-rehydration sweep to stop (adversary P1-1: the sweep runs
     # on its own thread and, unsignalled, kept building services AFTER
     # shutdown returned — orphaned runners holding per-principal flocks that
-    # flock-refuse the next boot's own twins). Checked per sweep iteration.
-    _rehydrate_shutdown.set()
+    # flock-refuse the next boot's own twins). Checked per sweep iteration;
+    # the set happens under _service_lock, where the boot clears and starts
+    # the sweep, and the sweep is then waited for (its current build ends,
+    # the next is skipped), so none of its services lands after the snapshot.
+    with _service_lock:
+        _rehydrate_shutdown.set()
+        sweep = _rehydrate_thread
+    if sweep is not None and sweep is not threading.current_thread() and sweep.is_alive():
+        sweep.join(timeout=REHYDRATE_STOP_WAIT_S)
     try:
         # Snapshot + clear the caches ATOMICALLY under the lock (adversary
         # P1-1): the old unlocked snapshot let an in-flight build land in the

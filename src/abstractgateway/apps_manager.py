@@ -2587,19 +2587,28 @@ class AppsManager:
             except Exception:
                 logger.warning("stopping app %s failed", p.spec.id, exc_info=True)
 
-    def autostart(self, *, gateway_url: Optional[str] = None) -> List[Dict[str, Any]]:
+    def autostart(self, *, gateway_url: Optional[str] = None, cancel: Optional[threading.Event] = None) -> List[Dict[str, Any]]:
         """Gateway boot: stop leftovers of a previous run, then start every
-        installed app marked enabled. Returns one outcome row per app."""
+        installed app marked enabled. Returns one outcome row per app.
+        `cancel` (the gateway is shutting down) stops it between apps, and
+        an app whose start was under way when it was set is stopped again."""
         if gateway_url:
             self.gateway_url = str(gateway_url).rstrip("/")
         outcomes: List[Dict[str, Any]] = []
         self.reap_orphans()
         for spec in APPS:
+            if cancel is not None and cancel.is_set():
+                break
             st = self.app_state(spec.id)
             if not st.get("enabled"):
                 continue
             try:
                 row = self.launch(spec.id, gateway_url=gateway_url)
+                if cancel is not None and cancel.is_set():
+                    proc = self._procs.get(spec.id)
+                    if proc is not None:
+                        proc.stop()
+                    break
                 outcomes.append({"app_id": spec.id, "ok": True, "url": row.get("url")})
                 logger.info("app %s started at %s (enabled)", spec.id, row.get("url"))
             except AppsError as exc:
@@ -3805,22 +3814,44 @@ def get_apps_manager(data_dir: Optional[Path] = None) -> AppsManager:
         return m
 
 
+# The lifespan's autostart thread and its cancel event: a shutdown that lands
+# while the enabled apps are still starting waits for that thread before it
+# stops the apps, so no app is started after the stop (it would outlive the
+# gateway as an orphan child).
+_AUTOSTART: Optional[Tuple[threading.Thread, threading.Event]] = None
+AUTOSTART_STOP_WAIT_S = READY_TIMEOUT_S + 10.0
+
+
 def start_apps_on_boot() -> None:
     """Lifespan hook: start the enabled apps on a background thread (never
     raises, never delays the listener)."""
+    global _AUTOSTART
+    cancel = threading.Event()
+
     def _run() -> None:
         try:
-            outcomes = get_apps_manager().autostart()
+            outcomes = get_apps_manager().autostart(cancel=cancel)
             for o in outcomes:
                 line = f"Browser app {o['app_id']}: " + (f"started at {o['url']}" if o["ok"] else f"did not start: {o['message']}")
                 print(line, file=sys.stderr, flush=True)
         except Exception:  # noqa: BLE001
             logger.warning("starting the enabled browser apps failed", exc_info=True)
 
-    threading.Thread(target=_run, name="apps-autostart", daemon=True).start()
+    t = threading.Thread(target=_run, name="apps-autostart", daemon=True)
+    _AUTOSTART = (t, cancel)
+    t.start()
 
 
 def stop_apps_on_shutdown() -> None:
+    global _AUTOSTART
+    pending, _AUTOSTART = _AUTOSTART, None
+    if pending is not None:
+        t, cancel = pending
+        cancel.set()
+        if t is not threading.current_thread() and t.is_alive():
+            t.join(timeout=AUTOSTART_STOP_WAIT_S)
+            if t.is_alive():
+                logger.warning("shutdown: browser apps were still starting after %.0fs", AUTOSTART_STOP_WAIT_S)
     with _MANAGERS_LOCK:
         managers = list(_MANAGERS.values())
     for m in managers:
