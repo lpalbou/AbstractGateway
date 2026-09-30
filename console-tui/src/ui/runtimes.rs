@@ -28,7 +28,10 @@ use crate::worker::Cmd;
 /// under the table the second.
 pub const RUNTIME_TITLE: &str =
     "Runtimes — a runtime is a user's own data plane: their runs, flows, sessions and memory";
-pub const RUNTIME_FOOTNOTE: &str = "Each user gets one, named after them, unless an admin bound them to a shared one  ·  sizes are on-disk data dirs  ·  w workspace policy (user rows)";
+pub const RUNTIME_FOOTNOTE: &str = "Each user gets one, named after them, unless an admin bound them to a shared one  ·  w workspace policy";
+/// The whole note, wrapped under the table when the terminal is too narrow
+/// for the title to carry its first sentence.
+pub const RUNTIME_NOTE: &str = "A runtime is a user's own data plane: their runs, flows, sessions and memory. Each user gets one, named after them, unless an admin bound them to a shared one. w workspace policy.";
 
 /// The Runtimes screen is admin-only end to end: every read and write it
 /// makes is an `/admin/*` route, and the web console hides the whole tab
@@ -405,10 +408,21 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         )
                     },
                 ))
-                .child(line(vec![span(
-                    RUNTIME_FOOTNOTE,
-                    t.text_faint,
-                )]))
+                .child({
+                    let vp = abstracttui::app::use_viewport(cx);
+                    dyn_view(LayoutStyle::column().gap(0).shrink(0.0), move || {
+                        let w = vp.get().w;
+                        if w >= 100 {
+                            return line(vec![span(RUNTIME_FOOTNOTE, tt.text_faint)]);
+                        }
+                        let mut col =
+                            Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+                        for l in super::util::wrap_text(RUNTIME_NOTE, (w - 6).max(20) as usize) {
+                            col = col.child(line(vec![span(l, tt.text_faint)]));
+                        }
+                        col.build()
+                    })
+                })
                 .element(t)
                 .build(),
         )

@@ -799,29 +799,39 @@ fn email_switches(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             Loadable::Ready(_) => None,
             _ => Some("reading…".to_string()),
         };
-        Element::new()
-            .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
+        // The switch on its row, its description under it (wrapped, never
+        // cut: "Sign-in by email" carries a security warning).
+        let pad = if indent { 2 } else { 0 };
+        let w = (abstracttui::app::use_viewport(scx).get_untracked().w - 10 - pad).max(20) as usize;
+        let mut col = Element::new()
+            .style(LayoutStyle::column().gap(0).shrink(0.0))
             .child(
+                // Indented by padding (a spacer beside a full-width switch
+                // pushed it over the block border).
                 Element::new()
-                    .style(
-                        LayoutStyle::default()
-                            .w(if indent { 2 } else { 0 })
-                            .h(1)
-                            .shrink(0.0),
+                    .style(LayoutStyle::column().h(1).shrink(0.0).padding(Edges {
+                        left: pad,
+                        right: 0,
+                        top: 0,
+                        bottom: 0,
+                    }))
+                    .child(
+                        super::switch::Switch::new(label, sig)
+                            .fill()
+                            .unavailable(unavailable)
+                            .busy_when(move || busy.get() == Some(key))
+                            .notice(store.notice)
+                            .on_request(move |want| request(key, want))
+                            .element(scx, &tt)
+                            .build(),
                     )
                     .build(),
-            )
-            .child(
-                super::switch::Switch::new(label, sig)
-                    .unavailable(unavailable)
-                    .busy_when(move || busy.get() == Some(key))
-                    .notice(store.notice)
-                    .on_request(move |want| request(key, want))
-                    .element(scx, &tt)
-                    .build(),
-            )
-            .child(line(vec![span(format!("— {help}"), tt.text_faint)]))
-            .build()
+            );
+        let lead = " ".repeat(pad as usize + 4);
+        for l in super::util::wrap_text(help, w) {
+            col = col.child(line(vec![span(format!("{lead}{l}"), tt.text_faint)]));
+        }
+        col.build()
     };
     dyn_view_scoped(LayoutStyle::column().gap(0).shrink(0.0), move |scx| {
         if !store.conn.with(ConnPhase::is_admin) {

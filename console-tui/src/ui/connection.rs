@@ -460,12 +460,13 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 let checking = matches!(r.step, RecoveryStep::Redeeming(_));
                 let (request, redeem, redeem_enter) =
                     (request.clone(), redeem.clone(), redeem.clone());
-                let mut col = Element::new()
-                    .style(LayoutStyle::column().gap(0).shrink(0.0))
-                    .child(line(vec![span(
-                        a.message.clone(),
-                        if a.sent { t.ok } else { t.warn },
-                    )]));
+                // The gateway's honest answer, wrapped (never cut).
+                let msg_w =
+                    (abstracttui::app::use_viewport(rcx).get_untracked().w - 6).max(20) as usize;
+                let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+                for l in super::util::wrap_text(&a.message, msg_w) {
+                    col = col.child(line(vec![span(l, if a.sent { t.ok } else { t.warn })]));
+                }
                 if a.sent {
                     col = col
                         .child(super::util::field_w(
@@ -509,9 +510,10 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     col = col.child(error_line(&t));
                 }
                 let a_clock = a.clone();
-                col.child(field(
+                col.child(super::util::field_w(
                     &t,
                     "",
+                    1,
                     Element::new()
                         .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
                         // Its own region: the countdown re-renders this

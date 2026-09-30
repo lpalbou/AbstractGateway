@@ -123,6 +123,17 @@ impl Switch {
         self
     }
 
+    /// Take the row's whole width (a switch alone on its row: room for
+    /// the "saving…" note).
+    pub fn fill(self) -> Switch {
+        self.layout(
+            LayoutStyle::default()
+                .width(Dimension::Percent(1.0))
+                .height(Dimension::Cells(1))
+                .shrink(0.0),
+        )
+    }
+
     pub fn layout(mut self, layout: LayoutStyle) -> Switch {
         self.layout = Some(layout);
         self
@@ -139,7 +150,9 @@ impl Switch {
             notice,
             layout,
         } = self;
-        let width_text = switch_text(&label, true, unavailable.as_deref(), true);
+        // Sized to the label (and reason); the busy note paints into the
+        // row when the caller gives the switch the row's width (`fill`).
+        let width_text = switch_text(&label, true, unavailable.as_deref(), false);
         let width = abstracttui::text::width(&width_text);
         let layout = layout.unwrap_or_else(|| {
             LayoutStyle::default()

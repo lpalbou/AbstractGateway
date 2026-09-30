@@ -24,7 +24,7 @@ use abstracttui::widgets::{Scroll, Tabs};
 use serde_json::json;
 
 use super::switch::Switch;
-use super::util::{ellipsize, field, line, span, span_bold, wrap_text};
+use super::util::{ellipsize, field, field_w, line, span, span_bold, wrap_text};
 use super::{open_form, Ctx};
 use crate::store::email::{
     address_domain, limits_body, other_connect_body, policy_body, security_label, Discovery,
@@ -902,14 +902,11 @@ fn oauth_tab(
     let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
     let hint = p.address.get_untracked();
     if !hint.is_empty() {
-        col = col.child(line(vec![
-            span("Signs in as ", t0.text_faint),
-            span(hint.clone(), t0.text),
-            span(
-                " (your email address; the provider may ask for another).",
-                t0.text_faint,
-            ),
-        ]));
+        col = col.child(helper(
+            &t0,
+            &format!("Signs in as {hint} (your email address; the provider may ask for another)."),
+            p.wrap_w,
+        ));
     }
     col = col.child(dyn_view_scoped(
         LayoutStyle::column().gap(0).shrink(0.0),
@@ -1044,6 +1041,7 @@ fn notifications_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) 
             .style(LayoutStyle::column().gap(0).shrink(0.0))
             .child(
                 Switch::new(label, sig)
+                    .fill()
                     .unavailable(reason.clone())
                     .busy_when(move || p.busy.get() == Some(key))
                     .notice(ctx.store.notice)
@@ -1092,6 +1090,7 @@ fn agent_tools_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) ->
         .child(heading(&t0, "Agent email tools"))
         .child(
             Switch::new("Agent email tools", sig)
+                .fill()
                 .unavailable(e.agent_tools_unavailable())
                 .busy_when(move || p.busy.get() == Some("agent_tools"))
                 .notice(ctx.store.notice)
@@ -1172,9 +1171,10 @@ fn advanced_body(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> Vi
     {
         let entries = entries.clone();
         let policy_send = policy_send.clone();
-        col = col.child(field(
+        col = col.child(field_w(
             &t0,
             "",
+            3,
             cycle(cx, &t0, "Mode", mode_sig, MODES, move |m| {
                 let words = if m == "denylist" {
                     "Recipient rules: everyone except the listed addresses."
@@ -1320,6 +1320,7 @@ fn advanced_body(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> Vi
     col = col
         .child(
             Switch::new("Use this mailbox", use_sig)
+                .fill()
                 .unavailable((!e.configured).then(|| crate::store::email::REASON_CONNECT_MAILBOX.to_string()))
                 .busy_when(move || p.busy.get() == Some("enabled"))
                 .notice(ctx.store.notice)

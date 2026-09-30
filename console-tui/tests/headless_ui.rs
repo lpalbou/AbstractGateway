@@ -10836,3 +10836,36 @@ fn sign_in_by_email_says_the_honest_refusals() {
     );
     assert_eq!(a.resend_wait_s(1_000_000 + 601_000), 0);
 }
+
+/// The switch reads by its ink too: ON = accent + bold, OFF = plain,
+/// unavailable = faint (the buffer's cells, not only the text).
+#[test]
+fn switch_ink_on_screen_marks_on_off_and_unavailable() {
+    const BOLD: u16 = abstracttui::testing::Attrs::BOLD;
+    let paint_at = |h: &Harness, needle: &str| {
+        let s = h.term.screen().to_text();
+        let (row, col) = s
+            .lines()
+            .enumerate()
+            .find_map(|(i, l)| l.find(needle).map(|c| (i, l[..c].chars().count())))
+            .unwrap_or_else(|| panic!("{needle:?} not on screen:\n{s}"));
+        // The label's first letter (after "[x] ").
+        h.term
+            .screen()
+            .cell(col as i32 + 4, row as i32)
+            .map(|c| c.paint)
+            .expect("cell")
+    };
+    let mut h = harness_sized(Size::new(140, 60));
+    open_my_email(&mut h, &my_email_fixture());
+    let on = paint_at(&h, "[x] Job failed");
+    let off = paint_at(&h, "[ ] Approval needed");
+    assert!(on.attrs.contains(BOLD), "ON is bold: {on:?}");
+    assert!(!off.attrs.contains(BOLD), "OFF is plain: {off:?}");
+    assert_ne!(on.fg, off.fg, "ON has the accent ink");
+    let mut h = harness_sized(Size::new(140, 60));
+    open_my_email(&mut h, &my_email_not_connected());
+    let na = paint_at(&h, "[-] Job failed");
+    assert!(!na.attrs.contains(BOLD), "unavailable is not bold");
+    assert_ne!(na.fg, off.fg, "unavailable is faint, not the plain ink");
+}
