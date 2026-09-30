@@ -139,7 +139,7 @@ configuration surfaces exist in a terminal through the `abstractgateway-console`
 Rust app (`cargo install abstractgateway-console`). See
 [docs/console.md](docs/console.md).
 
-Each user can connect their own mailbox (Users → **My email** in the web
+Each user can connect their own mailbox (Users & Entities → **My email address and mailbox** in the web
 console, `@` in the terminal console, or `/api/gateway/me/email`): automations
 can run when mail arrives, results and approvals can be emailed to the user,
 and agents can use email tools when an administrator makes them available. See

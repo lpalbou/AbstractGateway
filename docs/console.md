@@ -33,7 +33,7 @@ The sidebar lists these tabs:
 
 | Tab | What it covers |
 |---|---|
-| **Users & Entities** | user records, token rotation, retained runtime reservations, **My email** (your own mailbox, notifications — [email.md](./email.md)), the per-user **Mailbox** column and **Email on/off** switch (admins), and the summoned-entity roster ([entities.md](./entities.md)) |
+| **Users & Entities** | user records, token rotation, retained runtime reservations, **My email address and mailbox** (your email address, your mailbox, the **Job failed** / **Approval needed** notification switches and **Agent email tools** — [email.md](./email.md)); for admins the **Mailboxes for users** switch (Advanced: **Agent email tools for users**, **Sign-in by email**), the users table with an **Active** switch per user, and the summoned-entity roster ([entities.md](./entities.md)) |
 | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches |
 | **Workflows** | the default agent workflow for each agent interface (what "Gateway default" runs in the apps), the **Stream replies by default** switch, every registered workflow with versions and entrypoints (*Make agent default* on an entrypoint), import, export, delete, and versions that are not served (with the reason) |
 | **Providers** | provider connections (OpenAI, Anthropic, OpenRouter, Portkey, LM Studio, Ollama, custom OpenAI-compatible endpoints) with write-only keys |
@@ -46,10 +46,25 @@ The sidebar lists these tabs:
 | **Network** | who can reach the gateway (localhost only, local network, internet), its addresses, and *Advanced: reverse proxy* ([configuration.md](./configuration.md#network-exposure-localhost--local-network--internet)) |
 
 **Start at login** (the Gateway card, and the setup guide's last step) is a
-real switch for admins: it names the mechanism (a LaunchAgent, a systemd user
+switch for admins: it names the mechanism (a LaunchAgent, a systemd user
 unit, a desktop autostart entry, a Windows Run entry), asks before each change
 and shows the state read back from the gateway. Where nothing on the machine
 could start the gateway at login, it says why instead of offering the switch.
+
+**Workflows paused** (the Gateway card) is a switch for admins: on, no new
+workflow step starts and work already inside a call finishes; the console and
+the apps keep answering. A banner on every tab says so while it is on.
+
+Every persistent on/off setting in the console is a switch labelled by the
+feature (highlighted when on). It applies at once, shows the new state, and an
+unavailable switch stays visible with its reason ("Connect a mailbox first.").
+One-shot actions (Rotate, Delete, Test, Disconnect) stay buttons.
+
+The **sign-in page** asks for the gateway user and the token, with one status
+("Not signed in", "Signed in as admin", "Token refused") and errors under the
+field that failed. When sign-in by email is on, **Forgot your token? Email me a
+sign-in code** requests a code and opens the code step in place
+([email.md](./email.md#sign-in-by-email)).
 
 In **Multimodal**, a configured route whose engine is not installed reads
 "engine missing" with the install command, and the voice pickers say why a

@@ -54,6 +54,41 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
   give their reason ("Connect a mailbox first.", "Your admin turned mailboxes off.", "Your admin
   turned agent email tools off.").
 
+### Web console
+- The sign-in card has one column, one status ("Not signed in", "Signed in as admin", "Token
+  refused") and errors under the field that failed ("This token was refused.", "Can't reach the
+  gateway at …"). Sign-in by email is one link, **Forgot your token? Email me a sign-in code**: it
+  shows "Sending…", then the code step in its place with what happened, a code field (Use code is
+  available at 8 digits), **Send a new code** after 30 seconds and **Back to token**.
+- Users & Entities: the administrator's **Mailboxes for users** switch sits above the users table,
+  with **Agent email tools for users** and **Sign-in by email** under Advanced. The table shows
+  User, Role, Email address, Mailbox, Runtime, an **Active** switch and Workspace / Rotate / Delete.
+  Deactivating and deleting ask in a row under the user. Your own row cannot be deactivated. The
+  per-user Email on/off and Agent tools buttons are gone.
+- Create user asks for the **Email address** next to the user ID and role; Advanced keeps Runtime
+  and Tenant, each with a sentence saying what it is for.
+- **My email address and mailbox** is a page of cards: Email address (the only Save), Mailbox (tabs
+  Google / Microsoft / Other; Other asks for the address and password, finds the servers and shows
+  them on one line, and opens Server settings itself only when they are not found; one **Connect**;
+  once connected, one status line with Test and Disconnect), Notifications (**Job failed**,
+  **Approval needed**), **Agent email tools**, and Advanced (recipient rules, send limits, folder,
+  **Use this mailbox**, Send a test notification). Switches and limits apply on change.
+- **Workflows paused** and **Start at login** are switches instead of Pause/Resume and Turn on/Turn
+  off buttons.
+- The Runtimes page says what a runtime is: a user's own data plane (runs, flows, sessions and
+  memory).
+- Copy buttons work over plain http (a LAN or Tailscale address), and say "Copy failed — select and
+  copy" when the browser refuses. Ids for commands and the docs assistant are random UUIDs over
+  plain http too.
+- On phones the users table shows one block per user and the account page's cards are flat
+  sections; lists no longer scroll inside the page.
+
+### Fixed
+- Checkbox and form labels in the console were 18-20 px bold: the console carried its own copy of
+  the sign-in card's styles, and its checkbox rule was reused outside the card. The console now
+  uses the kit's sign-in card styles; labels are 14 px, helper text 13 px.
+- The Sandbox's system prompt field no longer shows "optional" as a placeholder.
+
 ## [0.9.0] - 2026-09-30
 
 The web console works on phones, tablets and any window size. It follows the AbstractFramework
