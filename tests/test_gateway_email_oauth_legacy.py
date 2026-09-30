@@ -217,7 +217,9 @@ def test_agent_email_tools_are_per_user_and_off_by_default(gateway, imap, smtp) 
 
     def email_rows(headers):
         items = c.get("/api/gateway/discovery/tools", headers=headers).json()["items"]
-        return {t["name"]: t["enabled"] for t in items if t["name"] in ("send_email", "read_email", "search_emails")}
+        rows = [(t["name"], t["enabled"]) for t in items if t["name"] in ("send_email", "read_email", "search_emails")]
+        assert len(rows) == len({n for n, _ in rows}), f"an email tool is listed twice: {rows}"
+        return dict(rows)
 
     assert c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["agent_tools"]["enabled"] is False
     r = c.put("/api/gateway/me/email/agent-tools", headers=gateway["alice"], json={"enabled": True})
