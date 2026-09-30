@@ -24,9 +24,10 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
   (`""` clears it).
 - `PUT /api/gateway/me/email/notifications {"job_failed"?, "approval_needed"?}` sets the two
   notification switches.
-- `GET /api/gateway/me/email` also returns `registered_address`, `email_available`,
-  `notifications`, `notifications_unavailable_reason`, `oauth_providers` and, in `agent_tools`,
-  `on`, `unavailable_reason` and `admin_available`.
+- `GET /api/gateway/me/email` also returns `email_address` (your email address as stored),
+  `email_available`, `notifications`, `notifications_unavailable_reason`, `oauth_providers` and,
+  in `agent_tools`, `on`, `unavailable_reason` and `admin_available`; `registered_address` is
+  filled before a mailbox is connected too.
 - `GET /api/gateway/admin/email/capabilities` returns each capability's `advanced` flag.
 
 ### Changed

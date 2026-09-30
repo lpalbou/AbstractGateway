@@ -62,11 +62,12 @@ def test_disabled_toolsets_are_visible_rows_with_real_specs() -> None:
             assert str(row["toolset"]).startswith("comms")
             if "email" in name:
                 # Per user (framework backlog 0992), never an environment gate: the runtime's
-                # typed off-reason. The static-token operator has no account and agent tools
-                # are not made available by default -> "not available, ask your administrator".
+                # typed off-reason. Agent email tools are available by default
+                # (capabilities.json v3), and the static-token operator has no mailbox ->
+                # "not connected".
                 from abstractruntime.integrations.abstractcore.default_tools import EMAIL_OFF_REASONS
 
-                assert row["enable_gate"] == EMAIL_OFF_REASONS["not_available"]
+                assert row["enable_gate"] == EMAIL_OFF_REASONS["not_connected"]
             else:
                 assert "ABSTRACT_ENABLE" in row["enable_gate"]
             # Real spec, never fabricated: the description comes from the callable.

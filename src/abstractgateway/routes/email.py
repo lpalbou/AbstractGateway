@@ -255,8 +255,9 @@ def _server_dict(body: Optional[ServerBody]) -> Optional[Dict[str, Any]]:
 @router.get(
     "/me/email",
     summary="My mailbox and email address: settings, status and switches",
-    description="Never a secret. Besides the mailbox settings: `registered_address` (my email address, from the "
-    "users registry), `email_available` (my admin allows mailboxes), `notifications` {job_failed, approval_needed} "
+    description="Never a secret. Besides the mailbox settings: `email_address` (my email address as stored on my "
+    "user record; \"\" when none), `registered_address` (\"self\" for runs: that address, else the connected "
+    "mailbox's own), `email_available` (my admin allows mailboxes), `notifications` {job_failed, approval_needed} "
     "(+ `notifications_unavailable_reason`), `agent_tools` {on, available, unavailable_reason, active}, "
     "`oauth_providers` [{id, available, reason}].",
 )

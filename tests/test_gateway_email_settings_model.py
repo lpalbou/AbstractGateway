@@ -146,7 +146,7 @@ def test_admin_one_switch_applies_to_every_user(gateway) -> None:
 def test_me_email_carries_the_account_page_fields(gateway, imap, smtp) -> None:
     c = gateway["client"]
     me = c.get("/api/gateway/me/email", headers=gateway["alice"]).json()
-    assert me["registered_address"] == ALICE  # the email address, before any mailbox
+    assert me["email_address"] == ALICE and me["registered_address"] == ALICE  # the email address, before any mailbox
     assert me["email_available"] is True
     assert me["notifications"] == {"job_failed": True, "approval_needed": True}
     assert me["agent_tools"]["on"] is False and me["agent_tools"]["available"] is False
@@ -260,7 +260,7 @@ def test_user_sets_their_own_email_address(gateway) -> None:
     c = gateway["client"]
     r = c.put("/api/gateway/me/email/address", headers=gateway["alice"], json={"address": "Alice.New@Example.test"})
     assert r.status_code == 200, r.text
-    assert r.json()["registered_address"] == "alice.new@example.test"
+    assert r.json()["email_address"] == r.json()["registered_address"] == "alice.new@example.test"
     assert GatewayUserRegistry().get_user("alice").email == "alice.new@example.test"
     assert GatewayUserRegistry().get_user("bob").email == BOB  # only their own record
     assert any(e["event"] == "email.address_changed" and e["user_id"] == "alice" for e in _audit(gateway))
@@ -271,7 +271,7 @@ def test_user_sets_their_own_email_address(gateway) -> None:
     assert GatewayUserRegistry().get_user("alice").email == "alice.new@example.test"
 
     r = c.put("/api/gateway/me/email/address", headers=gateway["alice"], json={"address": ""})
-    assert r.status_code == 200 and r.json()["registered_address"] == ""
+    assert r.status_code == 200 and r.json()["email_address"] == "" and r.json()["registered_address"] == ""
     assert GatewayUserRegistry().get_user("alice").email == ""
 
 
@@ -280,7 +280,7 @@ def test_account_less_operator_address_uses_the_gateway_setting(gateway) -> None
 
     r = gateway["client"].put("/api/gateway/me/email/address", headers=ADMIN, json={"address": "op@example.test"})
     assert r.status_code == 200, r.text
-    assert r.json()["registered_address"] == "op@example.test"
+    assert r.json()["email_address"] == "op@example.test"
     assert resolve_operator_email(gateway["data_dir"])["value"] == "op@example.test"
 
 
@@ -290,7 +290,7 @@ def test_admin_create_user_body_keeps_email_as_the_email_address(gateway) -> Non
     assert r.status_code == 200, r.text
     token = r.json()["token"]
     me = c.get("/api/gateway/me/email", headers={"Authorization": f"Bearer {token}"}).json()
-    assert me["registered_address"] == "dora@example.test" and me["configured"] is False
+    assert me["email_address"] == "dora@example.test" and me["configured"] is False
 
 
 # ---------------------------------------------------------------------------------------

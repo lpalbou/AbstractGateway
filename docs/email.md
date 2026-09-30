@@ -103,7 +103,8 @@ Besides the mailbox settings and status (never a secret):
 
 | Field | Meaning |
 |---|---|
-| `registered_address` | your email address (from your user record) |
+| `email_address` | your email address as stored on your user record (`""` when none) |
+| `registered_address` | "self" for your runs: your email address, else your connected mailbox's own address |
 | `email_available` | your administrator allows mailboxes ("Mailboxes for users") |
 | `notifications` | `{"job_failed": bool, "approval_needed": bool}`; `notifications_unavailable_reason` says why they cannot send yet ("Connect a mailbox first.") |
 | `agent_tools` | `{"on", "available", "unavailable_reason", "active"}`: your switch, whether it can be switched on now, and why not ("Connect a mailbox first.", "Your admin turned mailboxes off.", "Your admin turned agent email tools off.") |
