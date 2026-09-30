@@ -1799,8 +1799,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      .section-head { flex-wrap: wrap; }
 	      .section-head > div:first-child { flex: 1 1 100%; min-width: 0; }
 	    }
-	    @media (max-height: 500px) {
-	      .sandbox-chat { min-height: calc(var(--vh-full, 100vh) - 24px); max-height: none; }
+	    /* Narrow or touch: the composer (system prompt, reasoning, output
+	       modes) is taller than the fixed-height card left room for, and the
+	       card's overflow:hidden cut it off unreachably. The card grows with
+	       its content; the transcript alone scrolls. */
+	    @media (max-width: 1023.98px), (pointer: coarse) {
+	      .sandbox-chat { min-height: 0; max-height: none; overflow: visible; grid-template-rows: auto minmax(220px, auto) auto; }
+	      .sandbox-transcript { max-height: calc(var(--vh-full, 100vh) * .55); }
 	    }
 	    @media (max-width: 767.98px) {
 	      body:not(.signed-in) .console-shell { align-content: start; padding-block: 18px; }
