@@ -14,7 +14,7 @@ this file is stale against the kit checkout.
 ISLANDS_PROVENANCE = {
     "kit_version": "0.3.2",
     "api_version": "1",
-    "kit_sources_sha256": "5c9535365b891a6d7d79cca09f0bd550b7f97effd0212d8cbf76143eafade1be",
+    "kit_sources_sha256": "b8bac28d54acbe4b010936a04f7a97ef82cb48b669a219a387cbf8c4cd6851fb",
     "bundle_sha256": "5867733437c81615ec3cb978def6a951d8b871761cb30088967d006e1efec254",
     "css_sha256": "9a3925189431676d9b99fb18003a0f7290fb4e25f13e6bf6e978fde1b8a18f09"
 }
