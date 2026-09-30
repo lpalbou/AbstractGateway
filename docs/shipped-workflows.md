@@ -16,17 +16,31 @@ curl -sS -H "Authorization: Bearer $TOKEN" \
 
 `flow_id` values below are what you pass to the API — an entrypoint's display
 name is not resolvable. A `*` marks the bundle's default entrypoint, used when
-you omit `flow_id`.
+you omit `flow_id`. The name and the one-line description are what the
+Workflows page and the console TUI show for each bundle.
 
-| Bundle | Version | `flow_id` (interfaces) | What it does |
-| --- | --- | --- | --- |
-| `basic-agent` | 0.0.4 | `81795ea9`* (`abstractcode.agent.v1`) | The framework default chat agent: one Agent node with tools, memory, and status updates. Serves entity phases and chat hosts. |
-| `coding-agent` | 0.2.8 | `coder` (`abstractcode.agent.v1`), `coding-agent`* (`abstractcode.coding.v1`) | Verify-gated coding: a builder agent writes code, an independent verifier runs build/execute/match gates each round, and failures feed back as reprompts until gates pass. `coder` is the chat entrypoint; `coding-agent` is the structured pipeline. |
-| `deep-research` | 0.1.8 | `deep-research`* (`abstractcode.agent.v1`, `abstractresearch.deep.v1`) | Production research with adversarial review, a verified source ledger, and Markdown/PDF/DOCX export. See [deep-research.md](./deep-research.md). |
-| `co-scientist` | 0.2.1 | `co-scientist`* (`abstractresearch.coscientist.v1`) | Multi-agent hypothesis engine: literature grounding through the deep-research investigation flows, then cycles of generation, reflection, Elo-ranked pairwise debate, and evolution into a final reviewed research overview. |
-| `abstractassistant-orchestrator` | 0.0.0 | `d5d4e5a1`* (`abstractassistant.agent.v1`) | Orchestrator for the compact AbstractAssistant tray surface. |
-| `docs-qa` | 0.1.1 | `docsqa001`* | Documentation Q&A grounded on the asking app's `llms.txt` corpus; history comes from the run's session (`use_session_history`); also auto-published into the tenant workflow catalog at boot. |
-| `react-agent` / `codeact-agent` / `memact-agent` | 0.1.0 | `react`* / `codeact`* / `memact`* (`abstractcode.agent.v1`) | Native ReAct / CodeAct / MemAct agent loops (abstractagent). |
+| Bundle | Version | Name | `flow_id` (interfaces) | What it does |
+| --- | --- | --- | --- | --- |
+| `basic-agent` | 0.0.5 | Basic agent | `81795ea9`* (`abstractcode.agent.v1`) | Chat agent: answers a prompt in one agent loop that can use tools and memory, and returns the reply. The default agent for chat hosts and entities. |
+| `coding-agent` | 0.2.8 | Coding agent | `coding-agent`* (`abstractcode.coding.v1`) | Takes a build request and a workspace, writes the code, and runs build and run checks each round until they pass; returns a report. |
+| | | Coding agent (chat) | `coder` (`abstractcode.agent.v1`) | Chat version of the coding agent: builds what the prompt asks in the session workspace, checks it each round, and replies with a report. |
+| `deep-research` | 0.1.8 | Deep research | `deep-research`* (`abstractcode.agent.v1`, `abstractresearch.deep.v1`) | Takes a research question, searches the web, has three critics review the draft, and writes a cited report (Markdown, PDF, DOCX). See [deep-research.md](./deep-research.md). |
+| `co-scientist` | 0.2.1 | Co-scientist | `co-scientist`* (`abstractresearch.coscientist.v1`) | Takes a research goal, grounds it in web sources, then generates, debates and ranks hypotheses over cycles; returns a research overview. |
+| `abstractassistant-orchestrator` | 0.0.0 | AbstractAssistant Orchestrator | `d5d4e5a1`* (`abstractassistant.agent.v1`) | The menu-bar Assistant's workflow: sends each request to a tools agent or to image, video or music generation, and returns the reply. |
+| `docs-qa` | 0.1.2 | Docs Q&A | `docsqa001`* | Answers a question about an app from that app's documentation (its llms.txt), citing it, and says so when the docs do not cover it. History comes from the run's session; also auto-published into the tenant workflow catalog at boot. 0.1.2 changes only the name and description; 0.1.1 and 0.1.0 stay installed for what pins them. |
+| `react-agent` | 0.1.0 | ReAct agent | `react`* (`abstractcode.agent.v1`) | Chat agent (ReAct): reasons step by step and calls tools until it can answer the prompt, then returns the reply. |
+| `codeact-agent` | 0.1.0 | CodeAct agent | `codeact`* (`abstractcode.agent.v1`) | Chat agent (CodeAct): works on the prompt mainly by writing and running Python code, then returns the reply. |
+| `memact-agent` | 0.1.0 | MemAct agent | `memact`* (`abstractcode.agent.v1`) | Chat agent (MemAct): keeps a long-term memory that it reads and updates on each turn, can call tools, and returns the reply. |
+
+A source checkout (`flows/bundles/` in the repository) also carries building
+blocks that the wheel does not ship: `map-reduce` (Map-reduce),
+`structured-extract` (Structured extraction), `adversarial-review` (Adversarial
+review) and six deliberation patterns (`meta-baseline`, `meta-consensus`,
+`meta-debate`, `meta-deliberate`, `meta-perspectives`, `meta-reflect`).
+
+The names and descriptions come from one table in the AbstractFlow repository
+(`scripts/workflow_labels.py`); `scripts/relabel_shipped_bundles.py check`
+verifies that the build scripts and the latest shipped bundles carry it.
 
 Interfaces are how clients pick workflows without knowing bundle internals:
 anything declaring `abstractcode.agent.v1` can serve a plain chat prompt.
