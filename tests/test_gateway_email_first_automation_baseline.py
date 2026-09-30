@@ -51,8 +51,10 @@ def _person_mail(subject: str) -> bytes:
 
 def test_creating_the_first_email_automation_takes_the_baseline_at_once(live: TestClient, imap, smtp) -> None:
     from abstractgateway.mail.watcher import read_watcher_state
-    from abstractgateway.service import get_gateway_service
+    from abstractgateway.service import get_gateway_service, wait_for_gateway_boot
 
+    # The app's boot thread starts the email worker: wait for it, so the restart below is the last one.
+    assert wait_for_gateway_boot(60) == "ready"
     svc = get_gateway_service()
     worker = svc.email_worker
     r = live.put("/api/gateway/me/email", headers=HEADERS, json=connect_body(ADMIN_ADDR, imap, smtp))
