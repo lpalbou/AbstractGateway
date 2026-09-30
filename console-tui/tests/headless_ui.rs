@@ -523,11 +523,13 @@ fn boots_to_connection_wizard_step() {
     );
     // PageHost bar: numbered titles, engine-drawn active underline.
     assert!(screen.contains("1 Connection"), "page bar:\n{screen}");
-    // 6 Workflows sits between Runtimes and Review; the bar's tail moved.
-    assert!(screen.contains("6 Workflows"), "page bar:\n{screen}");
+    // DESIGN-v2 §1: the shown order is the web sidebar's groups —
+    // Accounts second, then the WORK screens.
+    assert!(screen.contains("2 Accounts"), "page bar:\n{screen}");
+    assert!(screen.contains("3 Workflows"), "page bar:\n{screen}");
     assert!(
-        screen.contains("7 Review & Test"),
-        "page bar tail:\n{screen}"
+        screen.contains("ACCOUNTS 2 · WORK 3-5 · MODELS 6-9 · SYSTEM 0 N R · S Setup"),
+        "group line:\n{screen}"
     );
     assert!(screen.contains("Gateway URL"), "url field:\n{screen}");
     assert!(screen.contains("Admin token"), "token field:\n{screen}");
@@ -549,34 +551,50 @@ fn pagehost_browse_navigation_digits_and_chords() {
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.store.providers.set(Loadable::Ready(providers_fixture()));
     h.turns(2);
-    // Browse digits ride PageHost's number_jump: 4 jumps straight to
-    // Users & Entities through the id bridge…
-    h.type_text("4");
+    // Browse digits follow the SHOWN order (DESIGN-v2 §1): 2 jumps
+    // straight to Accounts through the id bridge…
+    h.type_text("2");
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 3, "digit 4 → screen index 3");
-    // …and Ctrl+N advances by EXACTLY one (the host's capture chord
-    // consumes the key before the root wizard_next fallback — a double
-    // advance here would mean both fired).
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_USERS,
+        "digit 2 → Accounts"
+    );
+    // …and Ctrl+N advances by EXACTLY one in the shown order (the host's
+    // capture chord consumes the key before the root wizard_next
+    // fallback — a double advance here would mean both fired).
     h.key(b"\x0e");
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 4, "Ctrl+N advances one step");
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_WORKFLOWS,
+        "Ctrl+N advances one step"
+    );
     // Ctrl+P walks back one.
     h.key(b"\x10");
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 3, "Ctrl+P retreats one step");
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_USERS,
+        "Ctrl+P retreats one step"
+    );
     // Wizard mode disarms the free-navigation surface: digits refuse
     // with the reason instead of jumping.
     h.ui.wizard.set(true);
     h.turns(2);
     h.type_text("2");
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 3, "wizard digit does not jump");
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_USERS,
+        "wizard digit does not jump"
+    );
     assert!(
         h.store
             .notice
             .get_untracked()
             .unwrap_or_default()
-            .contains("screen jumps (1-9, 0, A, N) work in browse mode"),
+            .contains("screen jumps (1-9, 0, N, R, S) work in browse mode"),
         "wizard digit refusal carries its reason"
     );
 }
@@ -3233,12 +3251,12 @@ fn browse_mode_number_keys_jump_screens() {
     h.goto_screen(1);
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.turns(2);
+    h.type_text("2");
+    h.turns(2);
+    assert_eq!(h.ui.screen.get_untracked(), 3, "2 → accounts screen");
     h.type_text("4");
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 3, "4 → users screen");
-    h.type_text("5");
-    h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 4, "5 → runtimes screen");
+    assert_eq!(h.ui.screen.get_untracked(), 4, "4 → runtimes screen");
     // In wizard mode the number keys must NOT jump (gating).
     h.ui.wizard.set(true);
     h.ui.screen.set(2);
@@ -3776,9 +3794,11 @@ fn title_bar_and_separator_survive_content_pressure() {
                 lines[0].contains("AbstractGateway Console"),
                 "title bar at row 0 (wizard={wizard} screen={screen}):\n{scr}"
             );
+            // Row 1 separates the title from the tabs: the screen
+            // list's group line (DESIGN-v2 §1), never a component.
             assert!(
-                lines[1].trim().is_empty(),
-                "separator line under the title (wizard={wizard} screen={screen}):\n{scr}"
+                lines[1].contains("ACCOUNTS 2 · WORK 3-5"),
+                "group line under the title (wizard={wizard} screen={screen}):\n{scr}"
             );
             // With 8 tabs the bar OVERFLOWS at 110 cols and windows
             // (sticky around the active tab) — so the chrome check is
@@ -7280,9 +7300,13 @@ fn digit_8_jumps_to_the_models_tab() {
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.store.providers.set(Loadable::Ready(providers_fixture()));
     h.turns(2);
-    h.type_text("8");
+    h.type_text("0");
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 7, "digit 8 → screen index 7");
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        7,
+        "digit 0 → Resources (screen index 7)"
+    );
     // Entering the tab arms the generation-gated poll chain: exactly
     // one first poll, under the CURRENT generation.
     let gen_now = h.store.host_poll_gen.get_untracked();
@@ -7300,9 +7324,9 @@ fn digit_8_jumps_to_the_models_tab() {
     }
     // Leaving the tab bumps the generation — the chain's next result
     // (and its reschedule) dies on the worker's UI-thread gate.
-    h.type_text("4");
+    h.type_text("2");
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 3, "digit 4 still → users");
+    assert_eq!(h.ui.screen.get_untracked(), 3, "digit 2 → accounts");
     assert!(
         h.store.host_poll_gen.get_untracked() > gen_now,
         "tab exit bumps the poll generation"
@@ -7615,14 +7639,14 @@ impl Harness {
     }
 
     fn open_models(&mut self) -> String {
-        self.key(b"9");
+        self.key(b"7");
         self.settle_until("the catalog rows", |s| {
             s.contains("Qwen3 8B") && s.contains("Apple M5 Max")
         })
     }
 
     fn open_engines(&mut self) -> String {
-        self.key(b"0");
+        self.key(b"8");
         self.settle_until("the engines table", |s| {
             s.contains("Ollama") && s.contains("llama.cpp")
         })
@@ -7656,11 +7680,11 @@ impl Harness {
 }
 
 #[test]
-fn models_tab_9_renders_the_shared_catalog_once() {
+fn models_tab_7_renders_the_shared_catalog_once() {
     let mut h = harness_sized(Size::new(150, 40));
     h.browse_connected();
     let s = h.open_models();
-    assert!(s.contains("9 Models"), "tab 9 is Models:\n{s}");
+    assert!(s.contains("7 Models"), "tab 7 is Models:\n{s}");
     assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_CATALOG);
     // Contract G vocabulary, rendered by the shared screen.
     for word in ["fits", "too large", "not downloaded", "installed"] {
@@ -7682,7 +7706,7 @@ fn models_tab_9_renders_the_shared_catalog_once() {
     // Leave and come back: no re-read. `r` re-reads.
     h.key(b"6");
     h.turns(3);
-    h.key(b"9");
+    h.key(b"7");
     h.turns(3);
     assert_eq!(h.mock.count("catalog"), 1);
     h.key(b"r");
@@ -7700,12 +7724,12 @@ fn models_tab_9_renders_the_shared_catalog_once() {
 }
 
 #[test]
-fn zero_jumps_to_engines_in_browse_and_is_refused_in_the_wizard() {
+fn eight_jumps_to_engines_in_browse_and_is_refused_in_the_wizard() {
     let mut h = harness_sized(Size::new(150, 40));
     h.browse_connected();
     let s = h.open_engines();
     assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_ENGINES);
-    assert!(s.contains("0 Engines"), "{s}");
+    assert!(s.contains("8 Engines"), "{s}");
     assert!(
         s.contains("gateway host studio"),
         "the engines screen names the gateway host:\n{s}"
@@ -7716,11 +7740,11 @@ fn zero_jumps_to_engines_in_browse_and_is_refused_in_the_wizard() {
     h.ui.wizard.set(true);
     h.ui.screen.set(1);
     h.turns(2);
-    h.key(b"0");
+    h.key(b"8");
     let s = h.turns(2);
     assert_eq!(h.ui.screen.get_untracked(), 1, "wizard does not jump");
     assert!(
-        s.contains("screen jumps (1-9, 0, A, N) work in browse mode"),
+        s.contains("screen jumps (1-9, 0, N, R, S) work in browse mode"),
         "{s}"
     );
 }
@@ -9596,14 +9620,14 @@ fn the_current_screen_key_keeps_the_screen_keys_live() {
     let mut h = harness_sized(Size::new(80, 24));
     h.connect_as_admin();
     h.goto_screen(1);
-    h.key(b"8");
+    h.key(b"0");
     h.turns(2);
     h.store
         .host_state
         .set(Loadable::Ready(host_state_fixture()));
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 7, "8 jumps to Resources");
-    h.key(b"8");
+    assert_eq!(h.ui.screen.get_untracked(), 7, "0 jumps to Resources");
+    h.key(b"0");
     h.turns(2);
     h.type_text("w");
     let s = h.turns(3);
@@ -9925,26 +9949,34 @@ const LEFT: &[u8] = b"\x1b[D";
 fn arrows_switch_the_global_tab_and_wrap() {
     let mut h = harness();
     h.connect_as_admin();
-    h.goto_screen(ui::SCREEN_PROVIDERS);
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.store.providers.set(Loadable::Ready(providers_fixture()));
+    // The walk follows the SHOWN order (DESIGN-v2 §1): Connection,
+    // Accounts, Workflows, … Setup.
+    h.goto_screen(ui::SCREEN_USERS);
     h.turns(2);
     h.key(RIGHT);
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 2, "Right → the next screen");
-    h.key(LEFT);
-    h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 1, "Left → the previous screen");
-    h.key(LEFT);
-    h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 0, "Left → Connection");
-    // Connected: the URL field does not hold the caret, so the arrow is
-    // the root's — Left on the first screen wraps to the last.
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_WORKFLOWS,
+        "Right → the next screen"
+    );
     h.key(LEFT);
     h.turns(2);
     assert_eq!(
         h.ui.screen.get_untracked(),
-        ui::SCREENS.len() - 1,
+        ui::SCREEN_USERS,
+        "Left → the previous screen"
+    );
+    h.key(LEFT);
+    h.turns(2);
+    assert_eq!(h.ui.screen.get_untracked(), 0, "Left → Connection");
+    // Connected: the URL field does not hold the caret, so the arrow is
+    // the root's — Left on the first screen wraps to the last (Setup).
+    h.key(LEFT);
+    h.turns(2);
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_WELCOME,
         "Left on the first screen wraps to the last"
     );
     h.key(RIGHT);
@@ -9964,24 +9996,25 @@ fn right_walks_every_screen_in_order() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(0);
-    for step in 1..=ui::SCREENS.len() {
+    let order = ui::NAV_ORDER;
+    for step in 1..=order.len() {
         h.key(RIGHT);
         h.turns(3);
         assert_eq!(
             h.ui.screen.get_untracked(),
-            step % ui::SCREENS.len(),
+            order[step % order.len()],
             "Right from {} must reach the next screen",
-            ui::SCREENS[step - 1]
+            ui::SCREENS[order[step - 1]]
         );
     }
-    for step in (0..ui::SCREENS.len()).rev() {
+    for step in (0..order.len()).rev() {
         h.key(LEFT);
         h.turns(3);
         assert_eq!(
             h.ui.screen.get_untracked(),
-            step,
+            order[step],
             "Left walks back through {}",
-            ui::SCREENS[step]
+            ui::SCREENS[order[step]]
         );
     }
 }
@@ -10019,7 +10052,7 @@ fn arrows_move_the_caret_in_a_focused_text_field() {
     h.turns(2);
     assert_eq!(
         h.ui.screen.get_untracked(),
-        1,
+        ui::SCREEN_USERS,
         "with no field focused, Right switches the tab"
     );
 }
@@ -10081,7 +10114,7 @@ fn arrows_stay_with_a_focused_tabs_bar() {
     h.turns(2);
     assert_eq!(
         h.ui.screen.get_untracked(),
-        ui::SCREEN_WORKFLOWS,
+        ui::SCREEN_APPS,
         "off the tabs bar, Right switches the global tab"
     );
 }
@@ -10130,7 +10163,7 @@ fn arrows_do_not_switch_the_screen_behind_a_modal() {
     h.press_escape();
     h.key(RIGHT);
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_ROUTES);
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_CATALOG);
 }
 
 /// The footer teaches the arrows beside Ctrl+P/N in browse mode.

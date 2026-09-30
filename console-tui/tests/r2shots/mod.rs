@@ -198,7 +198,6 @@ impl Harness {
     }
 }
 
-
 impl Harness {
     /// Commands the UI sent to the worker since the last drain.
     pub fn sent(&mut self) -> Vec<Cmd> {

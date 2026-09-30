@@ -288,7 +288,7 @@ fn app_acts(cmds: &[Cmd]) -> Vec<(String, AppVerb, Option<String>, bool)> {
 fn every_web_card_state_renders() {
     let mut h = harness();
     let s = h.on_apps(true);
-    assert!(s.contains("A Apps"), "tab A:\n{s}");
+    assert!(s.contains("5 Apps"), "tab 5:\n{s}");
     for want in [
         "Observer",
         "Not installed",
@@ -364,13 +364,13 @@ fn entering_the_screen_loads_the_overview_once() {
 }
 
 #[test]
-fn a_jumps_to_apps_in_browse_mode() {
+fn five_jumps_to_apps_in_browse_mode() {
     let mut h = harness();
     h.connect(true);
     h.ui.wizard.set(false);
     h.ui.screen.set(ui::SCREEN_WORKFLOWS);
     h.turns(2);
-    h.key(b"A");
+    h.key(b"5");
     assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_APPS);
 }
 

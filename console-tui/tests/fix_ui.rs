@@ -274,12 +274,12 @@ fn m1_after_finish_screen_keys_jump_instead_of_typing() {
     let prompt = h.ui.sb_prompt.get_untracked();
     finish_in_the_guide(&mut h);
     assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_REVIEW);
-    h.type_text("3");
+    h.type_text("9");
     h.turns(3);
     assert_eq!(
         h.ui.screen.get_untracked(),
         ui::SCREEN_ROUTES,
-        "3 jumps to Routes"
+        "9 jumps to Multimodal"
     );
     assert_eq!(
         h.ui.sb_prompt.get_untracked(),
@@ -343,7 +343,7 @@ fn m2_url_field_holds_the_caret_only_until_connected() {
     );
     h.connect();
     h.turns(2);
-    h.type_text("5");
+    h.type_text("4");
     h.turns(3);
     assert_eq!(
         h.ui.screen.get_untracked(),
@@ -381,9 +381,9 @@ fn m2_esc_releases_the_url_field() {
         Some("already on the first screen"),
         "the second Esc is the screen's Esc"
     );
-    h.type_text("2");
+    h.type_text("6");
     h.turns(3);
-    assert_eq!(h.ui.screen.get_untracked(), 1, "2 jumps to Providers");
+    assert_eq!(h.ui.screen.get_untracked(), 1, "6 jumps to Providers");
     assert_eq!(
         h.ui.conn_url.get_untracked(),
         "ab",
@@ -407,7 +407,7 @@ fn m2_esc_releases_the_sandbox_prompt() {
         "the click put the caret there"
     );
     h.press_escape();
-    h.type_text("3");
+    h.type_text("9");
     h.turns(3);
     assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_ROUTES);
 }
