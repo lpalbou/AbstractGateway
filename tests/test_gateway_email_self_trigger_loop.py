@@ -67,9 +67,15 @@ def _person_mail(subject: str) -> bytes:
 def test_the_result_notice_never_triggers_its_automation(live: TestClient, imap, smtp) -> None:
     from abstractgateway.mail.notifications import NotificationCollector, NotificationOutbox
 
+    from abstractgateway.service import wait_for_gateway_boot
+
+    # The app's boot thread starts the email worker: wait for it, or it would start the worker again
+    # after the stop below and its own ticks would race the asserts.
+    assert wait_for_gateway_boot(60) == "ready"
     svc = _svc()
     worker = svc.email_worker
     worker.stop()  # driven step by step below (the worker's own 15 s tick would race the asserts)
+    assert worker._thread is None or not worker._thread.is_alive()
     plane = worker.plane
 
     r = live.put("/api/gateway/me/email", headers=HEADERS, json=connect_body(ADMIN_ADDR, imap, smtp))
