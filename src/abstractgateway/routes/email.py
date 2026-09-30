@@ -151,8 +151,10 @@ class ConnectBody(BaseModel):
 
     address: str = Field(..., description="The mailbox's address")
     password: str = Field(..., min_length=1, description="Password or app password; stored encrypted, never returned")
-    username: str = Field("", description="Sign-in user name; empty = the discovered form, else the address")
-    display_name: str = Field("", description="Name shown on sent mail (optional)")
+    username: str = Field("", description="Login, optional: empty = the discovered login form, else the address")
+    display_name: str = Field(
+        "", description="Name on sent mail, optional: empty = the stored name, else the address's local part"
+    )
     imap: Optional[ServerBody] = Field(None, description="Omit imap AND smtp to discover the servers from the address")
     smtp: Optional[ServerBody] = Field(None, description="Omit imap AND smtp to discover the servers from the address")
     test: bool = True

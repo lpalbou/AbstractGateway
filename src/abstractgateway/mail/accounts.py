@@ -57,6 +57,10 @@ from .core_mail import (
 )
 from .core_mail import legacy as core_legacy
 
+# The mailbox form's pre-filled server fields (DESIGN-v2 §3, §6): AbstractCore's own function,
+# imported directly so an AbstractCore without it fails at import, never silently.
+from abstractcore.comms.email.discovery import server_defaults
+
 from ..security.principal import GatewayPrincipal, local_admin_principal, safe_principal_component
 from ..users import gateway_data_dir_from_env
 from .audit import audit_email_event
@@ -931,7 +935,10 @@ def discover(address: str, **kwargs: Any) -> Dict[str, Any]:
     discovery: known providers, autoconfig, ISPDB, SRV, MX). A non-address is a typed 400."""
 
     try:
-        return discover_servers(str(address or "").strip(), **kwargs)
+        found = discover_servers(str(address or "").strip(), **kwargs)
+        # `defaults`: what the form pre-fills — the discovered servers, else the standard
+        # imap./smtp.<domain> 993/465 SSL, the login form and one sentence (`message`).
+        return {**found, "defaults": server_defaults(str(address or "").strip(), discovered=found)}
     except ValueError:
         raise EmailInvalidSettings(
             f"{str(address or '').strip()!r} is not a valid email address.", "Give the mailbox's address as name@example.com."
@@ -992,13 +999,18 @@ def connect_password(
         username = username or str(found.get("username") or "")
         discovery = {"source": found.get("source"), "provider": found.get("provider"), "tried": found.get("tried") or []}
     imap_s, smtp_s = build_servers(imap, smtp, allow_ca_file=allow_ca_file)
-    account = EmailAccount.build(address=address, username=username, imap=imap_s, smtp=smtp_s, display_name=display_name)
     store = account_store(plane)
+    # Nobody is asked for a display name (DESIGN-v2 §3): an empty one keeps the stored name,
+    # else the address's local part (AbstractCore `EmailAccountStore.connect`,
+    # `default_display_name`). The login defaults to the discovered form above, else the
+    # address (EmailAccount.build).
+    account = EmailAccount.build(address=address, username=username, imap=imap_s, smtp=smtp_s, display_name=display_name)
     reg = registered_address(plane)
     try:
         store.connect(account, EmailSecret(password), test=bool(test), registered_address=reg)
     except EmailError as err:
         raise _named_step_error(err) from None
+    set_address_if_empty(plane, account.address, actor=actor)
     try:
         from .watcher import reset_watcher_cursor
 
@@ -1014,6 +1026,42 @@ def connect_password(
     if discovery is not None:
         out["discovery"] = discovery
     return out
+
+
+def set_address_if_empty(plane: EmailPlane, address: str, *, actor: str = "") -> bool:
+    """Connecting a mailbox sets "Your email address" when it is empty (DESIGN-v2 §3): the
+    plane's user record (or, for the account-less operator, the gateway knob). Audited as
+    `email.address_changed` (source, reason `mailbox_connected`). True when it set it."""
+
+    if registered_address(plane):
+        return False
+    from ..users import GatewayUserRegistry, _normalize_email
+
+    try:
+        value = _normalize_email(address)
+    except ValueError:
+        return False
+    if not value:
+        return False
+    registry = GatewayUserRegistry()
+    record = registry.get_user(plane.user_id, tenant_id=plane.tenant_id)
+    if record is not None:
+        registry.update_user(user_id=record.user_id, tenant_id=record.tenant_id, email=value)
+        source = "account"
+    elif plane.is_default:
+        from ..runtime_config import write_runtime_config
+
+        write_runtime_config(gateway_data_dir_from_env(), {"operator_email": value}, actor=actor or f"person:{plane.user_id}")
+        source = "stored"
+    else:
+        return False
+    sync_registered_address(plane)
+    rebind_live_runtime(plane)
+    audit_email_event(
+        "email.address_changed", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=actor or plane.user_id,
+        outcome="set", source=source, reason="mailbox_connected",
+    )
+    return True
 
 
 def test_account(plane: EmailPlane, *, actor: str = "") -> Dict[str, Any]:
@@ -1455,6 +1503,7 @@ def oauth_finish(plane: EmailPlane, flow_id: str, *, wait_s: float = 0.0, actor:
     )
     store = account_store(plane)
     store.connect(entry["account"], secret, test=True, registered_address=registered_address(plane))
+    set_address_if_empty(plane, entry["account"].address, actor=actor)
     try:
         from .watcher import reset_watcher_cursor
 
