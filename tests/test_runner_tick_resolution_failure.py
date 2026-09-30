@@ -192,3 +192,45 @@ def test_one_unresolvable_parent_does_not_block_other_parents(tmp_path: Path) ->
 
     assert run_store.load(broken_parent).status == RunStatus.WAITING  # skipped, not crashed
     assert run_store.load(healthy_parent).status != RunStatus.WAITING  # resumed
+
+
+def test_a_child_the_run_facade_is_executing_in_process_is_never_ticked_or_failed(tmp_path: Path) -> None:
+    """0.7.0 end-to-end: "Workflow 'wf_abstractcore_run_facade_tts' not registered (after 40
+    consecutive attempts)" -- the runner scanned the RUNNING child a media route was executing
+    in-process (its workflow exists only inside the facade call) and failed it mid-flight."""
+    from abstractruntime.integrations.abstractcore.run_facade import _inline_execution
+
+    run_store, ledger_store, runtime, wf, host, runner = _make(tmp_path, failure_limit=3)
+    run_id = runtime.start(workflow=wf, actor_id="gateway")
+    host.broken.add(run_id)
+    with _inline_execution(run_id):
+        for _ in range(10):
+            runner._tick_run(run_id)
+        assert host.fail_counts.get(run_id, 0) == 0  # never even resolved
+        assert run_store.load(run_id).status == RunStatus.RUNNING
+        assert ledger_store.list(run_id) == []
+    # Once the facade is done with it, an orphan (e.g. after a crash) is handled as before.
+    for _ in range(3):
+        runner._tick_run(run_id)
+    assert run_store.load(run_id).status == RunStatus.FAILED
+
+
+def test_a_child_registered_while_the_runner_resolves_it_is_not_counted(tmp_path: Path) -> None:
+    """The facade registers a child right after `start`: a runner that picked it up in that
+    instant fails to resolve it, then sees it registered and does not count the failure."""
+    from abstractruntime.integrations.abstractcore.run_facade import _inline_execution
+
+    run_store, ledger_store, runtime, wf, host, runner = _make(tmp_path, failure_limit=1)
+    run_id = runtime.start(workflow=wf, actor_id="gateway")
+    ctx = _inline_execution(run_id)
+
+    def resolve_while_registering(rid: str):
+        ctx.__enter__()  # the facade's registration lands during the resolution
+        raise KeyError(f"Workflow for run '{rid}' is not registered")
+
+    host.runtime_and_workflow_for_run = resolve_while_registering  # type: ignore[method-assign]
+    try:
+        runner._tick_run(run_id)
+        assert run_store.load(run_id).status == RunStatus.RUNNING  # limit 1, yet not failed
+    finally:
+        ctx.__exit__(None, None, None)

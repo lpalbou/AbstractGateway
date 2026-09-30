@@ -2512,9 +2512,21 @@ class GatewayRunner:
             logger.exception("GatewayRunner: failed to promote unresolvable run %s to FAILED", run_id)
 
     def _tick_run(self, run_id: str) -> None:
+        from abstractruntime.integrations.abstractcore.run_facade import inline_run_active
+
+        if inline_run_active(run_id):
+            # A media/tool child the run facade is executing in this process right now (its
+            # workflow exists only inside that call): never ticked here, never counted as
+            # unresolvable (0.7.0 end-to-end: "wf_abstractcore_run_facade_tts not registered
+            # (after 40 attempts)" failed children mid-flight, successful TTS included).
+            self._clear_resolution_failure(run_id)
+            return
         try:
             runtime, wf = self._host.runtime_and_workflow_for_run(run_id)
         except Exception as e:
+            if inline_run_active(run_id):  # registered between the check and the resolution
+                self._clear_resolution_failure(run_id)
+                return
             # A RUNNING run whose workflow cannot be resolved (deleted draft,
             # tombstoned catalog version, principal-scoped bundle not loaded)
             # is re-submitted every poll and would otherwise spin RUNNING
