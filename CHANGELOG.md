@@ -7,10 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-The web console works on phones, tablets and any window size (ui-kit 0.3.0 responsive system).
+The web console works on phones, tablets and any window size (ui-kit 0.3.1 responsive system).
 
 ### Changed
-- Console themes and kit islands re-synced from `@abstractframework/ui-kit` 0.3.0: the responsive
+- Console themes and kit islands re-synced from `@abstractframework/ui-kit` 0.3.1: the responsive
   tokens (`--tap-min`, `--vh-full`, `--safe-*`, `--gutter`, fluid `--font-size-*`) and the kit's
   touch floors and sheet dialogs for the top bar, appearance and About dialogs.
 - Layout uses the framework breakpoints only (480 / 768 / 1024 / 1440 px, plus 500 px tall for
