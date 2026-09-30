@@ -449,7 +449,7 @@ exists yet, so a store you already have is never modified.
 | MTP default policy | AbstractCore | `options.speculation` on that text route | web/TUI **MTP** selector; application/run overrides remain independent |
 | Plugin/provider route options (voice, profile, language) | AbstractCore | `options` on the route | the same routes and console panel |
 | Provider API keys | AbstractCore | `api_keys` in `abstractcore.json` | console **Provider connections** (values are never returned) |
-| Mail connection (IMAP/SMTP host, port, username, folder) | AbstractCore | `email` in `abstractcore.json` | the email bridge and inbox routes read it; `ABSTRACT_EMAIL_*` variables override it |
+| Per-user mail account, recipient policy, send limits, notification preferences | Gateway (AbstractCore mail library) | each user's plane under the Gateway data dir, credentials encrypted ([email.md](email.md)) | `/api/gateway/me/email*`, `/api/gateway/me/notifications`, console **My email**; no environment variables |
 | Maintenance-triage LLM settings | AbstractCore | `maintenance` in `abstractcore.json` | the maintenance triage assistant; `ABSTRACT_TRIAGE_LLM_*` variables override it |
 | Endpoint profiles (custom base URLs, per-profile keys, allowed models) | shared namespace | `provider_profiles` in `abstractcore.json` and `provider_endpoint_profiles` under the Gateway data dir | `/api/gateway/config/provider-endpoint-profiles` |
 | Gateway auth, users, sessions, principals | Gateway | Gateway data dir | `/api/gateway/session/*`, `/api/gateway/users/*` |

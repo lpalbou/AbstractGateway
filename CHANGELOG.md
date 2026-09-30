@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Targets AbstractGateway 0.8.0 with the terminal console 0.12.0 (see
+[console-tui/CHANGELOG.md](console-tui/CHANGELOG.md)). Needs AbstractCore 2.20.0 (the mail library) and
+AbstractRuntime 0.8.0 (account binding, event inbox, `email.received@1`).
+
+### Added
+- **Per-user email: one user, one runtime, one mailbox** ([docs/email.md](docs/email.md)). Every signed-in person
+  connects their own mailbox from the web console (Users tab → **My email**), the terminal console (Users → `@`) or
+  `PUT /api/gateway/me/email`: IMAP/SMTP with a password or app password, or OAuth2 for Google and Microsoft (device
+  code or a browser on the gateway's computer; your own OAuth client, the gateway's, or the built-in one). The
+  account is tested before it is stored, stored in the user's own data home with the credentials encrypted
+  (AES-256-GCM, key in the OS keychain), and every connection verifies TLS. Failures name the cause and the fix.
+- **Recipient policy and send limits** per user (`allowlist` / `denylist` of addresses and domains; 20 per hour,
+  100 per day by default, editable), applied to every send: agents, automations, notifications, recovery codes.
+- **Mail watcher** per user: read-only, a durable cursor that moves only after the message is stored in the user's
+  runtime event inbox, safe across UIDVALIDITY resets, one bad message never blocks the mailbox, capped backoff with
+  cause and fix. It runs only while the user has an active `email.received@1` automation and wakes those automations
+  on new mail (every 60 s; how often an automation runs is its own trigger setting — hourly by default when it runs a
+  model).
+- **Email notifications** (`GET/PUT /api/gateway/me/notifications`, `POST /me/notifications/test`): automation results
+  and failures (for automations set to email), approval needed, and job finished/failed for runs started with
+  `_runtime.notify = {on: [...], channels: ["email"]}`. Sent to your registered address through your own account from
+  a durable outbox: queued once, never resent after an interrupted send, retried on temporary refusals, a digest when
+  the send limits are reached. Fixed templates.
+- **Account recovery by email**: "Forgot your token?" and "Email me a sign-in code" on the sign-in page when some
+  account has email (`GET /api/gateway/session/recovery`, `POST …/request`, `POST …/redeem`). Single-use 8-digit codes,
+  10-minute expiry, stored as keyed hashes, rate-limited per account and client address, the same answer for every
+  account, audited without the code.
+- **Administrator switch**: `PUT /api/gateway/admin/users/{id}/email` (web console **Email off / Email on**, terminal
+  console `x`) turns email off or on for a user — no watcher, no sending, no notifications, settings kept.
+  `GET /admin/users` rows and `GET /admin/users/{id}/email` show the mailbox state, address and last error, never
+  mail, recipient lists or credentials. Bring-your-own OAuth clients per provider:
+  `GET/PUT /api/gateway/admin/email/oauth-clients[/{provider}]` (secrets sealed, never returned).
+- Runs are bound to their user's account at the door (`_runtime.email_account`, set by the gateway; client values
+  removed); each runtime gets its durable event inbox and an in-memory credential resolver that answers only for its
+  own account. The send-email action workflow is registered on every host.
+- Typed audit events: `email.connected`, `email.tested`, `email.disconnected`, `email.capability_changed`,
+  `email.cursor_reset`, `email.message_unprocessable`, `email.notification_sent|failed`,
+  `email.recovery_code_issued|used|refused`, `email.oauth_client_changed`, `email.legacy_imported`.
+
+### Changed
+- Maintenance notices (triage, entity repair, backlog runner) are emailed to the administrator's registered address
+  through the administrator's own account and the notification outbox.
+- The email tool catalog row lists `reply_email`, `search_emails` and `get_email_attachment`.
+
+### Removed
+- The email bridge (`ABSTRACT_EMAIL_BRIDGE` and its polling variables) and every `ABSTRACT_EMAIL_*` configuration
+  path, including the process manager's email environment overrides. On the first start a gateway that still has them
+  imports that account once into the administrator's email settings; afterwards the variables are ignored and each one
+  still set is named at startup (and in the administrator's **My email** notices) with the setting that replaced it.
+  `ABSTRACT_BACKLOG_EMAIL_TO` / `ABSTRACT_TRIAGE_EMAIL_TO` and the related account variables are ignored.
+
+### Deprecated
+- `GET /api/gateway/email/accounts`, `GET /api/gateway/email/messages[/{uid}]` and `POST /api/gateway/email/send` act on
+  the calling administrator's own account (message bodies whole; the recipient policy and limits apply to sends) and
+  will be removed in a later minor release. Use `/api/gateway/me/email`.
+
 ## [0.7.4] - 2026-09-29
 
 Dependencies: AbstractCore 2.19.2 or newer and AbstractRuntime 0.7.3 or newer (also in the `apple` and `gpu`

@@ -32,8 +32,9 @@ CLI helpers:
 
 Notification helpers used by `triage-reports --notify`:
 - Telegram: `ABSTRACT_BACKLOG_TELEGRAM_CHAT_ID` or `ABSTRACT_TRIAGE_TELEGRAM_CHAT_ID`
-- Email recipients: `ABSTRACT_BACKLOG_EMAIL_TO` or `ABSTRACT_TRIAGE_EMAIL_TO`
-- Optional email account override: `ABSTRACT_BACKLOG_EMAIL_ACCOUNT` or `ABSTRACT_TRIAGE_EMAIL_ACCOUNT`
+- Email: sent to the administrator's registered address through the administrator's own email account
+  (Users tab → **My email**), from the durable notification outbox — the recipient policy and send limits apply and
+  a retry never sends a notice twice. See [email.md](./email.md).
 
 Evidence: CLI wiring in `src/abstractgateway/cli.py`.
 
@@ -144,7 +145,7 @@ export ABSTRACTGATEWAY_WORKSPACE_MOUNTS=$'repo=/abs/path/to/repo\\ndata=/abs/pat
 
 Evidence: `_workspace_mounts()` and related policy helpers in `src/abstractgateway/routes/gateway.py`, tests in `tests/test_gateway_workspace_policy_enforcement.py`.
 
-## Bridges (Telegram, email)
+## Telegram bridge
 
 Background bridges can ingest external messages and start durable runs (thin-client semantics), and may also emit events for specialized workflows.
 
@@ -169,34 +170,14 @@ Enable (Telegram):
   - Replayed history is the gateway's window (the most recent 50,000 tokens of whole turns); `ABSTRACT_TELEGRAM_MAX_HISTORY_MESSAGES` is retired and ignored (a warning is logged when it is set)
   - `/reset` controls: `ABSTRACT_TELEGRAM_RESET_DELETE_MESSAGES`, `ABSTRACT_TELEGRAM_RESET_DELETE_MAX`, `ABSTRACT_TELEGRAM_RESET_MESSAGE`
 
-Enable (Email):
-- `ABSTRACT_EMAIL_BRIDGE=1`
-- IMAP credentials + polling config (see `src/abstractgateway/integrations/email_bridge.py`)
-- TLS is always verified (certificate chain and host name, `ssl.create_default_context()`); a failed check is refused
-  before login. `ABSTRACT_EMAIL_IMAP_PASSWORD_ENV_VAR` / `imap_password_env_var` is the NAME of the variable holding the
-  password, never the password itself (a value that is not a variable name is refused).
-- Message bodies are passed whole (ADR-0026); `ABSTRACT_EMAIL_MAX_BODY_CHARS` / `ABSTRACT_EMAIL_MAX_HTML_CHARS` set an
-  explicit bound only when given.
-
 Evidence: bridge startup in `src/abstractgateway/service.py` (`start_gateway_runner`).
 
-## Email inbox endpoints (AbstractObserver Inbox → Email)
+## Email
 
-If email accounts are configured on the gateway host, the gateway exposes account-scoped endpoints used by AbstractObserver to list/read/send emails:
-- `GET /api/gateway/email/accounts`
-- `GET /api/gateway/email/messages`
-- `GET /api/gateway/email/messages/{uid}`
-- `POST /api/gateway/email/send`
-
-These endpoints proxy through Gateway's Runtime comms facade and never accept arbitrary IMAP/SMTP host/user secrets from the browser.
-
-Configuration notes:
-- Multi-account: set `ABSTRACT_EMAIL_ACCOUNTS_CONFIG=/path/to/emails.yaml` (recommended).
-- Single-account env fallback: `ABSTRACT_EMAIL_IMAP_*` / `ABSTRACT_EMAIL_SMTP_*`.
-- Connections use AbstractCore's mail tools, which verify TLS certificates and host names; a server signed by a
-  private CA is trusted through the accounts file's `ca_file` field (see AbstractCore's tool-calling docs).
-
-Evidence: `/api/gateway/email/*` routes in `src/abstractgateway/routes/gateway.py` which call the Runtime AbstractCore comms facade.
+Email is configured per user (Users tab → **My email**), never through environment variables; new mail reaches
+automations through the `email.received@1` trigger. See [email.md](./email.md) for the watcher, notifications,
+recovery codes and the one-time import of the retired `ABSTRACT_EMAIL_*` variables, and [api.md](./api.md#email) for
+the routes (including the deprecated `/api/gateway/email/*` aliases).
 
 ## Related docs
 

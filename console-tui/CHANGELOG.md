@@ -1,5 +1,18 @@
 # Changelog — abstractgateway-console
 
+## Unreleased (0.12.0)
+
+Needs AbstractGateway 0.8.0 (per-user email).
+
+### Added
+- **My email** (Users screen → `@`): your own mailbox with the web console's fields and words — account (IMAP/SMTP,
+  password; Save and test, Test, Turn on/off, Disconnect with an in-form confirmation), OAuth2 sign-in (device code or
+  loopback link, polled until approved, cancel), recipient policy and send limits, notification preferences with
+  **Send test notification**. Refusals show the gateway's cause and fix; the form stays open across writes.
+- Users table: a **mailbox** column (wide terminals) with each user's email state; `x` turns email off or on for the
+  selected user (admin; status and switch only).
+- Write bodies never print a `password` or `client_secret` in debug output.
+
 ## 0.11.2 (2026-09-29)
 
 Needs abstractcore-console 0.4; works with AbstractGateway 0.7.0 and newer (speech input in the recommendation

@@ -1689,42 +1689,70 @@ These remain explicitly local/operator-oriented:
 - remote and hybrid runtimes return `code=prompt_cache_local_only`
 - response payloads follow Runtime's host-local export/import contract, including `operation`, `local_only`, `artifact_*`, `capabilities`, and `provider_response`
 
-## Email inbox (operator UI; optional)
+## Email
 
-These endpoints power AbstractObserver’s **Inbox → Email** UI. They are **account-scoped**: the browser cannot supply arbitrary IMAP/SMTP host/user credentials. The gateway host must be configured with one or more email accounts (multi-account YAML or env vars).
+Per-user email ([email.md](./email.md)): every route acts on the **caller's own** account, resolved
+from the authenticated principal (never from a path or body id); entities are refused (403). No
+response ever carries a password, token or OAuth client secret.
 
-Endpoints:
-- `GET /api/gateway/email/accounts`
-- `GET /api/gateway/email/messages?account=…&mailbox=…&since=…&status=…&limit=…`
-- `GET /api/gateway/email/messages/{uid}?account=…&mailbox=…&max_body_chars=…`
-- `POST /api/gateway/email/send`
+Your mailbox (`/api/gateway/me/...`, every signed-in human):
 
-Examples:
+| Route | Purpose |
+|---|---|
+| `GET /me/email` | settings and status: `configured`, `address`, `imap`, `smtp`, `auth_kind`, `secret_set`, `policy`, `limits` (+ usage), `status{last_test, last_ok, last_error{code, cause, fix}}`, `watcher{state, last_poll, cursor, received}`, `admin_enabled`, `effective_enabled` |
+| `PUT /me/email` | connect: `{address, password, username?, display_name?, imap{host, port, security, folder}, smtp{host, port, security}, test}`; signs in to both legs first (unless `test: false`) and stores nothing on a failure |
+| `POST /me/email/test` | per-leg result `{imap, smtp, ok}` |
+| `DELETE /me/email` | disconnect: credentials and cursor deleted (policy and limits kept) |
+| `PUT /me/email/policy` | `{mode: "allowlist" \| "denylist", entries: [address \| domain]}` |
+| `POST /me/email/policy/check` | `{addresses}` → per-recipient verdicts |
+| `PUT /me/email/limits` | `{per_hour, per_day}` |
+| `PUT /me/email/enabled` | `{enabled}` — your own switch |
+| `GET /me/email/oauth/clients` | which providers have a gateway OAuth client (no secrets) |
+| `POST /me/email/oauth/start` | `{address, provider: google \| microsoft, client_id?, client_secret?, tenant?, flow?: device \| loopback}` → device code (`user_code`, `verification_uri`) or `authorization_url` |
+| `POST /me/email/oauth/poll` | `{flow_id}` → `{pending: true}` or the connected account |
+| `POST /me/email/oauth/finish` | `{flow_id, wait_s}` — waits up to 60 s for the approval |
+| `POST /me/email/oauth/cancel` | `{flow_id}` |
+| `GET /me/notifications` | events and choices, channel availability, outbox summary |
+| `PUT /me/notifications` | `{email: {automation_result, automation_failed, approval_needed, job_finished, job_failed: bool}}` |
+| `POST /me/notifications/test` | sends one test notification now → `{ok, state, error?}` |
+
+Administrators (status and the switch only; administrators never read mail):
+
+| Route | Purpose |
+|---|---|
+| `GET /admin/users` | each human row carries `email_account: {configured, address, state, admin_enabled}` |
+| `GET /admin/users/{user_id}/email` | `configured`, `address`, `auth_kind`, `user_enabled`, `admin_enabled`, `effective_enabled`, `status` (last test / last error), `watcher`, `state` |
+| `PUT /admin/users/{user_id}/email` | `{enabled}` — off: no watcher, no sending, no notifications (settings kept) |
+| `GET /admin/email/oauth-clients` | bring-your-own OAuth clients: `client_id`, `client_secret_set`, `tenant` per provider |
+| `PUT /admin/email/oauth-clients/{provider}` | `{client_id, client_secret?, tenant?}`; an empty `client_id` removes the provider's client; omitting `client_secret` keeps the stored one for the same id |
+
+Sign-in page (public):
+
+| Route | Purpose |
+|---|---|
+| `GET /session/recovery` | `{available}` — true when at least one account of this gateway has email |
+| `POST /session/recovery/request` | `{user_id, tenant_id?, purpose: sign_in \| reset_token}` → the same answer for every account |
+| `POST /session/recovery/redeem` | `{user_id, tenant_id?, purpose, code, remember?}` → a browser session; `reset_token` also returns the new `token` once. A wrong, expired or used code answers 401 `recovery_code_refused` |
+
+Errors carry `{"detail": {"reason_code", "message", "cause", "fix", "retryable"}}`: 400 invalid
+settings or a policy refusal (`email_policy_refused`), 403 entity, 404 no account
+(`email_not_configured`), 409 turned off (`email_disabled`) or credentials missing, 422 the mail
+server refused (`email_auth_failed`, `email_tls_failed`, `email_unreachable`, …), 429 send limit
+(`email_rate_limited`).
 
 ```bash
-curl -sS -H "$AUTH" "$BASE_URL/api/gateway/email/accounts"
+curl -sS -H "$AUTH" "$BASE_URL/api/gateway/me/email"
+curl -sS -X POST -H "$AUTH" "$BASE_URL/api/gateway/me/email/test"
+curl -sS -X POST -H "$AUTH" "$BASE_URL/api/gateway/me/notifications/test"
 ```
 
-```bash
-curl -sS -H "$AUTH" "$BASE_URL/api/gateway/email/messages?status=unread&since=7d&limit=20"
-```
+Runs: `_runtime.notify = {"on": ["finished", "failed"], "channels": ["email"]}` in a run's input asks
+for a notice when it ends (unknown values are dropped). `_runtime.email_account` and
+`_runtime.email_allowed_recipients` are set by the gateway; client-supplied values are removed.
 
-```bash
-curl -sS -H "$AUTH" "$BASE_URL/api/gateway/email/messages/12345?max_body_chars=20000"
-```
-
-```bash
-curl -sS -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"to":"you@example.com","subject":"Hello","body_text":"Hi!"}' \
-  "$BASE_URL/api/gateway/email/send"
-```
-
-Configuration notes (gateway host):
-- Multi-account: set `ABSTRACT_EMAIL_ACCOUNTS_CONFIG=/path/to/emails.yaml` (recommended).
-- Single-account env fallback: set `ABSTRACT_EMAIL_IMAP_*` and/or `ABSTRACT_EMAIL_SMTP_*`.
-- The secret itself must be present in the env var referenced by `*_PASSWORD_ENV_VAR` (e.g. `EMAIL_PASSWORD=...`). That setting is the variable's NAME; a value that is not a variable name is refused, never used as the password.
-- Every IMAP/SMTP connection verifies the server's TLS certificate and host name; a failed check returns an error naming the host, the reason and the fix, and no password is sent. A server signed by a private CA is trusted through the accounts file's `ca_file` field.
-
-Evidence: `src/abstractgateway/routes/gateway.py` (`/email/accounts|messages|send`) which proxies to the Runtime AbstractCore comms facade.
+Deprecated aliases (admin only, the calling administrator's own account; removed in a later minor
+release): `GET /email/accounts`, `GET /email/messages` (`mailbox`, `since`, `status`, `limit`),
+`GET /email/messages/{uid}` (whole body, `content_trust: "untrusted"`), `POST /email/send`
+(`{to, cc?, bcc?, subject, body_text?, body_html?}`; the recipient policy and limits apply).
 
 Troubleshooting and common questions: [faq.md](./faq.md).

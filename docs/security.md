@@ -166,7 +166,8 @@ In hosted multi-user mode, the request path resolves a principal and routes it
 to its own service. Gateway also applies a central
 route-family authorization table for operator/admin surfaces. Admin-only route
 families include user management, audit, process control, backlog/triage/report
-operations, email bridge routes, model residency mutations
+operations, the deprecated `/email/*` aliases (the calling admin's own mailbox),
+the per-user email switch, model residency mutations
 (`POST /models/load|unload|lock|unlock|download`), session-wide prompt-cache
 clearing (`POST /sessions/{session_id}/prompt_cache/clear_all`), server
 workspace file helpers, server-workspace artifact import/export, and global
@@ -205,6 +206,41 @@ admin principal. The current capability-default cascade uses execution-host
 Core defaults, then the Gateway/root Core config baseline, then the user's
 runtime Core config override under that user's Gateway data plane. A stronger encrypted vault, audit model, and
 bridge/delegated-tool propagation policy remain future hardening work.
+
+### Per-user email
+
+Each user's mailbox ([email.md](email.md)) lives in that user's own data plane,
+resolved from the authenticated principal on every route; no path or body id
+selects another user's account, and entities have none.
+
+- **Credentials** (password or OAuth tokens) are sealed with AES-256-GCM
+  (`<plane>/email/account/email/secret.enc`, 0600 in a 0700 folder); the key is
+  in the OS keychain, or a 0600 key file next to it on hosts without one. They
+  are used in memory at the moment of a connection and never enter run
+  variables, ledgers, events, logs, the audit log or API responses. The
+  encryption protects copies of the data folder, backups and file-reading tools;
+  code running as the gateway's OS user can reach the key.
+- **TLS** is verified on every IMAP, SMTP and OAuth connection (certificate
+  chain and host name); there is no plaintext mode. A private CA file is an
+  administrator setting.
+- **Administrators** can turn email on or off per user and see its state,
+  address and last error — never messages, recipient policies or credentials.
+- **Sending** always passes the user's recipient policy (allowlist or denylist)
+  and send limits; an agent's send to anyone but the user waits for approval.
+- **Inbound mail** is untrusted data: it reaches a model inside a fixed frame and
+  cannot change a run's recipients or tools. The mailbox is only read.
+- **Recovery codes** are single use, expire after 10 minutes, are stored as
+  keyed hashes, are rate-limited per account and client address, and the request
+  answer never reveals whether an account exists or has email. Issue and use are
+  audited without the code.
+- **Audit**: typed events (`email.connected`, `email.tested`, `email.disconnected`,
+  `email.capability_changed`, `email.cursor_reset`, `email.message_unprocessable`,
+  `email.notification_sent|failed`, `email.recovery_code_issued|used|refused`)
+  in `<data_dir>/audit_log.jsonl`.
+
+A user-supplied IMAP/SMTP host is a connection the gateway makes on that
+user's behalf; deployments that must restrict outbound destinations should do
+so at the network layer.
 
 ### Workflow registry ownership
 
@@ -402,7 +438,7 @@ Key point: the **main configuration** for filesystem allowlisting/denylisting is
 ### Default (safe): everything outside the run workspace is blocked
 
 - Every run the gateway starts works in a folder, whatever started it (the
-  HTTP routes, the Telegram, email and agora bridges, entity summons,
+  HTTP routes, email-triggered automations, the Telegram and agora bridges, entity summons,
   scheduled runs). A run that names no `workspace_root` works in its
   conversation's gateway-made folder, `<ABSTRACTGATEWAY_DATA_DIR>/workspaces/session-…`
   (or a per-run folder when it has no session).

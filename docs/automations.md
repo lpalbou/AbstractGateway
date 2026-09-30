@@ -129,6 +129,23 @@ Rare transport answers keep the same shape with `not_found` (unknown path),
   down coalesce into one occurrence.
 - **`manual@1`** takes `{}`: the automation runs only when you send
   `automation.run_now`.
+- **`email.received@1`** runs on new mail in your own mailbox
+  ([email.md](./email.md)): `{folder?, uses_model?, every?, max_batch?,
+  filter?: {from_in?, from_domain_in?, to_in?, subject_contains?,
+  has_attachment?}}` (equality, membership and one literal substring; no
+  patterns). With `uses_model` (the default) the automation runs at most once
+  an hour by default on the batch received since its last run; with
+  `"uses_model": false` every 60 seconds. `every` sets the interval (minimum
+  `60s`). Each message is read at most once per automation; mail received
+  before the automation existed, or while it was paused, is not processed. The
+  occurrence receives the messages under `trigger.emails`, marked
+  `content_trust: "untrusted"`. The gateway's mail watcher reads the mailbox
+  only while such an automation is active.
+
+An automation delivers its attention items to email as well as the console
+when its definition carries `"notify": {"channels": ["console", "email"]}`
+and your notification preferences allow it; `policy.email_allowed_recipients`
+(`["self", "a@example.com"]`) names who its sends may reach without asking.
 
 A source installed by another package that fails to load is listed with
 `"available": false` and an `unavailable_reason`. A missing built-in source is
