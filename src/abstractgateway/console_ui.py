@@ -2972,7 +2972,7 @@ CONSOLE_UI_JS = r"""
           // address other devices use), with a copy button beside it.
           { id: "island-address", label: `Gateway address: ${netPrimaryUrl()}`, text: netPrimaryUrl().replace(/^https?:\/\//, ""), hidden: !p || !netPrimaryUrl() },
           { id: "island-address-copy", label: "Copy the gateway address", icon: "copy", hidden: !p || !netPrimaryUrl(), onClick: () => uiCopy(netPrimaryUrl()) },
-          { id: "island-open-setup", label: "Setup guide", icon: "settings", hidden: !(p && p.admin), onClick: () => openFirstRunWizard(firstRun.step || "welcome") },
+          // Setup lives at the bottom of the sidebar (#open-setup, DESIGN-v2 §1): one labelled entry point.
           { id: "island-identity", label: "Signed in as", text: islands.identity, hidden: !p || !islands.identity },
         ],
         connection: {

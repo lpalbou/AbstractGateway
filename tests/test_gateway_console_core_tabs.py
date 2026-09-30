@@ -70,11 +70,16 @@ def test_tabs_are_appended_with_their_own_ids() -> None:
     for element_id in ("tab-button-models", "tab-models", "tab-button-runtimes", "tab-runtimes"):
         assert html.count(f'id="{element_id}"') == 1, element_id
     assert 'const TABS = ["users", "runtimes", "workflows", "providers", "defaults", "sandbox", "models", "catalog", "engines", "apps", "network"];' in html
-    nav = html[html.index('<nav class="shell_nav">') : html.index("</nav>")]
+    nav = html[html.index('<nav class="shell_nav"') : html.index("</nav>")]
     order = re.findall(r'id="tab-button-([a-z]+)"', nav)
-    # Mission L appends Apps (the gateway's apps service) after Engines;
-    # mission L2 appends Network (who can reach the gateway) after Apps.
-    assert order[-5:] == ["models", "catalog", "engines", "apps", "network"], order
+    # DESIGN-v2 §1: four groups, ACCOUNTS / WORK / MODELS / SYSTEM, in that order.
+    assert order == ["users", "workflows", "runtimes", "apps", "providers", "catalog", "engines", "defaults", "models", "sandbox", "network"], order
+    captions = re.findall(r'class="shell_nav_caption af-nav-group__caption">([^<]+)<', nav)
+    assert captions == ["Accounts", "Work", "Models", "System"], captions
+    groups = re.split(r'class="shell_nav_caption', nav)[1:]
+    assert [re.findall(r'id="tab-button-([a-z]+)"', g) for g in groups] == [
+        ["users"], ["workflows", "runtimes", "apps"], ["providers", "catalog", "engines", "defaults"], ["models", "sandbox", "network"]]
+    assert '<span class="shell_nav_label">Accounts</span>' in nav
     assert '<span class="shell_nav_label">Models</span>' in nav
     assert '<span class="shell_nav_label">Engines</span>' in nav
     assert 'catalog: ["Models",' in html and 'engines: ["Engines",' in html
