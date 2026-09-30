@@ -394,6 +394,14 @@ def email_context(plane: EmailPlane, *, require_enabled: bool = True) -> EmailCo
     return ctx
 
 
+def require_admin_email_on(plane: EmailPlane) -> None:
+    """Connect, Test and OAuth sign-in open connections to hosts the user chose; while an
+    administrator has email off for this user, none of them runs (settings are kept)."""
+
+    if not admin_email_enabled(plane):
+        raise EmailDisabled(ADMIN_DISABLED_CAUSE, ADMIN_DISABLED_FIX)
+
+
 def email_usable(plane: EmailPlane) -> bool:
     """Connected, turned on by the user, not turned off by the admin."""
 
@@ -648,6 +656,7 @@ def connect_password(
     allow_ca_file: bool = False,
     actor: str = "",
 ) -> Dict[str, Any]:
+    require_admin_email_on(plane)
     imap_s, smtp_s = build_servers(imap, smtp, allow_ca_file=allow_ca_file)
     account = EmailAccount.build(address=address, username=username, imap=imap_s, smtp=smtp_s, display_name=display_name)
     store = account_store(plane)
@@ -668,6 +677,7 @@ def connect_password(
 
 
 def test_account(plane: EmailPlane, *, actor: str = "") -> Dict[str, Any]:
+    require_admin_email_on(plane)
     store = sync_registered_address(plane)
     result = store.test()
     audit_email_event(
@@ -770,24 +780,110 @@ def set_oauth_client(provider: str, *, client_id: str, client_secret: Optional[s
     return oauth_clients_public()
 
 
+OAUTH_CLIENTS_API = "PUT /api/gateway/admin/email/oauth-clients/<provider>"
+
+
 def choose_oauth_client(provider: str, client_id: str = "", client_secret: str = "") -> Dict[str, str]:
     """Who signs in: the caller's own client, else the gateway's (admin setting), else the
-    built-in AbstractFramework client; a typed error naming the ways forward otherwise."""
+    built-in AbstractFramework client; a typed error naming the ways forward otherwise.
+
+    `held` says whose secret it is: `"caller"` (the caller brought it) or `"gateway"` (the
+    admin's client or the built-in one). A gateway-held secret only ever goes to the
+    provider preset's endpoints (`_gateway_secret_stays_with_preset`)."""
 
     prov = str(provider or "").strip().lower()
     if str(client_id or "").strip():
-        return resolve_oauth_client(prov, client_id, client_secret)
+        return {**resolve_oauth_client(prov, client_id, client_secret), "held": "caller"}
     gw = oauth_clients_raw().get(prov)
     if gw:
-        return {"client_id": gw["client_id"], "client_secret": gw.get("client_secret", ""), "source": "own", "tenant": gw.get("tenant", "")}
+        return {
+            "client_id": gw["client_id"],
+            "client_secret": gw.get("client_secret", ""),
+            "source": "own",
+            "tenant": gw.get("tenant", ""),
+            "held": "gateway",
+        }
     try:
-        return resolve_oauth_client(prov, "", "")
+        return {**resolve_oauth_client(prov, "", ""), "held": "gateway"}
     except EmailInvalidSettings as err:
         raise EmailInvalidSettings(
             err.cause,
-            "A gateway administrator can add an OAuth client for this provider (Settings → My email → OAuth clients), "
+            f"A gateway administrator can add an OAuth client for this provider ({OAUTH_CLIENTS_API}), "
             "or sign in with an app password instead.",
         ) from None
+
+
+OAUTH_OVERRIDE_REFUSED = "email_oauth_override_refused"
+# A Microsoft tenant is a GUID, a domain name, or common / organizations / consumers: letters,
+# digits, dots and hyphens only, so it can never change the preset endpoint's host or path.
+_TENANT_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-")
+
+
+def _refuse_oauth_overrides(
+    prov: str,
+    *,
+    is_admin: bool,
+    tenant: str,
+    token_endpoint: str,
+    authorization_endpoint: str,
+    device_authorization_endpoint: str,
+    scopes: Optional[List[str]],
+) -> None:
+    """Endpoints and scopes come from the provider preset. Only an administrator, and only
+    for provider `custom`, may give them (a custom provider brings its own client, never the
+    gateway's). Otherwise any user could send the admin's OAuth client secret, or make the
+    gateway POST, to a host of their choosing (framework backlog 0992, gate review G1)."""
+
+    if prov == "custom":
+        if not is_admin:
+            raise EmailError(
+                "A custom OAuth provider (explicit endpoints) is an administrator setting.",
+                "Use google or microsoft (their endpoints are built in), or ask an administrator.",
+                code=OAUTH_OVERRIDE_REFUSED,
+            )
+        return
+    given = [
+        name
+        for name, value in (
+            ("token_endpoint", token_endpoint),
+            ("authorization_endpoint", authorization_endpoint),
+            ("device_authorization_endpoint", device_authorization_endpoint),
+        )
+        if str(value or "").strip()
+    ]
+    if any(str(s or "").strip() for s in (scopes or [])):
+        given.append("scopes")
+    if given:
+        raise EmailError(
+            f"The {prov or 'OAuth'} sign-in uses the provider's built-in endpoints and scopes; "
+            f"these fields cannot be overridden: {', '.join(given)}.",
+            "Leave them empty. Explicit endpoints and scopes are for provider custom, which an administrator sets up.",
+            code=OAUTH_OVERRIDE_REFUSED,
+            details={"fields": given},
+        )
+    t = str(tenant or "").strip()
+    if t and not set(t) <= _TENANT_CHARS:
+        raise EmailError(
+            f"The tenant {t!r} is not a tenant id or domain.",
+            "Give a tenant GUID, a domain (contoso.onmicrosoft.com), or leave it empty (common).",
+            code=OAUTH_OVERRIDE_REFUSED,
+        )
+
+
+def _gateway_secret_stays_with_preset(chosen: Dict[str, str], oauth: Any, preset: Dict[str, Any]) -> None:
+    """A gateway-held client (the admin's or the built-in one) is used only against the
+    provider preset's endpoints; anything else is refused before any request is made."""
+
+    if chosen.get("held") == "caller":
+        return
+    for key in ("token_endpoint", "authorization_endpoint", "device_authorization_endpoint"):
+        if str(getattr(oauth, key, "") or "") != str(preset.get(key) or ""):
+            raise EmailError(
+                "The gateway's OAuth client may only be used with the provider's own endpoints.",
+                "Leave the endpoints empty, or bring your own OAuth client (client id and secret).",
+                code=OAUTH_OVERRIDE_REFUSED,
+                details={"field": key},
+            )
 
 
 # ---------------------------------------------------------------------------------------
@@ -829,12 +925,17 @@ def oauth_start(
     is_admin: bool = False,
 ) -> Dict[str, Any]:
     _prune_flows()
+    require_admin_email_on(plane)
     prov = str(provider or "").strip().lower()
-    if prov == "custom" and not is_admin:
-        raise EmailInvalidSettings(
-            "A custom OAuth provider (explicit endpoints) is an administrator setting.",
-            "Use google or microsoft, or ask an administrator.",
-        )
+    _refuse_oauth_overrides(
+        prov,
+        is_admin=is_admin,
+        tenant=tenant,
+        token_endpoint=token_endpoint,
+        authorization_endpoint=authorization_endpoint,
+        device_authorization_endpoint=device_authorization_endpoint,
+        scopes=scopes,
+    )
     if ca_file and not is_admin:
         raise EmailInvalidSettings(
             "A CA file is a path on the gateway host, which only an administrator may set.",
@@ -852,6 +953,7 @@ def oauth_start(
         scopes=list(scopes) if scopes else None,
         tenant=tenant or chosen.get("tenant", ""),
     )
+    _gateway_secret_stays_with_preset(chosen, oauth, preset)
     imap_s, smtp_s = build_servers(imap, smtp, preset, allow_ca_file=is_admin)
     if ca_file:
         imap_s = replace(imap_s, ca_file=imap_s.ca_file or ca_file) if imap_s else None

@@ -1709,7 +1709,7 @@ Your mailbox (`/api/gateway/me/...`, every signed-in human):
 | `PUT /me/email/enabled` | `{enabled}` — your own switch |
 | `PUT /me/email/agent-tools` | `{enabled}` — your agents' email tools (default off; 409 `email_disabled` "not available" unless an administrator made them available; active only with a connected, allowed account); reloads your workflows so toolsets follow (`tools_reloaded`). `GET /me/email` reports `agent_tools: {enabled, available, active, reason}` and `store.label` (which account this is) |
 | `GET /me/email/oauth/clients` | which providers have a gateway OAuth client (no secrets) |
-| `POST /me/email/oauth/start` | `{address, provider: google \| microsoft, client_id?, client_secret?, tenant?, flow?: device \| loopback}` → device code (`user_code`, `verification_uri`) or `authorization_url` |
+| `POST /me/email/oauth/start` | `{address, provider: google \| microsoft, client_id?, client_secret?, tenant?, flow?: device \| loopback}` → device code (`user_code`, `verification_uri`) or `authorization_url`. `token_endpoint`, `authorization_endpoint`, `device_authorization_endpoint` and `scopes` are accepted only from an administrator with `provider: "custom"` (own client id); otherwise 403 `email_oauth_override_refused` |
 | `POST /me/email/oauth/poll` | `{flow_id}` → `{pending: true}` or the connected account |
 | `POST /me/email/oauth/finish` | `{flow_id, wait_s}` — waits up to 60 s for the approval |
 | `POST /me/email/oauth/cancel` | `{flow_id}` |
@@ -1738,7 +1738,7 @@ Sign-in page (public):
 | `POST /session/recovery/redeem` | `{user_id, tenant_id?, purpose, code, remember?}` → a browser session; `reset_token` also returns the new `token` once. A wrong, expired or used code answers 401 `recovery_code_refused` |
 
 Errors carry `{"detail": {"reason_code", "message", "cause", "fix", "retryable"}}`: 400 invalid
-settings or a policy refusal (`email_policy_refused`), 403 entity, 404 no account
+settings or a policy refusal (`email_policy_refused`), 403 entity or a refused OAuth override (`email_oauth_override_refused`), 404 no account
 (`email_not_configured`), 409 turned off (`email_disabled`) or credentials missing, 422 the mail
 server refused (`email_auth_failed`, `email_tls_failed`, `email_unreachable`, …), 429 send limit
 (`email_rate_limited`).

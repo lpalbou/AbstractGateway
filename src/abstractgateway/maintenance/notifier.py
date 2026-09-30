@@ -1,7 +1,17 @@
 from __future__ import annotations
 
 import os
+import time
 from typing import Any, Dict, List, Optional, Tuple
+
+# The same maintenance notice (subject + body) is sent at most once per UTC day: a retry or a
+# second scan the same day never sends it twice, and a condition still true tomorrow is
+# reported again (the key used to be "once ever").
+NOTICE_DEDUPE_WINDOW_S = 86400
+
+
+def _notice_bucket() -> int:
+    return int(time.time() // NOTICE_DEDUPE_WINDOW_S)
 
 
 def _env(name: str, fallback: Optional[str] = None) -> Optional[str]:
@@ -53,7 +63,8 @@ def send_email_notification(*, subject: str, body_text: str) -> Tuple[bool, Opti
 
     The notice goes to the admin's registered address, sent by the admin's own email account
     (Settings -> My email) through the durable outbox: the recipient policy and send limits
-    apply, a retry never sends it twice. The retired recipient/account variables
+    apply, a retry never sends it twice, and the same notice is sent at most once per UTC day
+    (`NOTICE_DEDUPE_WINDOW_S`). The retired recipient/account variables
     (ABSTRACT_BACKLOG_EMAIL_TO, ABSTRACT_TRIAGE_EMAIL_TO, *_EMAIL_ACCOUNT, ABSTRACT_EMAIL_*)
     are ignored. Returns (sent, error).
     """
@@ -72,7 +83,7 @@ def send_email_notification(*, subject: str, body_text: str) -> Tuple[bool, Opti
         body = str(body_text or "").rstrip() + "\n\nSent by your AbstractFramework gateway (maintenance notice).\n"
         subj0 = str(subject or "").strip() or "Maintenance notice"
         subj = subj0 if subj0.startswith(SUBJECT_PREFIX) else f"{SUBJECT_PREFIX} {subj0}"
-        key = idempotency_key("maintenance", subj, hashlib.sha256(body.encode("utf-8")).hexdigest())
+        key = idempotency_key("maintenance", subj, f"{hashlib.sha256(body.encode('utf-8')).hexdigest()}:{_notice_bucket()}")
         outbox = NotificationOutbox(plane)
         outbox.enqueue(key, "maintenance", subj, body)
         outbox.deliver()

@@ -13,6 +13,8 @@ Rules, each one pinned by a test:
 - a new code for the same account and purpose replaces the previous one;
 - requests are rate-limited per account (3 per 15 minutes) and per client address
   (10 per 15 minutes);
+- the rate check runs on the request thread before any worker exists (a flood costs no
+  threads); it reads only the request counters, never the account;
 - the request answer is the same whether or not the account exists, has email, or is rate
   limited, and the mail is sent off the request thread (no timing difference): no account
   enumeration. The sign-in page shows the options when at least one account of this gateway
@@ -159,17 +161,19 @@ def request_code(*, user_id: str, tenant_id: str = "default", purpose: str, clie
     purpose0 = str(purpose or "").strip()
     if purpose0 not in PURPOSES:
         raise ValueError(f"purpose must be one of: {', '.join(PURPOSES)}")
-    worker = threading.Thread(
-        target=_issue,
-        kwargs={"user_id": str(user_id or ""), "tenant_id": str(tenant_id or "default"), "purpose": purpose0, "client_ip": str(client_ip or "unknown")},
-        name="gateway-recovery-code",
-        daemon=True,
-    )
+    answer = {"ok": True, "message": CONSTANT_MESSAGE, "expires_in_s": int(CODE_TTL_S)}
+    args = {"user_id": str(user_id or ""), "tenant_id": str(tenant_id or "default"), "purpose": purpose0, "client_ip": str(client_ip or "unknown")}
+    # The rate check runs here, before any thread exists: a flood of requests costs a file
+    # update each, never a thread each. It reads only the request counters (never whether the
+    # account exists), so its timing says nothing about the account.
+    if not _rate_admit(**args):
+        return answer
+    worker = threading.Thread(target=_issue, kwargs=args, name="gateway-recovery-code", daemon=True)
     with _PENDING_LOCK:
         _PENDING[:] = [t for t in _PENDING if t.is_alive()]
         _PENDING.append(worker)
     worker.start()
-    return {"ok": True, "message": CONSTANT_MESSAGE, "expires_in_s": int(CODE_TTL_S)}
+    return answer
 
 
 def drain(timeout_s: float = 30.0) -> None:
@@ -182,7 +186,10 @@ def drain(timeout_s: float = 30.0) -> None:
         t.join(max(0.0, deadline - time.time()))
 
 
-def _issue(*, user_id: str, tenant_id: str, purpose: str, client_ip: str) -> None:
+def _rate_admit(*, user_id: str, tenant_id: str, purpose: str, client_ip: str) -> bool:
+    """Count this request against the client address and the account; False (audited) when
+    either is over its window's budget."""
+
     now = time.time()
     account_key = f"{tenant_id}:{user_id}"
     base = {"tenant_id": tenant_id, "user_id": user_id, "purpose": purpose, "client_ip": client_ip}
@@ -195,14 +202,21 @@ def _issue(*, user_id: str, tenant_id: str, purpose: str, client_ip: str) -> Non
         if len(ip_rows) >= IP_MAX_REQUESTS:
             _save(doc)
             audit_email_event("email.recovery_code_refused", reason="rate_limited_client", **base)
-            return
+            return False
         ip_rows.append(now)
         if len(acct_rows) >= ACCOUNT_MAX_REQUESTS:
             _save(doc)
             audit_email_event("email.recovery_code_refused", reason="rate_limited_account", **base)
-            return
+            return False
         acct_rows.append(now)
         _save(doc)
+    return True
+
+
+def _issue(*, user_id: str, tenant_id: str, purpose: str, client_ip: str) -> None:
+    now = time.time()
+    account_key = f"{tenant_id}:{user_id}"
+    base = {"tenant_id": tenant_id, "user_id": user_id, "purpose": purpose, "client_ip": client_ip}
     if not recovery_enabled():
         audit_email_event("email.recovery_code_refused", reason="recovery_turned_off", **base)
         return

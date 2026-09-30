@@ -223,6 +223,13 @@ selects another user's account, and entities have none.
 - **TLS** is verified on every IMAP, SMTP and OAuth connection (certificate
   chain and host name); there is no plaintext mode. A private CA file is an
   administrator setting.
+- **OAuth endpoints** come from the provider preset for Google and Microsoft;
+  endpoint and scope overrides are refused (`403 email_oauth_override_refused`),
+  for administrators too. Only an administrator may use `provider: "custom"`,
+  which brings its own client. The gateway's and the built-in OAuth client are
+  sent only to their provider's own endpoints.
+- **Turned off by an administrator** means no connection at all: the user's
+  Connect, Test and OAuth sign-in are refused before any connection.
 - **Administrators** can turn email on or off per user and see its state,
   address and last error — never messages, recipient policies or credentials.
 - **Sending** always passes the user's recipient policy (allowlist or denylist)

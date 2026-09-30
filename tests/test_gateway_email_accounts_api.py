@@ -136,6 +136,20 @@ def test_admin_switch_turns_email_off_and_keeps_settings(gateway, imap, smtp) ->
     assert r.json()["ok"] is False and r.json()["error"]["code"] == "email_disabled"
     assert smtp.messages == []
 
+    # Connect, Test and OAuth sign-in open connections to hosts the user chose: all refused
+    # while the admin has email off, before any connection (the fake servers see no sign-in).
+    imap.logins.clear()
+    smtp.logins.clear()
+    for method, path, body in (
+        ("put", "/api/gateway/me/email", connect_body(ALICE, imap, smtp)),
+        ("post", "/api/gateway/me/email/test", None),
+        ("post", "/api/gateway/me/email/oauth/start", {"address": ALICE, "provider": "microsoft", "client_id": "cid"}),
+    ):
+        r = getattr(c, method)(path, headers=gateway["alice"], **({"json": body} if body is not None else {}))
+        assert r.status_code == 409, (path, r.text)
+        assert r.json()["detail"]["reason_code"] == "email_disabled" and "administrator" in r.json()["detail"]["message"]
+    assert imap.logins == [] and smtp.logins == []
+
     # The user cannot turn it back on themselves: their switch is a separate one.
     c.put("/api/gateway/me/email/enabled", headers=gateway["alice"], json={"enabled": True})
     assert c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["effective_enabled"] is False

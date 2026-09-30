@@ -52,6 +52,7 @@ nav:
   - Apple Silicon Local Setup: apple-local-gateway-flow.md
   - API Overview: api.md
   - Automations: automations.md
+  - Email: email.md
   - Architecture: architecture.md
   - Summoned Entities: entities.md
   - Security: security.md

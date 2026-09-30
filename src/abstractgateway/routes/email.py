@@ -69,6 +69,7 @@ _STATUS_BY_CODE = {
     "email_not_configured": 404,
     "email_message_not_found": 404,
     "email_attachment_not_found": 404,
+    "email_oauth_override_refused": 403,
     "email_disabled": 409,
     "email_secret_unavailable": 409,
     "email_rate_limited": 429,
@@ -180,11 +181,11 @@ class OAuthStartBody(BaseModel):
     display_name: str = ""
     imap: Optional[ServerBody] = None
     smtp: Optional[ServerBody] = None
-    token_endpoint: str = ""
-    authorization_endpoint: str = ""
-    device_authorization_endpoint: str = ""
-    scopes: List[str] = Field(default_factory=list)
-    ca_file: str = ""
+    token_endpoint: str = Field("", description="provider custom only (administrators); refused otherwise")
+    authorization_endpoint: str = Field("", description="provider custom only (administrators); refused otherwise")
+    device_authorization_endpoint: str = Field("", description="provider custom only (administrators); refused otherwise")
+    scopes: List[str] = Field(default_factory=list, description="provider custom only (administrators); refused otherwise")
+    ca_file: str = Field("", description="A PEM file on the gateway host (administrators only)")
 
 
 class FlowBody(BaseModel):

@@ -32,8 +32,8 @@ def _oauth_body(oauth_server, imap, smtp, ca) -> dict:
 
 def test_custom_oauth_provider_and_ca_file_are_admin_settings(gateway, imap, smtp, oauth_server, ca) -> None:
     r = gateway["client"].post("/api/gateway/me/email/oauth/start", headers=gateway["alice"], json=_oauth_body(oauth_server, imap, smtp, ca))
-    assert r.status_code == 400, r.text
-    assert r.json()["detail"]["reason_code"] == "email_invalid_settings"
+    assert r.status_code == 403, r.text
+    assert r.json()["detail"]["reason_code"] == "email_oauth_override_refused"
 
 
 def test_device_flow_connects_and_flows_are_per_user(gateway, imap, smtp, oauth_server, ca, monkeypatch) -> None:
@@ -163,6 +163,20 @@ def test_maintenance_notices_go_through_the_admin_outbox(gateway, imap, smtp) ->
     assert len(mails) == 1 and mails[0]["to"] == [ADMIN_ADDR]
     assert mails[0]["subject"] == "[AbstractFramework] Triage pending (2)"
     assert ok2 is True  # the same notice is recorded once and not sent again
+
+    # Once per UTC day, not once ever: the same condition still true tomorrow is reported again.
+    import abstractgateway.maintenance.notifier as notifier
+
+    today = notifier._notice_bucket()
+    notifier_bucket = lambda: today + 1  # noqa: E731
+    import pytest as _pytest
+
+    with _pytest.MonkeyPatch.context() as mp:
+        mp.setattr(notifier, "_notice_bucket", notifier_bucket)
+        ok3, err3 = send_email_notification(subject="[AbstractFramework] Triage pending (2)", body_text="Two reports wait.")
+        assert ok3 is True and err3 is None
+        send_email_notification(subject="[AbstractFramework] Triage pending (2)", body_text="Two reports wait.")
+    assert len(smtp_bodies(smtp)) == 2
 
 
 def test_runtime_wiring_binds_and_resolves_only_the_planes_account(gateway, imap, smtp) -> None:

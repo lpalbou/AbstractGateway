@@ -89,6 +89,26 @@ build on a runtime without the email seams.
   the calling administrator's own account (message bodies whole; the recipient policy and limits apply to sends) and
   will be removed in a later minor release. Use `/api/gateway/me/email`.
 
+### Security
+- **OAuth sign-in cannot be pointed at another host.** `POST /api/gateway/me/email/oauth/start` accepted
+  `token_endpoint`, `authorization_endpoint`, `device_authorization_endpoint` and `scopes` from any user, while the
+  client it used could be the administrator's (with its secret): a user could make the gateway send that secret, or
+  POST, to an internal address. For Google and Microsoft these fields are now refused with
+  `403 email_oauth_override_refused` (the answer names the fields), for administrators too, and a `tenant` must be a
+  tenant id or domain. Explicit endpoints and scopes are accepted only from an administrator with
+  `provider: "custom"`, which always brings its own client id; a user asking for `custom` gets the same typed 403
+  (was 400 `email_invalid_settings`). Independently, the gateway's and the built-in OAuth client are only ever used
+  against their provider's own endpoints (gate review of framework backlog 0992).
+- While an administrator has email off for a user, that user's Connect (`PUT /me/email`), Test
+  (`POST /me/email/test`) and OAuth sign-in are refused with `409 email_disabled` before any connection to a host the
+  user chose.
+- Account recovery checks the per-account and per-client rate limits on the request thread, before any background
+  send is started: a flood of requests starts no threads (the answer stays the same for every account).
+- The same maintenance notice is emailed at most once per UTC day (the deduplication key used to be "once ever", so
+  a condition still true the next day was never reported again).
+- Error texts name the real place to add a gateway OAuth client (`PUT /api/gateway/admin/email/oauth-clients/<provider>`)
+  instead of a console menu that does not exist; `email.md` is in the documentation site's navigation.
+
 ## [0.7.4] - 2026-09-29
 
 Dependencies: AbstractCore 2.19.2 or newer and AbstractRuntime 0.7.3 or newer (also in the `apple` and `gpu`

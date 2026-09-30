@@ -61,9 +61,23 @@ Which OAuth client signs in: the client id you give, else the gateway's client (
 setting, see below), else the built-in AbstractFramework client when one is registered for that
 provider. Tokens are refreshed automatically and stored encrypted, like passwords.
 
-Administrators set a bring-your-own client per provider with
+Google and Microsoft sign-ins always use the provider's built-in endpoints and scopes. A request
+that gives `token_endpoint`, `authorization_endpoint`, `device_authorization_endpoint` or `scopes`
+for them is refused with `403 email_oauth_override_refused` (the answer names the fields), for
+administrators too, and a `tenant` must be a tenant id or domain. Explicit endpoints and scopes
+are only for `provider: "custom"`, which only an administrator may use, and which always brings
+its own client id. The gateway's client and the built-in client are only ever sent to their
+provider's own endpoints, so no request can send the administrator's client secret, or make the
+gateway connect, to a host a user chose.
+
+Administrators set a bring-your-own client per provider over HTTP with
 `PUT /api/gateway/admin/email/oauth-clients/{google|microsoft}` (`client_id`, `client_secret`,
-`tenant`). The secret is sealed at rest and never returned; the read shows `client_secret_set`.
+`tenant`); the consoles do not edit OAuth clients yet. The secret is sealed at rest and never
+returned; the read shows `client_secret_set`.
+
+While an administrator has email turned off for a user, that user's **Connect**, **Test** and
+OAuth sign-in are refused (`409 email_disabled`) before any connection is made; the stored
+settings are kept.
 
 ## Agent email tools (off by default)
 
@@ -160,7 +174,8 @@ expires after 10 minutes and allows 5 tries. "Forgot your token?" issues a new t
 the old one stops working) and signs you in; "Email me a sign-in code" signs you in.
 
 The answer is the same whether or not the account exists or has email, requests are rate-limited
-per account and per client address, codes are stored only as keyed hashes, and every issue and use
+per account (3 per 15 minutes) and per client address (10 per 15 minutes) before any work starts
+(a flood of requests costs no background sends), codes are stored only as keyed hashes, and every issue and use
 is recorded in the audit log without the code. Users without email use the administrator's token
 rotation as before.
 
@@ -218,7 +233,8 @@ then on the variables are ignored, and each one still set is named at startup an
 administrator's **My email** notices with the setting that replaced it. The email bridge
 (`ABSTRACT_EMAIL_BRIDGE`) is replaced by the per-user watcher and the `email.received@1` trigger.
 Maintenance notices go to the administrator's registered address through the administrator's own
-account (`ABSTRACT_BACKLOG_EMAIL_TO` and the related account variables are ignored).
+account (`ABSTRACT_BACKLOG_EMAIL_TO` and the related account variables are ignored); the same notice
+is sent at most once per UTC day.
 
 The admin-only `/api/gateway/email/*` routes remain as deprecated aliases acting on the calling
 administrator's own account, and will be removed in a later minor release; use `/api/gateway/me/email`.

@@ -133,6 +133,32 @@ def test_rate_limited_per_account_and_per_client(gateway, imap, smtp, monkeypatc
     assert "rate_limited_account" in reasons and "rate_limited_client" in reasons
 
 
+def test_rate_limited_requests_spawn_no_thread(gateway, imap, smtp, monkeypatch) -> None:
+    # The rate check runs before any worker exists: once the account's budget is spent, a
+    # flood of requests answers the same and starts no thread at all.
+    import threading
+
+    from abstractgateway.mail import recovery
+
+    _connect(gateway, imap, smtp)
+    c = _fresh_client(gateway)
+    for _ in range(recovery.ACCOUNT_MAX_REQUESTS):
+        assert _request(c, "alice").status_code == 200
+    started = []
+    real_thread = threading.Thread
+
+    def counting_thread(*a, **kw):
+        started.append(kw.get("name"))
+        return real_thread(*a, **kw)
+
+    monkeypatch.setattr(recovery.threading, "Thread", counting_thread)
+    for _ in range(5):
+        r = _request(c, "alice")
+        assert r.status_code == 200 and r.json()["message"] == recovery.CONSTANT_MESSAGE
+    assert started == []
+    assert len(smtp.messages) == recovery.ACCOUNT_MAX_REQUESTS
+
+
 def test_reset_token_rotates_the_token_once(gateway, imap, smtp) -> None:
     _connect(gateway, imap, smtp)
     c = _fresh_client(gateway)
