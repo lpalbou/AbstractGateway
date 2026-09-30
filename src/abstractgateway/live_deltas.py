@@ -652,6 +652,16 @@ class _FileTail:
                     return out
                 st = os.fstat(fd)
                 self._fd, self._ino, self._buf = fd, (st.st_dev, st.st_ino), b""
+            # Look at the path BEFORE reading to the end: the writer appends its last
+            # line and only then deletes (or replaces) the file, so everything it
+            # wrote before a deletion seen here is read below. Checking after the
+            # read lost a final line written between the read and the check (the
+            # run's terminal, so the stream never got its synthetic delta_end).
+            try:
+                st = os.stat(self.path)
+                same = (st.st_dev, st.st_ino) == self._ino
+            except FileNotFoundError:
+                same = None
             while True:
                 chunk = os.read(self._fd, 1 << 16)
                 if not chunk:
@@ -668,11 +678,6 @@ class _FileTail:
                     continue
                 if isinstance(obj, dict):
                     out.append(obj)
-            try:
-                st = os.stat(self.path)
-                same = (st.st_dev, st.st_ino) == self._ino
-            except FileNotFoundError:
-                same = None
             if same is True:
                 return out
             # Deleted (None) or recreated (False): this file is finished.

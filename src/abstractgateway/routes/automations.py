@@ -574,6 +574,12 @@ def _create(svc: Any, principal: Any, body: CreateAutomationBody) -> Dict[str, A
     except RuntimeAutomationError as e:
         raise _domain_error(e)
     _nudge(svc, created_id)
+    if str((trigger or {}).get("source_id") or "") == "email.received":
+        # The mail watcher reads nothing until an email automation exists and its first read is a
+        # baseline (mail already there is history): take it now, not at the next 15 s tick.
+        worker = getattr(svc, "email_worker", None)
+        if worker is not None:
+            worker.nudge()
     controller = load_automation_controller(svc, created_id)
     return {"automation_id": created_id, "revision": revision, "summary": automation_summary_row(svc, principal, controller)}
 

@@ -39,6 +39,21 @@ The web console works on phones, tablets and any window size (ui-kit 0.3.1 respo
   at a time (the dialog first, then the drawer). While the drawer is open the page behind it is inert.
 - On touch screens, the setup guide's tile descriptions, card descriptions, the Network address notes
   and alert text use the 14 px reading size.
+## [0.8.2] - 2026-09-30
+
+Same dependencies as 0.8.1 (AbstractCore 2.20.2, AbstractRuntime 0.8.1; the terminal console stays
+0.12.0).
+
+### Fixed
+- Mail sent to test a new "When an email arrives" automation right after creating it triggers it.
+  The mail watcher reads nothing until an email automation exists and its first read only marks
+  where new mail starts; that read came up to a minute after the automation was created (checks
+  that read nothing counted as polls, and nothing woke the watcher), and mail arriving in that
+  minute was treated as already there. Creating an email automation now wakes the watcher, which
+  marks the start within seconds.
+- A new (or resumed) "When an email arrives" automation no longer runs on mail that arrived while
+  you had no email automation active: the watcher did not read the mailbox in that time, and its
+  next read delivered all of it as new mail. That mail is now treated as already there.
 
 ## [0.8.1] - 2026-09-30
 
@@ -67,6 +82,8 @@ stays 0.12.0).
 - A capability-default save that moves a route to another provider without naming options drops
   the old engine's speculation request (an LM Studio text route no longer keeps an MLX route's
   `speculation: native_mtp`).
+- A live stream no longer misses a run's end when the runner wrote the run's last line just as the
+  API process reached the end of the stream file (the open reply never got its closing frame).
 
 ### Docs
 - Model downloads: the Supertonic 3 examples show its real size (about 401 MB).

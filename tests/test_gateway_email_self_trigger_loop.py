@@ -106,7 +106,9 @@ def test_the_result_notice_never_triggers_its_automation(live: TestClient, imap,
     notice = email.message_from_bytes(sent["data"], policy=email.policy.default)
     assert str(notice["Subject"]) == f"[AbstractFramework] {TITLE}: result"
     assert notice["Auto-Submitted"] == "auto-generated"
-    assert str(notice["X-AbstractFramework-Automation"]).startswith("notification:")
+    # The marker header is long enough to be folded onto its own line; Python < 3.12's parser
+    # keeps the fold's leading space in the value (AbstractCore's reader strips it).
+    assert str(notice["X-AbstractFramework-Automation"]).strip().startswith("notification:")
     assert NotificationOutbox(plane).was_sent(str(notice["Message-ID"]))
 
     # The mail server delivers the notice to the same inbox; the watcher never admits it.

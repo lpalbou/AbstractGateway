@@ -6788,6 +6788,13 @@ on three polls in a row is recorded and passed, so one bad message never blocks 
 Connection problems back off from 60 seconds to 15 minutes; nothing is paused, and the status
 shows the cause and the fix.
 
+Mail that is already in your mailbox when the watcher starts is never an event. The watcher marks
+where new mail starts when you connect an account and whenever an email automation becomes active
+after a time with none (creating one takes that mark within seconds, so a message you send to test
+it right after counts); mail that arrived while none of your email automations was active is not
+processed later. A gateway restart keeps the mark: mail that arrives while the gateway is down is
+read when it is back.
+
 How often an automation **runs** on new mail is its own trigger setting: every 60 seconds when it
 needs no model (`"uses_model": false`), once an hour by default when it runs a model (summarise,
 classify, draft replies, AI triage), on the batch of messages received since its last run. Each
@@ -6920,7 +6927,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.8.1
+docker pull ghcr.io/lpalbou/abstractgateway:0.8.2
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -6928,7 +6935,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.8.1-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.8.2-gpu
 ```
 
 The image names `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -7210,7 +7217,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.8.1-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.8.2-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -7374,7 +7381,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.8.1
+docker pull ghcr.io/lpalbou/abstractgateway:0.8.2
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -7382,7 +7389,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.8.1-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.8.2-gpu
 ```
 
 The `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR names are
@@ -7907,7 +7914,7 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.8.1-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:0.8.2-gpu` with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -8441,6 +8448,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-09-30
+
+Same dependencies as 0.8.1 (AbstractCore 2.20.2, AbstractRuntime 0.8.1; the terminal console stays
+0.12.0).
+
+### Fixed
+- Mail sent to test a new "When an email arrives" automation right after creating it triggers it.
+  The mail watcher reads nothing until an email automation exists and its first read only marks
+  where new mail starts; that read came up to a minute after the automation was created (checks
+  that read nothing counted as polls, and nothing woke the watcher), and mail arriving in that
+  minute was treated as already there. Creating an email automation now wakes the watcher, which
+  marks the start within seconds.
+- A new (or resumed) "When an email arrives" automation no longer runs on mail that arrived while
+  you had no email automation active: the watcher did not read the mailbox in that time, and its
+  next read delivered all of it as new mail. That mail is now treated as already there.
+
 ## [0.8.1] - 2026-09-30
 
 Needs AbstractCore 2.20.2 and AbstractRuntime 0.8.1 (the floors are raised; the terminal console
@@ -8468,6 +8491,8 @@ stays 0.12.0).
 - A capability-default save that moves a route to another provider without naming options drops
   the old engine's speculation request (an LM Studio text route no longer keeps an MLX route's
   `speculation: native_mtp`).
+- A live stream no longer misses a run's end when the runner wrote the run's last line just as the
+  API process reached the end of the stream file (the open reply never got its closing frame).
 
 ### Docs
 - Model downloads: the Supertonic 3 examples show its real size (about 401 MB).
