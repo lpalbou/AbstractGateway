@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that read nothing counted as polls, and nothing woke the watcher), and mail arriving in that
   minute was treated as already there. Creating an email automation now wakes the watcher, which
   marks the start within seconds.
+- A new (or resumed) "When an email arrives" automation no longer runs on mail that arrived while
+  you had no email automation active: the watcher did not read the mailbox in that time, and its
+  next read delivered all of it as new mail. That mail is now treated as already there.
 
 ## [0.8.1] - 2026-09-30
 

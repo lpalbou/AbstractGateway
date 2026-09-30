@@ -106,8 +106,12 @@ class EmailWorker:
         return out
 
     def _loop(self) -> None:
-        while not self._stop.is_set():
+        while True:
+            # Clear the wake BEFORE checking stop: a stop() landing in between would otherwise
+            # have its wake erased and the loop would sleep a full tick past it.
             self._wake.clear()
+            if self._stop.is_set():
+                break
             self.tick()
             self._wake.wait(self.tick_s)
 

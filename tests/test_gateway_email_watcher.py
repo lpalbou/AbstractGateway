@@ -197,6 +197,47 @@ def test_the_first_email_automation_gets_its_baseline_at_the_next_tick(gateway, 
     assert [e["subject"] for e in _events(w)] == ["right after the automation"]
 
 
+def test_mail_from_a_time_without_email_automations_is_history(gateway, imap, smtp) -> None:
+    # The watcher reads nothing while no email automation exists, so its cursor goes stale; the
+    # next automation's first read delivered everything since then as new mail (stamped after
+    # the new automation's start), and it ran on mail older than itself.
+    _connect(gateway, "alice", imap, smtp, ALICE)
+    wanted = [True]
+    w = _watcher("alice", has_consumers=lambda: wanted[0])
+    assert w.poll_once()["state"] == "watching"  # baseline with a first automation
+    imap.add_message("INBOX", message("while watched"))
+    assert w.poll_once()["new"] == 1
+
+    wanted[0] = False  # the only email automation is archived (or paused)
+    assert w.poll_once()["state"].startswith("idle")
+    imap.add_message("INBOX", message("while nobody watched"))
+    wanted[0] = True  # a new one is created (or the paused one resumed)
+    assert w.poll_once()["new"] == 0, "mail from the time without automations is history"
+    imap.add_message("INBOX", message("after the new automation"))
+    assert w.poll_once()["new"] == 1
+    assert [e["subject"] for e in _events(w)] == ["while watched", "after the new automation"]
+
+
+def test_a_failed_consumer_probe_keeps_the_cursor(gateway, imap, smtp) -> None:
+    # A probe that fails says nothing about the automations: the cursor is kept and nothing
+    # that arrived meanwhile is dropped.
+    _connect(gateway, "alice", imap, smtp, ALICE)
+    state = {"fail": False}
+
+    def probe() -> bool:
+        if state["fail"]:
+            raise RuntimeError("runtime not ready")
+        return True
+
+    w = _watcher("alice", has_consumers=probe)
+    assert w.poll_once()["state"] == "watching"
+    state["fail"] = True
+    assert w.poll_once()["state"].startswith("idle")
+    imap.add_message("INBOX", message("during the failed probe"))
+    state["fail"] = False
+    assert w.poll_once()["new"] == 1
+
+
 def test_user_and_admin_switches_keep_the_mailbox_untouched(gateway, imap, smtp) -> None:
     _connect(gateway, "alice", imap, smtp, ALICE)
     before = len(imap.commands)

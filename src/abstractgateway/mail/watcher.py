@@ -246,9 +246,19 @@ class MailWatcher:
             try:
                 wanted = bool(self._has_consumers())
             except Exception:  # noqa: BLE001 - a probe failure never stops the others
-                wanted = False
-            if not wanted:
                 return self._gate(doc, "idle (no email-triggered automation)", out)
+            if not wanted:
+                # Seen with no email automation (a probe that answered, not one that failed): the
+                # mailbox is not read from here on, so its cursor goes stale.
+                doc["without_consumers"] = True
+                return self._gate(doc, "idle (no email-triggered automation)", out)
+            if doc.pop("without_consumers", False):
+                # The first email automation after a time with none: mail that arrived meanwhile is
+                # history, exactly as for a new account. The stale cursor delivered all of it as new
+                # mail, and the new automation ran on mail older than itself (and a resumed one on
+                # mail received while it was paused).
+                folder = settings.account.imap.folder if settings.account.imap is not None else ""
+                self.inbox.set_stream_state(self.feeder.stream(folder or None), {})
 
         # Only a poll that goes on to read the mailbox starts the 60 s cadence. A gate above reads
         # nothing, so it must not delay the next check: counted as a poll, it pushed the baseline up
