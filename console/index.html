@@ -404,6 +404,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#responsive-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Responsive layout
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#stream-replies-by-default" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1019,6 +1030,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#responsive-layout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Responsive layout
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#stream-replies-by-default" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1268,6 +1290,22 @@ contact address, then the versions the gateway reports on <code>GET
 /api/gateway/about</code>: AbstractGateway, AbstractFramework (or "not installed on
 the gateway host") and every installed AbstractFramework package. If the
 gateway cannot report them, one line says "Gateway: unavailable (reason)".</p>
+<h3 id="responsive-layout">Responsive layout<a class="headerlink" href="#responsive-layout" title="Permanent link">&para;</a></h3>
+<p>The web console works in any browser window and on phones and tablets:</p>
+<ul>
+<li>From 1024 px wide, the sidebar is a column on the left. Below that, it becomes a drawer: open
+  it with the <strong>☰</strong> button in the header, and close it with Escape, the close button, a tap
+  outside it, or by picking a section. While the drawer is open, the page behind it does not
+  respond to clicks or keyboard focus.</li>
+<li>On narrow screens the top-bar buttons wrap under the page title. In phone landscape the header
+  is a single thin row.</li>
+<li>Below 768 px wide, or in phone landscape, dialogs open as bottom sheets with their buttons
+  always visible, and the docs assistant drawer is full width. A dialog opened while a drawer is
+  open appears above it. Escape closes the top one first.</li>
+<li>On touch screens, buttons and rows are at least 44 px tall, form fields use 16 px text (iOS
+  does not zoom into a focused field), and reading text is 14 px.</li>
+<li>The layout respects the notch and home-indicator areas of phones.</li>
+</ul>
 <h3 id="stream-replies-by-default">Stream replies by default<a class="headerlink" href="#stream-replies-by-default" title="Permanent link">&para;</a></h3>
 <p>Under the default agent workflows on the Workflows tab, <strong>Stream replies by
 default</strong> turns <code>agents.streaming_default</code> on or off. When it is on, an
