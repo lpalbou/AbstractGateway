@@ -719,14 +719,39 @@ def _isolate_gateway_runtime_env(
     monkeypatch.delenv("ABSTRACTCORE_SERVER_BASE_URL", raising=False)
 
 
+def _join_gateway_boot_threads(timeout_s: float = 120.0) -> None:
+    # The app lifespan starts the service boot on a background "gateway-boot"
+    # thread and its shutdown does not wait for it. A test that leaves its
+    # TestClient before the boot finished (a 401 test returns at once) leaked
+    # that thread into the NEXT test: it built its service after this
+    # fixture's stop, reading the next test's environment half set up (the
+    # conftest data dir, before the module's own fixture), and the next
+    # lifespan reused that cached service with the wrong data dir
+    # (test_colliding_template_ids_are_skipped_loudly, full-suite order only).
+    # Join every boot thread so each test starts and ends with none running.
+    import threading
+    import time
+
+    deadline = time.monotonic() + timeout_s
+    for t in threading.enumerate():
+        if t.name == "gateway-boot" and t is not threading.current_thread():
+            t.join(timeout=max(0.0, deadline - time.monotonic()))
+            if t.is_alive():
+                pytest.fail(f"a gateway boot thread is still running after {timeout_s:.0f}s")
+
+
 @pytest.fixture(autouse=True)
 def _reset_gateway_service_between_tests(_isolate_gateway_runtime_env: None):
-    from abstractgateway.service import stop_gateway_runner
+    from abstractgateway.service import reset_gateway_boot_state, stop_gateway_runner
 
+    _join_gateway_boot_threads()
     stop_gateway_runner()
+    reset_gateway_boot_state()
     sys.modules.pop("abstractgateway.app", None)
     yield
+    _join_gateway_boot_threads()
     stop_gateway_runner()
+    reset_gateway_boot_state()
     sys.modules.pop("abstractgateway.app", None)
 
 
