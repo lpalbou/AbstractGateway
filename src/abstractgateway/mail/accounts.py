@@ -49,7 +49,9 @@ from .core_mail import (
     OAuthTokenClient,
     SecretVault,
     SmtpSettings,
+    discover_servers,
     provider_preset,
+    require_servers,
     resolve_oauth_client,
     tls_context,
 )
@@ -61,8 +63,14 @@ from .audit import audit_email_event
 
 ACCOUNT_ID = "default"
 SETTINGS_LABEL = "Settings → My email"
-ADMIN_DISABLED_CAUSE = "A gateway administrator turned email off for your account."
-ADMIN_DISABLED_FIX = "Ask a gateway administrator to turn it back on (Users → Email); your settings are kept."
+ADMIN_DISABLED_CAUSE = "Your admin turned mailboxes off for your account."
+ADMIN_DISABLED_FIX = "Ask your gateway admin to allow \u201cMailboxes for users\u201d for you; your settings are kept."
+
+# The reasons a user-facing switch is unavailable (DESIGN 2026-09-30 §6), in the order they apply.
+REASON_ADMIN_MAILBOXES_OFF = "Your admin turned mailboxes off."
+REASON_ADMIN_AGENT_TOOLS_OFF = "Your admin turned agent email tools off."
+REASON_CONNECT_MAILBOX = "Connect a mailbox first."
+REASON_MAILBOX_NOT_IN_USE = "Switch on \u201cUse this mailbox\u201d (Advanced) first."
 
 
 def _now_iso() -> str:
@@ -252,6 +260,40 @@ def sync_registered_address(plane: EmailPlane, store: Optional[EmailAccountStore
     return store
 
 
+def set_email_address(principal: GatewayPrincipal, address: str, *, actor: str = "") -> Dict[str, Any]:
+    """Set the user's EMAIL ADDRESS (not a mailbox): where sign-in codes and notifications go and
+    "self" for the recipient policy. The users registry stays the source of truth (the record's
+    `email`); the account-less operator (static admin token, no registry record) keeps the
+    gateway knob `operator_email`. Empty clears it."""
+
+    plane = plane_for_principal(principal)
+    from ..users import GatewayUserRegistry, _normalize_email
+
+    try:
+        value = _normalize_email(address)
+    except ValueError:
+        raise EmailInvalidSettings(
+            f"{str(address or '').strip()!r} is not a valid email address.", "Give one address, like name@example.com, or leave it empty."
+        ) from None
+    registry = GatewayUserRegistry()
+    record = registry.get_user(str(principal.user_id), tenant_id=str(principal.tenant_id or "default"))
+    if record is not None:
+        registry.update_user(user_id=record.user_id, tenant_id=record.tenant_id, email=value)
+        source = "account"
+    else:
+        from ..runtime_config import write_runtime_config
+
+        write_runtime_config(gateway_data_dir_from_env(), {"operator_email": value or None}, actor=actor or f"person:{principal.user_id}")
+        source = "stored"
+    sync_registered_address(plane)
+    rebind_live_runtime(plane)
+    audit_email_event(
+        "email.address_changed", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=actor or plane.user_id,
+        outcome="set" if value else "cleared", source=source,
+    )
+    return public_status(plane)
+
+
 def rebind_live_runtime(plane: EmailPlane) -> None:
     """After a settings change, re-bind the plane's live runtime (if its service is built)."""
 
@@ -267,32 +309,44 @@ def rebind_live_runtime(plane: EmailPlane) -> None:
 # The admin's per-user switch (D3: admins enable/disable, never read)
 # ---------------------------------------------------------------------------------------
 
-_CAP_LOCK = threading.Lock()
+_CAP_LOCK = threading.RLock()
 
-# What the administrator makes AVAILABLE (operator decision 2026-09-30): a gateway-wide default
+# What the administrator makes AVAILABLE (operator decisions 2026-09-30): a gateway-wide default
 # per capability plus per-user overrides. A user can switch on, on their own runtime, only what
-# is available to them.
+# is available to them. The admin's simple view is ONE switch, "Mailboxes for users" (`email`);
+# `email_agent_tools` and `email_recovery` sit under its Advanced disclosure (`advanced: True`).
 CAPABILITIES: Dict[str, Dict[str, Any]] = {
     "email": {
         "default": True,
-        "label": "Email",
-        "description": "the user's own mailbox: watcher, sending, email notifications, sign-in codes",
+        "label": "Mailboxes for users",
+        "description": "Users may connect their own mailbox for their agents, automations and notifications. "
+        "You never see anyone's mail.",
         "per_user": True,
+        "advanced": False,
     },
     "email_agent_tools": {
-        "default": False,
-        "label": "Agent email tools",
-        "description": "agents and workflows may list, search, read, send and reply to mail and handle attachments "
-        "(each user still switches them on for themselves)",
+        # ON since capabilities.json v3: each user still switches the tools on for themselves
+        # (their own switch is off by default), so availability no longer needs a second admin step.
+        "default": True,
+        "label": "Agent email tools for users",
+        "description": "Users may let their agents and workflows list, search, read, send and reply to their mail. "
+        "Each user still switches this on for themselves.",
         "per_user": True,
+        "advanced": True,
     },
     "email_recovery": {
         "default": True,
         "label": "Sign-in by email",
-        "description": "“Forgot your token?” and “Email me a sign-in code” on the sign-in page, for users with email",
+        "description": "Shows \u201cForgot your token?\u201d on the sign-in page. Whoever controls a user's mailbox can "
+        "then sign in as that user.",
         "per_user": False,
+        "advanced": True,
     },
 }
+
+CAPABILITIES_VERSION = 3
+# The built-in defaults before v3: the migration judges what each user could use under them.
+_V2_BUILT_IN_DEFAULTS = {"email": True, "email_agent_tools": False, "email_recovery": True}
 
 
 def _capability_path() -> Path:
@@ -300,10 +354,87 @@ def _capability_path() -> Path:
 
 
 def _capability_doc() -> Dict[str, Any]:
-    doc = _read_json(_capability_path())
+    path = _capability_path()
+    doc = _read_json(path)
+    if int(doc.get("version") or 0) < CAPABILITIES_VERSION:
+        doc = _migrate_capabilities(path, doc)
     defaults = doc.get("defaults") if isinstance(doc.get("defaults"), dict) else {}
     users = doc.get("users") if isinstance(doc.get("users"), dict) else {}
     return {"defaults": defaults, "users": users}
+
+
+def _all_planes() -> List[EmailPlane]:
+    """Every human plane of this gateway (the default runtime's plus each registry user's)."""
+
+    planes: Dict[str, EmailPlane] = {}
+    try:
+        p = default_plane(gateway_data_dir_from_env())
+        planes[p.key] = p
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from ..users import GatewayUserRegistry
+
+        for rec in GatewayUserRegistry().list_users():
+            if rec.principal_kind == "entity":
+                continue
+            try:
+                p = plane_for_principal(rec.to_principal())
+            except Exception:  # noqa: BLE001 - one unreadable record never blocks the others
+                continue
+            planes.setdefault(p.key, p)
+    except Exception:  # noqa: BLE001
+        pass
+    return list(planes.values())
+
+
+def _migrate_capabilities(path: Path, doc: Dict[str, Any]) -> Dict[str, Any]:
+    """capabilities.json v2 -> v3 (`email_agent_tools` built-in default OFF -> ON).
+
+    Nobody gains tools they could not use before: a user whose agent-tools availability was OFF
+    under the v2 rules (their override, else the stored gateway default, else the v2 built-in
+    OFF) and whose own switch is stored ON gets a per-user `email_agent_tools: false` override.
+    Everyone else keeps their own switch (default OFF), so the new default only lets them opt in.
+    Recorded in the audit log (`email.capabilities_migrated`)."""
+
+    with _CAP_LOCK:
+        current = _read_json(path)
+        if int(current.get("version") or 0) >= CAPABILITIES_VERSION:
+            return current
+        existed = path.exists()
+        defaults = dict(current.get("defaults") or {}) if isinstance(current.get("defaults"), dict) else {}
+        users = dict(current.get("users") or {}) if isinstance(current.get("users"), dict) else {}
+        pinned: List[str] = []
+        for plane in _all_planes():
+            if not agent_tools_switch(plane):
+                continue
+            row = users.get(plane.key) if isinstance(users.get(plane.key), dict) else {}
+            if isinstance(row.get("email_agent_tools"), bool):
+                continue  # an explicit per-user choice already decides, under v2 and v3 alike
+            stored_default = defaults.get("email_agent_tools")
+            was_available = stored_default if isinstance(stored_default, bool) else _V2_BUILT_IN_DEFAULTS["email_agent_tools"]
+            if was_available:
+                continue
+            row = dict(row)
+            row["email_agent_tools"] = False
+            row["by"], row["at"] = "migration:capabilities-v3", _now_iso()
+            users[plane.key] = row
+            pinned.append(plane.key)
+        migrated = {"version": CAPABILITIES_VERSION, "defaults": defaults, "users": users}
+        try:
+            _write_private_json(path, migrated)
+        except OSError:
+            return migrated  # read-only data dir: the migrated view still applies in memory
+    if existed or pinned:
+        audit_email_event(
+            "email.capabilities_migrated",
+            actor="gateway",
+            from_version=int(current.get("version") or 0),
+            to_version=CAPABILITIES_VERSION,
+            pinned_off=pinned,
+            reason="email_agent_tools built-in default is now ON; users who could not use the tools keep them off",
+        )
+    return migrated
 
 
 def capability_default(cap: str) -> bool:
@@ -327,7 +458,7 @@ def capabilities_public() -> Dict[str, Any]:
     return {
         "capabilities": [
             {"id": cid, "label": spec["label"], "description": spec["description"], "per_user": spec["per_user"],
-             "default": capability_default(cid), "built_in_default": spec["default"]}
+             "advanced": spec["advanced"], "default": capability_default(cid), "built_in_default": spec["default"]}
             for cid, spec in CAPABILITIES.items()
         ]
     }
@@ -346,7 +477,7 @@ def set_capability_defaults(changes: Dict[str, Any], *, actor: str) -> Dict[str,
                 doc["defaults"][k] = v
             else:
                 raise EmailInvalidSettings(f"{k} must be true, false or null.", "Send true, false, or null for the built-in default.")
-        _write_private_json(_capability_path(), {"version": 2, **doc})
+        _write_private_json(_capability_path(), {"version": CAPABILITIES_VERSION, **doc})
     for k, v in changes.items():
         audit_email_event("email.capability_changed", actor=actor, kind=k, enabled=v, reason="gateway default")
     rebind_all_live_runtimes()
@@ -371,7 +502,7 @@ def set_user_capabilities(plane: EmailPlane, changes: Dict[str, Any], *, actor: 
                 raise EmailInvalidSettings(f"{k} must be true, false or null.", "Send true, false, or null to inherit.")
         row["by"], row["at"] = str(actor or ""), _now_iso()
         doc["users"][plane.key] = row
-        _write_private_json(_capability_path(), {"version": 2, **doc})
+        _write_private_json(_capability_path(), {"version": CAPABILITIES_VERSION, **doc})
     rebind_live_runtime(plane)
     for k, v in changes.items():
         audit_email_event("email.capability_changed", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=actor, kind=k, enabled=v)
@@ -466,7 +597,7 @@ def email_usable(plane: EmailPlane) -> bool:
 # ---------------------------------------------------------------------------------------
 
 AGENT_TOOLS_OFF_CAUSE = "Agent email tools are off for your account."
-AGENT_TOOLS_OFF_FIX = "Turn on “Agent email tools” in Settings → My email (your account must be connected and allowed by an administrator)."
+AGENT_TOOLS_OFF_FIX = "Switch on \u201cAgent email tools\u201d on your account page (a mailbox must be connected)."
 
 
 def _agent_tools_path(plane: EmailPlane) -> Path:
@@ -488,8 +619,8 @@ def set_agent_tools_switch(plane: EmailPlane, enabled: bool, *, actor: str = "")
     return bool(enabled)
 
 
-AGENT_TOOLS_UNAVAILABLE_CAUSE = "Agent email tools are not available to your account."
-AGENT_TOOLS_UNAVAILABLE_FIX = "Ask a gateway administrator to make “Agent email tools” available to you (Users → Email)."
+AGENT_TOOLS_UNAVAILABLE_CAUSE = "Your admin turned agent email tools off."
+AGENT_TOOLS_UNAVAILABLE_FIX = "Ask your gateway admin to allow \u201cAgent email tools for users\u201d (Users \u2192 Advanced)."
 
 
 def agent_tools_active(plane: EmailPlane) -> bool:
@@ -500,20 +631,46 @@ def agent_tools_active(plane: EmailPlane) -> bool:
     return agent_tools_available(plane) and agent_tools_switch(plane) and email_usable(plane)
 
 
+def mailbox_unavailable_reason(plane: EmailPlane) -> Optional[str]:
+    """Why the mailbox cannot be used right now (None = usable): the admin's switch, no
+    connected mailbox, or the user's own "Use this mailbox" switch."""
+
+    if not admin_email_enabled(plane):
+        return REASON_ADMIN_MAILBOXES_OFF
+    try:
+        st = account_store(plane).settings()
+        configured = st.account is not None and account_store(plane).vault.exists()
+        in_use = bool(st.enabled)
+    except EmailError:
+        configured, in_use = False, False
+    if not configured:
+        return REASON_CONNECT_MAILBOX
+    if not in_use:
+        return REASON_MAILBOX_NOT_IN_USE
+    return None
+
+
 def agent_tools_status(plane: EmailPlane) -> Dict[str, Any]:
+    """The user's "Agent email tools" switch: `on` (their choice), `available` (can it be
+    switched on now), `unavailable_reason` (DESIGN §6 wording), `active` (agents have the tools).
+    `enabled` / `reason` / `admin_available` keep the pre-0.10 shape readable."""
+
     switch = agent_tools_switch(plane)
-    available = agent_tools_available(plane)
+    admin_available = agent_tools_available(plane)
     usable = email_usable(plane)
-    reason = ""
-    if not available:
-        reason = "not available — ask your admin"
-    elif not admin_email_enabled(plane):
-        reason = "email is turned off for your account by an administrator"
-    elif not usable:
-        reason = "no connected, turned-on email account"
-    elif not switch:
-        reason = "off (your choice; default)"
-    return {"enabled": switch, "available": available, "active": bool(available and switch and usable), "reason": reason}
+    unavailable = REASON_ADMIN_MAILBOXES_OFF if not admin_email_enabled(plane) else (
+        REASON_ADMIN_AGENT_TOOLS_OFF if not admin_available else mailbox_unavailable_reason(plane)
+    )
+    reason = unavailable or ("" if switch else "Off (your choice; the default).")
+    return {
+        "on": switch,
+        "available": unavailable is None,
+        "unavailable_reason": unavailable,
+        "active": bool(admin_available and switch and usable),
+        "enabled": switch,
+        "admin_available": admin_available,
+        "reason": reason or "",
+    }
 
 
 def agent_tools_off_reason(plane: EmailPlane) -> Optional[str]:
@@ -576,6 +733,15 @@ def public_status(plane: EmailPlane) -> Dict[str, Any]:
         out["admin_disabled"] = {"cause": ADMIN_DISABLED_CAUSE, "fix": ADMIN_DISABLED_FIX}
     out["account_ref"] = plane.account_ref
     out["agent_tools"] = agent_tools_status(plane)
+    # Additive fields for the account page (CONTRACT 2026-09-30 §5.4, DESIGN §6).
+    out["email_available"] = admin_on
+    out["registered_address"] = registered_address(plane)
+    out["oauth_providers"] = oauth_providers_for_users()
+    from .notifications import read_preferences
+
+    prefs = read_preferences(plane)
+    out["notifications"] = {"job_failed": bool(prefs["job_failed"]), "approval_needed": bool(prefs["approval_needed"])}
+    out["notifications_unavailable_reason"] = mailbox_unavailable_reason(plane)
     try:
         from .watcher import watcher_public_status
 
@@ -690,6 +856,44 @@ def build_servers(imap: Optional[Dict[str, Any]], smtp: Optional[Dict[str, Any]]
     return imap_s, smtp_s
 
 
+def discover(address: str, **kwargs: Any) -> Dict[str, Any]:
+    """The mailbox's IMAP / SMTP servers from its address (AbstractCore's deterministic
+    discovery: known providers, autoconfig, ISPDB, SRV, MX). A non-address is a typed 400."""
+
+    try:
+        return discover_servers(str(address or "").strip(), **kwargs)
+    except ValueError:
+        raise EmailInvalidSettings(
+            f"{str(address or '').strip()!r} is not a valid email address.", "Give the mailbox's address as name@example.com."
+        ) from None
+
+
+def _no_host(leg: Optional[Dict[str, Any]]) -> bool:
+    return not (isinstance(leg, dict) and str(leg.get("host") or "").strip())
+
+
+def _named_step_error(err: EmailError) -> EmailError:
+    """A failed connect names the step that failed (`details.step`: imap | smtp) and says it the
+    way the Connect form shows it (`details.step_message`)."""
+
+    d = err.details or {}
+    step = str(d.get("protocol") or "")
+    if step not in ("imap", "smtp"):
+        return err
+    host, port = str(d.get("host") or ""), d.get("port")
+    where = f"{host}:{port}" if port else host
+    if err.code == "email_auth_failed":
+        msg = f"Sign-in refused by {host} \u2014 check the password."
+    elif err.code == "email_tls_failed":
+        msg = f"Couldn't set up a secure connection to {where}."
+    elif err.code in ("email_unreachable", "email_transient"):
+        msg = f"Couldn't reach {where}."
+    else:
+        msg = f"The {step.upper()} check at {where} failed: {err.cause}"
+    err.details = {**d, "step": step, "step_message": msg}
+    return err
+
+
 def connect_password(
     plane: EmailPlane,
     *,
@@ -704,11 +908,27 @@ def connect_password(
     actor: str = "",
 ) -> Dict[str, Any]:
     require_admin_email_on(plane)
+    discovery: Optional[Dict[str, Any]] = None
+    if _no_host(imap) and _no_host(smtp):
+        # No servers given: discover them from the address (400 email_discovery_failed + tried).
+        try:
+            found = require_servers(str(address or "").strip())
+        except ValueError:
+            raise EmailInvalidSettings(
+                f"{str(address or '').strip()!r} is not a valid email address.", "Give the mailbox's address as name@example.com."
+            ) from None
+        imap = {**found["imap"], "folder": (imap or {}).get("folder") or "INBOX"} if isinstance(found.get("imap"), dict) else None
+        smtp = dict(found["smtp"]) if isinstance(found.get("smtp"), dict) else None
+        username = username or str(found.get("username") or "")
+        discovery = {"source": found.get("source"), "provider": found.get("provider"), "tried": found.get("tried") or []}
     imap_s, smtp_s = build_servers(imap, smtp, allow_ca_file=allow_ca_file)
     account = EmailAccount.build(address=address, username=username, imap=imap_s, smtp=smtp_s, display_name=display_name)
     store = account_store(plane)
     reg = registered_address(plane)
-    store.connect(account, EmailSecret(password), test=bool(test), registered_address=reg)
+    try:
+        store.connect(account, EmailSecret(password), test=bool(test), registered_address=reg)
+    except EmailError as err:
+        raise _named_step_error(err) from None
     try:
         from .watcher import reset_watcher_cursor
 
@@ -718,9 +938,12 @@ def connect_password(
     rebind_live_runtime(plane)
     audit_email_event(
         "email.connected", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=actor or plane.user_id, auth_kind="password",
-        outcome="tested" if test else "untested",
+        outcome="tested" if test else "untested", discovered=discovery is not None,
     )
-    return public_status(plane)
+    out = public_status(plane)
+    if discovery is not None:
+        out["discovery"] = discovery
+    return out
 
 
 def test_account(plane: EmailPlane, *, actor: str = "") -> Dict[str, Any]:
@@ -803,6 +1026,27 @@ def oauth_clients_public() -> Dict[str, Any]:
             "builtin_available": builtin is not None,
         }
     return {"providers": out}
+
+
+_PROVIDER_LABELS = {"google": "Google", "microsoft": "Microsoft"}
+
+
+def oauth_providers_for_users() -> List[Dict[str, Any]]:
+    """`[{id, available, reason}]` for the account page's "Sign in with Google / Microsoft"
+    buttons: available with the gateway's own client (admin setting) or a built-in one."""
+
+    pub = oauth_clients_public()["providers"]
+    out: List[Dict[str, Any]] = []
+    for prov in OAUTH_PROVIDERS:
+        row = pub.get(prov) or {}
+        available = bool(row.get("configured") or row.get("builtin_available"))
+        label = _PROVIDER_LABELS[prov]
+        out.append({
+            "id": prov,
+            "available": available,
+            "reason": None if available else f"No {label} sign-in client on this gateway: add one under Advanced, or ask your admin.",
+        })
+    return out
 
 
 def set_oauth_client(provider: str, *, client_id: str, client_secret: Optional[str], tenant: str = "", actor: str = "") -> Dict[str, Any]:

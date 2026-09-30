@@ -228,7 +228,12 @@ class GatewayUserCreateRequest(BaseModel):
 
     user_id: str = Field(..., min_length=1)
     tenant_id: str = Field(default="default", min_length=1)
-    email: Optional[str] = Field(default=None, max_length=254)
+    email: Optional[str] = Field(
+        default=None,
+        max_length=254,
+        description="The user's email address: where sign-in codes and notifications go, and the first address "
+        "their agents may write to. Empty = none (they can add it later). Not a mailbox: only the user connects one.",
+    )
     roles: List[str] = Field(default_factory=lambda: ["user"])
     scopes: List[str] = Field(default_factory=list)
     enabled: bool = True
@@ -242,10 +247,16 @@ class GatewayUserCreateRequest(BaseModel):
 class GatewayUserUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    email: Optional[str] = Field(default=None, max_length=254)
+    email: Optional[str] = Field(
+        default=None, max_length=254, description="The user's email address (\"\" clears it). Not a mailbox."
+    )
     roles: Optional[List[str]] = None
     scopes: Optional[List[str]] = None
-    enabled: Optional[bool] = None
+    enabled: Optional[bool] = Field(
+        default=None,
+        description="Active: true = can sign in; false = deactivated (signed out until Active is back on). "
+        "An admin can't deactivate their own account (409 cannot_deactivate_self).",
+    )
     runtime_id: Optional[str] = None
     token: Optional[str] = Field(default=None, description="Optional replacement bearer token.")
     rotate_token: bool = Field(default=False, description="Generate and return a fresh bearer token.")
@@ -541,6 +552,18 @@ def _with_email_account_status(rows: List[Dict[str, Any]]) -> List[Dict[str, Any
     return rows
 
 
+def _same_account(principal: Any, *, user_id: str, tenant_id: str) -> bool:
+    """Is `user_id`/`tenant_id` the calling principal's own account?"""
+    from ..security.principal import safe_principal_component
+
+    return (
+        safe_principal_component(str(getattr(principal, "user_id", "") or ""), default="")
+        == safe_principal_component(str(user_id or ""), default="")
+        and safe_principal_component(str(getattr(principal, "tenant_id", "") or "default"), default="default")
+        == safe_principal_component(str(tenant_id or "default"), default="default")
+    )
+
+
 def _roles_grant_admin(roles: Any) -> bool:
     return "admin" in {str(r).strip() for r in (roles or [])}
 
@@ -594,7 +617,13 @@ def _refuse_removing_last_admin(registry: GatewayUserRegistry, *, tenant_id: str
     )
 
 
-@router.post("/admin/users")
+@router.post(
+    "/admin/users",
+    summary="Create a user (User ID, role, email address)",
+    description="Creates a gateway user and returns their token once. `email` is the user's email address "
+    "(sign-in codes, notifications, the default allowed recipient), never a mailbox: only the user connects a "
+    "mailbox, from their own account page.",
+)
 async def gateway_admin_create_user(request: Request, payload: GatewayUserCreateRequest) -> Dict[str, Any]:
     _require_admin_principal(request)
     # 0089 front-door guard (adversary P1): entity principals are minted ONLY
@@ -638,14 +667,28 @@ async def gateway_admin_get_user(request: Request, user_id: str, tenant_id: str 
     return {"user": record.public_dict()}
 
 
-@router.patch("/admin/users/{user_id}")
+CANNOT_DEACTIVATE_SELF = "You can't deactivate your own account."
+
+
+@router.patch(
+    "/admin/users/{user_id}",
+    summary="Update a user (Active, role, email address, runtime, token)",
+    description="`enabled` is the Active switch (false = deactivated: signed out, cannot sign in). "
+    "`email` sets the user's email address. An admin cannot deactivate their own account "
+    "(409 `cannot_deactivate_self`), nor the last active admin (409 `last_admin`).",
+)
 async def gateway_admin_update_user(
     request: Request,
     user_id: str,
     payload: GatewayUserUpdateRequest,
     tenant_id: str = Query(default="default"),
 ) -> Dict[str, Any]:
-    _require_admin_principal(request)
+    admin = _require_admin_principal(request)
+    if payload.enabled is False and _same_account(admin, user_id=user_id, tenant_id=tenant_id):
+        raise HTTPException(
+            status_code=409,
+            detail={"reason_code": "cannot_deactivate_self", "message": CANNOT_DEACTIVATE_SELF},
+        )
     token_update: Optional[str] = payload.token
     if payload.rotate_token and token_update is None:
         token_update = ""

@@ -147,7 +147,7 @@ def test_admin_switch_turns_email_off_and_keeps_settings(gateway, imap, smtp) ->
     ):
         r = getattr(c, method)(path, headers=gateway["alice"], **({"json": body} if body is not None else {}))
         assert r.status_code == 409, (path, r.text)
-        assert r.json()["detail"]["reason_code"] == "email_disabled" and "administrator" in r.json()["detail"]["message"]
+        assert r.json()["detail"]["reason_code"] == "email_disabled" and "Your admin turned mailboxes off" in r.json()["detail"]["message"]
     assert imap.logins == [] and smtp.logins == []
 
     # The user cannot turn it back on themselves: their switch is a separate one.
@@ -225,13 +225,26 @@ def test_bob_connects_his_own_account_independently(gateway, imap, imap_bob, smt
 def test_gateway_defaults_and_per_user_overrides_decide_what_is_available(gateway, imap, smtp) -> None:
     c = gateway["client"]
     caps = {x["id"]: x for x in c.get("/api/gateway/admin/email/capabilities", headers=ADMIN).json()["capabilities"]}
-    assert caps["email"]["default"] is True and caps["email_agent_tools"]["default"] is False and caps["email_recovery"]["default"] is True
+    # capabilities.json v3: agent email tools are available by default (each user still opts in).
+    assert caps["email"]["default"] is True and caps["email_agent_tools"]["default"] is True and caps["email_recovery"]["default"] is True
+    assert caps["email_agent_tools"]["built_in_default"] is True
+    # DESIGN §1/§5.2 words: the admin's one switch, the rest under Advanced.
+    assert caps["email"]["label"] == "Mailboxes for users" and caps["email"]["advanced"] is False
+    assert caps["email_agent_tools"]["label"] == "Agent email tools for users" and caps["email_agent_tools"]["advanced"] is True
+    assert caps["email_recovery"]["label"] == "Sign-in by email" and caps["email_recovery"]["advanced"] is True
     assert c.get("/api/gateway/admin/email/capabilities", headers=gateway["alice"]).status_code == 403
     assert c.put("/api/gateway/admin/email/capabilities", headers=gateway["alice"], json={"email_agent_tools": True}).status_code == 403
 
+    # Available by default, but the user's own switch is OFF until they opt in.
     assert c.put("/api/gateway/me/email", headers=gateway["alice"], json=connect_body(ALICE, imap, smtp)).status_code == 200
     at = c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["agent_tools"]
-    assert at == {"enabled": False, "available": False, "active": False, "reason": "not available — ask your admin"}
+    assert at["on"] is False and at["available"] is True and at["unavailable_reason"] is None and at["active"] is False
+
+    # The admin makes them unavailable gateway-wide.
+    assert c.put("/api/gateway/admin/email/capabilities", headers=ADMIN, json={"email_agent_tools": False}).status_code == 200
+    at = c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["agent_tools"]
+    assert at["on"] is False and at["available"] is False and at["active"] is False
+    assert at["unavailable_reason"] == "Your admin turned agent email tools off."
     # The toolset listing names the same case with the runtime's typed reason, not "turned off".
     from abstractruntime.integrations.abstractcore.default_tools import EMAIL_OFF_REASONS
 
@@ -243,7 +256,7 @@ def test_gateway_defaults_and_per_user_overrides_decide_what_is_available(gatewa
     assert gates == {EMAIL_OFF_REASONS["not_available"]}
     r = c.put("/api/gateway/me/email/agent-tools", headers=gateway["alice"], json={"enabled": True})
     assert r.status_code == 409 and r.json()["detail"]["reason_code"] == "email_disabled"
-    assert "administrator" in r.json()["detail"]["fix"]
+    assert "admin" in r.json()["detail"]["fix"]
 
     # Gateway-wide default on: available to everyone; a per-user override wins.
     r = c.put("/api/gateway/admin/email/capabilities", headers=ADMIN, json={"email_agent_tools": True})
