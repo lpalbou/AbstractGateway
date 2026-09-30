@@ -10248,18 +10248,13 @@ fn my_email_page_reads_in_the_design_order_with_the_design_words() {
     assert!(at("│Email address") < at("│Mailbox"), "{s}");
     assert!(at("│Mailbox") < at("│Notifications"), "{s}");
     assert!(at("│Notifications") < at("[ ] Agent email tools"), "{s}");
-    assert!(
-        at("[ ] Agent email tools") < at("│ Advanced ▸  recipient"),
-        "{s}"
-    );
+    assert!(at("[ ] Agent email tools") < at("│ Advanced ▸  who"), "{s}");
     assert!(
         s.contains("Where sign-in codes and notifications go"),
         "{s}"
     );
     assert!(
-        s.contains(
-            "Connected as me@example.test · Other (address + password) · checked 2026-09-30 00:00"
-        ),
+        s.contains("Connected as me@example.test · IMAP · checked 2026-09-30 00:00"),
         "the connected status line:\n{s}"
     );
     assert!(s.contains("Test") && s.contains("Disconnect"), "{s}");
@@ -10379,65 +10374,103 @@ fn my_email_agent_tools_reason_follows_the_admin() {
     assert_eq!(e.notify_job_failed, None);
 }
 
+/// DESIGN-v2 §3: IMAP is the first tab and the default; its server fields
+/// are always shown, filled with the standard values for the address's
+/// domain at once, then with discovery's `defaults` — never over an edit.
 #[test]
-fn my_email_other_tab_asks_address_and_password_and_discovers_the_servers() {
+fn my_email_imap_tab_is_first_default_and_shows_prefilled_servers() {
     use abstractgateway_console::store::email::Discovery;
     use abstractgateway_console::worker::operator::EmailAction;
-    let mut h = harness_sized(Size::new(140, 60));
+    let mut h = harness_sized(Size::new(140, 70));
     let s = open_my_email(&mut h, &my_email_not_connected());
+    let tabs = s
+        .lines()
+        .find(|l| l.contains("IMAP") && l.contains("Google") && l.contains("Microsoft"))
+        .unwrap_or_else(|| panic!("the three tabs on one line:\n{s}"));
     assert!(
-        s.contains("Google") && s.contains("Microsoft") && s.contains("Other"),
-        "the three tabs:\n{s}"
+        tabs.find("IMAP") < tabs.find("Google") && tabs.find("Google") < tabs.find("Microsoft"),
+        "IMAP first: {tabs}"
     );
-    assert!(s.contains("Sign in with Google"), "{s}");
-    let _ = h.drain_cmds();
-    click_text(&mut h, &s, "Other");
-    let s = h.turns(3);
-    match email_action(&mut h) {
-        Some(EmailAction::Discover(a)) => assert_eq!(a, "me@fastmail.test"),
-        other => panic!("the Other tab looks the servers up, got {other:?}"),
-    }
-    assert!(s.contains("Password"), "{s}");
+    assert!(!s.contains("Other"), "no Other tab:\n{s}");
     assert!(
-        s.contains("Use an app password if your provider needs one."),
+        !s.contains("Sign in with Google"),
+        "IMAP is the default pane:\n{s}"
+    );
+    // Every field visible, pre-filled with the standard values.
+    assert!(s.contains("Mailbox address"), "{s}");
+    assert!(
+        s.contains("Incoming mail (IMAP)") && s.contains("Outgoing mail (SMTP)"),
         "{s}"
     );
     assert!(
-        !s.contains("IMAP server"),
-        "Server settings stay folded:\n{s}"
+        s.contains("imap.fastmail.test") && s.contains("smtp.fastmail.test"),
+        "{s}"
     );
+    assert!(s.contains("993") && s.contains("465"), "{s}");
+    assert!(
+        s.contains(
+            "Standard settings for fastmail.test — change them if your provider uses others."
+        ),
+        "{s}"
+    );
+    // Never a user name, a display name, or an Edit/Hide disclosure.
+    for banned in [
+        "User name",
+        "Display name",
+        "Server settings",
+        " Edit ",
+        "Hide",
+    ] {
+        assert!(!s.contains(banned), "{banned:?} is gone:\n{s}");
+    }
+    assert!(
+        s.contains("Ctrl+O  My provider uses a different login name"),
+        "{s}"
+    );
+    use abstractgateway_console::worker::operator::OpCmd;
+    match h.find_cmd(|c| {
+        is_op(c, |o| {
+            matches!(
+                o,
+                OpCmd::Email {
+                    action: EmailAction::Discover(_),
+                    ..
+                }
+            )
+        })
+    }) {
+        Some(Cmd::Operator(OpCmd::Email {
+            action: EmailAction::Discover(a),
+            ..
+        })) => {
+            assert_eq!(a, "me@fastmail.test")
+        }
+        other => panic!("the IMAP pane looks the servers up, got {other:?}"),
+    }
+    // Discovery's defaults replace the standard values; its sentence shows.
     h.store.op.email_discovery.set(Some((
         "me@fastmail.test".into(),
         Loadable::Ready(Discovery::from_value(&json!({
-            "address": "me@fastmail.test", "domain": "fastmail.test", "found": true, "source": "known",
-            "imap": {"host": "imap.fastmail.com", "port": 993, "security": "ssl"},
-            "smtp": {"host": "smtp.fastmail.com", "port": 465, "security": "ssl"},
-            "username": "me@fastmail.test"
+            "address": "me@fastmail.test", "found": true,
+            "defaults": {
+                "imap": {"host": "imap.fastmail.com", "port": 993, "security": "ssl"},
+                "smtp": {"host": "smtp.fastmail.com", "port": 587, "security": "starttls"},
+                "login": "me@fastmail.test", "source": "discovered", "provider": "Fastmail",
+                "message": "Settings found for fastmail.test."
+            }
         }))),
     )));
     let s = h.turns(3);
-    assert!(
-        s.contains("imap.fastmail.com · 993 · SSL  ·  smtp.fastmail.com · 465 · SSL"),
-        "the discovery summary:\n{s}"
-    );
-    assert!(s.contains("Edit"), "{s}");
-    // ONE Connect: refused without a password, before anything is sent.
-    click_text(&mut h, &s, "│ Connect ");
-    let s = h.turns(2);
-    assert!(s.contains("Type the password"), "{s}");
-    assert!(email_action(&mut h).is_none());
-    // With the password: address + password only (the gateway discovers).
+    assert!(s.contains("Settings found for fastmail.test."), "{s}");
+    assert!(s.contains("smtp.fastmail.com") && s.contains("587"), "{s}");
+    assert!(s.contains("STARTTLS"), "{s}");
+    // Connect sends the servers shown; no username, no display name.
     let pw_row = s
         .lines()
-        .position(|l| l.contains("Password"))
+        .position(|l| l.contains("Password") && l.contains('▐'))
         .expect("password row");
-    let pw_col = s
-        .lines()
-        .nth(pw_row)
-        .unwrap()
-        .find('▐')
-        .map(|c| s.lines().nth(pw_row).unwrap()[..c].chars().count())
-        .unwrap();
+    let pw_line = s.lines().nth(pw_row).unwrap();
+    let pw_col = pw_line[..pw_line.find('▐').unwrap()].chars().count();
     h.key(
         format!(
             "\x1b[<0;{};{}M\x1b[<0;{};{}m",
@@ -10451,44 +10484,215 @@ fn my_email_other_tab_asks_address_and_password_and_discovers_the_servers() {
     h.turns(1);
     h.type_text("app-pw");
     let s = h.turns(2);
+    let _ = h.drain_cmds();
     click_text(&mut h, &s, "│ Connect ");
     h.turns(2);
     match email_action(&mut h) {
         Some(EmailAction::Connect(body)) => {
             assert_eq!(body.0["address"], json!("me@fastmail.test"));
-            assert_eq!(body.0["password"], json!("app-pw"));
-            assert!(
-                body.0.get("imap").is_none() && body.0.get("smtp").is_none(),
-                "{:?}",
-                body.0.get("imap")
-            );
+            assert_eq!(body.0["imap"]["host"], json!("imap.fastmail.com"));
+            assert_eq!(body.0["smtp"]["port"], json!(587));
+            assert_eq!(body.0["smtp"]["security"], json!("starttls"));
+            assert!(body.0.get("username").is_none(), "{:?}", body.0);
+            assert!(body.0.get("display_name").is_none(), "{:?}", body.0);
         }
         other => panic!("PUT /me/email, got {other:?}"),
     }
 }
 
+/// An edited server field survives discovery's answer; a reply without
+/// `defaults` says so (no silent fallback to older fields).
 #[test]
-fn my_email_server_settings_open_by_themselves_when_discovery_finds_nothing() {
-    use abstractgateway_console::store::email::Discovery;
-    let mut h = harness_sized(Size::new(140, 60));
-    let mut v = my_email_not_connected();
-    v["auth_kind"] = json!("password");
-    open_my_email(&mut h, &v);
+fn my_email_discovery_never_overwrites_an_edit_and_missing_defaults_are_said() {
+    use abstractgateway_console::store::email::{Discovery, DISCOVERY_NO_DEFAULTS};
+    let mut h = harness_sized(Size::new(140, 70));
+    let s = open_my_email(&mut h, &my_email_not_connected());
+    // Edit the IMAP server: click it, clear, type.
+    let (row, l) = s
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("imap.fastmail.test"))
+        .expect("imap host field");
+    let col = l[..l.find("imap.fastmail.test").unwrap()].chars().count();
+    h.key(
+        format!(
+            "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+            col + 3,
+            row + 1,
+            col + 3,
+            row + 1
+        )
+        .as_bytes(),
+    );
+    h.turns(1);
+    for _ in 0..30 {
+        h.key(b"\x7f");
+    }
+    h.key(b"\x1b[F");
+    for _ in 0..30 {
+        h.key(b"\x7f");
+    }
+    h.type_text("mail.mine.test");
+    h.turns(2);
     h.store.op.email_discovery.set(Some((
         "me@fastmail.test".into(),
         Loadable::Ready(Discovery::from_value(&json!({
-            "address": "me@fastmail.test", "domain": "fastmail.test", "found": false, "tried": []
+            "address": "me@fastmail.test", "found": true,
+            "defaults": {
+                "imap": {"host": "imap.fastmail.com", "port": 993, "security": "ssl"},
+                "smtp": {"host": "smtp.fastmail.com", "port": 465, "security": "ssl"},
+                "login": "me@fastmail.test", "source": "discovered", "message": "Settings found for fastmail.test."
+            }
         }))),
     )));
     let s = h.turns(3);
+    assert!(s.contains("mail.mine.test"), "the edit stays:\n{s}");
+    assert!(!s.contains("imap.fastmail.com"), "{s}");
     assert!(
-        s.contains("Couldn't find the mail servers for fastmail.test. Enter them here."),
+        s.contains("smtp.fastmail.com"),
+        "unedited fields fill:\n{s}"
+    );
+    h.store.op.email_discovery.set(Some((
+        "me@fastmail.test".into(),
+        Loadable::Ready(Discovery::from_value(
+            &json!({"address": "me@fastmail.test", "found": false}),
+        )),
+    )));
+    let s = h.turns(3);
+    assert!(s.contains(&DISCOVERY_NO_DEFAULTS[..60]), "{s}");
+}
+
+/// Ctrl+O reveals ONE Login field (never shown by default); Connect sends
+/// `username` only when it was changed there.
+#[test]
+fn my_email_different_login_is_a_key_and_sends_username_only_when_edited() {
+    use abstractgateway_console::worker::operator::EmailAction;
+    let mut h = harness_sized(Size::new(140, 70));
+    let s = open_my_email(&mut h, &my_email_not_connected());
+    assert!(!s.contains("Login "), "{s}");
+    h.key(b"\x0f"); // Ctrl+O
+    let s = h.turns(2);
+    let (row, l) = s
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("Login") && l.contains('▐'))
+        .unwrap_or_else(|| panic!("the Login field:\n{s}"));
+    assert!(l.contains("me@fastmail.test"), "prefilled: {l}");
+    let _ = row;
+    // Ctrl+O again hides it; once more shows it (the caret in it).
+    h.key(b"\x0f");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Ctrl+O  My provider uses a different login name"),
+        "{s}"
+    );
+    h.key(b"\x0f");
+    h.turns(2);
+    // The Login field has the caret (autofocus): type a different login.
+    h.key(b"\x1b[F");
+    for _ in 0..40 {
+        h.key(b"\x7f");
+    }
+    h.type_text("me");
+    h.turns(1);
+    let s = h.turns(2);
+    let pw_row = s
+        .lines()
+        .position(|l| l.contains("Password") && l.contains('▐'))
+        .expect("password row");
+    let pw_line = s.lines().nth(pw_row).unwrap();
+    let pw_col = pw_line[..pw_line.find('▐').unwrap()].chars().count();
+    h.key(
+        format!(
+            "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+            pw_col + 3,
+            pw_row + 1,
+            pw_col + 3,
+            pw_row + 1
+        )
+        .as_bytes(),
+    );
+    h.turns(1);
+    h.type_text("pw");
+    let s = h.turns(2);
+    let _ = h.drain_cmds();
+    click_text(&mut h, &s, "│ Connect ");
+    h.turns(2);
+    match email_action(&mut h) {
+        Some(EmailAction::Connect(body)) => {
+            assert_eq!(body.0["username"], json!("me"), "{:?}\n{s}", body.0)
+        }
+        other => panic!("PUT /me/email, got {other:?}"),
+    }
+}
+
+/// Active sits in the Mailbox card (not Advanced); "Send a test" shows the
+/// gateway's sentence; a different mailbox account is said under the
+/// address; the admin reads the one sentence at the top.
+#[test]
+fn my_email_active_in_the_mailbox_card_and_test_says_the_api_sentence() {
+    use abstractgateway_console::worker::operator::EmailAction;
+    let mut h = harness_sized(Size::new(140, 90));
+    let mut v = my_email_fixture();
+    v["email_address"] = json!("owner@example.test");
+    let s = open_my_email(&mut h, &v);
+    let at = |needle: &str| {
+        s.find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} missing:\n{s}"))
+    };
+    assert!(s.contains("You are also a user of this gateway"), "{s}");
+    assert!(
+        s.contains("Your mailbox is a different account: me@example.test."),
+        "{s}"
+    );
+    assert!(at("│Mailbox") < at("[x] Active"), "{s}");
+    assert!(at("[x] Active") < at("│Notifications"), "{s}");
+    assert!(
+        s.contains("Off pauses watching, sending and notifications"),
+        "{s}"
+    );
+    assert!(!s.contains("Use this mailbox"), "{s}");
+    let _ = h.drain_cmds();
+    click_text(&mut h, &s, "│ Send a test");
+    h.turns(2);
+    let fid = match h.find_cmd(|c| {
+        is_op(c, |o| {
+            matches!(
+                o,
+                abstractgateway_console::worker::operator::OpCmd::Email {
+                    action: EmailAction::TestNotification,
+                    ..
+                }
+            )
+        })
+    }) {
+        Some(Cmd::Operator(abstractgateway_console::worker::operator::OpCmd::Email {
+            form_id,
+            ..
+        })) => form_id.expect("form id"),
+        other => panic!("POST /me/notifications/test, got {other:?}"),
+    };
+    let msg = "Not sent: hourly limit reached (20 of 20 this hour) — resets at 14:05.";
+    h.ui.write_done.set(Some((fid, Err(msg.into()))));
+    let s = h.turns(3);
+    assert!(
+        s.contains("Not sent: hourly limit reached (20 of 20 this hour)"),
+        "{s}"
+    );
+    assert!(!s.contains("rate_limited") && !s.contains("queued"), "{s}");
+    // Advanced: compact sentences, no Use this mailbox, no test button.
+    click_text(&mut h, &s, "│ Advanced ▸  who");
+    let s = h.turns(3);
+    assert!(
+        s.contains("Your agents may send to: only these recipients"),
         "{s}"
     );
     assert!(
-        s.contains("IMAP server") && s.contains("SMTP server"),
-        "opened:\n{s}"
+        s.contains("At most") && s.contains("per hour and") && s.contains("per day."),
+        "{s}"
     );
+    assert!(s.contains("0 sent this hour, 2 today."), "{s}");
+    assert!(s.contains("Watch folder"), "{s}");
 }
 
 #[test]
@@ -10883,12 +11087,12 @@ fn my_email_advanced_folder_saves_on_enter_and_is_unavailable_without_a_mailbox(
     use abstractgateway_console::worker::operator::EmailAction;
     let mut h = harness_sized(Size::new(140, 90));
     let s = open_my_email(&mut h, &my_email_fixture());
-    click_text(&mut h, &s, "│ Advanced ▸  recipient");
+    click_text(&mut h, &s, "│ Advanced ▸  who");
     let s = h.turns(3);
     let (row, line_txt) = s
         .lines()
         .enumerate()
-        .find(|(_, l)| l.contains("Folder ") && l.contains('▐'))
+        .find(|(_, l)| l.contains("Watch folder ") && l.contains('▐'))
         .unwrap_or_else(|| panic!("an editable Folder field:\n{s}"));
     let field_col = line_txt[..line_txt.find('▐').unwrap()].chars().count();
     let _ = h.drain_cmds();
@@ -10911,7 +11115,11 @@ fn my_email_advanced_folder_saves_on_enter_and_is_unavailable_without_a_mailbox(
     }
     let mut h = harness_sized(Size::new(140, 90));
     let s = open_my_email(&mut h, &my_email_not_connected());
-    click_text(&mut h, &s, "│ Advanced ▸  recipient");
+    click_text(&mut h, &s, "│ Advanced ▸  who");
+    h.turns(2);
+    for _ in 0..30 {
+        h.key(b"\x1b[<65;70;30M");
+    }
     let s = h.turns(3);
-    assert!(s.contains("[-] Folder — Connect a mailbox first."), "{s}");
+    assert!(s.contains("Watch folder — Connect a mailbox first."), "{s}");
 }
