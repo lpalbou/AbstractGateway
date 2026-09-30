@@ -41,7 +41,7 @@ Related repos:
 |---|---|
 | [email.md](./email.md) | per-user email: connecting your own mailbox (password or OAuth2), recipient policy and send limits, automations on new mail, email notifications, account recovery by email, the administrator switch, migration from the retired environment variables |
 | [automations.md](./automations.md) | automations: a workflow run on a trigger as a durable controller run; every route with its shapes, the error envelope, tool approval, typed waits and how to answer them, attention and `/seen`, discussions, run lists, legacy schedules, operations (one writer process, restart recovery, boot warm-up, the acceptance script) and the limits of v1 |
-| [console.md](./console.md) | the web console at `/console` (every tab) and the `abstractgateway-console` terminal app |
+| [console.md](./console.md) | the web console at `/console` (every tab, responsive layout on phones and tablets) and the `abstractgateway-console` terminal app |
 | [apps.md](./apps.md) | installing, starting and opening the browser apps (Flow, Code, Observer, Continuum, Entity), Code's terminal app and the desktop Assistant |
 | [engines.md](./engines.md) | installing local engines (Ollama, LM Studio, MLX, llama.cpp, vLLM, Hugging Face): what each Install does, when a password or the Apple tools are needed |
 | [model-downloads.md](./model-downloads.md) | download jobs: progress, stalls, cancel, end reasons, parent jobs, the event stream |

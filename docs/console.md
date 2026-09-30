@@ -71,6 +71,23 @@ contact address, then the versions the gateway reports on `GET
 the gateway host") and every installed AbstractFramework package. If the
 gateway cannot report them, one line says "Gateway: unavailable (reason)".
 
+### Responsive layout
+
+The web console works in any browser window and on phones and tablets:
+
+- From 1024 px wide, the sidebar is a column on the left. Below that, it becomes a drawer: open
+  it with the **☰** button in the header, and close it with Escape, the close button, a tap
+  outside it, or by picking a section. While the drawer is open, the page behind it does not
+  respond to clicks or keyboard focus.
+- On narrow screens the top-bar buttons wrap under the page title. In phone landscape the header
+  is a single thin row.
+- Below 768 px wide, or in phone landscape, dialogs open as bottom sheets with their buttons
+  always visible, and the docs assistant drawer is full width. A dialog opened while a drawer is
+  open appears above it. Escape closes the top one first.
+- On touch screens, buttons and rows are at least 44 px tall, form fields use 16 px text (iOS
+  does not zoom into a focused field), and reading text is 14 px.
+- The layout respects the notch and home-indicator areas of phones.
+
 ### Stream replies by default
 
 Under the default agent workflows on the Workflows tab, **Stream replies by

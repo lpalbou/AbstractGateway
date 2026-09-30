@@ -5423,6 +5423,23 @@ contact address, then the versions the gateway reports on `GET
 the gateway host") and every installed AbstractFramework package. If the
 gateway cannot report them, one line says "Gateway: unavailable (reason)".
 
+### Responsive layout
+
+The web console works in any browser window and on phones and tablets:
+
+- From 1024 px wide, the sidebar is a column on the left. Below that, it becomes a drawer: open
+  it with the **☰** button in the header, and close it with Escape, the close button, a tap
+  outside it, or by picking a section. While the drawer is open, the page behind it does not
+  respond to clicks or keyboard focus.
+- On narrow screens the top-bar buttons wrap under the page title. In phone landscape the header
+  is a single thin row.
+- Below 768 px wide, or in phone landscape, dialogs open as bottom sheets with their buttons
+  always visible, and the docs assistant drawer is full width. A dialog opened while a drawer is
+  open appears above it. Escape closes the top one first.
+- On touch screens, buttons and rows are at least 44 px tall, form fields use 16 px text (iOS
+  does not zoom into a focused field), and reading text is 14 px.
+- The layout respects the notch and home-indicator areas of phones.
+
 ### Stream replies by default
 
 Under the default agent workflows on the Workflows tab, **Stream replies by
@@ -6927,7 +6944,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.8.2
+docker pull ghcr.io/lpalbou/abstractgateway:0.9.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -6935,7 +6952,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.8.2-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.9.0-gpu
 ```
 
 The image names `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -7217,7 +7234,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.8.2-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.9.0-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -7381,7 +7398,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.8.2
+docker pull ghcr.io/lpalbou/abstractgateway:0.9.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -7389,7 +7406,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.8.2-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.9.0-gpu
 ```
 
 The `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR names are
@@ -7661,7 +7678,7 @@ Related repos:
 |---|---|
 | [email.md](docs/email.md) | per-user email: connecting your own mailbox (password or OAuth2), recipient policy and send limits, automations on new mail, email notifications, account recovery by email, the administrator switch, migration from the retired environment variables |
 | [automations.md](docs/automations.md) | automations: a workflow run on a trigger as a durable controller run; every route with its shapes, the error envelope, tool approval, typed waits and how to answer them, attention and `/seen`, discussions, run lists, legacy schedules, operations (one writer process, restart recovery, boot warm-up, the acceptance script) and the limits of v1 |
-| [console.md](docs/console.md) | the web console at `/console` (every tab) and the `abstractgateway-console` terminal app |
+| [console.md](docs/console.md) | the web console at `/console` (every tab, responsive layout on phones and tablets) and the `abstractgateway-console` terminal app |
 | [apps.md](docs/apps.md) | installing, starting and opening the browser apps (Flow, Code, Observer, Continuum, Entity), Code's terminal app and the desktop Assistant |
 | [engines.md](docs/engines.md) | installing local engines (Ollama, LM Studio, MLX, llama.cpp, vLLM, Hugging Face): what each Install does, when a password or the Apple tools are needed |
 | [model-downloads.md](docs/model-downloads.md) | download jobs: progress, stalls, cancel, end reasons, parent jobs, the event stream |
@@ -7914,7 +7931,7 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.8.2-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:0.9.0-gpu` with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -8447,6 +8464,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.9.0] - 2026-09-30
+
+The web console works on phones, tablets and any window size. It follows the AbstractFramework
+responsive system of `@abstractframework/ui-kit` 0.3.2. Dependencies are unchanged (AbstractCore
+2.20.2, AbstractRuntime 0.8.1, terminal console 0.12.0).
+
+### Changed
+- Below 1024 px the console sidebar is a drawer that opens from a **☰** button in the header.
+  Escape, a tap outside it, its close button or picking a section closes it, and the page behind
+  it is inert while it is open. From 1024 px up the sidebar stays a column.
+- The header wraps its top-right buttons under the page title on narrow screens and uses a single
+  thin row in phone landscape. The page respects the notch and home-indicator areas
+  (`viewport-fit=cover`) and uses the dynamic viewport height, so nothing hides under the mobile
+  browser bars.
+- Dialogs open as bottom sheets below 768 px wide or 500 px tall, with their buttons always
+  visible. A dialog opened while a drawer is open appears above it, and Escape closes the top one
+  first. The docs assistant drawer is full width below 768 px.
+- On touch screens, buttons and rows are at least 44 px tall, form fields use 16 px text (iOS does
+  not zoom into a focused field), and reading text is 14 px.
+- The layout uses the framework breakpoints: 480, 768, 1024 and 1440 px wide, plus 500 px tall for
+  phone landscape.
+- Console themes and kit components are synced from `@abstractframework/ui-kit` 0.3.2, including
+  its responsive tokens (`--tap-min`, `--vh-full`, `--safe-*`, `--gutter`, `--font-size-*`).
+
+### Fixed
+- Model catalog cards keep their layout in narrow windows and on tablets.
+- On phones the console is never wider than the screen.
+- The Sandbox composer is reachable at every window size: the transcript gives way first, and the
+  chat card scrolls when the composer still does not fit (for example at 1280x800 or 1366x768).
+- The action buttons of a users row keep their spacing when the table is shown as cards.
 
 ## [0.8.2] - 2026-09-30
 

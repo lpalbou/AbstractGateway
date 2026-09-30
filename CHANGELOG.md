@@ -7,38 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-The web console works on phones, tablets and any window size (ui-kit 0.3.2 responsive system).
+## [0.9.0] - 2026-09-30
+
+The web console works on phones, tablets and any window size. It follows the AbstractFramework
+responsive system of `@abstractframework/ui-kit` 0.3.2. Dependencies are unchanged (AbstractCore
+2.20.2, AbstractRuntime 0.8.1, terminal console 0.12.0).
 
 ### Changed
-- Console themes and kit islands re-synced from `@abstractframework/ui-kit` 0.3.2: the responsive
-  tokens (`--tap-min`, `--vh-full`, `--safe-*`, `--gutter`, fluid `--font-size-*`) and the kit's
-  touch floors and sheet dialogs for the top bar, appearance and About dialogs.
-- Layout uses the framework breakpoints only (480 / 768 / 1024 / 1440 px, plus 500 px tall for
-  phone landscape). The old 900 / 940 / 680 / 1100 / 860 px rules are gone.
-- Below 1024 px the sidebar is a drawer that opens from a ☰ button in the header. Escape, the
-  backdrop, the close button and picking a section all close it. Above 1024 px the sidebar is
-  unchanged.
-- The header wraps its top-right buttons under the title on phones and uses one thin row in
-  phone landscape; it respects the notch and home-indicator insets (`viewport-fit=cover`).
-- Dialogs are bottom sheets below 768 px wide or 500 px tall, with their buttons always visible;
-  the docs assistant drawer is full width below 768 px.
-- On touch screens, buttons and rows are at least 44 px, inputs use 16 px text (iOS no longer
-  zooms into a focused field), and reading text is 14 px.
-- The shell uses the dynamic viewport height, so nothing hides under the mobile browser bars.
+- Below 1024 px the console sidebar is a drawer that opens from a **☰** button in the header.
+  Escape, a tap outside it, its close button or picking a section closes it, and the page behind
+  it is inert while it is open. From 1024 px up the sidebar stays a column.
+- The header wraps its top-right buttons under the page title on narrow screens and uses a single
+  thin row in phone landscape. The page respects the notch and home-indicator areas
+  (`viewport-fit=cover`) and uses the dynamic viewport height, so nothing hides under the mobile
+  browser bars.
+- Dialogs open as bottom sheets below 768 px wide or 500 px tall, with their buttons always
+  visible. A dialog opened while a drawer is open appears above it, and Escape closes the top one
+  first. The docs assistant drawer is full width below 768 px.
+- On touch screens, buttons and rows are at least 44 px tall, form fields use 16 px text (iOS does
+  not zoom into a focused field), and reading text is 14 px.
+- The layout uses the framework breakpoints: 480, 768, 1024 and 1440 px wide, plus 500 px tall for
+  phone landscape.
+- Console themes and kit components are synced from `@abstractframework/ui-kit` 0.3.2, including
+  its responsive tokens (`--tap-min`, `--vh-full`, `--safe-*`, `--gutter`, `--font-size-*`).
 
 ### Fixed
-- Model catalog cards no longer fall apart below 940 px wide (iPad, narrow windows): a width rule
-  meant for the page header restyled every `<header>`, including each card head.
-- On phones the page is no longer wider than the screen (the top-bar cluster made it 425 px wide
-  at 375 px).
-- The action buttons of a stacked users row no longer touch each other.
-- The Sandbox composer is reachable at every window size: at 1280x800 and 1366x768 (and on phones)
-  the chat card cut the composer off, out of reach. The transcript now gives way first, and the card
-  scrolls when the composer still does not fit.
-- A dialog opened while the navigation drawer is open appears above it, and Escape closes one layer
-  at a time (the dialog first, then the drawer). While the drawer is open the page behind it is inert.
-- On touch screens, the setup guide's tile descriptions, card descriptions, the Network address notes
-  and alert text use the 14 px reading size.
+- Model catalog cards keep their layout in narrow windows and on tablets.
+- On phones the console is never wider than the screen.
+- The Sandbox composer is reachable at every window size: the transcript gives way first, and the
+  chat card scrolls when the composer still does not fit (for example at 1280x800 or 1366x768).
+- The action buttons of a users row keep their spacing when the table is shown as cards.
+
 ## [0.8.2] - 2026-09-30
 
 Same dependencies as 0.8.1 (AbstractCore 2.20.2, AbstractRuntime 0.8.1; the terminal console stays
