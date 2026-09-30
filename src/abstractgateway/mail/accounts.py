@@ -739,6 +739,9 @@ def public_status(plane: EmailPlane) -> Dict[str, Any]:
     # account page's field. `registered_address` stays "self" for runs: that address, else the
     # connected mailbox's own (filled here too when no mailbox exists yet).
     out["email_address"] = registered_address(plane)
+    # The shared mailbox shape (DESIGN-v2 §2.5): the same function /admin/users and
+    # /admin/accounts read, so the admin's row and card never disagree.
+    out["mailbox"] = mailbox_view(plane)
     out["registered_address"] = str(out.get("registered_address") or "") or self_address(plane)
     out["oauth_providers"] = oauth_providers_for_users()
     from .notifications import read_preferences
@@ -804,6 +807,69 @@ def admin_status(plane: EmailPlane) -> Dict[str, Any]:
         "watcher": watcher,
         "state": _admin_state_label(pub, admin_on, last_error),
     }
+
+
+# ---------------------------------------------------------------------------------------
+# One resolver for "what is this account's email address and mailbox" (DESIGN-v2 §2.5)
+# ---------------------------------------------------------------------------------------
+
+REASON_ENTITY_NO_MAILBOX = "Entities can't have their own mailbox yet: mailboxes belong to a user's runtime."
+REASON_SHARED_RUNTIME_NO_MAILBOX = (
+    "User accounts are off on this gateway, so only the operator's mailbox exists; this account can't sign in."
+)
+REASON_MAILBOXES_OFF_FOR_USER = "Mailboxes are turned off for this account (Email for everyone)."
+REASON_MAILBOX_PAUSED = "The mailbox is paused: its owner switched Active off; the settings are kept."
+
+
+def mailbox_view(plane: EmailPlane) -> Dict[str, Any]:
+    """`{state, address, provider, reason}` of the plane's mailbox — the one shape the account
+    page, `/admin/users` and `/admin/accounts` show. state: connected | not_connected | paused |
+    unavailable."""
+
+    pub = account_store(plane).public()
+    configured = bool(pub.get("configured"))
+    oauth = pub.get("oauth") if isinstance(pub.get("oauth"), dict) else None
+    provider = (str(oauth.get("provider") or "") or None) if oauth else ("imap" if configured else None)
+    address = str(pub.get("address") or "") or None
+    if not admin_email_enabled(plane):
+        return {"state": "unavailable", "address": address, "provider": provider, "reason": REASON_MAILBOXES_OFF_FOR_USER}
+    if not configured:
+        return {"state": "not_connected", "address": None, "provider": None, "reason": None}
+    if not pub.get("enabled"):
+        return {"state": "paused", "address": address, "provider": provider, "reason": REASON_MAILBOX_PAUSED}
+    return {"state": "connected", "address": address, "provider": provider, "reason": None}
+
+
+def account_email_view(principal: GatewayPrincipal) -> Dict[str, Any]:
+    """`{email_address, mailbox}` for the account `principal` names, through exactly the code
+    path `GET /me/email` uses: the principal's plane (`plane_for_principal`, the service's own
+    rule — the admin's default runtime included), `registered_address(plane)` for the address
+    (the user record, else the operator knob for the admin) and `mailbox_view(plane)`.
+    `/me/email`, `/admin/users` and `/admin/accounts` all call this, so the admin's own row and
+    the admin's own card can never disagree (item 4)."""
+
+    if _is_entity(principal):
+        from ..users import GatewayUserRegistry
+
+        rec = GatewayUserRegistry().get_user(str(principal.user_id), tenant_id=str(principal.tenant_id or "default"))
+        address = str(getattr(rec, "email", "") or "").strip().lower() or None
+        return {
+            "email_address": address,
+            "mailbox": {"state": "unavailable", "address": None, "provider": None, "reason": REASON_ENTITY_NO_MAILBOX},
+        }
+    from ..service import gateway_multi_user_enabled
+
+    if not gateway_multi_user_enabled() and not principal.is_admin():
+        # One shared runtime: this account's plane would be the operator's; never show it as theirs.
+        from ..runtime_config import resolve_operator_email
+
+        value = resolve_operator_email(gateway_data_dir_from_env(), tenant_id=principal.tenant_id, user_id=principal.user_id).get("value")
+        return {
+            "email_address": str(value or "").strip().lower() or None,
+            "mailbox": {"state": "unavailable", "address": None, "provider": None, "reason": REASON_SHARED_RUNTIME_NO_MAILBOX},
+        }
+    plane = plane_for_principal(principal)
+    return {"email_address": registered_address(plane) or None, "mailbox": mailbox_view(plane)}
 
 
 def _admin_state_label(pub: Dict[str, Any], admin_on: bool, last_error: Optional[Dict[str, Any]]) -> str:

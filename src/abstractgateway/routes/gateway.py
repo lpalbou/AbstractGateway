@@ -337,6 +337,18 @@ async def gateway_me(request: Request) -> Dict[str, Any]:
     }
 
 
+def _audit_signed_in(request: Request, principal: Any) -> None:
+    """Name who signed in on this request's audit line (`signed_in` {user_id, tenant_id}): a
+    sign-in request is unauthenticated, so the line has no principal of its own."""
+    try:
+        detail = getattr(request.state, "audit_detail", None)
+        detail = dict(detail) if isinstance(detail, dict) else {}
+        detail["signed_in"] = {"user_id": str(principal.user_id), "tenant_id": str(principal.tenant_id or "default")}
+        request.state.audit_detail = detail
+    except Exception:  # noqa: BLE001 - auditing never breaks a sign-in
+        pass
+
+
 def _issue_gateway_browser_session(
     request: Request,
     response: Response,
@@ -356,6 +368,7 @@ def _issue_gateway_browser_session(
         ttl_s = max(60, min(90 * 24 * 60 * 60, ttl_s))
 
     session_value, csrf_token, record = GatewaySessionStore().create_session(principal, ttl_s=ttl_s)
+    _audit_signed_in(request, principal)
     response.set_cookie(
         gateway_session_cookie_name(),
         session_value,
@@ -530,9 +543,21 @@ async def gateway_admin_list_users(
 
 
 def _with_email_account_status(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    from ..mail.accounts import EmailPrincipalRefused, admin_status, plane_for_user
+    from ..mail.accounts import EmailPrincipalRefused, account_email_view, admin_status, plane_for_user
+    from ..users import GatewayUserRegistry
 
+    registry = GatewayUserRegistry()
     for row in rows:
+        # `email_address` + `mailbox`: the SAME resolver `/me/email` uses (DESIGN-v2 §2.5), so
+        # the admin's own row can never say "—" / "Not connected" while the card says
+        # "Connected as …". `email` stays the raw record field (what an edit writes).
+        record = registry.get_user(str(row.get("user_id") or ""), tenant_id=str(row.get("tenant_id") or "default"))
+        if record is not None:
+            try:
+                row.update(account_email_view(record.to_principal()))
+            except Exception as exc:  # noqa: BLE001 - one unreadable plane never hides the users list
+                row["email_address"] = None
+                row["mailbox"] = {"state": "unavailable", "address": None, "provider": None, "reason": f"The mailbox status could not be read: {exc}"}
         if row.get("principal_kind") == "entity":
             continue
         try:
@@ -730,7 +755,36 @@ async def gateway_admin_update_user(
     response: Dict[str, Any] = {"user": record.public_dict()}
     if issued_token is not None:
         response["token"] = issued_token
+    _audit_account_change(
+        request,
+        user_id=record.user_id,
+        tenant_id=record.tenant_id,
+        changes={
+            "active": payload.enabled,
+            "email": None if payload.email is None else "changed",
+            "roles": None if payload.roles is None else list(payload.roles),
+            "runtime_id": payload.runtime_id,
+            "token_rotated": True if issued_token is not None else None,
+        },
+    )
     return response
+
+
+def _audit_account_change(request: Request, *, user_id: str, tenant_id: str, changes: Dict[str, Any]) -> None:
+    """Name the account an admin changed and what changed (`account_change` {user_id,
+    tenant_id, changes}) on this request's audit line: the TARGET account's Logs show it
+    (account_activity.py). Never a token or an address, only what kind of change it was."""
+    try:
+        detail = getattr(request.state, "audit_detail", None)
+        detail = dict(detail) if isinstance(detail, dict) else {}
+        detail["account_change"] = {
+            "user_id": str(user_id),
+            "tenant_id": str(tenant_id or "default"),
+            "changes": {k: v for k, v in changes.items() if v is not None},
+        }
+        request.state.audit_detail = detail
+    except Exception:  # noqa: BLE001 - auditing never breaks the request
+        pass
 
 
 @router.delete("/admin/users/{user_id}")
@@ -751,6 +805,114 @@ async def gateway_admin_delete_user(
     if not deleted:
         raise HTTPException(status_code=404, detail="Gateway user not found")
     return {"ok": True, "deleted": True, "user_id": user_id, "tenant_id": tenant_id}
+
+
+class AccountActiveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"active": False}]})
+
+    active: bool = Field(..., description="Users: can sign in. Entities: false suspends (paused, door credential off); true resumes.")
+
+
+def _account_error(exc: Any) -> HTTPException:
+    return HTTPException(status_code=int(exc.status), detail={"reason_code": exc.reason_code, "message": exc.message})
+
+
+@router.get(
+    "/admin/accounts",
+    tags=["accounts"],
+    summary="Accounts: users and entities in one list",
+    description="One row per account, sorted admins, users, entities, then id: `{id, tenant_id, kind: user | entity, "
+    "role: admin | user | entity, own, email_address, mailbox {state: connected | not_connected | paused | unavailable, "
+    "address, provider, reason}, runtime_id, active, entity_state, actions {email, logs, workspace, rotate, manage, delete, "
+    "suspend: {available, reason}}}`. The email address and mailbox come from the same resolver as `GET /me/email`, so "
+    "your own row matches your own email settings. An action that can't apply carries a one-sentence `reason`. "
+    "`entities_warning` says why entities are missing when the entity list could not be read.",
+)
+async def gateway_admin_list_accounts(request: Request) -> Dict[str, Any]:
+    admin = _require_admin_principal(request)
+    from ..admin_accounts import list_accounts
+
+    return await _off_the_event_loop(list_accounts, admin)
+
+
+@router.put(
+    "/admin/accounts/{account_id}/active",
+    tags=["accounts"],
+    summary="Turn an account's Active switch on or off",
+    description="Users: `active` false = deactivated (signed out, can't sign in); you can't deactivate your own "
+    "account or the last active admin (409 with `message`). Entities: false = suspended (entity state paused, its "
+    "door credential off; an open visit is closed); true = resumed (the state it had before is restored). Answers "
+    "the updated account row.",
+)
+async def gateway_admin_set_account_active(
+    request: Request, account_id: str, payload: AccountActiveRequest, tenant_id: str = Query(default="default")
+) -> Dict[str, Any]:
+    admin = _require_admin_principal(request)
+    from ..admin_accounts import AccountError, set_active
+
+    try:
+        row = await _off_the_event_loop(set_active, admin, account_id, active=bool(payload.active), tenant_id=tenant_id)
+    except AccountError as exc:
+        raise _account_error(exc) from None
+    changes: Dict[str, Any] = {"active": bool(payload.active)}
+    if row.get("kind") == "entity":
+        changes["entity_state"] = row.get("entity_state")
+    _audit_account_change(request, user_id=str(row.get("id")), tenant_id=str(row.get("tenant_id") or "default"), changes=changes)
+    return row
+
+
+_ACTIVITY_DESCRIPTION = (
+    "Newest first: `{events: [{ts, kind: sign_in | token | run | automation | email | account, title, detail, run_id, "
+    "observer_path, ok}], source: \"audit_log\", oldest_ts, truncated, note}`. Read from the gateway's audit log "
+    "(and its rotated files), newest first, within a fixed read budget: `truncated` is true when older entries were "
+    "not read. `kind` filters (comma-separated). `observer_path` is null: the Observer has no address for one run yet. "
+    "`note` says what the log does not record (read-only requests, mail received)."
+)
+
+
+def _activity_kinds(kind: Optional[str]) -> Optional[List[str]]:
+    from ..account_activity import KINDS
+
+    if not kind:
+        return None
+    wanted = [k.strip() for k in str(kind).split(",") if k.strip()]
+    unknown = [k for k in wanted if k not in KINDS]
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail={"reason_code": "invalid_kind", "message": f"Unknown activity kind {', '.join(unknown)}; use one of {', '.join(KINDS)}."},
+        )
+    return wanted or None
+
+
+@router.get("/admin/accounts/{account_id}/activity", tags=["accounts"], summary="An account's activity (admin)", description=_ACTIVITY_DESCRIPTION)
+async def gateway_admin_account_activity(
+    request: Request,
+    account_id: str,
+    tenant_id: str = Query(default="default"),
+    limit: int = Query(default=100, ge=1, le=1000),
+    kind: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
+    _require_admin_principal(request)
+    from ..account_activity import account_activity
+
+    kinds = _activity_kinds(kind)
+    return await _off_the_event_loop(account_activity, account_id, tenant_id=tenant_id, limit=limit, kinds=kinds)
+
+
+@router.get("/me/activity", tags=["accounts"], summary="My activity", description=_ACTIVITY_DESCRIPTION)
+async def gateway_me_activity(
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=1000),
+    kind: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
+    principal = _principal_from_request(request)
+    from ..account_activity import account_activity
+
+    kinds = _activity_kinds(kind)
+    return await _off_the_event_loop(
+        account_activity, str(principal.user_id), tenant_id=str(principal.tenant_id or "default"), limit=limit, kinds=kinds
+    )
 
 
 @router.get("/admin/runtime-config")
@@ -8241,6 +8403,18 @@ def _restamp_discussion_turn(svc: Any, *, session_id: str, input_data: Dict[str,
     return mounts
 
 
+def _audit_run_started(request: Request, *, run_id: str, workflow: str, scheduled: bool = False) -> None:
+    """Name the started run on this request's audit line (`run` {run_id, workflow, scheduled}):
+    the account Logs read it (account_activity.py); the raw path alone carries no run id."""
+    try:
+        detail = getattr(request.state, "audit_detail", None)
+        detail = dict(detail) if isinstance(detail, dict) else {}
+        detail["run"] = {"run_id": run_id, "workflow": workflow, "scheduled": bool(scheduled)}
+        request.state.audit_detail = detail
+    except Exception:  # noqa: BLE001 - auditing never breaks a run start
+        pass
+
+
 @router.post("/runs/start", response_model=StartRunResponse)
 async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
     svc = get_gateway_service()
@@ -8415,6 +8589,8 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
         raise HTTPException(status_code=404, detail=msg)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to start run: {e}")
+    # The audit line records which run this request started (account activity, DESIGN-v2 §6).
+    _audit_run_started(request, run_id=str(run_id), workflow=str(req.bundle_id or flow_id or ""))
     return StartRunResponse(
         run_id=str(run_id),
         runner_warning=_runner_inactive_warning(svc),
@@ -8746,6 +8922,7 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
         run_id = host.start_run(flow_id=scheduled_workflow_id, bundle_id=None, input_data=wrapper_vars, actor_id="gateway", session_id=session_id)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to start scheduled run: {e}")
+    _audit_run_started(request, run_id=str(run_id), workflow=str(scheduled_workflow_id or ""), scheduled=True)
 
     # resolved_workflow names the TARGET the schedule launches (the parent
     # run itself is the generated scheduled:<uuid> wrapper).

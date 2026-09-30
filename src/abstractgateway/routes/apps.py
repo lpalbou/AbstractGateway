@@ -652,6 +652,9 @@ def apps_desktop_handover(request: Request, payload: DesktopHandoverRequest):
     try:
         principal = _durable_session_principal(principal)
         session_value, csrf_token, record = GatewaySessionStore().create_session(principal, ttl_s=DESKTOP_SESSION_TTL_S)
+        from .gateway import _audit_signed_in
+
+        _audit_signed_in(request, principal)
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(status_code=403, headers=headers, content={"ok": False, "reason": "session_refused", "message": f"{type(exc).__name__}: {exc}"})
     return JSONResponse(

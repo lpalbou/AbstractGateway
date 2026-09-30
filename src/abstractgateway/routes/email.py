@@ -273,6 +273,11 @@ async def me_email_get(request: Request) -> Any:
 
     def run() -> Dict[str, Any]:
         out = mail_accounts.public_status(plane)
+        # The shared resolver (DESIGN-v2 §2.5): the admin's row in /admin/users and
+        # /admin/accounts reads exactly this.
+        view = mail_accounts.account_email_view(principal)
+        out["email_address"] = view["email_address"] or ""
+        out["mailbox"] = view["mailbox"]
         if principal.is_admin() and plane.is_default:
             out["notices"] = mail_accounts.boot_notices()
         return out
