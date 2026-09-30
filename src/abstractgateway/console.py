@@ -269,7 +269,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="theme-color" content="#1a1a2e">
   <title>AbstractGateway Console</title>
   <!-- abstractuic ui-kit component CSS (console_islands.py, generated from the
        kit's theme.css minus the per-theme blocks console_themes.py carries):
@@ -354,6 +355,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	       theme here; edit the kit and re-run the sync (uic card 0023). */
 /*__KIT_THEME_CSS__*/
 	    * { box-sizing: border-box; }
+	    /* No iOS/Android text inflation (DESIGN §2): the kit sheet carries it
+	       too; repeated here so the console never depends on the islands. */
+	    html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 	    html, body { height: 100%; }
 	    body {
 	      margin: 0;
@@ -362,6 +366,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      font: var(--font-base)/1.5 var(--font-sans);
 	      -webkit-font-smoothing: antialiased;
 	      overflow: hidden;
+	      /* The shell scrolls inside; pull-to-refresh must not drag it. */
+	      overscroll-behavior-y: none;
 	    }
 	    body.font-sm { --font-scale: .92; }
 	    body.font-lg { --font-scale: 1.08; }
@@ -370,7 +376,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    /* ---- FAMILY SHELL (.shell_* — continuum/observer's redesigned layout
 	       vocabulary, styles.css shell block): left sidebar + slim header,
 	       content scrolls internally. ---- */
-	    .shell { display: flex; flex-direction: row; height: 100vh; min-width: 0; }
+	    /* --vh-full (kit token: 100dvh where supported): 100vh is taller than
+	       the visible area on iOS, which hid the bottom of every tab. */
+	    .shell { display: flex; flex-direction: row; height: var(--vh-full, 100vh); min-width: 0; }
 	    .shell_sidebar {
 	      flex: 0 0 196px;
 	      display: flex;
@@ -394,17 +402,62 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      justify-content: space-between;
 	      gap: 12px;
 	      min-height: calc(52px * var(--header-density));
-	      padding: 8px 16px;
+	      padding: max(8px, var(--safe-top, 0px)) max(16px, var(--safe-right, 0px)) 8px max(16px, var(--safe-left, 0px));
 	      border-bottom: 1px solid var(--bg-tertiary);
 	      background: var(--bg-secondary);
+	      /* The top-right cluster wraps under the title instead of pushing the
+	         page wider than the phone (it was 418 px wide at 375). */
+	      flex-wrap: wrap;
+	      row-gap: 6px;
+	      min-width: 0;
 	    }
-	    .shell_header_titles { min-width: 0; }
-	    .shell_content { flex: 1 1 auto; min-height: 0; min-width: 0; overflow-y: auto; }
-	    @media (max-width: 900px) {
-	      .shell_sidebar { flex-basis: 56px; }
-	      .shell_brand_name, .shell_nav_label { display: none; }
-	      .tab-button.shell_nav_item { justify-content: center; }
+	    .shell_header > .af-topbar-island, .shell_header > .af-topbar { margin-left: auto; min-width: 0; max-width: 100%; }
+	    .shell_header .af-topbar { flex-wrap: wrap; justify-content: flex-end; row-gap: 6px; }
+	    @media (max-width: 767.98px) {
+	      .shell_header { gap: 8px 10px; }
+	      #page-subtitle { display: none; }
 	    }
+	    @media (max-height: 500px) {
+	      /* Phone landscape: one thin header row. */
+	      .shell_header { min-height: 0; padding-top: max(4px, var(--safe-top, 0px)); padding-bottom: 4px; flex-wrap: nowrap; }
+	      #page-subtitle { display: none; }
+	    }
+	    .shell_header_titles { min-width: 0; flex: 1 1 auto; }
+	    .shell_content { flex: 1 1 auto; min-height: 0; min-width: 0; overflow-y: auto; overscroll-behavior: contain; }
+	    /* Sidebar -> drawer below md (DESIGN §5.2). The nav toggle and the
+	       backdrop exist only for this range; above it the sidebar is the
+	       docked column it always was. */
+	    .shell_nav_toggle, .shell_nav_backdrop { display: none; }
+	    .shell_nav_close { display: none; }
+	    @media (max-width: 1023.98px) {
+	      .shell_sidebar {
+	        position: fixed; top: 0; bottom: 0; left: 0; z-index: var(--z-drawer, 900);
+	        width: min(288px, 86vw);
+	        padding-top: var(--safe-top, 0px); padding-bottom: var(--safe-bottom, 0px); padding-left: var(--safe-left, 0px);
+	        box-shadow: var(--shadow);
+	        transform: translateX(-105%);
+	        visibility: hidden;
+	        transition: transform 180ms ease, visibility 0s linear 180ms;
+	      }
+	      body.nav-open .shell_sidebar { transform: none; visibility: visible; transition: transform 180ms ease; }
+	      body.signed-in .shell_nav_toggle { display: inline-flex; }
+	      body.nav-open .shell_nav_backdrop {
+	        display: block; position: fixed; inset: 0; z-index: calc(var(--z-drawer, 900) - 1);
+	        background: rgba(0, 0, 0, .45);
+	      }
+	      .shell_nav_close { display: inline-flex; margin-left: auto; }
+	      .tab-button.shell_nav_item { min-height: var(--tap-min, 32px); }
+	    }
+	    @media (max-width: 1023.98px) and (prefers-reduced-motion: reduce) {
+	      .shell_sidebar, body.nav-open .shell_sidebar { transition: none; }
+	    }
+	    .shell_nav_toggle, .shell_nav_close {
+	      align-items: center; justify-content: center; flex: 0 0 auto;
+	      width: var(--tap-min, 32px); height: var(--tap-min, 32px); min-height: 0; padding: 0;
+	      border: 1px solid var(--line); border-radius: var(--radius-md);
+	      background: var(--panel-2); color: var(--text); font-size: 16px; line-height: 1;
+	    }
+	    .shell_nav_close { border: 0; background: transparent; color: var(--subtle); font-size: 20px; }
     /* Headings scale with the Appearance font-size control (hardcoded
        px never scaled) and cap at weight 650 —
        when everything is 800, nothing leads. */
@@ -413,6 +466,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     h3 { font-size: calc(13px * var(--font-scale)); margin: 0; letter-spacing: -.01em; font-weight: 600; }
     p { margin: 0; }
 	    main { width: 100%; max-width: 1560px; margin: 0 auto; padding: 20px 22px 28px; }
+	    @media (max-width: 767.98px) {
+	      main { padding: var(--gutter, 16px) max(var(--gutter, 16px), var(--safe-right, 0px)) max(28px, var(--safe-bottom, 0px)) max(var(--gutter, 16px), var(--safe-left, 0px)); }
+	      section { padding: 14px; }
+	    }
 	    #page-title { font-size: var(--font-size-lg); font-weight: 700; }
     .brand-subtitle { color: var(--subtle); font-size: 12px; margin-top: 1px; }
     .status {
@@ -461,7 +518,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       border-left: 1px solid var(--line); background: var(--panel);
       box-shadow: var(--shadow); color: var(--text); font-family: var(--font-sans);
     }
-    @media (max-width: 680px) { .af-drawer { width: 100vw !important; } }
+    /* Full width below sm with the notch/home-indicator insets (DESIGN §5.2;
+       the kit's own .af-drawer rule, mirrored for this vendored markup). */
+    .af-drawer { height: var(--vh-full, 100vh); padding-top: var(--safe-top, 0px); padding-bottom: var(--safe-bottom, 0px); padding-right: var(--safe-right, 0px); }
+    @media (max-width: 767.98px) { .af-drawer { width: 100vw !important; border-left: 0; padding-left: var(--safe-left, 0px); } }
     .af-drawer__header {
       display: flex; align-items: center; justify-content: space-between; gap: 10px;
       padding: 12px 14px; border-bottom: 1px solid var(--line);
@@ -475,6 +535,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     }
     .af-drawer__close:hover { color: var(--text); background: var(--panel-2); }
     .af-drawer__body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; overscroll-behavior: contain; }
+    @media (pointer: coarse) { .af-drawer__close { width: var(--tap-min, 44px); height: var(--tap-min, 44px); } }
     /* Console assistant drawer internals (console-owned, not kit API) */
     .assistant-messages { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 10px; padding: 14px; }
     .assistant-msg { border: 1px solid var(--line); border-radius: var(--radius-md); padding: 9px 11px; font-size: var(--font-sm); line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
@@ -485,6 +546,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     .assistant-note { color: var(--subtle); font-size: var(--font-xs); padding: 0 14px 6px; }
     .assistant-composer { display: flex; gap: 8px; padding: 10px 14px 14px; border-top: 1px solid var(--line); }
     .assistant-composer textarea { flex: 1; resize: vertical; min-height: 44px; max-height: 160px; }
+    .assistant-composer { padding-bottom: max(14px, var(--safe-bottom, 0px)); }
 		    .workspace-shell { display: grid; gap: 16px; }
 		    /* Sidebar nav rows (the continuum .shell_nav_item recipe) — the
 		       tab-button class + ids survive so the wiring and tests hold. */
@@ -903,7 +965,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 		    .provider-preset-grid {
 		      display: grid;
-		      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+		      grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
 		      gap: 8px;
 		      margin-top: 12px;
 		    }
@@ -1009,15 +1071,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       z-index: 10;
       display: grid;
       place-items: center;
-      padding: 22px;
+      padding: max(22px, var(--safe-top, 0px)) max(22px, var(--safe-right, 0px)) max(22px, var(--safe-bottom, 0px)) max(22px, var(--safe-left, 0px));
+      overscroll-behavior: contain;
       background: rgba(0, 0, 0, 0.45);
       -webkit-backdrop-filter: blur(6px);
       backdrop-filter: blur(6px);
     }
 	    .modal {
 	      width: min(520px, 100%);
-	      max-height: calc(100vh - 44px);
+	      max-height: calc(var(--vh-full, 100vh) - 44px);
 	      overflow: auto;
+	      overscroll-behavior: contain;
 	      border: 1px solid var(--line);
 	      border-radius: var(--radius-md);
 	      background: var(--panel);
@@ -1026,8 +1090,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    .modal.wide { width: min(680px, 100%); }
 	    .modal.flow-modal {
-	      width: min(520px, calc(100vw - 48px));
-	      max-width: min(520px, calc(100vw - 48px));
+	      width: min(520px, 100%);
+	      max-width: min(520px, 100%);
 	      padding: 0;
 	      display: flex;
 	      flex-direction: column;
@@ -1069,11 +1133,32 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      background: rgba(255, 255, 255, .02);
 	    }
 	    .default-modal {
-	      width: min(500px, calc(100vw - 48px));
-	      max-width: min(500px, calc(100vw - 48px));
+	      width: min(500px, 100%);
+	      max-width: min(500px, 100%);
 	    }
-	    .modal.wsp-modal { width: min(860px, calc(100vw - 48px)); max-width: min(860px, calc(100vw - 48px)); }
-	    .modal.log-modal { width: min(1100px, calc(100vw - 48px)); max-width: min(1100px, calc(100vw - 48px)); }
+	    .modal.wsp-modal { width: min(860px, 100%); max-width: min(860px, 100%); }
+	    .modal.log-modal { width: min(1100px, 100%); max-width: min(1100px, 100%); }
+	    /* Dialogs become bottom sheets on phones and in phone landscape
+	       (DESIGN §5.7): full width, top corners rounded, the actions row
+	       stays visible (sticky) above the home indicator. */
+	    @media (max-width: 767.98px), (max-height: 500px) {
+	      .modal-backdrop { place-items: end center; padding: var(--safe-top, 0px) 0 0; }
+	      .modal, .modal.wide, .modal.flow-modal, .default-modal, .modal.wsp-modal, .modal.log-modal, .modal.provider-modal {
+	        width: 100%; max-width: 100%;
+	        max-height: calc(var(--vh-full, 100vh) - var(--safe-top, 0px));
+	        border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+	        border-bottom: 0;
+	        padding-bottom: max(18px, var(--safe-bottom, 0px));
+	      }
+	      .modal.flow-modal, .modal.provider-modal { padding-bottom: 0; }
+	      .flow-modal .modal-actions, .provider-modal .modal-actions { padding-bottom: max(12px, var(--safe-bottom, 0px)); }
+	      .modal-actions { flex-wrap: wrap; }
+	    }
+	    @media (max-width: 479.98px) {
+	      /* Primary (confirm) is last in the DOM: it stays last, nearest the thumb. */
+	      .modal-actions { flex-direction: column; align-items: stretch; }
+	      .modal-actions > button { width: 100%; }
+	    }
 	    .list-pager { display: flex; gap: 12px; align-items: center; justify-content: center; margin-top: 8px; }
 	    /* ONE toolbar shape for every list tab: compact
 	       dropdown, then the search bar, then any tab-specific extra. The
@@ -1228,7 +1313,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    .provider-modal-grid { display: grid; gap: 12px; }
 	    .providers-workspace { display: grid; gap: 16px; }
-	    .providers-workspace #provider-preset-grid { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+	    .providers-workspace #provider-preset-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); }
 	    .sandbox-workspace {
 	      display: grid;
 	      grid-template-columns: minmax(0, 1fr);
@@ -1320,8 +1405,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      margin-top: 2px;
 	    }
 	    .sandbox-chat {
-	      min-height: 560px;
-	      max-height: calc(100vh - 205px);
+	      min-height: min(560px, calc(var(--vh-full, 100vh) - 160px));
+	      max-height: calc(var(--vh-full, 100vh) - 205px);
 	      display: grid;
 	      grid-template-rows: auto minmax(260px, 1fr) auto;
 	      overflow: hidden;
@@ -1516,7 +1601,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    .sandbox-artifact audio {
 	      width: 100%;
-	      min-width: 260px;
+	      min-width: min(260px, 100%);
 	    }
 	    .default-modal-test {
 	      display: grid;
@@ -1525,7 +1610,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      color: var(--text-muted);
 	    }
 	    .default-modal-test:empty { display: none; }
-	    .default-modal-test .sandbox-artifact audio { width: 100%; min-width: 220px; }
+	    .default-modal-test .sandbox-artifact audio { width: 100%; min-width: min(220px, 100%); }
 	    .sandbox-media-error {
 	      border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
 	      border-radius: var(--radius-md);
@@ -1697,16 +1782,27 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      min-width: 36px;
 	      padding: 0;
 	    }
-	    @media (max-width: 940px) {
-	      .tab-grid { grid-template-columns: 1fr; }
-	      .sandbox-workspace { grid-template-columns: 1fr; }
-	      .sandbox-composer-toolbar { grid-template-columns: 1fr; }
+	    /* md (was 940 px). The old rule here also restyled EVERY <header>
+	       element (flex column, padding) — including the model catalog's
+	       <header class="mc-card__head">, which is why each card head fell
+	       apart into a centred 400 px column below 940 px. Scoped now. */
+	    @media (max-width: 1023.98px) {
+	      .tab-grid { grid-template-columns: minmax(0, 1fr); }
+	      .sandbox-workspace { grid-template-columns: minmax(0, 1fr); }
+	      .sandbox-composer-toolbar { grid-template-columns: minmax(0, 1fr); }
 	      .sandbox-mode-grid { justify-content: flex-start; }
-	      header { align-items: flex-start; flex-direction: column; padding: 14px 18px; }
-	      .console-tabs-bar { top: 0; }
 	      main { padding: 16px; }
 	    }
-	    @media (max-width: 680px) {
+	    @media (max-width: 479.98px) {
+	      /* The head's action (Create user, Refresh...) drops under the note
+	         instead of squeezing it to a 120 px column. */
+	      .section-head { flex-wrap: wrap; }
+	      .section-head > div:first-child { flex: 1 1 100%; min-width: 0; }
+	    }
+	    @media (max-height: 500px) {
+	      .sandbox-chat { min-height: calc(var(--vh-full, 100vh) - 24px); max-height: none; }
+	    }
+	    @media (max-width: 767.98px) {
 	      body:not(.signed-in) .console-shell { align-content: start; padding-block: 18px; }
 	      .af-gateway-signin { padding: 18px; }
 	      .af-gateway-signin__hero { gap: 16px; }
@@ -1738,10 +1834,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	       (.shell_* family). Nav button ids are unchanged so the tab wiring
 	       and its tests survive the restyle. -->
 	  <div class="shell">
-	  <aside class="shell_sidebar session-only" aria-label="Gateway console sections">
+	  <aside id="console-nav" class="shell_sidebar session-only" aria-label="Gateway console sections">
 	    <div class="shell_brand">
 	      <span class="shell_brand_mark" aria-hidden="true">↔</span>
 	      <span class="shell_brand_name">AbstractGateway</span>
+	      <!-- Below 1024 px the sidebar is a drawer: its close button. -->
+	      <button id="nav-close" class="shell_nav_close" type="button" aria-label="Close navigation" title="Close">×</button>
 	    </div>
 	    <nav class="shell_nav">
 	      <button id="tab-button-users" class="tab-button shell_nav_item" type="button" title="People, tokens, and summoned entities"><span class="shell_nav_icon" aria-hidden="true">☾</span><span class="shell_nav_label">Users &amp; Entities</span></button>
@@ -1760,8 +1858,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <label class="ui-switch" title="Show commands, route ids and other technical details"><input id="sidebar-advanced" type="checkbox"><span>Technical details</span></label>
 	    </div>
 	  </aside>
+	  <div id="nav-backdrop" class="shell_nav_backdrop" aria-hidden="true"></div>
 	  <div class="shell_main">
 	  <header class="shell_header">
+	    <button id="nav-toggle" class="shell_nav_toggle" type="button" aria-controls="console-nav" aria-expanded="false" aria-label="Open navigation" title="Sections">☰</button>
 	    <div class="shell_header_titles">
 	      <h1 id="page-title">AbstractGateway Console</h1>
 	      <div id="page-subtitle" class="brand-subtitle">Users &amp; summoned entities, runtimes, providers, and multimodal capabilities</div>
@@ -13665,6 +13765,45 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      document.addEventListener("keydown", (event) => {
 	        if (event.key === "Escape" && firstRun.open && !islands.appearanceOpen) closeFirstRunWizard();
 	      });
+	    }
+	    // NAV DRAWER (below 1024 px the sidebar is an overlay drawer, DESIGN
+	    // §5.2): the header's ☰ opens it; Escape, the backdrop, the close
+	    // button and picking a section close it; focus goes into the drawer
+	    // on open and back to ☰ on close. Above 1024 px nothing changes (the
+	    // class has no effect there and a resize past it drops it).
+	    function navDrawerOpen() {
+	      try { return document.body.classList.contains("nav-open"); } catch { return false; }
+	    }
+	    function setNavDrawer(open) {
+	      const on = !!open;
+	      const was = navDrawerOpen();
+	      try { document.body.classList.toggle("nav-open", on); } catch { return; }
+	      $("nav-toggle").setAttribute("aria-expanded", on ? "true" : "false");
+	      if (on && !was) {
+	        const target = document.querySelector("#console-nav .tab-button.active") || document.querySelector("#console-nav .tab-button");
+	        if (target && typeof target.focus === "function") target.focus();
+	      } else if (!on && was) {
+	        const toggle = $("nav-toggle");
+	        if (toggle && toggle.offsetParent !== null && typeof toggle.focus === "function") toggle.focus();
+	      }
+	    }
+	    $("nav-toggle").onclick = () => setNavDrawer(!navDrawerOpen());
+	    $("nav-close").onclick = () => setNavDrawer(false);
+	    $("nav-backdrop").onclick = () => setNavDrawer(false);
+	    // Bubbles after the tab button's own onclick: the section is shown, then the drawer closes.
+	    $("console-nav").onclick = (event) => {
+	      const btn = event && event.target && typeof event.target.closest === "function" ? event.target.closest(".tab-button") : null;
+	      if (btn && navDrawerOpen()) setNavDrawer(false);
+	    };
+	    if (typeof document.addEventListener === "function") {
+	      document.addEventListener("keydown", (event) => {
+	        if (event.key === "Escape" && navDrawerOpen()) setNavDrawer(false);
+	      });
+	    }
+	    if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+	      const wide = window.matchMedia("(min-width: 1024px)");
+	      const onWide = () => { if (wide.matches && navDrawerOpen()) setNavDrawer(false); };
+	      if (typeof wide.addEventListener === "function") wide.addEventListener("change", onWide);
 	    }
 	    // A #claim= link signs this browser in (and opens the wizard) before
 	    // the normal session probe; without one, boot is unchanged.

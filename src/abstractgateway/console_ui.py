@@ -44,7 +44,7 @@ CONSOLE_UI_CSS = r"""
     .ui-switch input:checked::after { transform: translateX(12px); background: #fff; }
     .ui-switch input:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; box-shadow: none; }
     .shell_sidebar_foot { padding: 10px 14px 14px; border-top: 1px solid var(--ui-border-1); }
-    @media (max-width: 900px) { .shell_sidebar_foot .ui-switch span { display: none; } .shell_sidebar_foot { padding: 10px 8px; display: flex; justify-content: center; } }
+    .shell_sidebar_foot { padding-bottom: max(14px, var(--safe-bottom, 0px)); }
 
     /* ---- Top bar island (kit AfTopBarActions) ---- */
     .af-topbar-island { display: flex; align-items: center; min-width: 0; }
@@ -225,6 +225,10 @@ CONSOLE_UI_CSS = r"""
     table.ui-stacked:not(#ui-none) > tbody > tr > td:first-child::before { display: none; }
     table.ui-stacked:not(#ui-none) > tbody > tr > td:empty { display: none; }
     table.ui-stacked:not(#ui-none) > tbody > tr > td[data-ui-role="actions"] .actions, table.ui-stacked:not(#ui-none) > tbody > tr > td[data-ui-role="actions"] .acc-actions { flex-wrap: wrap; }
+    /* An actions cell that IS the .actions row (users table) keeps its flex
+       row when stacked (display:block above made its buttons touch). */
+    table.ui-stacked:not(#ui-none) > tbody > tr > td.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+    table.ui-stacked:not(#ui-none) > tbody > tr > td.actions::before { flex: 1 0 100%; margin-bottom: 0; }
     table.ui-stacked:not(#ui-none) td code, table.ui-stacked:not(#ui-none) .ui-ellip { max-width: 100%; }
     .acc-root table.ui-stacked:not(#ui-none) > tbody > tr.acc-group-start { border-top: 1px solid var(--ui-border-2); }
 
@@ -353,7 +357,7 @@ CONSOLE_UI_CSS = r"""
     .ui-apps-setting__head label { margin: 0; font-size: var(--font-size-md); font-weight: 650; color: var(--text-primary); text-transform: none; letter-spacing: 0; }
     .ui-apps-setting input { width: 100%; min-width: 0; margin: 0; font-family: var(--font-mono); }
     #island-address { font-family: var(--font-mono); font-size: var(--font-size-sm); max-width: 26ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    @media (max-width: 1100px) { #island-address { display: none; } }
+    @media (max-width: 1023.98px) { #island-address { display: none; } }
     /* Focus: every control the layer draws shows where the keyboard is. */
     .ui-btn:focus-visible, .ui-seg__opt:focus-visible, .first-run-step:focus-visible, details.ui-details > summary:focus-visible, .ui-log:focus-visible, a.ui-link:focus-visible { outline: 2px solid var(--info); outline-offset: 2px; box-shadow: none; }
     .ui-seg__opt:focus-visible { outline-offset: 1px; }
@@ -395,7 +399,7 @@ CONSOLE_UI_CSS = r"""
     .first-run-footer #first-run-skip:hover:not(:disabled) { color: var(--text-primary); background: var(--ui-surface-2); }
     .first-run-footer #first-run-next, .first-run-footer #first-run-finish { background: var(--accent); color: #fff; }
     #first-run-host-summary, #first-run-engines-body, #first-run-apps-body, #first-run-done-body, #first-run-model-recommended, #engines-core-root, #apps-root { display: grid; gap: 18px; min-width: 0; }
-    .first-run-tiles { display: grid; gap: 14px; margin: 0; grid-template-columns: repeat(auto-fill, minmax(max(240px, calc((100% - 28px) / 3)), 1fr)); }
+    .first-run-tiles { display: grid; gap: 14px; margin: 0; grid-template-columns: repeat(auto-fill, minmax(min(100%, max(240px, calc((100% - 28px) / 3))), 1fr)); }
     .first-run-tile code { font-weight: 500; font-size: var(--font-size-sm); }
     .first-run-tile { display: grid; gap: 6px; align-content: start; padding: 16px 18px; min-width: 0; border-radius: var(--radius-lg); border: 1px solid var(--ui-border-1); background: var(--bg-card, var(--bg-secondary)); }
     .first-run-tile dt { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
@@ -406,18 +410,62 @@ CONSOLE_UI_CSS = r"""
     .first-run-default-bar code { max-width: min(100%, 48ch); }
     #first-run-model-catalog .acc-root { display: grid; gap: 4px; }
     .first-run-table { width: 100%; border-collapse: collapse; }
-    @media (max-width: 1100px) {
-      .first-run-shell { grid-template-columns: 216px minmax(0, 1fr); }
-      .first-run-step__hint { display: none; }
-      .first-run-intro p { display: none; }
-    }
-    @media (max-width: 860px) {
+    /* Below md the step rail becomes the top row (DESIGN §5.2: no docked
+       side column under 1024 px); it was a 216 px column down to 860 px. */
+    @media (max-width: 1023.98px) {
       .first-run-shell { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
       .first-run-rail { flex-direction: row; align-items: center; gap: 12px; padding: 10px 14px; overflow-x: auto; overflow-y: hidden; border-right: 0; border-bottom: 1px solid var(--ui-border-1); }
-      .first-run-intro, .first-run-rail-foot { display: none; }
+      .first-run-intro, .first-run-rail-foot, .first-run-step__hint { display: none; }
       .first-run-steps { grid-auto-flow: column; }
       .first-run-step { grid-template-columns: 26px auto; padding: 6px 8px; }
       .first-run-step__num { width: 26px; height: 26px; grid-row: auto; }
+    }
+    /* ================= Responsive layer (DESIGN.md, ui-kit 0.3.0 tokens) =================
+       Last in the sheet so it refines everything above. Desktop (fine pointer,
+       >= 1024 px) is untouched: every rule sits under a query. */
+    .first-run-page { height: var(--vh-full, 100vh); }
+    .first-run-rail { padding-left: max(18px, var(--safe-left, 0px)); }
+    .first-run-footer { padding-bottom: max(14px, var(--safe-bottom, 0px)); flex-wrap: wrap; }
+    @media (max-width: 767.98px) {
+      .first-run-content { padding: 20px var(--gutter, 16px) 28px; gap: 18px; }
+      .first-run-head h3 { font-size: calc(22px * var(--font-scale)); }
+      .first-run-footer { padding-left: var(--gutter, 16px); padding-right: var(--gutter, 16px); }
+      .first-run-footer .message { flex-basis: 100%; order: 3; }
+    }
+    @media (max-width: 479.98px) {
+      .first-run-brand { display: none; }
+    }
+    @media (max-height: 500px) {
+      .first-run-rail { padding-top: 6px; padding-bottom: 6px; }
+      .first-run-content { padding-top: 14px; }
+      .first-run-footer { padding-top: 8px; padding-bottom: max(8px, var(--safe-bottom, 0px)); }
+    }
+    /* Touch (pointer: coarse): 44 px targets, 16 px inputs (iOS never zooms a
+       focused field), 14 px reading text. The visual glyphs keep their size;
+       the boxes grow. The target floor is !important on purpose: it is a
+       floor, and several control recipes (.ui-btn.is-quiet, #sandbox-reasoning,
+       the catalog's chips, later in this sheet) pin a desktop height with a
+       more specific selector. Exceptions (DESIGN §3.2): inline text links in
+       prose, disabled controls, the kit About dialog's link list. */
+    @media (pointer: coarse) {
+      button, .ui-btn, .af-topbar__btn, .af-topbar__pill, .mc-mode button, button.mc-chip, .entity-subtab,
+      .first-run-step, .tab-button.shell_nav_item, .af-select-trigger, summary, .ui-card__actions a.ui-link,
+      .acc-root .acc-btn, .acc-root .acc-tabs button { min-height: var(--tap-min, 44px) !important; }
+      .ui-card__actions a.ui-link { display: inline-flex; align-items: center; }
+      .mc-art .mc-id { min-height: var(--tap-min, 44px); display: flex; align-items: center; }
+      .af-topbar__btn, .icon-only, .sandbox-speak, .sandbox-mode, .shell_nav_toggle, .shell_nav_close, .mc-chip { min-width: var(--tap-min, 44px) !important; }
+      .sandbox-speak { height: var(--tap-min, 44px); }
+      input:not([type="checkbox"]):not([type="radio"]), select, textarea { font-size: var(--font-size-input, 16px) !important; min-height: var(--tap-min, 44px) !important; }
+      input[type="checkbox"], input[type="radio"] { width: 20px; height: 20px; }
+      .ui-switch, label.entity-checkbox, .af-gateway-signin__checkbox { min-height: var(--tap-min, 44px); }
+      .ui-switch input { width: 38px; height: 22px; min-height: 22px !important; }
+      .ui-switch input::after { width: 16px; height: 16px; }
+      .ui-switch input:checked::after { transform: translateX(16px); }
+      .shell_nav { gap: 4px; }
+      .actions, td .actions, .section-actions, .entity-btn-row, .list-toolbar { gap: 8px; }
+      body :is(.section-note, .field-help, .message, td, .mc-note, .mc-card__meta, .first-run-note, .ui-sub, .ui-field-msg,
+        .ui-net-proxy__text, .ui-net-proxy__saved, .ui-net-proxy__danger, .provider-preset span, .ui-card__note, .ui-warn-list li,
+        .ui-alert, .ui-seg__text, .assistant-msg, .acc-table, .acc-host-line, .acc-muted) { font-size: var(--font-size-body, 14px); }
     }
 """
 
