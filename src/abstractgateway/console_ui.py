@@ -2161,7 +2161,8 @@ CONSOLE_UI_JS = r"""
     // plain-http LAN/tailnet address is not a secure context. Otherwise the
     // address other devices use (GET /network `copy_hint`).
     function netPrimaryUrl() {
-      try { if (location.protocol === "https:") return String(location.origin); } catch { /* not a browser */ }
+      // GET /network `browser_url` (fix/apps-behind-proxy) is the caller's address when the gateway says it.
+      try { if (location.protocol === "https:") return String((netStore.data && netStore.data.browser_url) || location.origin); } catch { /* not a browser */ }
       return (netStore.data && netStore.data.copy_hint) || "";
     }
     function netAddressRow(a, primary) {
