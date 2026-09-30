@@ -10,8 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.9.0] - 2026-09-30
 
 The web console works on phones, tablets and any window size. It follows the AbstractFramework
-responsive system of `@abstractframework/ui-kit` 0.3.2. Dependencies are unchanged (AbstractCore
-2.20.2, AbstractRuntime 0.8.1, terminal console 0.12.0).
+responsive system of `@abstractframework/ui-kit` 0.3.2. It also carries the mail watcher fixes
+prepared as 0.8.2, which was not published. Dependencies are unchanged (AbstractCore 2.20.2,
+AbstractRuntime 0.8.1, terminal console 0.12.0).
 
 ### Changed
 - Below 1024 px the console sidebar is a drawer that opens from a **☰** button in the header.
@@ -37,13 +38,6 @@ responsive system of `@abstractframework/ui-kit` 0.3.2. Dependencies are unchang
 - The Sandbox composer is reachable at every window size: the transcript gives way first, and the
   chat card scrolls when the composer still does not fit (for example at 1280x800 or 1366x768).
 - The action buttons of a users row keep their spacing when the table is shown as cards.
-
-## [0.8.2] - 2026-09-30
-
-Same dependencies as 0.8.1 (AbstractCore 2.20.2, AbstractRuntime 0.8.1; the terminal console stays
-0.12.0).
-
-### Fixed
 - Mail sent to test a new "When an email arrives" automation right after creating it triggers it.
   The mail watcher reads nothing until an email automation exists and its first read only marks
   where new mail starts; that read came up to a minute after the automation was created (checks
