@@ -1827,7 +1827,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .users-caps { display: flex; flex-direction: column; gap: 6px; max-width: 720px; margin: 0 0 14px; }
 	    .users-table-wrap { overflow-x: auto; }
 	    .users-table td { font-size: var(--font-size-base); vertical-align: middle; }
-	    .users-table td.actions { white-space: nowrap; }
+	    /* A table cell, not a flex box: a flex td drops out of the row's borders. */
+	    .users-table td.actions { display: table-cell; white-space: nowrap; }
+	    .users-table td.actions > button + button { margin-left: 6px; }
 	    .users-table .row-confirm > td { padding-top: 0; }
 	    .users-override { color: var(--warn, var(--warning)); }
 	    button.small { min-height: 28px; padding: 3px 10px; font-size: var(--font-size-sm); }
@@ -1879,7 +1881,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      .users-table tr { padding: 10px 0; border-top: 1px solid var(--line-soft); }
 	      .users-table td { display: flex; align-items: center; gap: 10px; padding: 3px 0; border: 0; min-width: 0; overflow-wrap: anywhere; }
 	      .users-table td[data-label]::before { content: attr(data-label); flex: 0 0 104px; color: var(--muted); font-size: var(--font-size-md); }
-	      .users-table td.actions { flex-wrap: wrap; white-space: normal; }
+	      .users-table td.actions { display: flex; flex-wrap: wrap; gap: 6px; white-space: normal; }
+	      .users-table td.actions > button + button { margin-left: 0; }
 	      .users-table td.actions::before { flex-basis: 100%; }
 	      .users-table .row-confirm { border-top: 0; padding-top: 0; }
 	    }
