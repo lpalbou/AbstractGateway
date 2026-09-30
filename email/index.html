@@ -1223,6 +1223,9 @@ you by an administrator, no connected account, or your own switch is off. Every 
 call is an ordinary tool call recorded in the run's ledger. Your own send-email actions in
 automations (fixed templates you wrote), notifications and recovery codes do not need the switch:
 they only need a connected, allowed account.</p>
+<p>A run started without a tool list (<code>POST /runs/start</code> with no <code>input_data.tools</code>) gets its
+workflow's default tools plus the email tools while your agent email tools are active; an explicit
+tool list, even an empty one, is used as given.</p>
 <h2 id="recipient-policy-and-send-limits">Recipient policy and send limits<a class="headerlink" href="#recipient-policy-and-send-limits" title="Permanent link">&para;</a></h2>
 <p>Every send — an agent's <code>send_email</code>, an automation's send action, a notification, a recovery
 code — goes through the same checks, in this order:</p>
@@ -1236,7 +1239,10 @@ code — goes through the same checks, in this order:</p>
 <li>the <strong>send limits</strong>: 20 messages per rolling hour and 100 per day by default, editable by you.</li>
 </ol>
 <p>On top of the policy, the approval gate still decides whether an agent's send runs unattended: a
-send to anyone but you (or an automation's pre-authorised recipients) waits for your approval.</p>
+send to anyone but you (or an automation's pre-authorised recipients) waits for your approval, and
+a send to you runs without asking in chats and automations alike. "You" is the address My email
+shows as your registered address: the email on your user account (or the gateway's registered
+address for the operator), else the connected mailbox's own address.</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/me/email/policy"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"mode": "allowlist", "entries": ["me@example.com", "mycompany.com"]}'</span>
 curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/me/email/limits"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"per_hour": 20, "per_day": 100}'</span>
@@ -1257,6 +1263,15 @@ automation reads a message at most once. See <a href="../automations/">automatio
 configuration and the send-email action.</p>
 <p>Inbound mail is data, never instructions: it reaches a model inside a fixed "untrusted" frame, and
 nothing it says can widen who a run may mail or which tools it has.</p>
+<p>An automation never runs on mail the framework sent itself. Every message sent automatically
+through your account (notifications, recovery codes, and anything an automation sends, including
+its send-email action) carries <code>Auto-Submitted: auto-generated</code> (RFC 3834) and an
+<code>X-AbstractFramework-Automation</code> header, and its Message-ID is recorded in your outbox. The
+watcher skips such messages from your own address, and a recorded Message-ID even when a server
+dropped the headers, so a filter that matches an automation's own result email ("Email me the
+result") never re-triggers it. By default the trigger also ignores automatic mail from others
+(auto-replies, vacation notices, other automations); set <code>"auto_submitted": "admit"</code> in its
+configuration to run on those too.</p>
 <h2 id="notifications">Notifications<a class="headerlink" href="#notifications" title="Permanent link">&para;</a></h2>
 <p>Email notifications are opt-in: every event is off until you turn it on, and the console stays
 the default channel. <strong>My email → Notifications</strong> (or <code>GET/PUT /api/gateway/me/notifications</code>)
