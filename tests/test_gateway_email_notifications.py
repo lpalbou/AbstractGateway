@@ -1,8 +1,9 @@
-"""Email notifications (framework backlog 0992 WP3, C5): preferences, the durable outbox
-(queued once, a crash mid-send is `unknown` and never resent, 4xx retried, 5xx/auth
-surfaced), the send limits' digest, the recipient policy, and the collector (automation
-results/failures delivered to email only when the automation asks, approval waits, jobs
-that asked `_runtime.notify`)."""
+"""Email notifications (framework backlog 0992 WP3, C5; two switches since 2026-09-30):
+preferences (Job failed, Approval needed; both ON by default; v1 bodies and files mapped), the
+durable outbox (queued once, a crash mid-send is `unknown` and never resent, 4xx retried,
+5xx/auth surfaced), the send limits' digest, the recipient policy, and the collector
+(automation results delivered to email only when the automation asks, failures on "Job
+failed", approval waits on "Approval needed", jobs that asked `_runtime.notify` on their own)."""
 
 from __future__ import annotations
 
@@ -32,21 +33,67 @@ def test_preferences_round_trip_and_availability(gateway, imap, smtp) -> None:
     r = c.get("/api/gateway/me/notifications", headers=gateway["alice"])
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["channels"]["email"]["available"] is False and body["unavailable_reason"]
-    assert {e["id"] for e in body["events"]} == {"automation_result", "automation_failed", "approval_needed", "job_finished", "job_failed"}
+    assert body["channels"]["email"]["available"] is False
+    assert body["unavailable_reason"] == "Connect a mailbox first."
+    assert [(e["id"], e["label"]) for e in body["events"]] == [("job_failed", "Job failed"), ("approval_needed", "Approval needed")]
 
-    # Every email event is OFF by default (the console stays the default channel).
-    assert set(body["email"].values()) == {False}
+    # Both switches are ON by default; they only send once a mailbox is connected.
+    assert body["email"] == {"job_failed": True, "approval_needed": True}
+    me = c.get("/api/gateway/me/email", headers=gateway["alice"]).json()
+    assert me["notifications"] == {"job_failed": True, "approval_needed": True}
+    assert me["notifications_unavailable_reason"] == "Connect a mailbox first."
     _connect(gateway, imap, smtp, notify=False)
-    assert set(c.get("/api/gateway/me/notifications", headers=gateway["alice"]).json()["email"].values()) == {False}
-    r = c.put("/api/gateway/me/notifications", headers=gateway["alice"], json={"email": {"job_failed": True}})
+    assert c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["notifications_unavailable_reason"] is None
+
+    # The new route: one switch at a time, answered like GET /me/email.
+    r = c.put("/api/gateway/me/email/notifications", headers=gateway["alice"], json={"job_failed": False})
     assert r.status_code == 200, r.text
-    assert r.json()["email"]["job_failed"] is True and r.json()["email"]["job_finished"] is False
+    assert r.json()["notifications"] == {"job_failed": False, "approval_needed": True}
+    assert c.get("/api/gateway/me/notifications", headers=gateway["alice"]).json()["email"] == {"job_failed": False, "approval_needed": True}
+    r = c.get("/api/gateway/me/notifications", headers=gateway["alice"])
     assert r.json()["channels"]["email"] == {"available": True, "to": ALICE}
+    assert c.put("/api/gateway/me/email/notifications", headers=gateway["alice"], json={"bogus": True}).status_code == 422
+
+    # The old five-kind body is still accepted and mapped: automation_failed counts for job_failed.
+    r = c.put("/api/gateway/me/notifications", headers=gateway["alice"], json={"email": {"automation_failed": True, "job_finished": False}})
+    assert r.status_code == 200, r.text
+    assert r.json()["email"] == {"job_failed": True, "approval_needed": True}
+    r = c.put("/api/gateway/me/email/notifications", headers=gateway["alice"], json={"email": {"approval_needed": False, "automation_result": True}})
+    assert r.status_code == 200 and r.json()["notifications"] == {"job_failed": True, "approval_needed": False}
     r = c.put("/api/gateway/me/notifications", headers=gateway["alice"], json={"email": {"bogus": True}})
     assert r.status_code == 400
     # Bob's preferences are his own.
-    assert c.get("/api/gateway/me/notifications", headers=gateway["bob"]).json()["email"]["job_failed"] is False
+    assert c.get("/api/gateway/me/notifications", headers=gateway["bob"]).json()["email"] == {"job_failed": True, "approval_needed": True}
+
+
+@pytest.mark.parametrize(
+    "stored, expected",
+    [
+        (None, {"job_failed": True, "approval_needed": True}),  # never saved: the new defaults
+        ({"automation_result": True, "automation_failed": False, "approval_needed": False, "job_finished": True, "job_failed": False},
+         {"job_failed": False, "approval_needed": False}),
+        ({"automation_result": False, "automation_failed": True, "approval_needed": True, "job_finished": False, "job_failed": False},
+         {"job_failed": True, "approval_needed": True}),
+        ({"automation_result": False, "automation_failed": False, "approval_needed": False, "job_finished": False, "job_failed": True},
+         {"job_failed": True, "approval_needed": False}),
+    ],
+)
+def test_v1_preferences_file_is_read_as_the_two_switches(gateway, stored, expected) -> None:
+    import json as json_mod
+
+    from abstractgateway.mail.notifications import read_preferences, write_preferences
+
+    plane = plane_of("alice")
+    path = plane.email_dir / "notifications.json"
+    if stored is not None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json_mod.dumps({"version": 1, "email": stored}), encoding="utf-8")
+    assert read_preferences(plane) == expected
+    assert gateway["client"].get("/api/gateway/me/email", headers=gateway["alice"]).json()["notifications"] == expected
+    # The next save writes v2 and keeps the migrated values it does not change.
+    write_preferences(plane, {})
+    doc = json_mod.loads(path.read_text(encoding="utf-8"))
+    assert doc["version"] == 2 and doc["email"] == expected
 
 
 def test_test_notification_goes_to_self_through_own_account(gateway, imap, smtp) -> None:
@@ -220,10 +267,23 @@ def test_collector_emails_automation_results_only_when_the_automation_asks(gatew
     assert "3 invoices arrived" in result["text"] and "model-authored" in result["text"]
     assert all("console only" not in m["text"] for m in mails)
 
-    # The user's preference switches an event off.
-    gateway["client"].put("/api/gateway/me/notifications", headers=gateway["alice"], json={"email": {"automation_result": False}})
-    data["records"]["auto-1"] += [_completed(5, "notify", ["console", "email"], "muted")]
-    assert NotificationCollector(plane, svc).collect()["queued"] == 0
+    # "Job failed" covers every automation's failures after the retries, console-only ones too.
+    data["records"]["auto-1"] += [_completed(5, "failure", ["console"], "The disk is full.")]
+    assert NotificationCollector(plane, svc).collect()["queued"] == 1
+
+    # With "Job failed" off: no failure mail, but "Email me the result" still delivers on its own
+    # (no global preference gates it any more).
+    r = gateway["client"].put("/api/gateway/me/email/notifications", headers=gateway["alice"],
+                              json={"job_failed": False, "approval_needed": False})
+    assert r.status_code == 200, r.text
+    data["records"]["auto-1"] += [
+        _completed(6, "failure", ["console", "email"], "muted failure"),
+        _completed(7, "notify", ["console", "email"], "still wanted"),
+    ]
+    assert NotificationCollector(plane, svc).collect()["queued"] == 1
+    NotificationOutbox(plane).deliver()
+    texts = [m["text"] for m in smtp_bodies(smtp)]
+    assert any("still wanted" in t for t in texts) and not any("muted failure" in t for t in texts)
 
 
 def test_collector_approval_waits_and_jobs_that_asked(gateway, imap, smtp, monkeypatch) -> None:
@@ -279,17 +339,51 @@ def test_no_account_no_notifications(gateway, monkeypatch) -> None:
     assert row["state"] == "failed" and row["error_code"] == "email_not_configured"
 
 
-def test_nothing_is_emailed_by_default(gateway, imap, smtp, monkeypatch) -> None:
+def test_defaults_mail_approvals_and_opted_in_results_only(gateway, imap, smtp, monkeypatch) -> None:
     from abstractgateway.mail.notifications import NotificationCollector
 
-    _connect(gateway, imap, smtp, notify=False)
+    _connect(gateway, imap, smtp, notify=False)  # never saved preferences: the defaults
     plane = plane_of("alice")
     svc, data = _fake_svc(automations=[{"automation_id": "auto-1", "title": "Digest", "status": "active"}])
     _patch_runtime_sources(monkeypatch, data)
     NotificationCollector(plane, svc).collect()
-    data["records"]["auto-1"] = [_completed(1, "notify", ["console", "email"], "x")]
-    data["waits"]["auto-1"] = [{"run_id": "occ-1", "wait_key": "w", "kind": "ask_user"}]
-    assert NotificationCollector(plane, svc).collect()["queued"] == 0
+    data["records"]["auto-1"] = [
+        _completed(1, "notify", ["console", "email"], "x"),   # "Email me the result": mailed
+        _completed(2, "notify", ["console"], "console only"),  # console only: never mailed
+    ]
+    data["waits"]["auto-1"] = [{"run_id": "occ-1", "wait_key": "w", "kind": "ask_user"}]  # Approval needed: ON
+    assert NotificationCollector(plane, svc).collect()["queued"] == 2
+
+
+def test_jobs_that_asked_are_mailed_without_any_global_preference(gateway, imap, smtp, monkeypatch) -> None:
+    from abstractruntime.core.models import RunState, RunStatus
+
+    from abstractgateway.mail.notifications import NotificationCollector, NotificationOutbox
+
+    _connect(gateway, imap, smtp, notify=False)
+    r = gateway["client"].put("/api/gateway/me/email/notifications", headers=gateway["alice"],
+                              json={"job_failed": False, "approval_needed": False})
+    assert r.status_code == 200, r.text
+    plane = plane_of("alice")
+    svc, data = _fake_svc()
+    _patch_runtime_sources(monkeypatch, data)
+    NotificationCollector(plane, svc).collect()  # baseline
+
+    def run(run_id, status, notify=None):
+        vars0 = {"_runtime": {"notify": notify}} if notify else {}
+        return RunState(run_id=run_id, workflow_id="Nightly build", status=status, current_node="n", vars=vars0,
+                        error="boom" if status == RunStatus.FAILED else None, updated_at="2999-01-01T00:00:00+00:00")
+
+    runs = {
+        "completed": [run("run-ok", RunStatus.COMPLETED, {"on": ["finished"], "channels": ["email"]}), run("run-quiet", RunStatus.COMPLETED)],
+        "failed": [run("run-bad", RunStatus.FAILED, {"on": ["failed"], "channels": ["email"]}), run("run-quiet-bad", RunStatus.FAILED)],
+    }
+    svc.host.run_store.list_runs = lambda status=None, wait_reason=None, limit=100: list(runs.get(getattr(status, "value", status), []))
+    assert NotificationCollector(plane, svc).collect()["queued"] == 2
+    NotificationOutbox(plane).deliver()
+    subjects = sorted(m["subject"] for m in smtp_bodies(smtp))
+    assert subjects == ["[AbstractFramework] Nightly build: failed", "[AbstractFramework] Nightly build: finished"]
+    assert all("email me when done" in m["text"] for m in smtp_bodies(smtp))
 
 
 def test_outbox_exists_only_once_something_is_queued(gateway, imap, smtp) -> None:

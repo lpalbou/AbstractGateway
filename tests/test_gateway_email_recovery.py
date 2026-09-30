@@ -1,8 +1,9 @@
 """Account recovery by email (framework backlog 0992, operator addition 2026-09-29):
 "Forgot your token?" and "Email me a sign-in code" — single use, 10-minute expiry, stored
-hashed, rate-limited per account and per client address, the same answer whether or not the
-account exists or has email (no enumeration), audited without the code, sent through the
-user's own account, offered only when some account has email."""
+hashed, rate-limited per account and per client address, an HONEST answer (DESIGN 2026-09-30
+§4.1: sent to a masked address / no_email_address / too_many_requests with retry_after_s; an
+unknown account reads like one without an address), audited without the code, sent through the
+user's own account, offered only when some account has email; 404 when the admin turned it off."""
 
 from __future__ import annotations
 
@@ -49,15 +50,55 @@ def test_options_are_offered_only_when_some_account_has_email(gateway, imap, smt
     assert c.get("/api/gateway/session/recovery").json()["available"] is False
 
 
-def test_constant_answer_no_enumeration(gateway, imap, smtp) -> None:
+def test_honest_answers_sent_masked_or_no_email_address(gateway, imap, smtp) -> None:
+    from abstractgateway.mail import recovery
+
     _connect(gateway, imap, smtp)
     c = _fresh_client(gateway)
-    answers = [_request(c, uid).json() for uid in ("alice", "bob", "nobody-here")]
-    assert answers[0] == answers[1] == answers[2]
-    assert answers[0]["ok"] is True
+    sent = _request(c, "alice").json()
+    assert sent == {
+        "ok": True,
+        "sent": True,
+        "to": "a\u2022\u2022\u2022@\u2022\u2022\u2022",
+        "expires_in_s": 600,
+        "message": "A sign-in code is on its way to a\u2022\u2022\u2022@\u2022\u2022\u2022. It expires in 10 minutes.",
+    }
+    assert "example.test" not in json.dumps(sent)  # never the domain
+    # Bob has an email address but no mailbox to send with; "nobody-here" does not exist: the
+    # same answer for both (an unknown account is not told apart).
+    no_bob = _request(c, "bob").json()
+    no_ghost = _request(c, "nobody-here").json()
+    assert no_bob == no_ghost == {
+        "ok": True,
+        "sent": False,
+        "reason_code": "no_email_address",
+        "message": recovery.NO_EMAIL_ADDRESS_MESSAGE,
+    }
+    assert no_bob["message"] == "This account has no email address, so a code can't be sent. Ask your gateway admin for a token."
     # Only Alice (email configured) actually got a code.
     mails = smtp_bodies(smtp)
     assert len(mails) == 1 and mails[0]["to"] == [ALICE] and mails[0]["from"] == ALICE
+
+
+def test_purpose_defaults_to_sign_in(gateway, imap, smtp) -> None:
+    from abstractgateway.mail import recovery
+
+    _connect(gateway, imap, smtp)
+    c = _fresh_client(gateway)
+    r = c.post("/api/gateway/session/recovery/request", json={"user_id": "alice"})
+    recovery.drain()
+    assert r.status_code == 200 and r.json()["sent"] is True
+    mail = smtp_bodies(smtp)[-1]
+    assert mail["subject"] == "[AbstractFramework] Your sign-in code"
+    r = c.post("/api/gateway/session/recovery/redeem", json={"user_id": "alice", "code": code_from(mail["text"])})
+    assert r.status_code == 200, r.text
+
+
+def test_mask_keeps_the_first_character_only() -> None:
+    from abstractgateway.mail.recovery import mask_address
+
+    assert mask_address("laurent@abstractframework.ai") == "l\u2022\u2022\u2022@\u2022\u2022\u2022"
+    assert mask_address("x@y.z") == "x\u2022\u2022\u2022@\u2022\u2022\u2022"
 
 
 def test_sign_in_code_opens_a_session_once(gateway, imap, smtp) -> None:
@@ -120,8 +161,16 @@ def test_rate_limited_per_account_and_per_client(gateway, imap, smtp, monkeypatc
 
     _connect(gateway, imap, smtp)
     c = _fresh_client(gateway)
-    for _ in range(recovery.ACCOUNT_MAX_REQUESTS + 2):
-        assert _request(c, "alice").status_code == 200
+    for _ in range(recovery.ACCOUNT_MAX_REQUESTS):
+        assert _request(c, "alice").json()["sent"] is True
+    for _ in range(2):
+        r = _request(c, "alice")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["sent"] is False and body["reason_code"] == "too_many_requests"
+        assert 0 < body["retry_after_s"] <= recovery.ACCOUNT_WINDOW_S
+        minutes = -(-body["retry_after_s"] // 60)
+        assert body["message"] == f"Too many codes requested for this account. Try again in {minutes} minutes."
     assert len(smtp.messages) == recovery.ACCOUNT_MAX_REQUESTS
 
     # Per client address: a burst over other names is capped too (and answers the same).
@@ -148,13 +197,16 @@ def test_rate_limited_requests_spawn_no_thread(gateway, imap, smtp, monkeypatch)
     real_thread = threading.Thread
 
     def counting_thread(*a, **kw):
-        started.append(kw.get("name"))
+        # `recovery.threading` IS the threading module: count only the code-mail workers (the
+        # request itself runs in the server's thread pool).
+        if kw.get("name") == "gateway-recovery-code":
+            started.append(kw.get("name"))
         return real_thread(*a, **kw)
 
     monkeypatch.setattr(recovery.threading, "Thread", counting_thread)
     for _ in range(5):
         r = _request(c, "alice")
-        assert r.status_code == 200 and r.json()["message"] == recovery.CONSTANT_MESSAGE
+        assert r.status_code == 200 and r.json()["reason_code"] == "too_many_requests"
     assert started == []
     assert len(smtp.messages) == recovery.ACCOUNT_MAX_REQUESTS
 
@@ -202,5 +254,6 @@ def test_admin_can_turn_sign_in_by_email_off(gateway, imap, smtp) -> None:
     assert c.get("/api/gateway/session/recovery").json()["available"] is False
     assert _redeem(c, "alice", code).status_code == 401  # outstanding codes stop working too
     before = len(smtp.messages)
-    assert _request(c, "alice").json()["ok"] is True  # same answer
+    r = _request(c, "alice")
+    assert r.status_code == 404 and r.json()["detail"]["reason_code"] == "recovery_off"  # the link is not shown
     assert len(smtp.messages) == before

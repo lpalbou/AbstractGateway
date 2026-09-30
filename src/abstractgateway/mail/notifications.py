@@ -5,14 +5,21 @@ address), sent THROUGH THEIR OWN ACCOUNT with `guarded_send` — so the user's r
 policy and send limits apply exactly as for an agent's send. No account, email turned off
 by the user or by an administrator: no email notifications (no gateway-wide sender).
 
-Events (each one switchable in the preferences):
+The user has TWO switches (preferences v2, 2026-09-30), both ON by default; nothing is sent
+until a mailbox is connected and in use:
 
-    automation_result   an occurrence asked to notify (`notify` in its output) and the automation
+    job_failed          "Job failed": an automation of theirs failed after its retries
+    approval_needed     "Approval needed": a run of theirs waits on a person (tool approval, question)
+
+The explicit opt-ins stand on their own, with no global preference involved:
+
+    automation result   an occurrence asked to notify (`notify` in its output) and the automation
                         delivers to email (`notify.channels` holds "email", schema v2)
-    automation_failed   an occurrence failed after its retries (same channel rule)
-    approval_needed     a run of this user waits on a person (tool approval, question)
-    job_finished        a run started with `_runtime.notify = {on: ["finished"], channels: ["email"]}`
-    job_failed          same, `on: ["failed"]`
+    job finished/failed a run started with `_runtime.notify = {on: ["finished" | "failed"],
+                        channels: ["email"]}` ("email me when done")
+
+Preferences v1 (five kinds, all OFF by default) are read as v2: `job_failed = job_failed OR
+automation_failed`, `approval_needed = approval_needed`; a file never saved gets the v2 defaults.
 
 The outbox (`<plane>/email/outbox.sqlite3`) makes delivery exactly-once-or-visible:
 
@@ -56,28 +63,26 @@ from .accounts import (
     account_store,
     email_context,
     email_usable,
+    mailbox_unavailable_reason,
     _read_json,
     _write_private_json,
 )
 from .audit import audit_email_event
 
-EVENTS = ("automation_result", "automation_failed", "approval_needed", "job_finished", "job_failed")
-# Email notifications are OPT-IN: every event is off until the user turns it on (the
-# console stays the default channel).
-DEFAULT_PREFERENCES = {
-    "automation_result": False,
-    "automation_failed": False,
-    "approval_needed": False,
-    "job_finished": False,
-    "job_failed": False,
+EVENTS = ("job_failed", "approval_needed")
+# The two notifications are the events that need the user; both ON by default (they only
+# send once a mailbox is connected and in use).
+DEFAULT_PREFERENCES = {"job_failed": True, "approval_needed": True}
+EVENT_LABELS = {"job_failed": "Job failed", "approval_needed": "Approval needed"}
+EVENT_DESCRIPTIONS = {
+    "job_failed": "A run or automation of yours failed, after its retries.",
+    "approval_needed": "A run is waiting for your answer.",
 }
-EVENT_LABELS = {
-    "automation_result": "Automation results (automations set to “email me the result”)",
-    "automation_failed": "Automation failures after the retries (automations set to “email me the result”)",
-    "approval_needed": "Approval or answer needed",
-    "job_finished": "Job finished (runs started with “email me when done”)",
-    "job_failed": "Job failed (runs started with “email me when done”)",
-}
+# Preferences v1 kinds, still accepted in a PUT body and mapped (`automation_failed` ->
+# `job_failed`); `automation_result` and `job_finished` are explicit per-automation / per-run
+# opt-ins now and are ignored as preferences.
+LEGACY_EVENTS = ("automation_result", "automation_failed", "job_finished")
+PREFERENCES_VERSION = 2
 RETRY_BASE_S = 60.0
 RETRY_MAX_S = 3600.0
 MAX_TRANSIENT_ATTEMPTS = 12
@@ -115,22 +120,48 @@ def _prefs_path(plane: EmailPlane) -> Path:
 
 
 def read_preferences(plane: EmailPlane) -> Dict[str, bool]:
+    """The two preferences. A v1 file (five kinds) reads as `job_failed = job_failed OR
+    automation_failed`, `approval_needed = approval_needed`; a never-saved one gets the defaults."""
+
     doc = _read_json(_prefs_path(plane))
-    stored = doc.get("email") if isinstance(doc.get("email"), dict) else {}
+    stored = doc.get("email") if isinstance(doc.get("email"), dict) else None
+    if stored is None:
+        return dict(DEFAULT_PREFERENCES)
+    if int(doc.get("version") or 1) < PREFERENCES_VERSION:
+        return {
+            "job_failed": bool(stored.get("job_failed")) or bool(stored.get("automation_failed")),
+            "approval_needed": bool(stored.get("approval_needed")),
+        }
     return {k: bool(stored.get(k, DEFAULT_PREFERENCES[k])) for k in EVENTS}
 
 
-def write_preferences(plane: EmailPlane, changes: Dict[str, Any]) -> Dict[str, bool]:
-    unknown = sorted(k for k in changes if k not in EVENTS)
+def map_legacy_changes(changes: Dict[str, Any]) -> Dict[str, Any]:
+    """A v1 body (`{kind: bool}` over five kinds) as v2 changes: `automation_failed` counts for
+    `job_failed` (either true = on); `automation_result` / `job_finished` are dropped. Unknown
+    kinds and non-booleans are a ValueError."""
+
+    known = set(EVENTS) | set(LEGACY_EVENTS)
+    unknown = sorted(k for k in changes if k not in known)
     if unknown:
         raise ValueError(f"unknown notification event(s): {', '.join(unknown)} (known: {', '.join(EVENTS)})")
     for k, v in changes.items():
         if not isinstance(v, bool):
             raise ValueError(f"{k} must be true or false")
+    out: Dict[str, Any] = {}
+    failed = [changes[k] for k in ("job_failed", "automation_failed") if k in changes]
+    if failed:
+        out["job_failed"] = any(failed)
+    if "approval_needed" in changes:
+        out["approval_needed"] = changes["approval_needed"]
+    return out
+
+
+def write_preferences(plane: EmailPlane, changes: Dict[str, Any]) -> Dict[str, bool]:
+    mapped = map_legacy_changes(changes)
     with _plane_lock(plane):
         current = read_preferences(plane)
-        current.update({k: bool(v) for k, v in changes.items()})
-        _write_private_json(_prefs_path(plane), {"version": 1, "email": current, "updated_at": _now_iso()})
+        current.update({k: bool(v) for k, v in mapped.items()})
+        _write_private_json(_prefs_path(plane), {"version": PREFERENCES_VERSION, "email": current, "updated_at": _now_iso()})
     return current
 
 
@@ -145,9 +176,9 @@ def preferences_public(plane: EmailPlane) -> Dict[str, Any]:
     to = st.self_address if st is not None else ""
     return {
         "channels": {"email": {"available": usable, "to": to if usable else ""}},
-        "events": [{"id": k, "label": EVENT_LABELS[k], "email": prefs[k]} for k in EVENTS],
+        "events": [{"id": k, "label": EVENT_LABELS[k], "description": EVENT_DESCRIPTIONS[k], "email": prefs[k]} for k in EVENTS],
         "email": prefs,
-        "unavailable_reason": "" if usable else f"Email notifications need a connected, turned-on email account ({SETTINGS_LABEL}).",
+        "unavailable_reason": "" if usable else (mailbox_unavailable_reason(plane) or "Connect a mailbox first."),
         "outbox": NotificationOutbox(plane).summary(),
     }
 
@@ -226,13 +257,25 @@ def render_notice(kind: str, facts: Dict[str, Any]) -> Tuple[str, str, str]:
     if link:
         lines.append(f"Console: {link}")
     lines.append("")
-    lines.append(f"You receive this because email notifications are on in {SETTINGS_LABEL} → Notifications.")
+    lines.append(_why_line(kind))
     text = "\n".join(lines).strip() + "\n"
     paragraphs = "".join(
         f"<p>{html.escape(line)}</p>" if line else "" for line in lines
     )
     html_body = f"<!doctype html><html><body style=\"font-family:sans-serif\">{paragraphs}</body></html>"
     return subject, text, html_body
+
+
+def _why_line(kind: str) -> str:
+    if kind == "automation_result":
+        return "You receive this because this automation is set to \u201cEmail me the result\u201d."
+    if kind in ("job_finished", "job_failed"):
+        return "You receive this because this run was started with \u201cemail me when done\u201d."
+    if kind == "automation_failed":
+        return f"You receive this because \u201cJob failed\u201d is on in {SETTINGS_LABEL} \u2192 Notifications."
+    if kind == "approval_needed":
+        return f"You receive this because \u201cApproval needed\u201d is on in {SETTINGS_LABEL} \u2192 Notifications."
+    return f"You receive this because you asked for a test notification in {SETTINGS_LABEL}."
 
 
 def render_digest(rows: List[Dict[str, Any]]) -> Tuple[str, str, str]:
@@ -689,11 +732,15 @@ class NotificationCollector:
                         seq = int(it["seq"])
                         att[aid] = max(att.get(aid, 0), seq)
                         kind = "automation_failed" if str(it.get("kind")) == "failure" else "automation_result"
-                        # The automation asks for email delivery (`notify.channels`, schema v2;
-                        # the runtime stamps the channels on the attention item; v1 = console only).
-                        if "email" not in it["channels"]:
-                            continue
-                        if usable and prefs.get(kind):
+                        if kind == "automation_result":
+                            # "Email me the result": the automation asks for email delivery
+                            # (`notify.channels`, schema v2; the runtime stamps the channels on the
+                            # attention item; v1 = console only). No global preference involved.
+                            wanted = "email" in (it.get("channels") or [])
+                        else:
+                            # A failure after the retries: the user's "Job failed" switch.
+                            wanted = bool(prefs.get("job_failed"))
+                        if usable and wanted:
                             facts = {"title": title, "model_title": it.get("title"), "ref": f"automation {aid}, occurrence {it.get('index')}"}
                             if kind == "automation_result":
                                 facts["model_body"] = it.get("body")
@@ -742,9 +789,10 @@ class NotificationCollector:
                         notify = _run_notify(run)
                         want_on = {str(x) for x in (notify.get("on") or [])}
                         channels = {str(x) for x in (notify.get("channels") or [])}
+                        # "Email me when done": the run's own opt-in suffices (no global preference).
                         if "email" not in channels or ("finished" if kind == "job_finished" else "failed") not in want_on:
                             continue
-                        if not (usable and prefs.get(kind)):
+                        if not usable:
                             continue
                         facts: Dict[str, Any] = {"title": _run_title(run), "ref": f"run {run.run_id}"}
                         if kind == "job_failed":

@@ -4,6 +4,10 @@ The gateway never talks IMAP/SMTP itself (framework backlog 0992, principle 1): 
 connection, policy, limit, vault and OAuth operation is AbstractCore's, reached through
 AbstractRuntime's email facade (the host -> Runtime -> Core boundary,
 tests/test_gateway_import_boundary.py). Gateway modules import these names from HERE.
+
+`discover_servers` / `require_servers` / `EmailDiscoveryFailed` (mailbox server auto-discovery)
+arrived in AbstractCore with the state-toggles work (abstractcore feat/state-toggles-api d9faa97);
+the facade re-exports core's `__all__`, so an older core fails this import loudly.
 """
 
 from __future__ import annotations
@@ -14,6 +18,7 @@ from abstractruntime.integrations.abstractcore.email_facade import (  # noqa: F4
     EmailAgentToolsOff,
     EmailContext,
     EmailDisabled,
+    EmailDiscoveryFailed,
     EmailError,
     EmailInvalidMessage,
     EmailInvalidSettings,
@@ -32,11 +37,13 @@ from abstractruntime.integrations.abstractcore.email_facade import (  # noqa: F4
     SecretVault,
     SmtpSettings,
     builtin_client,
+    discover_servers,
     evaluate,
     guarded_send,
     legacy,
     parse_recipients,
     provider_preset,
+    require_servers,
     resolve_oauth_client,
     tls_context,
 )
