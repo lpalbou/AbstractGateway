@@ -1,4 +1,5 @@
-"""The web console's Start-at-login switch (wave 2, 2026-09-28): the Gateway
+"""The web console's Start-at-login switch (wave 2, 2026-09-28; a role=switch labelled by the
+feature since the state-toggles work, DESIGN §2): the Gateway
 card and the setup guide's Done step render GET /api/gateway/host/start-at-login,
 confirm every change, PUT it, and VERIFY by a fresh GET.
 
@@ -45,7 +46,8 @@ const vm = require("vm");
 const scenario = JSON.parse(process.argv[2]);
 const fns = require("fs").readFileSync(process.argv[3], "utf8");
 const els = {};
-const make = (id) => { els[id] = { id, textContent: "", className: "", disabled: false, hidden: true,
+const make = (id) => { els[id] = { id, textContent: "", className: "", disabled: false, hidden: true, attrs: {},
+  setAttribute(n, v) { this.attrs[n] = String(v); }, getAttribute(n) { return n in this.attrs ? this.attrs[n] : null; }, removeAttribute(n) { delete this.attrs[n]; },
   classList: { toggle(n, f) { if (n === "hidden") els[id].hidden = Boolean(f); }, add(n) { if (n === "hidden") els[id].hidden = true; }, remove(n) { if (n === "hidden") els[id].hidden = false; } } }; };
 // Like getElementById: only what is on the page (the Done step is not rendered here).
 const $ = (id) => els[id] || null;
@@ -69,9 +71,9 @@ const ctx = vm.createContext({ $, api, confirmAction, _gwMsg, console });
 vm.runInContext(fns + "\n;this.load = loadStartAtLogin; this.toggle = toggleStartAtLogin;", ctx);
 (async () => {
   await ctx.load("gateway-host");
-  const before = { text: $("gateway-host-login-text").textContent, button: $("gateway-host-login-toggle").textContent, hidden: $("gateway-host-login-toggle").hidden };
+  const before = { text: $("gateway-host-login-text").textContent, button: $("gateway-host-login-toggle").getAttribute("aria-checked"), hidden: $("gateway-host-login-toggle").hidden };
   await ctx.toggle("gateway-host");
-  console.log(JSON.stringify({ before, after: { text: $("gateway-host-login-text").textContent, button: $("gateway-host-login-toggle").textContent }, calls, confirms, msg: $("gateway-host-message").textContent }));
+  console.log(JSON.stringify({ before, after: { text: $("gateway-host-login-text").textContent, button: $("gateway-host-login-toggle").getAttribute("aria-checked") }, calls, confirms, msg: $("gateway-host-message").textContent }));
 })().catch((e) => { console.error(e); process.exit(1); });
 """
 
@@ -93,11 +95,11 @@ OFF = {"enabled": False, "state": "off", "mechanism": "launchd-agent", "mechanis
 
 def test_turn_on_is_confirmed_put_and_verified_by_get() -> None:
     out = _drive({"initial": OFF, "confirm": True})
-    assert out["before"] == {"text": "Off — Off — nothing starts the gateway at login", "button": "Turn on…", "hidden": False}
+    assert out["before"] == {"text": "Off — Off — nothing starts the gateway at login", "button": "false", "hidden": False}
     assert "a LaunchAgent" in out["confirms"][0]["message"]
     assert [c[0] for c in out["calls"]] == ["GET", "PUT", "GET"]
     assert out["calls"][1] == ["PUT", "/api/gateway/host/start-at-login", {"enabled": True, "replace_other": False}]
-    assert out["after"]["text"].startswith("On — ") and out["after"]["button"] == "Turn off…" and out["msg"] == ""
+    assert out["after"]["text"].startswith("On — ") and out["after"]["button"] == "true" and out["msg"] == ""
 
 
 def test_cancel_changes_nothing() -> None:
@@ -122,5 +124,5 @@ def test_cannot_change_shows_the_reason_and_no_button() -> None:
 def test_another_gateway_is_replaced_only_with_replace_other() -> None:
     st = dict(OFF, state="other", other_data_dir="/srv/other", summary="Registered (a LaunchAgent) for another gateway")
     out = _drive({"initial": st, "confirm": True})
-    assert out["before"]["button"] == "Use this gateway…" and "/srv/other" in out["confirms"][0]["message"]
+    assert out["before"]["button"] == "false" and "/srv/other" in out["confirms"][0]["message"]
     assert out["calls"][1][2] == {"enabled": True, "replace_other": True}

@@ -72,7 +72,7 @@ async function fetch(path, options = {}) {
   if (path.startsWith("/api/gateway/models/download/")) return res(200, { ok: true, job: jobState });
   return res(200, {});
 }
-const context = vm.createContext({ window: {}, document, fetch, Headers, localStorage: { getItem: () => null, setItem() {} },
+const context = vm.createContext({ crypto: globalThis.crypto, window: {}, document, fetch, Headers, localStorage: { getItem: () => null, setItem() {} },
   location: { hash: "", pathname: "/console", search: "", origin: "http://127.0.0.1:1", reload() {} }, history: { replaceState() {} }, console, Blob,
   URL: { createObjectURL: () => "blob:x", revokeObjectURL() {} }, Intl, navigator: { languages: ["en"], language: "en" },
   setTimeout: (fn, ms, ...a) => { const t = realSetTimeout(fn, Math.min(ms || 0, 5), ...a); t.unref(); return t; }, clearTimeout, setInterval: () => 0, clearInterval() {},

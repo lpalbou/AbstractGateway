@@ -31,7 +31,9 @@ the security model in [security.md](security.md#per-user-email), and the console
 
 You can connect from any of these surfaces; they share the same fields and words:
 
-- **Web console** → Users tab → **My email** (every signed-in user).
+- **Web console** → Users & Entities → **My email address and mailbox** (every signed-in user): the
+  **Mailbox** card, tab **Other** for address + password, **Google** or **Microsoft** to sign in with
+  the provider.
 - **Terminal console** (`abstractgateway-console`) → Users screen → `@`.
 - **HTTP**: `PUT /api/gateway/me/email`.
 
@@ -64,8 +66,9 @@ two-step verification is on.
 
 ### OAuth2 sign-in (Google, Microsoft)
 
-Microsoft 365 / Outlook needs OAuth2. In **My email → Sign in with OAuth2**, pick the provider and
-start the sign-in:
+Microsoft 365 / Outlook needs OAuth2. In the **Mailbox** card, pick the **Google** or **Microsoft**
+tab and select **Sign in with Google** / **Sign in with Microsoft** (your own client id and secret go
+under the tab's **Advanced**):
 
 - **Microsoft** uses a device code by default: open the link shown in any browser, on any machine,
   and enter the code.
@@ -157,8 +160,7 @@ code — goes through the same checks, in this order:
 
 On top of the policy, the approval gate still decides whether an agent's send runs unattended: a
 send to anyone but you (or an automation's pre-authorised recipients) waits for your approval, and
-a send to you runs without asking in chats and automations alike. "You" is the address My email
-shows as your registered address: the email on your user account (or the gateway's registered
+a send to you runs without asking in chats and automations alike. "You" is your registered address: the email on your user account (or the gateway's registered
 address for the operator), else the connected mailbox's own address.
 
 ```bash
@@ -240,8 +242,10 @@ notification does nothing.
 ## Sign-in by email
 
 When at least one account on the gateway has a connected mailbox, the sign-in page offers
-**Forgot your token? Email me a sign-in code**. Enter your Gateway user and follow the link; an
-8-digit code is sent to your email address through your own mailbox. The code works once, expires
+**Forgot your token? Email me a sign-in code**. Enter your Gateway user and select the link: it
+shows "Sending…", then the code step with what happened ("A sign-in code is on its way to
+l•••@•••." or why no code was sent), a field for the code, **Use code**, **Send a new code** (after
+30 seconds) and **Back to token**. The 8-digit code is sent to your email address through your own mailbox. The code works once, expires
 after 10 minutes and allows 5 tries; it signs you in (`purpose: "sign_in"`, the default), and your
 account page can then rotate your token. Clients may also ask for `purpose: "reset_token"`, which
 issues a new token (shown once; the old one stops working) with the session.
@@ -329,7 +333,7 @@ Email is configured per user, never through environment variables. On the first 
 that still has the `ABSTRACT_EMAIL_*` variables (or values saved through the process manager's
 environment overrides) imports that account **once** into the administrator's email settings; from
 then on the variables are ignored, and each one still set is named at startup and in the
-administrator's **My email** notices with the setting that replaced it. The email bridge
+administrator's account page (**My email address and mailbox**) with the setting that replaced it. The email bridge
 (`ABSTRACT_EMAIL_BRIDGE`) is replaced by the per-user watcher and the `email.received@1` trigger.
 Maintenance notices go to the administrator's registered address through the administrator's own
 account (`ABSTRACT_BACKLOG_EMAIL_TO` and the related account variables are ignored); the same notice

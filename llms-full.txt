@@ -5396,7 +5396,7 @@ The sidebar lists these tabs:
 
 | Tab | What it covers |
 |---|---|
-| **Users & Entities** | user records, token rotation, retained runtime reservations, **My email** (your own mailbox, notifications — [email.md](docs/email.md)), the per-user **Mailbox** column and **Email on/off** switch (admins), and the summoned-entity roster ([entities.md](docs/entities.md)) |
+| **Users & Entities** | user records, token rotation, retained runtime reservations, **My email address and mailbox** (your email address, your mailbox, the **Job failed** / **Approval needed** notification switches and **Agent email tools** — [email.md](docs/email.md)); for admins the **Mailboxes for users** switch (Advanced: **Agent email tools for users**, **Sign-in by email**), the users table with an **Active** switch per user, and the summoned-entity roster ([entities.md](docs/entities.md)) |
 | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches |
 | **Workflows** | the default agent workflow for each agent interface (what "Gateway default" runs in the apps), the **Stream replies by default** switch, every registered workflow with versions and entrypoints (*Make agent default* on an entrypoint), import, export, delete, and versions that are not served (with the reason) |
 | **Providers** | provider connections (OpenAI, Anthropic, OpenRouter, Portkey, LM Studio, Ollama, custom OpenAI-compatible endpoints) with write-only keys |
@@ -5409,10 +5409,25 @@ The sidebar lists these tabs:
 | **Network** | who can reach the gateway (localhost only, local network, internet), its addresses, and *Advanced: reverse proxy* ([configuration.md](docs/configuration.md#network-exposure-localhost--local-network--internet)) |
 
 **Start at login** (the Gateway card, and the setup guide's last step) is a
-real switch for admins: it names the mechanism (a LaunchAgent, a systemd user
+switch for admins: it names the mechanism (a LaunchAgent, a systemd user
 unit, a desktop autostart entry, a Windows Run entry), asks before each change
 and shows the state read back from the gateway. Where nothing on the machine
 could start the gateway at login, it says why instead of offering the switch.
+
+**Workflows paused** (the Gateway card) is a switch for admins: on, no new
+workflow step starts and work already inside a call finishes; the console and
+the apps keep answering. A banner on every tab says so while it is on.
+
+Every persistent on/off setting in the console is a switch labelled by the
+feature (highlighted when on). It applies at once, shows the new state, and an
+unavailable switch stays visible with its reason ("Connect a mailbox first.").
+One-shot actions (Rotate, Delete, Test, Disconnect) stay buttons.
+
+The **sign-in page** asks for the gateway user and the token, with one status
+("Not signed in", "Signed in as admin", "Token refused") and errors under the
+field that failed. When sign-in by email is on, **Forgot your token? Email me a
+sign-in code** requests a code and opens the code step in place
+([email.md](docs/email.md#sign-in-by-email)).
 
 In **Multimodal**, a configured route whose engine is not installed reads
 "engine missing" with the install command, and the voice pickers say why a
@@ -6706,7 +6721,9 @@ the security model in [security.md](docs/security.md#per-user-email), and the co
 
 You can connect from any of these surfaces; they share the same fields and words:
 
-- **Web console** → Users tab → **My email** (every signed-in user).
+- **Web console** → Users & Entities → **My email address and mailbox** (every signed-in user): the
+  **Mailbox** card, tab **Other** for address + password, **Google** or **Microsoft** to sign in with
+  the provider.
 - **Terminal console** (`abstractgateway-console`) → Users screen → `@`.
 - **HTTP**: `PUT /api/gateway/me/email`.
 
@@ -6739,8 +6756,9 @@ two-step verification is on.
 
 ### OAuth2 sign-in (Google, Microsoft)
 
-Microsoft 365 / Outlook needs OAuth2. In **My email → Sign in with OAuth2**, pick the provider and
-start the sign-in:
+Microsoft 365 / Outlook needs OAuth2. In the **Mailbox** card, pick the **Google** or **Microsoft**
+tab and select **Sign in with Google** / **Sign in with Microsoft** (your own client id and secret go
+under the tab's **Advanced**):
 
 - **Microsoft** uses a device code by default: open the link shown in any browser, on any machine,
   and enter the code.
@@ -6832,8 +6850,7 @@ code — goes through the same checks, in this order:
 
 On top of the policy, the approval gate still decides whether an agent's send runs unattended: a
 send to anyone but you (or an automation's pre-authorised recipients) waits for your approval, and
-a send to you runs without asking in chats and automations alike. "You" is the address My email
-shows as your registered address: the email on your user account (or the gateway's registered
+a send to you runs without asking in chats and automations alike. "You" is your registered address: the email on your user account (or the gateway's registered
 address for the operator), else the connected mailbox's own address.
 
 ```bash
@@ -6915,8 +6932,10 @@ notification does nothing.
 ## Sign-in by email
 
 When at least one account on the gateway has a connected mailbox, the sign-in page offers
-**Forgot your token? Email me a sign-in code**. Enter your Gateway user and follow the link; an
-8-digit code is sent to your email address through your own mailbox. The code works once, expires
+**Forgot your token? Email me a sign-in code**. Enter your Gateway user and select the link: it
+shows "Sending…", then the code step with what happened ("A sign-in code is on its way to
+l•••@•••." or why no code was sent), a field for the code, **Use code**, **Send a new code** (after
+30 seconds) and **Back to token**. The 8-digit code is sent to your email address through your own mailbox. The code works once, expires
 after 10 minutes and allows 5 tries; it signs you in (`purpose: "sign_in"`, the default), and your
 account page can then rotate your token. Clients may also ask for `purpose: "reset_token"`, which
 issues a new token (shown once; the old one stops working) with the session.
@@ -7004,7 +7023,7 @@ Email is configured per user, never through environment variables. On the first 
 that still has the `ABSTRACT_EMAIL_*` variables (or values saved through the process manager's
 environment overrides) imports that account **once** into the administrator's email settings; from
 then on the variables are ignored, and each one still set is named at startup and in the
-administrator's **My email** notices with the setting that replaced it. The email bridge
+administrator's account page (**My email address and mailbox**) with the setting that replaced it. The email bridge
 (`ABSTRACT_EMAIL_BRIDGE`) is replaced by the per-user watcher and the `email.received@1` trigger.
 Maintenance notices go to the administrator's registered address through the administrator's own
 account (`ABSTRACT_BACKLOG_EMAIL_TO` and the related account variables are ignored); the same notice
@@ -7472,7 +7491,7 @@ configuration surfaces exist in a terminal through the `abstractgateway-console`
 Rust app (`cargo install abstractgateway-console`). See
 [docs/console.md](docs/console.md).
 
-Each user can connect their own mailbox (Users → **My email** in the web
+Each user can connect their own mailbox (Users & Entities → **My email address and mailbox** in the web
 console, `@` in the terminal console, or `/api/gateway/me/email`): automations
 can run when mail arrives, results and approvals can be emailed to the user,
 and agents can use email tools when an administrator makes them available. See
@@ -8601,6 +8620,41 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
 - Route summaries, error messages and docs say "email address" or "mailbox"; unavailable switches
   give their reason ("Connect a mailbox first.", "Your admin turned mailboxes off.", "Your admin
   turned agent email tools off.").
+
+### Web console
+- The sign-in card has one column, one status ("Not signed in", "Signed in as admin", "Token
+  refused") and errors under the field that failed ("This token was refused.", "Can't reach the
+  gateway at …"). Sign-in by email is one link, **Forgot your token? Email me a sign-in code**: it
+  shows "Sending…", then the code step in its place with what happened, a code field (Use code is
+  available at 8 digits), **Send a new code** after 30 seconds and **Back to token**.
+- Users & Entities: the administrator's **Mailboxes for users** switch sits above the users table,
+  with **Agent email tools for users** and **Sign-in by email** under Advanced. The table shows
+  User, Role, Email address, Mailbox, Runtime, an **Active** switch and Workspace / Rotate / Delete.
+  Deactivating and deleting ask in a row under the user. Your own row cannot be deactivated. The
+  per-user Email on/off and Agent tools buttons are gone.
+- Create user asks for the **Email address** next to the user ID and role; Advanced keeps Runtime
+  and Tenant, each with a sentence saying what it is for.
+- **My email address and mailbox** is a page of cards: Email address (the only Save), Mailbox (tabs
+  Google / Microsoft / Other; Other asks for the address and password, finds the servers and shows
+  them on one line, and opens Server settings itself only when they are not found; one **Connect**;
+  once connected, one status line with Test and Disconnect), Notifications (**Job failed**,
+  **Approval needed**), **Agent email tools**, and Advanced (recipient rules, send limits, folder,
+  **Use this mailbox**, Send a test notification). Switches and limits apply on change.
+- **Workflows paused** and **Start at login** are switches instead of Pause/Resume and Turn on/Turn
+  off buttons.
+- The Runtimes page says what a runtime is: a user's own data plane (runs, flows, sessions and
+  memory).
+- Copy buttons work over plain http (a LAN or Tailscale address), and say "Copy failed — select and
+  copy" when the browser refuses. Ids for commands and the docs assistant are random UUIDs over
+  plain http too.
+- On phones the users table shows one block per user and the account page's cards are flat
+  sections; lists no longer scroll inside the page.
+
+### Fixed
+- Checkbox and form labels in the console were 18-20 px bold: the console carried its own copy of
+  the sign-in card's styles, and its checkbox rule was reused outside the card. The console now
+  uses the kit's sign-in card styles; labels are 14 px, helper text 13 px.
+- The Sandbox's system prompt field no longer shows "optional" as a placeholder.
 
 ## [0.9.0] - 2026-09-30
 
@@ -11619,7 +11673,7 @@ CLI helpers:
 Notification helpers used by `triage-reports --notify`:
 - Telegram: `ABSTRACT_BACKLOG_TELEGRAM_CHAT_ID` or `ABSTRACT_TRIAGE_TELEGRAM_CHAT_ID`
 - Email: sent to the administrator's registered address through the administrator's own email account
-  (Users tab → **My email**), from the durable notification outbox — the recipient policy and send limits apply and
+  (Users & Entities → **My email address and mailbox**), from the durable notification outbox — the recipient policy and send limits apply and
   a retry never sends a notice twice. See [email.md](docs/email.md).
 
 Evidence: CLI wiring in `src/abstractgateway/cli.py`.
@@ -11760,7 +11814,7 @@ Evidence: bridge startup in `src/abstractgateway/service.py` (`start_gateway_run
 
 ## Email
 
-Email is configured per user (Users tab → **My email**), never through environment variables; new mail reaches
+Email is configured per user (Users & Entities → **My email address and mailbox**), never through environment variables; new mail reaches
 automations through the `email.received@1` trigger. See [email.md](docs/email.md) for the watcher, notifications,
 recovery codes and the one-time import of the retired `ABSTRACT_EMAIL_*` variables, and [api.md](docs/api.md#email) for
 the routes (including the deprecated `/api/gateway/email/*` aliases).

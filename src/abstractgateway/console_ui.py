@@ -354,7 +354,7 @@ CONSOLE_UI_CSS = r"""
     .ui-apps-settings__rows { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 14px 18px; min-width: 0; }
     .ui-apps-setting { display: grid; align-content: start; gap: 6px; min-width: 0; }
     .ui-apps-setting__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
-    .ui-apps-setting__head label { margin: 0; font-size: var(--font-size-md); font-weight: 650; color: var(--text-primary); text-transform: none; letter-spacing: 0; }
+    .ui-apps-setting__head label { margin: 0; font-size: var(--font-size-md); font-weight: 600; color: var(--text-primary); text-transform: none; letter-spacing: 0; }
     .ui-apps-setting input { width: 100%; min-width: 0; margin: 0; font-family: var(--font-mono); }
     #island-address { font-family: var(--font-mono); font-size: var(--font-size-sm); max-width: 26ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     @media (max-width: 1023.98px) { #island-address { display: none; } }
@@ -934,14 +934,30 @@ CONSOLE_UI_JS = r"""
       clearTimeout(uiToast.timer);
       uiToast.timer = setTimeout(() => el.classList.remove("is-on"), 1600);
     }
+    // Over plain http (LAN / Tailscale) the Clipboard API is withheld: fall back
+    // to a hidden textarea + execCommand("copy") before giving up (DESIGN §11).
+    function uiExecCopy(text) {
+      try {
+        const el = document.createElement("textarea");
+        el.value = text;
+        el.setAttribute("readonly", "");
+        el.style.position = "fixed"; el.style.top = "0"; el.style.left = "-9999px"; el.style.opacity = "0";
+        document.body.appendChild(el);
+        let ok = false;
+        try { el.select(); el.setSelectionRange(0, text.length); ok = document.execCommand("copy") === true; }
+        finally { document.body.removeChild(el); }
+        return ok;
+      } catch { return false; }
+    }
     function uiCopy(text) {
+      const fallback = () => uiToast(uiExecCopy(text) ? "Copied" : "Copy failed — select and copy");
       try {
         if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(() => uiToast("Copied"), () => uiToast("Select the text to copy it"));
+          navigator.clipboard.writeText(text).then(() => uiToast("Copied"), fallback);
           return;
         }
       } catch { /* fall through */ }
-      uiToast("Select the text to copy it");
+      fallback();
     }
     const UI_ELLIP_SELECTOR = "td code, .ui-ellip, .acc-root td code, .acc-root td > span.acc-sub:only-child";
     const UI_NO_STACK = ".entity-matrix, .af-matrix, [data-ui-no-stack]";
@@ -2140,7 +2156,15 @@ CONSOLE_UI_JS = r"""
       // validation message, which field is saving, the last save's result
       // line, and the disclosure's open state once the user toggled it.
       proxy: { draft: "", error: "", saving: "", saved: null, open: null } };
-    function netPrimaryUrl() { return (netStore.data && netStore.data.copy_hint) || ""; }
+    // The top bar's "Gateway address": on an https page (behind `tailscale serve`
+    // or a reverse proxy) the address the person is using — the network page's
+    // plain-http LAN/tailnet address is not a secure context. Otherwise the
+    // address other devices use (GET /network `copy_hint`).
+    function netPrimaryUrl() {
+      // GET /network `browser_url` (fix/apps-behind-proxy) is the caller's address when the gateway says it.
+      try { if (location.protocol === "https:") return String((netStore.data && netStore.data.browser_url) || location.origin); } catch { /* not a browser */ }
+      return (netStore.data && netStore.data.copy_hint) || "";
+    }
     function netAddressRow(a, primary) {
       const url = a.url || "";
       const label = a.kind === "lan" && a.interface_label ? `${NET_KIND_LABEL.lan} · ${a.interface_label}` : (NET_KIND_LABEL[a.kind] || a.kind || "Address");
@@ -2181,6 +2205,7 @@ CONSOLE_UI_JS = r"""
       let out = `<div class="ui-section-title"><h3>Who can reach this gateway</h3><span class="ui-sub">Running now: <b>${esc(eff.label || "unknown")}</b>${eff.port ? ` · port ${esc(eff.port)}` : ""}</span></div>`
         + `<div class="ui-seg" role="radiogroup" aria-label="Who can reach this gateway">${opts}</div>`;
       if (!admin) out += `<p class="ui-card__note">Only an admin can change who can reach this gateway.</p>`;
+      out += `<p class="ui-card__note" data-net-tailscale-hint>Reached through Tailscale? On the gateway machine run <code>tailscale serve --bg http://127.0.0.1:${esc(eff.port || 8080)}</code> and open https://&lt;host&gt;.&lt;tailnet&gt;.ts.net/ — <code>tailscale serve reset</code> undoes it; voice and camera in the browser need this https address.</p>`;
       if (netStore.refused) {
         const r = netStore.refused;
         out += `<div class="ui-alert tone-warn" role="alert"><strong>${esc(r.reason || "This mode is not available right now.")}</strong>`

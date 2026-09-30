@@ -221,6 +221,8 @@ const coreLib = {
 };
 const windowStub = scenario.coreStub ? { AbstractCoreConsole: coreLib } : {};
 const context = vm.createContext({
+  // Web Crypto, as in every browser (randomId: DESIGN §11).
+  crypto: globalThis.crypto,
   window: windowStub,
   document, fetch, Headers, localStorage, location, history, console, Blob, URLSearchParams,
   URL: { createObjectURL: () => "blob:x", revokeObjectURL() {} },
