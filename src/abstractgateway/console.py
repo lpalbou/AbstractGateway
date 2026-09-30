@@ -1068,7 +1068,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .modal-backdrop {
 	      position: fixed;
 	      inset: 0;
-      z-index: 10;
+      /* Above the nav drawer and the assistant drawer (kit --z-drawer 900):
+         a dialog opened while a drawer is open must be on top. */
+      z-index: var(--z-connect-modal, 1000);
       display: grid;
       place-items: center;
       padding: max(22px, var(--safe-top, 0px)) max(22px, var(--safe-right, 0px)) max(22px, var(--safe-bottom, 0px)) max(22px, var(--safe-left, 0px));
@@ -1408,8 +1410,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      min-height: min(560px, calc(var(--vh-full, 100vh) - 160px));
 	      max-height: calc(var(--vh-full, 100vh) - 205px);
 	      display: grid;
-	      grid-template-rows: auto minmax(260px, 1fr) auto;
-	      overflow: hidden;
+	      /* The transcript gives way first (down to 140 px) and, when the
+	         composer still does not fit (1280x800, 1366x768: system prompt +
+	         reasoning + MTP + input), the card scrolls instead of clipping the
+	         composer out of reach (it was overflow:hidden). */
+	      grid-template-rows: auto minmax(140px, 1fr) auto;
+	      overflow-x: hidden;
+	      overflow-y: auto;
+	      overscroll-behavior: contain;
 	    }
 	    .sandbox-chat .section-head {
 	      margin-bottom: 0;
@@ -13773,43 +13781,64 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    // NAV DRAWER (below 1024 px the sidebar is an overlay drawer, DESIGN
 	    // §5.2): the header's ☰ opens it; Escape, the backdrop, the close
-	    // button and picking a section close it; focus goes into the drawer
-	    // on open and back to ☰ on close. Above 1024 px nothing changes (the
-	    // class has no effect there and a resize past it drops it).
-	    function navDrawerOpen() {
-	      try { return document.body.classList.contains("nav-open"); } catch { return false; }
-	    }
-	    function setNavDrawer(open) {
-	      const on = !!open;
-	      const was = navDrawerOpen();
-	      try { document.body.classList.toggle("nav-open", on); } catch { return; }
-	      $("nav-toggle").setAttribute("aria-expanded", on ? "true" : "false");
-	      if (on && !was) {
-	        const target = document.querySelector("#console-nav .tab-button.active") || document.querySelector("#console-nav .tab-button");
-	        if (target && typeof target.focus === "function") target.focus();
-	      } else if (!on && was) {
-	        const toggle = $("nav-toggle");
-	        if (toggle && toggle.offsetParent !== null && typeof toggle.focus === "function") toggle.focus();
+	    // button and picking a section close it; focus goes into the drawer on
+	    // open and back to ☰ on close; while it is open the shell behind it is
+	    // `inert`. Escape closes ONE layer: with a dialog open above the drawer
+	    // (modals stack above it, z-index), Escape belongs to the dialog, and a
+	    // key another handler already consumed (defaultPrevented) is ignored.
+	    // Above 1024 px nothing changes (a resize past it closes the drawer).
+	    // Self-contained (document/window/lookup passed in) so the behaviour
+	    // tests run it against a fake DOM.
+	    function installNavDrawer(doc, win, byId) {
+	      const body = doc.body;
+	      const query = (sel) => (typeof doc.querySelector === "function" ? doc.querySelector(sel) : null);
+	      const queryAll = (sel) => (typeof doc.querySelectorAll === "function" ? Array.from(doc.querySelectorAll(sel)) : []);
+	      const isOpen = () => body.classList.contains("nav-open");
+	      // Rendered = has boxes (a `.hidden` or display:none dialog, or one inside a hidden backdrop, has none).
+	      const shown = (el) => typeof el.getClientRects === "function" && el.getClientRects().length > 0;
+	      const dialogOpen = () => queryAll('.modal-backdrop, .first-run-page, .acc-modal-backdrop, [aria-modal="true"]').some(shown);
+	      function set(open) {
+	        const on = !!open;
+	        const was = isOpen();
+	        body.classList.toggle("nav-open", on);
+	        byId("nav-toggle").setAttribute("aria-expanded", on ? "true" : "false");
+	        const shell = query(".shell_main");
+	        if (shell) {
+	          if (on) shell.setAttribute("inert", "");
+	          else shell.removeAttribute("inert");
+	        }
+	        if (on && !was) {
+	          const target = query("#console-nav .tab-button.active") || query("#console-nav .tab-button");
+	          if (target && typeof target.focus === "function") target.focus();
+	        } else if (!on && was) {
+	          const toggle = byId("nav-toggle");
+	          if (toggle && toggle.offsetParent !== null && typeof toggle.focus === "function") toggle.focus();
+	        }
 	      }
+	      byId("nav-toggle").onclick = () => set(!isOpen());
+	      byId("nav-close").onclick = () => set(false);
+	      byId("nav-backdrop").onclick = () => set(false);
+	      // Bubbles after the tab button's own onclick: the section is shown, then the drawer closes.
+	      byId("console-nav").onclick = (event) => {
+	        const btn = event && event.target && typeof event.target.closest === "function" ? event.target.closest(".tab-button") : null;
+	        if (btn && isOpen()) set(false);
+	      };
+	      const onKey = (event) => {
+	        if (event.key !== "Escape" || !isOpen() || event.defaultPrevented || dialogOpen()) return;
+	        event.preventDefault();
+	        set(false);
+	      };
+	      // Capture phase on window: runs before the dialogs' own document-level
+	      // Escape handlers, so "is a dialog open" is read before one closes.
+	      if (win && typeof win.addEventListener === "function") win.addEventListener("keydown", onKey, true);
+	      if (win && typeof win.matchMedia === "function") {
+	        const wide = win.matchMedia("(min-width: 1024px)");
+	        const onWide = () => { if (wide.matches && isOpen()) set(false); };
+	        if (typeof wide.addEventListener === "function") wide.addEventListener("change", onWide);
+	      }
+	      return { set, isOpen, onKey };
 	    }
-	    $("nav-toggle").onclick = () => setNavDrawer(!navDrawerOpen());
-	    $("nav-close").onclick = () => setNavDrawer(false);
-	    $("nav-backdrop").onclick = () => setNavDrawer(false);
-	    // Bubbles after the tab button's own onclick: the section is shown, then the drawer closes.
-	    $("console-nav").onclick = (event) => {
-	      const btn = event && event.target && typeof event.target.closest === "function" ? event.target.closest(".tab-button") : null;
-	      if (btn && navDrawerOpen()) setNavDrawer(false);
-	    };
-	    if (typeof document.addEventListener === "function") {
-	      document.addEventListener("keydown", (event) => {
-	        if (event.key === "Escape" && navDrawerOpen()) setNavDrawer(false);
-	      });
-	    }
-	    if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
-	      const wide = window.matchMedia("(min-width: 1024px)");
-	      const onWide = () => { if (wide.matches && navDrawerOpen()) setNavDrawer(false); };
-	      if (typeof wide.addEventListener === "function") wide.addEventListener("change", onWide);
-	    }
+	    installNavDrawer(document, typeof window !== "undefined" ? window : null, $);
 	    // A #claim= link signs this browser in (and opens the wizard) before
 	    // the normal session probe; without one, boot is unchanged.
 	    if (!redeemClaimFromHash()) refresh();

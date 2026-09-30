@@ -466,6 +466,12 @@ CONSOLE_UI_CSS = r"""
       body :is(.section-note, .field-help, .message, td, .mc-note, .mc-card__meta, .first-run-note, .ui-sub, .ui-field-msg,
         .ui-net-proxy__text, .ui-net-proxy__saved, .ui-net-proxy__danger, .provider-preset span, .ui-card__note, .ui-warn-list li,
         .ui-alert, .ui-seg__text, .assistant-msg, .acc-table, .acc-host-line, .acc-muted) { font-size: var(--font-size-body, 14px); }
+      /* Reading surfaces whose desktop rule is more specific (review B): the
+         first-run tile sub-lines, card blurbs, disclosure hints, the
+         Network address notes and alert text. Dense data (ids, sizes,
+         chips, pills) stays at its desktop size. */
+      body .first-run-tile .ui-sub, body .ui-card .ui-card__blurb, body summary .entity-config-hint,
+      body .ui-addr__text .ui-addr__note, body .ui-alert > span, body .ui-alert > strong { font-size: var(--font-size-body, 14px); }
     }
 """
 

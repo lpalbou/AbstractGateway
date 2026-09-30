@@ -32,6 +32,13 @@ The web console works on phones, tablets and any window size (ui-kit 0.3.1 respo
 - On phones the page is no longer wider than the screen (the top-bar cluster made it 425 px wide
   at 375 px).
 - The action buttons of a stacked users row no longer touch each other.
+- The Sandbox composer is reachable at every window size: at 1280x800 and 1366x768 (and on phones)
+  the chat card cut the composer off, out of reach. The transcript now gives way first, and the card
+  scrolls when the composer still does not fit.
+- A dialog opened while the navigation drawer is open appears above it, and Escape closes one layer
+  at a time (the dialog first, then the drawer). While the drawer is open the page behind it is inert.
+- On touch screens, the setup guide's tile descriptions, card descriptions, the Network address notes
+  and alert text use the 14 px reading size.
 
 ## [0.8.1] - 2026-09-30
 
