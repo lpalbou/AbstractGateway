@@ -114,7 +114,10 @@ Besides the mailbox settings and status (never a secret):
 | `oauth_providers` | `[{"id": "google" \| "microsoft", "available", "reason"}]` |
 
 **Use this mailbox** (`PUT /api/gateway/me/email/enabled {"enabled": false}`) keeps the settings but
-stops watching, sending and notifications until you switch it back on.
+stops watching, sending and notifications until you switch it back on. **Folder**
+(`PUT /api/gateway/me/email/folder {"folder": "Archive"}`, empty = INBOX) changes the folder your
+agents and the mail watcher read without reconnecting; the watcher starts that folder from mail that
+arrives after the change.
 
 ## Agent email tools (off by default)
 
@@ -282,8 +285,9 @@ curl -sS -X PUT -H "$ADMIN" "$BASE_URL/api/gateway/admin/email/capabilities" -d 
 ```
 
 Per-user overrides (`PUT /api/gateway/admin/users/{user_id}/email {"enabled"?, "agent_tools"?}`)
-are still honoured; the consoles no longer create them and show an existing one as "not allowed
-for this user" with a **Reset** action (`{"inherit": ["email", "email_agent_tools"]}`).
+are still honoured; the consoles no longer create them and show an existing one (a `user` source in
+the `email_account.capabilities` of `GET /api/gateway/admin/users`) as "not allowed for this user"
+with a **Reset** action (`{"inherit": ["email", "email_agent_tools"]}`).
 
 Agent email tools became available by default with `capabilities.json` version 3. On the first
 start, the gateway upgrades the file so that nobody gains tools they could not use before: a user

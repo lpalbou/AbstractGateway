@@ -137,6 +137,8 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("POST", "/api/gateway/me/email/discover"),
     ("PUT", "/api/gateway/me/email/address"),
     ("PUT", "/api/gateway/me/email/notifications"),
+    # The caller's OWN mailbox folder (same plane rule as PUT /me/email/limits).
+    ("PUT", "/api/gateway/me/email/folder"),
     # Account recovery by email (framework backlog 0992): the public writes
     # below — single-use HMAC-stored codes, 10-minute expiry, rate-limited
     # per account and client address, a constant answer (no enumeration);

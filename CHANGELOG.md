@@ -29,6 +29,10 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
   in `agent_tools`, `on`, `unavailable_reason` and `admin_available`; `registered_address` is
   filled before a mailbox is connected too.
 - `GET /api/gateway/admin/email/capabilities` returns each capability's `advanced` flag.
+- `PUT /api/gateway/me/email/folder {"folder"}` sets the folder your mailbox is read from (empty =
+  INBOX) without reconnecting; `404 email_not_configured` without a mailbox.
+- `GET /api/gateway/admin/users` rows carry `email_account.capabilities` (`{value, source}` for
+  `email` and `email_agent_tools`), so the Users table can show a per-user override with a Reset.
 
 ### Changed
 - The administrator's one switch is **Mailboxes for users** (capability `email`, on by default).

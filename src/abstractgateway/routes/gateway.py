@@ -548,6 +548,10 @@ def _with_email_account_status(rows: List[Dict[str, Any]]) -> List[Dict[str, Any
             "state": st["state"],
             "admin_enabled": st["admin_enabled"],
             "agent_tools_available": st["agent_tools"]["available"],
+            # {email, email_agent_tools}: {value, source: user | gateway | built-in}. A `user`
+            # source is a per-user override (the old UI's, or the v3 migration's pin): the
+            # Users table shows "not allowed for this user" + Reset (inherit).
+            "capabilities": st["capabilities"],
         }
     return rows
 

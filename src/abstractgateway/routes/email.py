@@ -17,6 +17,7 @@ user makes so their agents and automations can read and send mail as them.
     PUT    /me/email/policy              {mode: allowlist|denylist, entries: [address | domain]}
     POST   /me/email/policy/check        {addresses} -> would they be allowed?
     PUT    /me/email/limits              {per_hour, per_day}
+    PUT    /me/email/folder              {folder}    the IMAP folder read (empty = INBOX; connection kept)
     PUT    /me/email/enabled             {enabled}   "Use this mailbox" (the user's own switch)
     PUT    /me/email/agent-tools         {enabled}   "Agent email tools" (default off; needs a usable mailbox)
     GET    /me/email/oauth/clients       which providers have a gateway OAuth client (no secrets)
@@ -195,6 +196,12 @@ class LimitsBody(BaseModel):
 
     per_hour: Optional[int] = None
     per_day: Optional[int] = None
+
+
+class FolderBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"folder": "INBOX"}]})
+
+    folder: str = Field("", max_length=255, description="The IMAP folder to read; empty = INBOX")
 
 
 class EnabledBody(BaseModel):
@@ -409,6 +416,22 @@ async def me_email_limits(request: Request, body: LimitsBody) -> Any:
     def run() -> Dict[str, Any]:
         mail_accounts.account_store(plane).set_limits(per_hour=body.per_hour, per_day=body.per_day)
         return {"ok": True, **mail_accounts.public_status(plane)}
+
+    return await _call(run)
+
+
+@router.put(
+    "/me/email/folder",
+    summary="Set my mailbox's folder (Advanced; empty = INBOX)",
+    description="The IMAP folder my agents and the mail watcher read. The connection is kept and nothing is "
+    "tested; the watcher starts the new folder from a fresh baseline. 404 `email_not_configured` without a "
+    "mailbox, 400 `email_invalid_settings` for a control character or a name over 255. Answers like GET /me/email.",
+)
+async def me_email_folder(request: Request, body: FolderBody) -> Any:
+    principal, plane = _self_plane(request)
+
+    def run() -> Dict[str, Any]:
+        return {"ok": True, **mail_accounts.set_folder(plane, body.folder, actor=_actor(principal))}
 
     return await _call(run)
 
