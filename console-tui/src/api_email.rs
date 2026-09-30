@@ -120,6 +120,35 @@ impl GatewayClient {
         )
     }
 
+    /// `PUT /admin/users/{id}/email` (admin) — make Agent email tools available (or not).
+    pub fn set_user_email_agent_tools(
+        &self,
+        user_id: &str,
+        tenant_id: &str,
+        available: bool,
+    ) -> ApiResult<Value> {
+        self.send(
+            "PUT",
+            &format!(
+                "/admin/users/{}/email?tenant_id={}",
+                urlencode(user_id),
+                urlencode(tenant_id)
+            ),
+            &json!({ "agent_tools": available }),
+            false,
+        )
+    }
+
+    /// `GET /admin/email/capabilities` (admin) — the gateway-wide email defaults.
+    pub fn email_capabilities(&self) -> ApiResult<Value> {
+        self.get("/admin/email/capabilities", false)
+    }
+
+    /// `PUT /admin/email/capabilities` (admin).
+    pub fn set_email_capabilities(&self, body: &Value) -> ApiResult<Value> {
+        self.send("PUT", "/admin/email/capabilities", body, false)
+    }
+
     /// `GET /admin/users/{id}/email` (admin) — status only.
     pub fn user_email_status(&self, user_id: &str, tenant_id: &str) -> ApiResult<Value> {
         self.get(

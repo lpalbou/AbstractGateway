@@ -536,6 +536,7 @@ def _with_email_account_status(rows: List[Dict[str, Any]]) -> List[Dict[str, Any
             "address": st["address"],
             "state": st["state"],
             "admin_enabled": st["admin_enabled"],
+            "agent_tools_available": st["agent_tools"]["available"],
         }
     return rows
 

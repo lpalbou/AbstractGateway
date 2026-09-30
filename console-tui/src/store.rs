@@ -981,6 +981,8 @@ pub struct UserRow {
     pub mailbox: String,
     /// The admin's per-user email switch (`false` = turned off).
     pub mailbox_admin_enabled: bool,
+    /// Agent email tools available to this user (the admin's per-user capability).
+    pub mailbox_agent_tools: bool,
 }
 
 impl UserRow {
@@ -996,6 +998,7 @@ impl UserRow {
             principal_kind: s(v, "principal_kind"),
             mailbox: email::mailbox_state(v).0,
             mailbox_admin_enabled: email::mailbox_state(v).1,
+            mailbox_agent_tools: email::agent_tools_available(v),
         })
     }
 

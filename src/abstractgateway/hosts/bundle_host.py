@@ -1002,8 +1002,8 @@ class WorkflowBundleGatewayHost:
 
         email_plane = plane_for_host(data_root=data_root, tenant_id=catalog_tenant, user_id=catalog_user, runtime_id=catalog_runtime)
         # Agent email tools (framework backlog 0992; default OFF): the toolsets carry
-        # them only when this user's account is connected, allowed by the admin and
-        # the user's "Agent email tools" toggle is on. Checked again at execution time
+        # them only when the administrator made them available, this user's account is
+        # connected and allowed, and the user's "Agent email tools" toggle is on. Checked again at execution time
         # by the runtime's credential resolver (runtime_wiring.py), and a toggle
         # change reloads this host (routes/email.py).
         email_tools_listed = agent_tools_active(email_plane)
@@ -1317,7 +1317,13 @@ class WorkflowBundleGatewayHost:
             tool_mode = str(_env("ABSTRACTGATEWAY_TOOL_MODE") or "approval").strip().lower()
             # Always build a concrete in-process executor so thin-client approvals can execute tools
             # inside the runtime (no bridge-owned tool execution).
-            gateway_tool_map = build_default_tool_map(email_enabled=email_tools_listed)
+            # The EXECUTOR always knows the email tools: the runtime's own send-email action
+            # (user-authored templates) runs through them with agent tools off, and a later
+            # connect needs no host rebuild. Every call resolves the account through this
+            # plane's resolver, which refuses an unusable account and, for agent/workflow
+            # calls, "Agent email tools" not active. Agents' tool LISTS (below) carry the
+            # email tools only when agent tools are active.
+            gateway_tool_map = build_default_tool_map(email_enabled=True)
 
             # read_skill execution half (card 0087; agent's progressive-
             # disclosure contract needs BOTH halves — the skills_block index

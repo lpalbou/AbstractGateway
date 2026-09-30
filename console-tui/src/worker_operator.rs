@@ -16,7 +16,9 @@ use serde_json::Value;
 
 use super::{finish_write, load, publish_ready, require_client, with_busy, Body, Cmd, Secret};
 use crate::api::{ApiError, ApiErrorKind, GatewayClient};
-use crate::store::email::{email_error_text, notifications_body, MyEmail, MyNotifications};
+use crate::store::email::{
+    email_error_text, notifications_body, EmailCaps, MyEmail, MyNotifications,
+};
 use crate::store::operator::{
     my_policy_body, seed_report_text, start_again_hint, tray_note, HostRunner, HostUpdate,
     MyPolicy, StartAtLogin,
@@ -158,6 +160,16 @@ pub enum EmailAction {
         tenant_id: String,
         enabled: bool,
     },
+    /// PUT /admin/users/{id}/email `{agent_tools}` (admin) — make Agent email tools available.
+    AdminSetAgentTools {
+        user_id: String,
+        tenant_id: String,
+        available: bool,
+    },
+    /// GET /admin/email/capabilities (admin).
+    LoadCaps,
+    /// PUT /admin/email/capabilities (admin) — the gateway-wide email defaults.
+    CapsDefaults(Body),
 }
 
 impl OpCmd {
@@ -1214,6 +1226,107 @@ fn email_write(
             if let Ok(v) = require_client(client).and_then(|c| c.my_notifications()) {
                 publish_ready(wake, op.my_notifications, MyNotifications::from_value(&v));
             }
+        }
+
+        EmailAction::LoadCaps => load(
+            store,
+            wake,
+            "reading the email defaults",
+            op.email_caps,
+            || {
+                require_client(client)?
+                    .email_capabilities()
+                    .map(|v| EmailCaps::from_value(&v))
+            },
+        ),
+
+        EmailAction::CapsDefaults(body) => {
+            let (write, verify) = with_busy(store, wake, "saving the email defaults", || {
+                let write = require_client(client)
+                    .and_then(|c| c.set_email_capabilities(&body))
+                    .map_err(email_err);
+                let verify = require_client(client).and_then(|c| c.email_capabilities());
+                (write, verify)
+            });
+            let verified = verify.as_ref().ok().map(|v| {
+                let got = EmailCaps::from_value(v).body();
+                if got == body.0 {
+                    Ok("GET /admin/email/capabilities holds the saved defaults".to_string())
+                } else {
+                    Err(format!(
+                        "GET /admin/email/capabilities holds {got}, not {}",
+                        body.0
+                    ))
+                }
+            });
+            finish_write(
+                store,
+                wake,
+                "PUT email defaults".into(),
+                write,
+                verified,
+                form_id,
+                on_done,
+            );
+            if let Ok(v) = verify {
+                publish_ready(wake, op.email_caps, EmailCaps::from_value(&v));
+            }
+            let _ = tx.send(Cmd::LoadUsers);
+        }
+
+        EmailAction::AdminSetAgentTools {
+            user_id,
+            tenant_id,
+            available,
+        } => {
+            let (write, verify) = with_busy(
+                store,
+                wake,
+                "switching agent email tools for the user",
+                || {
+                    let write = require_client(client)
+                        .and_then(|c| c.set_user_email_agent_tools(&user_id, &tenant_id, available))
+                        .map_err(email_err);
+                    let verify = require_client(client)
+                        .and_then(|c| c.user_email_status(&user_id, &tenant_id));
+                    (write, verify)
+                },
+            );
+            let verified = verify.as_ref().ok().map(|v| {
+                let got = v
+                    .get("agent_tools")
+                    .and_then(|a| a.get("available"))
+                    .and_then(Value::as_bool);
+                if got == Some(available) {
+                    Ok(format!(
+                        "GET /admin/users/{user_id}/email — agent tools {}",
+                        if available {
+                            "available"
+                        } else {
+                            "not available"
+                        }
+                    ))
+                } else {
+                    Err(format!(
+                        "GET /admin/users/{user_id}/email still says available={got:?}"
+                    ))
+                }
+            });
+            let verb = if available {
+                "MAKE AVAILABLE"
+            } else {
+                "MAKE UNAVAILABLE"
+            };
+            finish_write(
+                store,
+                wake,
+                format!("{verb} agent email tools for {user_id}"),
+                write,
+                verified,
+                form_id,
+                on_done,
+            );
+            let _ = tx.send(Cmd::LoadUsers);
         }
 
         EmailAction::AdminSetEnabled {

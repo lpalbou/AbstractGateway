@@ -179,28 +179,35 @@ def test_runtime_wiring_binds_and_resolves_only_the_planes_account(gateway, imap
     assert runtime.email_binding is None and runtime.event_inbox is not None
 
     gateway["client"].put("/api/gateway/me/email", headers=gateway["alice"], json=connect_body(ALICE, imap, smtp))
-    # Connected, but the agents' email tools are OFF by default: no binding, the resolver refuses.
-    assert current_binding(plane) is None
+    # The binding follows the ACCOUNT (connected + enabled + allowed), not the agent-tools choice.
+    assert current_binding(plane) == EmailBinding(account_ref="default:alice:default", address=ALICE)
     from abstractcore.comms.email import EmailDisabled
 
+    resolve = make_email_resolver(plane)
+    # Agent/workflow tool calls need "Agent email tools" (not available by default) ...
     with pytest.raises(EmailDisabled) as off:
-        make_email_resolver(plane)(EmailBinding(account_ref="default:alice:default"))
-    assert "Agent email tools" in off.value.fix
+        resolve(EmailBinding(account_ref="default:alice:default"))
+    assert "administrator" in off.value.fix
+    # ... the runtime's own send-email action does not.
+    assert resolve(EmailBinding(account_ref="default:alice:default"), use="action").account.address == ALICE
+    gateway["client"].put("/api/gateway/admin/users/alice/email", headers=ADMIN, json={"agent_tools": True})
+    with pytest.raises(EmailDisabled) as off2:
+        resolve(EmailBinding(account_ref="default:alice:default"))
+    assert "Agent email tools" in off2.value.fix
     r = gateway["client"].put("/api/gateway/me/email/agent-tools", headers=gateway["alice"], json={"enabled": True})
-    assert r.status_code == 200 and r.json()["agent_tools"] == {"enabled": True, "active": True, "reason": ""}
-    assert current_binding(plane) == EmailBinding(account_ref="default:alice:default", address=ALICE)
+    assert r.status_code == 200 and r.json()["agent_tools"] == {"enabled": True, "available": True, "active": True, "reason": ""}
     wire_runtime_email(runtime, plane)
     assert runtime.email_binding.account_ref == "default:alice:default"
 
-    resolve = make_email_resolver(plane)
     assert resolve(EmailBinding(account_ref="default:alice:default")).account.address == ALICE
     with pytest.raises(EmailNotConfigured):
         resolve(EmailBinding(account_ref="default:bob:default"))
 
     gateway["client"].put("/api/gateway/admin/users/alice/email", headers=ADMIN, json={"enabled": False})
     assert current_binding(plane) is None
-    with pytest.raises(EmailDisabled):
-        resolve(EmailBinding(account_ref="default:alice:default"))
+    for use in ("agent_tool", "action"):
+        with pytest.raises(EmailDisabled):
+            resolve(EmailBinding(account_ref="default:alice:default"), use=use)
     status = gateway["client"].get("/api/gateway/me/email", headers=gateway["alice"]).json()["agent_tools"]
     assert status["enabled"] is True and status["active"] is False and "administrator" in status["reason"]
 
@@ -213,9 +220,11 @@ def test_agent_email_tools_are_per_user_and_off_by_default(gateway, imap, smtp) 
         return {t["name"]: t["enabled"] for t in items if t["name"] in ("send_email", "read_email", "search_emails")}
 
     assert c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["agent_tools"]["enabled"] is False
-    # Turning the toggle on without an account does not activate anything.
     r = c.put("/api/gateway/me/email/agent-tools", headers=gateway["alice"], json={"enabled": True})
-    assert r.json()["agent_tools"]["active"] is False and r.json()["agent_tools"]["reason"]
+    assert r.status_code == 409  # not available (the administrator decides)
+    c.put("/api/gateway/admin/users/alice/email", headers=ADMIN, json={"agent_tools": True})
+    r = c.put("/api/gateway/me/email/agent-tools", headers=gateway["alice"], json={"enabled": True})
+    assert r.json()["agent_tools"]["active"] is False and r.json()["agent_tools"]["reason"]  # no account yet
     assert email_rows(gateway["alice"]) == {"send_email": False, "read_email": False, "search_emails": False}
     c.put("/api/gateway/me/email", headers=gateway["alice"], json=connect_body(ALICE, imap, smtp))
     assert email_rows(gateway["alice"]) == {"send_email": True, "read_email": True, "search_emails": True}
@@ -223,3 +232,25 @@ def test_agent_email_tools_are_per_user_and_off_by_default(gateway, imap, smtp) 
     assert email_rows(gateway["bob"]) == {"send_email": False, "read_email": False, "search_emails": False}
     c.put("/api/gateway/me/email/agent-tools", headers=gateway["alice"], json={"enabled": False})
     assert email_rows(gateway["alice"]) == {"send_email": False, "read_email": False, "search_emails": False}
+
+
+def test_core_local_account_is_imported_once_for_the_admin(gateway, imap, smtp, tmp_path, monkeypatch) -> None:
+    from abstractcore.comms.email import EmailAccount, EmailAccountStore, EmailSecret, ImapSettings, SmtpSettings
+
+    from abstractgateway.mail.accounts import admin_plane, import_core_account_once, public_status
+
+    core_file = tmp_path / "core" / "abstractcore.json"
+    monkeypatch.setenv("ABSTRACTCORE_CONFIG_FILE", str(core_file))
+    account = EmailAccount.build(
+        address=ADMIN_ADDR,
+        imap=ImapSettings.build("localhost", port=imap.port, security="ssl"),
+        smtp=SmtpSettings.build("localhost", port=smtp.port, security="starttls"),
+    )
+    EmailAccountStore(config_file=core_file).connect(account, EmailSecret(PASSWORDS[ADMIN_ADDR]), test=False)
+    notes = import_core_account_once()
+    assert any("AbstractCore's local email account" in n for n in notes)
+    pub = public_status(admin_plane())
+    assert pub["configured"] is True and pub["address"] == ADMIN_ADDR and pub["secret_set"] is True
+    assert "configured separately" in pub["store"]["label"]
+    assert gateway["client"].post("/api/gateway/me/email/test", headers=ADMIN).json()["ok"] is True
+    assert import_core_account_once() == []  # once

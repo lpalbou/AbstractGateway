@@ -887,9 +887,9 @@ def begin_gateway_boot() -> None:
             # imported ONCE into the admin's email account, then ignored; each
             # variable still set is named with the setting that replaced it.
             try:
-                from .mail.accounts import import_legacy_env_once
+                from .mail.accounts import import_core_account_once, import_legacy_env_once
 
-                for note in import_legacy_env_once():
+                for note in import_legacy_env_once() + import_core_account_once():
                     print(f"[WARN] email: {note}", file=sys.stderr, flush=True)
             except Exception:  # noqa: BLE001 - never a boot blocker
                 logging.getLogger("abstractgateway.service").warning("email legacy import failed", exc_info=True)

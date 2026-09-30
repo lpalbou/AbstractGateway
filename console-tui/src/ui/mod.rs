@@ -1940,6 +1940,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     pairs.push(("w", "my workspace policy"));
                     pairs.push(("@", "my email"));
                     pairs.push(("x", "email on/off (user)"));
+                    pairs.push(("X", "agent email tools (user)"));
                     pairs.push(("r", "refresh"));
                 }
                 // The whole Runtimes screen is admin-only: no verbs.

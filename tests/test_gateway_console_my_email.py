@@ -58,3 +58,12 @@ def test_sign_in_page_offers_recovery_only_when_available() -> None:
     assert "Forgot your token?" in html and "Email me a sign-in code" in html
     assert "/api/gateway/session/recovery/request" in html and "/api/gateway/session/recovery/redeem" in html
     assert 'toggle("hidden", !(out && out.available))' in html
+
+
+def test_admin_sees_email_defaults_and_per_user_agent_tools() -> None:
+    html = _html()
+    for field in ("email-caps-section", "email-cap-email", "email-cap-agent-tools", "email-cap-recovery", "email-caps-save"):
+        assert f'id="{field}"' in html, field
+    assert "/api/gateway/admin/email/capabilities" in html
+    assert "setUserAgentToolsAvailable(u, !toolsOn)" in html
+    assert "whoever controls a user's mailbox can sign in as that user" in html

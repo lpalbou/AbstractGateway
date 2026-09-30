@@ -163,3 +163,18 @@ def test_no_email_no_code_and_disabled_users_get_nothing(gateway, imap, smtp) ->
     _request(c, "alice")
     _request(c, "bob")
     assert smtp.messages == []
+
+
+def test_admin_can_turn_sign_in_by_email_off(gateway, imap, smtp) -> None:
+    _connect(gateway, imap, smtp)
+    c = _fresh_client(gateway)
+    assert c.get("/api/gateway/session/recovery").json()["available"] is True
+    _request(c, "alice")
+    code = code_from(smtp_bodies(smtp)[-1]["text"])
+    r = gateway["client"].put("/api/gateway/admin/email/capabilities", headers=ADMIN, json={"email_recovery": False})
+    assert r.status_code == 200
+    assert c.get("/api/gateway/session/recovery").json()["available"] is False
+    assert _redeem(c, "alice", code).status_code == 401  # outstanding codes stop working too
+    before = len(smtp.messages)
+    assert _request(c, "alice").json()["ok"] is True  # same answer
+    assert len(smtp.messages) == before

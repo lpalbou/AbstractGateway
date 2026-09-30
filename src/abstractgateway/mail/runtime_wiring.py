@@ -25,7 +25,7 @@ from typing import Any, Optional
 
 from .core_mail import EmailError, EmailNotConfigured
 
-from .accounts import EmailPlane, account_store, agent_tools_active, email_context, plane_for_service_config, require_agent_tools
+from .accounts import EmailPlane, account_store, email_context, email_usable, plane_for_service_config, require_agent_tools
 
 logger = logging.getLogger("abstractgateway.mail")
 
@@ -37,7 +37,7 @@ def plane_for_host(*, data_root: Path, tenant_id: str, user_id: str, runtime_id:
 
 
 def make_email_resolver(plane: EmailPlane):
-    def resolve(binding: Any):
+    def resolve(binding: Any, *, use: str = "agent_tool"):
         ref = str(getattr(binding, "account_ref", "") or "")
         if ref != plane.account_ref:
             # A run bound to another account never resolves here (one runtime = one account).
@@ -45,9 +45,13 @@ def make_email_resolver(plane: EmailPlane):
                 "This run is bound to an email account that is not this user's.",
                 "Start the run again from your own account.",
             )
-        # Execution-time gate (defence in depth; the toolset is gated at build time too):
-        # the account, the administrator's switch AND the user's "Agent email tools" toggle.
-        require_agent_tools(plane)
+        # Execution-time gate (defence in depth; the agents' toolsets are gated at build time
+        # too). `use` comes from the runtime: "action" is the runtime's own send-email action
+        # (user-authored templates) — the account being connected, enabled and allowed is
+        # enough; anything else is an agent/workflow tool call and also needs "Agent email
+        # tools" (available from the administrator AND switched on by the user).
+        if use != "action":
+            require_agent_tools(plane)
         return email_context(plane)
 
     return resolve
@@ -56,7 +60,9 @@ def make_email_resolver(plane: EmailPlane):
 def current_binding(plane: EmailPlane) -> Optional[Any]:
     from abstractruntime.email import EmailBinding
 
-    if not agent_tools_active(plane):
+    # The binding follows the ACCOUNT (connected + enabled + allowed), never the agent-tools
+    # choice: user-authored send actions work with agent tools off.
+    if not email_usable(plane):
         return None
     try:
         st = account_store(plane).settings()
@@ -98,3 +104,19 @@ def refresh_cached_service_binding(plane: EmailPlane) -> None:
                 refresh_runtime_binding(svc.host.runtime, plane)
     except Exception:  # noqa: BLE001
         logger.warning("email binding refresh (cached services) failed", exc_info=True)
+
+
+def refresh_all_cached_bindings() -> None:
+    """After a gateway-wide capability change: re-bind every live runtime."""
+
+    try:
+        from .. import service as service_mod
+
+        with service_mod._service_lock:
+            candidates = [service_mod._service] + list(service_mod._services_by_principal.values())
+        for svc in candidates:
+            worker = getattr(svc, "email_worker", None) if svc is not None else None
+            if worker is not None:
+                refresh_runtime_binding(svc.host.runtime, worker.plane)
+    except Exception:  # noqa: BLE001
+        logger.warning("email binding refresh (all services) failed", exc_info=True)

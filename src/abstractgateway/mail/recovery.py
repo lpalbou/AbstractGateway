@@ -39,7 +39,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from .core_mail import EmailError, OutgoingMessage, guarded_send
 
 from ..users import gateway_data_dir_from_env
-from .accounts import EmailPrincipalRefused, _read_json, _write_private_json, email_context, email_usable, plane_for_principal
+from .accounts import EmailPrincipalRefused, _read_json, _write_private_json, email_context, email_usable, plane_for_principal, recovery_enabled
 from .audit import audit_email_event
 
 PURPOSES = ("sign_in", "reset_token")
@@ -114,8 +114,11 @@ def _prune(doc: Dict[str, Any], now: float) -> None:
 
 
 def recovery_available() -> bool:
-    """True when at least one enabled human account of this gateway can receive a code."""
+    """True when the administrator leaves sign-in by email on (the default) and at least one
+    enabled human account of this gateway can receive a code."""
 
+    if not recovery_enabled():
+        return False
     try:
         from ..service import gateway_multi_user_enabled
         from ..users import GatewayUserRegistry
@@ -200,6 +203,9 @@ def _issue(*, user_id: str, tenant_id: str, purpose: str, client_ip: str) -> Non
             return
         acct_rows.append(now)
         _save(doc)
+    if not recovery_enabled():
+        audit_email_event("email.recovery_code_refused", reason="recovery_turned_off", **base)
+        return
     principal = _eligible_principal(user_id, tenant_id)
     if principal is None:
         audit_email_event("email.recovery_code_refused", reason="no_eligible_account", **base)
@@ -273,6 +279,9 @@ def redeem_code(*, user_id: str, tenant_id: str = "default", purpose: str, code:
     account_key = f"{tenant0}:{user0}"
     base = {"tenant_id": tenant0, "user_id": user0, "purpose": purpose0, "client_ip": str(client_ip or "unknown")}
     if purpose0 not in PURPOSES:
+        return None
+    if not recovery_enabled():
+        audit_email_event("email.recovery_code_used", outcome="refused", reason="recovery_turned_off", **base)
         return None
     given = "".join(ch for ch in str(code or "") if ch.isdigit())
     now = time.time()

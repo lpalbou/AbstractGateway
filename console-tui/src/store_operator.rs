@@ -59,6 +59,8 @@ pub struct OperatorStore {
     pub my_notifications: Signal<Loadable<super::email::MyNotifications>>,
     /// The OAuth2 sign-in being awaited: `(flow_id, what to do)`.
     pub email_oauth: Signal<Option<(String, String)>>,
+    /// `GET /admin/email/capabilities` (admin): the gateway-wide email defaults.
+    pub email_caps: Signal<Loadable<super::email::EmailCaps>>,
 }
 
 impl OperatorStore {
@@ -75,6 +77,7 @@ impl OperatorStore {
             my_email: cx.signal(Loadable::default()),
             my_notifications: cx.signal(Loadable::default()),
             email_oauth: cx.signal(None),
+            email_caps: cx.signal(Loadable::default()),
         }
     }
 
@@ -92,6 +95,7 @@ impl OperatorStore {
         self.my_email.set(Loadable::NotAsked);
         self.my_notifications.set(Loadable::NotAsked);
         self.email_oauth.set(None);
+        self.email_caps.set(Loadable::NotAsked);
         self.runner_poll_gen.update(|g| *g += 1);
     }
 }

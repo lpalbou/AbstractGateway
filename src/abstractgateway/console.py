@@ -2331,6 +2331,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <tbody id="users-table"></tbody>
 	              </table>
 	              <div id="users-entity-note" class="section-note hidden"></div>
+              <details id="email-caps-section" class="entity-advanced">
+                <summary>Email for users <span class="entity-config-hint">what users may turn on: mailbox, agent email tools, sign-in by email</span></summary>
+                <div class="entity-config-block">
+                  <p class="section-note">Gateway-wide defaults; a user's row overrides them (Email off/on, Agent tools). You never see anyone's mail.</p>
+                  <div id="email-caps-message" class="message"></div>
+                  <label class="af-gateway-signin__checkbox"><input id="email-cap-email" type="checkbox"> Email: users may connect their own mailbox (watcher, sending, email notifications)</label>
+                  <label class="af-gateway-signin__checkbox"><input id="email-cap-agent-tools" type="checkbox"> Agent email tools available: users may let their agents list, search, read, send and reply to mail</label>
+                  <label class="af-gateway-signin__checkbox"><input id="email-cap-recovery" type="checkbox"> Sign-in by email: “Forgot your token?” and “Email me a sign-in code” on the sign-in page</label>
+                  <p class="section-note">Sign-in by email means that whoever controls a user's mailbox can sign in as that user: turn it off where mailboxes are not as well protected as gateway tokens.</p>
+                  <div class="inline"><button id="email-caps-save" type="button">Save email defaults</button></div>
+                </div>
+              </details>
 	            </section>
 	            <details id="my-workspace-policy-section" class="entity-advanced session-only">
 	              <summary>My workspace policy <span id="my-workspace-policy-summary" class="entity-config-hint">where your agents may write — mode, launch-folder trust, allow/deny lists</span></summary>
@@ -6110,7 +6122,51 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (!acc) return "—";
       const tone = acc.state === "connected" ? "ok" : (acc.state === "not connected" ? "" : "off");
       const who = acc.address ? `<div class="section-note">${esc(acc.address)}</div>` : "";
-      return `<span class="state-pill ${tone}">${esc(acc.state || "—")}</span>${who}`;
+      const tools = `<div class="section-note">agent tools ${acc.agent_tools_available ? "available" : "not available"}</div>`;
+      return `<span class="state-pill ${tone}">${esc(acc.state || "—")}</span>${who}${tools}`;
+    }
+    async function setUserAgentToolsAvailable(u, available) {
+      const msg = $("users-message");
+      try {
+        await api(`/api/gateway/admin/users/${encodeURIComponent(u.user_id)}/email?tenant_id=${encodeURIComponent(u.tenant_id || "default")}`, { method: "PUT", body: JSON.stringify({ agent_tools: available }) });
+        msg.textContent = available ? `Agent email tools are available to ${u.user_id} (they switch them on in My email).` : `Agent email tools are no longer available to ${u.user_id}.`;
+        msg.className = "message ok";
+        await refresh();
+      } catch (e) {
+        msg.textContent = emailErrorText(e);
+        msg.className = "message error";
+      }
+    }
+    async function loadEmailCaps() {
+      const msg = $("email-caps-message");
+      try {
+        const out = await api("/api/gateway/admin/email/capabilities");
+        const by = {};
+        for (const c of out.capabilities || []) by[c.id] = c;
+        $("email-cap-email").checked = Boolean(by.email && by.email.default);
+        $("email-cap-agent-tools").checked = Boolean(by.email_agent_tools && by.email_agent_tools.default);
+        $("email-cap-recovery").checked = Boolean(by.email_recovery && by.email_recovery.default);
+        msg.textContent = "";
+      } catch (e) {
+        msg.textContent = emailErrorText(e);
+        msg.className = "message error";
+      }
+    }
+    async function saveEmailCaps() {
+      const msg = $("email-caps-message");
+      try {
+        await api("/api/gateway/admin/email/capabilities", { method: "PUT", body: JSON.stringify({
+          email: Boolean($("email-cap-email").checked),
+          email_agent_tools: Boolean($("email-cap-agent-tools").checked),
+          email_recovery: Boolean($("email-cap-recovery").checked),
+        }) });
+        msg.textContent = "Email defaults saved.";
+        msg.className = "message ok";
+        await refresh();
+      } catch (e) {
+        msg.textContent = emailErrorText(e);
+        msg.className = "message error";
+      }
     }
     async function setUserEmailEnabled(u, enabled) {
       const msg = $("users-message");
@@ -6188,6 +6244,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         ["Credentials", d.secret_storage === "os-keychain" ? "encrypted, key in the OS keychain" : d.secret_storage === "key-file" ? "encrypted, key in a 0600 file" : "none stored"],
       ];
       const lines = rows.map(([k, v]) => `<div><strong>${esc(k)}:</strong> ${esc(v)}</div>`);
+      if (d.store && d.store.label) lines.unshift(`<div class="section-note">${esc(d.store.label)}</div>`);
       if (st.last_error) lines.push(`<div class="message error">${esc(st.last_error.cause || st.last_error.code)} Fix: ${esc(st.last_error.fix || "")}</div>`);
       if (d.admin_disabled) lines.push(`<div class="message error">${esc(d.admin_disabled.cause)} ${esc(d.admin_disabled.fix)}</div>`);
       $("my-email-status").innerHTML = lines.join("");
@@ -6196,6 +6253,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       $("my-email-disconnect-confirm").classList.add("hidden");
       const at = d.agent_tools || { enabled: false, active: false, reason: "" };
       $("my-email-agent-tools").checked = Boolean(at.enabled);
+      $("my-email-agent-tools").disabled = at.available === false && !at.enabled;
+      $("my-email-agent-tools-save").disabled = at.available === false && !at.enabled;
       $("my-email-agent-tools-state").textContent = at.active
         ? "On: your agents and workflows have the email tools (every send still passes your recipient policy, your limits and the approval gate)."
         : `Off${at.reason ? ` — ${at.reason}` : ""}. The tools appear in your agents' toolsets only when your account is connected, allowed by an administrator and this is on.`;
@@ -10932,7 +10991,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           : "Turn email back on for this user";
         mail.setAttribute("aria-label", `${mailOn ? "Turn email off" : "Turn email on"} for ${u.user_id}`);
         mail.onclick = () => setUserEmailEnabled(u, !mailOn);
-        actions.append(wsp, mail, rotate, toggle, del);
+        const tools = document.createElement("button");
+        const toolsOn = Boolean(u.email_account && u.email_account.agent_tools_available);
+        tools.innerHTML = `<span class="button-icon" aria-hidden="true">⚙</span><span>${toolsOn ? "Agent tools off" : "Agent tools on"}</span>`;
+        tools.className = "secondary";
+        tools.title = toolsOn
+          ? "Make Agent email tools unavailable to this user (their agents lose the email tools)"
+          : "Make Agent email tools available to this user (they still switch them on for themselves)";
+        tools.setAttribute("aria-label", `${toolsOn ? "Agent email tools unavailable" : "Agent email tools available"} for ${u.user_id}`);
+        tools.onclick = () => setUserAgentToolsAvailable(u, !toolsOn);
+        actions.append(wsp, mail, tools, rotate, toggle, del);
         tr.append(actions);
         tbody.append(tr);
       }
@@ -13422,6 +13490,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     $("my-email-notify-save").onclick = saveMyNotifications;
     $("my-email-notify-test").onclick = testMyNotifications;
     $("my-email-agent-tools-save").onclick = saveMyEmailAgentTools;
+    $("email-caps-section").ontoggle = () => { if ($("email-caps-section").open) loadEmailCaps(); };
+    $("email-caps-save").onclick = saveEmailCaps;
     $("my-email-oauth-start").onclick = startMyEmailOAuth;
     $("my-email-oauth-cancel").onclick = cancelMyEmailOAuth;
 	    $("wsp-cancel").onclick = closeWorkspacePolicyModal;

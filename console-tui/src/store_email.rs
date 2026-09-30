@@ -118,8 +118,11 @@ pub struct MyEmail {
     pub notices: Vec<String>,
     /// The user's "Agent email tools" toggle (default off) and whether it is in force.
     pub agent_tools_enabled: bool,
+    pub agent_tools_available: bool,
     pub agent_tools_active: bool,
     pub agent_tools_reason: String,
+    /// Which account this is (the admin's gateway account vs AbstractCore's local one).
+    pub store_label: String,
 }
 
 fn leg_text(v: Option<&Value>) -> String {
@@ -209,7 +212,9 @@ impl MyEmail {
             watcher_last_poll: s(&watcher, "last_poll"),
             admin_disabled,
             agent_tools_enabled: b(&agent, "enabled").unwrap_or(false),
+            agent_tools_available: b(&agent, "available").unwrap_or(false),
             agent_tools_active: b(&agent, "active").unwrap_or(false),
+            store_label: v.get("store").map(|st| s(st, "label")).unwrap_or_default(),
             agent_tools_reason: s(&agent, "reason"),
             notices: v
                 .get("notices")
@@ -336,6 +341,46 @@ impl MyNotifications {
             self.unavailable_reason.clone()
         }
     }
+}
+
+/// `GET /admin/email/capabilities` — the gateway-wide defaults (admin).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EmailCaps {
+    pub email: bool,
+    pub agent_tools: bool,
+    pub recovery: bool,
+}
+
+impl EmailCaps {
+    pub fn from_value(v: &Value) -> EmailCaps {
+        let mut out = EmailCaps::default();
+        for c in v
+            .get("capabilities")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let on = b(c, "default").unwrap_or(false);
+            match s(c, "id").as_str() {
+                "email" => out.email = on,
+                "email_agent_tools" => out.agent_tools = on,
+                "email_recovery" => out.recovery = on,
+                _ => {}
+            }
+        }
+        out
+    }
+
+    pub fn body(&self) -> Value {
+        json!({"email": self.email, "email_agent_tools": self.agent_tools, "email_recovery": self.recovery})
+    }
+}
+
+/// The admin Users table's agent-tools availability for a user.
+pub fn agent_tools_available(user: &Value) -> bool {
+    user.get("email_account")
+        .and_then(|a| b(a, "agent_tools_available"))
+        .unwrap_or(false)
 }
 
 /// The admin Users table's mailbox cell (`/admin/users` rows carry
@@ -495,9 +540,30 @@ mod tests {
             "status": {"last_test": "t", "legs": {"imap": {"ok": true}, "smtp": {"ok": false, "code": "email_auth_failed", "cause": "rejected"}},
                        "last_error": {"code": "email_auth_failed", "cause": "rejected", "fix": "update it"}},
             "watcher": {"state": "watching", "last_poll": "now"},
-            "agent_tools": {"enabled": true, "active": false, "reason": "no connected, turned-on email account"}
+            "agent_tools": {"enabled": true, "available": true, "active": false, "reason": "no connected, turned-on email account"},
+            "store": {"kind": "gateway", "label": "Your email account on this gateway."}
         }));
         assert!(e.agent_tools_enabled && !e.agent_tools_active);
+        assert!(e.agent_tools_available);
+        assert_eq!(e.store_label, "Your email account on this gateway.");
+        let caps = EmailCaps::from_value(&json!({"capabilities": [
+            {"id": "email", "default": true}, {"id": "email_agent_tools", "default": false}, {"id": "email_recovery", "default": true}
+        ]}));
+        assert_eq!(
+            caps,
+            EmailCaps {
+                email: true,
+                agent_tools: false,
+                recovery: true
+            }
+        );
+        assert_eq!(
+            caps.body(),
+            json!({"email": true, "email_agent_tools": false, "email_recovery": true})
+        );
+        assert!(agent_tools_available(
+            &json!({"email_account": {"agent_tools_available": true}})
+        ));
         assert_eq!(
             e.agent_tools_text(),
             "off — no connected, turned-on email account"

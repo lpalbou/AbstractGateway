@@ -245,35 +245,138 @@ def rebind_live_runtime(plane: EmailPlane) -> None:
 
 _CAP_LOCK = threading.Lock()
 
+# What the administrator makes AVAILABLE (operator decision 2026-09-30): a gateway-wide default
+# per capability plus per-user overrides. A user can switch on, on their own runtime, only what
+# is available to them.
+CAPABILITIES: Dict[str, Dict[str, Any]] = {
+    "email": {
+        "default": True,
+        "label": "Email",
+        "description": "the user's own mailbox: watcher, sending, email notifications, sign-in codes",
+        "per_user": True,
+    },
+    "email_agent_tools": {
+        "default": False,
+        "label": "Agent email tools",
+        "description": "agents and workflows may list, search, read, send and reply to mail and handle attachments "
+        "(each user still switches them on for themselves)",
+        "per_user": True,
+    },
+    "email_recovery": {
+        "default": True,
+        "label": "Sign-in by email",
+        "description": "“Forgot your token?” and “Email me a sign-in code” on the sign-in page, for users with email",
+        "per_user": False,
+    },
+}
+
 
 def _capability_path() -> Path:
-    return gateway_data_dir_from_env() / "auth" / "email_capability.json"
+    return gateway_data_dir_from_env() / "auth" / "capabilities.json"
+
+
+def _capability_doc() -> Dict[str, Any]:
+    doc = _read_json(_capability_path())
+    defaults = doc.get("defaults") if isinstance(doc.get("defaults"), dict) else {}
+    users = doc.get("users") if isinstance(doc.get("users"), dict) else {}
+    return {"defaults": defaults, "users": users}
+
+
+def capability_default(cap: str) -> bool:
+    stored = _capability_doc()["defaults"].get(cap)
+    return bool(CAPABILITIES[cap]["default"]) if not isinstance(stored, bool) else stored
+
+
+def capability_for(plane: EmailPlane, cap: str) -> Dict[str, Any]:
+    """`{value, source: "user" | "gateway" | "built-in"}` for one user."""
+
+    doc = _capability_doc()
+    row = doc["users"].get(plane.key) if CAPABILITIES[cap]["per_user"] else None
+    if isinstance(row, dict) and isinstance(row.get(cap), bool):
+        return {"value": row[cap], "source": "user"}
+    if isinstance(doc["defaults"].get(cap), bool):
+        return {"value": doc["defaults"][cap], "source": "gateway"}
+    return {"value": bool(CAPABILITIES[cap]["default"]), "source": "built-in"}
+
+
+def capabilities_public() -> Dict[str, Any]:
+    return {
+        "capabilities": [
+            {"id": cid, "label": spec["label"], "description": spec["description"], "per_user": spec["per_user"],
+             "default": capability_default(cid), "built_in_default": spec["default"]}
+            for cid, spec in CAPABILITIES.items()
+        ]
+    }
+
+
+def set_capability_defaults(changes: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
+    unknown = sorted(k for k in changes if k not in CAPABILITIES)
+    if unknown:
+        raise EmailInvalidSettings(f"Unknown capability: {', '.join(unknown)}.", f"Use one of: {', '.join(CAPABILITIES)}.")
+    with _CAP_LOCK:
+        doc = _capability_doc()
+        for k, v in changes.items():
+            if v is None:
+                doc["defaults"].pop(k, None)
+            elif isinstance(v, bool):
+                doc["defaults"][k] = v
+            else:
+                raise EmailInvalidSettings(f"{k} must be true, false or null.", "Send true, false, or null for the built-in default.")
+        _write_private_json(_capability_path(), {"version": 2, **doc})
+    for k, v in changes.items():
+        audit_email_event("email.capability_changed", actor=actor, kind=k, enabled=v, reason="gateway default")
+    rebind_all_live_runtimes()
+    return capabilities_public()
+
+
+def set_user_capabilities(plane: EmailPlane, changes: Dict[str, Any], *, actor: str) -> None:
+    """Per-user overrides: true / false, or None to inherit the gateway default."""
+
+    for k in changes:
+        if k not in CAPABILITIES or not CAPABILITIES[k]["per_user"]:
+            raise EmailInvalidSettings(f"{k} is not a per-user capability.", "Use email or email_agent_tools.")
+    with _CAP_LOCK:
+        doc = _capability_doc()
+        row = dict(doc["users"].get(plane.key) or {})
+        for k, v in changes.items():
+            if v is None:
+                row.pop(k, None)
+            elif isinstance(v, bool):
+                row[k] = v
+            else:
+                raise EmailInvalidSettings(f"{k} must be true, false or null.", "Send true, false, or null to inherit.")
+        row["by"], row["at"] = str(actor or ""), _now_iso()
+        doc["users"][plane.key] = row
+        _write_private_json(_capability_path(), {"version": 2, **doc})
+    rebind_live_runtime(plane)
+    for k, v in changes.items():
+        audit_email_event("email.capability_changed", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=actor, kind=k, enabled=v)
 
 
 def admin_email_enabled(plane: EmailPlane) -> bool:
-    doc = _read_json(_capability_path())
-    row = (doc.get("users") or {}).get(plane.key) if isinstance(doc.get("users"), dict) else None
-    if isinstance(row, dict) and row.get("enabled") is False:
-        return False
-    return True
+    return bool(capability_for(plane, "email")["value"])
+
+
+def agent_tools_available(plane: EmailPlane) -> bool:
+    return bool(capability_for(plane, "email_agent_tools")["value"])
+
+
+def recovery_enabled() -> bool:
+    return capability_default("email_recovery")
 
 
 def set_admin_email_enabled(plane: EmailPlane, enabled: bool, *, actor: str) -> Dict[str, Any]:
-    with _CAP_LOCK:
-        path = _capability_path()
-        doc = _read_json(path)
-        users = doc.get("users") if isinstance(doc.get("users"), dict) else {}
-        users[plane.key] = {"enabled": bool(enabled), "by": str(actor or ""), "at": _now_iso()}
-        _write_private_json(path, {"version": 1, "users": users})
-    rebind_live_runtime(plane)
-    audit_email_event(
-        "email.capability_changed",
-        tenant_id=plane.tenant_id,
-        user_id=plane.user_id,
-        actor=actor,
-        enabled=bool(enabled),
-    )
+    set_user_capabilities(plane, {"email": bool(enabled)}, actor=actor)
     return {"enabled": bool(enabled)}
+
+
+def rebind_all_live_runtimes() -> None:
+    try:
+        from .runtime_wiring import refresh_all_cached_bindings
+
+        refresh_all_cached_bindings()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def email_context(plane: EmailPlane, *, require_enabled: bool = True) -> EmailContext:
@@ -321,37 +424,50 @@ def agent_tools_switch(plane: EmailPlane) -> bool:
 
 
 def set_agent_tools_switch(plane: EmailPlane, enabled: bool, *, actor: str = "") -> bool:
+    if enabled and not agent_tools_available(plane):
+        raise EmailDisabled(AGENT_TOOLS_UNAVAILABLE_CAUSE, AGENT_TOOLS_UNAVAILABLE_FIX)
     _write_private_json(_agent_tools_path(plane), {"version": 1, "enabled": bool(enabled), "at": _now_iso()})
     rebind_live_runtime(plane)
     audit_email_event("email.agent_tools_changed", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=actor or plane.user_id, enabled=bool(enabled))
     return bool(enabled)
 
 
-def agent_tools_active(plane: EmailPlane) -> bool:
-    """Agents and workflows get the email tools only when ALL hold: the account is connected
-    and turned on by the user, the administrator allows email, and the toggle is on."""
+AGENT_TOOLS_UNAVAILABLE_CAUSE = "Agent email tools are not available to your account."
+AGENT_TOOLS_UNAVAILABLE_FIX = "Ask a gateway administrator to make “Agent email tools” available to you (Users → Email)."
 
-    return agent_tools_switch(plane) and email_usable(plane)
+
+def agent_tools_active(plane: EmailPlane) -> bool:
+    """Agents and workflows get the email tools only when ALL hold: the administrator made them
+    available, the account is connected and turned on (and email is allowed), and the user's
+    own toggle is on."""
+
+    return agent_tools_available(plane) and agent_tools_switch(plane) and email_usable(plane)
 
 
 def agent_tools_status(plane: EmailPlane) -> Dict[str, Any]:
     switch = agent_tools_switch(plane)
+    available = agent_tools_available(plane)
     usable = email_usable(plane)
     reason = ""
-    if not switch:
-        reason = "off (your choice; default)"
+    if not available:
+        reason = "not available — ask your admin"
     elif not admin_email_enabled(plane):
         reason = "email is turned off for your account by an administrator"
     elif not usable:
         reason = "no connected, turned-on email account"
-    return {"enabled": switch, "active": bool(switch and usable), "reason": reason}
+    elif not switch:
+        reason = "off (your choice; default)"
+    return {"enabled": switch, "available": available, "active": bool(available and switch and usable), "reason": reason}
 
 
 def require_agent_tools(plane: EmailPlane) -> None:
-    if not agent_tools_active(plane):
-        if not admin_email_enabled(plane):
-            raise EmailDisabled(ADMIN_DISABLED_CAUSE, ADMIN_DISABLED_FIX)
-        raise EmailDisabled(AGENT_TOOLS_OFF_CAUSE, AGENT_TOOLS_OFF_FIX)
+    if agent_tools_active(plane):
+        return
+    if not agent_tools_available(plane):
+        raise EmailDisabled(AGENT_TOOLS_UNAVAILABLE_CAUSE, AGENT_TOOLS_UNAVAILABLE_FIX)
+    if not admin_email_enabled(plane):
+        raise EmailDisabled(ADMIN_DISABLED_CAUSE, ADMIN_DISABLED_FIX)
+    raise EmailDisabled(AGENT_TOOLS_OFF_CAUSE, AGENT_TOOLS_OFF_FIX)
 
 
 # ---------------------------------------------------------------------------------------
@@ -379,6 +495,15 @@ def public_status(plane: EmailPlane) -> Dict[str, Any]:
     except Exception:  # noqa: BLE001 - the status view never fails on the watcher file
         out["watcher"] = {"state": "unknown"}
     out["source"] = "gateway user settings"
+    out["store"] = {
+        "kind": "gateway",
+        "label": (
+            "The gateway's email account for the administrator (the default runtime); AbstractCore's own local "
+            "account (`abstractcore email`) is configured separately."
+            if plane.is_default
+            else "Your email account on this gateway, stored in your own data home."
+        ),
+    }
     return out
 
 
@@ -416,6 +541,8 @@ def admin_status(plane: EmailPlane) -> Dict[str, Any]:
                 else None
             ),
         },
+        "capabilities": {"email": capability_for(plane, "email"), "email_agent_tools": capability_for(plane, "email_agent_tools")},
+        "agent_tools": {"available": agent_tools_available(plane), "user_enabled": agent_tools_switch(plane), "active": agent_tools_active(plane)},
         "watcher": watcher,
         "state": _admin_state_label(pub, admin_on, last_error),
     }
@@ -904,6 +1031,48 @@ def import_legacy_env_once(environ: Optional[Dict[str, str]] = None) -> List[str
     with _notices_lock:
         _notices[:] = notes
     return list(notes)
+
+
+def import_core_account_once() -> List[str]:
+    """The administrator's gateway account starts from AbstractCore's own local account
+    (`abstractcore email connect`, the core store) ONCE, when the gateway plane has none: the
+    same person, the same machine. Later changes to either are independent."""
+
+    notes: List[str] = []
+    try:
+        plane = admin_plane()
+        marker = plane.email_dir / "core_import.json"
+        if marker.exists():
+            return notes
+        gw = account_store(plane)
+        if gw.settings().account is not None:
+            _write_private_json(marker, {"done": True, "at": _now_iso(), "source": "none (gateway account exists)"})
+            return notes
+        from ..core_config import core_store_path
+
+        core_path = core_store_path()
+        if core_path is None or not Path(core_path).is_file():
+            return notes
+        core = EmailAccountStore(config_file=core_path)
+        st = core.settings()
+        if st.account is None or not core.vault.exists():
+            return notes
+        ctx = core.context(require_enabled=False)
+        gw.connect(st.account, ctx.secret, test=False, registered_address=registered_address(plane) or None)
+        if not st.policy_is_default:
+            gw.set_policy(mode=st.policy.mode, add=list(st.policy.entries), clear=True)
+        gw.set_limits(per_hour=st.limits.per_hour, per_day=st.limits.per_day)
+        _write_private_json(marker, {"done": True, "at": _now_iso(), "source": "abstractcore"})
+        audit_email_event("email.legacy_imported", tenant_id=plane.tenant_id, user_id=plane.user_id, actor="gateway", outcome="imported", reason="abstractcore local account")
+        notes.append(
+            "Imported AbstractCore's local email account once into the administrator's gateway email settings "
+            f"({SETTINGS_LABEL}); from now on the two are configured separately."
+        )
+    except Exception as exc:  # noqa: BLE001 - boot never dies on the import
+        notes.append(f"AbstractCore's local email account could not be imported ({type(exc).__name__}); connect it in {SETTINGS_LABEL}.")
+    with _notices_lock:
+        _notices.extend(notes)
+    return notes
 
 
 def boot_notices() -> List[str]:

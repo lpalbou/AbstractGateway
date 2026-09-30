@@ -179,15 +179,19 @@ def _fake_svc(*, automations=(), records=None, waits=None, runs=None):
 def _patch_runtime_sources(monkeypatch, data):
     import abstractruntime.automation_queries as aq
     import abstractruntime.automations.attention as att
-    import abstractruntime.automations.ledger as led
+
+    def fake_list_attention(ledger_store, aid, *, after_seq=0, cursor=None, limit=50):
+        items = [i for i in data["records"].get(aid, []) if i["seq"] > int(after_seq or 0)]
+        return {"items": items[:limit], "next_cursor": None}
 
     monkeypatch.setattr(aq, "list_automations", lambda run_store, status=None, cursor=None, limit=50: SimpleNamespace(items=list(data["automations"]), next_cursor=None))
-    monkeypatch.setattr(led, "automation_records", lambda ledger_store, aid, kind: list(data["records"].get(aid, [])))
+    monkeypatch.setattr(att, "list_attention", fake_list_attention)
     monkeypatch.setattr(att, "pending_waits", lambda run_store, aid, limit=20: list(data["waits"].get(aid, [])))
 
 
 def _completed(seq: int, kind: str, channels, body: str = "") -> dict:
-    return {"payload": {"index": seq, "run_id": f"occ-{seq}", "attention": {"kind": kind, "seq": seq, "title": "Daily digest", "body": body, "channels": channels}}}
+    """An attention item as AbstractRuntime's `list_attention` pages it (channels included)."""
+    return {"kind": kind, "seq": seq, "title": "Daily digest", "body": body, "channels": channels, "index": seq, "run_id": f"occ-{seq}"}
 
 
 def test_collector_emails_automation_results_only_when_the_automation_asks(gateway, imap, smtp, monkeypatch) -> None:
@@ -286,3 +290,16 @@ def test_nothing_is_emailed_by_default(gateway, imap, smtp, monkeypatch) -> None
     data["records"]["auto-1"] = [_completed(1, "notify", ["console", "email"], "x")]
     data["waits"]["auto-1"] = [{"run_id": "occ-1", "wait_key": "w", "kind": "ask_user"}]
     assert NotificationCollector(plane, svc).collect()["queued"] == 0
+
+
+def test_outbox_exists_only_once_something_is_queued(gateway, imap, smtp) -> None:
+    from abstractgateway.mail.worker import EmailWorker
+
+    plane = plane_of("alice")
+    svc, _data = _fake_svc()
+    EmailWorker(svc, plane).tick()
+    r = gateway["client"].post("/api/gateway/me/notifications/test", headers=gateway["alice"])
+    assert r.json()["ok"] is False and r.json()["error"]["code"] == "email_not_configured"
+    assert not (plane.email_dir / "outbox.sqlite3").exists()
+    _connect(gateway, imap, smtp, notify=False)
+    assert not (plane.email_dir / "outbox.sqlite3").exists()

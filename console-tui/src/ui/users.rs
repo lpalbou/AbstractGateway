@@ -48,6 +48,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ctx_mypolicy = ctx.clone();
     let ctx_myemail = ctx.clone();
     let ctx_mail = ctx.clone();
+    let ctx_tools = ctx.clone();
     let ctx_summon = ctx.clone();
     let ctx_talk = ctx.clone();
     let ctx_tpl = ctx.clone();
@@ -157,6 +158,26 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .shortcut(KeyChord::plain(Key::Char('@')), move |_| super::my_email::open(cx, &ctx_myemail))
         // The admin's per-user email switch (status + on/off only; the admin
         // never reads a user's mail).
+        // The admin's per-user "Agent email tools available" capability.
+        .shortcut(KeyChord::plain(Key::Char('X')), move |_| {
+            if !super::util::admin_gate(&store, "making agent email tools available to a user") {
+                return;
+            }
+            if let Some(u) = selected_user(&ctx_tools) {
+                ctx_tools.send(crate::worker::Cmd::Operator(crate::worker::operator::OpCmd::Email {
+                    action: crate::worker::operator::EmailAction::AdminSetAgentTools {
+                        user_id: u.user_id.clone(),
+                        tenant_id: u.tenant_id.clone(),
+                        available: !u.mailbox_agent_tools,
+                    },
+                    form_id: None,
+                }));
+            } else {
+                store
+                    .notice
+                    .set(Some("no user selected — nobody to switch agent email tools for".into()));
+            }
+        })
         .shortcut(KeyChord::plain(Key::Char('x')), move |_| {
             if !super::util::admin_gate(&store, "turning email on or off for a user") {
                 return;
@@ -679,7 +700,11 @@ fn users_table(
                 } else {
                     u.email.clone()
                 });
-                row.push(u.mailbox.clone());
+                row.push(if u.mailbox_agent_tools {
+                    format!("{} · agent tools", u.mailbox)
+                } else {
+                    u.mailbox.clone()
+                });
                 row.push(u.created_at.chars().take(10).collect());
             }
             row

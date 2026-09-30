@@ -24,7 +24,9 @@ principal, never from a path or body id; entities are refused):
 Admin routes — status and the per-user switch only (D3: administrators never read mail):
 
     GET    /admin/users/{user_id}/email          configured / address / state / last error
-    PUT    /admin/users/{user_id}/email          {enabled}   off = no watcher, no sending, no notifications
+    PUT    /admin/users/{user_id}/email          {enabled?, agent_tools?, inherit?}  email on/off, agent tools available
+    GET    /admin/email/capabilities             gateway-wide defaults (email, email_agent_tools, email_recovery)
+    PUT    /admin/email/capabilities             {email?, email_agent_tools?, email_recovery?, reset?}
     GET    /admin/email/oauth-clients            bring-your-own OAuth clients (ids; secret_set only)
     PUT    /admin/email/oauth-clients/{provider} {client_id, client_secret?, tenant?}
 
@@ -454,16 +456,56 @@ async def admin_user_email_get(request: Request, user_id: str, tenant_id: str = 
     return await _call(mail_accounts.admin_status, plane)
 
 
-@router.put("/admin/users/{user_id}/email", summary="Turn email on or off for a user")
-async def admin_user_email_put(request: Request, user_id: str, body: EnabledBody, tenant_id: str = Query(default="default")) -> Any:
+class AdminUserEmailBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"enabled": True, "agent_tools": True}]})
+
+    enabled: Optional[bool] = Field(None, description="Email for this user (off: no watcher, no sending, no notifications)")
+    agent_tools: Optional[bool] = Field(None, description="Make Agent email tools available to this user")
+    inherit: List[str] = Field(default_factory=list, description="Capabilities that follow the gateway default again: email, email_agent_tools")
+
+
+@router.put("/admin/users/{user_id}/email", summary="A user's email capabilities (email on/off, agent tools available)")
+async def admin_user_email_put(request: Request, user_id: str, body: AdminUserEmailBody, tenant_id: str = Query(default="default")) -> Any:
     admin = _require_admin_principal(request)
     plane = _admin_plane(user_id, tenant_id)
 
     def run() -> Dict[str, Any]:
-        mail_accounts.set_admin_email_enabled(plane, body.enabled, actor=_actor(admin))
+        changes: Dict[str, Any] = {k: None for k in body.inherit}
+        if body.enabled is not None:
+            changes["email"] = body.enabled
+        if body.agent_tools is not None:
+            changes["email_agent_tools"] = body.agent_tools
+        if changes:
+            mail_accounts.set_user_capabilities(plane, changes, actor=_actor(admin))
         return {"ok": True, **mail_accounts.admin_status(plane)}
 
     return await _call(run)
+
+
+class CapabilityDefaultsBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"email_agent_tools": True, "email_recovery": False}]})
+
+    email: Optional[bool] = None
+    email_agent_tools: Optional[bool] = None
+    email_recovery: Optional[bool] = None
+    reset: List[str] = Field(default_factory=list, description="Capabilities back to their built-in default")
+
+
+@router.get("/admin/email/capabilities", summary="What the gateway makes available to users by default")
+async def admin_capabilities_get(request: Request) -> Any:
+    _require_admin_principal(request)
+    return await _call(mail_accounts.capabilities_public)
+
+
+@router.put("/admin/email/capabilities", summary="Set the gateway-wide email capability defaults")
+async def admin_capabilities_put(request: Request, body: CapabilityDefaultsBody) -> Any:
+    admin = _require_admin_principal(request)
+    changes: Dict[str, Any] = {k: None for k in body.reset}
+    for k in ("email", "email_agent_tools", "email_recovery"):
+        v = getattr(body, k)
+        if v is not None:
+            changes[k] = v
+    return await _call(mail_accounts.set_capability_defaults, changes, actor=_actor(admin))
 
 
 @router.get("/admin/email/oauth-clients", summary="Bring-your-own OAuth clients of this gateway")

@@ -315,6 +315,8 @@ class NotificationOutbox:
         """`sending` rows left by a crash become `unknown`: the SMTP exchange may have
         completed, so they are never resent automatically."""
 
+        if not self.path.exists():
+            return 0  # lazy: no outbox file until a notice exists
         conn = self._connect()
         try:
             with conn:
@@ -543,6 +545,11 @@ def queue_notice(plane: EmailPlane, kind: str, key: str, facts: Dict[str, Any]) 
 def send_test_notification(plane: EmailPlane) -> Dict[str, Any]:
     """Queue and deliver one test notice now (the click is the request)."""
 
+    if not email_usable(plane):
+        try:
+            email_context(plane)  # raises the precise typed reason (not connected / turned off)
+        except EmailError as err:
+            return {"ok": False, "state": "not sent", "error": {"code": err.code, "cause": err.cause, "fix": err.fix}}
     key = idempotency_key("test", plane.key, time.time_ns())
     queue_notice(plane, "test", key, {"title": "Test"})
     result = NotificationOutbox(plane).deliver()
@@ -583,34 +590,6 @@ def _run_error(run: Any) -> Tuple[str, str]:
     return "", ""
 
 
-def _attention_items(ledger_store: Any, automation_id: str, *, after_seq: int) -> List[Dict[str, Any]]:
-    """Attention items (`automation.completed` records carrying `attention`) after `after_seq`,
-    oldest first, with the delivery channels the runtime stamped on each."""
-
-    from abstractruntime.automations.ledger import automation_records
-
-    out: List[Dict[str, Any]] = []
-    for rec in automation_records(ledger_store, automation_id, "automation.completed"):
-        p = rec["payload"]
-        att = p.get("attention")
-        if not isinstance(att, dict) or int(att.get("seq") or 0) <= int(after_seq):
-            continue
-        channels = att.get("channels")
-        out.append(
-            {
-                "kind": att.get("kind"),
-                "seq": int(att["seq"]),
-                "title": att.get("title"),
-                "body": att.get("body"),
-                "index": p.get("index"),
-                "run_id": p.get("run_id"),
-                "channels": [str(c) for c in channels] if isinstance(channels, list) else ["console"],
-            }
-        )
-    out.sort(key=lambda it: it["seq"])
-    return out
-
-
 class NotificationCollector:
     """Turns the plane's ledger / run facts into queued notices (never sends)."""
 
@@ -638,7 +617,7 @@ class NotificationCollector:
         # Automations: notify / failure attention items (ledger), human waits (run state).
         try:
             from abstractruntime.automation_queries import list_automations
-            from abstractruntime.automations.attention import pending_waits
+            from abstractruntime.automations.attention import list_attention, pending_waits
 
             cursor = None
             while True:
@@ -649,7 +628,7 @@ class NotificationCollector:
                         continue
                     title = str(item.get("title") or "Automation")
                     floor = att.get(aid)
-                    items = _attention_items(ledger_store, aid, after_seq=floor or 0) if ledger_store is not None else []
+                    items = list_attention(ledger_store, aid, after_seq=floor or 0, limit=500)["items"] if ledger_store is not None else []
                     if floor is None and first:
                         # Baseline: never mail the history that existed before notifications were on.
                         att[aid] = max([int(i["seq"]) for i in items] or [0])

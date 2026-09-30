@@ -105,7 +105,7 @@ def test_admin_sees_status_never_content_or_correspondents(gateway, imap, smtp) 
     body = r.json()
     assert set(body) == {
         "tenant_id", "user_id", "configured", "address", "auth_kind", "user_enabled", "admin_enabled",
-        "effective_enabled", "status", "watcher", "state",
+        "effective_enabled", "status", "capabilities", "agent_tools", "watcher", "state",
     }
     assert body["configured"] is True and body["address"] == ALICE and body["state"] == "connected"
     text = r.text
@@ -206,3 +206,31 @@ def test_bob_connects_his_own_account_independently(gateway, imap, imap_bob, smt
     assert c.get("/api/gateway/me/email", headers=gateway["bob"]).json()["address"] == BOB
     c.delete("/api/gateway/me/email", headers=gateway["bob"])
     assert c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["configured"] is True
+
+
+def test_gateway_defaults_and_per_user_overrides_decide_what_is_available(gateway, imap, smtp) -> None:
+    c = gateway["client"]
+    caps = {x["id"]: x for x in c.get("/api/gateway/admin/email/capabilities", headers=ADMIN).json()["capabilities"]}
+    assert caps["email"]["default"] is True and caps["email_agent_tools"]["default"] is False and caps["email_recovery"]["default"] is True
+    assert c.get("/api/gateway/admin/email/capabilities", headers=gateway["alice"]).status_code == 403
+    assert c.put("/api/gateway/admin/email/capabilities", headers=gateway["alice"], json={"email_agent_tools": True}).status_code == 403
+
+    assert c.put("/api/gateway/me/email", headers=gateway["alice"], json=connect_body(ALICE, imap, smtp)).status_code == 200
+    at = c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["agent_tools"]
+    assert at == {"enabled": False, "available": False, "active": False, "reason": "not available — ask your admin"}
+    r = c.put("/api/gateway/me/email/agent-tools", headers=gateway["alice"], json={"enabled": True})
+    assert r.status_code == 409 and r.json()["detail"]["reason_code"] == "email_disabled"
+    assert "administrator" in r.json()["detail"]["fix"]
+
+    # Gateway-wide default on: available to everyone; a per-user override wins.
+    r = c.put("/api/gateway/admin/email/capabilities", headers=ADMIN, json={"email_agent_tools": True})
+    assert r.status_code == 200
+    assert c.put("/api/gateway/me/email/agent-tools", headers=gateway["alice"], json={"enabled": True}).json()["agent_tools"]["active"] is True
+    r = c.put("/api/gateway/admin/users/alice/email", headers=ADMIN, json={"agent_tools": False})
+    assert r.json()["capabilities"]["email_agent_tools"] == {"value": False, "source": "user"}
+    at = c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["agent_tools"]
+    assert at["enabled"] is True and at["available"] is False and at["active"] is False
+    r = c.put("/api/gateway/admin/users/alice/email", headers=ADMIN, json={"inherit": ["email_agent_tools"]})
+    assert r.json()["capabilities"]["email_agent_tools"] == {"value": True, "source": "gateway"}
+    rows = {u["user_id"]: u for u in c.get("/api/gateway/admin/users", headers=ADMIN).json()["users"]}
+    assert rows["alice"]["email_account"]["state"] == "connected"

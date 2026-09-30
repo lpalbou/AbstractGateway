@@ -16,18 +16,19 @@ use serde_json::json;
 use super::util::{ellipsize, field, line, span, span_bold};
 use super::{open_form, Ctx};
 use crate::store::email::{
-    connect_body, limits_body, notifications_body, policy_body, MyEmail, MyNotifications,
-    NotifyEvent,
+    connect_body, limits_body, notifications_body, policy_body, EmailCaps, MyEmail,
+    MyNotifications, NotifyEvent,
 };
 use crate::store::{ConnPhase, Loadable};
 use crate::worker::operator::{EmailAction, OpCmd};
 use crate::worker::Cmd;
 
-const SECTIONS: [&str; 4] = [
+const SECTIONS: [&str; 5] = [
     "Account",
     "OAuth2 sign-in",
     "Policy, limits & tools",
     "Notifications",
+    "Email for users (admin)",
 ];
 
 /// Route this form's write outcomes: a landed write keeps the form OPEN
@@ -71,6 +72,13 @@ pub fn open(cx: Scope, ctx: &Ctx) {
         return;
     }
     ctx.send(Cmd::Operator(OpCmd::LoadMyEmail));
+    let admin = ctx.store.conn.with_untracked(ConnPhase::is_admin);
+    if admin {
+        ctx.send(Cmd::Operator(OpCmd::Email {
+            action: EmailAction::LoadCaps,
+            form_id: None,
+        }));
+    }
     let ctx2 = ctx.clone();
     open_form(ctx, cx, Size::new(100, 34), move |mcx, close| {
         let theme = use_theme(mcx);
@@ -86,7 +94,13 @@ pub fn open(cx: Scope, ctx: &Ctx) {
         let close_cancel = close.clone();
         let tabs = {
             let mut row = Element::new().style(LayoutStyle::row().gap(2).h(1).shrink(0.0));
-            for (i, name) in SECTIONS.iter().enumerate() {
+            // The last section is the administrator's (gateway-wide defaults).
+            let shown = if admin {
+                SECTIONS.len()
+            } else {
+                SECTIONS.len() - 1
+            };
+            for (i, name) in SECTIONS.iter().enumerate().take(shown) {
                 row = row.child(
                     Button::new(*name)
                         .on_click(move || section.set(i))
@@ -117,7 +131,7 @@ pub fn open(cx: Scope, ctx: &Ctx) {
             .child(tabs)
             .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
                 let t = theme.get().tokens;
-                line(vec![span_bold(format!("— {} —", SECTIONS[section.get().min(3)]), t.text)])
+                line(vec![span_bold(format!("— {} —", SECTIONS[section.get().min(4)]), t.text)])
             }))
             .child(dyn_view_scoped(LayoutStyle::column().gap(0).grow(1.0), move |bcx| {
                 let t = theme.get().tokens;
@@ -130,6 +144,11 @@ pub fn open(cx: Scope, ctx: &Ctx) {
                     0 => account_section(bcx, &ctx_body, &t, &e, form_id, in_flight, form_error, ok_note),
                     1 => oauth_section(bcx, &ctx_body, &t, &e, form_id, in_flight, form_error, ok_note),
                     2 => policy_section(bcx, &ctx_body, &t, &e, form_id, in_flight, form_error, ok_note),
+                    4 => match store.op.email_caps.get() {
+                        Loadable::Ready(c) => caps_section(bcx, &ctx_body, &t, &c, form_id, in_flight, form_error, ok_note),
+                        Loadable::Failed(err) => line(vec![span(format!("✗ {err}"), t.error)]),
+                        _ => line(vec![span("◌ reading the email defaults…", t.info)]),
+                    },
                     _ => match store.op.my_notifications.get() {
                         Loadable::Ready(n) => notifications_section(bcx, &ctx_body, &t, &n, form_id, in_flight, form_error, ok_note),
                         Loadable::Failed(err) => line(vec![span(format!("✗ {err}"), t.error)]),
@@ -158,6 +177,12 @@ pub fn open(cx: Scope, ctx: &Ctx) {
 fn status_block(t: &TokenSet, e: &MyEmail) -> View {
     let t0 = *t;
     let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+    if !e.store_label.is_empty() {
+        col = col.child(line(vec![span(
+            ellipsize(&e.store_label, 94),
+            t0.text_faint,
+        )]));
+    }
     col = col.child(line(vec![
         span("state: ", t0.text_muted),
         span_bold(
@@ -536,6 +561,7 @@ fn policy_section(
     let usage = e.usage_text();
     let (c_pol, c_lim, c_tools) = (ctx.clone(), ctx.clone(), ctx.clone());
     let agent_on = e.agent_tools_enabled;
+    let agent_available = e.agent_tools_available;
     let agent_text = e.agent_tools_text();
     Element::new()
         .style(LayoutStyle::column().gap(0).grow(1.0))
@@ -591,7 +617,9 @@ fn policy_section(
             span("agent email tools: ", t0.text_muted),
             span(ellipsize(&agent_text, 76), t0.text),
         ]))
-        .child(
+        .child(if !agent_available && !agent_on {
+            line(vec![span("not available — ask your admin", t0.warn)])
+        } else {
             Button::new(if agent_on {
                 "Turn agent email tools off"
             } else {
@@ -601,10 +629,10 @@ fn policy_section(
                 send_write(&c_tools, EmailAction::AgentTools(!agent_on), form_id, in_flight, form_error, ok_note)
             })
             .element(cx, &t0)
-            .build(),
-        )
+            .build()
+        })
         .child(line(vec![span(
-            "Off by default: agents and workflows get list, search, read, send, reply and attachments only when your account is connected, allowed by an administrator and this is on.",
+            "Off by default: agents and workflows get list, search, read, send, reply and attachments only when an administrator made them available, your account is connected and this is on.",
             t0.text_faint,
         )]))
         .build()
@@ -692,4 +720,50 @@ fn notifications_section(
         t0.text_faint,
     )]))
     .build()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn caps_section(
+    cx: Scope,
+    ctx: &Ctx,
+    t: &TokenSet,
+    c: &EmailCaps,
+    form_id: u64,
+    in_flight: Signal<bool>,
+    form_error: Signal<Option<String>>,
+    ok_note: Signal<Option<String>>,
+) -> View {
+    let t0 = *t;
+    let email = cx.signal(c.email);
+    let tools = cx.signal(c.agent_tools);
+    let recovery = cx.signal(c.recovery);
+    let c_save = ctx.clone();
+    Element::new()
+        .style(LayoutStyle::column().gap(0).grow(1.0))
+        .child(line(vec![span(
+            "Gateway-wide defaults; a user's row on the Users screen overrides them (x email on/off, X agent tools). You never see anyone's mail.",
+            t0.text_faint,
+        )]))
+        .child(field(&t0, "", Checkbox::new("Email: users may connect their own mailbox").checked(email).element(cx, &t0).build()))
+        .child(field(&t0, "", Checkbox::new("Agent email tools available to users").checked(tools).element(cx, &t0).build()))
+        .child(field(&t0, "", Checkbox::new("Sign-in by email on the sign-in page").checked(recovery).element(cx, &t0).build()))
+        .child(line(vec![span(
+            "Sign-in by email means that whoever controls a user's mailbox can sign in as that user.",
+            t0.warn,
+        )]))
+        .child(
+            Button::new("Save email defaults")
+                .on_click(move || {
+                    let body = EmailCaps {
+                        email: email.get_untracked(),
+                        agent_tools: tools.get_untracked(),
+                        recovery: recovery.get_untracked(),
+                    }
+                    .body();
+                    send_write(&c_save, EmailAction::CapsDefaults(body.into()), form_id, in_flight, form_error, ok_note);
+                })
+                .element(cx, &t0)
+                .build(),
+        )
+        .build()
 }

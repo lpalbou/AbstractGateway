@@ -10345,8 +10345,23 @@ fn my_email_agent_tools_are_off_by_default_and_toggle_through_the_gateway() {
     h.type_text("@");
     h.turns(1);
     let mut v = my_email_fixture();
-    v["agent_tools"] =
-        json!({"enabled": false, "active": false, "reason": "off (your choice; default)"});
+    v["agent_tools"] = json!({"enabled": false, "available": false, "active": false, "reason": "not available — ask your admin"});
+    h.store
+        .op
+        .my_email
+        .set(Loadable::Ready(MyEmail::from_value(&v)));
+    let s = h.turns(2);
+    click_text(&mut h, &s, "Policy, limits & tools");
+    let s = h.turns(2);
+    assert!(
+        s.contains("not available — ask your admin"),
+        "unavailable:\n{s}"
+    );
+    assert!(
+        !s.contains("Turn agent email tools on"),
+        "no switch when unavailable:\n{s}"
+    );
+    v["agent_tools"] = json!({"enabled": false, "available": true, "active": false, "reason": "off (your choice; default)"});
     h.store
         .op
         .my_email
@@ -10371,5 +10386,95 @@ fn my_email_agent_tools_are_off_by_default_and_toggle_through_the_gateway() {
         )))
         .is_some(),
         "PUT /me/email/agent-tools {{enabled: true}}"
+    );
+}
+
+#[test]
+fn users_shift_x_makes_agent_tools_available_and_admins_edit_the_defaults() {
+    use abstractgateway_console::store::email::EmailCaps;
+    use abstractgateway_console::worker::operator::{EmailAction, OpCmd};
+    let mut h = harness_sized(Size::new(160, 50));
+    h.connect_as_admin();
+    h.goto_screen(3);
+    let mut users = users_fixture();
+    users["users"][1]["email_account"] = json!({"configured": true, "address": "a@x.io", "state": "connected", "admin_enabled": true, "agent_tools_available": false});
+    h.store
+        .users
+        .set(Loadable::Ready(users_from_payload(&users)));
+    h.turns(2);
+    let _ = h.drain_cmds();
+    h.key(b"\x1b[B");
+    h.turns(1);
+    h.type_text("X");
+    h.turns(2);
+    let sent = h.find_cmd(|c| {
+        is_op(c, |o| {
+            matches!(
+                o,
+                OpCmd::Email {
+                    action: EmailAction::AdminSetAgentTools { .. },
+                    ..
+                }
+            )
+        })
+    });
+    let Some(Cmd::Operator(OpCmd::Email {
+        action: EmailAction::AdminSetAgentTools {
+            user_id, available, ..
+        },
+        ..
+    })) = sent
+    else {
+        panic!("X sends PUT /admin/users/{{id}}/email {{agent_tools}}");
+    };
+    assert_eq!(user_id, "alice");
+    assert!(available);
+
+    let _ = h.drain_cmds();
+    h.type_text("@");
+    h.turns(1);
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(
+            o,
+            OpCmd::Email {
+                action: EmailAction::LoadCaps,
+                ..
+            }
+        )))
+        .is_some(),
+        "an admin's My email reads the gateway defaults"
+    );
+    h.store.op.my_email.set(Loadable::Ready(
+        abstractgateway_console::store::email::MyEmail::from_value(&my_email_fixture()),
+    ));
+    h.store.op.email_caps.set(Loadable::Ready(EmailCaps {
+        email: true,
+        agent_tools: false,
+        recovery: true,
+    }));
+    let s = h.turns(2);
+    click_text(&mut h, &s, "Email for users (admin)");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Agent email tools available to users"),
+        "defaults:\n{s}"
+    );
+    assert!(
+        s.contains("whoever controls a user's mailbox can sign in as that user"),
+        "recovery note:\n{s}"
+    );
+    let _ = h.drain_cmds();
+    click_text(&mut h, &s, "Save email defaults");
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(
+            o,
+            OpCmd::Email {
+                action: EmailAction::CapsDefaults(_),
+                ..
+            }
+        )))
+        .is_some(),
+        "PUT /admin/email/capabilities"
     );
 }
