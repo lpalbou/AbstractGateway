@@ -995,76 +995,25 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      color: var(--muted);
 	      margin-bottom: 12px;
 	    }
-	    .af-gateway-signin {
-	      width: min(760px, 100%);
-	      border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
-	      border-radius: var(--radius-md);
-	      padding: 24px;
-	      /* Theme-var surface: the old hardcoded dark gradient stayed dark in
-	         the light theme while --text went near-black (unreadable login). */
-	      background: linear-gradient(135deg, var(--panel-2, var(--panel)), var(--panel)) , var(--panel);
-	      box-shadow: var(--shadow);
-	    }
-	    .af-gateway-signin h2 { margin: 0; font-size: var(--font-size-xl); line-height: 1.25; }
-	    .af-gateway-signin p { margin: 12px 0 0; color: var(--muted); font-size: var(--font-size-base); line-height: 1.45; }
-	    .af-gateway-signin__hero { display: flex; justify-content: space-between; gap: 24px; margin-bottom: 24px; }
-	    .af-gateway-signin__kicker {
-	      margin-bottom: 8px;
-	      color: var(--accent);
-	      font-size: 13px;
-	      font-weight: 700;
-	      letter-spacing: .14em;
-	      text-transform: uppercase;
-	    }
-	    .af-gateway-signin__mark {
-	      width: 72px;
-	      height: 72px;
-	      display: grid;
-	      place-items: center;
-	      flex: 0 0 auto;
-	      border-radius: var(--radius-lg);
-	      border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
-	      background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, transparent), color-mix(in srgb, var(--error) 20%, transparent));
-	      color: rgba(255, 255, 255, .86);
-	      font-size: 32px;
-	      font-weight: 700;
-	    }
-	    .af-gateway-signin__status-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
-	    .af-gateway-signin__status {
+	    /* The sign-in card is the kit's (af-gateway-signin block of theme.css,
+	       synced into af-kit-css): one column, labels above, 480 px. The console
+	       used to carry its own copy here whose __checkbox rule (18 px / 700) was
+	       reused outside the card: every "checkbox label" in the console grew to
+	       20 px bold. DESIGN §3 — fixed at the rule by deleting the copy. */
+	    body:not(.signed-in) .console-shell > .af-gateway-signin { margin-top: 24px; }
+	    /* A plain checkbox row in a form (not a setting: settings are switches). */
+	    .check-row {
 	      display: inline-flex;
 	      align-items: center;
-	      min-height: 26px;
-	      padding: 4px 12px;
-	      border-radius: 999px;
-	      font-size: 12px;
-	      font-weight: 800;
-	      border: 1px solid rgba(255, 255, 255, .12);
-	      background: rgba(255, 255, 255, .06);
-	    }
-	    .af-gateway-signin__status--ok { color: var(--success); border-color: color-mix(in srgb, var(--success) 35%, transparent); }
-	    .af-gateway-signin__status--warn { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 35%, transparent); }
-	    .af-gateway-signin__status--err { color: var(--error); border-color: color-mix(in srgb, var(--error) 35%, transparent); }
-	    .af-gateway-signin__source { color: var(--muted); font-size: 13px; }
-	    .af-gateway-signin__form { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 14px; align-items: center; }
-	    .af-gateway-signin__label { margin: 0; }
-	    .af-gateway-signin__token-input { display: flex; align-items: center; gap: 8px; }
-	    .af-gateway-signin__token-input input { flex: 1; }
-	    .af-gateway-signin__checkbox {
-	      display: flex;
-	      align-items: center;
-	      gap: 10px;
+	      gap: 8px;
 	      margin: 0;
-	      color: var(--muted);
-	      font-size: 18px;
-	      font-weight: 700;
+	      color: var(--text);
+	      font-size: var(--font-size-base);
+	      font-weight: 400;
 	      text-transform: none;
 	      letter-spacing: 0;
+	      cursor: pointer;
 	    }
-	    .af-gateway-signin__actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; flex-wrap: wrap; }
-	    /* Sign-in is the page's one non-destructive primary action — it must
-	       not wear the destructive color. */
-	    .af-gateway-signin__primary { background: color-mix(in srgb, var(--accent) 22%, var(--panel-2)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); color: var(--text); }
-	    .af-gateway-signin__secondary { background: var(--button-2); }
 	    .modal-backdrop {
 	      position: fixed;
 	      inset: 0;
@@ -1268,9 +1217,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      gap: 12px;
 	      flex-wrap: wrap;
 	      padding-top: 2px;
-	    }
-	    .provider-modal .provider-toggle-row .af-gateway-signin__checkbox {
-	      font-size: 13px;
 	    }
 	    .provider-modal .advanced-panel summary {
 	      padding: 7px 10px;
@@ -1817,10 +1763,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    @media (max-width: 767.98px) {
 	      body:not(.signed-in) .console-shell { align-content: start; padding-block: 18px; }
-	      .af-gateway-signin { padding: 18px; }
-	      .af-gateway-signin__hero { gap: 16px; }
-	      .af-gateway-signin__mark { width: 56px; height: 56px; border-radius: var(--radius-lg); font-size: 26px; }
-	      .af-gateway-signin__form { grid-template-columns: 1fr; }
 	      .appearance-form { grid-template-columns: 1fr; }
 	      .provider-modal .provider-config-form { grid-template-columns: 1fr; }
 	      .provider-modal .field-span-2 { grid-column: auto; }
@@ -1906,51 +1848,58 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    <button id="paused-banner-resume" class="secondary" type="button" title="Resume workflow execution on this gateway">Resume workflows</button>
 	  </div>
 	  <main class="console-shell shell_content">
+	    <!-- Sign-in card (DESIGN §4): the kit's af-gateway-signin block. One
+	         status pill, labels above fields, inline errors, ONE quiet recovery
+	         link that turns into the code step. Nothing green stays static. -->
 	    <section id="login-section" class="af-gateway-signin">
 	      <div class="af-gateway-signin__hero">
 	        <div>
 	          <div class="af-gateway-signin__kicker">AbstractGateway Console</div>
-	          <h2>Connect to AbstractGateway</h2>
-	          <p>Sign in with the Gateway user token assigned by the Gateway admin.</p>
+	          <h2>Sign in</h2>
+	          <p>Use the token your gateway admin gave you.</p>
 	        </div>
-	        <div class="af-gateway-signin__mark" aria-hidden="true">↔</div>
 	      </div>
 	      <div class="af-gateway-signin__status-row">
-	        <span id="login-status" class="af-gateway-signin__status af-gateway-signin__status--warn">Gateway token missing</span>
-	        <span id="login-source" class="af-gateway-signin__source">token: missing</span>
+	        <span id="login-status" class="af-gateway-signin__status af-gateway-signin__status--neutral" role="status" aria-live="polite">Not signed in</span>
 	      </div>
-	      <form id="login-form">
-	        <div class="af-gateway-signin__form">
+	      <form id="login-form" class="af-gateway-signin__form" novalidate>
+	        <div class="af-gateway-signin__field">
 	          <label class="af-gateway-signin__label" for="login-user">Gateway user</label>
-	          <input id="login-user" autocomplete="username" value="admin">
-	          <label class="af-gateway-signin__label" for="login-token">Gateway token</label>
-	          <div class="af-gateway-signin__token-input">
-	            <input id="login-token" autocomplete="current-password" type="password" placeholder="Paste Gateway user token">
-	            <button id="toggle-token" class="af-gateway-signin__secondary" type="button" title="Show or hide the token characters">Show</button>
-	          </div>
-	          <label class="af-gateway-signin__label">Browser session</label>
-	          <label class="af-gateway-signin__checkbox"><input id="login-remember" type="checkbox"> Remember this browser</label>
+	          <input id="login-user" autocomplete="username" value="admin" aria-describedby="login-user-error">
+	          <p id="login-user-error" class="af-gateway-signin__field-error" role="alert" hidden></p>
 	        </div>
-	        <div class="af-gateway-signin__actions">
+	        <div class="af-gateway-signin__field">
+	          <label class="af-gateway-signin__label" for="login-token">Token</label>
+	          <div class="af-gateway-signin__token-input">
+	            <input id="login-token" autocomplete="current-password" type="password" aria-describedby="login-token-error">
+	            <button id="toggle-token" type="button" aria-label="Show token" aria-pressed="false">Show</button>
+	          </div>
+	          <p id="login-token-error" class="af-gateway-signin__field-error" role="alert" hidden></p>
+	        </div>
+	        <div class="af-gateway-signin__submit-row">
+	          <label class="af-gateway-signin__checkbox"><input id="login-remember" type="checkbox"> Remember this browser</label>
 	          <button id="login-button" class="af-gateway-signin__primary" type="submit">Sign in</button>
 	        </div>
 	      </form>
-	      <div id="login-message" class="message"></div>
-      <div id="recovery-section" class="hidden">
-        <div class="af-gateway-signin__actions">
-          <button id="recovery-forgot" class="af-gateway-signin__secondary" type="button" title="Email a code to the user's registered address; the code sets a new token">Forgot your token?</button>
-          <button id="recovery-code" class="af-gateway-signin__secondary" type="button" title="Email a one-time sign-in code to the user's registered address">Email me a sign-in code</button>
-        </div>
-        <div id="recovery-redeem" class="af-gateway-signin__form hidden">
-          <label class="af-gateway-signin__label" for="recovery-code-input">Code from the email</label>
-          <input id="recovery-code-input" autocomplete="one-time-code" inputmode="numeric" placeholder="8 digits">
-        </div>
-        <div id="recovery-redeem-actions" class="af-gateway-signin__actions hidden">
-          <button id="recovery-use" class="af-gateway-signin__primary" type="button">Use code</button>
-        </div>
-        <div id="recovery-message" class="message" role="status" aria-live="polite"></div>
-        <div id="recovery-token" class="issued hidden"></div>
-      </div>
+	      <p id="login-message" class="af-gateway-signin__message af-gateway-signin__message--error" role="alert" hidden></p>
+	      <!-- Shown only when GET /session/recovery says sign-in by email is on. -->
+	      <div id="recovery-section" class="af-gateway-signin__recovery" hidden>
+	        <button id="recovery-link" type="button" class="af-gateway-signin__link">Forgot your token? Email me a sign-in code</button>
+	        <p id="recovery-request-message" class="af-gateway-signin__message af-gateway-signin__message--error" role="alert" hidden></p>
+	      </div>
+	      <div id="recovery-code-step" class="af-gateway-signin__code" hidden>
+	        <p id="recovery-sent-message" class="af-gateway-signin__message af-gateway-signin__message--ok" role="status" aria-live="polite"></p>
+	        <div class="af-gateway-signin__field">
+	          <label class="af-gateway-signin__label" for="recovery-code-input">Code from the email</label>
+	          <input id="recovery-code-input" autocomplete="one-time-code" inputmode="numeric" maxlength="8" pattern="[0-9]{8}" aria-describedby="recovery-code-error">
+	          <p id="recovery-code-error" class="af-gateway-signin__field-error" role="alert" hidden></p>
+	        </div>
+	        <div class="af-gateway-signin__code-actions">
+	          <button id="recovery-resend" type="button" class="af-gateway-signin__link">Send a new code</button>
+	          <button id="recovery-use" type="button" class="af-gateway-signin__primary" disabled>Use code</button>
+	        </div>
+	        <button id="recovery-back" type="button" class="af-gateway-signin__link af-gateway-signin__back">Back to token</button>
+	      </div>
 	    </section>
 
 	    <div id="workspace-shell" class="workspace-shell session-only">
@@ -2433,29 +2382,35 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <div class="section-head">
 	                <div>
 	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">⧉</span><span>Users</span></h2>
-	                  <p class="section-note">Human and service principals of this gateway. Each binds to one runtime data plane. Summoned entities are principals too, but they live in their own panel below — never in this table.</p>
+	                  <p class="section-note">The people who sign in to this gateway. Each user has their own runtime: their runs, flows, sessions and memory. Summoned entities are listed in their own panel below.</p>
 	                </div>
-	                <button id="open-create-user" title="Create a gateway user and issue its bearer token (shown once)" aria-label="Create user"><span class="button-icon" aria-hidden="true">＋</span><span>Create user</span></button>
+	                <button id="open-create-user" title="Create a gateway user and issue their token (shown once)" aria-label="Create user"><span class="button-icon" aria-hidden="true">＋</span><span>Create user</span></button>
+	              </div>
+	              <!-- The admin's ONE email switch (DESIGN §5.2) = capability `email`.
+	                   Agent email tools and sign-in by email sit under Advanced.
+	                   Switches apply at once: no Save button. -->
+	              <div id="email-caps-section" class="users-caps">
+	                <div class="switch-list">
+	                  <button type="button" role="switch" id="email-cap-email" class="af-switch af-switch--row" aria-checked="false" aria-describedby="email-cap-email-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Mailboxes for users</span><span class="af-switch__desc" id="email-cap-email-desc">Users may connect their own mailbox for their agents, automations and notifications. You never see anyone&#39;s mail.</span></span></button><span id="email-cap-email-reason" class="af-switch__reason" hidden></span>
+	                </div>
+	                <details id="email-caps-advanced" class="plain-disclosure">
+	                  <summary>Advanced</summary>
+	                  <div class="switch-list">
+	                    <button type="button" role="switch" id="email-cap-agent-tools" class="af-switch af-switch--row" aria-checked="false" aria-describedby="email-cap-agent-tools-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Agent email tools for users</span><span class="af-switch__desc" id="email-cap-agent-tools-desc">Users may let their agents and workflows use their mailbox. Each user still switches the tools on for themselves.</span></span></button><span id="email-cap-agent-tools-reason" class="af-switch__reason" hidden></span>
+	                    <button type="button" role="switch" id="email-cap-recovery" class="af-switch af-switch--row" aria-checked="false" aria-describedby="email-cap-recovery-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Sign-in by email</span><span class="af-switch__desc" id="email-cap-recovery-desc">Shows &#39;Forgot your token?&#39; on the sign-in page. Whoever controls a user&#39;s mailbox can then sign in as that user.</span></span></button><span id="email-cap-recovery-reason" class="af-switch__reason" hidden></span>
+	                  </div>
+	                </details>
+	                <p id="email-caps-message" class="inline-state" role="status" aria-live="polite"></p>
 	              </div>
 	              <div id="issued-token" class="issued hidden"></div>
-	              <div id="users-message" class="message"></div>
-	              <table>
-	                <thead><tr><th>User</th><th>Email</th><th>Mailbox</th><th>Runtime</th><th>Roles</th><th>State</th><th>Actions</th></tr></thead>
-	                <tbody id="users-table"></tbody>
-	              </table>
+	              <div id="users-message" class="message" role="status" aria-live="polite"></div>
+	              <div class="table-scroll users-table-wrap">
+	                <table class="users-table">
+	                  <thead><tr><th>User</th><th>Role</th><th>Email address</th><th>Mailbox</th><th>Runtime</th><th>Active</th><th>Actions</th></tr></thead>
+	                  <tbody id="users-table"></tbody>
+	                </table>
+	              </div>
 	              <div id="users-entity-note" class="section-note hidden"></div>
-              <details id="email-caps-section" class="entity-advanced">
-                <summary>Email for users <span class="entity-config-hint">what users may turn on: mailbox, agent email tools, sign-in by email</span></summary>
-                <div class="entity-config-block">
-                  <p class="section-note">Gateway-wide defaults; a user's row overrides them (Email off/on, Agent tools). You never see anyone's mail.</p>
-                  <div id="email-caps-message" class="message"></div>
-                  <label class="af-gateway-signin__checkbox"><input id="email-cap-email" type="checkbox"> Email: users may connect their own mailbox (watcher, sending, email notifications)</label>
-                  <label class="af-gateway-signin__checkbox"><input id="email-cap-agent-tools" type="checkbox"> Agent email tools available: users may let their agents list, search, read, send and reply to mail</label>
-                  <label class="af-gateway-signin__checkbox"><input id="email-cap-recovery" type="checkbox"> Sign-in by email: “Forgot your token?” and “Email me a sign-in code” on the sign-in page</label>
-                  <p class="section-note">Sign-in by email means that whoever controls a user's mailbox can sign in as that user: turn it off where mailboxes are not as well protected as gateway tokens.</p>
-                  <div class="inline"><button id="email-caps-save" type="button">Save email defaults</button></div>
-                </div>
-              </details>
 	            </section>
 	            <details id="my-workspace-policy-section" class="entity-advanced session-only">
 	              <summary>My workspace policy <span id="my-workspace-policy-summary" class="entity-config-hint">where your agents may write — mode, launch-folder trust, allow/deny lists</span></summary>
@@ -2480,96 +2435,174 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <div id="my-workspace-policy-current" class="section-note"></div>
 	              </div>
 	            </details>
-            <details id="my-email-section" class="entity-advanced session-only">
-              <summary>My email <span id="my-email-summary" class="entity-config-hint">your own mailbox: automations on new mail, emailed notifications, sign-in codes</span></summary>
-              <div class="entity-config-block">
-                <div class="section-head">
-                  <div>
-                    <p class="section-note">One account per user, stored encrypted in your own data home. The mailbox is only read (never marked read, moved or deleted). Administrators can turn email on or off for you, never read it. Without an account there is no sending and no email notification.</p>
-                  </div>
-                  <button id="my-email-refresh" class="secondary icon-only" title="Reload my email settings" aria-label="Refresh my email"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
-                </div>
-                <div id="my-email-message" class="message" role="status" aria-live="polite"></div>
-                <div id="my-email-notices" class="message"></div>
-                <div id="my-email-status" class="section-note">Loading…</div>
-                <h3 class="section-subtitle">Account</h3>
-                <div class="provider-config-form">
-                  <label>Address <input id="my-email-address" autocomplete="off" placeholder="me@example.com"></label>
-                  <label>Display name <input id="my-email-display-name" autocomplete="off"></label>
-                  <label>User name <input id="my-email-username" autocomplete="off" placeholder="(the address)"></label>
-                  <label>Password <input id="my-email-password" type="password" autocomplete="new-password" placeholder="app password"></label>
-                  <label>IMAP host <input id="my-email-imap-host" autocomplete="off" placeholder="imap.example.com"></label>
-                  <label>IMAP port <input id="my-email-imap-port" inputmode="numeric" placeholder="993"></label>
-                  <label>IMAP security <select id="my-email-imap-security"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option></select></label>
-                  <label>Folder <input id="my-email-imap-folder" placeholder="INBOX"></label>
-                  <label>SMTP host <input id="my-email-smtp-host" autocomplete="off" placeholder="smtp.example.com"></label>
-                  <label>SMTP port <input id="my-email-smtp-port" inputmode="numeric" placeholder="465"></label>
-                  <label>SMTP security <select id="my-email-smtp-security"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option></select></label>
-                </div>
-                <div class="inline">
-                  <button id="my-email-save" type="button">Save and test</button>
-                  <button id="my-email-test" class="secondary" type="button">Test</button>
-                  <button id="my-email-toggle" class="secondary" type="button">Turn off</button>
-                  <button id="my-email-disconnect" class="danger" type="button">Disconnect</button>
-                </div>
-                <div id="my-email-disconnect-confirm" class="inline hidden">
-                  <span class="section-note">Disconnect deletes the stored password or tokens (policy and limits are kept).</span>
-                  <button id="my-email-disconnect-now" class="danger" type="button">Disconnect now</button>
-                  <button id="my-email-disconnect-cancel" class="secondary" type="button">Cancel</button>
-                </div>
-                <p class="section-note">Passwords are stored encrypted and never shown again. Many providers need an app password when two-step verification is on.</p>
-                <h3 class="section-subtitle">Agent email tools</h3>
-                <div class="inline">
-                  <label class="af-gateway-signin__checkbox"><input id="my-email-agent-tools" type="checkbox"> Let my agents and workflows use email tools (list, search, read, send, reply, attachments)</label>
-                  <button id="my-email-agent-tools-save" class="secondary" type="button">Save</button>
-                </div>
-                <p id="my-email-agent-tools-state" class="section-note">Off by default. The tools appear in your agents' toolsets only when your account is connected, allowed by an administrator and this is on; every send still passes your recipient policy, your limits and the approval gate.</p>
-                <h3 class="section-subtitle">Sign in with OAuth2</h3>
-                <div class="provider-config-form">
-                  <label>Provider <select id="my-email-oauth-provider"><option value="microsoft">Microsoft (Outlook, Microsoft 365)</option><option value="google">Google (Gmail)</option></select></label>
-                  <label>Address <input id="my-email-oauth-address" autocomplete="off" placeholder="me@outlook.com"></label>
-                  <label>Client id <input id="my-email-oauth-client-id" autocomplete="off" placeholder="(the gateway's or the built-in client)"></label>
-                  <label>Client secret <input id="my-email-oauth-client-secret" type="password" autocomplete="new-password" placeholder="(none)"></label>
-                  <label>Tenant <input id="my-email-oauth-tenant" autocomplete="off" placeholder="common (Microsoft only)"></label>
-                  <label>Sign-in flow <select id="my-email-oauth-flow"><option value="">provider default</option><option value="device">device code</option><option value="loopback">browser on the gateway's computer</option></select></label>
-                </div>
-                <div class="inline">
-                  <button id="my-email-oauth-start" type="button">Start sign-in</button>
-                  <button id="my-email-oauth-cancel" class="secondary hidden" type="button">Cancel sign-in</button>
-                </div>
-                <div id="my-email-oauth-prompt" class="message" role="status" aria-live="polite"></div>
-                <p id="my-email-oauth-clients" class="section-note">Without a client id, the gateway's OAuth client (set by an administrator) or the built-in AbstractFramework client signs in. Microsoft defaults to a device code (any browser, any machine); Google to a browser on the gateway's own computer. Tokens are stored encrypted, like passwords.</p>
-                <h3 class="section-subtitle">Recipient policy</h3>
-                <div class="provider-config-form">
-                  <label>Mode <select id="my-email-policy-mode"><option value="allowlist">allowlist: only these recipients</option><option value="denylist">denylist: everyone except these</option></select></label>
-                  <label class="field-span-2">Entries (one address or domain per line) <textarea id="my-email-policy-entries" rows="3" spellcheck="false" placeholder="me@example.com&#10;example.org"></textarea></label>
-                  <label>Check a recipient <input id="my-email-policy-check" autocomplete="off" placeholder="recipient to check"></label>
-                </div>
-                <div class="inline">
-                  <button id="my-email-policy-save" type="button">Save policy</button>
-                  <button id="my-email-policy-check-button" class="secondary" type="button">Check</button>
-                  <span id="my-email-policy-check-result" class="section-note"></span>
-                </div>
-                <p class="section-note">Entries are exact addresses (name@example.com) or domains (example.com; a subdomain only when written as its own entry). The policy applies to To, Cc and Bcc of every send (agents, automations, notifications); a message with any refused recipient is not sent.</p>
-                <h3 class="section-subtitle">Send limits</h3>
-                <div class="provider-config-form">
-                  <label>Per hour <input id="my-email-per-hour" inputmode="numeric"></label>
-                  <label>Per day <input id="my-email-per-day" inputmode="numeric"></label>
-                </div>
-                <div class="inline">
-                  <button id="my-email-limits-save" type="button">Save limits</button>
-                  <span id="my-email-usage" class="section-note"></span>
-                </div>
-                <h3 class="section-subtitle">Notifications</h3>
-                <p id="my-email-notify-note" class="section-note"></p>
-                <div id="my-email-notify-events" class="provider-config-form"></div>
-                <div class="inline">
-                  <button id="my-email-notify-save" type="button">Save notifications</button>
-                  <button id="my-email-notify-test" class="secondary" type="button">Send test notification</button>
-                  <span id="my-email-outbox" class="section-note"></span>
-                </div>
+            <!-- The user's account page (DESIGN §6). Cards, in order: Email address
+                 (the one inline Save) → Mailbox (tabs Google / Microsoft / Other, or the
+                 connected status) → Notifications (two switches) → Agent email tools →
+                 Advanced. Switches apply at once; no other Save button. -->
+            <div id="my-email-section" class="session-only account-page">
+              <div class="account-page__head">
+                <h2 class="section-title"><span class="section-icon" aria-hidden="true">✉</span><span>My email address and mailbox</span></h2>
+                <button id="my-email-refresh" class="secondary icon-only" type="button" title="Reload" aria-label="Reload my email address and mailbox"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
               </div>
-            </details>
+              <p id="my-email-message" class="inline-state" role="status" aria-live="polite"></p>
+              <p id="my-email-notices" class="af-form__help" hidden></p>
+              <section class="af-card account-card" aria-labelledby="my-email-registered-title">
+                <div class="af-card__header"><h3 id="my-email-registered-title" class="af-card__title">Email address</h3></div>
+                <div class="af-form">
+                  <div class="af-form__field">
+                    <label class="af-form__label" for="my-email-registered">Email address</label>
+                    <div class="af-form__inline">
+                      <input id="my-email-registered" type="email" autocomplete="email" spellcheck="false" aria-describedby="my-email-registered-help my-email-registered-error">
+                      <button id="my-email-registered-save" class="secondary" type="button">Save</button>
+                    </div>
+                    <p id="my-email-registered-error" class="af-form__error" role="alert" hidden></p>
+                    <p id="my-email-registered-help" class="af-form__help">Where sign-in codes and notifications go, and the first address your agents may write to.</p>
+                  </div>
+                </div>
+              </section>
+              <section class="af-card account-card" aria-labelledby="my-email-mailbox-title">
+                <div class="af-card__header">
+                  <h3 id="my-email-mailbox-title" class="af-card__title">Mailbox</h3>
+                  <p class="af-card__desc">Lets your agents and automations read and send mail as you. Your admin never sees your mail.</p>
+                </div>
+                <p id="my-email-unavailable" class="af-form__error" hidden></p>
+                <div id="my-email-connected" hidden>
+                  <p id="my-email-status" class="mailbox-status"></p>
+                  <p id="my-email-status-error" class="af-form__error" hidden></p>
+                  <div class="af-form__actions mailbox-actions">
+                    <button id="my-email-test" class="secondary" type="button">Test</button>
+                    <button id="my-email-disconnect" class="danger" type="button">Disconnect</button>
+                  </div>
+                  <div id="my-email-disconnect-confirm" class="inline-confirm" role="group" hidden>
+                    <span>Disconnect this mailbox? Your agents lose email until you connect again. Policy and limits are kept.</span>
+                    <button id="my-email-disconnect-now" class="danger" type="button">Disconnect</button>
+                    <button id="my-email-disconnect-cancel" class="secondary" type="button">Cancel</button>
+                  </div>
+                </div>
+                <div id="my-email-connect" class="af-tabs">
+                  <div class="af-tabs__list" role="tablist" aria-label="How your mailbox signs in">
+                    <button id="my-email-tab-google" class="af-tabs__tab" role="tab" type="button" data-email-tab="google" aria-controls="my-email-pane-oauth" aria-selected="true">Google</button>
+                    <button id="my-email-tab-microsoft" class="af-tabs__tab" role="tab" type="button" data-email-tab="microsoft" aria-controls="my-email-pane-oauth" aria-selected="false" tabindex="-1">Microsoft</button>
+                    <button id="my-email-tab-other" class="af-tabs__tab" role="tab" type="button" data-email-tab="other" aria-controls="my-email-pane-other" aria-selected="false" tabindex="-1">Other</button>
+                  </div>
+                  <div id="my-email-pane-oauth" class="af-tabs__panel" role="tabpanel" aria-labelledby="my-email-tab-google">
+                    <div class="af-form">
+                      <div class="af-form__field">
+                        <label class="af-form__label" for="my-email-oauth-address">Email address</label>
+                        <input id="my-email-oauth-address" type="email" autocomplete="email" spellcheck="false" aria-describedby="my-email-oauth-address-help">
+                        <p id="my-email-oauth-address-help" class="af-form__help">The account you sign in with; it pre-fills the sign-in page.</p>
+                      </div>
+                      <div class="af-form__actions">
+                        <button id="my-email-oauth-cancel" class="secondary" type="button" hidden>Cancel sign-in</button>
+                        <button id="my-email-oauth-start" type="button" aria-describedby="my-email-oauth-start-reason">Sign in with Google</button>
+                      </div>
+                      <p id="my-email-oauth-start-reason" class="af-form__help" hidden></p>
+                      <p id="my-email-oauth-prompt" class="inline-state" role="status" aria-live="polite"></p>
+                      <details id="my-email-oauth-advanced" class="plain-disclosure">
+                        <summary>Advanced</summary>
+                        <div class="af-form">
+                          <p class="af-form__help">Your own sign-in client instead of the gateway&#39;s or the built-in one.</p>
+                          <div class="af-form__grid-2">
+                            <div class="af-form__field"><label class="af-form__label" for="my-email-oauth-client-id">Client ID</label><input id="my-email-oauth-client-id" autocomplete="off" spellcheck="false"></div>
+                            <div class="af-form__field"><label class="af-form__label" for="my-email-oauth-client-secret">Client secret</label><input id="my-email-oauth-client-secret" type="password" autocomplete="new-password"></div>
+                          </div>
+                          <div class="af-form__grid-2 email-ms-only">
+                            <div class="af-form__field"><label class="af-form__label" for="my-email-oauth-tenant">Tenant</label><input id="my-email-oauth-tenant" autocomplete="off" spellcheck="false"><p class="af-form__help">Empty = any Microsoft account (common).</p></div>
+                            <div class="af-form__field"><label class="af-form__label" for="my-email-oauth-flow">Sign-in flow</label><select id="my-email-oauth-flow"><option value="">Code in any browser (default)</option><option value="loopback">Browser on the gateway&#39;s computer</option></select></div>
+                          </div>
+                        </div>
+                      </details>
+                    </div>
+                  </div>
+                  <div id="my-email-pane-other" class="af-tabs__panel" role="tabpanel" aria-labelledby="my-email-tab-other" hidden>
+                    <div class="af-form">
+                      <div class="af-form__field">
+                        <label class="af-form__label" for="my-email-address">Email address</label>
+                        <input id="my-email-address" type="email" autocomplete="email" spellcheck="false">
+                      </div>
+                      <div class="af-form__field">
+                        <label class="af-form__label" for="my-email-password">Password</label>
+                        <input id="my-email-password" type="password" autocomplete="new-password" aria-describedby="my-email-password-help">
+                        <p id="my-email-password-help" class="af-form__help">Use an app password if your provider needs one.</p>
+                      </div>
+                      <p id="my-email-servers-line" class="servers-line" hidden><span id="my-email-servers-summary"></span> <button id="my-email-servers-edit" class="link-button" type="button">Edit</button></p>
+                      <p id="my-email-servers-looking" class="af-form__help" role="status" hidden>Looking up the mail servers…</p>
+                      <details id="my-email-servers" class="plain-disclosure">
+                        <summary>Server settings</summary>
+                        <div class="af-form">
+                          <p id="my-email-servers-reason" class="af-form__error" role="alert" hidden></p>
+                          <div class="af-form__field"><label class="af-form__label" for="my-email-imap-host">Incoming server (IMAP)</label><input id="my-email-imap-host" autocomplete="off" spellcheck="false"></div>
+                          <div class="af-form__grid-2">
+                            <div class="af-form__field"><label class="af-form__label" for="my-email-imap-port">IMAP port</label><input id="my-email-imap-port" inputmode="numeric"></div>
+                            <div class="af-form__field"><label class="af-form__label" for="my-email-imap-security">IMAP security</label><select id="my-email-imap-security"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option></select></div>
+                          </div>
+                          <div class="af-form__field"><label class="af-form__label" for="my-email-smtp-host">Outgoing server (SMTP)</label><input id="my-email-smtp-host" autocomplete="off" spellcheck="false"></div>
+                          <div class="af-form__grid-2">
+                            <div class="af-form__field"><label class="af-form__label" for="my-email-smtp-port">SMTP port</label><input id="my-email-smtp-port" inputmode="numeric"></div>
+                            <div class="af-form__field"><label class="af-form__label" for="my-email-smtp-security">SMTP security</label><select id="my-email-smtp-security"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option></select></div>
+                          </div>
+                          <div class="af-form__grid-2">
+                            <div class="af-form__field"><label class="af-form__label" for="my-email-username">User name</label><input id="my-email-username" autocomplete="off" spellcheck="false" aria-describedby="my-email-username-help"><p id="my-email-username-help" class="af-form__help">Empty = the email address.</p></div>
+                            <div class="af-form__field"><label class="af-form__label" for="my-email-display-name">Display name</label><input id="my-email-display-name" autocomplete="off" aria-describedby="my-email-display-name-help"><p id="my-email-display-name-help" class="af-form__help">How your name appears on mail you send.</p></div>
+                          </div>
+                        </div>
+                      </details>
+                      <p id="my-email-connect-error" class="af-form__error" role="alert" hidden></p>
+                      <div class="af-form__actions">
+                        <button id="my-email-connect-go" type="button">Connect</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+              <section class="af-card account-card" aria-labelledby="my-email-notify-title">
+                <div class="af-card__header"><h3 id="my-email-notify-title" class="af-card__title">Notifications</h3></div>
+                <div class="switch-list">
+                  <button type="button" role="switch" id="my-email-notify-job-failed" class="af-switch af-switch--row" aria-checked="false" aria-describedby="my-email-notify-job-failed-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Job failed</span><span class="af-switch__desc" id="my-email-notify-job-failed-desc">A run or automation of yours failed, after its retries.</span></span></button><span id="my-email-notify-job-failed-reason" class="af-switch__reason" hidden></span>
+                  <button type="button" role="switch" id="my-email-notify-approval" class="af-switch af-switch--row" aria-checked="false" aria-describedby="my-email-notify-approval-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Approval needed</span><span class="af-switch__desc" id="my-email-notify-approval-desc">A run is waiting for your answer.</span></span></button><span id="my-email-notify-approval-reason" class="af-switch__reason" hidden></span>
+                </div>
+              </section>
+              <section class="af-card account-card" aria-labelledby="my-email-tools-title">
+                <div class="af-card__header"><h3 id="my-email-tools-title" class="af-card__title">Agent email tools</h3></div>
+                <div class="switch-list">
+                  <button type="button" role="switch" id="my-email-agent-tools" class="af-switch af-switch--row" aria-checked="false" aria-describedby="my-email-agent-tools-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Agent email tools</span><span class="af-switch__desc" id="my-email-agent-tools-desc">Your agents and workflows may list, search, read, send and reply to your mail. Every send still follows your recipient rules, your limits and the approval gate.</span></span></button><span id="my-email-agent-tools-reason" class="af-switch__reason" hidden></span>
+                </div>
+              </section>
+              <details id="my-email-advanced" class="af-card account-card account-advanced">
+                <summary>Advanced</summary>
+                <div class="af-form">
+                  <div class="switch-list">
+                    <button type="button" role="switch" id="my-email-enabled" class="af-switch af-switch--row" aria-checked="false" aria-describedby="my-email-enabled-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Use this mailbox</span><span class="af-switch__desc" id="my-email-enabled-desc">Off keeps the settings but stops watching, sending and notifications.</span></span></button><span id="my-email-enabled-reason" class="af-switch__reason" hidden></span>
+                  </div>
+                  <div class="af-form__field">
+                    <span class="af-form__label" id="my-email-policy-title">Recipient rules</span>
+                    <div class="af-form__inline">
+                      <select id="my-email-policy-mode" aria-labelledby="my-email-policy-title"><option value="allowlist">Only these recipients</option><option value="denylist">Everyone except these</option></select>
+                    </div>
+                    <ul id="my-email-policy-list" class="chip-list" aria-label="Recipient rules"></ul>
+                    <div class="af-form__inline">
+                      <input id="my-email-policy-add" autocomplete="off" spellcheck="false" aria-label="Address or domain to add" aria-describedby="my-email-policy-help">
+                      <button id="my-email-policy-add-button" class="secondary" type="button">Add</button>
+                    </div>
+                    <p id="my-email-policy-help" class="af-form__help">An address (name@example.com) or a domain (example.com). Applies to To, Cc and Bcc of every send; a message with any refused recipient is not sent. <span id="my-email-policy-state" class="inline-state" role="status" aria-live="polite"></span></p>
+                  </div>
+                  <div class="af-form__field">
+                    <span class="af-form__label">Send limits <span id="my-email-limits-state" class="inline-state" role="status" aria-live="polite"></span></span>
+                    <div class="af-form__grid-2">
+                      <div class="af-form__field"><label class="af-form__label" for="my-email-per-hour">Per hour</label><input id="my-email-per-hour" type="number" min="0" inputmode="numeric"></div>
+                      <div class="af-form__field"><label class="af-form__label" for="my-email-per-day">Per day</label><input id="my-email-per-day" type="number" min="0" inputmode="numeric"></div>
+                    </div>
+                    <p id="my-email-usage" class="af-form__help"></p>
+                  </div>
+                  <div class="af-form__field">
+                    <label class="af-form__label" for="my-email-imap-folder">Folder</label>
+                    <div class="af-form__inline"><input id="my-email-imap-folder" autocomplete="off" spellcheck="false" aria-describedby="my-email-folder-help"><span id="my-email-folder-state" class="inline-state" role="status" aria-live="polite"></span></div>
+                    <p id="my-email-folder-help" class="af-form__help">The folder automations watch for new mail.</p>
+                  </div>
+                  <p><button id="my-email-notify-test" class="link-button" type="button">Send a test notification</button> <span id="my-email-notify-test-state" class="inline-state" role="status" aria-live="polite"></span></p>
+                </div>
+              </details>
+            </div>
 	            <section id="entities-list-section" class="session-only">
 	              <div class="section-head">
 	                <div>
@@ -2944,8 +2977,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        <p id="endpoint-base-url-help" class="field-help"></p>
 	        <p id="endpoint-api-key-help" class="field-help"></p>
 	        <div class="provider-toggle-row">
-	          <label class="af-gateway-signin__checkbox"><input id="endpoint-clear-api-key" type="checkbox"> Clear stored API key</label>
-	          <label class="af-gateway-signin__checkbox"><input id="endpoint-enabled" type="checkbox" checked> Enabled</label>
+	          <label class="check-row"><input id="endpoint-clear-api-key" type="checkbox"> Clear stored API key</label>
+	          <label class="check-row"><input id="endpoint-enabled" type="checkbox" checked> Enabled</label>
 	        </div>
 	        <div class="model-picker field-span-2">
 	          <details class="advanced-panel">
@@ -3077,22 +3110,43 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
   <div id="user-create-backdrop" class="modal-backdrop hidden" role="presentation">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="user-create-title">
       <h2 id="user-create-title">Create user</h2>
-      <div id="user-create-form">
-        <label>User id<input id="new-user" placeholder="e.g. alice" title="The principal id this person signs in as"></label>
-        <label>Role<select id="new-roles" title="What this user may do: user = run workflows on their own runtime; admin = full console + operator verbs; readonly = inspect only">
-          <option value="user" selected>user — run workflows on their own runtime</option>
-          <option value="admin">admin — full console and operator verbs</option>
-          <option value="readonly">readonly — inspect only</option>
-        </select></label>
-        <p id="new-roles-note" class="message hidden" role="status"></p>
-        <details class="entity-advanced"><summary>Advanced (defaults are right for almost everyone)</summary>
-          <label>Email<input id="new-email" type="email" placeholder="optional" title="Contact only — never used for auth"></label>
-          <label>Runtime binding<input id="new-runtime" placeholder="defaults to the user id" title="The data plane this user's runs and flows live in. Leave blank: each user gets their own, named after them. Entities are NOT bound here — they always carry their own runtime."></label>
-          <label>Tenant<input id="new-tenant" value="default" title="Multi-tenant isolation namespace. Single-tenant installs keep 'default'."></label>
+      <div id="user-create-form" class="af-form user-create-form">
+        <div class="af-form__field">
+          <label class="af-form__label" for="new-user">User ID</label>
+          <input id="new-user" autocomplete="off" spellcheck="false" aria-describedby="new-user-help">
+          <p id="new-user-help" class="af-form__help">Letters, digits, dots or dashes. This is how they sign in.</p>
+        </div>
+        <div class="af-form__field">
+          <label class="af-form__label" for="new-roles">Role</label>
+          <select id="new-roles">
+            <option value="user" selected>User — runs workflows on their own runtime</option>
+            <option value="admin">Admin — manages this gateway</option>
+            <option value="readonly">Read-only — can look, cannot change anything</option>
+          </select>
+          <p id="new-roles-note" class="af-form__help hidden" role="status"></p>
+        </div>
+        <div class="af-form__field">
+          <label class="af-form__label" for="new-email">Email address</label>
+          <input id="new-email" type="email" autocomplete="off" spellcheck="false" aria-describedby="new-email-help">
+          <p id="new-email-help" class="af-form__help">Where sign-in codes and notifications go. Leave empty if they have none; they can add it later.</p>
+        </div>
+        <details class="plain-disclosure"><summary>Advanced</summary>
+          <div class="af-form">
+            <div class="af-form__field">
+              <label class="af-form__label" for="new-runtime">Runtime</label>
+              <input id="new-runtime" autocomplete="off" spellcheck="false" aria-describedby="new-runtime-help">
+              <p id="new-runtime-help" class="af-form__help">The data plane their runs, flows and sessions live in. Empty = their own, named after them.</p>
+            </div>
+            <div class="af-form__field">
+              <label class="af-form__label" for="new-tenant">Tenant</label>
+              <input id="new-tenant" value="default" autocomplete="off" spellcheck="false" aria-describedby="new-tenant-help">
+              <p id="new-tenant-help" class="af-form__help">Leave &#39;default&#39; unless you run several tenants.</p>
+            </div>
+          </div>
         </details>
         <div class="modal-actions">
-          <button id="create-user-cancel" class="secondary">Cancel</button>
-          <button id="create-user" title="Create the user and issue its bearer token (shown once)"><span class="button-icon" aria-hidden="true">＋</span><span>Create user</span></button>
+          <button id="create-user-cancel" class="secondary" type="button">Cancel</button>
+          <button id="create-user" type="button">Create user</button>
         </div>
       </div>
       <div id="user-create-done" class="hidden">
@@ -6227,322 +6281,567 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        msg.className = "message error";
 	      }
 	    }
-	    // ------------------------------------------------------------ My email
-    // Framework backlog 0992: the signed-in user's OWN mailbox (/me/email*),
-    // notification preferences (/me/notifications). Same fields and words as
-    // AbstractCore's Email page and the terminal console's My email screen.
-    function mailboxCell(acc) {
-      if (!acc) return "—";
-      const tone = acc.state === "connected" ? "ok" : (acc.state === "not connected" ? "" : "off");
-      const who = acc.address ? `<div class="section-note">${esc(acc.address)}</div>` : "";
-      const tools = `<div class="section-note">agent tools ${acc.agent_tools_available ? "available" : "not available"}</div>`;
-      return `<span class="state-pill ${tone}">${esc(acc.state || "—")}</span>${who}${tools}`;
+    // ------------------------------------------------------------ Switches
+    // The kit's af-switch markup (CONTRACT §2, DESIGN §2): role=switch,
+    // aria-checked; unavailable = aria-disabled + a visible reason (never the
+    // `disabled` attribute: the reason must stay reachable from the keyboard);
+    // busy while saving; a failure reverts and the caller shows the error.
+    function afSwitchCreate({ id, label, description = "", ariaLabel = "", checked = false, small = false, unavailableReason = "" }) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.id = id;
+      button.setAttribute("role", "switch");
+      button.className = small ? "af-switch af-switch--sm" : "af-switch af-switch--row";
+      if (ariaLabel) button.setAttribute("aria-label", ariaLabel);
+      button.innerHTML = `<span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">${esc(label)}</span>${description ? `<span class="af-switch__desc">${esc(description)}</span>` : ""}</span>`;
+      const reason = document.createElement("span");
+      reason.id = `${id}-reason`;
+      reason.className = "af-switch__reason";
+      reason.hidden = true;
+      afSwitchSet(button, { checked, reason: unavailableReason }, reason);
+      return { button, reason, nodes: [button, reason] };
     }
-    async function setUserAgentToolsAvailable(u, available) {
-      const msg = $("users-message");
-      try {
-        await api(`/api/gateway/admin/users/${encodeURIComponent(u.user_id)}/email?tenant_id=${encodeURIComponent(u.tenant_id || "default")}`, { method: "PUT", body: JSON.stringify({ agent_tools: available }) });
-        msg.textContent = available ? `Agent email tools are available to ${u.user_id} (they switch them on in My email).` : `Agent email tools are no longer available to ${u.user_id}.`;
-        msg.className = "message ok";
-        await refresh();
-      } catch (e) {
-        msg.textContent = emailErrorText(e);
-        msg.className = "message error";
+    function afSwitchReasonEl(button) {
+      return button.__afReason || (button.id ? $(`${button.id}-reason`) : null);
+    }
+    function afSwitchSet(button, { checked, busy = false, reason } = {}, reasonEl = null) {
+      if (!button) return;
+      if (reasonEl) button.__afReason = reasonEl;
+      if (typeof checked === "boolean") button.setAttribute("aria-checked", checked ? "true" : "false");
+      if (busy) button.setAttribute("aria-busy", "true"); else button.removeAttribute("aria-busy");
+      if (reason === undefined) return;
+      const r = afSwitchReasonEl(button);
+      const describedBase = String(button.getAttribute("aria-describedby") || "").split(/\s+/).filter((x) => x && !x.endsWith("-reason"));
+      if (reason) {
+        button.setAttribute("aria-disabled", "true");
+        button.title = reason;
+        if (r) { r.textContent = reason; r.hidden = false; describedBase.push(r.id); }
+      } else {
+        button.removeAttribute("aria-disabled");
+        button.removeAttribute("title");
+        if (r) { r.textContent = ""; r.hidden = true; }
+      }
+      if (describedBase.length) button.setAttribute("aria-describedby", describedBase.join(" ")); else button.removeAttribute("aria-describedby");
+    }
+    function afSwitchChecked(button) { return button && button.getAttribute("aria-checked") === "true"; }
+    // onChange(next) applies the change: return false when it did not apply
+    // (an inline confirmation is pending), throw on failure (reverted).
+    function afSwitchBind(button, onChange, onError) {
+      if (!button) return;
+      button.onclick = async () => {
+        if (button.getAttribute("aria-disabled") === "true" || button.getAttribute("aria-busy") === "true") return;
+        const was = afSwitchChecked(button);
+        const next = !was;
+        afSwitchSet(button, { checked: next, busy: true });
+        let applied = true;
+        try {
+          applied = (await onChange(next)) !== false;
+        } catch (e) {
+          applied = false;
+          if (onError) onError(e);
+        } finally {
+          afSwitchSet(button, { busy: false });
+        }
+        if (!applied && button.getAttribute("aria-busy") !== "true") afSwitchSet(button, { checked: was });
+      };
+    }
+    function inlineState(id, text, tone = "ok", holdMs = 2000) {
+      const el = $(id);
+      if (!el) return;
+      el.textContent = text || "";
+      el.className = `inline-state${tone ? ` ${tone}` : ""}`;
+      if (el.__t) clearTimeout(el.__t);
+      if (text && tone === "ok" && holdMs > 0 && typeof setTimeout === "function") el.__t = setTimeout(() => { el.textContent = ""; }, holdMs);
+    }
+    // ------------------------------------------------------------ My email
+    // Framework backlog 0992 + DESIGN §5/§6: the admin's "Mailboxes for users"
+    // switch, and the signed-in user's own email address and mailbox.
+    function emailErrorText(e) {
+      const d = e && e.detail;
+      if (d && typeof d === "object") {
+        if (d.message) return String(d.message);
+        if (d.cause) return d.fix ? `${d.cause} ${d.fix}` : String(d.cause);
+      }
+      return String((e && e.message) || e);
+    }
+    const EMAIL_CAP_TEXT = {
+      email: ["Mailboxes are on for all users.", "Mailboxes are off for all users."],
+      email_agent_tools: ["Agent email tools are available to users.", "Agent email tools are off for all users."],
+      email_recovery: ["Sign-in by email is on.", "Sign-in by email is off."],
+    };
+    const EMAIL_CAP_IDS = { email: "email-cap-email", email_agent_tools: "email-cap-agent-tools", email_recovery: "email-cap-recovery" };
+    function renderEmailCaps(out) {
+      const by = {};
+      for (const c of (out && out.capabilities) || []) by[c.id] = c;
+      for (const [cap, id] of Object.entries(EMAIL_CAP_IDS)) {
+        afSwitchSet($(id), { checked: Boolean(by[cap] && by[cap].default) });
       }
     }
     async function loadEmailCaps() {
-      const msg = $("email-caps-message");
       try {
-        const out = await api("/api/gateway/admin/email/capabilities");
-        const by = {};
-        for (const c of out.capabilities || []) by[c.id] = c;
-        $("email-cap-email").checked = Boolean(by.email && by.email.default);
-        $("email-cap-agent-tools").checked = Boolean(by.email_agent_tools && by.email_agent_tools.default);
-        $("email-cap-recovery").checked = Boolean(by.email_recovery && by.email_recovery.default);
-        msg.textContent = "";
+        renderEmailCaps(await api("/api/gateway/admin/email/capabilities"));
       } catch (e) {
-        msg.textContent = emailErrorText(e);
-        msg.className = "message error";
+        inlineState("email-caps-message", emailErrorText(e), "error");
       }
     }
-    async function saveEmailCaps() {
-      const msg = $("email-caps-message");
-      try {
-        await api("/api/gateway/admin/email/capabilities", { method: "PUT", body: JSON.stringify({
-          email: Boolean($("email-cap-email").checked),
-          email_agent_tools: Boolean($("email-cap-agent-tools").checked),
-          email_recovery: Boolean($("email-cap-recovery").checked),
-        }) });
-        msg.textContent = "Email defaults saved.";
-        msg.className = "message ok";
-        await refresh();
-      } catch (e) {
-        msg.textContent = emailErrorText(e);
-        msg.className = "message error";
+    function bindEmailCaps() {
+      for (const [cap, id] of Object.entries(EMAIL_CAP_IDS)) {
+        afSwitchBind($(id), async (next) => {
+          const out = await api("/api/gateway/admin/email/capabilities", { method: "PUT", body: JSON.stringify({ [cap]: next }) });
+          renderEmailCaps(out);
+          inlineState("email-caps-message", EMAIL_CAP_TEXT[cap][next ? 0 : 1], "ok", 4000);
+          if (cap !== "email_recovery") refreshUsersOnly();
+        }, (e) => inlineState("email-caps-message", emailErrorText(e), "error"));
       }
     }
-    async function setUserEmailEnabled(u, enabled) {
-      const msg = $("users-message");
+    async function refreshUsersOnly() {
       try {
-        await api(`/api/gateway/admin/users/${encodeURIComponent(u.user_id)}/email?tenant_id=${encodeURIComponent(u.tenant_id || "default")}`, { method: "PUT", body: JSON.stringify({ enabled }) });
-        msg.textContent = enabled ? `Email turned on for ${u.user_id}.` : `Email turned off for ${u.user_id}: no watcher, no sending, no notifications (settings kept).`;
-        msg.className = "message ok";
-        await refresh();
-      } catch (e) {
-        msg.textContent = emailErrorText(e);
-        msg.className = "message error";
-      }
-    }
-    function emailErrorText(e) {
-      const d = e && e.detail;
-      if (d && typeof d === "object" && d.cause) return d.fix ? `${d.cause} Fix: ${d.fix}` : String(d.cause);
-      return String((e && e.message) || e);
+        const out = await api("/api/gateway/admin/users");
+        state.users = out.users || [];
+        renderUsers(state.users);
+      } catch {}
     }
     function myEmailMessage(text, tone) {
-      const m = $("my-email-message");
-      m.textContent = text || "";
-      m.className = tone ? `message ${tone}` : "message";
+      inlineState("my-email-message", text, tone || "", tone === "ok" ? 4000 : 0);
     }
     function myEmailSet(id, v) { $(id).value = v === null || v === undefined ? "" : String(v); }
     function myEmailVal(id) { return String($(id).value || "").trim(); }
     function myEmailNum(id) { const v = myEmailVal(id); return v === "" ? null : Number(v); }
-    function emailLegText(leg) {
-      if (!leg || leg.ok === undefined) return "-";
-      if (leg.ok === null) return "not configured";
-      return leg.ok ? "ok" : `failed: ${leg.cause || leg.code}`;
+    function myEmailShow(id, text) { const el = $(id); if (!el) return; el.textContent = text || ""; el.hidden = !text; }
+    function emailAgo(iso) {
+      if (!iso) return "";
+      const t = Date.parse(iso);
+      if (!Number.isFinite(t)) return String(iso);
+      const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+      if (s < 60) return "just now";
+      if (s < 3600) return `${Math.round(s / 60)} min ago`;
+      if (s < 86400) return `${Math.round(s / 3600)} h ago`;
+      return `${Math.round(s / 86400)} d ago`;
+    }
+    function emailServersSummary(imap, smtp) {
+      const leg = (x) => `${x.host} · ${x.port} · ${String(x.security || "").toUpperCase() === "STARTTLS" ? "STARTTLS" : "SSL"}`;
+      return [imap && imap.host ? leg(imap) : "", smtp && smtp.host ? leg(smtp) : ""].filter(Boolean).join("  ·  ");
+    }
+    const myEmailUi = { tab: "", discovered: null, discoveredFor: "", oauth: null };
+    function myEmailSelectTab(tab, focus = false) {
+      myEmailUi.tab = tab;
+      for (const t of ["google", "microsoft", "other"]) {
+        const b = $(`my-email-tab-${t}`);
+        const on = t === tab;
+        b.setAttribute("aria-selected", on ? "true" : "false");
+        b.tabIndex = on ? 0 : -1;
+        if (on && focus) { try { b.focus(); } catch {} }
+      }
+      const oauth = tab !== "other";
+      $("my-email-pane-oauth").hidden = !oauth;
+      $("my-email-pane-other").hidden = oauth;
+      $("my-email-pane-oauth").setAttribute("aria-labelledby", `my-email-tab-${oauth ? tab : "google"}`);
+      for (const el of Array.from(document.querySelectorAll ? document.querySelectorAll(".email-ms-only") : [])) el.hidden = tab !== "microsoft";
+      if (oauth) myEmailRenderOAuthButton();
+    }
+    function myEmailRenderOAuthButton() {
+      const tab = myEmailUi.tab === "microsoft" ? "microsoft" : "google";
+      const btn = $("my-email-oauth-start");
+      btn.textContent = tab === "microsoft" ? "Sign in with Microsoft" : "Sign in with Google";
+      const d = state.myEmail || {};
+      const prov = (Array.isArray(d.oauth_providers) ? d.oauth_providers : []).find((p) => p && p.id === tab) || null;
+      const ownClient = Boolean(myEmailVal("my-email-oauth-client-id"));
+      const name = tab === "microsoft" ? "Microsoft" : "Google";
+      const reason = (prov && prov.available === false && !ownClient)
+        ? (prov.reason || `No ${name} sign-in client on this gateway: add one under Advanced, or ask your admin.`)
+        : "";
+      btn.disabled = Boolean(reason) || Boolean(myEmailUi.oauth);
+      myEmailShow("my-email-oauth-start-reason", reason);
+    }
+    function myEmailTabKeydown(event) {
+      const order = ["google", "microsoft", "other"];
+      const i = order.indexOf(myEmailUi.tab);
+      let n = null;
+      if (event.key === "ArrowRight" || event.key === "ArrowDown") n = order[(i + 1) % order.length];
+      else if (event.key === "ArrowLeft" || event.key === "ArrowUp") n = order[(i + order.length - 1) % order.length];
+      else if (event.key === "Home") n = order[0];
+      else if (event.key === "End") n = order[order.length - 1];
+      if (n) { event.preventDefault(); myEmailSelectTab(n, true); }
     }
     function renderMyEmail(d) {
       state.myEmail = d || null;
       d = d || {};
       const imap = d.imap || {};
       const smtp = d.smtp || {};
-      myEmailSet("my-email-address", d.address);
-      myEmailSet("my-email-display-name", d.display_name);
-      myEmailSet("my-email-username", d.username && d.username !== d.address ? d.username : "");
-      myEmailSet("my-email-password", "");
-      myEmailSet("my-email-imap-host", imap.host);
-      myEmailSet("my-email-imap-port", imap.port);
-      $("my-email-imap-security").value = imap.security || "ssl";
-      myEmailSet("my-email-imap-folder", imap.folder || "");
-      myEmailSet("my-email-smtp-host", smtp.host);
-      myEmailSet("my-email-smtp-port", smtp.port);
-      $("my-email-smtp-security").value = smtp.security || "ssl";
+      // 1. Email address (the registered address, not the mailbox).
+      if (document.activeElement !== $("my-email-registered")) myEmailSet("my-email-registered", d.registered_address || "");
+      myEmailShow("my-email-registered-error", "");
+      // 2. Mailbox: connected status, or the tabs.
+      const connected = Boolean(d.configured);
+      const mailboxesOff = d.email_available === false;
+      myEmailShow("my-email-unavailable", mailboxesOff ? "Your admin turned mailboxes off. Your settings are kept." : "");
+      $("my-email-connected").hidden = !connected;
+      $("my-email-connect").hidden = connected || mailboxesOff;
+      $("my-email-disconnect-confirm").hidden = true;
+      const st = d.status || {};
+      if (connected) {
+        const how = d.auth_kind === "oauth2" || d.oauth ? ((d.oauth && d.oauth.provider) === "microsoft" ? "Microsoft" : ((d.oauth && d.oauth.provider) === "google" ? "Google" : "sign-in")) : "password";
+        const checked = st.last_ok ? `checked ${emailAgo(st.last_ok)}` : (st.last_test ? `last check ${emailAgo(st.last_test)}` : "not checked yet");
+        const paused = d.enabled === false ? " · not in use (Advanced → Use this mailbox)" : "";
+        $("my-email-status").textContent = `Connected as ${d.address} · ${how} · ${checked}${paused}`;
+        const err = st.last_error;
+        myEmailShow("my-email-status-error", err ? `${err.cause || err.code}${err.fix ? ` ${err.fix}` : ""}` : "");
+      } else {
+        const want = d.registered_address || "";
+        if (!myEmailVal("my-email-address")) myEmailSet("my-email-address", want);
+        if (!myEmailVal("my-email-oauth-address")) myEmailSet("my-email-oauth-address", want);
+        if (!myEmailUi.tab) {
+          // Default tab: the provider the address belongs to, else Google.
+          const dom = String(want.split("@")[1] || "").toLowerCase();
+          myEmailUi.tab = /^(gmail|googlemail)\.com$/.test(dom) ? "google" : /^(outlook|hotmail|live|msn)\.[a-z.]+$/.test(dom) ? "microsoft" : (want ? "other" : "google");
+        }
+        myEmailSelectTab(myEmailUi.tab);
+        if (myEmailUi.tab === "other" && myEmailVal("my-email-address") && myEmailUi.discoveredFor !== myEmailVal("my-email-address")) myEmailDiscover();
+      }
+      // 3. Notifications.
+      const n = d.notifications || {};
+      const nReason = d.notifications_unavailable_reason || "";
+      afSwitchSet($("my-email-notify-job-failed"), { checked: n.job_failed !== false, reason: nReason });
+      afSwitchSet($("my-email-notify-approval"), { checked: n.approval_needed !== false, reason: nReason });
+      // 4. Agent email tools.
+      const at = d.agent_tools || {};
+      afSwitchSet($("my-email-agent-tools"), { checked: Boolean(at.on), reason: at.available === false ? (at.unavailable_reason || "Connect a mailbox first.") : "" });
+      // 5. Advanced.
+      afSwitchSet($("my-email-enabled"), { checked: d.enabled !== false, reason: connected ? "" : "Connect a mailbox first." });
       const pol = d.policy || { mode: "allowlist", entries: [] };
       $("my-email-policy-mode").value = pol.mode || "allowlist";
-      $("my-email-policy-entries").value = (pol.entries || []).join(String.fromCharCode(10));
+      renderMyEmailPolicyList(pol.entries || []);
       const lim = d.limits || {};
-      myEmailSet("my-email-per-hour", lim.per_hour);
-      myEmailSet("my-email-per-day", lim.per_day);
-      $("my-email-usage").textContent = lim.per_hour !== undefined ? `${lim.used_last_hour} sent in the last hour, ${lim.used_last_day} in the last day` : "";
-      $("my-email-toggle").textContent = d.enabled === false ? "Turn on" : "Turn off";
-      let label = "not connected";
-      if (d.configured && d.admin_enabled === false) label = "turned off by an administrator";
-      else if (d.configured && d.enabled === false) label = "off";
-      else if (d.configured && d.status && d.status.last_error) label = "needs action";
-      else if (d.configured) label = "connected";
-      $("my-email-summary").textContent = d.configured ? `${label} · ${d.address}` : label;
-      const st = d.status || {};
-      const legs = st.legs || {};
-      const w = d.watcher || {};
-      const rows = [
-        ["State", label],
-        ["Address", d.address || "not connected"],
-        ["Sign-in", d.auth_kind || "-"],
-        ["IMAP (read)", d.imap ? `${imap.host}:${imap.port} ${imap.security}` : "not configured"],
-        ["SMTP (send)", d.smtp ? `${smtp.host}:${smtp.port} ${smtp.security}` : "not configured"],
-        ["Last test", st.last_test || "never"],
-        ["IMAP test", emailLegText(legs.imap)],
-        ["SMTP test", emailLegText(legs.smtp)],
-        ["Watcher", `${w.state || "idle"}${w.last_poll ? ` · last check ${w.last_poll}` : ""}`],
-        ["Credentials", d.secret_storage === "os-keychain" ? "encrypted, key in the OS keychain" : d.secret_storage === "key-file" ? "encrypted, key in a 0600 file" : "none stored"],
-      ];
-      const lines = rows.map(([k, v]) => `<div><strong>${esc(k)}:</strong> ${esc(v)}</div>`);
-      if (d.store && d.store.label) lines.unshift(`<div class="section-note">${esc(d.store.label)}</div>`);
-      if (st.last_error) lines.push(`<div class="message error">${esc(st.last_error.cause || st.last_error.code)} Fix: ${esc(st.last_error.fix || "")}</div>`);
-      if (d.admin_disabled) lines.push(`<div class="message error">${esc(d.admin_disabled.cause)} ${esc(d.admin_disabled.fix)}</div>`);
-      $("my-email-status").innerHTML = lines.join("");
+      if (document.activeElement !== $("my-email-per-hour")) myEmailSet("my-email-per-hour", lim.per_hour);
+      if (document.activeElement !== $("my-email-per-day")) myEmailSet("my-email-per-day", lim.per_day);
+      $("my-email-usage").textContent = lim.per_hour !== undefined ? `${lim.used_last_hour || 0} sent in the last hour, ${lim.used_last_day || 0} in the last day.` : "";
+      if (document.activeElement !== $("my-email-imap-folder")) myEmailSet("my-email-imap-folder", imap.folder || (connected ? "INBOX" : ""));
+      $("my-email-imap-folder").disabled = !connected;
       const notices = (Array.isArray(d.notices) ? d.notices : []).concat(d.secret_warning ? [d.secret_warning] : []);
-      $("my-email-notices").textContent = notices.join(" ");
-      $("my-email-disconnect-confirm").classList.add("hidden");
-      const at = d.agent_tools || { enabled: false, active: false, reason: "" };
-      $("my-email-agent-tools").checked = Boolean(at.enabled);
-      $("my-email-agent-tools").disabled = at.available === false && !at.enabled;
-      $("my-email-agent-tools-save").disabled = at.available === false && !at.enabled;
-      $("my-email-agent-tools-state").textContent = at.active
-        ? "On: your agents and workflows have the email tools (every send still passes your recipient policy, your limits and the approval gate)."
-        : `Off${at.reason ? ` — ${at.reason}` : ""}. The tools appear in your agents' toolsets only when your account is connected, allowed by an administrator and this is on.`;
-    }
-    async function saveMyEmailAgentTools() {
-      const enabled = Boolean($("my-email-agent-tools").checked);
-      await myEmailRun("Agent email tools", () => api("/api/gateway/me/email/agent-tools", { method: "PUT", body: JSON.stringify({ enabled }), slow: true }), enabled ? "Agent email tools saved (on)." : "Agent email tools saved (off).");
-    }
-    function renderMyNotifications(n) {
-      state.myNotifications = n || null;
-      n = n || {};
-      const box = $("my-email-notify-events");
-      box.textContent = "";
-      for (const ev of n.events || []) {
-        const label = document.createElement("label");
-        label.className = "af-gateway-signin__checkbox";
-        const input = document.createElement("input");
-        input.type = "checkbox";
-        input.checked = Boolean(ev.email);
-        input.setAttribute("data-event", ev.id);
-        input.id = `my-email-notify-${ev.id}`;
-        label.append(input, document.createTextNode(` ${ev.label}`));
-        box.append(label);
+      myEmailShow("my-email-notices", notices.join(" "));
+      if (!connected) {
+        // Prefill Server settings from a stored (disconnected) configuration.
+        if (imap.host && !myEmailVal("my-email-imap-host")) { myEmailSet("my-email-imap-host", imap.host); myEmailSet("my-email-imap-port", imap.port); $("my-email-imap-security").value = imap.security || "ssl"; }
+        if (smtp.host && !myEmailVal("my-email-smtp-host")) { myEmailSet("my-email-smtp-host", smtp.host); myEmailSet("my-email-smtp-port", smtp.port); $("my-email-smtp-security").value = smtp.security || "ssl"; }
       }
-      const ch = (n.channels && n.channels.email) || {};
-      $("my-email-notify-note").textContent = ch.available
-        ? `Notifications are emailed to ${ch.to}, sent by your own account (your recipient policy and send limits apply). Automations email a result only when set to “email me the result”.`
-        : (n.unavailable_reason || "Email notifications need a connected, turned-on email account.");
-      const ob = n.outbox || {};
-      const fail = ob.last_failure ? ` Last failure: ${ob.last_failure.cause} Fix: ${ob.last_failure.fix}` : "";
-      $("my-email-outbox").textContent = `${ob.sent || 0} sent, ${ob.queued || 0} waiting, ${ob.failed || 0} failed.${fail}`;
+    }
+    function renderMyEmailPolicyList(entries) {
+      const ul = $("my-email-policy-list");
+      ul.textContent = "";
+      for (const entry of entries) {
+        const li = document.createElement("li");
+        li.className = "chip";
+        const t = document.createElement("span");
+        t.textContent = entry;
+        const x = document.createElement("button");
+        x.type = "button";
+        x.className = "chip__remove";
+        x.textContent = "×";
+        x.setAttribute("aria-label", `Remove ${entry}`);
+        x.onclick = () => saveMyEmailPolicy(entries.filter((e) => e !== entry), `${entry} removed.`);
+        li.append(t, x);
+        ul.append(li);
+      }
+      if (!entries.length) {
+        const li = document.createElement("li");
+        li.className = "chip-list__empty";
+        li.textContent = $("my-email-policy-mode").value === "denylist" ? "No refused recipients." : "No allowed recipients yet: sends are refused until you add one.";
+        ul.append(li);
+      }
     }
     async function loadMyEmail() {
-      myEmailMessage("Loading…");
       try {
         renderMyEmail(await api("/api/gateway/me/email"));
-        renderMyNotifications(await api("/api/gateway/me/notifications"));
         myEmailMessage("");
       } catch (e) {
         myEmailMessage(emailErrorText(e), "error");
       }
     }
-    async function myEmailRun(label, fn, okText) {
-      myEmailMessage(`${label}…`);
+    async function saveMyEmailAddress() {
+      const btn = $("my-email-registered-save");
+      const address = myEmailVal("my-email-registered");
+      btn.disabled = true;
+      btn.setAttribute("aria-busy", "true");
+      myEmailShow("my-email-registered-error", "");
       try {
-        const out = await fn();
-        if (out && out.schema === "email_settings_v1") renderMyEmail({ ...out, notices: (state.myEmail && state.myEmail.notices) || [] });
-        if (okText) myEmailMessage(typeof okText === "function" ? okText(out) : okText, "ok");
-        else myEmailMessage("");
-        return out;
+        const out = await api("/api/gateway/me/email/address", { method: "PUT", body: JSON.stringify({ address }) });
+        if (out && out.registered_address !== undefined) state.myEmail = { ...(state.myEmail || {}), registered_address: out.registered_address };
+        btn.textContent = "Saved";
+        if (typeof setTimeout === "function") setTimeout(() => { btn.textContent = "Save"; }, 2000);
+        if (!state.myEmail || !state.myEmail.configured) {
+          if (!myEmailVal("my-email-address")) myEmailSet("my-email-address", address);
+          if (!myEmailVal("my-email-oauth-address")) myEmailSet("my-email-oauth-address", address);
+        }
       } catch (e) {
-        myEmailMessage(`${label}: ${emailErrorText(e)}`, "error");
-        return null;
+        myEmailShow("my-email-registered-error", emailErrorText(e));
+      } finally {
+        btn.disabled = false;
+        btn.removeAttribute("aria-busy");
       }
     }
-    function myEmailServer(prefix, withFolder) {
-      const host = myEmailVal(`my-email-${prefix}-host`);
-      if (!host) return null;
-      const out = { host, port: myEmailNum(`my-email-${prefix}-port`), security: $(`my-email-${prefix}-security`).value };
-      if (withFolder) out.folder = myEmailVal("my-email-imap-folder") || "INBOX";
+    async function myEmailDiscover() {
+      const address = myEmailVal("my-email-address");
+      if (!address || !address.includes("@")) { $("my-email-servers-line").hidden = true; return null; }
+      if (myEmailUi.discoveredFor === address && myEmailUi.discovered) return myEmailUi.discovered;
+      myEmailUi.discoveredFor = address;
+      $("my-email-servers-looking").hidden = false;
+      let out = null;
+      try {
+        out = await api("/api/gateway/me/email/discover", { method: "POST", body: JSON.stringify({ address }), slow: true });
+      } catch (e) {
+        out = { found: false, error: emailErrorText(e) };
+      } finally {
+        $("my-email-servers-looking").hidden = true;
+      }
+      if (myEmailUi.discoveredFor !== address) return null; // a newer address was typed
+      myEmailUi.discovered = out;
+      const domain = String(address.split("@")[1] || address);
+      if (out && out.found && out.imap && out.smtp) {
+        $("my-email-servers-summary").textContent = emailServersSummary(out.imap, out.smtp);
+        $("my-email-servers-line").hidden = false;
+        myEmailShow("my-email-servers-reason", "");
+        myEmailSet("my-email-imap-host", out.imap.host); myEmailSet("my-email-imap-port", out.imap.port); $("my-email-imap-security").value = out.imap.security || "ssl";
+        myEmailSet("my-email-smtp-host", out.smtp.host); myEmailSet("my-email-smtp-port", out.smtp.port); $("my-email-smtp-security").value = out.smtp.security || "ssl";
+        if (out.username && out.username !== address) myEmailSet("my-email-username", out.username);
+        // A known Google/Microsoft domain: say which tab signs in without a password.
+        if (out.provider === "google" || out.provider === "microsoft") {
+          $("my-email-servers-summary").textContent += `  ·  ${out.provider === "google" ? "Google" : "Microsoft"} mailboxes can also use the ${out.provider === "google" ? "Google" : "Microsoft"} tab.`;
+        }
+      } else {
+        $("my-email-servers-line").hidden = true;
+        myEmailShow("my-email-servers-reason", out && out.error ? out.error : `Couldn't find the mail servers for ${domain}. Enter them here.`);
+        $("my-email-servers").open = true;
+      }
       return out;
     }
-    async function saveMyEmail() {
-      const body = {
-        address: myEmailVal("my-email-address"),
-        display_name: myEmailVal("my-email-display-name"),
-        username: myEmailVal("my-email-username"),
-        password: String($("my-email-password").value || ""),
-        imap: myEmailServer("imap", true),
-        smtp: myEmailServer("smtp", false),
-        test: true,
-      };
-      if (!body.password) { myEmailMessage("Give the password (or app password): it is never shown again once stored.", "error"); return; }
-      await myEmailRun("Save and test", () => api("/api/gateway/me/email", { method: "PUT", body: JSON.stringify(body), slow: true }), (out) => `Connected ${out.address} (connection test passed).`);
-      await loadMyEmail();
+    async function connectMyEmail() {
+      const btn = $("my-email-connect-go");
+      myEmailShow("my-email-connect-error", "");
+      const address = myEmailVal("my-email-address");
+      const password = String($("my-email-password").value || "");
+      if (!address) { myEmailShow("my-email-connect-error", "Enter the mailbox's email address."); return; }
+      if (!password) { myEmailShow("my-email-connect-error", "Enter the password (or an app password)."); return; }
+      const body = { address, password, username: myEmailVal("my-email-username"), display_name: myEmailVal("my-email-display-name"), test: true };
+      const host = (p) => myEmailVal(`my-email-${p}-host`);
+      if (host("imap") && host("smtp")) {
+        body.imap = { host: host("imap"), port: myEmailNum("my-email-imap-port"), security: $("my-email-imap-security").value };
+        body.smtp = { host: host("smtp"), port: myEmailNum("my-email-smtp-port"), security: $("my-email-smtp-security").value };
+      }
+      btn.disabled = true;
+      btn.setAttribute("aria-busy", "true");
+      btn.textContent = "Connecting…";
+      try {
+        const out = await api("/api/gateway/me/email", { method: "PUT", body: JSON.stringify(body), slow: true });
+        $("my-email-password").value = "";
+        await loadMyEmail();
+        myEmailMessage(`Mailbox connected as ${(out && out.address) || address}.`, "ok");
+      } catch (e) {
+        const d = e && e.detail;
+        myEmailShow("my-email-connect-error", emailErrorText(e));
+        if (d && d.reason_code === "email_discovery_failed") {
+          myEmailShow("my-email-servers-reason", `Couldn't find the mail servers for ${String(address.split("@")[1] || address)}. Enter them here.`);
+          $("my-email-servers").open = true;
+        }
+      } finally {
+        btn.disabled = false;
+        btn.removeAttribute("aria-busy");
+        btn.textContent = "Connect";
+      }
     }
     async function testMyEmail() {
-      const out = await myEmailRun("Test", () => api("/api/gateway/me/email/test", { method: "POST", slow: true }));
-      if (out) {
-        const failed = ["imap", "smtp"].map((k) => out[k]).filter((l) => l && l.ok === false);
-        myEmailMessage(failed.length ? `Test failed: ${failed[0].cause} Fix: ${failed[0].fix}` : "Test passed.", failed.length ? "error" : "ok");
+      const btn = $("my-email-test");
+      btn.disabled = true;
+      btn.setAttribute("aria-busy", "true");
+      btn.textContent = "Testing…";
+      try {
+        const out = await api("/api/gateway/me/email/test", { method: "POST", slow: true });
+        const failed = ["imap", "smtp"].map((k) => out && out[k]).filter((l) => l && l.ok === false);
         await loadMyEmail();
+        if (failed.length) myEmailShow("my-email-status-error", `${failed[0].cause}${failed[0].fix ? ` ${failed[0].fix}` : ""}`);
+        else myEmailMessage("The mailbox answered: reading and sending work.", "ok");
+      } catch (e) {
+        myEmailShow("my-email-status-error", emailErrorText(e));
+      } finally {
+        btn.disabled = false;
+        btn.removeAttribute("aria-busy");
+        btn.textContent = "Test";
       }
-    }
-    async function toggleMyEmail() {
-      const on = !(state.myEmail && state.myEmail.enabled === false);
-      await myEmailRun(on ? "Turn off" : "Turn on", () => api("/api/gateway/me/email/enabled", { method: "PUT", body: JSON.stringify({ enabled: !on }) }), on ? "Email is off: no watcher, no sending, no notifications." : "Email is on.");
     }
     async function disconnectMyEmail() {
-      await myEmailRun("Disconnect", () => api("/api/gateway/me/email", { method: "DELETE" }), "Disconnected: the stored password or tokens are deleted.");
-      await loadMyEmail();
-    }
-    async function saveMyEmailPolicy() {
-      const entries = String($("my-email-policy-entries").value || "").split(String.fromCharCode(10)).map((x) => x.trim()).filter(Boolean);
-      await myEmailRun("Save policy", () => api("/api/gateway/me/email/policy", { method: "PUT", body: JSON.stringify({ mode: $("my-email-policy-mode").value, entries }) }), "Policy saved.");
-    }
-    async function checkMyEmailPolicy() {
-      const who = myEmailVal("my-email-policy-check");
-      if (!who) return;
+      const btn = $("my-email-disconnect-now");
+      btn.disabled = true;
       try {
-        const out = await api("/api/gateway/me/email/policy/check", { method: "POST", body: JSON.stringify({ addresses: [who] }) });
-        const v = (out.recipients || [])[0] || {};
-        $("my-email-policy-check-result").textContent = v.allowed ? `${who}: allowed` : `${who}: refused (${v.reason || v.rule || "policy"})`;
+        await api("/api/gateway/me/email", { method: "DELETE" });
+        myEmailUi.tab = ""; myEmailUi.discovered = null; myEmailUi.discoveredFor = "";
+        await loadMyEmail();
+        myEmailMessage("Mailbox disconnected. Your policy and limits are kept.", "ok");
       } catch (e) {
-        $("my-email-policy-check-result").textContent = emailErrorText(e);
+        myEmailShow("my-email-status-error", emailErrorText(e));
+      } finally {
+        btn.disabled = false;
       }
+    }
+    async function saveMyEmailPolicy(entries, okText) {
+      try {
+        const out = await api("/api/gateway/me/email/policy", { method: "PUT", body: JSON.stringify({ mode: $("my-email-policy-mode").value, entries }) });
+        const pol = (out && out.policy) || { mode: $("my-email-policy-mode").value, entries };
+        state.myEmail = { ...(state.myEmail || {}), policy: pol };
+        renderMyEmailPolicyList(pol.entries || entries);
+        inlineState("my-email-policy-state", okText || "Saved", "ok");
+        return true;
+      } catch (e) {
+        inlineState("my-email-policy-state", emailErrorText(e), "error");
+        return false;
+      }
+    }
+    async function addMyEmailPolicyEntry() {
+      const v = myEmailVal("my-email-policy-add");
+      if (!v) return;
+      const cur = ((state.myEmail && state.myEmail.policy && state.myEmail.policy.entries) || []).slice();
+      if (!cur.includes(v)) cur.push(v);
+      if (await saveMyEmailPolicy(cur, `${v} added.`)) $("my-email-policy-add").value = "";
     }
     async function saveMyEmailLimits() {
-      await myEmailRun("Save limits", () => api("/api/gateway/me/email/limits", { method: "PUT", body: JSON.stringify({ per_hour: myEmailNum("my-email-per-hour"), per_day: myEmailNum("my-email-per-day") }) }), "Limits saved.");
-    }
-    async function saveMyNotifications() {
-      const email = {};
-      for (const ev of (state.myNotifications && state.myNotifications.events) || []) {
-        email[ev.id] = Boolean($(`my-email-notify-${ev.id}`).checked);
+      try {
+        const out = await api("/api/gateway/me/email/limits", { method: "PUT", body: JSON.stringify({ per_hour: myEmailNum("my-email-per-hour"), per_day: myEmailNum("my-email-per-day") }) });
+        if (out && out.limits) {
+          const lim = out.limits;
+          $("my-email-usage").textContent = `${lim.used_last_hour || 0} sent in the last hour, ${lim.used_last_day || 0} in the last day.`;
+        }
+        inlineState("my-email-limits-state", "Saved", "ok");
+      } catch (e) {
+        inlineState("my-email-limits-state", emailErrorText(e), "error");
       }
-      const out = await myEmailRun("Save notifications", () => api("/api/gateway/me/notifications", { method: "PUT", body: JSON.stringify({ email }) }), "Notifications saved.");
-      if (out) renderMyNotifications(out);
+    }
+    async function saveMyEmailFolder() {
+      const folder = myEmailVal("my-email-imap-folder");
+      try {
+        await api("/api/gateway/me/email/folder", { method: "PUT", body: JSON.stringify({ folder }) });
+        inlineState("my-email-folder-state", "Saved", "ok");
+      } catch (e) {
+        inlineState("my-email-folder-state", emailErrorText(e), "error");
+      }
     }
     async function testMyNotifications() {
-      const out = await myEmailRun("Send test notification", () => api("/api/gateway/me/notifications/test", { method: "POST", slow: true }));
-      if (out) {
-        myEmailMessage(out.ok ? "Test notification sent." : `Not sent: ${(out.error && out.error.cause) || out.state} ${(out.error && out.error.fix) ? `Fix: ${out.error.fix}` : ""}`, out.ok ? "ok" : "error");
-        try { renderMyNotifications(await api("/api/gateway/me/notifications")); } catch {}
+      const btn = $("my-email-notify-test");
+      btn.disabled = true;
+      inlineState("my-email-notify-test-state", "Sending…", "");
+      try {
+        const out = await api("/api/gateway/me/notifications/test", { method: "POST", slow: true });
+        inlineState("my-email-notify-test-state", out && out.ok ? "Sent." : `Not sent: ${(out && out.error && out.error.cause) || (out && out.state) || "unknown"}`, out && out.ok ? "ok" : "error", 4000);
+      } catch (e) {
+        inlineState("my-email-notify-test-state", emailErrorText(e), "error");
+      } finally {
+        btn.disabled = false;
       }
     }
-    let myEmailOAuthFlow = null;
+    function bindMyEmailSwitches() {
+      const onErr = (e) => myEmailMessage(emailErrorText(e), "error");
+      const notify = (key, label) => async (next) => {
+        const out = await api("/api/gateway/me/email/notifications", { method: "PUT", body: JSON.stringify({ [key]: next }) });
+        if (out && out.schema) renderMyEmail({ ...out, notices: (state.myEmail && state.myEmail.notices) || [] });
+        myEmailMessage(`${label} emails are ${next ? "on" : "off"}.`, "ok");
+      };
+      afSwitchBind($("my-email-notify-job-failed"), notify("job_failed", "“Job failed”"), onErr);
+      afSwitchBind($("my-email-notify-approval"), notify("approval_needed", "“Approval needed”"), onErr);
+      afSwitchBind($("my-email-agent-tools"), async (next) => {
+        await api("/api/gateway/me/email/agent-tools", { method: "PUT", body: JSON.stringify({ enabled: next }) });
+        await loadMyEmail();
+        myEmailMessage(next ? "Agent email tools are on." : "Agent email tools are off.", "ok");
+      }, onErr);
+      afSwitchBind($("my-email-enabled"), async (next) => {
+        await api("/api/gateway/me/email/enabled", { method: "PUT", body: JSON.stringify({ enabled: next }) });
+        await loadMyEmail();
+        myEmailMessage(next ? "This mailbox is in use." : "This mailbox is not in use: no watching, sending or notifications. Settings are kept.", "ok");
+      }, onErr);
+    }
     async function startMyEmailOAuth() {
+      const provider = myEmailUi.tab === "microsoft" ? "microsoft" : "google";
       const body = {
-        provider: $("my-email-oauth-provider").value,
+        provider,
         address: myEmailVal("my-email-oauth-address"),
         client_id: myEmailVal("my-email-oauth-client-id"),
         client_secret: String($("my-email-oauth-client-secret").value || ""),
-        tenant: myEmailVal("my-email-oauth-tenant"),
-        flow: $("my-email-oauth-flow").value,
+        tenant: provider === "microsoft" ? myEmailVal("my-email-oauth-tenant") : "",
+        flow: provider === "microsoft" ? $("my-email-oauth-flow").value : "",
       };
       const prompt = $("my-email-oauth-prompt");
+      const start = $("my-email-oauth-start");
+      start.disabled = true;
+      start.setAttribute("aria-busy", "true");
       let out;
       try {
         out = await api("/api/gateway/me/email/oauth/start", { method: "POST", body: JSON.stringify(body), slow: true });
       } catch (e) {
-        prompt.textContent = `Start sign-in: ${emailErrorText(e)}`;
-        prompt.className = "message error";
+        start.removeAttribute("aria-busy");
+        myEmailRenderOAuthButton();
+        prompt.textContent = emailErrorText(e);
+        prompt.className = "inline-state error";
         return;
       }
       const flow = { id: out.flow_id, cancelled: false };
-      myEmailOAuthFlow = flow;
-      $("my-email-oauth-cancel").classList.remove("hidden");
-      prompt.className = "message";
+      myEmailUi.oauth = flow;
+      $("my-email-oauth-cancel").hidden = false;
+      prompt.className = "inline-state";
       prompt.textContent = out.flow === "device"
-        ? `Open ${out.verification_uri} in any browser and enter the code ${out.user_code}. Waiting for the approval…`
+        ? `Open ${out.verification_uri} in any browser and enter the code ${out.user_code}. Waiting for you to approve…`
         : `Open this link in a browser on the gateway's computer: ${out.authorization_url} — waiting for the sign-in…`;
       while (!flow.cancelled) {
         let res;
         try {
           res = await api("/api/gateway/me/email/oauth/finish", { method: "POST", body: JSON.stringify({ flow_id: flow.id, wait_s: 20 }), timeoutMs: 70000 });
         } catch (e) {
-          if (!flow.cancelled) { prompt.textContent = `Sign-in: ${emailErrorText(e)}`; prompt.className = "message error"; }
+          if (!flow.cancelled) { prompt.textContent = emailErrorText(e); prompt.className = "inline-state error"; }
           break;
         }
         if (res && res.pending) continue;
-        prompt.textContent = `Signed in: ${res.address} (connection test passed).`;
-        prompt.className = "message ok";
-        renderMyEmail(res);
+        prompt.textContent = "";
+        await loadMyEmail();
+        myEmailMessage(`Mailbox connected as ${res.address}.`, "ok");
         break;
       }
-      if (myEmailOAuthFlow === flow) myEmailOAuthFlow = null;
-      $("my-email-oauth-cancel").classList.add("hidden");
+      if (myEmailUi.oauth === flow) myEmailUi.oauth = null;
+      start.removeAttribute("aria-busy");
+      $("my-email-oauth-cancel").hidden = true;
+      myEmailRenderOAuthButton();
     }
     async function cancelMyEmailOAuth() {
-      const flow = myEmailOAuthFlow;
+      const flow = myEmailUi.oauth;
       if (!flow) return;
       flow.cancelled = true;
       try { await api("/api/gateway/me/email/oauth/cancel", { method: "POST", body: JSON.stringify({ flow_id: flow.id }) }); } catch {}
       $("my-email-oauth-prompt").textContent = "Sign-in cancelled.";
-      $("my-email-oauth-cancel").classList.add("hidden");
+      $("my-email-oauth-cancel").hidden = true;
+      myEmailUi.oauth = null;
+      myEmailRenderOAuthButton();
+    }
+    function bindMyEmail() {
+      $("my-email-refresh").onclick = loadMyEmail;
+      $("my-email-registered-save").onclick = saveMyEmailAddress;
+      $("my-email-registered").onkeydown = (event) => { if (event && event.key === "Enter") saveMyEmailAddress(); };
+      for (const t of ["google", "microsoft", "other"]) {
+        $(`my-email-tab-${t}`).onclick = () => { myEmailSelectTab(t); if (t === "other") myEmailDiscover(); };
+        $(`my-email-tab-${t}`).onkeydown = myEmailTabKeydown;
+      }
+      $("my-email-address").onchange = () => { myEmailUi.discovered = null; myEmailDiscover(); };
+      $("my-email-servers-edit").onclick = () => { $("my-email-servers").open = true; try { $("my-email-imap-host").focus(); } catch {} };
+      $("my-email-connect-go").onclick = connectMyEmail;
+      $("my-email-password").onkeydown = (event) => { if (event && event.key === "Enter") connectMyEmail(); };
+      $("my-email-oauth-client-id").oninput = myEmailRenderOAuthButton;
+      $("my-email-oauth-start").onclick = startMyEmailOAuth;
+      $("my-email-oauth-cancel").onclick = cancelMyEmailOAuth;
+      $("my-email-test").onclick = testMyEmail;
+      $("my-email-disconnect").onclick = () => { $("my-email-disconnect-confirm").hidden = false; try { $("my-email-disconnect-cancel").focus(); } catch {} };
+      $("my-email-disconnect-cancel").onclick = () => { $("my-email-disconnect-confirm").hidden = true; };
+      $("my-email-disconnect-now").onclick = disconnectMyEmail;
+      $("my-email-policy-mode").onchange = () => saveMyEmailPolicy(((state.myEmail && state.myEmail.policy && state.myEmail.policy.entries) || []).slice(), "Saved");
+      $("my-email-policy-add-button").onclick = addMyEmailPolicyEntry;
+      $("my-email-policy-add").onkeydown = (event) => { if (event && event.key === "Enter") addMyEmailPolicyEntry(); };
+      $("my-email-per-hour").onchange = saveMyEmailLimits;
+      $("my-email-per-day").onchange = saveMyEmailLimits;
+      $("my-email-imap-folder").onchange = saveMyEmailFolder;
+      $("my-email-notify-test").onclick = testMyNotifications;
+      bindMyEmailSwitches();
     }
     function _wspSetMode(mode) {
 	      for (const card of document.querySelectorAll("#wsp-mode-cards .wsp-card")) {
@@ -7732,10 +8031,29 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // drawer so a stale conversation doesn't sit over the login screen.
 	      if (!ok && typeof toggleAssistant === "function" && assistantState.open) toggleAssistant(false);
 	    }
-	    function setLoginStatus(label, tone = "warn", source = "token: missing") {
-	      $("login-status").textContent = label;
-	      $("login-status").className = `af-gateway-signin__status af-gateway-signin__status--${tone}`;
-	      $("login-source").textContent = source;
+	    // ONE status pill (DESIGN §3/§4): "Not signed in" (neutral) / "Signed in
+	    // as admin" (ok) / "Token refused" (warn). No duplicate caption.
+	    function setLoginStatus(label, tone = "neutral") {
+	      const pill = $("login-status");
+	      pill.textContent = label;
+	      pill.className = `af-gateway-signin__status af-gateway-signin__status--${tone === "err" ? "warn" : tone}`;
+	    }
+	    function signinShow(id, text) {
+	      const el = $(id);
+	      if (!el) return;
+	      el.textContent = text || "";
+	      el.hidden = !text;
+	    }
+	    function signinFieldError(inputId, errorId, text) {
+	      signinShow(errorId, text);
+	      const input = $(inputId);
+	      if (input && input.setAttribute) {
+	        if (text) input.setAttribute("aria-invalid", "true"); else input.removeAttribute("aria-invalid");
+	      }
+	    }
+	    function signinUnreachableText() {
+	      const origin = (typeof location !== "undefined" && location.origin) ? location.origin : "this address";
+	      return `Can't reach the gateway at ${origin}. Check that it is running, then try again.`;
 	    }
     function confirmAction({ title, message, confirmLabel = "Confirm", danger = false, input = null }) {
       // A second confirm opened while one is pending must not orphan the first
@@ -10952,7 +11270,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // read — the path is evidence from a session that just ended.
 	      renderStoreAuthority("defaults-authority", null);
 	      renderStoreAuthority("endpoint-profiles-authority", null);
-	        setLoginStatus("Gateway token missing", "warn", "token: missing");
+	        setLoginStatus("Not signed in", "neutral");
 	        setStatus(false, "Signed out");
 		        return;
 		      }
@@ -11015,6 +11333,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        state.activeTab = wantedTab;
 	        setActiveTab(wantedTab);
 	        if (wantedTab === "models") { loadHostState(); startHostStatePoll(); }
+	        if (wantedTab === "users") loadMyEmail();
 	        if (wantedTab === "catalog" || wantedTab === "engines" || wantedTab === "apps" || wantedTab === "network") openCoreTab(wantedTab);
 	        // `#apps?open=<id>&path=<p>` (app_proxy.py sends a signed-out page
 	        // load of /apps/<id>/... here): open that app, signed in.
@@ -11039,6 +11358,75 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         ? "entity"
         : "human";
     }
+    // Users table (DESIGN §5.1): User | Role | Email address | Mailbox |
+    // Runtime | Active (switch) | Actions. No State column, no Disable
+    // button, no per-row email/agent-tools switches. Deactivating and
+    // deleting confirm INLINE in a row under the user (never a dialog).
+    function userRoleLabel(u) {
+      const roles = (u && Array.isArray(u.roles) ? u.roles : []).map((r) => String(r || "").trim().toLowerCase());
+      if (roles.includes("admin")) return "Admin";
+      if (roles.includes("readonly")) return "Read-only";
+      return "User";
+    }
+    function userMailboxOverride(acc) {
+      // An override stored by the old per-row buttons stays honoured by the
+      // backend; the table shows it and offers Reset (a one-shot action).
+      if (!acc || acc.state === "unknown") return false;
+      const caps = acc.capabilities;
+      if (!caps || typeof caps !== "object") {
+        console.error("AbstractGateway console: /admin/users rows carry no email_account.capabilities; an old per-user mailbox override cannot be shown (gateway-api seam, DESIGN §5.1).");
+        return false;
+      }
+      return ["email", "email_agent_tools"].some((k) => caps[k] && caps[k].source === "user" && caps[k].value === false);
+    }
+    function userMailboxText(acc) {
+      if (!acc || acc.state === "unknown") return "—";
+      return acc.configured && acc.address ? `connected as ${acc.address}` : "not connected";
+    }
+    function isOwnRow(u) {
+      const p = state.principal || {};
+      return String(p.user_id || "") === String(u.user_id || "") && String(p.tenant_id || "default") === String(u.tenant_id || "default");
+    }
+    function usersMessage(text, tone) {
+      const msg = $("users-message");
+      msg.textContent = text || "";
+      msg.className = tone ? `message ${tone}` : "message";
+    }
+    function userConfirmRow(tr, text, confirmLabel, onConfirm) {
+      // One inline confirmation at a time, directly under the user's row.
+      for (const old of Array.from(document.querySelectorAll ? document.querySelectorAll("#users-table .row-confirm") : [])) old.remove();
+      const row = document.createElement("tr");
+      row.className = "row-confirm";
+      const td = document.createElement("td");
+      td.colSpan = 7;
+      const box = document.createElement("div");
+      box.className = "inline-confirm";
+      box.setAttribute("role", "group");
+      const span = document.createElement("span");
+      span.textContent = text;
+      const yes = document.createElement("button");
+      yes.type = "button";
+      yes.className = "danger";
+      yes.textContent = confirmLabel;
+      const no = document.createElement("button");
+      no.type = "button";
+      no.className = "secondary";
+      no.textContent = "Cancel";
+      const close = () => { row.remove(); };
+      no.onclick = close;
+      yes.onclick = async () => {
+        yes.disabled = true;
+        yes.setAttribute("aria-busy", "true");
+        try { await onConfirm(); close(); }
+        catch (e) { yes.disabled = false; yes.removeAttribute("aria-busy"); usersMessage(String((e && e.message) || e), "error"); }
+      };
+      box.append(span, yes, no);
+      td.append(box);
+      row.append(td);
+      tr.after(row);
+      try { no.focus(); } catch {}
+      return row;
+    }
     function renderUsers(users) {
       const tbody = $("users-table");
       tbody.textContent = "";
@@ -11057,65 +11445,116 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       }
       if (!humans.length) {
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td colspan="7" class="empty">No users registered.</td>`;
+        tr.innerHTML = `<td colspan="7" class="empty">No users yet.</td>`;
         tbody.append(tr);
         return;
       }
       for (const u of humans) {
         const tr = document.createElement("tr");
+        tr.setAttribute("data-user", u.user_id);
         // Tenant is demoted (single-tenant installs only ever have
         // "default"): it renders as a prefix ONLY when it says something.
         const shownUser = (u.tenant_id && u.tenant_id !== "default") ? `${u.tenant_id}/${u.user_id}` : u.user_id;
-        tr.innerHTML = `<td>${esc(shownUser)}</td><td>${esc(u.email || "—")}</td><td>${mailboxCell(u.email_account)}</td><td>${esc(u.runtime_id || u.user_id)}</td><td>${esc((u.roles || []).join(", "))}</td><td><span class="state-pill ${u.enabled ? "ok" : "off"}">${u.enabled ? "enabled" : "disabled"}</span></td>`;
+        const acc = u.email_account || null;
+        tr.innerHTML = `<td data-label="User"><strong>${esc(shownUser)}</strong></td>`
+          + `<td data-label="Role">${esc(userRoleLabel(u))}</td>`
+          + `<td data-label="Email address">${esc(u.email || "—")}</td>`
+          + `<td data-label="Mailbox" class="users-mailbox"></td>`
+          + `<td data-label="Runtime"><code>${esc(u.runtime_id || u.user_id)}</code></td>`
+          + `<td data-label="Active" class="users-active"></td>`;
+        const mailboxCell = tr.querySelector ? tr.querySelector(".users-mailbox") : tr.children[3];
+        if (mailboxCell) {
+          const text = document.createElement("span");
+          text.textContent = userMailboxText(acc);
+          mailboxCell.append(text);
+          if (userMailboxOverride(acc)) {
+            const noteEl = document.createElement("span");
+            noteEl.className = "users-override";
+            noteEl.textContent = " · not allowed for this user ";
+            const reset = document.createElement("button");
+            reset.type = "button";
+            reset.className = "secondary small";
+            reset.textContent = "Reset";
+            reset.title = "Clear the old per-user setting: this user follows “Mailboxes for users” again";
+            reset.setAttribute("aria-label", `Reset the mailbox setting for ${u.user_id}`);
+            reset.onclick = () => resetUserMailboxOverride(u, reset);
+            mailboxCell.append(noteEl, reset);
+          }
+        }
+        const activeCell = tr.querySelector ? tr.querySelector(".users-active") : tr.children[5];
+        const own = isOwnRow(u);
+        const sw = afSwitchCreate({
+          id: `user-active-${u.tenant_id || "default"}-${u.user_id}`.replace(/[^A-Za-z0-9_-]/g, "-"),
+          label: "Active",
+          ariaLabel: `Active: ${u.user_id}`,
+          checked: Boolean(u.enabled),
+          small: true,
+          unavailableReason: own ? "You can't deactivate your own account." : "",
+        });
+        if (activeCell) activeCell.append(...sw.nodes);
+        afSwitchBind(sw.button, async (next) => {
+          if (!next) {
+            // Turning OFF asks first; the switch stays ON until confirmed.
+            userConfirmRow(tr, `Deactivate ${u.user_id}? They are signed out until you turn Active back on.`, "Deactivate", async () => {
+              afSwitchSet(sw.button, { checked: true, busy: true });
+              try {
+                await updateUser(u, { enabled: false });
+                usersMessage(`${u.user_id} is deactivated.`, "ok");
+              } catch (e) {
+                afSwitchSet(sw.button, { checked: true });
+                throw e;
+              }
+            });
+            return false; // not applied yet
+          }
+          await updateUser(u, { enabled: true });
+          usersMessage(`${u.user_id} is active again.`, "ok");
+          return true;
+        }, (e) => usersMessage(String((e && e.message) || e), "error"));
         const actions = document.createElement("td");
         actions.className = "actions";
+        actions.setAttribute("data-label", "Actions");
         const wsp = document.createElement("button");
+        wsp.type = "button";
         wsp.innerHTML = `<span class="button-icon" aria-hidden="true">${ICONS.gear}</span><span>Workspace</span>`;
         wsp.className = "secondary";
-        wsp.title = "Configure where this user's agents may read and write (deny-all + whitelist, or allow-all + blacklist)";
+        wsp.title = "Where this user's agents may read and write";
         wsp.setAttribute("aria-label", `Workspace policy for ${u.user_id}`);
         wsp.onclick = () => openWorkspacePolicyModal({ tenant_id: u.tenant_id || "default", user_id: u.user_id });
         const rotate = document.createElement("button");
+        rotate.type = "button";
         rotate.innerHTML = `<span class="button-icon icon-refresh" aria-hidden="true">↻</span><span>Rotate</span>`;
         rotate.className = "secondary";
-        rotate.title = "Rotate this user's bearer token — the old token stops working immediately; the new one is shown once";
+        rotate.title = "Issue a new token for this user — the old token stops working immediately; the new one is shown once";
         rotate.setAttribute("aria-label", `Rotate token for ${u.user_id}`);
         rotate.onclick = () => rotateUser(u);
-        const toggle = document.createElement("button");
-        toggle.innerHTML = `<span class="button-icon" aria-hidden="true">${u.enabled ? "⏸" : "✓"}</span><span>${u.enabled ? "Disable" : "Enable"}</span>`;
-        toggle.className = "secondary";
-        toggle.title = u.enabled
-          ? "Disable sign-in for this user (reversible — the account and its data stay)"
-          : "Re-enable sign-in for this user";
-        toggle.setAttribute("aria-label", `${u.enabled ? "Disable" : "Enable"} ${u.user_id}`);
-        toggle.onclick = () => updateUser(u, { enabled: !u.enabled });
         const del = document.createElement("button");
+        del.type = "button";
         del.innerHTML = `<span class="button-icon" aria-hidden="true">×</span><span>Delete</span>`;
         del.className = "danger";
-        del.title = "Delete this account and its token — the runtime data is retained and stays reserved (see Retained runtimes)";
+        del.title = "Delete this account and its token — the runtime data is kept and stays reserved (see Retained runtimes)";
         del.setAttribute("aria-label", `Delete ${u.user_id}`);
-        del.onclick = () => deleteUser(u);
-        const mail = document.createElement("button");
-        const mailOn = !(u.email_account && u.email_account.admin_enabled === false);
-        mail.innerHTML = `<span class="button-icon" aria-hidden="true">✉</span><span>${mailOn ? "Email off" : "Email on"}</span>`;
-        mail.className = "secondary";
-        mail.title = mailOn
-          ? "Turn email off for this user: no mailbox watcher, no sending, no email notifications (settings are kept; you never see their mail)"
-          : "Turn email back on for this user";
-        mail.setAttribute("aria-label", `${mailOn ? "Turn email off" : "Turn email on"} for ${u.user_id}`);
-        mail.onclick = () => setUserEmailEnabled(u, !mailOn);
-        const tools = document.createElement("button");
-        const toolsOn = Boolean(u.email_account && u.email_account.agent_tools_available);
-        tools.innerHTML = `<span class="button-icon" aria-hidden="true">${ICONS.gear}</span><span>${toolsOn ? "Agent tools off" : "Agent tools on"}</span>`;
-        tools.className = "secondary";
-        tools.title = toolsOn
-          ? "Make Agent email tools unavailable to this user (their agents lose the email tools)"
-          : "Make Agent email tools available to this user (they still switch them on for themselves)";
-        tools.setAttribute("aria-label", `${toolsOn ? "Agent email tools unavailable" : "Agent email tools available"} for ${u.user_id}`);
-        tools.onclick = () => setUserAgentToolsAvailable(u, !toolsOn);
-        actions.append(wsp, mail, tools, rotate, toggle, del);
+        del.disabled = own;
+        if (own) del.title = "You can't delete your own account.";
+        del.onclick = () => userConfirmRow(tr, `Delete ${u.user_id}? The account and its token are removed; the runtime ${u.runtime_id || u.user_id} and its data are kept and stay reserved for this user.`, "Delete", async () => {
+          await api(`/api/gateway/admin/users/${encodeURIComponent(u.user_id)}?tenant_id=${encodeURIComponent(u.tenant_id || "default")}`, { method: "DELETE" });
+          usersMessage(`${u.user_id} is deleted. Their runtime data is kept.`, "ok");
+          await refresh();
+        });
+        actions.append(wsp, rotate, del);
         tr.append(actions);
         tbody.append(tr);
+      }
+    }
+    async function resetUserMailboxOverride(u, btn) {
+      if (btn) { btn.disabled = true; btn.setAttribute("aria-busy", "true"); }
+      try {
+        await api(`/api/gateway/admin/users/${encodeURIComponent(u.user_id)}/email?tenant_id=${encodeURIComponent(u.tenant_id || "default")}`, { method: "PUT", body: JSON.stringify({ inherit: ["email", "email_agent_tools"] }) });
+        usersMessage(`${u.user_id} follows “Mailboxes for users” again.`, "ok");
+        await refresh();
+      } catch (e) {
+        usersMessage(emailErrorText(e), "error");
+        if (btn) { btn.disabled = false; btn.removeAttribute("aria-busy"); }
       }
     }
     function renderRuntimeReservations(reservations) {
@@ -12532,7 +12971,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const code = decodeURIComponent(match[1]);
       firstRun.claimTab = claimTabFromHash(hash);
       stripClaimFromUrl(firstRun.claimTab);
-      setLoginStatus("Claiming first-run link...", "warn", "token: one-time link");
+      setLoginStatus("Signing in…", "neutral");
       (async () => {
         try {
           const res = await api("/api/gateway/session/claim", { method: "POST", body: JSON.stringify({ code }) });
@@ -12540,11 +12979,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           // Who minted the link (`claim.created_by`: "tray",
           // "installer", ...); absent on older gateways -> null.
           firstRun.claimCreatedBy = (res && res.claim && typeof res.claim.created_by === "string") ? res.claim.created_by : null;
-          setLoginStatus("Signed in", "ok", firstRun.claimCreatedBy === "tray" ? "token: menu bar link" : "token: first-run link");
+          setLoginStatus("Signed in", "ok");
         } catch (err) {
-          $("login-message").textContent = `${String(err.message || err)}`;
-          $("login-message").className = "message error";
-          setLoginStatus("First-run link not accepted", "err", "token: link rejected");
+          signinShow("login-message", `This sign-in link was not accepted: ${String(err.message || err)}`);
+          setLoginStatus("Not signed in", "neutral");
         }
         await refresh();
       })();
@@ -12999,6 +13437,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           const users = await api("/api/gateway/admin/users");
           state.users = users.users || [];
           renderUsers(state.users);
+          loadEmailCaps();
         } catch (err) {
           $("users-message").textContent = String(err.message || err);
           $("users-message").className = "message error";
@@ -13016,79 +13455,171 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       }
     }
     async function login() {
-	      $("login-message").textContent = "";
-	      $("login-button").disabled = true;
-	      setLoginStatus("Signing in...", "warn", "token: checking");
-	      try {
-	        const user = $("login-user").value.trim();
-	        const token = $("login-token").value.trim();
-	        if (!user || !token) throw new Error("Gateway user and token are required.");
-	        await api("/api/gateway/session/login", {
-	          method: "POST",
-	          body: JSON.stringify({ user_id: user, token, remember: $("login-remember").checked })
-	        });
-	        $("login-token").value = "";
-	        setLoginStatus("Signed in", "ok", "token: browser session");
-	        await refresh();
-	      } catch (err) {
-	        $("login-message").textContent = String(err.message || err);
-	        $("login-message").className = "message error";
-	        setLoginStatus("Could not sign in", "err", "token: rejected");
-	      } finally {
-	        $("login-button").disabled = false;
-	      }
-	    }
-    // Account recovery by email (framework backlog 0992): shown only when at
-    // least one account of this gateway has email configured; the answer to a
-    // request never says whether THIS account has (no enumeration).
-    let recoveryPurpose = "";
-    function recoveryMessage(text, tone) {
-      const m = $("recovery-message");
-      m.textContent = text || "";
-      m.className = tone ? `message ${tone}` : "message";
+      signinShow("login-message", "");
+      signinFieldError("login-user", "login-user-error", "");
+      signinFieldError("login-token", "login-token-error", "");
+      const user = $("login-user").value.trim();
+      const token = $("login-token").value.trim();
+      if (!user) { signinFieldError("login-user", "login-user-error", "Enter your gateway user."); return; }
+      if (!token) { signinFieldError("login-token", "login-token-error", "Paste the token your gateway admin gave you."); return; }
+      const btn = $("login-button");
+      btn.disabled = true;
+      btn.setAttribute("aria-busy", "true");
+      btn.textContent = "Signing in…";
+      try {
+        await api("/api/gateway/session/login", {
+          method: "POST",
+          body: JSON.stringify({ user_id: user, token, remember: $("login-remember").checked })
+        });
+        $("login-token").value = "";
+        setLoginStatus(`Signed in as ${user}`, "ok");
+        await refresh();
+      } catch (err) {
+        if (err && (err.status === 401 || err.status === 403) && !/origin/i.test(String(err.message || ""))) {
+          signinFieldError("login-token", "login-token-error", "This token was refused.");
+          setLoginStatus("Token refused", "warn");
+        } else if (err && !err.status) {
+          signinShow("login-message", signinUnreachableText());
+          setLoginStatus("Not signed in", "neutral");
+        } else {
+          signinShow("login-message", String((err && err.message) || err));
+          setLoginStatus("Not signed in", "neutral");
+        }
+      } finally {
+        btn.disabled = false;
+        btn.removeAttribute("aria-busy");
+        btn.textContent = "Sign in";
+      }
     }
+    // Sign-in by email (DESIGN §4): ONE quiet link requests a `sign_in` code;
+    // the answer is honest (§4.1: sent to a masked address / no email address /
+    // too many requests), then the code step replaces the link. `reset_token`
+    // stays in the API for clients that use it; the signed-in user rotates
+    // their token from their account page.
+    const RECOVERY_COOLDOWN_S = 30;
+    const recoveryState = { cooldownUntil: 0, timer: null, busy: false };
     async function loadRecoveryOptions() {
+      let available = false;
       try {
         const out = await api("/api/gateway/session/recovery");
-        $("recovery-section").classList.toggle("hidden", !(out && out.available));
-      } catch {
-        $("recovery-section").classList.add("hidden");
+        available = Boolean(out && out.available);
+      } catch { available = false; }
+      $("recovery-section").hidden = !available || !$("recovery-code-step").hidden;
+      state.recoveryAvailable = available;
+    }
+    function recoveryCooldownTick() {
+      const resend = $("recovery-resend");
+      const left = Math.ceil((recoveryState.cooldownUntil - Date.now()) / 1000);
+      if (left > 0) {
+        resend.disabled = true;
+        resend.textContent = `Send a new code (in ${left} s)`;
+        recoveryState.timer = setTimeout(recoveryCooldownTick, 1000);
+      } else {
+        resend.disabled = false;
+        resend.textContent = "Send a new code";
+        recoveryState.timer = null;
       }
     }
-    async function requestRecoveryCode(purpose) {
+    function recoveryStartCooldown(seconds) {
+      recoveryState.cooldownUntil = Date.now() + seconds * 1000;
+      if (recoveryState.timer) clearTimeout(recoveryState.timer);
+      recoveryCooldownTick();
+    }
+    function recoveryShowCodeStep(message) {
+      $("recovery-section").hidden = true;
+      $("recovery-code-step").hidden = false;
+      $("recovery-sent-message").textContent = message;
+      signinFieldError("recovery-code-input", "recovery-code-error", "");
+      $("recovery-code-input").value = "";
+      $("recovery-use").disabled = true;
+      recoveryStartCooldown(RECOVERY_COOLDOWN_S);
+      try { $("recovery-code-input").focus(); } catch {}
+    }
+    function recoveryBackToToken() {
+      if (recoveryState.timer) clearTimeout(recoveryState.timer);
+      recoveryState.timer = null;
+      $("recovery-code-step").hidden = true;
+      $("recovery-section").hidden = !state.recoveryAvailable;
+      signinShow("recovery-request-message", "");
+      const link = $("recovery-link");
+      link.disabled = false;
+      link.removeAttribute("aria-busy");
+      link.textContent = "Forgot your token? Email me a sign-in code";
+      try { $("login-token").focus(); } catch {}
+    }
+    async function requestRecoveryCode(fromResend = false) {
+      if (recoveryState.busy) return;
       const user = $("login-user").value.trim();
-      if (!user) { recoveryMessage("Enter your Gateway user first.", "error"); return; }
-      recoveryPurpose = purpose;
+      signinShow("recovery-request-message", "");
+      if (!user) { signinFieldError("login-user", "login-user-error", "Enter your gateway user first."); return; }
+      signinFieldError("login-user", "login-user-error", "");
+      const control = fromResend ? $("recovery-resend") : $("recovery-link");
+      recoveryState.busy = true;
+      control.disabled = true;
+      control.setAttribute("aria-busy", "true");
+      control.textContent = "Sending…";
+      let out = null;
+      let failure = "";
       try {
-        const out = await api("/api/gateway/session/recovery/request", { method: "POST", body: JSON.stringify({ user_id: user, purpose }) });
-        recoveryMessage(out.message || "If this account has email configured, a code is on its way.", "ok");
-        $("recovery-redeem").classList.remove("hidden");
-        $("recovery-redeem-actions").classList.remove("hidden");
+        out = await api("/api/gateway/session/recovery/request", { method: "POST", body: JSON.stringify({ user_id: user, purpose: "sign_in" }) });
       } catch (e) {
-        recoveryMessage(String((e && e.message) || e), "error");
+        if (e && e.status === 404) { state.recoveryAvailable = false; failure = "Sign-in by email is off on this gateway. Ask your gateway admin for a token."; }
+        else if (e && !e.status) failure = signinUnreachableText();
+        else failure = String((e && e.message) || e);
+      } finally {
+        recoveryState.busy = false;
+        control.removeAttribute("aria-busy");
       }
+      if (out && out.sent) {
+        if (!fromResend) { control.disabled = false; control.textContent = "Forgot your token? Email me a sign-in code"; }
+        recoveryShowCodeStep(String(out.message || `A sign-in code is on its way to ${out.to || "your email address"}.`));
+        return;
+      }
+      const text = failure || String((out && out.message) || "A code could not be sent. Ask your gateway admin for a token.");
+      if (fromResend) {
+        $("recovery-sent-message").textContent = "";
+        signinFieldError("recovery-code-input", "recovery-code-error", text);
+        const retry = Number(out && out.retry_after_s) || RECOVERY_COOLDOWN_S;
+        recoveryStartCooldown(retry);
+      } else {
+        control.disabled = false;
+        control.textContent = "Forgot your token? Email me a sign-in code";
+        signinShow("recovery-request-message", text);
+      }
+    }
+    function recoveryCodeInput() {
+      const input = $("recovery-code-input");
+      const digits = String(input.value || "").replace(/[^0-9]/g, "").slice(0, 8);
+      if (digits !== input.value) input.value = digits;
+      $("recovery-use").disabled = digits.length !== 8;
+      signinFieldError("recovery-code-input", "recovery-code-error", "");
     }
     async function useRecoveryCode() {
       const user = $("login-user").value.trim();
-      const code = $("recovery-code-input").value.trim();
-      if (!user || !code || !recoveryPurpose) { recoveryMessage("Enter your Gateway user and the code from the email.", "error"); return; }
+      const code = String($("recovery-code-input").value || "").trim();
+      if (!user || code.length !== 8) return;
+      const btn = $("recovery-use");
+      btn.disabled = true;
+      btn.setAttribute("aria-busy", "true");
+      btn.textContent = "Signing in…";
       try {
-        const out = await api("/api/gateway/session/recovery/redeem", {
+        await api("/api/gateway/session/recovery/redeem", {
           method: "POST",
-          body: JSON.stringify({ user_id: user, purpose: recoveryPurpose, code, remember: $("login-remember").checked }),
+          body: JSON.stringify({ user_id: user, purpose: "sign_in", code, remember: $("login-remember").checked }),
         });
         $("recovery-code-input").value = "";
-        if (out.token) {
-          renderIssuedToken($("recovery-token"), user, out.token);
-          $("recovery-token").classList.remove("hidden");
-          recoveryMessage("Your new token is shown once: keep it. Your old token no longer works. You are signed in.", "ok");
-        } else {
-          recoveryMessage("Signed in.", "ok");
-        }
-        setLoginStatus("Signed in", "ok", "token: browser session");
+        recoveryBackToToken();
+        setLoginStatus(`Signed in as ${user}`, "ok");
         await refresh();
       } catch (e) {
-        recoveryMessage(String((e && e.message) || e), "error");
+        const text = e && e.status === 401
+          ? "That code is wrong, expired or already used. Send a new one."
+          : (e && !e.status ? signinUnreachableText() : String((e && e.message) || e));
+        signinFieldError("recovery-code-input", "recovery-code-error", text);
+        btn.disabled = false;
+      } finally {
+        btn.removeAttribute("aria-busy");
+        btn.textContent = "Use code";
       }
     }
     async function signOut() {
@@ -13109,13 +13640,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         roles: [$("new-roles").value || "user"],
       };
       if (!payload.user_id) {
-        $("user-create-message").textContent = "User id is required.";
+        $("user-create-message").textContent = "Enter a User ID.";
         $("user-create-message").className = "message error";
         return;
       }
       try {
         const res = await api("/api/gateway/admin/users", { method: "POST", body: JSON.stringify(payload) });
-        renderIssuedToken($("user-create-token"), `${res.user.tenant_id}/${res.user.user_id}`, res.token);
+        renderIssuedToken($("user-create-token"), res.user.tenant_id && res.user.tenant_id !== "default" ? `${res.user.tenant_id}/${res.user.user_id}` : res.user.user_id, res.token);
         $("user-create-form").classList.add("hidden");
         $("user-create-done").classList.remove("hidden");
         $("new-user").value = "";
@@ -13136,7 +13667,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // text forced manual selection of a 40-char token).
       el.textContent = "";
       const text = document.createElement("span");
-      text.textContent = `Issued token for ${who}: `;
+      text.textContent = `Give this token to ${who}. It is shown once. `;
       const code = document.createElement("code");
       code.textContent = token;
       const copy = document.createElement("button");
@@ -13149,12 +13680,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           await navigator.clipboard.writeText(token);
           copy.innerHTML = `<span class="button-icon" aria-hidden="true">✓</span><span>Copied</span>`;
         } catch (e) {
-          copy.innerHTML = `<span class="button-icon" aria-hidden="true">!</span><span>#FALLBACK select + copy manually</span>`;
+          // DESIGN §11: over plain http the clipboard is withheld — say so once.
+          const insecure = typeof window !== "undefined" && window.isSecureContext === false;
+          copy.disabled = true;
+          copy.innerHTML = `<span>Copy unavailable</span>`;
+          note.textContent = insecure
+            ? " This page is loaded over http, so copying to the clipboard is unavailable — open it over https or on the gateway's own computer. Select the token and copy it by hand."
+            : " Copying to the clipboard was refused by the browser. Select the token and copy it by hand.";
         }
       };
       const note = document.createElement("span");
       note.className = "muted";
-      note.textContent = " shown once — store it now.";
       el.append(text, code, copy, note);
       el.classList.remove("hidden");
     }
@@ -13168,17 +13704,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (!ok) return;
       const res = await api(`/api/gateway/admin/users/${encodeURIComponent(u.user_id)}?tenant_id=${encodeURIComponent(u.tenant_id)}`, { method: "PATCH", body: JSON.stringify({ rotate_token: true }) });
       renderIssuedToken($("issued-token"), `${res.user.tenant_id}/${res.user.user_id}`, res.token);
-      await refresh();
-    }
-    async function deleteUser(u) {
-      const ok = await confirmAction({
-        title: "Delete Gateway user",
-        message: `Delete ${u.tenant_id}/${u.user_id}? This removes the account and token access to runtime ${u.runtime_id || u.user_id}. Runtime data is retained and the runtime id stays reserved for this user.`,
-        confirmLabel: "Delete user",
-        danger: true,
-      });
-      if (!ok) return;
-      await api(`/api/gateway/admin/users/${encodeURIComponent(u.user_id)}?tenant_id=${encodeURIComponent(u.tenant_id)}`, { method: "DELETE" });
       await refresh();
     }
     async function transferRuntimeReservation(r, targetUserId) {
@@ -13416,15 +13941,20 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      await renderDefaults(await api("/api/gateway/config/capability-defaults"));
 	    }
     $("login-form").onsubmit = (event) => { event.preventDefault(); login(); };
-    $("recovery-forgot").onclick = () => requestRecoveryCode("reset_token");
-    $("recovery-code").onclick = () => requestRecoveryCode("sign_in");
+    $("recovery-link").onclick = () => requestRecoveryCode(false);
+    $("recovery-resend").onclick = () => requestRecoveryCode(true);
+    $("recovery-back").onclick = recoveryBackToToken;
     $("recovery-use").onclick = useRecoveryCode;
+    $("recovery-code-input").oninput = recoveryCodeInput;
+    $("recovery-code-input").onkeydown = (event) => { if (event && event.key === "Enter" && !$("recovery-use").disabled) useRecoveryCode(); };
     loadRecoveryOptions();
 	    $("toggle-token").onclick = () => {
 	      const input = $("login-token");
 	      const visible = input.type === "text";
 	      input.type = visible ? "password" : "text";
 	      $("toggle-token").textContent = visible ? "Show" : "Hide";
+	      $("toggle-token").setAttribute("aria-label", visible ? "Show token" : "Hide token");
+	      $("toggle-token").setAttribute("aria-pressed", visible ? "false" : "true");
 	    };
 	    $("sign-out").onclick = signOut;
     $("confirm-cancel").onclick = () => finishConfirm(false);
@@ -13443,7 +13973,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("appearance-theme").onchange = updateAppearanceFromForm;
 	    $("appearance-font-size").onchange = updateAppearanceFromForm;
 	    $("appearance-header-size").onchange = updateAppearanceFromForm;
-	    $("tab-button-users").onclick = () => { setActiveTab("users"); loadEntities(); };
+	    $("tab-button-users").onclick = () => { setActiveTab("users"); loadEntities(); loadMyEmail(); };
 	    // No direct loadRuns() on tab open: loadRuntimes'
 	    // selection restore auto-selects a runtime (default first) and its
 	    // Runs tab loader fires from there. Cache sizes load when the Cache
@@ -13587,26 +14117,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("my-workspace-policy-refresh").onclick = loadMyWorkspacePolicy;
 	    $("my-workspace-policy-save").onclick = () => saveMyWorkspacePolicy(false);
 	    $("my-workspace-policy-clear").onclick = () => saveMyWorkspacePolicy(true);
-    $("my-email-section").ontoggle = () => {
-      if ($("my-email-section").open && !state.myEmail) loadMyEmail();
-    };
-    $("my-email-refresh").onclick = loadMyEmail;
-    $("my-email-save").onclick = saveMyEmail;
-    $("my-email-test").onclick = testMyEmail;
-    $("my-email-toggle").onclick = toggleMyEmail;
-    $("my-email-disconnect").onclick = () => $("my-email-disconnect-confirm").classList.remove("hidden");
-    $("my-email-disconnect-cancel").onclick = () => $("my-email-disconnect-confirm").classList.add("hidden");
-    $("my-email-disconnect-now").onclick = disconnectMyEmail;
-    $("my-email-policy-save").onclick = saveMyEmailPolicy;
-    $("my-email-policy-check-button").onclick = checkMyEmailPolicy;
-    $("my-email-limits-save").onclick = saveMyEmailLimits;
-    $("my-email-notify-save").onclick = saveMyNotifications;
-    $("my-email-notify-test").onclick = testMyNotifications;
-    $("my-email-agent-tools-save").onclick = saveMyEmailAgentTools;
-    $("email-caps-section").ontoggle = () => { if ($("email-caps-section").open) loadEmailCaps(); };
-    $("email-caps-save").onclick = saveEmailCaps;
-    $("my-email-oauth-start").onclick = startMyEmailOAuth;
-    $("my-email-oauth-cancel").onclick = cancelMyEmailOAuth;
+    bindMyEmail();
+    bindEmailCaps();
 	    $("wsp-cancel").onclick = closeWorkspacePolicyModal;
 	    $("wsp-save").onclick = () => saveWorkspacePolicyModal(false);
 	    $("wsp-reset").onclick = () => saveWorkspacePolicyModal(true);

@@ -112,7 +112,7 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert "window.prompt(" not in console.text
     assert 'id="login-form"' in console.text
     assert 'id="toggle-token"' in console.text
-    assert "Connect to AbstractGateway" in console.text
+    assert "<h2>Sign in</h2>" in console.text and "Use the token your gateway admin gave you." in console.text
     # Operator IA (2026-07-13): Users & Entities | Runtimes | Providers |
     # Multimodal Capabilities | Sandbox. Entities are door principals and
     # live WITH users; runtimes split into their own tab; sandbox is last.
@@ -348,6 +348,12 @@ class Element {{
       ).has(name),
     }};
   }}
+  // Attributes (the sign-in card and the switches set aria-busy /
+  // aria-invalid / aria-checked through them).
+  setAttribute(name, value) {{ (this._attrs || (this._attrs = {{}}))[name] = String(value); }}
+  getAttribute(name) {{ return this._attrs && name in this._attrs ? this._attrs[name] : null; }}
+  removeAttribute(name) {{ if (this._attrs) delete this._attrs[name]; }}
+  focus() {{}}
   get textContent() {{ return this._textContent; }}
   set textContent(value) {{
     this._textContent = String(value || "");
