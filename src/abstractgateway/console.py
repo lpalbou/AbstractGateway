@@ -1787,6 +1787,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	       at body size (14 px, 500), helpers small and muted. */
 	    .switch-list { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 	    .switch-list > .af-switch__reason { margin: -2px 0 6px 0; }
+	    /* Visually hidden text is absolutely positioned: its containing block must sit inside
+	       the scrolling .shell_content, or it escapes the clip and makes the page scroll too. */
+	    .users-active, .kv-switch, .af-form__field { position: relative; }
 	    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 	    /* The column header says Active: the switch keeps its accessible name, the visible label goes. */
 	    .users-active .af-switch__text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
@@ -1822,6 +1825,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .inline-confirm[hidden] { display: none; }
 	    /* Users (admin): the one switch above the table, then the table. */
 	    .users-caps { display: flex; flex-direction: column; gap: 6px; max-width: 720px; margin: 0 0 14px; }
+	    .users-table-wrap { overflow-x: auto; }
 	    .users-table td { font-size: var(--font-size-base); vertical-align: middle; }
 	    .users-table td.actions { white-space: nowrap; }
 	    .users-table .row-confirm > td { padding-top: 0; }
@@ -1854,6 +1858,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .chip__remove { min-height: 24px; min-width: 24px; padding: 0 6px; border: 0; border-radius: 999px; background: transparent; color: var(--muted); font-size: 15px; line-height: 1; }
 	    .chip__remove:hover { color: var(--error); filter: none; }
 	    .chip-list__empty { color: var(--muted); font-size: var(--font-size-sm); }
+	    /* DESIGN §3 (amendment 22:35): helper text is 13 px (never 11-12 px) on these pages. */
+	    #tab-users .af-form__help, #tab-users .af-switch__desc, #tab-users .af-switch__reason, #tab-users .af-card__desc,
+	    #tab-users .section-note, #tab-users .inline-state, #user-create-form .af-form__help,
+	    #login-section .af-gateway-signin__source, .servers-line, .chip, .chip-list__empty { font-size: var(--font-size-md); }
+	    .users-table td[data-label]::before { font-size: var(--font-size-md); }
 	    @media (max-width: 767.98px) {
 	      /* DESIGN §12: phones use the full width — the account page's cards are
 	         flat sections with a hairline divider (no card in a card), and the
@@ -1862,12 +1871,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      .account-page { gap: 0; max-width: none; }
 	      .account-card { border: 0; background: transparent; padding: 16px 0; border-top: 1px solid var(--line-soft); }
 	      .users-table-wrap { overflow: visible; }
+	      /* One page scroll on phones (§12): bounded list boxes grow instead of scrolling inside the page. */
+	      .table-scroll { max-height: none; }
 	      #tab-users #users-section { border: 0; background: transparent; box-shadow: none; padding: 8px 0 0; }
 	      .users-table, .users-table tbody, .users-table tr, .users-table td { display: block; width: 100%; }
 	      .users-table thead { display: none; }
 	      .users-table tr { padding: 10px 0; border-top: 1px solid var(--line-soft); }
 	      .users-table td { display: flex; align-items: center; gap: 10px; padding: 3px 0; border: 0; min-width: 0; overflow-wrap: anywhere; }
-	      .users-table td[data-label]::before { content: attr(data-label); flex: 0 0 104px; color: var(--muted); font-size: var(--font-size-sm); }
+	      .users-table td[data-label]::before { content: attr(data-label); flex: 0 0 104px; color: var(--muted); font-size: var(--font-size-md); }
 	      .users-table td.actions { flex-wrap: wrap; white-space: normal; }
 	      .users-table td.actions::before { flex-basis: 100%; }
 	      .users-table .row-confirm { border-top: 0; padding-top: 0; }
@@ -2498,7 +2509,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              </div>
 	              <div id="issued-token" class="issued hidden"></div>
 	              <div id="users-message" class="message" role="status" aria-live="polite"></div>
-	              <div class="table-scroll users-table-wrap">
+	              <div class="users-table-wrap">
 	                <table class="users-table">
 	                  <thead><tr><th>User</th><th>Role</th><th>Email address</th><th>Mailbox</th><th>Runtime</th><th>Active</th><th>Actions</th></tr></thead>
 	                  <tbody id="users-table"></tbody>
@@ -3768,6 +3779,36 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 	      }
 	      throw new Error("randomId: Web Crypto (crypto.getRandomValues) is unavailable");
+	    }
+	    // Copy that also works over plain http (DESIGN §11, COORD 21:05): the
+	    // Clipboard API in a secure context, else a hidden textarea +
+	    // execCommand("copy"). Resolves true when the text reached the
+	    // clipboard, so the caller says "Copied" or "Copy failed — select and copy".
+	    const COPY_FAILED = "Copy failed — select and copy";
+	    function execCommandCopy(text) {
+	      try {
+	        if (typeof document === "undefined" || !document.body || typeof document.execCommand !== "function") return false;
+	        const el = document.createElement("textarea");
+	        el.value = text;
+	        el.setAttribute("readonly", "");
+	        el.style.position = "fixed"; el.style.top = "0"; el.style.left = "-9999px"; el.style.opacity = "0";
+	        const active = document.activeElement;
+	        document.body.appendChild(el);
+	        let ok = false;
+	        try { el.select(); el.setSelectionRange(0, text.length); ok = document.execCommand("copy") === true; }
+	        finally { document.body.removeChild(el); try { active && active.focus && active.focus(); } catch {} }
+	        return ok;
+	      } catch { return false; }
+	    }
+	    async function clipboardWrite(text) {
+	      const value = String(text == null ? "" : text);
+	      try {
+	        if (typeof navigator !== "undefined" && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+	          await navigator.clipboard.writeText(value);
+	          return true;
+	        }
+	      } catch { /* fall back below */ }
+	      return execCommandCopy(value);
 	    }
 	    function assistantNewSessionId() {
 	      return "gateway-docs-assistant:" + randomId();
@@ -13465,13 +13506,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         });
       }
     }
-    function firstRunCopy(text, btn) {
-      const done = () => { if (btn) { btn.textContent = "Copied"; setTimeout(() => { btn.textContent = "Copy"; }, 1500); } };
-      try {
-        if (typeof navigator !== "undefined" && navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(done, () => {});
-        }
-      } catch { /* the command stays visible to copy by hand */ }
+    async function firstRunCopy(text, btn) {
+      const ok = await clipboardWrite(text);
+      if (btn) {
+        btn.textContent = ok ? "Copied" : COPY_FAILED;
+        setTimeout(() => { btn.textContent = "Copy"; }, ok ? 1500 : 4000);
+      }
     }
     function gatewayBaseUrl() {
       const gw = (firstRun.host && firstRun.host.gateway) || {};
@@ -13797,18 +13837,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       copy.title = "Copy the token to the clipboard — it is shown once";
       copy.setAttribute("aria-label", "Copy token");
       copy.onclick = async () => {
-        try {
-          await navigator.clipboard.writeText(token);
-          copy.innerHTML = `<span class="button-icon" aria-hidden="true">✓</span><span>Copied</span>`;
-        } catch (e) {
-          // DESIGN §11: over plain http the clipboard is withheld — say so once.
-          const insecure = typeof window !== "undefined" && window.isSecureContext === false;
-          copy.disabled = true;
-          copy.innerHTML = `<span>Copy unavailable</span>`;
-          note.textContent = insecure
-            ? " This page is loaded over http, so copying to the clipboard is unavailable — open it over https or on the gateway's own computer. Select the token and copy it by hand."
-            : " Copying to the clipboard was refused by the browser. Select the token and copy it by hand.";
-        }
+        // DESIGN §11: over plain http the Clipboard API is withheld; clipboardWrite
+        // falls back to execCommand, and a copy that still fails says so.
+        const ok = await clipboardWrite(token);
+        copy.innerHTML = ok
+          ? `<span class="button-icon" aria-hidden="true">✓</span><span>Copied</span>`
+          : `<span>${COPY_FAILED}</span>`;
       };
       const note = document.createElement("span");
       note.className = "muted";

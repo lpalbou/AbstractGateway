@@ -934,14 +934,30 @@ CONSOLE_UI_JS = r"""
       clearTimeout(uiToast.timer);
       uiToast.timer = setTimeout(() => el.classList.remove("is-on"), 1600);
     }
+    // Over plain http (LAN / Tailscale) the Clipboard API is withheld: fall back
+    // to a hidden textarea + execCommand("copy") before giving up (DESIGN §11).
+    function uiExecCopy(text) {
+      try {
+        const el = document.createElement("textarea");
+        el.value = text;
+        el.setAttribute("readonly", "");
+        el.style.position = "fixed"; el.style.top = "0"; el.style.left = "-9999px"; el.style.opacity = "0";
+        document.body.appendChild(el);
+        let ok = false;
+        try { el.select(); el.setSelectionRange(0, text.length); ok = document.execCommand("copy") === true; }
+        finally { document.body.removeChild(el); }
+        return ok;
+      } catch { return false; }
+    }
     function uiCopy(text) {
+      const fallback = () => uiToast(uiExecCopy(text) ? "Copied" : "Copy failed — select and copy");
       try {
         if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(() => uiToast("Copied"), () => uiToast("Select the text to copy it"));
+          navigator.clipboard.writeText(text).then(() => uiToast("Copied"), fallback);
           return;
         }
       } catch { /* fall through */ }
-      uiToast("Select the text to copy it");
+      fallback();
     }
     const UI_ELLIP_SELECTOR = "td code, .ui-ellip, .acc-root td code, .acc-root td > span.acc-sub:only-child";
     const UI_NO_STACK = ".entity-matrix, .af-matrix, [data-ui-no-stack]";
