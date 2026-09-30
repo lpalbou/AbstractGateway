@@ -199,7 +199,14 @@ def apps_overview(request: Request, latest: bool = True) -> Dict[str, Any]:
     """Node.js runtime + one row per app (installed, running, url, actions,
     interfaces). The terminal entries depend on WHO asks from WHERE."""
     principal = _principal(request)
-    return get_apps_manager().overview(check_latest=bool(latest), caller=_caller(request, principal))
+    caller = _caller(request, principal)
+    out = get_apps_manager().overview(check_latest=bool(latest), caller=caller)
+    # `gateway_url` is where the app SERVERS reach the gateway (on its own
+    # machine, usually loopback); `browser_gateway_url` is the address THIS
+    # caller uses (the https origin behind `tailscale serve` or another
+    # proxy): what any command or link shown to the caller must name.
+    out["browser_gateway_url"] = caller["gateway_url"]
+    return out
 
 
 @router.post("/runtime/install")

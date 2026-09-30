@@ -281,7 +281,7 @@ change from the console, the TUI or the CLI (another process) is live at once.
 
 | Setting | Meaning | Default |
 |---|---|---|
-| `allowed_origins` | Browser origins whose pages may call the gateway, **added** to the always-allowed `http://localhost:*`, `http://127.0.0.1:*` (and, in a network mode, the gateway's own LAN origins). | none |
+| `allowed_origins` | Browser origins whose pages may call the gateway, **added** to the always-allowed `http://localhost:*`, `http://127.0.0.1:*` (and, in a network mode, the gateway's own LAN origins). An https page calling its own address through a TLS proxy on the gateway machine that keeps the browser's `Host` (for example `tailscale serve`) needs no entry: see [Reached through Tailscale](#reached-through-tailscale-https). | none |
 | `trust_proxy` | Take the client address from `X-Forwarded-For` (sign-in lockouts, audit log). Only when your own proxy sits in front of every request: otherwise any client chooses the address the gateway sees. | off |
 
 **Validation** (one place, the gateway; every door shows its sentence
@@ -366,7 +366,10 @@ resolution. Each row says whether the gateway listens there now
 (`reachable`). The WAN address (`kind: public`) is looked up only on request
 (`?lookup_public=1`, admin, `internet` mode only; one HTTPS GET to
 `api.ipify.org`), never on a poll. `copy_hint` is the URL to copy first (the
-LAN IPv4 when listening on the network, else loopback).
+LAN IPv4 when listening on the network, else loopback). `browser_url` is the
+address the caller itself uses (`https://<host>.<tailnet>.ts.net` behind
+`tailscale serve`), and `browser_url_listed` says whether it is one of the
+addresses above (false behind a proxy or tunnel).
 
 ### API (`gateway_network_v1`)
 
@@ -408,6 +411,28 @@ A trimmed `GET` in `lan` mode, running and applied:
   "warnings": ["Traffic is plain HTTP: …"]
 }
 ```
+
+### Reached through Tailscale (https)
+
+Reached through Tailscale? On the gateway machine run
+`tailscale serve --bg http://127.0.0.1:<port>` and open
+`https://<host>.<tailnet>.ts.net/` (the console at `/console`, the apps at
+`/apps/<app>/`). `tailscale serve reset` undoes it. Voice and camera in the
+browser need this https address: browsers offer the microphone, the camera,
+the clipboard and `crypto.randomUUID` only on https pages (or on the gateway
+machine itself), never on a plain `http://` address such as
+`http://100.x.y.z:8080`.
+
+The gateway can stay in `localhost` mode: Tailscale delivers each request to
+`127.0.0.1` with the browser's `Host` kept and `X-Forwarded-Proto: https`
+added. The gateway believes forwarded headers from a loopback peer only, and
+it accepts a page whose Origin is `https://` plus that same `Host`, so no
+`allowed_origins` entry is needed; sign-in cookies are marked `Secure`. The
+first-run `#claim=` link works from the gateway machine only; from another
+device, sign in with your user name and token. Tailscale issues and renews the
+certificate; the address is reachable from your tailnet only (`tailscale
+funnel` would publish it to the internet, and needs the `internet` mode's
+precautions).
 
 ### CLI
 

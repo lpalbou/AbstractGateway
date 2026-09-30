@@ -23,6 +23,14 @@ Every request to `/apps/<id>/...`:
   person in and opens the app through the usual one-time handover; anything
   else is 401. A WebSocket without one is refused before it is accepted,
   and one whose Origin is another site is refused too.
+  The one exception: the PUBLIC ASSETS a browser fetches WITHOUT cookies
+  (`public_asset_path`: the web app manifest, favicons, the home-screen
+  icons; `<link rel=manifest>` is fetched credentials-omitted unless the
+  page says `crossorigin="use-credentials"`). Those paths, GET/HEAD only,
+  are relayed with no cookie at all and answered only when the app returns
+  200/304 with a manifest or image Content-Type (anything else, e.g. the
+  app's HTML shell for a missing file, is the usual 401); their Set-Cookie
+  headers are dropped. Nothing under `api/`, no page, no script bundle.
 - is relayed with the `/apps/<id>` prefix stripped, and
     X-Forwarded-Prefix: /apps/<id>
     X-Forwarded-For:    <the effective peer> (overwritten, never appended)
@@ -91,6 +99,49 @@ _REQUEST_DROP = frozenset(
     }
 )
 _HOST_RE = re.compile(r"^(\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9.-]+)(:\d{1,5})?$")
+
+# Paths (after `/apps/<id>`, raw and percent-encoded as sent) a browser
+# fetches WITHOUT cookies: the web app manifest, and the icons a page or a
+# manifest names (favicon, home-screen / apple-touch icons). One segment,
+# or `icons/<one segment>`; no `%`, so nothing encoded (no `%2F`, `%2e`).
+_PUBLIC_ASSET_RE = re.compile(
+    r"^/(?:"
+    r"manifest\.webmanifest|manifest\.json|site\.webmanifest"
+    r"|favicon(?:-[A-Za-z0-9_.-]+)?\.(?:ico|svg|png)"
+    r"|icon(?:-[A-Za-z0-9_.-]+)?\.(?:svg|png|webp)"
+    r"|apple-touch-icon(?:-[A-Za-z0-9_.-]+)?\.png"
+    r"|icons/[A-Za-z0-9_.-]+\.(?:png|svg|ico|webp)"
+    r")$"
+)
+# ... and answered only with one of these types (the app's HTML shell, which
+# a single-page app returns for any unknown path, never passes).
+_PUBLIC_ASSET_TYPES = frozenset(
+    {
+        "application/manifest+json",
+        "application/json",
+        "image/svg+xml",
+        "image/png",
+        "image/webp",
+        "image/x-icon",
+        "image/vnd.microsoft.icon",
+    }
+)
+
+
+def public_asset_path(method: str, rest: Optional[str]) -> bool:
+    """`rest` (the path after `/apps/<id>`, with its query) is a public asset
+    a browser fetches without cookies: served without the session gate."""
+    if method not in ("GET", "HEAD") or not rest:
+        return False
+    path = rest.split("?", 1)[0]
+    return bool(_PUBLIC_ASSET_RE.match(path)) and ".." not in path
+
+
+def _public_asset_answer(status: int, content_type: Optional[str]) -> bool:
+    if status == 304:
+        return True
+    ctype = str(content_type or "").split(";", 1)[0].strip().lower()
+    return status == 200 and ctype in _PUBLIC_ASSET_TYPES
 
 
 def app_prefix(app_id: str) -> str:
@@ -253,7 +304,7 @@ def _upstream_path(scope: Dict[str, Any], app_id: str) -> Optional[str]:
     return rest
 
 
-def _forward_headers(request_headers: Any, *, spec: AppSpec, client: str, proto: str, host: str) -> List[Tuple[str, str]]:
+def _forward_headers(request_headers: Any, *, spec: AppSpec, client: str, proto: str, host: str, cookies_allowed: bool = True) -> List[Tuple[str, str]]:
     prefix, _session = app_cookie_names(spec)
     out: List[Tuple[str, str]] = []
     for k, v in request_headers.items():
@@ -261,7 +312,7 @@ def _forward_headers(request_headers: Any, *, spec: AppSpec, client: str, proto:
         if lk in _HOP_BY_HOP or lk in _REQUEST_DROP or lk.startswith("sec-websocket-"):
             continue
         out.append((k, v))
-    cookies = [f"{n}={v}" for n, v in parse_cookie_pairs(request_headers.get("cookie")) if n.startswith(prefix)]
+    cookies = [f"{n}={v}" for n, v in parse_cookie_pairs(request_headers.get("cookie")) if n.startswith(prefix)] if cookies_allowed else []
     if cookies:
         out.append(("cookie", "; ".join(cookies)))
     out.append(("x-forwarded-for", client))
@@ -293,14 +344,17 @@ def _invalid_host_response() -> JSONResponse:
     )
 
 
-def _response_headers(raw: List[Tuple[bytes, bytes]], spec: AppSpec) -> List[Tuple[bytes, bytes]]:
+def _response_headers(raw: List[Tuple[bytes, bytes]], spec: AppSpec, *, cookies_allowed: bool = True) -> List[Tuple[bytes, bytes]]:
     """The app's response headers, minus hop-by-hop ones and any cookie that
-    is not the app's own (an app must never set the console's session)."""
+    is not the app's own (an app must never set the console's session); a
+    public asset (no session) sets no cookie at all."""
     prefix = app_cookie_names(spec)[0].encode("latin-1")
     out: List[Tuple[bytes, bytes]] = []
     for k, v in raw:
         lk = k.lower()
         if lk.decode("latin-1") in _HOP_BY_HOP:
+            continue
+        if lk == b"set-cookie" and not cookies_allowed:
             continue
         if lk == b"set-cookie" and not v.lstrip().startswith(prefix):
             logger.warning("app %s tried to set a cookie outside its own names (%r): dropped", spec.id, v.split(b"=", 1)[0][:64])
@@ -390,7 +444,9 @@ async def app_http(request: Request, app_id: str, path: str) -> Response:
         return JSONResponse(status_code=403, content={"ok": False, "reason": "cross_origin", "message": "Requests to an app must come from the gateway's own pages."}, headers={"Cache-Control": "no-store"})
     _prefix, session_cookie = app_cookie_names(spec)
     pairs = parse_cookie_pairs(request.headers.get("cookie"))
-    if not await run_in_threadpool(session_valid, first_cookie(pairs, session_cookie)):
+    signed_in = await run_in_threadpool(session_valid, first_cookie(pairs, session_cookie))
+    public = not signed_in and public_asset_path(request.method, rest)
+    if not signed_in and not public:
         if _wants_page(request):
             # The console signs the person in, then opens the app through
             # the one-time handover, landing on the page asked for.
@@ -403,8 +459,8 @@ async def app_http(request: Request, app_id: str, path: str) -> Response:
     client = forwarded_client(request)
     if not client:
         return JSONResponse(status_code=400, content={"ok": False, "reason": "unknown_client", "message": "Cannot determine the client address of this connection."})
-    headers = _forward_headers(request.headers, spec=spec, client=client, proto=request.url.scheme, host=str(request.headers.get("host") or ""))
-    has_body = request.method not in ("GET", "HEAD", "OPTIONS") or bool(request.headers.get("content-length") or request.headers.get("transfer-encoding"))
+    headers = _forward_headers(request.headers, spec=spec, client=client, proto=request.url.scheme, host=str(request.headers.get("host") or ""), cookies_allowed=not public)
+    has_body = not public and (request.method not in ("GET", "HEAD", "OPTIONS") or bool(request.headers.get("content-length") or request.headers.get("transfer-encoding")))
     http = _http_client()
     upstream = http.build_request(
         request.method,
@@ -419,6 +475,17 @@ async def app_http(request: Request, app_id: str, path: str) -> Response:
         get_apps_manager()._mount_cache.pop((spec.id, int(port)), None)
         return _refusal(request, 502, "app_not_answering", f"{spec.name} is not answering", f"{spec.name} did not answer ({type(exc).__name__}). Try again in a moment, or restart it from the console.")
 
+    if public and not _public_asset_answer(resp.status_code, resp.headers.get("content-type")):
+        # Not a manifest or an icon after all (a missing file answered with
+        # the app's shell, a redirect, an error): what a request without a
+        # session gets everywhere else.
+        await resp.aclose()
+        return JSONResponse(
+            status_code=401,
+            content={"ok": False, "reason": "app_sign_in_required", "message": f"Open {spec.name} from the gateway console to sign in."},
+            headers={"Cache-Control": "no-store"},
+        )
+
     async def body():
         try:
             async for chunk in resp.aiter_raw():
@@ -427,7 +494,7 @@ async def app_http(request: Request, app_id: str, path: str) -> Response:
             await resp.aclose()
 
     out = StreamingResponse(body(), status_code=resp.status_code, background=BackgroundTask(resp.aclose))
-    out.raw_headers = _response_headers(list(resp.headers.raw), spec)
+    out.raw_headers = _response_headers(list(resp.headers.raw), spec, cookies_allowed=not public)
     return out
 
 

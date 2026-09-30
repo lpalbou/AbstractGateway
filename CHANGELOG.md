@@ -33,6 +33,12 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
   INBOX) without reconnecting; `404 email_not_configured` without a mailbox.
 - `GET /api/gateway/admin/users` rows carry `email_account.capabilities` (`{value, source}` for
   `email` and `email_agent_tools`), so the Users table can show a per-user override with a Reset.
+- `GET /api/gateway/apps` carries `browser_gateway_url`, the address the caller uses (the https
+  origin behind a proxy). `gateway_url` stays the address the app servers use.
+- `GET /api/gateway/network` carries `browser_url` (the caller's address) and
+  `browser_url_listed` (false behind a proxy or tunnel).
+- Docs: "Reached through Tailscale (https)" in configuration.md and deployment.md, and the
+  https same-origin rule in security.md.
 
 ### Changed
 - The administrator's one switch is **Mailboxes for users** (capability `email`, on by default).
@@ -116,6 +122,16 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
   verb in the same minute". A change made across a minute boundary then showed twice, and the
   entity's "asleep at birth" moment disappeared when a sleep through the gateway fell in the same
   minute (backlog 0920).
+- Behind `tailscale serve` (or any TLS proxy on the gateway machine that keeps the browser's
+  `Host`), signing in to the console at `https://<host>.<tailnet>.ts.net/` no longer fails with
+  403 "origin not allowed". An https page asking its own address is accepted when the request
+  came over TLS (native, or `X-Forwarded-Proto: https` from a loopback proxy). No
+  `allowed_origins` entry is needed. A plain-http Origin never qualifies.
+- Apps served at `/apps/<app>/` answer their web app manifest and icons (`manifest.webmanifest`,
+  `favicon*`, `icon*`, `apple-touch-icon*`, `icons/<file>`) without an app session, because
+  browsers fetch them without cookies. The console no longer logs `manifest.webmanifest 401`.
+  These requests are relayed with no cookie and answered only with a manifest or image type,
+  with no `Set-Cookie`. Pages, scripts, `sw.js` and `api/` still need the session.
 
 ### Security
 - The server file helpers (`GET /files/list|search|read|skim`, workspace import and export) never

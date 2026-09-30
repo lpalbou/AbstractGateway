@@ -654,3 +654,88 @@ def test_apps_host_is_deprecated_apps_always_bind_loopback(tmp_path, monkeypatch
         assert m.bind_host == "127.0.0.1"
     warned = [r for r in caplog.records if "apps.host is deprecated" in r.getMessage()]
     assert len(warned) == 1 and "0.0.0.0" in warned[0].getMessage()
+
+
+# ---------------------------------------------------------------------------
+# `tailscale serve` (or any TLS-terminating proxy on this machine): an https
+# page asking its own address is not a foreign origin (operator P1 2026-09-30:
+# console sign-in behind `tailscale serve` was 403 "origin not allowed").
+# ---------------------------------------------------------------------------
+
+TS = "mac-mini.tail43a344.ts.net"
+
+
+def _proxied_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, peer: str) -> TestClient:
+    """The gateway app as `serve` runs it: uvicorn's proxy-headers middleware
+    believing X-Forwarded-* from loopback only (cli.py), around the security
+    middleware; `peer` is the socket peer."""
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+    from abstractgateway.security.same_machine import TRUSTED_PROXY_PEERS
+
+    inner = _client(tmp_path, monkeypatch).app
+    return TestClient(ProxyHeadersMiddleware(inner, trusted_hosts=",".join(TRUSTED_PROXY_PEERS)), client=(peer, 50123))
+
+
+def _ts_headers(origin: str, host: str = TS, proto: str = "https") -> Dict[str, str]:
+    # What Tailscale's serve.go sends for an http:// backend: Host preserved,
+    # X-Forwarded-Host/Proto/For added.
+    return {**ADMIN, "Host": host, "Origin": origin, "X-Forwarded-Host": host, "X-Forwarded-Proto": proto, "X-Forwarded-For": "100.91.176.118"}
+
+
+@pytest.mark.parametrize(
+    "peer,headers,want",
+    [
+        # the Tailscale case: loopback peer, https, Origin == https://Host
+        ("127.0.0.1", _ts_headers(f"https://{TS}"), 200),
+        ("::1", _ts_headers(f"https://{TS}"), 200),
+        ("127.0.0.1", _ts_headers(f"https://{TS}:443", host=f"{TS}:443"), 200),
+        ("127.0.0.1", _ts_headers("https://gw.test:18443", host="gw.test:18443"), 200),
+        # the Origin names another site
+        ("127.0.0.1", _ts_headers("https://evil.example"), 403),
+        ("127.0.0.1", _ts_headers(f"https://{TS}.evil.example"), 403),
+        # a plain-http page (the DNS-rebinding shape): never, even with a forged X-Forwarded-Proto
+        ("127.0.0.1", _ts_headers(f"http://{TS}"), 403),
+        ("127.0.0.1", _ts_headers("http://evil.example:8080", host="evil.example:8080"), 403),
+        # the proxy did not say https (no TLS in front)
+        ("127.0.0.1", _ts_headers(f"https://{TS}", proto="http"), 403),
+        # a REMOTE peer's X-Forwarded-Proto is not believed (scheme stays http)
+        ("100.91.176.118", _ts_headers(f"https://{TS}"), 403),
+        ("192.168.1.50", _ts_headers(f"https://{TS}"), 403),
+        # the proxy rewrote Host to the backend: Origin no longer names it
+        ("127.0.0.1", _ts_headers(f"https://{TS}", host="127.0.0.1:8080"), 403),
+        # port differs
+        ("127.0.0.1", _ts_headers(f"https://{TS}:8443"), 403),
+        # Origin with a path is not an origin
+        ("127.0.0.1", _ts_headers(f"https://{TS}/console"), 403),
+    ],
+)
+def test_https_page_asking_its_own_address_through_a_local_tls_proxy(tmp_path, monkeypatch, peer, headers, want) -> None:
+    client = _proxied_client(tmp_path, monkeypatch, peer)
+    r = client.get("/api/gateway/network", headers=headers)
+    assert r.status_code == want, (peer, headers["Origin"], headers["Host"], r.status_code, r.text[:200])
+    if want == 403:
+        assert "origin not allowed" in r.text
+
+
+def test_https_same_origin_covers_the_console_sign_in_post(tmp_path, monkeypatch) -> None:
+    """The exact request that failed: POST /session/login from the console
+    page at https://<host>.ts.net. A wrong token is the ordinary 401 (the
+    origin check passed); the stored allowlist was never needed."""
+    client = _proxied_client(tmp_path, monkeypatch, "127.0.0.1")
+    h = {k: v for k, v in _ts_headers(f"https://{TS}").items() if k != "Authorization"}
+    r = client.post("/api/gateway/session/login", headers=h, json={"user_id": "admin", "token": "wrong-token-000000"})
+    assert r.status_code != 403, r.text
+    assert "origin not allowed" not in r.text
+
+
+def test_network_status_names_the_address_the_caller_uses(tmp_path, monkeypatch) -> None:
+    """Behind `tailscale serve` the caller's address (https://<host>.ts.net)
+    is none of the gateway's own plain-http addresses: the status says so, so
+    a console shows it instead of a LAN address the caller never used."""
+    client = _proxied_client(tmp_path, monkeypatch, "127.0.0.1")
+    d = client.get("/api/gateway/network", headers=_ts_headers(f"https://{TS}")).json()
+    assert d["browser_url"] == f"https://{TS}" and d["browser_url_listed"] is False
+    direct = _proxied_client(tmp_path, monkeypatch, "127.0.0.1")
+    d = direct.get("/api/gateway/network", headers={**ADMIN, "Host": "127.0.0.1:8080"}).json()
+    assert d["browser_url"] == "http://127.0.0.1:8080"
