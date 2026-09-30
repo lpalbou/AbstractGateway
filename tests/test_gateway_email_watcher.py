@@ -175,6 +175,28 @@ def test_no_consumer_no_polling(gateway, imap, smtp) -> None:
     assert len(imap.commands) == before
 
 
+def test_the_first_email_automation_gets_its_baseline_at_the_next_tick(gateway, imap, smtp) -> None:
+    # 0.7.1 Linux end-to-end: the idle check (no email automation yet) counted as a poll, so the
+    # baseline came up to a minute after the first automation was created and a message arriving
+    # in that minute was absorbed as history. Gates read nothing and never delay the next check.
+    _connect(gateway, "alice", imap, smtp, ALICE)
+    now = [1000.0]
+    wanted = [False]
+    w = _watcher("alice", has_consumers=lambda: wanted[0], clock=lambda: now[0])
+
+    assert w.poll_once()["state"].startswith("idle")
+    wanted[0] = True  # the user creates an email automation
+    now[0] += 5
+    assert w.due(), "an idle check must not start the 60 s cadence"
+    assert w.poll_once()["state"] == "watching"  # the baseline, seconds after the automation
+    imap.add_message("INBOX", message("right after the automation"))
+    now[0] += 5
+    assert not w.due(), "a real read starts the 60 s cadence"
+    now[0] += 60
+    assert w.due() and w.poll_once()["new"] == 1
+    assert [e["subject"] for e in _events(w)] == ["right after the automation"]
+
+
 def test_user_and_admin_switches_keep_the_mailbox_untouched(gateway, imap, smtp) -> None:
     _connect(gateway, "alice", imap, smtp, ALICE)
     before = len(imap.commands)

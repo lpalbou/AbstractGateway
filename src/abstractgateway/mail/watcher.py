@@ -227,7 +227,6 @@ class MailWatcher:
         plane = self.plane
         doc = read_watcher_state(plane)
         doc["last_poll"] = _now_iso()
-        doc["last_poll_ts"] = self._clock()
         out: Dict[str, Any] = {"state": "", "new": 0, "skipped": 0, "reset": False, "unprocessable": 0}
 
         if not admin_email_enabled(plane):
@@ -251,6 +250,11 @@ class MailWatcher:
             if not wanted:
                 return self._gate(doc, "idle (no email-triggered automation)", out)
 
+        # Only a poll that goes on to read the mailbox starts the 60 s cadence. A gate above reads
+        # nothing, so it must not delay the next check: counted as a poll, it pushed the baseline up
+        # to a minute past the first email automation, and mail arriving in that minute was taken
+        # as history and never triggered it.
+        doc["last_poll_ts"] = self._clock()
         try:
             ctx = email_context(plane)
         except EmailError as err:
