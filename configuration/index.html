@@ -1108,6 +1108,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../email/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Email
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../architecture/" class="md-nav__link">
         
   
@@ -1776,8 +1803,8 @@ sentence-transformer embeddings on the Gateway host.</p>
 - <code>abstractgateway[docs]</code>: MkDocs site tooling
 - <code>abstractgateway[dev]</code>: local dev/test deps</p>
 <p>Default dependency floors (see <code>pyproject.toml</code>):
-- <code>AbstractRuntime&gt;=0.7.3</code>
-- <code>abstractcore&gt;=2.19.2</code>
+- <code>AbstractRuntime&gt;=0.8.0</code> (per-user email: run binding, event inbox, <code>email.received@1</code>, the email facade)
+- <code>abstractcore&gt;=2.20.0</code> (the mail library behind per-user email)
 - <code>abstractvoice&gt;=0.13.0</code> (the voice listings import <code>abstractvoice.engine_runtime</code>)
 - <code>abstractagent&gt;=0.3.17</code>
 - <code>AbstractMemory[lancedb]&gt;=0.3.0</code></p>
@@ -2250,10 +2277,10 @@ exists yet, so a store you already have is never modified.</p>
 <td>console <strong>Provider connections</strong> (values are never returned)</td>
 </tr>
 <tr>
-<td>Mail connection (IMAP/SMTP host, port, username, folder)</td>
-<td>AbstractCore</td>
-<td><code>email</code> in <code>abstractcore.json</code></td>
-<td>the email bridge and inbox routes read it; <code>ABSTRACT_EMAIL_*</code> variables override it</td>
+<td>Per-user mail account, recipient policy, send limits, notification preferences</td>
+<td>Gateway (AbstractCore mail library)</td>
+<td>each user's plane under the Gateway data dir, credentials encrypted (<a href="../email/">email.md</a>)</td>
+<td><code>/api/gateway/me/email*</code>, <code>/api/gateway/me/notifications</code>, console <strong>My email</strong>; no environment variables</td>
 </tr>
 <tr>
 <td>Maintenance-triage LLM settings</td>

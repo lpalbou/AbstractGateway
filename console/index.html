@@ -798,6 +798,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../email/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Email
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../architecture/" class="md-nav__link">
         
   
@@ -1175,7 +1202,7 @@ You can also sign in with a user id and token (the admin's first token is in
 <tbody>
 <tr>
 <td><strong>Users &amp; Entities</strong></td>
-<td>user records, token rotation, retained runtime reservations, and the summoned-entity roster (<a href="../entities/">entities.md</a>)</td>
+<td>user records, token rotation, retained runtime reservations, <strong>My email</strong> (your own mailbox, notifications — <a href="../email/">email.md</a>), the per-user <strong>Mailbox</strong> column and <strong>Email on/off</strong> switch (admins), and the summoned-entity roster (<a href="../entities/">entities.md</a>)</td>
 </tr>
 <tr>
 <td><strong>Runtimes</strong></td>
@@ -1556,7 +1583,11 @@ sent or the token was rejected.</p>
   output mode (text, image, voice, music, sound effects, video), file
   attachments and speak-this-reply.</li>
 <li><strong>Users &amp; Entities</strong> summons entities (<code>n</code>), manages spark templates (<code>s</code>),
-  talks with an entity (<code>c</code>) and edits your own workspace policy (<code>w</code>).</li>
+  talks with an entity (<code>c</code>), edits your own workspace policy (<code>w</code>) and your
+  own mailbox (<code>@</code>: account, OAuth2 sign-in, recipient policy, send limits and
+  agent email tools, notifications — <a href="../email/">email.md</a>). Administrators switch email on or
+  off for the selected user with <code>x</code>; the table's <strong>mailbox</strong> column shows each
+  user's state.</li>
 <li><strong>Workflows</strong> imports a <code>.flow</code> bundle (<code>i</code>) and reloads the registry (<code>L</code>).</li>
 <li><strong>A Apps</strong> is the web console's Apps tab: open browser apps signed in,
   install or update them, start and stop them, the desktop Assistant and

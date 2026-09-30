@@ -16,7 +16,7 @@
         <link rel="prev" href="../api/">
       
       
-        <link rel="next" href="../architecture/">
+        <link rel="next" href="../email/">
       
       
         
@@ -947,6 +947,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../email/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Email
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../architecture/" class="md-nav__link">
         
   
@@ -1634,7 +1661,23 @@ they apply.</p>
   down coalesce into one occurrence.</li>
 <li><strong><code>manual@1</code></strong> takes <code>{}</code>: the automation runs only when you send
   <code>automation.run_now</code>.</li>
+<li><strong><code>email.received@1</code></strong> runs on new mail in your own mailbox
+  (<a href="../email/">email.md</a>): <code>{folder?, uses_model?, every?, max_batch?,
+  filter?: {from_in?, from_domain_in?, to_in?, subject_contains?,
+  has_attachment?}}</code> (equality, membership and one literal substring; no
+  patterns). With <code>uses_model</code> (the default) the automation runs at most once
+  an hour by default on the batch received since its last run; with
+  <code>"uses_model": false</code> every 60 seconds. <code>every</code> sets the interval (minimum
+  <code>60s</code>). Each message is read at most once per automation; mail received
+  before the automation existed, or while it was paused, is not processed. The
+  occurrence receives the messages under <code>trigger.emails</code>, marked
+  <code>content_trust: "untrusted"</code>. The gateway's mail watcher reads the mailbox
+  only while such an automation is active.</li>
 </ul>
+<p>An automation delivers its attention items to email as well as the console
+when its definition carries <code>"notify": {"channels": ["console", "email"]}</code>
+and your notification preferences allow it; <code>policy.email_allowed_recipients</code>
+(<code>["self", "a@example.com"]</code>) names who its sends may reach without asking.</p>
 <p>A source installed by another package that fails to load is listed with
 <code>"available": false</code> and an <code>unavailable_reason</code>. A missing built-in source is
 an error (500 <code>internal_error</code>).</p>

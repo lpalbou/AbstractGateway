@@ -1,0 +1,1471 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Deployable HTTP/SSE gateway for durable AbstractRuntime runs.">
+      
+      
+      
+        <link rel="canonical" href="https://www.lpalbou.info/AbstractGateway/email/">
+      
+      
+        <link rel="prev" href="../automations/">
+      
+      
+        <link rel="next" href="../architecture/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Email - AbstractGateway</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#email-one-user-one-runtime-one-mailbox" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="AbstractGateway" class="md-header__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            AbstractGateway
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Email
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="AbstractGateway" class="md-nav__button md-logo" aria-label="AbstractGateway" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    AbstractGateway
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/lpalbou/abstractgateway" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpalbou/abstractgateway
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../first-run/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    First Run
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../console/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Consoles (web + terminal)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Browser & Terminal Apps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engines/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Local Engines
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../model-downloads/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model Downloads
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tray/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Desktop Tray
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../shipped-workflows/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shipped Workflows
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deep-research/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deep Research Workflow
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deployment/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apple-local-gateway-flow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apple Silicon Local Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../automations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Automations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Email
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Email
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#connect-your-mailbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connect your mailbox
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Connect your mailbox">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#oauth2-sign-in-google-microsoft" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OAuth2 sign-in (Google, Microsoft)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#agent-email-tools-off-by-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent email tools (off by default)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipient-policy-and-send-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipient policy and send limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#automations-on-new-mail" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automations on new mail
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notifications" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notifications
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#account-recovery-by-email" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Account recovery by email
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#administrators" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Administrators
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-things-are-stored" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where things are stored
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#migrating-from-the-environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Migrating from the environment variables
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../entities/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Summoned Entities
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../maintenance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operator Tooling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../faq/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FAQ
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#connect-your-mailbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connect your mailbox
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Connect your mailbox">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#oauth2-sign-in-google-microsoft" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OAuth2 sign-in (Google, Microsoft)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#agent-email-tools-off-by-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Agent email tools (off by default)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recipient-policy-and-send-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recipient policy and send limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#automations-on-new-mail" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automations on new mail
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notifications" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Notifications
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#account-recovery-by-email" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Account recovery by email
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#administrators" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Administrators
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-things-are-stored" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where things are stored
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#migrating-from-the-environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Migrating from the environment variables
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="email-one-user-one-runtime-one-mailbox">Email: one user, one runtime, one mailbox<a class="headerlink" href="#email-one-user-one-runtime-one-mailbox" title="Permanent link">&para;</a></h1>
+<p>Every signed-in person on an AbstractGateway can connect <strong>their own</strong> mailbox. The account is
+stored encrypted in that user's data home and is used for three things:</p>
+<ul>
+<li><strong>automations on new mail</strong> — the <code>email.received@1</code> trigger (for example "forward invoices",
+  "tell me when X writes", or an AI triage that opens a session with you);</li>
+<li><strong>email notifications</strong> — job finished/failed, approval needed and automation results, emailed
+  to you through your own account;</li>
+<li><strong>account recovery</strong> — "Forgot your token?" and "Email me a sign-in code" on the sign-in page.</li>
+</ul>
+<p>Email is optional and nothing is active by default: no watcher runs until you create an
+email-triggered automation, notifications stay in the console until you choose email, and your
+agents get no email tools until you turn them on. Without an account there is no sending and no
+email notification; the gateway has no shared "system" sender. The mailbox is only read: nothing marks messages read, moves or
+deletes them.</p>
+<p>This page is the user and operator guide. The HTTP surface is listed in <a href="../api/#email">api.md</a>,
+the security model in <a href="../security/#per-user-email">security.md</a>, and the consoles in
+<a href="../console/">console.md</a>.</p>
+<h2 id="connect-your-mailbox">Connect your mailbox<a class="headerlink" href="#connect-your-mailbox" title="Permanent link">&para;</a></h2>
+<p>You can connect from any of these surfaces; they share the same fields and words:</p>
+<ul>
+<li><strong>Web console</strong> → Users tab → <strong>My email</strong> (every signed-in user).</li>
+<li><strong>Terminal console</strong> (<code>abstractgateway-console</code>) → Users screen → <code>@</code>.</li>
+<li><strong>HTTP</strong>: <code>PUT /api/gateway/me/email</code>.</li>
+</ul>
+<p>Give the address, the password (or app password), and the IMAP and SMTP servers:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;your gateway token&gt;"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/me/email"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{</span>
+<span class="s1">    "address": "me@example.com",</span>
+<span class="s1">    "password": "&lt;app password&gt;",</span>
+<span class="s1">    "imap": {"host": "imap.example.com", "port": 993, "security": "ssl"},</span>
+<span class="s1">    "smtp": {"host": "smtp.example.com", "port": 587, "security": "starttls"}</span>
+<span class="s1">  }'</span>
+</code></pre></div>
+<p>The gateway signs in to both servers first and stores nothing when a leg fails; the answer names
+the cause and the fix (for example <code>email_auth_failed</code>: "The IMAP server rejected the user name or
+password … many providers need an app password when two-step verification is on"). TLS
+certificates and host names are always verified; there is no unencrypted mode.</p>
+<p>Many providers (Gmail, iCloud, Fastmail, most hosted IMAP) accept an <strong>app password</strong> when
+two-step verification is on.</p>
+<h3 id="oauth2-sign-in-google-microsoft">OAuth2 sign-in (Google, Microsoft)<a class="headerlink" href="#oauth2-sign-in-google-microsoft" title="Permanent link">&para;</a></h3>
+<p>Microsoft 365 / Outlook needs OAuth2. In <strong>My email → Sign in with OAuth2</strong>, pick the provider and
+start the sign-in:</p>
+<ul>
+<li><strong>Microsoft</strong> uses a device code by default: open the link shown in any browser, on any machine,
+  and enter the code.</li>
+<li><strong>Google</strong> uses a browser on the gateway's own computer (the provider redirects to a one-shot
+  listener on <code>127.0.0.1</code> there). Google does not allow the Gmail scope in its device flow.</li>
+</ul>
+<p>Which OAuth client signs in: the client id you give, else the gateway's client (an administrator
+setting, see below), else the built-in AbstractFramework client when one is registered for that
+provider. Tokens are refreshed automatically and stored encrypted, like passwords.</p>
+<p>Google and Microsoft sign-ins always use the provider's built-in endpoints and scopes. A request
+that gives <code>token_endpoint</code>, <code>authorization_endpoint</code>, <code>device_authorization_endpoint</code> or <code>scopes</code>
+for them is refused with <code>403 email_oauth_override_refused</code> (the answer names the fields), for
+administrators too, and a <code>tenant</code> must be a tenant id or domain. Explicit endpoints and scopes
+are only for <code>provider: "custom"</code>, which only an administrator may use, and which always brings
+its own client id. The gateway's client and the built-in client are only ever sent to their
+provider's own endpoints, so no request can send the administrator's client secret, or make the
+gateway connect, to a host a user chose.</p>
+<p>Administrators set a bring-your-own client per provider over HTTP with
+<code>PUT /api/gateway/admin/email/oauth-clients/{google|microsoft}</code> (<code>client_id</code>, <code>client_secret</code>,
+<code>tenant</code>); the consoles do not edit OAuth clients yet. The secret is sealed at rest and never
+returned; the read shows <code>client_secret_set</code>.</p>
+<p>While an administrator has email turned off for a user, that user's <strong>Connect</strong>, <strong>Test</strong> and
+OAuth sign-in are refused (<code>409 email_disabled</code>) before any connection is made; the stored
+settings are kept.</p>
+<h2 id="agent-email-tools-off-by-default">Agent email tools (off by default)<a class="headerlink" href="#agent-email-tools-off-by-default" title="Permanent link">&para;</a></h2>
+<p>Your agents and workflows — chats, workflow runs and automations, from every client (Code,
+Assistant, Observer, the consoles) — get the email tools (list and search mail, read a message,
+list folders, send, reply, download an attachment) only when <strong>all</strong> of these hold:</p>
+<ol>
+<li>an administrator made <strong>Agent email tools</strong> available to you (they are not, by default);</li>
+<li>your account is connected and turned on, and email is allowed for you;</li>
+<li>you turned on <strong>Agent email tools</strong> (My email in the web console, <strong>Policy, limits &amp; tools</strong> in
+   the terminal console, or <code>PUT /api/gateway/me/email/agent-tools {"enabled": true}</code>). When they
+   are not available the switch reads "not available — ask your admin".</li>
+</ol>
+<p>The rule is applied twice: when your toolsets are built (the tools are listed only then; turning
+the switch reloads your workflows so the change applies at once) and again when a tool runs (a
+call without all three is refused with the cause and the fix). <code>GET /api/gateway/discovery/tools</code>
+shows the email tools as enabled only for a caller whose agent tools are active; otherwise each
+disabled email row names why: not available to you (ask your administrator), email turned off for
+you by an administrator, no connected account, or your own switch is off. Every email tool
+call is an ordinary tool call recorded in the run's ledger. Your own send-email actions in
+automations (fixed templates you wrote), notifications and recovery codes do not need the switch:
+they only need a connected, allowed account.</p>
+<h2 id="recipient-policy-and-send-limits">Recipient policy and send limits<a class="headerlink" href="#recipient-policy-and-send-limits" title="Permanent link">&para;</a></h2>
+<p>Every send — an agent's <code>send_email</code>, an automation's send action, a notification, a recovery
+code — goes through the same checks, in this order:</p>
+<ol>
+<li>email is on (your switch <strong>and</strong> the administrator's);</li>
+<li>the <strong>recipient policy</strong>: <code>allowlist</code> (only the listed addresses and domains) or <code>denylist</code>
+   (everyone except them). Entries are exact addresses or domains; a subdomain matches only when
+   written as its own entry. The policy applies to To, Cc and Bcc, and a message with any refused
+   recipient is refused whole, naming the refused addresses. A new account starts with an allowlist
+   holding your registered address;</li>
+<li>the <strong>send limits</strong>: 20 messages per rolling hour and 100 per day by default, editable by you.</li>
+</ol>
+<p>On top of the policy, the approval gate still decides whether an agent's send runs unattended: a
+send to anyone but you (or an automation's pre-authorised recipients) waits for your approval.</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/me/email/policy"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"mode": "allowlist", "entries": ["me@example.com", "mycompany.com"]}'</span>
+curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/me/email/limits"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"per_hour": 20, "per_day": 100}'</span>
+</code></pre></div>
+<h2 id="automations-on-new-mail">Automations on new mail<a class="headerlink" href="#automations-on-new-mail" title="Permanent link">&para;</a></h2>
+<p>The mail watcher reads your mailbox only while at least one of your automations is active on the
+<code>email.received@1</code> trigger, checking every 60 seconds. It is read-only (IMAP <code>EXAMINE</code> and
+<code>BODY.PEEK</code>), keeps a durable cursor, survives a server rebuilding the folder (UIDVALIDITY change:
+it re-reads by date and passes messages it already has), and moves the cursor past a message only
+after that message is durably stored in your runtime's event inbox. A message that cannot be read
+on three polls in a row is recorded and passed, so one bad message never blocks your mailbox.
+Connection problems back off from 60 seconds to 15 minutes; nothing is paused, and the status
+shows the cause and the fix.</p>
+<p>How often an automation <strong>runs</strong> on new mail is its own trigger setting: every 60 seconds when it
+needs no model (<code>"uses_model": false</code>), once an hour by default when it runs a model (summarise,
+classify, draft replies, AI triage), on the batch of messages received since its last run. Each
+automation reads a message at most once. See <a href="../automations/">automations.md</a> for the trigger
+configuration and the send-email action.</p>
+<p>Inbound mail is data, never instructions: it reaches a model inside a fixed "untrusted" frame, and
+nothing it says can widen who a run may mail or which tools it has.</p>
+<h2 id="notifications">Notifications<a class="headerlink" href="#notifications" title="Permanent link">&para;</a></h2>
+<p>Email notifications are opt-in: every event is off until you turn it on, and the console stays
+the default channel. <strong>My email → Notifications</strong> (or <code>GET/PUT /api/gateway/me/notifications</code>)
+chooses which events email you:</p>
+<table>
+<thead>
+<tr>
+<th>Event</th>
+<th>When</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>automation_result</code></td>
+<td>an automation occurrence asked to notify, and the automation is set to "email me the result" (<code>notify.channels</code> holds <code>email</code>)</td>
+</tr>
+<tr>
+<td><code>automation_failed</code></td>
+<td>an occurrence failed after its retries (same channel rule)</td>
+</tr>
+<tr>
+<td><code>approval_needed</code></td>
+<td>one of your runs waits for your approval or answer</td>
+</tr>
+<tr>
+<td><code>job_finished</code> / <code>job_failed</code></td>
+<td>a run started with <code>_runtime.notify = {"on": ["finished", "failed"], "channels": ["email"]}</code></td>
+</tr>
+</tbody>
+</table>
+<p>Notices go to your registered address (else your mailbox address), sent by your own account, from
+a durable outbox: each notice is queued once and sent once. If the gateway stops in the middle of a
+send, that notice is marked <code>unknown</code> and never resent automatically. Temporary SMTP refusals are
+retried with backoff; sign-in and permanent refusals are shown with their cause and fix. Over your
+send limits, the waiting notices go out as one digest when the window allows. <strong>Send test
+notification</strong> checks the whole path. Notification emails use fixed templates; the only
+model-written text is an automation's own <code>notify</code> title and body, labelled as such. Replying to a
+notification does nothing.</p>
+<h2 id="account-recovery-by-email">Account recovery by email<a class="headerlink" href="#account-recovery-by-email" title="Permanent link">&para;</a></h2>
+<p>When at least one account on the gateway has email configured, the sign-in page offers
+<strong>Forgot your token?</strong> and <strong>Email me a sign-in code</strong>. Enter your Gateway user and choose one; an
+8-digit code is sent to your registered address through your own account. The code works once,
+expires after 10 minutes and allows 5 tries. "Forgot your token?" issues a new token (shown once;
+the old one stops working) and signs you in; "Email me a sign-in code" signs you in.</p>
+<p>The answer is the same whether or not the account exists or has email, requests are rate-limited
+per account (3 per 15 minutes) and per client address (10 per 15 minutes) before any work starts
+(a flood of requests costs no background sends), codes are stored only as keyed hashes, and every issue and use
+is recorded in the audit log without the code. Users without email use the administrator's token
+rotation as before.</p>
+<h2 id="administrators">Administrators<a class="headerlink" href="#administrators" title="Permanent link">&para;</a></h2>
+<p>Administrators decide what is <strong>available</strong> to users, with a gateway-wide default and per-user
+overrides (web console Users tab → <strong>Email for users</strong> and the row buttons; terminal console Users
+screen → <code>@</code> → <strong>Email for users (admin)</strong>, <code>x</code> and <code>X</code>; or the HTTP routes):</p>
+<table>
+<thead>
+<tr>
+<th>Capability</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>email</code></td>
+<td>on</td>
+<td>users may connect their own mailbox (off: no watcher, no sending, no email notifications; settings are kept)</td>
+</tr>
+<tr>
+<td><code>email_agent_tools</code></td>
+<td>off</td>
+<td>users may turn on Agent email tools for their own agents</td>
+</tr>
+<tr>
+<td><code>email_recovery</code></td>
+<td>on (gateway-wide only)</td>
+<td>"Forgot your token?" and "Email me a sign-in code" on the sign-in page</td>
+</tr>
+</tbody>
+</table>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$ADMIN</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/admin/email/capabilities"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"email_agent_tools": true}'</span>
+curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$ADMIN</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/admin/users/alice/email"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"enabled": true, "agent_tools": false}'</span>
+curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$ADMIN</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/admin/users/alice/email"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"inherit": ["email_agent_tools"]}'</span>
+</code></pre></div>
+<p>Sign-in by email means that whoever controls a user's mailbox can sign in as that user; turn it off
+where mailboxes are not as well protected as gateway tokens. The Users table
+shows each user's mailbox state (<code>connected</code>, <code>not connected</code>, <code>needs action</code>, <code>turned off by an
+administrator</code>, …). Administrators see the state, the address and the last error — never messages,
+the user's recipient list or credentials.</p>
+<p>The administrator's own account (the default runtime) is configured like everyone else's. It is the
+gateway's account, separate from AbstractCore's own local account (<code>abstractcore email</code>); on the
+first start, when the gateway has no account for the administrator and AbstractCore has one, that
+account is copied once into the gateway settings (the consoles say which account you are editing).</p>
+<h2 id="where-things-are-stored">Where things are stored<a class="headerlink" href="#where-things-are-stored" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>What</th>
+<th>Where</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Account settings, policy, limits</td>
+<td><code>&lt;plane&gt;/email/account/abstractcore.json</code></td>
+</tr>
+<tr>
+<td>Password / OAuth tokens</td>
+<td><code>&lt;plane&gt;/email/account/email/secret.enc</code> (AES-256-GCM; key in the OS keychain, or a 0600 key file when there is none)</td>
+</tr>
+<tr>
+<td>Watcher state</td>
+<td><code>&lt;plane&gt;/email/watcher.json</code>; the cursor and received mail in <code>&lt;runtime data dir&gt;/event_inbox/</code></td>
+</tr>
+<tr>
+<td>Notification preferences and outbox</td>
+<td><code>&lt;plane&gt;/email/notifications.json</code>, <code>&lt;plane&gt;/email/outbox.sqlite3</code> (created with the first notice)</td>
+</tr>
+<tr>
+<td>What is available to users (defaults + per-user)</td>
+<td><code>&lt;data_dir&gt;/auth/capabilities.json</code></td>
+</tr>
+<tr>
+<td>Agent email tools choice</td>
+<td><code>&lt;plane&gt;/email/agent_tools.json</code></td>
+</tr>
+<tr>
+<td>OAuth clients (admin)</td>
+<td><code>&lt;data_dir&gt;/email/oauth_clients/secret.enc</code></td>
+</tr>
+<tr>
+<td>Recovery codes (hashed)</td>
+<td><code>&lt;data_dir&gt;/auth/recovery_codes.json</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>&lt;plane&gt;</code> is <code>&lt;data_dir&gt;</code> for the default runtime (single-user gateways and the administrator) and
+<code>&lt;data_dir&gt;/users/&lt;tenant&gt;/&lt;runtime&gt;</code> for every other user.</p>
+<h2 id="migrating-from-the-environment-variables">Migrating from the environment variables<a class="headerlink" href="#migrating-from-the-environment-variables" title="Permanent link">&para;</a></h2>
+<p>Email is configured per user, never through environment variables. On the first start, a gateway
+that still has the <code>ABSTRACT_EMAIL_*</code> variables (or values saved through the process manager's
+environment overrides) imports that account <strong>once</strong> into the administrator's email settings; from
+then on the variables are ignored, and each one still set is named at startup and in the
+administrator's <strong>My email</strong> notices with the setting that replaced it. The email bridge
+(<code>ABSTRACT_EMAIL_BRIDGE</code>) is replaced by the per-user watcher and the <code>email.received@1</code> trigger.
+Maintenance notices go to the administrator's registered address through the administrator's own
+account (<code>ABSTRACT_BACKLOG_EMAIL_TO</code> and the related account variables are ignored); the same notice
+is sent at most once per UTC day.</p>
+<p>The admin-only <code>/api/gateway/email/*</code> routes remain as deprecated aliases acting on the calling
+administrator's own account, and will be removed in a later minor release; use <code>/api/gateway/me/email</code>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.instant", "navigation.tracking", "navigation.top", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

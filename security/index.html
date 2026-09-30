@@ -629,6 +629,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../email/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Email
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../architecture/" class="md-nav__link">
         
   
@@ -759,6 +786,17 @@
     <span class="md-ellipsis">
       
         Tenant and user isolation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#per-user-email" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-user email
       
     </span>
   </a>
@@ -1162,6 +1200,17 @@
     <span class="md-ellipsis">
       
         Tenant and user isolation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#per-user-email" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-user email
       
     </span>
   </a>
@@ -1593,7 +1642,8 @@ correlation and lookup fields; they do not authorize access by themselves.</p>
 to its own service. Gateway also applies a central
 route-family authorization table for operator/admin surfaces. Admin-only route
 families include user management, audit, process control, backlog/triage/report
-operations, email bridge routes, model residency mutations
+operations, the deprecated <code>/email/*</code> aliases (the calling admin's own mailbox),
+the per-user email switch, model residency mutations
 (<code>POST /models/load|unload|lock|unlock|download</code>), session-wide prompt-cache
 clearing (<code>POST /sessions/{session_id}/prompt_cache/clear_all</code>), server
 workspace file helpers, server-workspace artifact import/export, and global
@@ -1629,6 +1679,53 @@ admin principal. The current capability-default cascade uses execution-host
 Core defaults, then the Gateway/root Core config baseline, then the user's
 runtime Core config override under that user's Gateway data plane. A stronger encrypted vault, audit model, and
 bridge/delegated-tool propagation policy remain future hardening work.</p>
+<h3 id="per-user-email">Per-user email<a class="headerlink" href="#per-user-email" title="Permanent link">&para;</a></h3>
+<p>Each user's mailbox (<a href="../email/">email.md</a>) lives in that user's own data plane,
+resolved from the authenticated principal on every route; no path or body id
+selects another user's account, and entities have none.</p>
+<ul>
+<li><strong>Credentials</strong> (password or OAuth tokens) are sealed with AES-256-GCM
+  (<code>&lt;plane&gt;/email/account/email/secret.enc</code>, 0600 in a 0700 folder); the key is
+  in the OS keychain, or a 0600 key file next to it on hosts without one. They
+  are used in memory at the moment of a connection and never enter run
+  variables, ledgers, events, logs, the audit log or API responses. The
+  encryption protects copies of the data folder, backups and file-reading tools;
+  code running as the gateway's OS user can reach the key.</li>
+<li><strong>TLS</strong> is verified on every IMAP, SMTP and OAuth connection (certificate
+  chain and host name); there is no plaintext mode. A private CA file is an
+  administrator setting.</li>
+<li><strong>OAuth endpoints</strong> come from the provider preset for Google and Microsoft;
+  endpoint and scope overrides are refused (<code>403 email_oauth_override_refused</code>),
+  for administrators too. Only an administrator may use <code>provider: "custom"</code>,
+  which brings its own client. The gateway's and the built-in OAuth client are
+  sent only to their provider's own endpoints.</li>
+<li><strong>Turned off by an administrator</strong> means no connection at all: the user's
+  Connect, Test and OAuth sign-in are refused before any connection.</li>
+<li><strong>Administrators</strong> can turn email on or off per user and see its state,
+  address and last error — never messages, recipient policies or credentials.</li>
+<li><strong>Sending</strong> always passes the user's recipient policy (allowlist or denylist)
+  and send limits; an agent's send to anyone but the user waits for approval.</li>
+<li><strong>Inbound mail</strong> is untrusted data: it reaches a model inside a fixed frame and
+  cannot change a run's recipients or tools. The mailbox is only read.</li>
+<li><strong>Availability</strong> is the administrator's: <code>email</code>, <code>email_agent_tools</code> (off by default) and
+  <code>email_recovery</code> are gateway-wide defaults with per-user overrides; agents get email tools only
+  when available, connected and switched on by the user — checked when toolsets are built and
+  again on every tool call (the runtime's own send actions only need the account).</li>
+<li><strong>Recovery by email</strong> trusts the mailbox: whoever controls a user's mailbox can sign in as that
+  user. It is on by default for users with email; administrators can turn it off gateway-wide
+  (<code>email_recovery</code>).</li>
+<li><strong>Recovery codes</strong> are single use, expire after 10 minutes, are stored as
+  keyed hashes, are rate-limited per account and client address, and the request
+  answer never reveals whether an account exists or has email. Issue and use are
+  audited without the code.</li>
+<li><strong>Audit</strong>: typed events (<code>email.connected</code>, <code>email.tested</code>, <code>email.disconnected</code>,
+  <code>email.capability_changed</code>, <code>email.cursor_reset</code>, <code>email.message_unprocessable</code>,
+  <code>email.notification_sent|failed</code>, <code>email.recovery_code_issued|used|refused</code>)
+  in <code>&lt;data_dir&gt;/audit_log.jsonl</code>.</li>
+</ul>
+<p>A user-supplied IMAP/SMTP host is a connection the gateway makes on that
+user's behalf; deployments that must restrict outbound destinations should do
+so at the network layer.</p>
 <h3 id="workflow-registry-ownership">Workflow registry ownership<a class="headerlink" href="#workflow-registry-ownership" title="Permanent link">&para;</a></h3>
 <p>Writing a workflow registry requires owning it. Under hosted user auth the
 <code>/api/gateway/bundles</code> routes resolve to the calling principal's own bundle
@@ -1805,7 +1902,7 @@ remembered session (30 days) of the user who clicked Open. See
 <h3 id="default-safe-everything-outside-the-run-workspace-is-blocked">Default (safe): everything outside the run workspace is blocked<a class="headerlink" href="#default-safe-everything-outside-the-run-workspace-is-blocked" title="Permanent link">&para;</a></h3>
 <ul>
 <li>Every run the gateway starts works in a folder, whatever started it (the
-  HTTP routes, the Telegram, email and agora bridges, entity summons,
+  HTTP routes, email-triggered automations, the Telegram and agora bridges, entity summons,
   scheduled runs). A run that names no <code>workspace_root</code> works in its
   conversation's gateway-made folder, <code>&lt;ABSTRACTGATEWAY_DATA_DIR&gt;/workspaces/session-…</code>
   (or a per-run folder when it has no session).</li>

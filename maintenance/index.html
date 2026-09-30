@@ -629,6 +629,33 @@
   
   
     <li class="md-nav__item">
+      <a href="../email/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Email
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../architecture/" class="md-nav__link">
         
   
@@ -853,10 +880,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#bridges-telegram-email" class="md-nav__link">
+  <a href="#telegram-bridge" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bridges (Telegram, email)
+        Telegram bridge
       
     </span>
   </a>
@@ -864,10 +891,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#email-inbox-endpoints-abstractobserver-inbox-email" class="md-nav__link">
+  <a href="#email" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Email inbox endpoints (AbstractObserver Inbox → Email)
+        Email
       
     </span>
   </a>
@@ -1057,10 +1084,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#bridges-telegram-email" class="md-nav__link">
+  <a href="#telegram-bridge" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bridges (Telegram, email)
+        Telegram bridge
       
     </span>
   </a>
@@ -1068,10 +1095,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#email-inbox-endpoints-abstractobserver-inbox-email" class="md-nav__link">
+  <a href="#email" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Email inbox endpoints (AbstractObserver Inbox → Email)
+        Email
       
     </span>
   </a>
@@ -1133,8 +1160,9 @@ Security enforcement for <code>/api/gateway/*</code> is in <code>src/abstractgat
 - <code>abstractgateway triage-apply &lt;decision_id&gt; approve|reject|defer</code></p>
 <p>Notification helpers used by <code>triage-reports --notify</code>:
 - Telegram: <code>ABSTRACT_BACKLOG_TELEGRAM_CHAT_ID</code> or <code>ABSTRACT_TRIAGE_TELEGRAM_CHAT_ID</code>
-- Email recipients: <code>ABSTRACT_BACKLOG_EMAIL_TO</code> or <code>ABSTRACT_TRIAGE_EMAIL_TO</code>
-- Optional email account override: <code>ABSTRACT_BACKLOG_EMAIL_ACCOUNT</code> or <code>ABSTRACT_TRIAGE_EMAIL_ACCOUNT</code></p>
+- Email: sent to the administrator's registered address through the administrator's own email account
+  (Users tab → <strong>My email</strong>), from the durable notification outbox — the recipient policy and send limits apply and
+  a retry never sends a notice twice. See <a href="../email/">email.md</a>.</p>
 <p>Evidence: CLI wiring in <code>src/abstractgateway/cli.py</code>.</p>
 <h2 id="backlog-browsingediting">Backlog browsing/editing<a class="headerlink" href="#backlog-browsingediting" title="Permanent link">&para;</a></h2>
 <p>The gateway also exposes endpoints that read/write backlog Markdown files in a folder that contains <code>docs/backlog/*</code>.</p>
@@ -1205,7 +1233,7 @@ abstractgateway<span class="w"> </span>config<span class="w"> </span><span class
 <span class="nb">export</span><span class="w"> </span><span class="nv">ABSTRACTGATEWAY_WORKSPACE_MOUNTS</span><span class="o">=</span><span class="s1">$'repo=/abs/path/to/repo\\ndata=/abs/path/to/data'</span>
 </code></pre></div>
 <p>Evidence: <code>_workspace_mounts()</code> and related policy helpers in <code>src/abstractgateway/routes/gateway.py</code>, tests in <code>tests/test_gateway_workspace_policy_enforcement.py</code>.</p>
-<h2 id="bridges-telegram-email">Bridges (Telegram, email)<a class="headerlink" href="#bridges-telegram-email" title="Permanent link">&para;</a></h2>
+<h2 id="telegram-bridge">Telegram bridge<a class="headerlink" href="#telegram-bridge" title="Permanent link">&para;</a></h2>
 <p>Background bridges can ingest external messages and start durable runs (thin-client semantics), and may also emit events for specialized workflows.</p>
 <p>Enable (Telegram):
 - <code>ABSTRACT_TELEGRAM_BRIDGE=1</code>
@@ -1227,28 +1255,12 @@ abstractgateway<span class="w"> </span>config<span class="w"> </span><span class
   - Telegram-only routing override: <code>ABSTRACT_TELEGRAM_MODEL</code> (and optionally <code>ABSTRACT_TELEGRAM_PROVIDER</code>)
   - Replayed history is the gateway's window (the most recent 50,000 tokens of whole turns); <code>ABSTRACT_TELEGRAM_MAX_HISTORY_MESSAGES</code> is retired and ignored (a warning is logged when it is set)
   - <code>/reset</code> controls: <code>ABSTRACT_TELEGRAM_RESET_DELETE_MESSAGES</code>, <code>ABSTRACT_TELEGRAM_RESET_DELETE_MAX</code>, <code>ABSTRACT_TELEGRAM_RESET_MESSAGE</code></p>
-<p>Enable (Email):
-- <code>ABSTRACT_EMAIL_BRIDGE=1</code>
-- IMAP credentials + polling config (see <code>src/abstractgateway/integrations/email_bridge.py</code>)
-- TLS is always verified (certificate chain and host name, <code>ssl.create_default_context()</code>); a failed check is refused
-  before login. <code>ABSTRACT_EMAIL_IMAP_PASSWORD_ENV_VAR</code> / <code>imap_password_env_var</code> is the NAME of the variable holding the
-  password, never the password itself (a value that is not a variable name is refused).
-- Message bodies are passed whole (ADR-0026); <code>ABSTRACT_EMAIL_MAX_BODY_CHARS</code> / <code>ABSTRACT_EMAIL_MAX_HTML_CHARS</code> set an
-  explicit bound only when given.</p>
 <p>Evidence: bridge startup in <code>src/abstractgateway/service.py</code> (<code>start_gateway_runner</code>).</p>
-<h2 id="email-inbox-endpoints-abstractobserver-inbox-email">Email inbox endpoints (AbstractObserver Inbox → Email)<a class="headerlink" href="#email-inbox-endpoints-abstractobserver-inbox-email" title="Permanent link">&para;</a></h2>
-<p>If email accounts are configured on the gateway host, the gateway exposes account-scoped endpoints used by AbstractObserver to list/read/send emails:
-- <code>GET /api/gateway/email/accounts</code>
-- <code>GET /api/gateway/email/messages</code>
-- <code>GET /api/gateway/email/messages/{uid}</code>
-- <code>POST /api/gateway/email/send</code></p>
-<p>These endpoints proxy through Gateway's Runtime comms facade and never accept arbitrary IMAP/SMTP host/user secrets from the browser.</p>
-<p>Configuration notes:
-- Multi-account: set <code>ABSTRACT_EMAIL_ACCOUNTS_CONFIG=/path/to/emails.yaml</code> (recommended).
-- Single-account env fallback: <code>ABSTRACT_EMAIL_IMAP_*</code> / <code>ABSTRACT_EMAIL_SMTP_*</code>.
-- Connections use AbstractCore's mail tools, which verify TLS certificates and host names; a server signed by a
-  private CA is trusted through the accounts file's <code>ca_file</code> field (see AbstractCore's tool-calling docs).</p>
-<p>Evidence: <code>/api/gateway/email/*</code> routes in <code>src/abstractgateway/routes/gateway.py</code> which call the Runtime AbstractCore comms facade.</p>
+<h2 id="email">Email<a class="headerlink" href="#email" title="Permanent link">&para;</a></h2>
+<p>Email is configured per user (Users tab → <strong>My email</strong>), never through environment variables; new mail reaches
+automations through the <code>email.received@1</code> trigger. See <a href="../email/">email.md</a> for the watcher, notifications,
+recovery codes and the one-time import of the retired <code>ABSTRACT_EMAIL_*</code> variables, and <a href="../api/#email">api.md</a> for
+the routes (including the deprecated <code>/api/gateway/email/*</code> aliases).</p>
 <h2 id="related-docs">Related docs<a class="headerlink" href="#related-docs" title="Permanent link">&para;</a></h2>
 <ul>
 <li>API overview (core client contract): <a href="../api/">api.md</a></li>

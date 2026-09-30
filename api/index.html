@@ -1149,10 +1149,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#email-inbox-operator-ui-optional" class="md-nav__link">
+  <a href="#email" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Email inbox (operator UI; optional)
+        Email
       
     </span>
   </a>
@@ -1182,6 +1182,33 @@
     
   
     Automations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../email/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Email
   
 
     
@@ -1897,10 +1924,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#email-inbox-operator-ui-optional" class="md-nav__link">
+  <a href="#email" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Email inbox (operator UI; optional)
+        Email
       
     </span>
   </a>
@@ -3682,30 +3709,167 @@ later <code>LLM_CALL.params.prompt_cache_binding</code> used inside real Runtime
 <li>remote and hybrid runtimes return <code>code=prompt_cache_local_only</code></li>
 <li>response payloads follow Runtime's host-local export/import contract, including <code>operation</code>, <code>local_only</code>, <code>artifact_*</code>, <code>capabilities</code>, and <code>provider_response</code></li>
 </ul>
-<h2 id="email-inbox-operator-ui-optional">Email inbox (operator UI; optional)<a class="headerlink" href="#email-inbox-operator-ui-optional" title="Permanent link">&para;</a></h2>
-<p>These endpoints power AbstractObserver’s <strong>Inbox → Email</strong> UI. They are <strong>account-scoped</strong>: the browser cannot supply arbitrary IMAP/SMTP host/user credentials. The gateway host must be configured with one or more email accounts (multi-account YAML or env vars).</p>
-<p>Endpoints:
-- <code>GET /api/gateway/email/accounts</code>
-- <code>GET /api/gateway/email/messages?account=…&amp;mailbox=…&amp;since=…&amp;status=…&amp;limit=…</code>
-- <code>GET /api/gateway/email/messages/{uid}?account=…&amp;mailbox=…&amp;max_body_chars=…</code>
-- <code>POST /api/gateway/email/send</code></p>
-<p>Examples:</p>
-<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/email/accounts"</span>
+<h2 id="email">Email<a class="headerlink" href="#email" title="Permanent link">&para;</a></h2>
+<p>Per-user email (<a href="../email/">email.md</a>): every route acts on the <strong>caller's own</strong> account, resolved
+from the authenticated principal (never from a path or body id); entities are refused (403). No
+response ever carries a password, token or OAuth client secret.</p>
+<p>Your mailbox (<code>/api/gateway/me/...</code>, every signed-in human):</p>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /me/email</code></td>
+<td>settings and status: <code>configured</code>, <code>address</code>, <code>imap</code>, <code>smtp</code>, <code>auth_kind</code>, <code>secret_set</code>, <code>policy</code>, <code>limits</code> (+ usage), <code>status{last_test, last_ok, last_error{code, cause, fix}}</code>, <code>watcher{state, last_poll, cursor, received}</code>, <code>admin_enabled</code>, <code>effective_enabled</code></td>
+</tr>
+<tr>
+<td><code>PUT /me/email</code></td>
+<td>connect: <code>{address, password, username?, display_name?, imap{host, port, security, folder}, smtp{host, port, security}, test}</code>; signs in to both legs first (unless <code>test: false</code>) and stores nothing on a failure</td>
+</tr>
+<tr>
+<td><code>POST /me/email/test</code></td>
+<td>per-leg result <code>{imap, smtp, ok}</code></td>
+</tr>
+<tr>
+<td><code>DELETE /me/email</code></td>
+<td>disconnect: credentials and cursor deleted (policy and limits kept)</td>
+</tr>
+<tr>
+<td><code>PUT /me/email/policy</code></td>
+<td><code>{mode: "allowlist" \| "denylist", entries: [address \| domain]}</code></td>
+</tr>
+<tr>
+<td><code>POST /me/email/policy/check</code></td>
+<td><code>{addresses}</code> → per-recipient verdicts</td>
+</tr>
+<tr>
+<td><code>PUT /me/email/limits</code></td>
+<td><code>{per_hour, per_day}</code></td>
+</tr>
+<tr>
+<td><code>PUT /me/email/enabled</code></td>
+<td><code>{enabled}</code> — your own switch</td>
+</tr>
+<tr>
+<td><code>PUT /me/email/agent-tools</code></td>
+<td><code>{enabled}</code> — your agents' email tools (default off; 409 <code>email_disabled</code> "not available" unless an administrator made them available; active only with a connected, allowed account); reloads your workflows so toolsets follow (<code>tools_reloaded</code>). <code>GET /me/email</code> reports <code>agent_tools: {enabled, available, active, reason}</code> and <code>store.label</code> (which account this is)</td>
+</tr>
+<tr>
+<td><code>GET /me/email/oauth/clients</code></td>
+<td>which providers have a gateway OAuth client (no secrets)</td>
+</tr>
+<tr>
+<td><code>POST /me/email/oauth/start</code></td>
+<td><code>{address, provider: google \| microsoft, client_id?, client_secret?, tenant?, flow?: device \| loopback}</code> → device code (<code>user_code</code>, <code>verification_uri</code>) or <code>authorization_url</code>. <code>token_endpoint</code>, <code>authorization_endpoint</code>, <code>device_authorization_endpoint</code> and <code>scopes</code> are accepted only from an administrator with <code>provider: "custom"</code> (own client id); otherwise 403 <code>email_oauth_override_refused</code></td>
+</tr>
+<tr>
+<td><code>POST /me/email/oauth/poll</code></td>
+<td><code>{flow_id}</code> → <code>{pending: true}</code> or the connected account</td>
+</tr>
+<tr>
+<td><code>POST /me/email/oauth/finish</code></td>
+<td><code>{flow_id, wait_s}</code> — waits up to 60 s for the approval</td>
+</tr>
+<tr>
+<td><code>POST /me/email/oauth/cancel</code></td>
+<td><code>{flow_id}</code></td>
+</tr>
+<tr>
+<td><code>GET /me/notifications</code></td>
+<td>events and choices, channel availability, outbox summary</td>
+</tr>
+<tr>
+<td><code>PUT /me/notifications</code></td>
+<td><code>{email: {automation_result, automation_failed, approval_needed, job_finished, job_failed: bool}}</code> (all off by default)</td>
+</tr>
+<tr>
+<td><code>POST /me/notifications/test</code></td>
+<td>sends one test notification now → <code>{ok, state, error?}</code></td>
+</tr>
+</tbody>
+</table>
+<p>Administrators (status and the switch only; administrators never read mail):</p>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /admin/users</code></td>
+<td>each human row carries <code>email_account: {configured, address, state, admin_enabled, agent_tools_available}</code></td>
+</tr>
+<tr>
+<td><code>GET /admin/users/{user_id}/email</code></td>
+<td><code>configured</code>, <code>address</code>, <code>auth_kind</code>, <code>user_enabled</code>, <code>admin_enabled</code>, <code>effective_enabled</code>, <code>status</code> (last test / last error), <code>capabilities</code> (<code>{value, source: user \| gateway \| built-in}</code>), <code>agent_tools</code> (<code>available</code>, <code>user_enabled</code>, <code>active</code>), <code>watcher</code>, <code>state</code></td>
+</tr>
+<tr>
+<td><code>PUT /admin/users/{user_id}/email</code></td>
+<td><code>{enabled?, agent_tools?, inherit?: ["email", "email_agent_tools"]}</code> — per-user capabilities; <code>enabled: false</code> = no watcher, no sending, no notifications (settings kept); <code>agent_tools</code> = Agent email tools available</td>
+</tr>
+<tr>
+<td><code>GET /admin/email/capabilities</code></td>
+<td>gateway-wide defaults: <code>email</code> (on), <code>email_agent_tools</code> (off), <code>email_recovery</code> (on)</td>
+</tr>
+<tr>
+<td><code>PUT /admin/email/capabilities</code></td>
+<td><code>{email?, email_agent_tools?, email_recovery?, reset?: [...]}</code></td>
+</tr>
+<tr>
+<td><code>GET /admin/email/oauth-clients</code></td>
+<td>bring-your-own OAuth clients: <code>client_id</code>, <code>client_secret_set</code>, <code>tenant</code> per provider</td>
+</tr>
+<tr>
+<td><code>PUT /admin/email/oauth-clients/{provider}</code></td>
+<td><code>{client_id, client_secret?, tenant?}</code>; an empty <code>client_id</code> removes the provider's client; omitting <code>client_secret</code> keeps the stored one for the same id</td>
+</tr>
+</tbody>
+</table>
+<p>Sign-in page (public):</p>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /session/recovery</code></td>
+<td><code>{available}</code> — true when sign-in by email is on (<code>email_recovery</code>, default on) and at least one account of this gateway has email</td>
+</tr>
+<tr>
+<td><code>POST /session/recovery/request</code></td>
+<td><code>{user_id, tenant_id?, purpose: sign_in \| reset_token}</code> → the same answer for every account</td>
+</tr>
+<tr>
+<td><code>POST /session/recovery/redeem</code></td>
+<td><code>{user_id, tenant_id?, purpose, code, remember?}</code> → a browser session; <code>reset_token</code> also returns the new <code>token</code> once. A wrong, expired or used code answers 401 <code>recovery_code_refused</code></td>
+</tr>
+</tbody>
+</table>
+<p>Errors carry <code>{"detail": {"reason_code", "message", "cause", "fix", "retryable"}}</code>: 400 invalid
+settings or a policy refusal (<code>email_policy_refused</code>), 403 entity or a refused OAuth override (<code>email_oauth_override_refused</code>), 404 no account
+(<code>email_not_configured</code>), 409 turned off (<code>email_disabled</code>) or credentials missing, 422 the mail
+server refused (<code>email_auth_failed</code>, <code>email_tls_failed</code>, <code>email_unreachable</code>, …), 429 send limit
+(<code>email_rate_limited</code>).</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/me/email"</span>
+curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/me/email/test"</span>
+curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>POST<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/me/notifications/test"</span>
 </code></pre></div>
-<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/email/messages?status=unread&amp;since=7d&amp;limit=20"</span>
-</code></pre></div>
-<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/email/messages/12345?max_body_chars=20000"</span>
-</code></pre></div>
-<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"to":"you@example.com","subject":"Hello","body_text":"Hi!"}'</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/email/send"</span>
-</code></pre></div>
-<p>Configuration notes (gateway host):
-- Multi-account: set <code>ABSTRACT_EMAIL_ACCOUNTS_CONFIG=/path/to/emails.yaml</code> (recommended).
-- Single-account env fallback: set <code>ABSTRACT_EMAIL_IMAP_*</code> and/or <code>ABSTRACT_EMAIL_SMTP_*</code>.
-- The secret itself must be present in the env var referenced by <code>*_PASSWORD_ENV_VAR</code> (e.g. <code>EMAIL_PASSWORD=...</code>). That setting is the variable's NAME; a value that is not a variable name is refused, never used as the password.
-- Every IMAP/SMTP connection verifies the server's TLS certificate and host name; a failed check returns an error naming the host, the reason and the fix, and no password is sent. A server signed by a private CA is trusted through the accounts file's <code>ca_file</code> field.</p>
-<p>Evidence: <code>src/abstractgateway/routes/gateway.py</code> (<code>/email/accounts|messages|send</code>) which proxies to the Runtime AbstractCore comms facade.</p>
+<p>Runs: <code>_runtime.notify = {"on": ["finished", "failed"], "channels": ["email"]}</code> in a run's input asks
+for a notice when it ends (unknown values are dropped). <code>_runtime.email_account</code> and
+<code>_runtime.email_allowed_recipients</code> are set by the gateway; client-supplied values are removed.</p>
+<p>Deprecated aliases (admin only, the calling administrator's own account; removed in a later minor
+release): <code>GET /email/accounts</code>, <code>GET /email/messages</code> (<code>mailbox</code>, <code>since</code>, <code>status</code>, <code>limit</code>),
+<code>GET /email/messages/{uid}</code> (whole body, <code>content_trust: "untrusted"</code>), <code>POST /email/send</code>
+(<code>{to, cc?, bcc?, subject, body_text?, body_html?}</code>; the recipient policy and limits apply).</p>
 <p>Troubleshooting and common questions: <a href="../faq/">faq.md</a>.</p>
 
 
