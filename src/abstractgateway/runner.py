@@ -22,7 +22,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Protocol
+from typing import Any, Dict, List, Optional, Protocol
 
 from abstractruntime import Runtime, StaleResumeError
 from abstractruntime.core.event_keys import build_event_wait_key
@@ -313,6 +313,9 @@ class GatewayRunner:
         # store scan (a scan is O(store): ~0.2s on the operator's 9.3k-run
         # dir). Guarded by _inflight_lock.
         self._direct_tick_ids: set = set()
+        # Called as fn(command_type, automation_id) after an automation command is APPLIED
+        # (add_automation_command_listener): the email worker wakes on a resumed email automation.
+        self._automation_command_listeners: List[Any] = []
         self._ledger_unsubscribe: Optional[Any] = None
         self._thread: Optional[threading.Thread] = None
         self._executor = ThreadPoolExecutor(max_workers=max(1, int(self._cfg.tick_workers or 1)))
@@ -1898,6 +1901,17 @@ class GatewayRunner:
             result.get("status"),
             result.get("duplicate"),
         )
+        if result.get("status") == "applied" and not result.get("duplicate"):
+            for listener in list(self._automation_command_listeners):
+                try:
+                    listener(typ, automation_id)
+                except Exception:  # noqa: BLE001 - a listener never fails the command
+                    logger.warning("GatewayRunner: automation command listener failed (%s)", typ, exc_info=True)
+
+    def add_automation_command_listener(self, fn: Any) -> None:
+        """Call `fn(command_type, automation_id)` after each applied automation command (once per fn)."""
+        if fn not in self._automation_command_listeners:
+            self._automation_command_listeners.append(fn)
 
     def _apply_inject_guidance(self, payload: Dict[str, Any], *, run_id: str) -> None:
         """Steer a running agent through the DURABLE steer sidecar (H4, hooks plan).

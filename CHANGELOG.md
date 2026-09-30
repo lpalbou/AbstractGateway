@@ -92,6 +92,19 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
   the sign-in card's styles, and its checkbox rule was reused outside the card. The console now
   uses the kit's sign-in card styles; labels are 14 px, helper text 13 px.
 - The Sandbox's system prompt field no longer shows "optional" as a placeholder.
+- Resuming a paused `email.received` automation wakes the email worker at once, as creating one
+  already did: the watcher takes its new-mail mark within seconds, so mail arriving right after
+  the resume triggers the automation (it was taken as history until the worker's next tick, up to
+  15 s later). The runner calls the worker after each applied automation command
+  (`GatewayRunner.add_automation_command_listener`).
+
+### Security
+- The server file helpers (`GET /files/list|search|read|skim`, workspace import and export) never
+  serve the gateway data folder or the account's credential folders, the same rule as the run
+  workspace browser and every run's tools. The server workspace root defaults to the gateway's
+  working directory, which is the data folder under the OS service and contains it after a launch
+  from a parent folder: an administrator could read another user's received mail and run ledgers
+  through `/files/read`. Administrators never read mail.
 
 ## [0.9.0] - 2026-09-30
 

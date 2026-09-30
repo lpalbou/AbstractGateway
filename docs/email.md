@@ -182,9 +182,9 @@ shows the cause and the fix.
 
 Mail that is already in your mailbox when the watcher starts is never an event. The watcher marks
 where new mail starts when you connect an account and whenever an email automation becomes active
-after a time with none (creating one takes that mark within seconds, so a message you send to test
-it right after counts); mail that arrived while none of your email automations was active is not
-processed later. A gateway restart keeps the mark: mail that arrives while the gateway is down is
+after a time with none (creating or resuming one takes that mark within seconds, so a message you
+send to test it right after counts); mail that arrived while none of your email automations was
+active is not processed later. A gateway restart keeps the mark: mail that arrives while the gateway is down is
 read when it is back.
 
 How often an automation **runs** on new mail is its own trigger setting: every 60 seconds when it
@@ -304,7 +304,9 @@ Sign-in by email means that whoever controls a user's mailbox can sign in as tha
 where mailboxes are not as well protected as gateway tokens. The Users table
 shows each user's mailbox state (`connected`, `not connected`, `needs action`, `turned off by an
 administrator`, …). Administrators see the state, the address and the last error — never messages,
-the user's recipient list or credentials.
+the user's recipient list or credentials. The administrator's server file helpers (`/files/*`,
+workspace import and export) never serve the gateway data folder, where every user's runs,
+received mail and sealed credentials live, even when it sits inside the server workspace.
 
 The administrator's own account (the default runtime) is configured like everyone else's. It is the
 gateway's account, separate from AbstractCore's own local account (`abstractcore email`); on the
