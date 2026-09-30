@@ -11530,16 +11530,22 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (roles.includes("readonly")) return "Read-only";
       return "User";
     }
-    function userMailboxOverride(acc) {
-      // An override stored by the old per-row buttons stays honoured by the
-      // backend; the table shows it and offers Reset (a one-shot action).
-      if (!acc || acc.state === "unknown") return false;
+    function userMailboxNote(acc) {
+      // DESIGN §5.1 (same words as the terminal console): a per-user override
+      // (the old per-row buttons', or the capabilities v3 migration's pin) is
+      // shown with Reset (a one-shot action that clears it); mailboxes off for
+      // everyone (the admin's switch) is said, with nothing to reset.
+      if (!acc || acc.state === "unknown") return { text: "", reset: false };
       const caps = acc.capabilities;
       if (!caps || typeof caps !== "object") {
         console.error("AbstractGateway console: /admin/users rows carry no email_account.capabilities; an old per-user mailbox override cannot be shown (gateway-api seam, DESIGN §5.1).");
-        return false;
+        return { text: "", reset: false };
       }
-      return ["email", "email_agent_tools"].some((k) => caps[k] && caps[k].source === "user" && caps[k].value === false);
+      const pinned = (k) => Boolean(caps[k] && caps[k].source === "user" && caps[k].value === false);
+      if (pinned("email")) return { text: "not allowed for this user", reset: true };
+      if (pinned("email_agent_tools")) return { text: "agent email tools not allowed for this user", reset: true };
+      if (acc.admin_enabled === false) return { text: "mailboxes off", reset: false };
+      return { text: "", reset: false };
     }
     function userMailboxText(acc) {
       if (!acc || acc.state === "unknown") return "—";
@@ -11629,10 +11635,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           const text = document.createElement("span");
           text.textContent = userMailboxText(acc);
           mailboxCell.append(text);
-          if (userMailboxOverride(acc)) {
+          const mnote = userMailboxNote(acc);
+          if (mnote.text) {
             const noteEl = document.createElement("span");
             noteEl.className = "users-override";
-            noteEl.textContent = " · not allowed for this user ";
+            noteEl.textContent = ` · ${mnote.text} `;
+            mailboxCell.append(noteEl);
+          }
+          if (mnote.reset) {
             const reset = document.createElement("button");
             reset.type = "button";
             reset.className = "secondary small";
@@ -11640,7 +11650,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             reset.title = "Clear the old per-user setting: this user follows “Mailboxes for users” again";
             reset.setAttribute("aria-label", `Reset the mailbox setting for ${u.user_id}`);
             reset.onclick = () => resetUserMailboxOverride(u, reset);
-            mailboxCell.append(noteEl, reset);
+            mailboxCell.append(reset);
           }
         }
         const activeCell = tr.querySelector ? tr.querySelector(".users-active") : tr.children[5];

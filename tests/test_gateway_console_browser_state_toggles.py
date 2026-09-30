@@ -8,7 +8,8 @@ ABSTRACTGATEWAY_PLAYWRIGHT_NODE_MODULES pointing at a node_modules that holds pl
 (default: the monorepo's abstractcode/web/node_modules). Once opted in, a missing Playwright
 fails. The gateway runs from this checkout with a scratch HOME and data dir, no provider keys,
 the key-file vault, on a free loopback port >= 18120; users admin / alice (email address + a
-mailbox record on .invalid hosts that never connects) / bob (no email address).
+mailbox record on .invalid hosts that never connects) / bob (no email address; an old per-user
+override pins his agent email tools off).
 """
 
 from __future__ import annotations
@@ -111,6 +112,9 @@ def scratch_gateway(tmp_path: Path):
             "imap": {"host": "imap.alice.invalid", "port": 993, "security": "ssl"},
             "smtp": {"host": "smtp.alice.invalid", "port": 465, "security": "ssl"}, "test": False,
         })
+        assert code == 200, out
+        # An old per-user override (what the capabilities v3 migration pins): bob's agent email tools off.
+        code, out = _call(base, "PUT", "/admin/users/bob/email", admin, {"agent_tools": False})
         assert code == 200, out
         yield base, admin
     finally:

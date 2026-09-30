@@ -139,6 +139,12 @@ try {
     check(alice.includes("connected as alice@fastmail.com"), "alice mailbox cell", alice);
     const bobEmail = await page.textContent("tr[data-user='bob'] td[data-label='Email address']");
     check(bobEmail.trim() === "—", "bob has no email address", bobEmail);
+    const bobCell = (await page.textContent("tr[data-user='bob'] .users-mailbox")).trim();
+    check(bobCell.includes("agent email tools not allowed for this user") && (await page.locator("tr[data-user='bob'] .users-mailbox button").count()) === 1, "old per-user override shown with Reset", bobCell);
+    check(!(await page.textContent("tr[data-user='alice'] .users-mailbox")).includes("not allowed"), "no note without an override");
+    await page.click("tr[data-user='bob'] .users-mailbox button");
+    await page.waitForFunction(() => !document.querySelector("tr[data-user='bob'] .users-mailbox").textContent.includes("not allowed"), null, { timeout: 10000 });
+    check(true, "Reset clears the override");
     await page.click("tr[data-user='bob'] .users-active [role=switch]");
     await page.waitForSelector("#users-table .row-confirm");
     const confirmText = await page.textContent("#users-table .row-confirm");
@@ -191,6 +197,11 @@ try {
     const nf = await page.evaluate(() => ["my-email-notify-job-failed", "my-email-notify-approval"].map((id) => [document.getElementById(id).getAttribute("aria-disabled"), document.getElementById(id).getAttribute("aria-checked")]));
     check(nf.every(([d, c]) => d === null && c === "true"), "notification switches available and on by default", nf);
     check((await page.inputValue("#my-email-registered")) === "alice@fastmail.com", "email address field");
+    await page.evaluate(() => { document.getElementById("my-email-advanced").open = true; });
+    await page.fill("#my-email-imap-folder", "Archive");
+    await page.locator("#my-email-imap-folder").blur();
+    await page.waitForFunction(() => document.getElementById("my-email-folder-state").textContent.trim() !== "", null, { timeout: 10000 });
+    check((await page.textContent("#my-email-folder-state")).trim() === "Saved", "Folder auto-saves", await page.textContent("#my-email-folder-state"));
     await page.click("#my-email-disconnect");
     check((await page.textContent("#my-email-disconnect-confirm")).includes("Disconnect this mailbox?"), "inline disconnect confirmation");
     await page.click("#my-email-disconnect-cancel");
