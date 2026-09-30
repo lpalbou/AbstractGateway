@@ -6619,8 +6619,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       d = d || {};
       const imap = d.imap || {};
       const smtp = d.smtp || {};
-      // 1. Email address (the registered address, not the mailbox).
-      if (document.activeElement !== $("my-email-registered")) myEmailSet("my-email-registered", d.registered_address || "");
+      // 1. Email address (the stored address, not the mailbox: `email_address`).
+      if (document.activeElement !== $("my-email-registered")) myEmailSet("my-email-registered", d.email_address || "");
       myEmailShow("my-email-registered-error", "");
       // 2. Mailbox: connected status, or the tabs.
       const connected = Boolean(d.configured);
@@ -6638,7 +6638,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         const err = st.last_error;
         myEmailShow("my-email-status-error", err ? `${err.cause || err.code}${err.fix ? ` ${err.fix}` : ""}` : "");
       } else {
-        const want = d.registered_address || "";
+        const want = d.email_address || "";
         if (!myEmailVal("my-email-address")) myEmailSet("my-email-address", want);
         if (!myEmailVal("my-email-oauth-address")) myEmailSet("my-email-oauth-address", want);
         if (!myEmailUi.tab) {
@@ -6716,7 +6716,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       myEmailShow("my-email-registered-error", "");
       try {
         const out = await api("/api/gateway/me/email/address", { method: "PUT", body: JSON.stringify({ address }) });
-        if (out && out.registered_address !== undefined) state.myEmail = { ...(state.myEmail || {}), registered_address: out.registered_address };
+        if (out && out.schema) renderMyEmail({ ...out, notices: (state.myEmail && state.myEmail.notices) || [] });
         btn.textContent = "Saved";
         if (typeof setTimeout === "function") setTimeout(() => { btn.textContent = "Save"; }, 2000);
         if (!state.myEmail || !state.myEmail.configured) {
