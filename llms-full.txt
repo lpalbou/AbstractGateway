@@ -5375,7 +5375,7 @@ Sign-in page (public):
 | Route | Purpose |
 |---|---|
 | `GET /session/recovery` | `{available}` — true when sign-in by email is on (`email_recovery`, default on) and at least one account of this gateway has email |
-| `POST /session/recovery/request` | `{user_id, tenant_id?, purpose?: sign_in (default) \| reset_token}` → `{sent: true, to: "l•••@•••", expires_in_s, message}`, `{sent: false, reason_code: "no_email_address", message}` (also for an unknown account) or `{sent: false, reason_code: "too_many_requests", retry_after_s, message}`; 404 `recovery_off` when sign-in by email is off ([email.md](docs/email.md#sign-in-by-email)) |
+| `POST /session/recovery/request` | `{user_id, tenant_id?, purpose?: sign_in (default) \| reset_token}` → `{sent: true, to: "l•••@•••", expires_in_s, message}`, `{sent: false, reason_code: "no_email_address", message}` (also for an unknown account), `{sent: false, reason_code: "no_mailbox", message}` (an address but no mailbox to send from), `{sent: false, reason_code: "send_failed", message}` (the mail server refused or could not be reached; the request waits up to 12 s for the real outcome) or `{sent: false, reason_code: "too_many_requests", retry_after_s, message}`; 404 `recovery_off` when sign-in by email is off ([email.md](docs/email.md#sign-in-by-email)) |
 | `POST /session/recovery/redeem` | `{user_id, tenant_id?, purpose?, code, remember?}` → a browser session; `reset_token` also returns the new `token` once. A wrong, expired or used code answers 401 `recovery_code_refused` |
 
 Errors carry `{"detail": {"reason_code", "message", "cause", "fix", "retryable"}}`: 400 invalid
@@ -7006,6 +7006,8 @@ issues a new token (shown once; the old one stops working) with the session.
 |---|---|
 | sent | `{"sent": true, "to": "l•••@•••", "expires_in_s": 600, "message": "A sign-in code is on its way to l•••@•••. It expires in 10 minutes."}` — the first character of the address, never the domain |
 | no address | `{"sent": false, "reason_code": "no_email_address", "message": "This account has no email address, so a code can't be sent. Ask your gateway admin for a token."}` — also for an unknown account, a deactivated one, or one without a mailbox to send with |
+| an address, but no mailbox | `{"sent": false, "reason_code": "no_mailbox", "message": "This account has an email address, but no mailbox is connected to send the code from. Ask your gateway admin for a token."}` |
+| the mail server refused or could not be reached | `{"sent": false, "reason_code": "send_failed", "message": "The code couldn't be emailed (<cause>). Try again, or ask your gateway admin for a token."}` — the request waits up to 12 s for the real outcome; a send still in flight after that is answered as on its way |
 | rate limited | `{"sent": false, "reason_code": "too_many_requests", "retry_after_s": N, "message": "Too many codes requested for this account. Try again in N minutes."}` |
 | sign-in by email off | `404 recovery_off` |
 
@@ -8728,6 +8730,14 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
   sections; lists no longer scroll inside the page.
 
 ### Fixed
+- Sign-in by email answers with the real outcome: `no_mailbox` when the account has an email
+  address but no mailbox to send the code from (it used to read like "no email address"), and
+  `send_failed` when the mail server refused the code or could not be reached (the request waits up
+  to 12 s for the send; before, it answered "on its way" before the mail left). The cause stays in
+  the audit log, never in the answer.
+- The web console's `[hidden]` attribute always wins over a display rule (a hidden "Cancel sign-in"
+  on the Google and Microsoft tabs stayed visible), and two regular-expression escapes in the
+  console's inline script no longer raise a `SyntaxWarning` at import.
 - Checkbox and form labels in the console were 18-20 px bold: the console carried its own copy of
   the sign-in card's styles, and its checkbox rule was reused outside the card. The console now
   uses the kit's sign-in card styles; labels are 14 px, helper text 13 px.

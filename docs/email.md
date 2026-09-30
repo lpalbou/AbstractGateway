@@ -256,6 +256,8 @@ issues a new token (shown once; the old one stops working) with the session.
 |---|---|
 | sent | `{"sent": true, "to": "l•••@•••", "expires_in_s": 600, "message": "A sign-in code is on its way to l•••@•••. It expires in 10 minutes."}` — the first character of the address, never the domain |
 | no address | `{"sent": false, "reason_code": "no_email_address", "message": "This account has no email address, so a code can't be sent. Ask your gateway admin for a token."}` — also for an unknown account, a deactivated one, or one without a mailbox to send with |
+| an address, but no mailbox | `{"sent": false, "reason_code": "no_mailbox", "message": "This account has an email address, but no mailbox is connected to send the code from. Ask your gateway admin for a token."}` |
+| the mail server refused or could not be reached | `{"sent": false, "reason_code": "send_failed", "message": "The code couldn't be emailed (<cause>). Try again, or ask your gateway admin for a token."}` — the request waits up to 12 s for the real outcome; a send still in flight after that is answered as on its way |
 | rate limited | `{"sent": false, "reason_code": "too_many_requests", "retry_after_s": N, "message": "Too many codes requested for this account. Try again in N minutes."}` |
 | sign-in by email off | `404 recovery_off` |
 

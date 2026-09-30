@@ -94,6 +94,14 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
   sections; lists no longer scroll inside the page.
 
 ### Fixed
+- Sign-in by email answers with the real outcome: `no_mailbox` when the account has an email
+  address but no mailbox to send the code from (it used to read like "no email address"), and
+  `send_failed` when the mail server refused the code or could not be reached (the request waits up
+  to 12 s for the send; before, it answered "on its way" before the mail left). The cause stays in
+  the audit log, never in the answer.
+- The web console's `[hidden]` attribute always wins over a display rule (a hidden "Cancel sign-in"
+  on the Google and Microsoft tabs stayed visible), and two regular-expression escapes in the
+  console's inline script no longer raise a `SyntaxWarning` at import.
 - Checkbox and form labels in the console were 18-20 px bold: the console carried its own copy of
   the sign-in card's styles, and its checkbox rule was reused outside the card. The console now
   uses the kit's sign-in card styles; labels are 14 px, helper text 13 px.

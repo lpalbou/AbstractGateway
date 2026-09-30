@@ -1238,7 +1238,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      gap: 5px;
 	      margin-bottom: 0;
 	      color: var(--text-secondary);
-	      font-size: var(--font-size-xs);
+	      /* Labels sit at body size (DESIGN §3): 11 px labels hid the workspace-policy form on phones. */
+	      font-size: 14px;
 	    }
 	    .default-config-form select {
 	      min-height: 32px;
@@ -1844,6 +1845,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .account-card { margin: 0; box-shadow: none; }
 	    .account-card .af-card__title { font-size: var(--font-size-lg); }
 	    .account-card[hidden], #my-email-connect[hidden], #my-email-connected[hidden] { display: none; }
+	    /* The hidden attribute always wins over a display rule (a hidden "Cancel sign-in" stayed display:flex). */
+	    .console-shell [hidden], .account-card [hidden], #my-email-oauth-cancel[hidden] { display: none !important; }
 	    .account-advanced > summary {
 	      cursor: pointer; font-size: var(--font-size-lg); font-weight: 600; color: var(--text); min-height: 32px;
 	      display: flex; align-items: center; gap: 8px; list-style: none;
@@ -6472,7 +6475,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (busy) button.setAttribute("aria-busy", "true"); else button.removeAttribute("aria-busy");
       if (reason === undefined) return;
       const r = afSwitchReasonEl(button);
-      const describedBase = String(button.getAttribute("aria-describedby") || "").split(/\s+/).filter((x) => x && !x.endsWith("-reason"));
+      const describedBase = String(button.getAttribute("aria-describedby") || "").split(/\\s+/).filter((x) => x && !x.endsWith("-reason"));
       if (reason) {
         button.setAttribute("aria-disabled", "true");
         button.title = reason;
@@ -6654,7 +6657,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         if (!myEmailUi.tab) {
           // Default tab: the provider the address belongs to, else Google.
           const dom = String(want.split("@")[1] || "").toLowerCase();
-          myEmailUi.tab = /^(gmail|googlemail)\.com$/.test(dom) ? "google" : /^(outlook|hotmail|live|msn)\.[a-z.]+$/.test(dom) ? "microsoft" : (want ? "other" : "google");
+          myEmailUi.tab = /^(gmail|googlemail)\\.com$/.test(dom) ? "google" : /^(outlook|hotmail|live|msn)\\.[a-z.]+$/.test(dom) ? "microsoft" : (want ? "other" : "google");
         }
         myEmailSelectTab(myEmailUi.tab);
         if (myEmailUi.tab === "other" && myEmailVal("my-email-address") && myEmailUi.discoveredFor !== myEmailVal("my-email-address")) myEmailDiscover();

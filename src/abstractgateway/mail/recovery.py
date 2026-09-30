@@ -16,7 +16,9 @@ Rules, each one pinned by a test:
 - the rate check runs on the request thread before any worker exists (a flood costs no
   threads); it reads only the request counters, never the account;
 - the request answer is HONEST (DESIGN 2026-09-30 §4.1): `sent` with the masked address
-  ("l•••@•••": the first character of the local part, never the domain), `no_email_address`
+  ("l•••@•••": the first character of the local part, never the domain), `no_email_address`,
+  `no_mailbox` (an address but no mailbox to send from), `send_failed` (the server refused or
+  could not be reached — the answer waits up to SEND_WAIT_S for the real outcome)
   (an unknown account and one without an address or usable mailbox read the same), or
   `too_many_requests` with `retry_after_s`. The mail itself is sent off the request thread.
   Trade-off: a requester can learn that an account id has an email address; the rate limits
@@ -94,6 +96,32 @@ def sent_answer(to: str) -> Dict[str, Any]:
 
 def no_email_answer() -> Dict[str, Any]:
     return {"ok": True, "sent": False, "reason_code": "no_email_address", "message": NO_EMAIL_ADDRESS_MESSAGE}
+
+
+NO_MAILBOX_MESSAGE = (
+    "This account has an email address, but no mailbox is connected to send the code from. "
+    "Ask your gateway admin for a token."
+)
+
+
+def no_mailbox_answer() -> Dict[str, Any]:
+    return {"ok": True, "sent": False, "reason_code": "no_mailbox", "message": NO_MAILBOX_MESSAGE}
+
+
+SEND_FAILED_MESSAGE = (
+    "The code couldn't be emailed: the mail server refused it or couldn't be reached. "
+    "Try again, or ask your gateway admin for a token."
+)
+
+
+def send_failed_answer(cause: str = "") -> Dict[str, Any]:
+    # The cause (which can name an address or a server) goes to the audit log, never to the caller.
+    return {"ok": True, "sent": False, "reason_code": "send_failed", "message": SEND_FAILED_MESSAGE}
+
+
+# How long the request waits for the code mail to actually leave (the answer is the REAL outcome;
+# a send still in flight after this is answered as on its way).
+SEND_WAIT_S = 12.0
 
 
 def rate_limited_answer(bucket: str, retry_after_s: int) -> Dict[str, Any]:
@@ -204,32 +232,35 @@ def _eligible_principal(user_id: str, tenant_id: str):
     return principal
 
 
-def _recipient(user_id: str, tenant_id: str, base: Dict[str, Any]) -> Optional[str]:
-    """The address a code would go to, or None (audited) when the account cannot receive one:
-    unknown / disabled / entity, no usable mailbox to send with, or no address."""
+def _recipient(user_id: str, tenant_id: str, base: Dict[str, Any]) -> Tuple[Optional[str], str]:
+    """(address, refusal): the address a code would go to, or None (audited) with why the account
+    cannot receive one — "no_email_address" (unknown / disabled / entity / no address: an unknown
+    account reads like one without an address) or "no_mailbox" (an address, but no usable mailbox
+    to send the code from)."""
 
     principal = _eligible_principal(user_id, tenant_id)
     if principal is None:
         audit_email_event("email.recovery_code_refused", reason="no_eligible_account", **base)
-        return None
+        return None, "no_email_address"
     try:
         plane = plane_for_principal(principal)
     except EmailPrincipalRefused:
         audit_email_event("email.recovery_code_refused", reason="no_eligible_account", **base)
-        return None
-    if not email_usable(plane):
-        audit_email_event("email.recovery_code_refused", reason="email_not_configured", **base)
-        return None
+        return None, "no_email_address"
     to = self_address(plane)
     if not to:
         audit_email_event("email.recovery_code_refused", reason="no_email_address", **base)
-        return None
-    return to
+        return None, "no_email_address"
+    if not email_usable(plane):
+        audit_email_event("email.recovery_code_refused", reason="email_not_configured", **base)
+        return None, "no_mailbox"
+    return to, ""
 
 
 def request_code(*, user_id: str, tenant_id: str = "default", purpose: str = "sign_in", client_ip: str) -> Dict[str, Any]:
-    """The honest answer (DESIGN §4.1): sent (masked address) | no_email_address |
-    too_many_requests. The code mail itself is sent off the request thread."""
+    """The honest answer (DESIGN §4.1): sent (masked address) | no_email_address | no_mailbox |
+    send_failed | too_many_requests. The code mail is sent on its own thread; the answer waits for
+    its real outcome (up to SEND_WAIT_S)."""
 
     purpose0 = str(purpose or "").strip() or "sign_in"
     if purpose0 not in PURPOSES:
@@ -241,14 +272,20 @@ def request_code(*, user_id: str, tenant_id: str = "default", purpose: str = "si
     if refused is not None:
         return rate_limited_answer(*refused)
     base = {"tenant_id": args["tenant_id"], "user_id": args["user_id"], "purpose": purpose0, "client_ip": args["client_ip"]}
-    to = _recipient(args["user_id"], args["tenant_id"], base)
+    to, refusal = _recipient(args["user_id"], args["tenant_id"], base)
     if to is None:
-        return no_email_answer()
-    worker = threading.Thread(target=_issue, kwargs=args, name="gateway-recovery-code", daemon=True)
+        return no_mailbox_answer() if refusal == "no_mailbox" else no_email_answer()
+    # The mail is sent on its own thread, but the answer waits for the real outcome (up to
+    # SEND_WAIT_S): a refused or unreachable server is reported, never a "sent" that never left.
+    outcome: Dict[str, Any] = {}
+    worker = threading.Thread(target=_issue, kwargs={**args, "outcome": outcome}, name="gateway-recovery-code", daemon=True)
     with _PENDING_LOCK:
         _PENDING[:] = [t for t in _PENDING if t.is_alive()]
         _PENDING.append(worker)
     worker.start()
+    worker.join(SEND_WAIT_S)
+    if outcome.get("result") == "send_failed":
+        return send_failed_answer(str(outcome.get("cause") or ""))
     return sent_answer(to)
 
 
@@ -294,7 +331,7 @@ def _rate_admit(*, user_id: str, tenant_id: str, purpose: str, client_ip: str) -
     return None
 
 
-def _issue(*, user_id: str, tenant_id: str, purpose: str, client_ip: str) -> None:
+def _issue(*, user_id: str, tenant_id: str, purpose: str, client_ip: str, outcome: Optional[Dict[str, Any]] = None) -> None:
     now = time.time()
     account_key = f"{tenant_id}:{user_id}"
     base = {"tenant_id": tenant_id, "user_id": user_id, "purpose": purpose, "client_ip": client_ip}
@@ -346,9 +383,14 @@ def _issue(*, user_id: str, tenant_id: str, purpose: str, client_ip: str) -> Non
             doc["codes"] = [c for c in doc["codes"] if not (c.get("account") == account_key and c.get("purpose") == purpose)]
             _save(doc)
         audit_email_event("email.recovery_code_refused", reason="send_failed", code=err.code, cause=err.cause, fix=err.fix, **base)
+        if outcome is not None:
+            outcome["result"] = "send_failed"
+            outcome["cause"] = str(err.cause or err.code or "").strip()
         return
     finally:
         code = ""
+    if outcome is not None:
+        outcome["result"] = "sent"
     audit_email_event("email.recovery_code_issued", outcome="sent", **base)
 
 

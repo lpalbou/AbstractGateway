@@ -1745,7 +1745,7 @@ Sign-in page (public):
 | Route | Purpose |
 |---|---|
 | `GET /session/recovery` | `{available}` — true when sign-in by email is on (`email_recovery`, default on) and at least one account of this gateway has email |
-| `POST /session/recovery/request` | `{user_id, tenant_id?, purpose?: sign_in (default) \| reset_token}` → `{sent: true, to: "l•••@•••", expires_in_s, message}`, `{sent: false, reason_code: "no_email_address", message}` (also for an unknown account) or `{sent: false, reason_code: "too_many_requests", retry_after_s, message}`; 404 `recovery_off` when sign-in by email is off ([email.md](./email.md#sign-in-by-email)) |
+| `POST /session/recovery/request` | `{user_id, tenant_id?, purpose?: sign_in (default) \| reset_token}` → `{sent: true, to: "l•••@•••", expires_in_s, message}`, `{sent: false, reason_code: "no_email_address", message}` (also for an unknown account), `{sent: false, reason_code: "no_mailbox", message}` (an address but no mailbox to send from), `{sent: false, reason_code: "send_failed", message}` (the mail server refused or could not be reached; the request waits up to 12 s for the real outcome) or `{sent: false, reason_code: "too_many_requests", retry_after_s, message}`; 404 `recovery_off` when sign-in by email is off ([email.md](./email.md#sign-in-by-email)) |
 | `POST /session/recovery/redeem` | `{user_id, tenant_id?, purpose?, code, remember?}` → a browser session; `reset_token` also returns the new `token` once. A wrong, expired or used code answers 401 `recovery_code_refused` |
 
 Errors carry `{"detail": {"reason_code", "message", "cause", "fix", "retryable"}}`: 400 invalid

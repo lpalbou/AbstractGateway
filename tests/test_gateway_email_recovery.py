@@ -64,17 +64,14 @@ def test_honest_answers_sent_masked_or_no_email_address(gateway, imap, smtp) -> 
         "message": "A sign-in code is on its way to a\u2022\u2022\u2022@\u2022\u2022\u2022. It expires in 10 minutes.",
     }
     assert "example.test" not in json.dumps(sent)  # never the domain
-    # Bob has an email address but no mailbox to send with; "nobody-here" does not exist: the
-    # same answer for both (an unknown account is not told apart).
+    # Bob has an email address but no mailbox to send the code from: he is told exactly that.
+    # "nobody-here" does not exist: it reads like an account without an address.
     no_bob = _request(c, "bob").json()
     no_ghost = _request(c, "nobody-here").json()
-    assert no_bob == no_ghost == {
-        "ok": True,
-        "sent": False,
-        "reason_code": "no_email_address",
-        "message": recovery.NO_EMAIL_ADDRESS_MESSAGE,
-    }
-    assert no_bob["message"] == "This account has no email address, so a code can't be sent. Ask your gateway admin for a token."
+    assert no_bob == {"ok": True, "sent": False, "reason_code": "no_mailbox", "message": recovery.NO_MAILBOX_MESSAGE}
+    assert no_bob["message"] == "This account has an email address, but no mailbox is connected to send the code from. Ask your gateway admin for a token."
+    assert no_ghost == {"ok": True, "sent": False, "reason_code": "no_email_address", "message": recovery.NO_EMAIL_ADDRESS_MESSAGE}
+    assert no_ghost["message"] == "This account has no email address, so a code can't be sent. Ask your gateway admin for a token."
     # Only Alice (email configured) actually got a code.
     mails = smtp_bodies(smtp)
     assert len(mails) == 1 and mails[0]["to"] == [ALICE] and mails[0]["from"] == ALICE
@@ -257,3 +254,21 @@ def test_admin_can_turn_sign_in_by_email_off(gateway, imap, smtp) -> None:
     r = _request(c, "alice")
     assert r.status_code == 404 and r.json()["detail"]["reason_code"] == "recovery_off"  # the link is not shown
     assert len(smtp.messages) == before
+
+
+def test_a_refused_send_is_reported_not_claimed_sent(gateway, imap, smtp) -> None:
+    """The answer is the REAL outcome: when the mail server refuses the code mail, the request
+    says so (send_failed) instead of "on its way", and no code stays stored."""
+    from abstractgateway.mail import recovery
+
+    _connect(gateway, imap, smtp)
+    # The fake SMTP refuses blocked@example.test with a 550: make it Alice's email address.
+    r = gateway["client"].put("/api/gateway/me/email/address", headers=gateway["alice"], json={"address": "blocked@example.test"})
+    assert r.status_code == 200, r.text
+    c = _fresh_client(gateway)
+    body = _request(c, "alice").json()
+    assert body["ok"] is True and body["sent"] is False and body["reason_code"] == "send_failed", body
+    assert body["message"].startswith("The code couldn't be emailed") and body["message"].endswith("Try again, or ask your gateway admin for a token.")
+    assert "blocked" not in body["message"] and "example.test" not in json.dumps(body)  # never the address
+    assert smtp_bodies(smtp) == []
+    assert recovery._load()["codes"] == []  # the refused code was dropped
