@@ -1685,6 +1685,31 @@ fn email_write(
                     Err(format!("GET /me/email says {}", got.state_label()))
                 }
             });
+            // A connect whose servers could not be discovered (400
+            // `email_discovery_failed`): record "nothing found" for that
+            // address, so the page opens Server settings with the reason.
+            if let (EmailAction::Connect(body), Err(e)) = (&other, &write) {
+                let refused = e
+                    .body
+                    .as_ref()
+                    .and_then(|b| b.get("reason_code"))
+                    .and_then(Value::as_str)
+                    == Some("email_discovery_failed");
+                if refused {
+                    let address = body
+                        .get("address")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let found = Discovery::from_value(&serde_json::json!({
+                        "address": address, "found": false,
+                    }));
+                    wake.post(move || {
+                        op.email_discovery
+                            .set(Some((address.clone(), Loadable::Ready(found.clone()))))
+                    });
+                }
+            }
             let wrote = write
                 .as_ref()
                 .map(|v| v.get("ok").and_then(Value::as_bool) != Some(false))

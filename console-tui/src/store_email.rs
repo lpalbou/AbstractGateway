@@ -968,6 +968,15 @@ pub fn notifications_body(events: &[NotifyEvent]) -> Value {
 /// else the error's own text.
 pub fn email_error_text(e: &crate::api::ApiError) -> String {
     if let Some(body) = &e.body {
+        // A connect that names its failing step ("Sign-in refused by
+        // imap.x.com — check the password.") or a discovery that found
+        // nothing: the gateway's one sentence is the whole answer.
+        let msg = s(body, "message");
+        let named =
+            body.get("step").is_some() || s(body, "reason_code") == "email_discovery_failed";
+        if named && !msg.is_empty() {
+            return msg;
+        }
         let cause = s(body, "cause");
         if !cause.is_empty() {
             let fix = s(body, "fix");
@@ -1230,6 +1239,22 @@ mod tests {
         assert_eq!(
             caps_state_text(&json!({"email_recovery": false})),
             "Sign-in by email is off."
+        );
+    }
+
+    #[test]
+    fn a_failed_connect_says_the_step_in_the_gateways_words() {
+        let e = crate::api::ApiError {
+            kind: crate::api::ApiErrorKind::Http(422),
+            message: "x".into(),
+            body: Some(json!({"reason_code": "email_auth_failed", "step": "imap",
+                "message": "Sign-in refused by imap.x.com — check the password.",
+                "cause": "The server refused the sign-in.", "fix": "Check the password."})),
+            timed_out: false,
+        };
+        assert_eq!(
+            email_error_text(&e),
+            "Sign-in refused by imap.x.com — check the password."
         );
     }
 }

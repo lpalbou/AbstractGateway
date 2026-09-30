@@ -41,7 +41,8 @@ const TAB_OTHER: usize = 2;
 pub const ADDRESS_HELP: &str =
     "Where sign-in codes and notifications go, and the first address your agents may write to.";
 pub const PASSWORD_HELP: &str = "Use an app password if your provider needs one.";
-pub const JOB_FAILED_HELP: &str = "A run or automation of yours failed, after its retries.";
+pub const JOB_FAILED_HELP: &str =
+    "An automation of yours, or a run you asked to be emailed about, failed after its retries.";
 pub const APPROVAL_HELP: &str = "A run is waiting for your answer.";
 pub const AGENT_TOOLS_HELP: &str = "Your agents and workflows may list, search, read, send and reply to your mail. Every send still follows your recipient rules, your limits and the approval gate.";
 pub const DISCONNECT_CONFIRM: &str = "Disconnect this mailbox? Your agents lose email until you connect again. Policy and limits are kept.";
@@ -177,13 +178,9 @@ fn install_done(mcx: Scope, ctx: &Ctx, p: Page) {
                         p.status.set(Some(Ok(text)));
                     }
                     Err(e) => {
-                        // A failed connect opens Server settings with the
-                        // cause: the servers are what the user can fix.
-                        if landed == Some("connect")
-                            && (e.contains("discovery") || e.contains("mail servers"))
-                        {
-                            p.servers_open.set(true);
-                        }
+                        // (A connect refused for want of servers opens
+                        // Server settings through `email_discovery`, set by
+                        // the worker from the gateway's reason code.)
                         p.status.set(Some(Err(e)));
                     }
                 }
