@@ -3,29 +3,38 @@
 Self routes — every signed-in human, on THEIR OWN plane (resolved from the authenticated
 principal, never from a path or body id; entities are refused):
 
-    GET    /me/email                     settings + status (never a secret)
-    PUT    /me/email                     connect: test, then store (password in the body, never echoed)
-    POST   /me/email/test                sign in to IMAP and SMTP with the stored account
-    DELETE /me/email                     disconnect: credentials and cursor deleted
+Words (DESIGN 2026-09-30 §1): the EMAIL ADDRESS is the user's own address (sign-in codes,
+notifications, the default allowed recipient; no password); the MAILBOX is the connection the
+user makes so their agents and automations can read and send mail as them.
+
+    GET    /me/email                     mailbox settings + status, email address, switches (never a secret)
+    POST   /me/email/discover            {address} -> the mailbox's IMAP/SMTP servers (auto-discovery)
+    PUT    /me/email                     connect the mailbox: test, then store (imap/smtp omitted = discovered)
+    PUT    /me/email/address             {address}   my email address ("" clears it; users registry)
+    PUT    /me/email/notifications       {job_failed?, approval_needed?}  my two notification switches
+    POST   /me/email/test                sign in to IMAP and SMTP with the stored mailbox
+    DELETE /me/email                     disconnect the mailbox: credentials and cursor deleted
     PUT    /me/email/policy              {mode: allowlist|denylist, entries: [address | domain]}
     POST   /me/email/policy/check        {addresses} -> would they be allowed?
     PUT    /me/email/limits              {per_hour, per_day}
-    PUT    /me/email/enabled             {enabled}   the user's own switch
-    PUT    /me/email/agent-tools         {enabled}   agents' email tools (default off; needs a usable account)
+    PUT    /me/email/folder              {folder}    the IMAP folder read (empty = INBOX; connection kept)
+    PUT    /me/email/enabled             {enabled}   "Use this mailbox" (the user's own switch)
+    PUT    /me/email/agent-tools         {enabled}   "Agent email tools" (default off; needs a usable mailbox)
     GET    /me/email/oauth/clients       which providers have a gateway OAuth client (no secrets)
     POST   /me/email/oauth/start         begin an OAuth2 sign-in (device code or loopback browser)
     POST   /me/email/oauth/poll          {flow_id}          -> pending | connected
     POST   /me/email/oauth/finish        {flow_id, wait_s}  wait up to 60 s for the approval
     POST   /me/email/oauth/cancel        {flow_id}
     GET    /me/notifications             events, channel availability, outbox summary
-    PUT    /me/notifications             {email: {event: bool}}
+    PUT    /me/notifications             {email: {event: bool}}  (v1 five-kind body accepted and mapped)
     POST   /me/notifications/test        send one test notification now
 
 Admin routes — status and the per-user switch only (D3: administrators never read mail):
 
     GET    /admin/users/{user_id}/email          configured / address / state / last error
-    PUT    /admin/users/{user_id}/email          {enabled?, agent_tools?, inherit?}  email on/off, agent tools available
-    GET    /admin/email/capabilities             gateway-wide defaults (email, email_agent_tools, email_recovery)
+    PUT    /admin/users/{user_id}/email          {enabled?, agent_tools?, inherit?}  per-user overrides (legacy UI)
+    GET    /admin/email/capabilities             gateway-wide defaults: email ("Mailboxes for users"),
+                                                 email_agent_tools, email_recovery (Advanced)
     PUT    /admin/email/capabilities             {email?, email_agent_tools?, email_recovery?, reset?}
     GET    /admin/email/oauth-clients            bring-your-own OAuth clients (ids; secret_set only)
     PUT    /admin/email/oauth-clients/{provider} {client_id, client_secret?, tenant?}
@@ -33,14 +42,16 @@ Admin routes — status and the per-user switch only (D3: administrators never r
 Sign-in page (public, see mail/recovery.py):
 
     GET    /session/recovery                     {available}
-    POST   /session/recovery/request             {user_id, purpose: sign_in | reset_token} -> constant answer
+    POST   /session/recovery/request             {user_id, purpose?: sign_in | reset_token} -> sent (masked to) |
+                                                 no_email_address | too_many_requests (+ retry_after_s)
     POST   /session/recovery/redeem              {user_id, purpose, code} -> session (+ new token)
 
 Legacy aliases of the retired process-wide `/email/*` routes (admin only, the CALLING admin's
 own account; removed one minor later): GET /email/accounts, GET /email/messages,
 GET /email/messages/{uid}, POST /email/send.
 
-Errors carry `{"detail": {reason_code, message, cause, fix, retryable}}`: 400 invalid input,
+Errors carry `{"detail": {reason_code, message, cause, fix, retryable}}` (a failed connect also
+`step`: imap | smtp, and `message` names it; `email_discovery_failed` also `tried`): 400 invalid input,
 403 entity / admin-only, 404 no account, 409 turned off / credentials missing, 422 the mail
 server refused (wrong password, TLS, unreachable ...), 429 send limit.
 """
@@ -64,6 +75,7 @@ router = APIRouter(prefix="/gateway", tags=["email"])
 
 _STATUS_BY_CODE = {
     "email_invalid_settings": 400,
+    "email_discovery_failed": 400,
     "email_invalid_message": 400,
     "email_policy_refused": 400,
     "email_not_configured": 404,
@@ -79,10 +91,13 @@ _STATUS_BY_CODE = {
 def _error_response(err: EmailError) -> JSONResponse:
     status = _STATUS_BY_CODE.get(err.code, 422)
     body = err.to_dict(include_details=True)
-    return JSONResponse(
-        status_code=status,
-        content={"ok": False, "detail": {"reason_code": err.code, "message": err.message, **body}},
-    )
+    details = err.details or {}
+    detail: Dict[str, Any] = {"reason_code": err.code, "message": str(details.get("step_message") or err.message), **body}
+    if details.get("step"):
+        detail["step"] = details["step"]
+    if err.code == "email_discovery_failed":
+        detail["tried"] = list(details.get("tried") or [])
+    return JSONResponse(status_code=status, content={"ok": False, "detail": detail})
 
 
 async def _call(fn, *args: Any, **kwargs: Any) -> Any:
@@ -134,13 +149,33 @@ class ConnectBody(BaseModel):
         },
     )
 
-    address: str
+    address: str = Field(..., description="The mailbox's address")
     password: str = Field(..., min_length=1, description="Password or app password; stored encrypted, never returned")
-    username: str = ""
-    display_name: str = ""
-    imap: Optional[ServerBody] = None
-    smtp: Optional[ServerBody] = None
+    username: str = Field("", description="Sign-in user name; empty = the discovered form, else the address")
+    display_name: str = Field("", description="Name shown on sent mail (optional)")
+    imap: Optional[ServerBody] = Field(None, description="Omit imap AND smtp to discover the servers from the address")
+    smtp: Optional[ServerBody] = Field(None, description="Omit imap AND smtp to discover the servers from the address")
     test: bool = True
+
+
+class DiscoverBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"address": "me@fastmail.com"}]})
+
+    address: str = Field(..., min_length=3, max_length=254, description="The mailbox's address")
+
+
+class AddressBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"address": "me@example.test"}]})
+
+    address: str = Field(..., max_length=254, description="My email address; \"\" clears it")
+
+
+class MyNotificationsBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"job_failed": True}, {"approval_needed": False}]})
+
+    job_failed: Optional[bool] = Field(None, description="\"Job failed\": a run or automation of mine failed, after its retries")
+    approval_needed: Optional[bool] = Field(None, description="\"Approval needed\": a run is waiting for my answer")
+    email: Optional[Dict[str, bool]] = Field(None, description="Legacy five-kind body ({kind: bool}); mapped")
 
 
 class PolicyBody(BaseModel):
@@ -161,6 +196,12 @@ class LimitsBody(BaseModel):
 
     per_hour: Optional[int] = None
     per_day: Optional[int] = None
+
+
+class FolderBody(BaseModel):
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"folder": "INBOX"}]})
+
+    folder: str = Field("", max_length=255, description="The IMAP folder to read; empty = INBOX")
 
 
 class EnabledBody(BaseModel):
@@ -196,7 +237,7 @@ class FlowBody(BaseModel):
 
 
 class NotificationsBody(BaseModel):
-    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"email": {"job_failed": True, "automation_result": False}}]})
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"email": {"job_failed": True, "approval_needed": False}}]})
 
     email: Dict[str, bool] = Field(default_factory=dict)
 
@@ -218,7 +259,15 @@ def _server_dict(body: Optional[ServerBody]) -> Optional[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/me/email", summary="My email account: settings and status")
+@router.get(
+    "/me/email",
+    summary="My mailbox and email address: settings, status and switches",
+    description="Never a secret. Besides the mailbox settings: `email_address` (my email address as stored on my "
+    "user record; \"\" when none), `registered_address` (\"self\" for runs: that address, else the connected "
+    "mailbox's own), `email_available` (my admin allows mailboxes), `notifications` {job_failed, approval_needed} "
+    "(+ `notifications_unavailable_reason`), `agent_tools` {on, available, unavailable_reason, active}, "
+    "`oauth_providers` [{id, available, reason}].",
+)
 async def me_email_get(request: Request) -> Any:
     principal, plane = _self_plane(request)
 
@@ -231,7 +280,27 @@ async def me_email_get(request: Request) -> Any:
     return await _call(run)
 
 
-@router.put("/me/email", summary="Connect my email account (test, then store)")
+@router.post(
+    "/me/email/discover",
+    summary="Find my mailbox's IMAP and SMTP servers from its address",
+    description="Known providers, the domain's autoconfig file, the Thunderbird ISPDB, DNS SRV, then MX "
+    "(AbstractCore's deterministic discovery). 200 for a valid address: `found` says whether both servers were "
+    "found, `tried` lists every step; 400 `email_invalid_settings` for a non-address.",
+)
+async def me_email_discover(request: Request, body: DiscoverBody) -> Any:
+    _self_plane(request)
+    return await _call(mail_accounts.discover, body.address)
+
+
+@router.put(
+    "/me/email",
+    summary="Connect my mailbox (test, then store)",
+    description="Saves and tests in one call. Without `imap` and `smtp` the servers are discovered from the "
+    "address (the answer then carries `discovery` {source, provider, tried}); none found = 400 "
+    "`email_discovery_failed` with `tried`. `username` defaults to the discovered form, else the address. A failed "
+    "test stores nothing and names its step: `detail.step` (imap | smtp) and `detail.message` "
+    "(\"Sign-in refused by imap.x.com \u2014 check the password.\" / \"Couldn't reach smtp.x.com:465.\").",
+)
 async def me_email_put(request: Request, body: ConnectBody) -> Any:
     principal, plane = _self_plane(request)
 
@@ -255,13 +324,57 @@ async def me_email_put(request: Request, body: ConnectBody) -> Any:
     return await _call(run)
 
 
-@router.post("/me/email/test", summary="Test my stored email account")
+@router.put(
+    "/me/email/address",
+    summary="Set my email address",
+    description="My email address (not a mailbox): where sign-in codes and notifications go, and the first address "
+    "my agents may write to. Stored on my user record (the users registry is the source of truth; the account-less "
+    "operator keeps the gateway's operator_email setting). \"\" clears it; an invalid address is 400.",
+)
+async def me_email_address(request: Request, body: AddressBody) -> Any:
+    principal, _plane = _self_plane(request)
+
+    def run() -> Dict[str, Any]:
+        return {"ok": True, **mail_accounts.set_email_address(principal, body.address, actor=_actor(principal))}
+
+    return await _call(run)
+
+
+@router.put(
+    "/me/email/notifications",
+    summary="Set my notification switches (Job failed, Approval needed)",
+    description="`{job_failed?, approval_needed?}`; both ON by default, sent only once a mailbox is connected. The "
+    "old body `{email: {automation_result, automation_failed, approval_needed, job_finished, job_failed}}` is "
+    "accepted and mapped (automation_failed counts for job_failed; the per-automation \"Email me the result\" and "
+    "per-run \"email me when done\" options no longer need a preference). Answers like GET /me/email.",
+)
+async def me_email_notifications(request: Request, body: MyNotificationsBody) -> Any:
+    _principal, plane = _self_plane(request)
+    from ..mail.notifications import write_preferences
+
+    changes: Dict[str, Any] = dict(body.email or {})
+    for k in ("job_failed", "approval_needed"):
+        v = getattr(body, k)
+        if v is not None:
+            changes[k] = v
+
+    def run() -> Dict[str, Any]:
+        try:
+            write_preferences(plane, changes)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"reason_code": "invalid_request", "message": str(exc)}) from None
+        return {"ok": True, **mail_accounts.public_status(plane)}
+
+    return await _call(run)
+
+
+@router.post("/me/email/test", summary="Test my connected mailbox")
 async def me_email_test(request: Request) -> Any:
     principal, plane = _self_plane(request)
     return await _call(mail_accounts.test_account, plane, actor=_actor(principal))
 
 
-@router.delete("/me/email", summary="Disconnect my email account")
+@router.delete("/me/email", summary="Disconnect my mailbox (policy and limits are kept)")
 async def me_email_delete(request: Request) -> Any:
     principal, plane = _self_plane(request)
 
@@ -307,7 +420,23 @@ async def me_email_limits(request: Request, body: LimitsBody) -> Any:
     return await _call(run)
 
 
-@router.put("/me/email/enabled", summary="Turn my email on or off")
+@router.put(
+    "/me/email/folder",
+    summary="Set my mailbox's folder (Advanced; empty = INBOX)",
+    description="The IMAP folder my agents and the mail watcher read. The connection is kept and nothing is "
+    "tested; the watcher starts the new folder from a fresh baseline. 404 `email_not_configured` without a "
+    "mailbox, 400 `email_invalid_settings` for a control character or a name over 255. Answers like GET /me/email.",
+)
+async def me_email_folder(request: Request, body: FolderBody) -> Any:
+    principal, plane = _self_plane(request)
+
+    def run() -> Dict[str, Any]:
+        return {"ok": True, **mail_accounts.set_folder(plane, body.folder, actor=_actor(principal))}
+
+    return await _call(run)
+
+
+@router.put("/me/email/enabled", summary="\"Use this mailbox\" (off keeps the settings; stops watching, sending and notifications)")
 async def me_email_enabled(request: Request, body: EnabledBody) -> Any:
     principal, plane = _self_plane(request)
 
@@ -322,7 +451,7 @@ async def me_email_enabled(request: Request, body: EnabledBody) -> Any:
     return await _call(run)
 
 
-@router.put("/me/email/agent-tools", summary="Turn my agents' email tools on or off (default off)")
+@router.put("/me/email/agent-tools", summary="\"Agent email tools\": my agents may use my mailbox (default off)")
 async def me_email_agent_tools(request: Request, body: EnabledBody) -> Any:
     principal, plane = _self_plane(request)
 
@@ -413,7 +542,7 @@ async def me_notifications_get(request: Request) -> Any:
     return await _call(preferences_public, plane)
 
 
-@router.put("/me/notifications", summary="Set my notification preferences")
+@router.put("/me/notifications", summary="Set my notification preferences (legacy body; see PUT /me/email/notifications)")
 async def me_notifications_put(request: Request, body: NotificationsBody) -> Any:
     _principal, plane = _self_plane(request)
     from ..mail.notifications import preferences_public, write_preferences
@@ -450,7 +579,7 @@ def _admin_plane(user_id: str, tenant_id: str) -> EmailPlane:
         raise HTTPException(status_code=400, detail={"reason_code": "email_principal_refused", "message": str(exc)}) from None
 
 
-@router.get("/admin/users/{user_id}/email", summary="A user's email status (no content)")
+@router.get("/admin/users/{user_id}/email", summary="A user's mailbox status (never content)")
 async def admin_user_email_get(request: Request, user_id: str, tenant_id: str = Query(default="default")) -> Any:
     _require_admin_principal(request)
     plane = _admin_plane(user_id, tenant_id)
@@ -465,7 +594,13 @@ class AdminUserEmailBody(BaseModel):
     inherit: List[str] = Field(default_factory=list, description="Capabilities that follow the gateway default again: email, email_agent_tools")
 
 
-@router.put("/admin/users/{user_id}/email", summary="A user's email capabilities (email on/off, agent tools available)")
+@router.put(
+    "/admin/users/{user_id}/email",
+    summary="A user's mailbox overrides (legacy; `inherit` resets them)",
+    description="Per-user overrides of \"Mailboxes for users\" (`enabled`) and \"Agent email tools for users\" "
+    "(`agent_tools`). The console no longer creates them; `inherit: [\"email\", \"email_agent_tools\"]` clears them "
+    "(the Users table's Reset action).",
+)
 async def admin_user_email_put(request: Request, user_id: str, body: AdminUserEmailBody, tenant_id: str = Query(default="default")) -> Any:
     admin = _require_admin_principal(request)
     plane = _admin_plane(user_id, tenant_id)
@@ -492,13 +627,19 @@ class CapabilityDefaultsBody(BaseModel):
     reset: List[str] = Field(default_factory=list, description="Capabilities back to their built-in default")
 
 
-@router.get("/admin/email/capabilities", summary="What the gateway makes available to users by default")
+@router.get(
+    "/admin/email/capabilities",
+    summary="What the gateway makes available to users (Mailboxes for users; Advanced: agent tools, sign-in by email)",
+    description="`capabilities`: [{id, label, description, per_user, advanced, default, built_in_default}]. `email` = "
+    "\"Mailboxes for users\" (the admin's one switch, ON built in); under Advanced `email_agent_tools` = \"Agent "
+    "email tools for users\" (ON built in; each user still opts in) and `email_recovery` = \"Sign-in by email\".",
+)
 async def admin_capabilities_get(request: Request) -> Any:
     _require_admin_principal(request)
     return await _call(mail_accounts.capabilities_public)
 
 
-@router.put("/admin/email/capabilities", summary="Set the gateway-wide email capability defaults")
+@router.put("/admin/email/capabilities", summary="Set Mailboxes for users / Agent email tools for users / Sign-in by email")
 async def admin_capabilities_put(request: Request, body: CapabilityDefaultsBody) -> Any:
     admin = _require_admin_principal(request)
     changes: Dict[str, Any] = {k: None for k in body.reset}
@@ -538,7 +679,7 @@ class RecoveryRequestBody(BaseModel):
 
     user_id: str = Field(..., min_length=1, max_length=200)
     tenant_id: str = Field(default="default", min_length=1, max_length=200)
-    purpose: str = Field(..., description="sign_in | reset_token")
+    purpose: str = Field(default="sign_in", description="sign_in (default: the code opens a session) | reset_token")
 
 
 class RecoveryRedeemBody(BaseModel):
@@ -546,7 +687,7 @@ class RecoveryRedeemBody(BaseModel):
 
     user_id: str = Field(..., min_length=1, max_length=200)
     tenant_id: str = Field(default="default", min_length=1, max_length=200)
-    purpose: str = Field(..., description="sign_in | reset_token")
+    purpose: str = Field(default="sign_in", description="sign_in (default) | reset_token")
     code: str = Field(..., min_length=1, max_length=64)
     remember: bool = False
 
@@ -572,13 +713,31 @@ async def session_recovery_available() -> Dict[str, Any]:
     return {"available": bool(available), "purposes": ["sign_in", "reset_token"] if available else []}
 
 
-@router.post("/session/recovery/request", summary="Email me a code (constant answer)")
+_RECOVERY_REQUEST_DESCRIPTION = """Emails a sign-in code (8 digits, single use, 10 minutes) to the account's email
+address, sent through the user's own mailbox. The answer is honest (200 in every case below):
+
+- sent: `{"sent": true, "to": "l•••@•••", "expires_in_s": 600, "message": "A sign-in code is on its way to l•••@•••. It expires in 10 minutes."}`
+  (the mask keeps the first character of the local part, never the domain);
+- `{"sent": false, "reason_code": "no_email_address", "message": "This account has no email address, so a code can't be sent. Ask your gateway admin for a token."}`
+  (also for an unknown account, a deactivated one, or one without a usable mailbox to send with);
+- `{"sent": false, "reason_code": "too_many_requests", "retry_after_s": N, "message": "Too many codes requested for this account. Try again in N minutes."}`
+  (3 per account and 10 per client address per 15 minutes).
+
+Sign-in by email off (the admin's Advanced switch): 404 `recovery_off`. Trade-off: a requester can learn that an
+account id has an email address; the rate limits and the audit log bound it. `purpose` defaults to `sign_in`."""
+
+
+@router.post("/session/recovery/request", summary="Email me a sign-in code", description=_RECOVERY_REQUEST_DESCRIPTION)
 async def session_recovery_request(request: Request, body: RecoveryRequestBody) -> Dict[str, Any]:
     from ..mail.recovery import PURPOSES, request_code
 
     if body.purpose not in PURPOSES:
         raise HTTPException(status_code=400, detail={"reason_code": "invalid_request", "message": "purpose must be sign_in or reset_token"})
-    return request_code(user_id=body.user_id, tenant_id=body.tenant_id, purpose=body.purpose, client_ip=_client_ip(request))
+    if not await _off_the_event_loop(mail_accounts.recovery_enabled):
+        raise HTTPException(status_code=404, detail={"reason_code": "recovery_off", "message": "Sign-in by email is off on this gateway."})
+    return await _off_the_event_loop(
+        request_code, user_id=body.user_id, tenant_id=body.tenant_id, purpose=body.purpose, client_ip=_client_ip(request)
+    )
 
 
 @router.post("/session/recovery/redeem", summary="Redeem an emailed code for a session (and a new token)")

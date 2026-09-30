@@ -129,6 +129,16 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("POST", "/api/gateway/me/email/oauth/cancel"),
     ("PUT", "/api/gateway/me/notifications"),
     ("POST", "/api/gateway/me/notifications/test"),
+    # Same rule (2026-09-30 settings model): discovery only looks up the
+    # public mail configuration of the address the caller gives (no account is
+    # read or written); the address route writes the caller's OWN user record
+    # (`email` of the principal's registry row, never another id); the
+    # notification switches are the caller's own preferences file.
+    ("POST", "/api/gateway/me/email/discover"),
+    ("PUT", "/api/gateway/me/email/address"),
+    ("PUT", "/api/gateway/me/email/notifications"),
+    # The caller's OWN mailbox folder (same plane rule as PUT /me/email/limits).
+    ("PUT", "/api/gateway/me/email/folder"),
     # Account recovery by email (framework backlog 0992): the public writes
     # below — single-use HMAC-stored codes, 10-minute expiry, rate-limited
     # per account and client address, a constant answer (no enumeration);

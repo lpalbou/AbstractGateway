@@ -41,6 +41,12 @@ _ALLOWED_FIELDS = frozenset(
         "auth_kind",
         "provider",
         "leg",
+        # capabilities.json migration, email address / connect facts (typed, never content)
+        "from_version",
+        "to_version",
+        "pinned_off",
+        "source",
+        "discovered",
     }
 )
 

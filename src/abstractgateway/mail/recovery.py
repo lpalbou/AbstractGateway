@@ -15,10 +15,12 @@ Rules, each one pinned by a test:
   (10 per 15 minutes);
 - the rate check runs on the request thread before any worker exists (a flood costs no
   threads); it reads only the request counters, never the account;
-- the request answer is the same whether or not the account exists, has email, or is rate
-  limited, and the mail is sent off the request thread (no timing difference): no account
-  enumeration. The sign-in page shows the options when at least one account of this gateway
-  has email configured, and never says which;
+- the request answer is HONEST (DESIGN 2026-09-30 §4.1): `sent` with the masked address
+  ("l•••@•••": the first character of the local part, never the domain), `no_email_address`
+  (an unknown account and one without an address or usable mailbox read the same), or
+  `too_many_requests` with `retry_after_s`. The mail itself is sent off the request thread.
+  Trade-off: a requester can learn that an account id has an email address; the rate limits
+  and the audit log bound it, and the admin can turn sign-in by email off (then 404);
 - every issue, refusal and use is audited without the code.
 
 Purposes: `sign_in` (the code opens a browser session) and `reset_token` (the code rotates
@@ -41,7 +43,16 @@ from typing import Any, Dict, List, Optional, Tuple
 from .core_mail import EmailError, OutgoingMessage, guarded_send
 
 from ..users import gateway_data_dir_from_env
-from .accounts import EmailPrincipalRefused, _read_json, _write_private_json, email_context, email_usable, plane_for_principal, recovery_enabled
+from .accounts import (
+    EmailPrincipalRefused,
+    _read_json,
+    _write_private_json,
+    email_context,
+    email_usable,
+    plane_for_principal,
+    recovery_enabled,
+    self_address,
+)
 from .audit import audit_email_event
 
 PURPOSES = ("sign_in", "reset_token")
@@ -51,11 +62,49 @@ ACCOUNT_WINDOW_S = 900.0
 ACCOUNT_MAX_REQUESTS = 3
 IP_WINDOW_S = 900.0
 IP_MAX_REQUESTS = 10
-CONSTANT_MESSAGE = (
-    "If this account has email configured, a code is on its way to its registered address. "
-    "It works once and expires in 10 minutes."
+NO_EMAIL_ADDRESS_MESSAGE = (
+    "This account has no email address, so a code can't be sent. Ask your gateway admin for a token."
 )
-REDEEM_REFUSED = "The code is wrong, expired or already used. Request a new one."
+REDEEM_REFUSED = "That code is wrong, expired or already used. Send a new one."
+MASK = "\u2022\u2022\u2022@\u2022\u2022\u2022"
+
+
+def mask_address(address: str) -> str:
+    """"l•••@•••": the first character of the local part, never the domain."""
+
+    local = str(address or "").strip().split("@", 1)[0]
+    return f"{local[:1]}{MASK}" if local else MASK
+
+
+def _minutes(seconds: int) -> str:
+    n = max(1, -(-int(seconds) // 60))
+    return f"{n} minute" if n == 1 else f"{n} minutes"
+
+
+def sent_answer(to: str) -> Dict[str, Any]:
+    masked = mask_address(to)
+    return {
+        "ok": True,
+        "sent": True,
+        "to": masked,
+        "expires_in_s": int(CODE_TTL_S),
+        "message": f"A sign-in code is on its way to {masked}. It expires in {_minutes(int(CODE_TTL_S))}.",
+    }
+
+
+def no_email_answer() -> Dict[str, Any]:
+    return {"ok": True, "sent": False, "reason_code": "no_email_address", "message": NO_EMAIL_ADDRESS_MESSAGE}
+
+
+def rate_limited_answer(bucket: str, retry_after_s: int) -> Dict[str, Any]:
+    who = "this account" if bucket == "account" else "this device"
+    return {
+        "ok": True,
+        "sent": False,
+        "reason_code": "too_many_requests",
+        "retry_after_s": int(retry_after_s),
+        "message": f"Too many codes requested for {who}. Try again in {_minutes(retry_after_s)}.",
+    }
 
 _LOCK = threading.Lock()
 _PENDING: List[threading.Thread] = []
@@ -155,25 +204,52 @@ def _eligible_principal(user_id: str, tenant_id: str):
     return principal
 
 
-def request_code(*, user_id: str, tenant_id: str = "default", purpose: str, client_ip: str) -> Dict[str, Any]:
-    """Always the same answer. The decision and the mail happen off the request thread."""
+def _recipient(user_id: str, tenant_id: str, base: Dict[str, Any]) -> Optional[str]:
+    """The address a code would go to, or None (audited) when the account cannot receive one:
+    unknown / disabled / entity, no usable mailbox to send with, or no address."""
 
-    purpose0 = str(purpose or "").strip()
+    principal = _eligible_principal(user_id, tenant_id)
+    if principal is None:
+        audit_email_event("email.recovery_code_refused", reason="no_eligible_account", **base)
+        return None
+    try:
+        plane = plane_for_principal(principal)
+    except EmailPrincipalRefused:
+        audit_email_event("email.recovery_code_refused", reason="no_eligible_account", **base)
+        return None
+    if not email_usable(plane):
+        audit_email_event("email.recovery_code_refused", reason="email_not_configured", **base)
+        return None
+    to = self_address(plane)
+    if not to:
+        audit_email_event("email.recovery_code_refused", reason="no_email_address", **base)
+        return None
+    return to
+
+
+def request_code(*, user_id: str, tenant_id: str = "default", purpose: str = "sign_in", client_ip: str) -> Dict[str, Any]:
+    """The honest answer (DESIGN §4.1): sent (masked address) | no_email_address |
+    too_many_requests. The code mail itself is sent off the request thread."""
+
+    purpose0 = str(purpose or "").strip() or "sign_in"
     if purpose0 not in PURPOSES:
         raise ValueError(f"purpose must be one of: {', '.join(PURPOSES)}")
-    answer = {"ok": True, "message": CONSTANT_MESSAGE, "expires_in_s": int(CODE_TTL_S)}
     args = {"user_id": str(user_id or ""), "tenant_id": str(tenant_id or "default"), "purpose": purpose0, "client_ip": str(client_ip or "unknown")}
-    # The rate check runs here, before any thread exists: a flood of requests costs a file
-    # update each, never a thread each. It reads only the request counters (never whether the
-    # account exists), so its timing says nothing about the account.
-    if not _rate_admit(**args):
-        return answer
+    # The rate check runs first, before any account lookup or thread: a flood of requests costs
+    # a file update each, never a thread each, and an unknown account is counted like a real one.
+    refused = _rate_admit(**args)
+    if refused is not None:
+        return rate_limited_answer(*refused)
+    base = {"tenant_id": args["tenant_id"], "user_id": args["user_id"], "purpose": purpose0, "client_ip": args["client_ip"]}
+    to = _recipient(args["user_id"], args["tenant_id"], base)
+    if to is None:
+        return no_email_answer()
     worker = threading.Thread(target=_issue, kwargs=args, name="gateway-recovery-code", daemon=True)
     with _PENDING_LOCK:
         _PENDING[:] = [t for t in _PENDING if t.is_alive()]
         _PENDING.append(worker)
     worker.start()
-    return answer
+    return sent_answer(to)
 
 
 def drain(timeout_s: float = 30.0) -> None:
@@ -186,9 +262,14 @@ def drain(timeout_s: float = 30.0) -> None:
         t.join(max(0.0, deadline - time.time()))
 
 
-def _rate_admit(*, user_id: str, tenant_id: str, purpose: str, client_ip: str) -> bool:
-    """Count this request against the client address and the account; False (audited) when
-    either is over its window's budget."""
+def _retry_after(rows: List[float], window: float, now: float) -> int:
+    oldest = min((float(t) for t in rows), default=now)
+    return max(1, int(round(window - (now - oldest) + 0.4999)))
+
+
+def _rate_admit(*, user_id: str, tenant_id: str, purpose: str, client_ip: str) -> Optional[Tuple[str, int]]:
+    """Count this request against the client address and the account; None when admitted, else
+    `(bucket, retry_after_s)` (audited) when either is over its window's budget."""
 
     now = time.time()
     account_key = f"{tenant_id}:{user_id}"
@@ -202,15 +283,15 @@ def _rate_admit(*, user_id: str, tenant_id: str, purpose: str, client_ip: str) -
         if len(ip_rows) >= IP_MAX_REQUESTS:
             _save(doc)
             audit_email_event("email.recovery_code_refused", reason="rate_limited_client", **base)
-            return False
+            return "client", _retry_after(ip_rows, IP_WINDOW_S, now)
         ip_rows.append(now)
         if len(acct_rows) >= ACCOUNT_MAX_REQUESTS:
             _save(doc)
             audit_email_event("email.recovery_code_refused", reason="rate_limited_account", **base)
-            return False
+            return "account", _retry_after(acct_rows, ACCOUNT_WINDOW_S, now)
         acct_rows.append(now)
         _save(doc)
-    return True
+    return None
 
 
 def _issue(*, user_id: str, tenant_id: str, purpose: str, client_ip: str) -> None:
@@ -252,7 +333,8 @@ def _issue(*, user_id: str, tenant_id: str, purpose: str, client_ip: str) -> Non
         _save(doc)
     try:
         ctx = email_context(plane)
-        to = str(ctx.registered_address or ctx.account.address or "").strip()
+        # The same address the request's answer masked (the registered one, else the mailbox's).
+        to = self_address(plane) or str(ctx.registered_address or ctx.account.address or "").strip()
         subject, text = _render(purpose, code)
         # Automatic mail (RFC 3834) with the framework marker: the watcher never admits it,
         # so a sign-in code never reaches an automation (or its model) reading this inbox.
