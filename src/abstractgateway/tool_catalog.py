@@ -135,7 +135,7 @@ def _rows_from_registry(names: Tuple[str, ...] | List[str], registry: Dict[str, 
     return out
 
 
-def disabled_toolset_rows() -> Tuple[List[Dict[str, Any]], List[str]]:
+def disabled_toolset_rows(*, email_enabled: bool = False, email_off_reason: str | None = None) -> Tuple[List[Dict[str, Any]], List[str]]:
     """Tool rows for every toolset runtime knows but has NOT enabled.
 
     Primary path: runtime's `list_tool_catalog(include_disabled=True)` — the
@@ -145,14 +145,13 @@ def disabled_toolset_rows() -> Tuple[List[Dict[str, Any]], List[str]]:
     the catalog degrade to a labeled minimal fold.
     """
     warnings: List[str] = []
-    try:
-        from abstractruntime.integrations.abstractcore.default_tools import list_tool_catalog
-    except Exception:
-        return _legacy_disabled_rows()
+    from abstractruntime.integrations.abstractcore.default_tools import list_tool_catalog
 
     rows: List[Dict[str, Any]] = []
     try:
-        catalog = list_tool_catalog(include_disabled=True)
+        # Email is per caller (framework backlog 0992): the caller's agent-tools state and,
+        # when off, the typed reason the disabled `comms.email` row names.
+        catalog = list_tool_catalog(include_disabled=True, email_enabled=email_enabled, email_off_reason=email_off_reason)
     except Exception as e:  # noqa: BLE001 - a broken catalog never breaks discovery
         warnings.append(f"#FALLBACK runtime tool catalog failed ({type(e).__name__}); serving enabled rows only")
         return rows, warnings
@@ -219,41 +218,9 @@ def _comms_partial_remainder(*, existing: List[Dict[str, Any]], warnings: List[s
             )
         )
 
-    _kind("email", "email_tools_enabled", "ABSTRACT_ENABLE_COMMS_TOOLS or ABSTRACT_ENABLE_EMAIL_TOOLS")
     _kind("whatsapp", "whatsapp_tools_enabled", "ABSTRACT_ENABLE_COMMS_TOOLS or ABSTRACT_ENABLE_WHATSAPP_TOOLS")
     _kind("telegram", "telegram_tools_enabled", "ABSTRACT_ENABLE_COMMS_TOOLS or ABSTRACT_ENABLE_TELEGRAM_TOOLS")
     return out
-
-
-def _legacy_disabled_rows() -> Tuple[List[Dict[str, Any]], List[str]]:
-    """#FALLBACK for runtimes predating list_tool_catalog: a minimal comms
-    fold so the operator's named suspects (email/telegram) stay visible even
-    on the older floor. Rows come from the registry facade when THAT exists;
-    a runtime old enough to lack both serves labeled name-only rows —
-    visibility is the promise, spec richness is not. Deleted when the
-    runtime floor moves."""
-    warnings: List[str] = ["#FALLBACK runtime lacks list_tool_catalog; serving a minimal legacy comms fold"]
-    rows: List[Dict[str, Any]] = []
-    try:
-        from abstractruntime.integrations.abstractcore import default_tools as dt
-    except Exception as e:  # noqa: BLE001
-        return [], [f"#FALLBACK runtime default_tools unavailable ({type(e).__name__}); catalog serves enabled rows only"]
-    try:
-        enabled = bool(dt.email_tools_enabled()) if callable(getattr(dt, "email_tools_enabled", None)) else False
-    except Exception:  # noqa: BLE001
-        enabled = False
-    if not enabled:
-        rows.extend(
-            _rows_from_registry(
-                _COMMS_KIND_TOOLS["email"],
-                _registry_rows_by_name(warnings),
-                toolset="comms",
-                gate="ABSTRACT_ENABLE_COMMS_TOOLS or ABSTRACT_ENABLE_EMAIL_TOOLS",
-                why=_WHY_BY_TOOLSET["comms"],
-                warnings=warnings,
-            )
-        )
-    return rows, warnings
 
 
 def join_registry_facts(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -403,20 +370,3 @@ def clamp_disabled_approval(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]
             continue
     return items
 
-
-def email_agent_tool_rows(present: set, warnings: List[str]) -> List[Dict[str, Any]]:
-    """Disabled rows for the email tools a caller does not have (framework backlog 0992):
-    per user, the email tools exist only when "Agent email tools" are active (account
-    connected, allowed by the admin, toggle on). Never both lanes, never neither."""
-
-    missing = [n for n in _COMMS_KIND_TOOLS["email"] if n not in present]
-    if not missing:
-        return []
-    return _rows_from_registry(
-        missing,
-        _registry_rows_by_name(warnings),
-        toolset="comms.email",
-        gate="Settings → My email → Agent email tools",
-        why="per user: needs a connected email account allowed by the administrator and “Agent email tools” turned on (default off)",
-        warnings=warnings,
-    )

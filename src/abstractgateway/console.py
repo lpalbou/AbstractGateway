@@ -10993,7 +10993,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         mail.onclick = () => setUserEmailEnabled(u, !mailOn);
         const tools = document.createElement("button");
         const toolsOn = Boolean(u.email_account && u.email_account.agent_tools_available);
-        tools.innerHTML = `<span class="button-icon" aria-hidden="true">⚙</span><span>${toolsOn ? "Agent tools off" : "Agent tools on"}</span>`;
+        tools.innerHTML = `<span class="button-icon" aria-hidden="true">${ICONS.gear}</span><span>${toolsOn ? "Agent tools off" : "Agent tools on"}</span>`;
         tools.className = "secondary";
         tools.title = toolsOn
           ? "Make Agent email tools unavailable to this user (their agents lose the email tools)"

@@ -916,3 +916,46 @@ def test_a_discussion_turn_with_a_client_transcript_is_still_refused(live: TestC
         "input_data": {"prompt": "and then?", "context": {"messages": long_transcript}}})
     assert r.status_code == 400, r.text
     assert "do not send context.messages" in r.text
+
+
+def test_create_accepts_email_notify_policy_and_the_email_trigger(live: TestClient) -> None:
+    """Apps create "Email me the result" automations and "When an email arrives" ones in one
+    request (framework backlog 0992): `notify`, `policy.email_allowed_recipients`,
+    `policy.untrusted_input_tools` and the email.received@1 trigger fields reach the runtime,
+    which validates them; the definition reads them back."""
+    body = {
+        "request_id": "email-1",
+        "title": "Invoices",
+        "target": {"bundle_ref": live.bundle_ref, "flow_id": ECHO_FLOW_ID, "input_data": {"prompt": "hello"}},
+        "trigger": {
+            "source_id": "email.received",
+            "source_version": 1,
+            "config": {
+                "folder": "INBOX",
+                "uses_model": False,
+                "every": "60s",
+                "max_batch": 20,
+                "filter": {
+                    "from_in": ["billing@example.test"],
+                    "from_domain_in": ["example.org"],
+                    "to_in": ["me@example.test"],
+                    "subject_contains": "invoice",
+                    "has_attachment": True,
+                },
+            },
+        },
+        "policy": {"email_allowed_recipients": ["self", "boss@example.test"], "untrusted_input_tools": []},
+        "notify": {"channels": ["console", "email"]},
+    }
+    r = live.post("/api/gateway/automations", headers=HEADERS, json=body)
+    assert r.status_code == 200, r.text
+    aid = r.json()["automation_id"]
+    d = live.get(f"/api/gateway/automations/{aid}", headers=HEADERS).json()["definition"]
+    assert d["notify"] == {"channels": ["console", "email"]}
+    assert d["policy"]["email_allowed_recipients"] == ["self", "boss@example.test"]
+    assert d["trigger"]["source_id"] == "email.received"
+    assert d["trigger"]["config"]["filter"]["subject_contains"] == "invoice"
+    assert d["trigger"]["config"]["every"] == "60s"
+
+    bad = live.post("/api/gateway/automations", headers=HEADERS, json={**body, "request_id": "email-2", "notify": {"channels": ["pager"]}})
+    assert bad.status_code == 422, bad.text

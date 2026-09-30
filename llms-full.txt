@@ -1947,6 +1947,13 @@ selects another user's account, and entities have none.
   and send limits; an agent's send to anyone but the user waits for approval.
 - **Inbound mail** is untrusted data: it reaches a model inside a fixed frame and
   cannot change a run's recipients or tools. The mailbox is only read.
+- **Availability** is the administrator's: `email`, `email_agent_tools` (off by default) and
+  `email_recovery` are gateway-wide defaults with per-user overrides; agents get email tools only
+  when available, connected and switched on by the user — checked when toolsets are built and
+  again on every tool call (the runtime's own send actions only need the account).
+- **Recovery by email** trusts the mailbox: whoever controls a user's mailbox can sign in as that
+  user. It is on by default for users with email; administrators can turn it off gateway-wide
+  (`email_recovery`).
 - **Recovery codes** are single use, expire after 10 minutes, are stored as
   keyed hashes, are rate-limited per account and client address, and the request
   answer never reveals whether an account exists or has email. Issue and use are
@@ -5279,7 +5286,7 @@ Your mailbox (`/api/gateway/me/...`, every signed-in human):
 | `POST /me/email/policy/check` | `{addresses}` → per-recipient verdicts |
 | `PUT /me/email/limits` | `{per_hour, per_day}` |
 | `PUT /me/email/enabled` | `{enabled}` — your own switch |
-| `PUT /me/email/agent-tools` | `{enabled}` — your agents' email tools (default off; active only with a connected account the administrator allows); reloads your workflows so toolsets follow (`tools_reloaded`). `GET /me/email` reports `agent_tools: {enabled, active, reason}` |
+| `PUT /me/email/agent-tools` | `{enabled}` — your agents' email tools (default off; 409 `email_disabled` "not available" unless an administrator made them available; active only with a connected, allowed account); reloads your workflows so toolsets follow (`tools_reloaded`). `GET /me/email` reports `agent_tools: {enabled, available, active, reason}` and `store.label` (which account this is) |
 | `GET /me/email/oauth/clients` | which providers have a gateway OAuth client (no secrets) |
 | `POST /me/email/oauth/start` | `{address, provider: google \| microsoft, client_id?, client_secret?, tenant?, flow?: device \| loopback}` → device code (`user_code`, `verification_uri`) or `authorization_url` |
 | `POST /me/email/oauth/poll` | `{flow_id}` → `{pending: true}` or the connected account |
@@ -5293,9 +5300,11 @@ Administrators (status and the switch only; administrators never read mail):
 
 | Route | Purpose |
 |---|---|
-| `GET /admin/users` | each human row carries `email_account: {configured, address, state, admin_enabled}` |
-| `GET /admin/users/{user_id}/email` | `configured`, `address`, `auth_kind`, `user_enabled`, `admin_enabled`, `effective_enabled`, `status` (last test / last error), `watcher`, `state` |
-| `PUT /admin/users/{user_id}/email` | `{enabled}` — off: no watcher, no sending, no notifications (settings kept) |
+| `GET /admin/users` | each human row carries `email_account: {configured, address, state, admin_enabled, agent_tools_available}` |
+| `GET /admin/users/{user_id}/email` | `configured`, `address`, `auth_kind`, `user_enabled`, `admin_enabled`, `effective_enabled`, `status` (last test / last error), `capabilities` (`{value, source: user \| gateway \| built-in}`), `agent_tools` (`available`, `user_enabled`, `active`), `watcher`, `state` |
+| `PUT /admin/users/{user_id}/email` | `{enabled?, agent_tools?, inherit?: ["email", "email_agent_tools"]}` — per-user capabilities; `enabled: false` = no watcher, no sending, no notifications (settings kept); `agent_tools` = Agent email tools available |
+| `GET /admin/email/capabilities` | gateway-wide defaults: `email` (on), `email_agent_tools` (off), `email_recovery` (on) |
+| `PUT /admin/email/capabilities` | `{email?, email_agent_tools?, email_recovery?, reset?: [...]}` |
 | `GET /admin/email/oauth-clients` | bring-your-own OAuth clients: `client_id`, `client_secret_set`, `tenant` per provider |
 | `PUT /admin/email/oauth-clients/{provider}` | `{client_id, client_secret?, tenant?}`; an empty `client_id` removes the provider's client; omitting `client_secret` keeps the stored one for the same id |
 
@@ -5303,7 +5312,7 @@ Sign-in page (public):
 
 | Route | Purpose |
 |---|---|
-| `GET /session/recovery` | `{available}` — true when at least one account of this gateway has email |
+| `GET /session/recovery` | `{available}` — true when sign-in by email is on (`email_recovery`, default on) and at least one account of this gateway has email |
 | `POST /session/recovery/request` | `{user_id, tenant_id?, purpose: sign_in \| reset_token}` → the same answer for every account |
 | `POST /session/recovery/redeem` | `{user_id, tenant_id?, purpose, code, remember?}` → a browser session; `reset_token` also returns the new `token` once. A wrong, expired or used code answers 401 `recovery_code_refused` |
 
@@ -6702,17 +6711,19 @@ Your agents and workflows — chats, workflow runs and automations, from every c
 Assistant, Observer, the consoles) — get the email tools (list and search mail, read a message,
 send, reply, download an attachment) only when **all** of these hold:
 
-1. your account is connected and turned on;
-2. an administrator has not turned email off for you;
+1. an administrator made **Agent email tools** available to you (they are not, by default);
+2. your account is connected and turned on, and email is allowed for you;
 3. you turned on **Agent email tools** (My email in the web console, **Policy, limits & tools** in
-   the terminal console, or `PUT /api/gateway/me/email/agent-tools {"enabled": true}`).
+   the terminal console, or `PUT /api/gateway/me/email/agent-tools {"enabled": true}`). When they
+   are not available the switch reads "not available — ask your admin".
 
 The rule is applied twice: when your toolsets are built (the tools are listed only then; turning
 the switch reloads your workflows so the change applies at once) and again when a tool runs (a
 call without all three is refused with the cause and the fix). `GET /api/gateway/discovery/tools`
 shows the email tools as enabled only for a caller whose agent tools are active. Every email tool
-call is an ordinary tool call recorded in the run's ledger. Automations send actions through the
-same `send_email` tool, so they need the switch too; notifications and recovery codes do not.
+call is an ordinary tool call recorded in the run's ledger. Your own send-email actions in
+automations (fixed templates you wrote), notifications and recovery codes do not need the switch:
+they only need a connected, allowed account.
 
 ## Recipient policy and send limits
 
@@ -6793,14 +6804,32 @@ rotation as before.
 
 ## Administrators
 
-Administrators can turn email **on or off per user** (web console Users table → **Email off / Email
-on**, terminal console Users screen → `x`, or `PUT /api/gateway/admin/users/{id}/email`). Off means
-no watcher, no sending and no email notifications; the user's settings are kept. The Users table
+Administrators decide what is **available** to users, with a gateway-wide default and per-user
+overrides (web console Users tab → **Email for users** and the row buttons; terminal console Users
+screen → `@` → **Email for users (admin)**, `x` and `X`; or the HTTP routes):
+
+| Capability | Default | Meaning |
+|---|---|---|
+| `email` | on | users may connect their own mailbox (off: no watcher, no sending, no email notifications; settings are kept) |
+| `email_agent_tools` | off | users may turn on Agent email tools for their own agents |
+| `email_recovery` | on (gateway-wide only) | "Forgot your token?" and "Email me a sign-in code" on the sign-in page |
+
+```bash
+curl -sS -X PUT -H "$ADMIN" "$BASE_URL/api/gateway/admin/email/capabilities" -d '{"email_agent_tools": true}'
+curl -sS -X PUT -H "$ADMIN" "$BASE_URL/api/gateway/admin/users/alice/email" -d '{"enabled": true, "agent_tools": false}'
+curl -sS -X PUT -H "$ADMIN" "$BASE_URL/api/gateway/admin/users/alice/email" -d '{"inherit": ["email_agent_tools"]}'
+```
+
+Sign-in by email means that whoever controls a user's mailbox can sign in as that user; turn it off
+where mailboxes are not as well protected as gateway tokens. The Users table
 shows each user's mailbox state (`connected`, `not connected`, `needs action`, `turned off by an
 administrator`, …). Administrators see the state, the address and the last error — never messages,
 the user's recipient list or credentials.
 
-The administrator's own account (the default runtime) is configured like everyone else's.
+The administrator's own account (the default runtime) is configured like everyone else's. It is the
+gateway's account, separate from AbstractCore's own local account (`abstractcore email`); on the
+first start, when the gateway has no account for the administrator and AbstractCore has one, that
+account is copied once into the gateway settings (the consoles say which account you are editing).
 
 ## Where things are stored
 
@@ -6809,8 +6838,9 @@ The administrator's own account (the default runtime) is configured like everyon
 | Account settings, policy, limits | `<plane>/email/account/abstractcore.json` |
 | Password / OAuth tokens | `<plane>/email/account/email/secret.enc` (AES-256-GCM; key in the OS keychain, or a 0600 key file when there is none) |
 | Watcher state | `<plane>/email/watcher.json`; the cursor and received mail in `<runtime data dir>/event_inbox/` |
-| Notification preferences and outbox | `<plane>/email/notifications.json`, `<plane>/email/outbox.sqlite3` |
-| Per-user email switch | `<data_dir>/auth/email_capability.json` |
+| Notification preferences and outbox | `<plane>/email/notifications.json`, `<plane>/email/outbox.sqlite3` (created with the first notice) |
+| What is available to users (defaults + per-user) | `<data_dir>/auth/capabilities.json` |
+| Agent email tools choice | `<plane>/email/agent_tools.json` |
 | OAuth clients (admin) | `<data_dir>/email/oauth_clients/secret.enc` |
 | Recovery codes (hashed) | `<data_dir>/auth/recovery_codes.json` |
 
@@ -8375,10 +8405,18 @@ AbstractRuntime 0.8.0 (account binding, event inbox, `email.received@1`).
   (AES-256-GCM, key in the OS keychain), and every connection verifies TLS. Failures name the cause and the fix.
 - **Nothing email-related is on by default**: the watcher runs only for a user with an email-triggered automation,
   every email notification event is off until the user turns it on, and nothing is seeded at first run.
+- **What is available is the administrator's decision**: gateway-wide defaults with per-user overrides for `email`
+  (default on), `email_agent_tools` (default off) and `email_recovery` (sign-in by email, gateway-wide, default on):
+  `GET/PUT /api/gateway/admin/email/capabilities`, `PUT /api/gateway/admin/users/{id}/email {enabled?, agent_tools?,
+  inherit?}`; web console **Email for users** and row buttons, terminal console `x` / `X` and **Email for users
+  (admin)**.
+- The administrator's gateway account starts, once, from AbstractCore's own local account when the gateway has none;
+  the consoles say which account is being edited.
 - **Agent email tools** per user, off by default (`PUT /api/gateway/me/email/agent-tools`, web console My email,
   terminal console **Policy, limits & tools**): agents and workflows get list/search/read/send/reply/attachment
-  tools only when the account is connected, allowed by the administrator and the switch is on — applied when the
-  toolsets are built (the switch reloads the user's workflows) and again when a tool runs.
+  tools only when the administrator made them available, the account is connected and allowed, and the switch is on —
+  applied when the toolsets are built (the switch reloads the user's workflows) and again when a tool runs. The run
+  binding follows the account, so user-authored send-email actions and notifications work with the switch off.
   `GET /api/gateway/discovery/tools` lists the email tools as enabled only for such a caller; the
   `ABSTRACT_ENABLE_EMAIL_TOOLS` environment gate no longer enables them on the gateway.
 - **Recipient policy and send limits** per user (`allowlist` / `denylist` of addresses and domains; 20 per hour,
@@ -8410,6 +8448,12 @@ AbstractRuntime 0.8.0 (account binding, event inbox, `email.received@1`).
   `email.recovery_code_issued|used|refused`, `email.oauth_client_changed`, `email.legacy_imported`.
 
 ### Changed
+- `POST /api/gateway/automations` accepts `notify` (`{"channels": ["console", "email"]}`) like an edit, and passes
+  `policy.email_allowed_recipients`, `policy.untrusted_input_tools` and the `email.received@1` trigger configuration
+  to the runtime, which validates them.
+- Tool listings (`/discovery/tools`, `/discovery/capabilities`, skills' tool checks) follow the caller's agent-tools
+  state; a disabled email row names the runtime's typed reason (not connected, turned off by an administrator,
+  agent tools off).
 - Maintenance notices (triage, entity repair, backlog runner) are emailed to the administrator's registered address
   through the administrator's own account and the notification outbox.
 - The email tool catalog row lists `reply_email`, `search_emails` and `get_email_attachment`.

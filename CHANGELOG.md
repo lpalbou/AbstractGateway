@@ -20,10 +20,18 @@ AbstractRuntime 0.8.0 (account binding, event inbox, `email.received@1`).
   (AES-256-GCM, key in the OS keychain), and every connection verifies TLS. Failures name the cause and the fix.
 - **Nothing email-related is on by default**: the watcher runs only for a user with an email-triggered automation,
   every email notification event is off until the user turns it on, and nothing is seeded at first run.
+- **What is available is the administrator's decision**: gateway-wide defaults with per-user overrides for `email`
+  (default on), `email_agent_tools` (default off) and `email_recovery` (sign-in by email, gateway-wide, default on):
+  `GET/PUT /api/gateway/admin/email/capabilities`, `PUT /api/gateway/admin/users/{id}/email {enabled?, agent_tools?,
+  inherit?}`; web console **Email for users** and row buttons, terminal console `x` / `X` and **Email for users
+  (admin)**.
+- The administrator's gateway account starts, once, from AbstractCore's own local account when the gateway has none;
+  the consoles say which account is being edited.
 - **Agent email tools** per user, off by default (`PUT /api/gateway/me/email/agent-tools`, web console My email,
   terminal console **Policy, limits & tools**): agents and workflows get list/search/read/send/reply/attachment
-  tools only when the account is connected, allowed by the administrator and the switch is on — applied when the
-  toolsets are built (the switch reloads the user's workflows) and again when a tool runs.
+  tools only when the administrator made them available, the account is connected and allowed, and the switch is on —
+  applied when the toolsets are built (the switch reloads the user's workflows) and again when a tool runs. The run
+  binding follows the account, so user-authored send-email actions and notifications work with the switch off.
   `GET /api/gateway/discovery/tools` lists the email tools as enabled only for such a caller; the
   `ABSTRACT_ENABLE_EMAIL_TOOLS` environment gate no longer enables them on the gateway.
 - **Recipient policy and send limits** per user (`allowlist` / `denylist` of addresses and domains; 20 per hour,
@@ -55,6 +63,12 @@ AbstractRuntime 0.8.0 (account binding, event inbox, `email.received@1`).
   `email.recovery_code_issued|used|refused`, `email.oauth_client_changed`, `email.legacy_imported`.
 
 ### Changed
+- `POST /api/gateway/automations` accepts `notify` (`{"channels": ["console", "email"]}`) like an edit, and passes
+  `policy.email_allowed_recipients`, `policy.untrusted_input_tools` and the `email.received@1` trigger configuration
+  to the runtime, which validates them.
+- Tool listings (`/discovery/tools`, `/discovery/capabilities`, skills' tool checks) follow the caller's agent-tools
+  state; a disabled email row names the runtime's typed reason (not connected, turned off by an administrator,
+  agent tools off).
 - Maintenance notices (triage, entity repair, backlog runner) are emailed to the administrator's registered address
   through the administrator's own account and the notification outbox.
 - The email tool catalog row lists `reply_email`, `search_emails` and `get_email_attachment`.

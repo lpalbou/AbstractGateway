@@ -120,3 +120,24 @@ def refresh_all_cached_bindings() -> None:
                 refresh_runtime_binding(svc.host.runtime, worker.plane)
     except Exception:  # noqa: BLE001
         logger.warning("email binding refresh (all services) failed", exc_info=True)
+
+
+def email_tools_for_data_dir(data_dir: Any) -> bool:
+    """Agent email tools active for the plane whose runtime data dir is `data_dir` (a built
+    service's), else False — for checks that know only the data dir."""
+
+    try:
+        from .. import service as service_mod
+        from .accounts import agent_tools_active
+
+        target = Path(data_dir).resolve()
+        with service_mod._service_lock:
+            candidates = [service_mod._service] + list(service_mod._services_by_principal.values())
+        for svc in candidates:
+            if svc is None or getattr(svc, "email_worker", None) is None:
+                continue
+            if Path(svc.config.data_dir).resolve() == target:
+                return agent_tools_active(svc.email_worker.plane)
+    except Exception:  # noqa: BLE001
+        return False
+    return False

@@ -4607,7 +4607,9 @@ def _get_tool_specs_by_name(*, ttl_s: float = 30.0) -> Dict[str, Dict[str, Any]]
     try:
         from abstractruntime.integrations.abstractcore.default_tools import list_default_tool_specs
 
-        items = list_default_tool_specs()
+        # Display metadata for tool calls ALREADY in a ledger (digests), not a toolset: it
+        # knows the email tools so a recorded send_email renders with its spec.
+        items = list_default_tool_specs(email_enabled=True)
     except Exception:
         items = []
 
@@ -14423,7 +14425,7 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
 
 
 @router.get("/discovery/tools")
-async def discovery_tools(request: Request) -> Dict[str, Any]:
+async def discovery_tools() -> Dict[str, Any]:
     """List available tool specs for thin clients (best-effort).
 
     Notes:
@@ -14433,16 +14435,9 @@ async def discovery_tools(request: Request) -> Dict[str, Any]:
       are active (framework backlog 0992: account connected, allowed by the admin,
       toggle on; default off) — the same rule the caller's toolsets are built with.
     """
-    email_tools = False
-    try:
-        from ..mail.accounts import EmailPrincipalRefused, agent_tools_active, plane_for_principal
+    from ..mail.accounts import principal_email_tools
 
-        try:
-            email_tools = await _off_the_event_loop(lambda: agent_tools_active(plane_for_principal(_principal_from_request(request))))
-        except (EmailPrincipalRefused, HTTPException):
-            email_tools = False
-    except Exception:  # noqa: BLE001 - listing never fails on the email probe
-        email_tools = False
+    email_tools, email_off_reason = await _off_the_event_loop(principal_email_tools, current_gateway_principal())
     try:
         from abstractruntime.integrations.abstractcore.default_tools import list_default_tool_specs
 
@@ -14468,14 +14463,9 @@ async def discovery_tools(request: Request) -> Dict[str, Any]:
     try:
         from ..tool_catalog import disabled_toolset_rows, plugin_error_warnings
 
-        disabled_rows, catalog_warnings = disabled_toolset_rows()
-        enabled_names = {str(r.get("name")) for r in items}
-        from ..tool_catalog import _COMMS_KIND_TOOLS, email_agent_tool_rows
-
-        email_names = set(_COMMS_KIND_TOOLS["email"])
-        # Email rows follow the caller's agent-tools state, never an environment gate.
-        items.extend(r for r in disabled_rows if str(r.get("name")) not in enabled_names and str(r.get("name")) not in email_names)
-        items.extend(email_agent_tool_rows(enabled_names, catalog_warnings))
+        # Email rows follow the caller's agent-tools state (runtime's typed off-reason gate).
+        disabled_rows, catalog_warnings = disabled_toolset_rows(email_enabled=email_tools, email_off_reason=email_off_reason)
+        items.extend(disabled_rows)
         # Plugin load failures (camera c4634 boot-race class): core's
         # registry holds them process-internally — surface them here so a
         # silently-absent capability package is VISIBLE on the response.
@@ -17840,7 +17830,10 @@ async def discovery_capabilities() -> Dict[str, Any]:
     try:
         from abstractruntime.integrations.abstractcore.default_tools import list_default_tool_specs
 
-        specs = list_default_tool_specs()
+        from ..mail.accounts import principal_email_tools
+
+        email_on, _reason = principal_email_tools(current_gateway_principal())
+        specs = list_default_tool_specs(email_enabled=email_on)
         caps["tools"] = {"installed": True, "count": len(specs) if isinstance(specs, list) else None}
     except Exception as e:
         caps["tools"] = {"installed": False, "error": str(e)}

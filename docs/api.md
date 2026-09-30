@@ -1707,7 +1707,7 @@ Your mailbox (`/api/gateway/me/...`, every signed-in human):
 | `POST /me/email/policy/check` | `{addresses}` → per-recipient verdicts |
 | `PUT /me/email/limits` | `{per_hour, per_day}` |
 | `PUT /me/email/enabled` | `{enabled}` — your own switch |
-| `PUT /me/email/agent-tools` | `{enabled}` — your agents' email tools (default off; active only with a connected account the administrator allows); reloads your workflows so toolsets follow (`tools_reloaded`). `GET /me/email` reports `agent_tools: {enabled, active, reason}` |
+| `PUT /me/email/agent-tools` | `{enabled}` — your agents' email tools (default off; 409 `email_disabled` "not available" unless an administrator made them available; active only with a connected, allowed account); reloads your workflows so toolsets follow (`tools_reloaded`). `GET /me/email` reports `agent_tools: {enabled, available, active, reason}` and `store.label` (which account this is) |
 | `GET /me/email/oauth/clients` | which providers have a gateway OAuth client (no secrets) |
 | `POST /me/email/oauth/start` | `{address, provider: google \| microsoft, client_id?, client_secret?, tenant?, flow?: device \| loopback}` → device code (`user_code`, `verification_uri`) or `authorization_url` |
 | `POST /me/email/oauth/poll` | `{flow_id}` → `{pending: true}` or the connected account |
@@ -1721,9 +1721,11 @@ Administrators (status and the switch only; administrators never read mail):
 
 | Route | Purpose |
 |---|---|
-| `GET /admin/users` | each human row carries `email_account: {configured, address, state, admin_enabled}` |
-| `GET /admin/users/{user_id}/email` | `configured`, `address`, `auth_kind`, `user_enabled`, `admin_enabled`, `effective_enabled`, `status` (last test / last error), `watcher`, `state` |
-| `PUT /admin/users/{user_id}/email` | `{enabled}` — off: no watcher, no sending, no notifications (settings kept) |
+| `GET /admin/users` | each human row carries `email_account: {configured, address, state, admin_enabled, agent_tools_available}` |
+| `GET /admin/users/{user_id}/email` | `configured`, `address`, `auth_kind`, `user_enabled`, `admin_enabled`, `effective_enabled`, `status` (last test / last error), `capabilities` (`{value, source: user \| gateway \| built-in}`), `agent_tools` (`available`, `user_enabled`, `active`), `watcher`, `state` |
+| `PUT /admin/users/{user_id}/email` | `{enabled?, agent_tools?, inherit?: ["email", "email_agent_tools"]}` — per-user capabilities; `enabled: false` = no watcher, no sending, no notifications (settings kept); `agent_tools` = Agent email tools available |
+| `GET /admin/email/capabilities` | gateway-wide defaults: `email` (on), `email_agent_tools` (off), `email_recovery` (on) |
+| `PUT /admin/email/capabilities` | `{email?, email_agent_tools?, email_recovery?, reset?: [...]}` |
 | `GET /admin/email/oauth-clients` | bring-your-own OAuth clients: `client_id`, `client_secret_set`, `tenant` per provider |
 | `PUT /admin/email/oauth-clients/{provider}` | `{client_id, client_secret?, tenant?}`; an empty `client_id` removes the provider's client; omitting `client_secret` keeps the stored one for the same id |
 
@@ -1731,7 +1733,7 @@ Sign-in page (public):
 
 | Route | Purpose |
 |---|---|
-| `GET /session/recovery` | `{available}` — true when at least one account of this gateway has email |
+| `GET /session/recovery` | `{available}` — true when sign-in by email is on (`email_recovery`, default on) and at least one account of this gateway has email |
 | `POST /session/recovery/request` | `{user_id, tenant_id?, purpose: sign_in \| reset_token}` → the same answer for every account |
 | `POST /session/recovery/redeem` | `{user_id, tenant_id?, purpose, code, remember?}` → a browser session; `reset_token` also returns the new `token` once. A wrong, expired or used code answers 401 `recovery_code_refused` |
 

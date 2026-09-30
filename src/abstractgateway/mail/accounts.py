@@ -35,6 +35,7 @@ from typing import Any, Dict, List, Optional
 from .core_mail import (
     EmailAccount,
     EmailAccountStore,
+    EmailAgentToolsOff,
     EmailContext,
     EmailDisabled,
     EmailError,
@@ -460,6 +461,31 @@ def agent_tools_status(plane: EmailPlane) -> Dict[str, Any]:
     return {"enabled": switch, "available": available, "active": bool(available and switch and usable), "reason": reason}
 
 
+def agent_tools_off_reason(plane: EmailPlane) -> Optional[str]:
+    """AbstractRuntime's typed off-reason for the email toolset of this plane (None = active):
+    "admin_disabled" (email turned off, or agent tools not made available, by an administrator),
+    "not_connected" (no connected, turned-on account), "agent_tools_off" (the user's choice)."""
+
+    if agent_tools_active(plane):
+        return None
+    if not admin_email_enabled(plane) or not agent_tools_available(plane):
+        return "admin_disabled"
+    if not email_usable(plane):
+        return "not_connected"
+    return "agent_tools_off"
+
+
+def principal_email_tools(principal: Any) -> tuple:
+    """`(email_enabled, email_off_reason)` for a principal's toolset listings."""
+
+    try:
+        plane = plane_for_principal(principal)
+    except EmailPrincipalRefused:
+        return False, "not_connected"
+    reason = agent_tools_off_reason(plane)
+    return reason is None, reason
+
+
 def require_agent_tools(plane: EmailPlane) -> None:
     if agent_tools_active(plane):
         return
@@ -467,7 +493,10 @@ def require_agent_tools(plane: EmailPlane) -> None:
         raise EmailDisabled(AGENT_TOOLS_UNAVAILABLE_CAUSE, AGENT_TOOLS_UNAVAILABLE_FIX)
     if not admin_email_enabled(plane):
         raise EmailDisabled(ADMIN_DISABLED_CAUSE, ADMIN_DISABLED_FIX)
-    raise EmailDisabled(AGENT_TOOLS_OFF_CAUSE, AGENT_TOOLS_OFF_FIX)
+    if not email_usable(plane):
+        # Not connected / turned off by the user: the store's own typed error says which.
+        email_context(plane)
+    raise EmailAgentToolsOff(AGENT_TOOLS_OFF_CAUSE, AGENT_TOOLS_OFF_FIX)
 
 
 # ---------------------------------------------------------------------------------------

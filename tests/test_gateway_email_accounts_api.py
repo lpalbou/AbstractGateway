@@ -230,6 +230,16 @@ def test_gateway_defaults_and_per_user_overrides_decide_what_is_available(gatewa
     assert r.json()["capabilities"]["email_agent_tools"] == {"value": False, "source": "user"}
     at = c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["agent_tools"]
     assert at["enabled"] is True and at["available"] is False and at["active"] is False
+    # Enforced where toolsets are listed and where tools run, not only in the status view.
+    items = c.get("/api/gateway/discovery/tools", headers=gateway["alice"]).json()["items"]
+    assert {t["name"]: t["enabled"] for t in items if t["name"] == "send_email"} == {"send_email": False}
+    from abstractcore.comms.email import EmailDisabled
+    from abstractruntime.email import EmailBinding
+
+    from abstractgateway.mail.runtime_wiring import make_email_resolver
+
+    with pytest.raises(EmailDisabled):
+        make_email_resolver(plane_of("alice"))(EmailBinding(account_ref="default:alice:default"))
     r = c.put("/api/gateway/admin/users/alice/email", headers=ADMIN, json={"inherit": ["email_agent_tools"]})
     assert r.json()["capabilities"]["email_agent_tools"] == {"value": True, "source": "gateway"}
     rows = {u["user_id"]: u for u in c.get("/api/gateway/admin/users", headers=ADMIN).json()["users"]}

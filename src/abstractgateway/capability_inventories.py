@@ -321,9 +321,11 @@ def _apply_requires_check(
         try:
             from abstractruntime.integrations.abstractcore.default_tools import list_default_tool_specs
 
+            from .mail.runtime_wiring import email_tools_for_data_dir
+
             tool_universe = {
                 str(s.get("name") or "").strip()
-                for s in list_default_tool_specs()
+                for s in list_default_tool_specs(email_enabled=email_tools_for_data_dir(data_dir))
                 if isinstance(s, dict)
             }
         except Exception as e:  # noqa: BLE001

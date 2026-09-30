@@ -517,6 +517,9 @@ class CreateAutomationBody(BaseModel):
     trigger: Optional[Dict[str, Any]] = None
     context: Optional[Dict[str, Any]] = None
     policy: Optional[Dict[str, Any]] = None
+    # Where attention items are delivered (definition schema v2): {"channels": ["console"] |
+    # ["console", "email"]} — validated by the runtime like an edit's `notify`.
+    notify: Optional[Dict[str, Any]] = None
 
 
 def _create(svc: Any, principal: Any, body: CreateAutomationBody) -> Dict[str, Any]:
@@ -556,6 +559,8 @@ def _create(svc: Any, principal: Any, body: CreateAutomationBody) -> Dict[str, A
         request["context"] = context
     if body.policy is not None:
         request["policy"] = body.policy
+    if body.notify is not None:
+        request["notify"] = body.notify
     runtime = svc.host.runtime
     try:
         # Gateway-owned from its creation: the runner ticks only actor

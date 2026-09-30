@@ -61,8 +61,12 @@ def test_disabled_toolsets_are_visible_rows_with_real_specs() -> None:
             # / comms.whatsapp / comms.telegram) answering the filed gap.
             assert str(row["toolset"]).startswith("comms")
             if "email" in name:
-                # Per user (framework backlog 0992), never an environment gate.
-                assert row["enable_gate"] == "Settings → My email → Agent email tools"
+                # Per user (framework backlog 0992), never an environment gate: the runtime's
+                # typed off-reason. The static-token operator has no account and agent tools
+                # are not made available by default -> the administrator's reason.
+                from abstractruntime.integrations.abstractcore.default_tools import EMAIL_OFF_REASONS
+
+                assert row["enable_gate"] == EMAIL_OFF_REASONS["admin_disabled"]
             else:
                 assert "ABSTRACT_ENABLE" in row["enable_gate"]
             # Real spec, never fabricated: the description comes from the callable.
@@ -111,7 +115,9 @@ def test_enabling_a_gate_moves_rows_to_the_enabled_lane(monkeypatch: pytest.Monk
         assert tg_rows[0]["enabled"] is True
         email_rows = [t for t in items if t["name"] == "send_email"]
         assert len(email_rows) == 1 and email_rows[0]["enabled"] is False
-        assert "Agent email tools" in email_rows[0]["enable_gate"]
+        from abstractruntime.integrations.abstractcore.default_tools import EMAIL_OFF_REASONS
+
+        assert email_rows[0]["enable_gate"] in EMAIL_OFF_REASONS.values()
         # Un-enabled comms kinds remain disabled rows.
         wa = [t for t in items if t["name"] == "send_whatsapp_message"]
         assert len(wa) == 1 and wa[0]["enabled"] is False
@@ -249,7 +255,8 @@ def test_comms_kind_map_matches_runtime_composition(monkeypatch: pytest.MonkeyPa
 
     from abstractgateway.tool_catalog import _COMMS_KIND_TOOLS
 
-    comms = get_default_toolsets().get("comms") or {}
+    # Email has no env gate (framework backlog 0992): the host passes email_enabled.
+    comms = get_default_toolsets(email_enabled=True).get("comms") or {}
     composed = {getattr(fn, "__name__", "") for fn in comms.get("tools") or []}
     mapped = {name for names in _COMMS_KIND_TOOLS.values() for name in names}
     assert composed, "comms toolset did not compose with the gate enabled"

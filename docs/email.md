@@ -71,17 +71,19 @@ Your agents and workflows — chats, workflow runs and automations, from every c
 Assistant, Observer, the consoles) — get the email tools (list and search mail, read a message,
 send, reply, download an attachment) only when **all** of these hold:
 
-1. your account is connected and turned on;
-2. an administrator has not turned email off for you;
+1. an administrator made **Agent email tools** available to you (they are not, by default);
+2. your account is connected and turned on, and email is allowed for you;
 3. you turned on **Agent email tools** (My email in the web console, **Policy, limits & tools** in
-   the terminal console, or `PUT /api/gateway/me/email/agent-tools {"enabled": true}`).
+   the terminal console, or `PUT /api/gateway/me/email/agent-tools {"enabled": true}`). When they
+   are not available the switch reads "not available — ask your admin".
 
 The rule is applied twice: when your toolsets are built (the tools are listed only then; turning
 the switch reloads your workflows so the change applies at once) and again when a tool runs (a
 call without all three is refused with the cause and the fix). `GET /api/gateway/discovery/tools`
 shows the email tools as enabled only for a caller whose agent tools are active. Every email tool
-call is an ordinary tool call recorded in the run's ledger. Automations send actions through the
-same `send_email` tool, so they need the switch too; notifications and recovery codes do not.
+call is an ordinary tool call recorded in the run's ledger. Your own send-email actions in
+automations (fixed templates you wrote), notifications and recovery codes do not need the switch:
+they only need a connected, allowed account.
 
 ## Recipient policy and send limits
 
@@ -162,14 +164,32 @@ rotation as before.
 
 ## Administrators
 
-Administrators can turn email **on or off per user** (web console Users table → **Email off / Email
-on**, terminal console Users screen → `x`, or `PUT /api/gateway/admin/users/{id}/email`). Off means
-no watcher, no sending and no email notifications; the user's settings are kept. The Users table
+Administrators decide what is **available** to users, with a gateway-wide default and per-user
+overrides (web console Users tab → **Email for users** and the row buttons; terminal console Users
+screen → `@` → **Email for users (admin)**, `x` and `X`; or the HTTP routes):
+
+| Capability | Default | Meaning |
+|---|---|---|
+| `email` | on | users may connect their own mailbox (off: no watcher, no sending, no email notifications; settings are kept) |
+| `email_agent_tools` | off | users may turn on Agent email tools for their own agents |
+| `email_recovery` | on (gateway-wide only) | "Forgot your token?" and "Email me a sign-in code" on the sign-in page |
+
+```bash
+curl -sS -X PUT -H "$ADMIN" "$BASE_URL/api/gateway/admin/email/capabilities" -d '{"email_agent_tools": true}'
+curl -sS -X PUT -H "$ADMIN" "$BASE_URL/api/gateway/admin/users/alice/email" -d '{"enabled": true, "agent_tools": false}'
+curl -sS -X PUT -H "$ADMIN" "$BASE_URL/api/gateway/admin/users/alice/email" -d '{"inherit": ["email_agent_tools"]}'
+```
+
+Sign-in by email means that whoever controls a user's mailbox can sign in as that user; turn it off
+where mailboxes are not as well protected as gateway tokens. The Users table
 shows each user's mailbox state (`connected`, `not connected`, `needs action`, `turned off by an
 administrator`, …). Administrators see the state, the address and the last error — never messages,
 the user's recipient list or credentials.
 
-The administrator's own account (the default runtime) is configured like everyone else's.
+The administrator's own account (the default runtime) is configured like everyone else's. It is the
+gateway's account, separate from AbstractCore's own local account (`abstractcore email`); on the
+first start, when the gateway has no account for the administrator and AbstractCore has one, that
+account is copied once into the gateway settings (the consoles say which account you are editing).
 
 ## Where things are stored
 
@@ -178,8 +198,9 @@ The administrator's own account (the default runtime) is configured like everyon
 | Account settings, policy, limits | `<plane>/email/account/abstractcore.json` |
 | Password / OAuth tokens | `<plane>/email/account/email/secret.enc` (AES-256-GCM; key in the OS keychain, or a 0600 key file when there is none) |
 | Watcher state | `<plane>/email/watcher.json`; the cursor and received mail in `<runtime data dir>/event_inbox/` |
-| Notification preferences and outbox | `<plane>/email/notifications.json`, `<plane>/email/outbox.sqlite3` |
-| Per-user email switch | `<data_dir>/auth/email_capability.json` |
+| Notification preferences and outbox | `<plane>/email/notifications.json`, `<plane>/email/outbox.sqlite3` (created with the first notice) |
+| What is available to users (defaults + per-user) | `<data_dir>/auth/capabilities.json` |
+| Agent email tools choice | `<plane>/email/agent_tools.json` |
 | OAuth clients (admin) | `<data_dir>/email/oauth_clients/secret.enc` |
 | Recovery codes (hashed) | `<data_dir>/auth/recovery_codes.json` |
 

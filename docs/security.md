@@ -229,6 +229,13 @@ selects another user's account, and entities have none.
   and send limits; an agent's send to anyone but the user waits for approval.
 - **Inbound mail** is untrusted data: it reaches a model inside a fixed frame and
   cannot change a run's recipients or tools. The mailbox is only read.
+- **Availability** is the administrator's: `email`, `email_agent_tools` (off by default) and
+  `email_recovery` are gateway-wide defaults with per-user overrides; agents get email tools only
+  when available, connected and switched on by the user — checked when toolsets are built and
+  again on every tool call (the runtime's own send actions only need the account).
+- **Recovery by email** trusts the mailbox: whoever controls a user's mailbox can sign in as that
+  user. It is on by default for users with email; administrators can turn it off gateway-wide
+  (`email_recovery`).
 - **Recovery codes** are single use, expire after 10 minutes, are stored as
   keyed hashes, are rate-limited per account and client address, and the request
   answer never reveals whether an account exists or has email. Issue and use are

@@ -10,8 +10,10 @@ Needs AbstractGateway 0.8.0 (per-user email).
   loopback link, polled until approved, cancel), recipient policy, send limits and **Agent email tools** (off by
   default), notification preferences (all off by default) with
   **Send test notification**. Refusals show the gateway's cause and fix; the form stays open across writes.
-- Users table: a **mailbox** column (wide terminals) with each user's email state; `x` turns email off or on for the
-  selected user (admin; status and switch only).
+- Users table: a **mailbox** column (wide terminals) with each user's email state; `x` turns email off or on and `X`
+  makes Agent email tools available (or not) for the selected user (admin; status and switches only). An admin's My
+  email has an **Email for users (admin)** section with the gateway-wide defaults (email, agent email tools, sign-in by
+  email). A user whose agent tools are not available sees "not available — ask your admin".
 - Write bodies never print a `password` or `client_secret` in debug output.
 
 ## 0.11.2 (2026-09-29)
