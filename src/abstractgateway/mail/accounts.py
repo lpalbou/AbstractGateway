@@ -1020,6 +1020,7 @@ def test_account(plane: EmailPlane, *, actor: str = "") -> Dict[str, Any]:
     require_admin_email_on(plane)
     store = sync_registered_address(plane)
     result = store.test()
+    result["message"] = _test_message(store, result)
     audit_email_event(
         "email.tested",
         tenant_id=plane.tenant_id,
@@ -1032,6 +1033,30 @@ def test_account(plane: EmailPlane, *, actor: str = "") -> Dict[str, Any]:
         ),
     )
     return result
+
+
+def _test_message(store: EmailAccountStore, result: Dict[str, Any]) -> str:
+    """One sentence for a mailbox test: which step failed and why, or that both signed in."""
+
+    try:
+        acct = store.settings().account
+    except EmailError:
+        acct = None
+    for leg in ("imap", "smtp"):
+        res = result.get(leg) or {}
+        if res.get("ok") is not False:
+            continue
+        server = getattr(acct, leg, None) if acct is not None else None
+        err = EmailError(
+            str(res.get("cause") or "The check failed."), str(res.get("fix") or ""), code=str(res.get("code") or "email_error"),
+            details={"protocol": leg, "host": getattr(server, "host", "") or leg, "port": getattr(server, "port", None)},
+        )
+        msg = str((_named_step_error(err).details or {}).get("step_message") or err.cause)
+        cause = str(res.get("cause") or "").strip()
+        return f"{msg} ({cause.rstrip('.')})" if cause and cause not in msg else msg
+    hosts = [str(getattr(getattr(acct, leg, None), "host", "") or "") for leg in ("imap", "smtp")] if acct is not None else []
+    hosts = [h for h in hosts if h]
+    return f"Test passed: signed in to {' and '.join(hosts)}." if hosts else "Test passed."
 
 
 def set_folder(plane: EmailPlane, folder: str, *, actor: str = "") -> Dict[str, Any]:

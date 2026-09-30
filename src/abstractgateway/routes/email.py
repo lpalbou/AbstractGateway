@@ -579,7 +579,9 @@ def _admin_plane(user_id: str, tenant_id: str) -> EmailPlane:
     try:
         return mail_accounts.plane_for_user(user_id, tenant_id=tenant_id)
     except KeyError:
-        raise HTTPException(status_code=404, detail="Gateway user not found") from None
+        raise HTTPException(
+            status_code=404, detail={"reason_code": "user_not_found", "message": f"There is no user named {user_id!r} on this gateway."}
+        ) from None
     except EmailPrincipalRefused as exc:
         raise HTTPException(status_code=400, detail={"reason_code": "email_principal_refused", "message": str(exc)}) from None
 
