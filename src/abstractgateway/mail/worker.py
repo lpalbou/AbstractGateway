@@ -121,10 +121,36 @@ class EmailWorker:
 
         self._wake.set()
 
+    def on_automation_command(self, command_type: str, automation_id: str) -> None:
+        """Runner listener, called after an automation command is applied.
+
+        A resumed email automation (or one revised onto `email.received`) is a consumer again:
+        after a time with none the watcher's next read is a fresh baseline, so it must happen now,
+        not at the next tick up to 15 s later (mail arriving in between was taken as history and
+        never triggered the resumed automation). Mirrors the creation nudge (routes/automations.py).
+        The command is already applied here, so the tick sees the automation active.
+        """
+
+        if command_type not in ("automation.resume", "automation.revise") or self._stop.is_set():
+            return
+        try:
+            from abstractruntime.automations.ledger import definition_of
+
+            run = self.svc.host.run_store.load(str(automation_id))
+            trigger = definition_of(run)["trigger"] if run is not None else {}
+        except Exception:  # noqa: BLE001 - not an automation this plane can read: nothing to wake
+            return
+        if str((trigger or {}).get("source_id") or "") == "email.received":
+            self.nudge()
+
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
             return
         self._stop.clear()
+        try:
+            self.svc.runner.add_automation_command_listener(self.on_automation_command)
+        except Exception:  # noqa: BLE001 - no runner hook: the 15 s tick still picks the resume up
+            logger.warning("email worker %s: no automation command hook on the runner", self.name, exc_info=True)
         self._thread = threading.Thread(target=self._loop, name=f"gateway-{self.name}", daemon=True)
         self._thread.start()
         try:

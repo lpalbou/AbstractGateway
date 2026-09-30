@@ -3912,6 +3912,22 @@ def _workspace_blocked_roots() -> tuple[Path, ...]:
     return resolve_workspace_blocked_paths(gateway_data_dir_from_env())
 
 
+def _server_file_blocked_roots() -> tuple[Path, ...]:
+    """What the SERVER-workspace file routes (`/files/*`, the workspace imports and exports) never
+    list, read or write: the operator's deny list plus the host's built-in protection — the whole
+    gateway data folder and the account's credential folders (`workspace_browse.builtin_deny_paths`,
+    the same rule as the run workspace browser and every run's tools).
+
+    The data folder holds every user's runs, ledgers, email event inbox and sealed credentials and
+    the admin token. The server workspace root defaults to the gateway's working directory, which
+    is the data folder itself under the OS service (launchd `WorkingDirectory`) and often contains
+    it (a launch from the home folder): without this rule an administrator read another user's
+    mail through `/files/read` (decision D3: administrators never read mail)."""
+    from ..workspace_browse import builtin_deny_paths
+
+    return tuple(list(_workspace_blocked_roots()) + builtin_deny_paths(gateway_data_dir_from_env().expanduser()))
+
+
 def _parse_lines_or_json_list(raw: Optional[str]) -> list[str]:
     """Parse a newline-separated string or a JSON array of strings (best-effort)."""
     if raw is None:
@@ -5034,7 +5050,7 @@ def _max_attachment_bytes() -> int:
 def _request_workspace_scope(req: Any) -> tuple[Path, Dict[str, Path], tuple[Path, ...], str]:
     base_default = _workspace_root()
     mounts_default = _workspace_mounts()
-    blocked_default = _workspace_blocked_roots()
+    blocked_default = _server_file_blocked_roots()
     if not _client_workspace_scope_overrides_enabled():
         return base_default, mounts_default, blocked_default, "workspace_only"
 
@@ -28225,7 +28241,7 @@ async def files_list(
     mounts_default = _workspace_mounts()
     base = base_default
     mounts = mounts_default
-    blocked: tuple[Path, ...] = _workspace_blocked_roots()
+    blocked: tuple[Path, ...] = _server_file_blocked_roots()
     mode = "workspace_only"
 
     if _client_workspace_scope_overrides_enabled():
@@ -28288,7 +28304,7 @@ async def files_search(
     mounts_default = _workspace_mounts()
     base = base_default
     mounts = mounts_default
-    blocked: tuple[Path, ...] = _workspace_blocked_roots()
+    blocked: tuple[Path, ...] = _server_file_blocked_roots()
 
     if _client_workspace_scope_overrides_enabled():
         # Opt-in scoped search: allow the UI to drive workspace_* for local/dev flows.
@@ -28362,7 +28378,7 @@ async def files_read(
     mounts_default = _workspace_mounts()
     base = base_default
     mounts = mounts_default
-    blocked: tuple[Path, ...] = _workspace_blocked_roots()
+    blocked: tuple[Path, ...] = _server_file_blocked_roots()
     mode = "workspace_only"
 
     if _client_workspace_scope_overrides_enabled():
@@ -28414,7 +28430,7 @@ async def files_skim(
     mounts_default = _workspace_mounts()
     base = base_default
     mounts = mounts_default
-    blocked: tuple[Path, ...] = _workspace_blocked_roots()
+    blocked: tuple[Path, ...] = _server_file_blocked_roots()
     mode = "workspace_only"
 
     if _client_workspace_scope_overrides_enabled():

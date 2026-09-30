@@ -692,7 +692,10 @@ workspace roots, mounted roots, ignored paths, and size limits are enforced on
 the server. Browser-local files should be uploaded through
 `POST /api/gateway/attachments/upload`; browser-local file paths are not
 interpreted as Gateway workspace paths. In hosted user-auth mode, server
-workspace import/export and `/files/*` helpers require an admin principal.
+workspace import/export and `/files/*` helpers require an admin principal. They
+never list, read or write the gateway data folder or the account's credential
+folders (`.ssh`, `.aws`, `Library/Keychains`, ...), even when the workspace root
+contains them (403).
 Ordinary users can still upload browser-local files and list/search artifacts in
 their own routed runtime.
 

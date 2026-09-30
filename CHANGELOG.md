@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- The server file helpers (`GET /files/list|search|read|skim`, workspace import and export) never
+  serve the gateway data folder or the account's credential folders, the same rule as the run
+  workspace browser and every run's tools. The server workspace root defaults to the gateway's
+  working directory, which is the data folder under the OS service and contains it after a launch
+  from a parent folder: an administrator could read another user's received mail and run ledgers
+  through `/files/read`. Administrators never read mail.
+
+### Fixed
+- Resuming a paused `email.received` automation wakes the email worker at once, as creating one
+  already did: the watcher takes its new-mail mark within seconds, so mail arriving right after
+  the resume triggers the automation (it was taken as history until the worker's next tick, up to
+  15 s later). The runner calls the worker after each applied automation command
+  (`GatewayRunner.add_automation_command_listener`).
+
 ## [0.9.0] - 2026-09-30
 
 The web console works on phones, tablets and any window size. It follows the AbstractFramework
