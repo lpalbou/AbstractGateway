@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The web console works on phones, tablets and any window size (ui-kit 0.3.0 responsive system).
+
+### Changed
+- Console themes and kit islands re-synced from `@abstractframework/ui-kit` 0.3.0: the responsive
+  tokens (`--tap-min`, `--vh-full`, `--safe-*`, `--gutter`, fluid `--font-size-*`) and the kit's
+  touch floors and sheet dialogs for the top bar, appearance and About dialogs.
+- Layout uses the framework breakpoints only (480 / 768 / 1024 / 1440 px, plus 500 px tall for
+  phone landscape). The old 900 / 940 / 680 / 1100 / 860 px rules are gone.
+- Below 1024 px the sidebar is a drawer that opens from a ☰ button in the header. Escape, the
+  backdrop, the close button and picking a section all close it. Above 1024 px the sidebar is
+  unchanged.
+- The header wraps its top-right buttons under the title on phones and uses one thin row in
+  phone landscape; it respects the notch and home-indicator insets (`viewport-fit=cover`).
+- Dialogs are bottom sheets below 768 px wide or 500 px tall, with their buttons always visible;
+  the docs assistant drawer is full width below 768 px.
+- On touch screens, buttons and rows are at least 44 px, inputs use 16 px text (iOS no longer
+  zooms into a focused field), and reading text is 14 px.
+- The shell uses the dynamic viewport height, so nothing hides under the mobile browser bars.
+
+### Fixed
+- Model catalog cards no longer fall apart below 940 px wide (iPad, narrow windows): a width rule
+  meant for the page header restyled every `<header>`, including each card head.
+- On phones the page is no longer wider than the screen (the top-bar cluster made it 425 px wide
+  at 375 px).
+- The action buttons of a stacked users row no longer touch each other.
+
 ## [0.8.1] - 2026-09-30
 
 Needs AbstractCore 2.20.2 and AbstractRuntime 0.8.1 (the floors are raised; the terminal console
