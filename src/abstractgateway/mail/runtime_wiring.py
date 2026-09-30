@@ -25,7 +25,7 @@ from typing import Any, Optional
 
 from .core_mail import EmailError, EmailNotConfigured
 
-from .accounts import EmailPlane, account_store, email_context, email_usable, plane_for_service_config
+from .accounts import EmailPlane, account_store, agent_tools_active, email_context, plane_for_service_config, require_agent_tools
 
 logger = logging.getLogger("abstractgateway.mail")
 
@@ -45,6 +45,9 @@ def make_email_resolver(plane: EmailPlane):
                 "This run is bound to an email account that is not this user's.",
                 "Start the run again from your own account.",
             )
+        # Execution-time gate (defence in depth; the toolset is gated at build time too):
+        # the account, the administrator's switch AND the user's "Agent email tools" toggle.
+        require_agent_tools(plane)
         return email_context(plane)
 
     return resolve
@@ -53,7 +56,7 @@ def make_email_resolver(plane: EmailPlane):
 def current_binding(plane: EmailPlane) -> Optional[Any]:
     from abstractruntime.email import EmailBinding
 
-    if not email_usable(plane):
+    if not agent_tools_active(plane):
         return None
     try:
         st = account_store(plane).settings()

@@ -179,6 +179,15 @@ def test_runtime_wiring_binds_and_resolves_only_the_planes_account(gateway, imap
     assert runtime.email_binding is None and runtime.event_inbox is not None
 
     gateway["client"].put("/api/gateway/me/email", headers=gateway["alice"], json=connect_body(ALICE, imap, smtp))
+    # Connected, but the agents' email tools are OFF by default: no binding, the resolver refuses.
+    assert current_binding(plane) is None
+    from abstractcore.comms.email import EmailDisabled
+
+    with pytest.raises(EmailDisabled) as off:
+        make_email_resolver(plane)(EmailBinding(account_ref="default:alice:default"))
+    assert "Agent email tools" in off.value.fix
+    r = gateway["client"].put("/api/gateway/me/email/agent-tools", headers=gateway["alice"], json={"enabled": True})
+    assert r.status_code == 200 and r.json()["agent_tools"] == {"enabled": True, "active": True, "reason": ""}
     assert current_binding(plane) == EmailBinding(account_ref="default:alice:default", address=ALICE)
     wire_runtime_email(runtime, plane)
     assert runtime.email_binding.account_ref == "default:alice:default"
@@ -190,3 +199,27 @@ def test_runtime_wiring_binds_and_resolves_only_the_planes_account(gateway, imap
 
     gateway["client"].put("/api/gateway/admin/users/alice/email", headers=ADMIN, json={"enabled": False})
     assert current_binding(plane) is None
+    with pytest.raises(EmailDisabled):
+        resolve(EmailBinding(account_ref="default:alice:default"))
+    status = gateway["client"].get("/api/gateway/me/email", headers=gateway["alice"]).json()["agent_tools"]
+    assert status["enabled"] is True and status["active"] is False and "administrator" in status["reason"]
+
+
+def test_agent_email_tools_are_per_user_and_off_by_default(gateway, imap, smtp) -> None:
+    c = gateway["client"]
+
+    def email_rows(headers):
+        items = c.get("/api/gateway/discovery/tools", headers=headers).json()["items"]
+        return {t["name"]: t["enabled"] for t in items if t["name"] in ("send_email", "read_email", "search_emails")}
+
+    assert c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["agent_tools"]["enabled"] is False
+    # Turning the toggle on without an account does not activate anything.
+    r = c.put("/api/gateway/me/email/agent-tools", headers=gateway["alice"], json={"enabled": True})
+    assert r.json()["agent_tools"]["active"] is False and r.json()["agent_tools"]["reason"]
+    assert email_rows(gateway["alice"]) == {"send_email": False, "read_email": False, "search_emails": False}
+    c.put("/api/gateway/me/email", headers=gateway["alice"], json=connect_body(ALICE, imap, smtp))
+    assert email_rows(gateway["alice"]) == {"send_email": True, "read_email": True, "search_emails": True}
+    # Bob (no account, toggle off) never sees Alice's state.
+    assert email_rows(gateway["bob"]) == {"send_email": False, "read_email": False, "search_emails": False}
+    c.put("/api/gateway/me/email/agent-tools", headers=gateway["alice"], json={"enabled": False})
+    assert email_rows(gateway["alice"]) == {"send_email": False, "read_email": False, "search_emails": False}

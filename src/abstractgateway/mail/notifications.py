@@ -56,12 +56,14 @@ from .accounts import (
 from .audit import audit_email_event
 
 EVENTS = ("automation_result", "automation_failed", "approval_needed", "job_finished", "job_failed")
+# Email notifications are OPT-IN: every event is off until the user turns it on (the
+# console stays the default channel).
 DEFAULT_PREFERENCES = {
-    "automation_result": True,
-    "automation_failed": True,
-    "approval_needed": True,
-    "job_finished": True,
-    "job_failed": True,
+    "automation_result": False,
+    "automation_failed": False,
+    "approval_needed": False,
+    "job_finished": False,
+    "job_failed": False,
 }
 EVENT_LABELS = {
     "automation_result": "Automation results (automations set to “email me the result”)",

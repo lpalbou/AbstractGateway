@@ -379,8 +379,8 @@ The console has thirteen screens: **1** Connection, **2** Providers, **3** Route
   attachments and speak-this-reply.
 - **Users & Entities** summons entities (`n`), manages spark templates (`s`),
   talks with an entity (`c`), edits your own workspace policy (`w`) and your
-  own mailbox (`@`: account, OAuth2 sign-in, recipient policy and send limits,
-  notifications — [email.md](./email.md)). Administrators switch email on or
+  own mailbox (`@`: account, OAuth2 sign-in, recipient policy, send limits and
+  agent email tools, notifications — [email.md](./email.md)). Administrators switch email on or
   off for the selected user with `x`; the table's **mailbox** column shows each
   user's state.
 - **Workflows** imports a `.flow` bundle (`i`) and reloads the registry (`L`).

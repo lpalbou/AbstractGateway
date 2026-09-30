@@ -303,6 +303,58 @@ def email_usable(plane: EmailPlane) -> bool:
 
 
 # ---------------------------------------------------------------------------------------
+# Agent email tools (per user, default OFF)
+# ---------------------------------------------------------------------------------------
+
+AGENT_TOOLS_OFF_CAUSE = "Agent email tools are off for your account."
+AGENT_TOOLS_OFF_FIX = "Turn on “Agent email tools” in Settings → My email (your account must be connected and allowed by an administrator)."
+
+
+def _agent_tools_path(plane: EmailPlane) -> Path:
+    return plane.email_dir / "agent_tools.json"
+
+
+def agent_tools_switch(plane: EmailPlane) -> bool:
+    """The user's "Agent email tools" choice (default OFF)."""
+
+    return _read_json(_agent_tools_path(plane)).get("enabled") is True
+
+
+def set_agent_tools_switch(plane: EmailPlane, enabled: bool, *, actor: str = "") -> bool:
+    _write_private_json(_agent_tools_path(plane), {"version": 1, "enabled": bool(enabled), "at": _now_iso()})
+    rebind_live_runtime(plane)
+    audit_email_event("email.agent_tools_changed", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=actor or plane.user_id, enabled=bool(enabled))
+    return bool(enabled)
+
+
+def agent_tools_active(plane: EmailPlane) -> bool:
+    """Agents and workflows get the email tools only when ALL hold: the account is connected
+    and turned on by the user, the administrator allows email, and the toggle is on."""
+
+    return agent_tools_switch(plane) and email_usable(plane)
+
+
+def agent_tools_status(plane: EmailPlane) -> Dict[str, Any]:
+    switch = agent_tools_switch(plane)
+    usable = email_usable(plane)
+    reason = ""
+    if not switch:
+        reason = "off (your choice; default)"
+    elif not admin_email_enabled(plane):
+        reason = "email is turned off for your account by an administrator"
+    elif not usable:
+        reason = "no connected, turned-on email account"
+    return {"enabled": switch, "active": bool(switch and usable), "reason": reason}
+
+
+def require_agent_tools(plane: EmailPlane) -> None:
+    if not agent_tools_active(plane):
+        if not admin_email_enabled(plane):
+            raise EmailDisabled(ADMIN_DISABLED_CAUSE, ADMIN_DISABLED_FIX)
+        raise EmailDisabled(AGENT_TOOLS_OFF_CAUSE, AGENT_TOOLS_OFF_FIX)
+
+
+# ---------------------------------------------------------------------------------------
 # Read shapes
 # ---------------------------------------------------------------------------------------
 
@@ -319,6 +371,7 @@ def public_status(plane: EmailPlane) -> Dict[str, Any]:
     if not admin_on:
         out["admin_disabled"] = {"cause": ADMIN_DISABLED_CAUSE, "fix": ADMIN_DISABLED_FIX}
     out["account_ref"] = plane.account_ref
+    out["agent_tools"] = agent_tools_status(plane)
     try:
         from .watcher import watcher_public_status
 

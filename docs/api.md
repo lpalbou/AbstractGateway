@@ -1707,13 +1707,14 @@ Your mailbox (`/api/gateway/me/...`, every signed-in human):
 | `POST /me/email/policy/check` | `{addresses}` → per-recipient verdicts |
 | `PUT /me/email/limits` | `{per_hour, per_day}` |
 | `PUT /me/email/enabled` | `{enabled}` — your own switch |
+| `PUT /me/email/agent-tools` | `{enabled}` — your agents' email tools (default off; active only with a connected account the administrator allows); reloads your workflows so toolsets follow (`tools_reloaded`). `GET /me/email` reports `agent_tools: {enabled, active, reason}` |
 | `GET /me/email/oauth/clients` | which providers have a gateway OAuth client (no secrets) |
 | `POST /me/email/oauth/start` | `{address, provider: google \| microsoft, client_id?, client_secret?, tenant?, flow?: device \| loopback}` → device code (`user_code`, `verification_uri`) or `authorization_url` |
 | `POST /me/email/oauth/poll` | `{flow_id}` → `{pending: true}` or the connected account |
 | `POST /me/email/oauth/finish` | `{flow_id, wait_s}` — waits up to 60 s for the approval |
 | `POST /me/email/oauth/cancel` | `{flow_id}` |
 | `GET /me/notifications` | events and choices, channel availability, outbox summary |
-| `PUT /me/notifications` | `{email: {automation_result, automation_failed, approval_needed, job_finished, job_failed: bool}}` |
+| `PUT /me/notifications` | `{email: {automation_result, automation_failed, approval_needed, job_finished, job_failed: bool}}` (all off by default) |
 | `POST /me/notifications/test` | sends one test notification now → `{ok, state, error?}` |
 
 Administrators (status and the switch only; administrators never read mail):

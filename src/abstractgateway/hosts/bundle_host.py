@@ -997,14 +997,16 @@ class WorkflowBundleGatewayHost:
         catalog_runtime = safe_principal_component(catalog_runtime_id, default=catalog_tenant)
         catalog_user = safe_principal_component(catalog_user_id, default="admin")
         catalog_policy_secret = load_or_create_workflow_policy_secret(catalog_root)
-        from ..mail.accounts import email_usable
+        from ..mail.accounts import agent_tools_active
         from ..mail.runtime_wiring import plane_for_host
 
         email_plane = plane_for_host(data_root=data_root, tenant_id=catalog_tenant, user_id=catalog_user, runtime_id=catalog_runtime)
-        # Email tools: the executor always knows them (a call from a run without a
-        # connected account answers `email_not_configured` through the resolver);
-        # the agents' tool lists carry them when this user's account is usable.
-        email_tools_listed = email_usable(email_plane)
+        # Agent email tools (framework backlog 0992; default OFF): the toolsets carry
+        # them only when this user's account is connected, allowed by the admin and
+        # the user's "Agent email tools" toggle is on. Checked again at execution time
+        # by the runtime's credential resolver (runtime_wiring.py), and a toggle
+        # change reloads this host (routes/email.py).
+        email_tools_listed = agent_tools_active(email_plane)
 
         def _bundle_paths_from_dir(path: Path) -> list[Path]:
             if path.is_file():
@@ -1315,7 +1317,7 @@ class WorkflowBundleGatewayHost:
             tool_mode = str(_env("ABSTRACTGATEWAY_TOOL_MODE") or "approval").strip().lower()
             # Always build a concrete in-process executor so thin-client approvals can execute tools
             # inside the runtime (no bridge-owned tool execution).
-            gateway_tool_map = build_default_tool_map(email_enabled=True)
+            gateway_tool_map = build_default_tool_map(email_enabled=email_tools_listed)
 
             # read_skill execution half (card 0087; agent's progressive-
             # disclosure contract needs BOTH halves — the skills_block index

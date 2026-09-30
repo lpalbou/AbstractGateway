@@ -9,8 +9,10 @@ stored encrypted in that user's data home and is used for three things:
   to you through your own account;
 - **account recovery** — "Forgot your token?" and "Email me a sign-in code" on the sign-in page.
 
-Email is optional. Without an account there is no sending and no email notification; the gateway
-has no shared "system" sender. The mailbox is only read: nothing marks messages read, moves or
+Email is optional and nothing is active by default: no watcher runs until you create an
+email-triggered automation, notifications stay in the console until you choose email, and your
+agents get no email tools until you turn them on. Without an account there is no sending and no
+email notification; the gateway has no shared "system" sender. The mailbox is only read: nothing marks messages read, moves or
 deletes them.
 
 This page is the user and operator guide. The HTTP surface is listed in [api.md](api.md#email),
@@ -63,6 +65,24 @@ Administrators set a bring-your-own client per provider with
 `PUT /api/gateway/admin/email/oauth-clients/{google|microsoft}` (`client_id`, `client_secret`,
 `tenant`). The secret is sealed at rest and never returned; the read shows `client_secret_set`.
 
+## Agent email tools (off by default)
+
+Your agents and workflows — chats, workflow runs and automations, from every client (Code,
+Assistant, Observer, the consoles) — get the email tools (list and search mail, read a message,
+send, reply, download an attachment) only when **all** of these hold:
+
+1. your account is connected and turned on;
+2. an administrator has not turned email off for you;
+3. you turned on **Agent email tools** (My email in the web console, **Policy, limits & tools** in
+   the terminal console, or `PUT /api/gateway/me/email/agent-tools {"enabled": true}`).
+
+The rule is applied twice: when your toolsets are built (the tools are listed only then; turning
+the switch reloads your workflows so the change applies at once) and again when a tool runs (a
+call without all three is refused with the cause and the fix). `GET /api/gateway/discovery/tools`
+shows the email tools as enabled only for a caller whose agent tools are active. Every email tool
+call is an ordinary tool call recorded in the run's ledger. Automations send actions through the
+same `send_email` tool, so they need the switch too; notifications and recovery codes do not.
+
 ## Recipient policy and send limits
 
 Every send — an agent's `send_email`, an automation's send action, a notification, a recovery
@@ -107,8 +127,9 @@ nothing it says can widen who a run may mail or which tools it has.
 
 ## Notifications
 
-**My email → Notifications** (or `GET/PUT /api/gateway/me/notifications`) chooses which events
-email you:
+Email notifications are opt-in: every event is off until you turn it on, and the console stays
+the default channel. **My email → Notifications** (or `GET/PUT /api/gateway/me/notifications`)
+chooses which events email you:
 
 | Event | When |
 |---|---|

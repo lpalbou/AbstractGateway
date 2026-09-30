@@ -26,7 +26,7 @@ def test_my_email_section_carries_the_web_fields_and_words() -> None:
         "my-email-imap-folder", "my-email-smtp-host", "my-email-smtp-port", "my-email-smtp-security",
         "my-email-oauth-provider", "my-email-oauth-client-id", "my-email-oauth-client-secret", "my-email-oauth-flow",
         "my-email-policy-mode", "my-email-policy-entries", "my-email-per-hour", "my-email-per-day",
-        "my-email-notify-events", "my-email-notify-test",
+        "my-email-notify-events", "my-email-notify-test", "my-email-agent-tools",
     ):
         assert f'id="{field}"' in html, field
     # Same words as AbstractCore's Email page and the terminal console.
@@ -42,7 +42,7 @@ def test_console_calls_only_the_callers_own_routes() -> None:
     html = _html()
     for route in (
         "/api/gateway/me/email", "/api/gateway/me/email/test", "/api/gateway/me/email/policy",
-        "/api/gateway/me/email/limits", "/api/gateway/me/email/enabled", "/api/gateway/me/email/oauth/start",
+        "/api/gateway/me/email/limits", "/api/gateway/me/email/enabled", "/api/gateway/me/email/agent-tools", "/api/gateway/me/email/oauth/start",
         "/api/gateway/me/email/oauth/finish", "/api/gateway/me/email/oauth/cancel", "/api/gateway/me/notifications",
         "/api/gateway/me/notifications/test",
     ):

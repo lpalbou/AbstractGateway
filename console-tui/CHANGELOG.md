@@ -7,7 +7,8 @@ Needs AbstractGateway 0.8.0 (per-user email).
 ### Added
 - **My email** (Users screen → `@`): your own mailbox with the web console's fields and words — account (IMAP/SMTP,
   password; Save and test, Test, Turn on/off, Disconnect with an in-form confirmation), OAuth2 sign-in (device code or
-  loopback link, polled until approved, cancel), recipient policy and send limits, notification preferences with
+  loopback link, polled until approved, cancel), recipient policy, send limits and **Agent email tools** (off by
+  default), notification preferences (all off by default) with
   **Send test notification**. Refusals show the gateway's cause and fix; the form stays open across writes.
 - Users table: a **mailbox** column (wide terminals) with each user's email state; `x` turns email off or on for the
   selected user (admin; status and switch only).

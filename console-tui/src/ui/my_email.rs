@@ -26,7 +26,7 @@ use crate::worker::Cmd;
 const SECTIONS: [&str; 4] = [
     "Account",
     "OAuth2 sign-in",
-    "Policy & limits",
+    "Policy, limits & tools",
     "Notifications",
 ];
 
@@ -534,7 +534,9 @@ fn policy_section(
     let per_hour = cx.signal(e.per_hour.map(|v| v.to_string()).unwrap_or_default());
     let per_day = cx.signal(e.per_day.map(|v| v.to_string()).unwrap_or_default());
     let usage = e.usage_text();
-    let (c_pol, c_lim) = (ctx.clone(), ctx.clone());
+    let (c_pol, c_lim, c_tools) = (ctx.clone(), ctx.clone(), ctx.clone());
+    let agent_on = e.agent_tools_enabled;
+    let agent_text = e.agent_tools_text();
     Element::new()
         .style(LayoutStyle::column().gap(0).grow(1.0))
         .child(field(&t0, "", cycle(cx, &t0, "mode", mode, MODES)))
@@ -585,6 +587,26 @@ fn policy_section(
                 .child(line(vec![span(usage, t0.text_faint)]))
                 .build(),
         )
+        .child(line(vec![
+            span("agent email tools: ", t0.text_muted),
+            span(ellipsize(&agent_text, 76), t0.text),
+        ]))
+        .child(
+            Button::new(if agent_on {
+                "Turn agent email tools off"
+            } else {
+                "Turn agent email tools on"
+            })
+            .on_click(move || {
+                send_write(&c_tools, EmailAction::AgentTools(!agent_on), form_id, in_flight, form_error, ok_note)
+            })
+            .element(cx, &t0)
+            .build(),
+        )
+        .child(line(vec![span(
+            "Off by default: agents and workflows get list, search, read, send, reply and attachments only when your account is connected, allowed by an administrator and this is on.",
+            t0.text_faint,
+        )]))
         .build()
 }
 

@@ -2393,6 +2393,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                   <button id="my-email-disconnect-cancel" class="secondary" type="button">Cancel</button>
                 </div>
                 <p class="section-note">Passwords are stored encrypted and never shown again. Many providers need an app password when two-step verification is on.</p>
+                <h3 class="section-subtitle">Agent email tools</h3>
+                <div class="inline">
+                  <label class="af-gateway-signin__checkbox"><input id="my-email-agent-tools" type="checkbox"> Let my agents and workflows use email tools (list, search, read, send, reply, attachments)</label>
+                  <button id="my-email-agent-tools-save" class="secondary" type="button">Save</button>
+                </div>
+                <p id="my-email-agent-tools-state" class="section-note">Off by default. The tools appear in your agents' toolsets only when your account is connected, allowed by an administrator and this is on; every send still passes your recipient policy, your limits and the approval gate.</p>
                 <h3 class="section-subtitle">Sign in with OAuth2</h3>
                 <div class="provider-config-form">
                   <label>Provider <select id="my-email-oauth-provider"><option value="microsoft">Microsoft (Outlook, Microsoft 365)</option><option value="google">Google (Gmail)</option></select></label>
@@ -6188,6 +6194,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const notices = (Array.isArray(d.notices) ? d.notices : []).concat(d.secret_warning ? [d.secret_warning] : []);
       $("my-email-notices").textContent = notices.join(" ");
       $("my-email-disconnect-confirm").classList.add("hidden");
+      const at = d.agent_tools || { enabled: false, active: false, reason: "" };
+      $("my-email-agent-tools").checked = Boolean(at.enabled);
+      $("my-email-agent-tools-state").textContent = at.active
+        ? "On: your agents and workflows have the email tools (every send still passes your recipient policy, your limits and the approval gate)."
+        : `Off${at.reason ? ` — ${at.reason}` : ""}. The tools appear in your agents' toolsets only when your account is connected, allowed by an administrator and this is on.`;
+    }
+    async function saveMyEmailAgentTools() {
+      const enabled = Boolean($("my-email-agent-tools").checked);
+      await myEmailRun("Agent email tools", () => api("/api/gateway/me/email/agent-tools", { method: "PUT", body: JSON.stringify({ enabled }), slow: true }), enabled ? "Agent email tools saved (on)." : "Agent email tools saved (off).");
     }
     function renderMyNotifications(n) {
       state.myNotifications = n || null;
@@ -13406,6 +13421,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     $("my-email-limits-save").onclick = saveMyEmailLimits;
     $("my-email-notify-save").onclick = saveMyNotifications;
     $("my-email-notify-test").onclick = testMyNotifications;
+    $("my-email-agent-tools-save").onclick = saveMyEmailAgentTools;
     $("my-email-oauth-start").onclick = startMyEmailOAuth;
     $("my-email-oauth-cancel").onclick = cancelMyEmailOAuth;
 	    $("wsp-cancel").onclick = closeWorkspacePolicyModal;

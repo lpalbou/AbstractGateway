@@ -122,6 +122,7 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("POST", "/api/gateway/me/email/policy/check"),
     ("PUT", "/api/gateway/me/email/limits"),
     ("PUT", "/api/gateway/me/email/enabled"),
+    ("PUT", "/api/gateway/me/email/agent-tools"),
     ("POST", "/api/gateway/me/email/oauth/start"),
     ("POST", "/api/gateway/me/email/oauth/poll"),
     ("POST", "/api/gateway/me/email/oauth/finish"),

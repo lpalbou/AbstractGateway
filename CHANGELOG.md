@@ -18,6 +18,14 @@ AbstractRuntime 0.8.0 (account binding, event inbox, `email.received@1`).
   code or a browser on the gateway's computer; your own OAuth client, the gateway's, or the built-in one). The
   account is tested before it is stored, stored in the user's own data home with the credentials encrypted
   (AES-256-GCM, key in the OS keychain), and every connection verifies TLS. Failures name the cause and the fix.
+- **Nothing email-related is on by default**: the watcher runs only for a user with an email-triggered automation,
+  every email notification event is off until the user turns it on, and nothing is seeded at first run.
+- **Agent email tools** per user, off by default (`PUT /api/gateway/me/email/agent-tools`, web console My email,
+  terminal console **Policy, limits & tools**): agents and workflows get list/search/read/send/reply/attachment
+  tools only when the account is connected, allowed by the administrator and the switch is on — applied when the
+  toolsets are built (the switch reloads the user's workflows) and again when a tool runs.
+  `GET /api/gateway/discovery/tools` lists the email tools as enabled only for such a caller; the
+  `ABSTRACT_ENABLE_EMAIL_TOOLS` environment gate no longer enables them on the gateway.
 - **Recipient policy and send limits** per user (`allowlist` / `denylist` of addresses and domains; 20 per hour,
   100 per day by default, editable), applied to every send: agents, automations, notifications, recovery codes.
 - **Mail watcher** per user: read-only, a durable cursor that moves only after the message is stored in the user's

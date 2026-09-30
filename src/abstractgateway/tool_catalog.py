@@ -402,3 +402,21 @@ def clamp_disabled_approval(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]
         except Exception:  # noqa: BLE001
             continue
     return items
+
+
+def email_agent_tool_rows(present: set, warnings: List[str]) -> List[Dict[str, Any]]:
+    """Disabled rows for the email tools a caller does not have (framework backlog 0992):
+    per user, the email tools exist only when "Agent email tools" are active (account
+    connected, allowed by the admin, toggle on). Never both lanes, never neither."""
+
+    missing = [n for n in _COMMS_KIND_TOOLS["email"] if n not in present]
+    if not missing:
+        return []
+    return _rows_from_registry(
+        missing,
+        _registry_rows_by_name(warnings),
+        toolset="comms.email",
+        gate="Settings → My email → Agent email tools",
+        why="per user: needs a connected email account allowed by the administrator and “Agent email tools” turned on (default off)",
+        warnings=warnings,
+    )

@@ -116,6 +116,10 @@ pub struct MyEmail {
     pub watcher_last_poll: String,
     pub admin_disabled: String,
     pub notices: Vec<String>,
+    /// The user's "Agent email tools" toggle (default off) and whether it is in force.
+    pub agent_tools_enabled: bool,
+    pub agent_tools_active: bool,
+    pub agent_tools_reason: String,
 }
 
 fn leg_text(v: Option<&Value>) -> String {
@@ -147,6 +151,7 @@ impl MyEmail {
         let status = v.get("status").cloned().unwrap_or(Value::Null);
         let legs = status.get("legs").cloned().unwrap_or(Value::Null);
         let watcher = v.get("watcher").cloned().unwrap_or(Value::Null);
+        let agent = v.get("agent_tools").cloned().unwrap_or(Value::Null);
         let admin_disabled = v
             .get("admin_disabled")
             .map(|d| {
@@ -203,6 +208,9 @@ impl MyEmail {
             },
             watcher_last_poll: s(&watcher, "last_poll"),
             admin_disabled,
+            agent_tools_enabled: b(&agent, "enabled").unwrap_or(false),
+            agent_tools_active: b(&agent, "active").unwrap_or(false),
+            agent_tools_reason: s(&agent, "reason"),
             notices: v
                 .get("notices")
                 .and_then(Value::as_array)
@@ -228,6 +236,17 @@ impl MyEmail {
             "needs action"
         } else {
             "connected"
+        }
+    }
+
+    /// The web console's agent-tools line.
+    pub fn agent_tools_text(&self) -> String {
+        if self.agent_tools_active {
+            "on: your agents and workflows have the email tools (policy, limits and approval still apply)".into()
+        } else if self.agent_tools_reason.is_empty() {
+            "off".into()
+        } else {
+            format!("off — {}", self.agent_tools_reason)
         }
     }
 
@@ -475,8 +494,14 @@ mod tests {
             "limits": {"per_hour": 20, "per_day": 100, "used_last_hour": 1, "used_last_day": 3},
             "status": {"last_test": "t", "legs": {"imap": {"ok": true}, "smtp": {"ok": false, "code": "email_auth_failed", "cause": "rejected"}},
                        "last_error": {"code": "email_auth_failed", "cause": "rejected", "fix": "update it"}},
-            "watcher": {"state": "watching", "last_poll": "now"}
+            "watcher": {"state": "watching", "last_poll": "now"},
+            "agent_tools": {"enabled": true, "active": false, "reason": "no connected, turned-on email account"}
         }));
+        assert!(e.agent_tools_enabled && !e.agent_tools_active);
+        assert_eq!(
+            e.agent_tools_text(),
+            "off — no connected, turned-on email account"
+        );
         assert_eq!(e.state_label(), "needs action");
         assert_eq!(e.imap.as_ref().unwrap().text(), "imap.example.test:993 ssl");
         assert_eq!(e.smtp_test, "failed: rejected");

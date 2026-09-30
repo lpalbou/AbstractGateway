@@ -10333,3 +10333,43 @@ fn users_table_shows_the_mailbox_and_x_switches_email_for_the_user() {
     assert_eq!(user_id, "alice");
     assert!(!enabled, "a connected mailbox is switched OFF");
 }
+
+#[test]
+fn my_email_agent_tools_are_off_by_default_and_toggle_through_the_gateway() {
+    use abstractgateway_console::store::email::MyEmail;
+    use abstractgateway_console::worker::operator::{EmailAction, OpCmd};
+    let mut h = harness_sized(Size::new(140, 50));
+    h.connect_as_admin();
+    h.goto_screen(3);
+    h.turns(2);
+    h.type_text("@");
+    h.turns(1);
+    let mut v = my_email_fixture();
+    v["agent_tools"] =
+        json!({"enabled": false, "active": false, "reason": "off (your choice; default)"});
+    h.store
+        .op
+        .my_email
+        .set(Loadable::Ready(MyEmail::from_value(&v)));
+    let s = h.turns(2);
+    click_text(&mut h, &s, "Policy, limits & tools");
+    let s = h.turns(2);
+    assert!(
+        s.contains("agent email tools: off — off (your choice; default)"),
+        "state:\n{s}"
+    );
+    let _ = h.drain_cmds();
+    click_text(&mut h, &s, "Turn agent email tools on");
+    h.turns(2);
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(
+            o,
+            OpCmd::Email {
+                action: EmailAction::AgentTools(true),
+                ..
+            }
+        )))
+        .is_some(),
+        "PUT /me/email/agent-tools {{enabled: true}}"
+    );
+}

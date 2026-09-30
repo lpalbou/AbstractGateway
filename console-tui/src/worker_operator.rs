@@ -140,6 +140,8 @@ pub enum EmailAction {
     Limits(Body),
     /// PUT /me/email/enabled — the user's own switch.
     Enabled(bool),
+    /// PUT /me/email/agent-tools — the agents' email tools (default off).
+    AgentTools(bool),
     /// PUT /me/notifications.
     Notifications(Body),
     /// POST /me/notifications/test.
@@ -1264,6 +1266,14 @@ fn email_write(
                 EmailAction::Limits(_) => ("saving my send limits", "PUT my send limits"),
                 EmailAction::Enabled(true) => ("turning my email on", "TURN ON my email"),
                 EmailAction::Enabled(false) => ("turning my email off", "TURN OFF my email"),
+                EmailAction::AgentTools(true) => (
+                    "turning my agents' email tools on",
+                    "TURN ON agent email tools",
+                ),
+                EmailAction::AgentTools(false) => (
+                    "turning my agents' email tools off",
+                    "TURN OFF agent email tools",
+                ),
                 _ => ("writing my email settings", "WRITE my email"),
             };
             let (write, verify) = with_busy(store, wake, label, || {
@@ -1275,6 +1285,7 @@ fn email_write(
                         EmailAction::Policy(body) => c.set_my_email_policy(body),
                         EmailAction::Limits(body) => c.set_my_email_limits(body),
                         EmailAction::Enabled(on) => c.set_my_email_enabled(*on),
+                        EmailAction::AgentTools(on) => c.set_my_email_agent_tools(*on),
                         _ => unreachable!("handled above"),
                     })
                     .map_err(email_err)
@@ -1315,6 +1326,7 @@ fn email_write(
                         want("per_hour", got.per_hour) && want("per_day", got.per_day)
                     }
                     EmailAction::Enabled(on) => got.enabled == *on,
+                    EmailAction::AgentTools(on) => got.agent_tools_enabled == *on,
                     _ => true,
                 };
                 if ok {

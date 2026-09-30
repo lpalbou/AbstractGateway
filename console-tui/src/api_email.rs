@@ -51,6 +51,16 @@ impl GatewayClient {
         )
     }
 
+    /// `PUT /me/email/agent-tools` — the agents' email tools (default off).
+    pub fn set_my_email_agent_tools(&self, enabled: bool) -> ApiResult<Value> {
+        self.send(
+            "PUT",
+            "/me/email/agent-tools",
+            &json!({ "enabled": enabled }),
+            true,
+        )
+    }
+
     /// `GET /me/notifications`.
     pub fn my_notifications(&self) -> ApiResult<Value> {
         self.get("/me/notifications", false)

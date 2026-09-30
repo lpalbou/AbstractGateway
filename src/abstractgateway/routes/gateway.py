@@ -14422,17 +14422,30 @@ async def kg_query(req: KGQueryRequest) -> KGQueryResponse:
 
 
 @router.get("/discovery/tools")
-async def discovery_tools() -> Dict[str, Any]:
+async def discovery_tools(request: Request) -> Dict[str, Any]:
     """List available tool specs for thin clients (best-effort).
 
     Notes:
     - This is meant as UI help for constructing `input_data.tools` allowlists.
     - Tool execution mode may still vary by deployment (local vs passthrough).
+    - The email tools are enabled rows only for a caller whose "Agent email tools"
+      are active (framework backlog 0992: account connected, allowed by the admin,
+      toggle on; default off) — the same rule the caller's toolsets are built with.
     """
+    email_tools = False
+    try:
+        from ..mail.accounts import EmailPrincipalRefused, agent_tools_active, plane_for_principal
+
+        try:
+            email_tools = await _off_the_event_loop(lambda: agent_tools_active(plane_for_principal(_principal_from_request(request))))
+        except (EmailPrincipalRefused, HTTPException):
+            email_tools = False
+    except Exception:  # noqa: BLE001 - listing never fails on the email probe
+        email_tools = False
     try:
         from abstractruntime.integrations.abstractcore.default_tools import list_default_tool_specs
 
-        specs = list_default_tool_specs()
+        specs = list_default_tool_specs(email_enabled=email_tools)
     except Exception as e:
         return {"items": [], "error": str(e)}
 
@@ -14455,7 +14468,13 @@ async def discovery_tools() -> Dict[str, Any]:
         from ..tool_catalog import disabled_toolset_rows, plugin_error_warnings
 
         disabled_rows, catalog_warnings = disabled_toolset_rows()
-        items.extend(disabled_rows)
+        enabled_names = {str(r.get("name")) for r in items}
+        from ..tool_catalog import _COMMS_KIND_TOOLS, email_agent_tool_rows
+
+        email_names = set(_COMMS_KIND_TOOLS["email"])
+        # Email rows follow the caller's agent-tools state, never an environment gate.
+        items.extend(r for r in disabled_rows if str(r.get("name")) not in enabled_names and str(r.get("name")) not in email_names)
+        items.extend(email_agent_tool_rows(enabled_names, catalog_warnings))
         # Plugin load failures (camera c4634 boot-race class): core's
         # registry holds them process-internally — surface them here so a
         # silently-absent capability package is VISIBLE on the response.

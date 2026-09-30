@@ -16,9 +16,15 @@ from email_fixtures import ALICE, connect_body, plane_of, smtp_bodies
 pytestmark = pytest.mark.integration
 
 
-def _connect(gateway, imap, smtp) -> None:
+ALL_ON = {"automation_result": True, "automation_failed": True, "approval_needed": True, "job_finished": True, "job_failed": True}
+
+
+def _connect(gateway, imap, smtp, *, notify: bool = True) -> None:
     r = gateway["client"].put("/api/gateway/me/email", headers=gateway["alice"], json=connect_body(ALICE, imap, smtp))
     assert r.status_code == 200, r.text
+    if notify:
+        r = gateway["client"].put("/api/gateway/me/notifications", headers=gateway["alice"], json={"email": ALL_ON})
+        assert r.status_code == 200, r.text
 
 
 def test_preferences_round_trip_and_availability(gateway, imap, smtp) -> None:
@@ -29,14 +35,18 @@ def test_preferences_round_trip_and_availability(gateway, imap, smtp) -> None:
     assert body["channels"]["email"]["available"] is False and body["unavailable_reason"]
     assert {e["id"] for e in body["events"]} == {"automation_result", "automation_failed", "approval_needed", "job_finished", "job_failed"}
 
-    _connect(gateway, imap, smtp)
-    r = c.put("/api/gateway/me/notifications", headers=gateway["alice"], json={"email": {"job_finished": False}})
+    # Every email event is OFF by default (the console stays the default channel).
+    assert set(body["email"].values()) == {False}
+    _connect(gateway, imap, smtp, notify=False)
+    assert set(c.get("/api/gateway/me/notifications", headers=gateway["alice"]).json()["email"].values()) == {False}
+    r = c.put("/api/gateway/me/notifications", headers=gateway["alice"], json={"email": {"job_failed": True}})
     assert r.status_code == 200, r.text
-    assert r.json()["email"]["job_finished"] is False and r.json()["channels"]["email"] == {"available": True, "to": ALICE}
+    assert r.json()["email"]["job_failed"] is True and r.json()["email"]["job_finished"] is False
+    assert r.json()["channels"]["email"] == {"available": True, "to": ALICE}
     r = c.put("/api/gateway/me/notifications", headers=gateway["alice"], json={"email": {"bogus": True}})
     assert r.status_code == 400
     # Bob's preferences are his own.
-    assert c.get("/api/gateway/me/notifications", headers=gateway["bob"]).json()["email"]["job_finished"] is True
+    assert c.get("/api/gateway/me/notifications", headers=gateway["bob"]).json()["email"]["job_failed"] is False
 
 
 def test_test_notification_goes_to_self_through_own_account(gateway, imap, smtp) -> None:
@@ -263,3 +273,16 @@ def test_no_account_no_notifications(gateway, monkeypatch) -> None:
     assert NotificationOutbox(plane).deliver()["failed"] == 1
     row = NotificationOutbox(plane).rows()[0]
     assert row["state"] == "failed" and row["error_code"] == "email_not_configured"
+
+
+def test_nothing_is_emailed_by_default(gateway, imap, smtp, monkeypatch) -> None:
+    from abstractgateway.mail.notifications import NotificationCollector
+
+    _connect(gateway, imap, smtp, notify=False)
+    plane = plane_of("alice")
+    svc, data = _fake_svc(automations=[{"automation_id": "auto-1", "title": "Digest", "status": "active"}])
+    _patch_runtime_sources(monkeypatch, data)
+    NotificationCollector(plane, svc).collect()
+    data["records"]["auto-1"] = [_completed(1, "notify", ["console", "email"], "x")]
+    data["waits"]["auto-1"] = [{"run_id": "occ-1", "wait_key": "w", "kind": "ask_user"}]
+    assert NotificationCollector(plane, svc).collect()["queued"] == 0

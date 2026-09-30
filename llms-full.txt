@@ -5279,13 +5279,14 @@ Your mailbox (`/api/gateway/me/...`, every signed-in human):
 | `POST /me/email/policy/check` | `{addresses}` → per-recipient verdicts |
 | `PUT /me/email/limits` | `{per_hour, per_day}` |
 | `PUT /me/email/enabled` | `{enabled}` — your own switch |
+| `PUT /me/email/agent-tools` | `{enabled}` — your agents' email tools (default off; active only with a connected account the administrator allows); reloads your workflows so toolsets follow (`tools_reloaded`). `GET /me/email` reports `agent_tools: {enabled, active, reason}` |
 | `GET /me/email/oauth/clients` | which providers have a gateway OAuth client (no secrets) |
 | `POST /me/email/oauth/start` | `{address, provider: google \| microsoft, client_id?, client_secret?, tenant?, flow?: device \| loopback}` → device code (`user_code`, `verification_uri`) or `authorization_url` |
 | `POST /me/email/oauth/poll` | `{flow_id}` → `{pending: true}` or the connected account |
 | `POST /me/email/oauth/finish` | `{flow_id, wait_s}` — waits up to 60 s for the approval |
 | `POST /me/email/oauth/cancel` | `{flow_id}` |
 | `GET /me/notifications` | events and choices, channel availability, outbox summary |
-| `PUT /me/notifications` | `{email: {automation_result, automation_failed, approval_needed, job_finished, job_failed: bool}}` |
+| `PUT /me/notifications` | `{email: {automation_result, automation_failed, approval_needed, job_finished, job_failed: bool}}` (all off by default) |
 | `POST /me/notifications/test` | sends one test notification now → `{ok, state, error?}` |
 
 Administrators (status and the switch only; administrators never read mail):
@@ -5714,8 +5715,8 @@ The console has thirteen screens: **1** Connection, **2** Providers, **3** Route
   attachments and speak-this-reply.
 - **Users & Entities** summons entities (`n`), manages spark templates (`s`),
   talks with an entity (`c`), edits your own workspace policy (`w`) and your
-  own mailbox (`@`: account, OAuth2 sign-in, recipient policy and send limits,
-  notifications — [email.md](docs/email.md)). Administrators switch email on or
+  own mailbox (`@`: account, OAuth2 sign-in, recipient policy, send limits and
+  agent email tools, notifications — [email.md](docs/email.md)). Administrators switch email on or
   off for the selected user with `x`; the table's **mailbox** column shows each
   user's state.
 - **Workflows** imports a `.flow` bundle (`i`) and reloads the registry (`L`).
@@ -6639,8 +6640,10 @@ stored encrypted in that user's data home and is used for three things:
   to you through your own account;
 - **account recovery** — "Forgot your token?" and "Email me a sign-in code" on the sign-in page.
 
-Email is optional. Without an account there is no sending and no email notification; the gateway
-has no shared "system" sender. The mailbox is only read: nothing marks messages read, moves or
+Email is optional and nothing is active by default: no watcher runs until you create an
+email-triggered automation, notifications stay in the console until you choose email, and your
+agents get no email tools until you turn them on. Without an account there is no sending and no
+email notification; the gateway has no shared "system" sender. The mailbox is only read: nothing marks messages read, moves or
 deletes them.
 
 This page is the user and operator guide. The HTTP surface is listed in [api.md](docs/api.md#email),
@@ -6693,6 +6696,24 @@ Administrators set a bring-your-own client per provider with
 `PUT /api/gateway/admin/email/oauth-clients/{google|microsoft}` (`client_id`, `client_secret`,
 `tenant`). The secret is sealed at rest and never returned; the read shows `client_secret_set`.
 
+## Agent email tools (off by default)
+
+Your agents and workflows — chats, workflow runs and automations, from every client (Code,
+Assistant, Observer, the consoles) — get the email tools (list and search mail, read a message,
+send, reply, download an attachment) only when **all** of these hold:
+
+1. your account is connected and turned on;
+2. an administrator has not turned email off for you;
+3. you turned on **Agent email tools** (My email in the web console, **Policy, limits & tools** in
+   the terminal console, or `PUT /api/gateway/me/email/agent-tools {"enabled": true}`).
+
+The rule is applied twice: when your toolsets are built (the tools are listed only then; turning
+the switch reloads your workflows so the change applies at once) and again when a tool runs (a
+call without all three is refused with the cause and the fix). `GET /api/gateway/discovery/tools`
+shows the email tools as enabled only for a caller whose agent tools are active. Every email tool
+call is an ordinary tool call recorded in the run's ledger. Automations send actions through the
+same `send_email` tool, so they need the switch too; notifications and recovery codes do not.
+
 ## Recipient policy and send limits
 
 Every send — an agent's `send_email`, an automation's send action, a notification, a recovery
@@ -6737,8 +6758,9 @@ nothing it says can widen who a run may mail or which tools it has.
 
 ## Notifications
 
-**My email → Notifications** (or `GET/PUT /api/gateway/me/notifications`) chooses which events
-email you:
+Email notifications are opt-in: every event is off until you turn it on, and the console stays
+the default channel. **My email → Notifications** (or `GET/PUT /api/gateway/me/notifications`)
+chooses which events email you:
 
 | Event | When |
 |---|---|
@@ -8351,6 +8373,14 @@ AbstractRuntime 0.8.0 (account binding, event inbox, `email.received@1`).
   code or a browser on the gateway's computer; your own OAuth client, the gateway's, or the built-in one). The
   account is tested before it is stored, stored in the user's own data home with the credentials encrypted
   (AES-256-GCM, key in the OS keychain), and every connection verifies TLS. Failures name the cause and the fix.
+- **Nothing email-related is on by default**: the watcher runs only for a user with an email-triggered automation,
+  every email notification event is off until the user turns it on, and nothing is seeded at first run.
+- **Agent email tools** per user, off by default (`PUT /api/gateway/me/email/agent-tools`, web console My email,
+  terminal console **Policy, limits & tools**): agents and workflows get list/search/read/send/reply/attachment
+  tools only when the account is connected, allowed by the administrator and the switch is on — applied when the
+  toolsets are built (the switch reloads the user's workflows) and again when a tool runs.
+  `GET /api/gateway/discovery/tools` lists the email tools as enabled only for such a caller; the
+  `ABSTRACT_ENABLE_EMAIL_TOOLS` environment gate no longer enables them on the gateway.
 - **Recipient policy and send limits** per user (`allowlist` / `denylist` of addresses and domains; 20 per hour,
   100 per day by default, editable), applied to every send: agents, automations, notifications, recovery codes.
 - **Mail watcher** per user: read-only, a durable cursor that moves only after the message is stored in the user's

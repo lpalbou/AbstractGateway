@@ -60,7 +60,11 @@ def test_disabled_toolsets_are_visible_rows_with_real_specs() -> None:
             # runtime shipped sub-toolset granularity same-hour (comms.email
             # / comms.whatsapp / comms.telegram) answering the filed gap.
             assert str(row["toolset"]).startswith("comms")
-            assert "ABSTRACT_ENABLE" in row["enable_gate"]
+            if "email" in name:
+                # Per user (framework backlog 0992), never an environment gate.
+                assert row["enable_gate"] == "Settings → My email → Agent email tools"
+            else:
+                assert "ABSTRACT_ENABLE" in row["enable_gate"]
             # Real spec, never fabricated: the description comes from the callable.
             assert isinstance(row.get("description"), str) and row["description"].strip()
 
@@ -97,12 +101,17 @@ def _client_items(client: TestClient) -> list:
 def test_enabling_a_gate_moves_rows_to_the_enabled_lane(monkeypatch: pytest.MonkeyPatch) -> None:
     """A toolset is in the enabled lane OR the disabled list — never both,
     never neither (the one-predicate-source rule)."""
+    monkeypatch.setenv("ABSTRACT_ENABLE_TELEGRAM_TOOLS", "1")
+    # Email is per user (framework backlog 0992): an environment gate never enables it.
     monkeypatch.setenv("ABSTRACT_ENABLE_EMAIL_TOOLS", "1")
     with _client() as client:
         items = _client_items(client)
+        tg_rows = [t for t in items if t["name"] == "send_telegram_message"]
+        assert len(tg_rows) == 1, "send_telegram_message must appear exactly once"
+        assert tg_rows[0]["enabled"] is True
         email_rows = [t for t in items if t["name"] == "send_email"]
-        assert len(email_rows) == 1, "send_email must appear exactly once"
-        assert email_rows[0]["enabled"] is True
+        assert len(email_rows) == 1 and email_rows[0]["enabled"] is False
+        assert "Agent email tools" in email_rows[0]["enable_gate"]
         # Un-enabled comms kinds remain disabled rows.
         wa = [t for t in items if t["name"] == "send_whatsapp_message"]
         assert len(wa) == 1 and wa[0]["enabled"] is False

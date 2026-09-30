@@ -11,6 +11,7 @@ principal, never from a path or body id; entities are refused):
     POST   /me/email/policy/check        {addresses} -> would they be allowed?
     PUT    /me/email/limits              {per_hour, per_day}
     PUT    /me/email/enabled             {enabled}   the user's own switch
+    PUT    /me/email/agent-tools         {enabled}   agents' email tools (default off; needs a usable account)
     GET    /me/email/oauth/clients       which providers have a gateway OAuth client (no secrets)
     POST   /me/email/oauth/start         begin an OAuth2 sign-in (device code or loopback browser)
     POST   /me/email/oauth/poll          {flow_id}          -> pending | connected
@@ -314,6 +315,33 @@ async def me_email_enabled(request: Request, body: EnabledBody) -> Any:
 
         audit_email_event("email.user_switch", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=_actor(principal), enabled=bool(body.enabled))
         return {"ok": True, **mail_accounts.public_status(plane)}
+
+    return await _call(run)
+
+
+@router.put("/me/email/agent-tools", summary="Turn my agents' email tools on or off (default off)")
+async def me_email_agent_tools(request: Request, body: EnabledBody) -> Any:
+    principal, plane = _self_plane(request)
+
+    def run() -> Dict[str, Any]:
+        mail_accounts.set_agent_tools_switch(plane, body.enabled, actor=_actor(principal))
+        reloaded = False
+        # The toolsets are built with the host: reload THIS user's host (only when it is
+        # already built — never a first build from here) so agents see the change now.
+        try:
+            from .. import service as service_mod
+
+            built = (
+                service_mod.principal_service_cached(principal)
+                if service_mod.gateway_multi_user_enabled()
+                else service_mod._service is not None
+            )
+            if built:
+                service_mod.get_gateway_service().host.reload_bundles_from_disk()
+                reloaded = True
+        except Exception:  # noqa: BLE001 - the execution-time gate applies either way
+            reloaded = False
+        return {"ok": True, "tools_reloaded": reloaded, **mail_accounts.public_status(plane)}
 
     return await _call(run)
 
