@@ -112,13 +112,6 @@ def test_email_names_are_not_duplicated() -> None:
     assert rdt.with_email_tools(["read_file", "send_email"], ["send_email", "read_email"]) == ["read_file", "send_email", "read_email"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "SEAM: hosts/bundle_host.py start_run must call run_default_tools.apply_default_email_tools "
-        "after _complete_workflow_selection (owner of bundle_host.py); remove this xfail when it does"
-    ),
-)
 def test_host_start_run_applies_the_email_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     host = _host(tmp_path, monkeypatch, email_active=True)
     run_id = host.start_run(flow_id="", bundle_id="basic-agent", input_data={"prompt": "mail me"})

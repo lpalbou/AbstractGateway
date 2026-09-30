@@ -2471,6 +2471,11 @@ class WorkflowBundleGatewayHost:
         sid = str(session_id).strip() if isinstance(session_id, str) and session_id.strip() else None
         vars0 = dict(input_data or {})
         self._complete_workflow_selection(vars0, workflow_id)
+        # A run started without `tools` gets the start-node default plus the email tools
+        # when this user's Agent email tools are active (run_default_tools.py; 0.7.0 E2E F2).
+        from ..run_default_tools import apply_default_email_tools
+
+        apply_default_email_tools(self, workflow_id=workflow_id, vars0=vars0)
         rt_ns = _ensure_runtime_namespace(vars0)
 
         # Email account binding (framework backlog 0992 B1): a client never
