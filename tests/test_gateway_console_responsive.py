@@ -70,3 +70,17 @@ def test_shell_uses_the_dynamic_viewport_height() -> None:
     css = _styles(gateway_console_html())
     assert re.search(r"\.shell \{[^}]*height: var\(--vh-full, 100vh\)", css)
     assert "--vh-full" in css and "--tap-min" in css  # kit 0.3.0 tokens reach the page
+
+
+def test_every_css_variable_the_page_uses_is_declared_or_has_a_fallback() -> None:
+    """An undefined `var(--x)` without a fallback makes its declaration invalid at
+    computed-value time (silently `unset`): a 44 px touch rule would do nothing.
+    The kit's base and responsive tokens (--tap-min, --vh-full, --safe-*, ...)
+    reach the page through console_islands.ISLANDS_CSS (kit theme.css minus the
+    per-theme blocks, drift-pinned); the theme blocks through console_themes."""
+    css = re.sub(r"/\*.*?\*/", "", _styles(gateway_console_html()), flags=re.S)
+    declared = set(re.findall(r"(--[A-Za-z0-9_-]+)\s*:", css))
+    assert {"--tap-min", "--vh-full", "--safe-top", "--font-size-input", "--gutter"} <= declared
+    undefined = sorted({name for name, sep in re.findall(r"var\(\s*(--[A-Za-z0-9_-]+)\s*([,)])", css)
+                        if sep == ")" and name not in declared})
+    assert undefined == [], f"CSS variables used without a declaration or fallback: {undefined}"
