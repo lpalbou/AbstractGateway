@@ -380,11 +380,35 @@ def rebind_all_live_runtimes() -> None:
         pass
 
 
+def _sent_recorder(plane: EmailPlane, previous: Any = None):
+    """`EmailContext.on_sent` for the plane: every AUTOMATIC send through the account (one that
+    carries the framework marker: an automation occurrence, a notification, a sign-in code) has
+    its Message-ID recorded in the plane's outbox, which the mail watcher consults so the
+    account's own automatic mail never triggers an automation. A person's sends are not recorded.
+    """
+
+    def on_sent(info: Dict[str, Any]) -> None:
+        if callable(previous):
+            try:
+                previous(info)
+            except Exception:  # noqa: BLE001 - core ignores on_sent failures too
+                pass
+        marker = str((info or {}).get("automation_marker") or "")
+        if not marker:
+            return
+        from .notifications import NotificationOutbox
+
+        NotificationOutbox(plane).record_sent(str(info.get("message_id") or ""), kind="automatic", marker=marker)
+
+    return on_sent
+
+
 def email_context(plane: EmailPlane, *, require_enabled: bool = True) -> EmailContext:
     """The user's account ready for use: policy, limits, the user's switch AND the admin's."""
 
     store = sync_registered_address(plane)
     ctx = store.context(require_enabled=False)
+    ctx.on_sent = _sent_recorder(plane, ctx.on_sent)
     if not admin_email_enabled(plane):
         ctx.enabled = False
         if require_enabled:

@@ -26,6 +26,12 @@ The outbox (`<plane>/email/outbox.sqlite3`) makes delivery exactly-once-or-visib
 - over the send limits (20/hour, 100/day by default, the user's own), notices wait for the
   window and then go out as ONE digest message.
 
+Every notice is automatic mail (RFC 3834): it carries `Auto-Submitted: auto-generated` and the
+framework marker (`X-AbstractFramework-Automation: notification:<key>`), and its Message-ID is
+recorded here (`sent_messages`, with every other automatic send through the account: automation
+occurrences, sign-in codes). The mail watcher never admits the account's own marked mail nor a
+recorded Message-ID, so a notice can never trigger an automation (the 0.7.0 self-trigger loop).
+
 Templates are fixed (text + minimal HTML). The only model-authored text is an automation's
 own `notify` title/body, labelled as such. No approve/deny links (D8).
 """
@@ -288,6 +294,13 @@ class NotificationOutbox:
             " error_fix TEXT NOT NULL DEFAULT '',"
             " to_self INTEGER NOT NULL DEFAULT 1)"
         )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS sent_messages ("
+            " message_id TEXT PRIMARY KEY,"
+            " kind TEXT NOT NULL,"
+            " marker TEXT NOT NULL DEFAULT '',"
+            " sent_at TEXT NOT NULL)"
+        )
         try:
             self.path.chmod(0o600)
         except OSError:
@@ -308,6 +321,41 @@ class NotificationOutbox:
                     (str(key), str(kind), str(subject), str(text), str(html_body or ""), _now_iso()),
                 )
                 return cur.rowcount == 1
+        finally:
+            conn.close()
+
+    def record_sent(self, message_id: str, *, kind: str, marker: str = "") -> None:
+        """Remember a Message-ID this account sent automatically (the watcher skips it).
+
+        Never takes the plane lock: it runs from inside a send (`EmailContext.on_sent`),
+        possibly while `deliver` holds that lock.
+        """
+
+        mid = str(message_id or "").strip()
+        if not mid:
+            return
+        conn = self._connect()
+        try:
+            with conn:
+                conn.execute(
+                    "INSERT OR IGNORE INTO sent_messages(message_id, kind, marker, sent_at) VALUES (?,?,?,?)",
+                    (mid, str(kind), str(marker or ""), _now_iso()),
+                )
+        finally:
+            conn.close()
+
+    def was_sent(self, message_id: str) -> bool:
+        """Did the framework send this Message-ID from this account automatically (recorded by
+        the account context's `on_sent` for every marked send, notices included)? False when
+        nothing was ever sent (no outbox file)."""
+
+        mid = str(message_id or "").strip()
+        if not mid or not self.path.exists():
+            return False
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT 1 FROM sent_messages WHERE message_id=? LIMIT 1", (mid,)).fetchone()
+            return row is not None
         finally:
             conn.close()
 
@@ -424,7 +472,11 @@ class NotificationOutbox:
                 subject, text, html_body = batch[0]["subject"], batch[0]["text"], batch[0]["html"]
             else:
                 subject, text, html_body = render_digest(batch)
-            message = OutgoingMessage(to=(to,), subject=subject, text=text, html=html_body)
+            marker = f"notification:{keys[0]}" if len(keys) == 1 else f"notification-digest:{keys[0]}"
+            message = OutgoingMessage(
+                to=(to,), subject=subject, text=text, html=html_body,
+                auto_submitted="auto-generated", automation_marker=marker[:200],
+            )
             conn = self._connect()
             try:
                 with conn:  # committed (fsynced) BEFORE the SMTP exchange

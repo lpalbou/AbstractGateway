@@ -76,7 +76,11 @@ def open_event_inbox(plane: EmailPlane) -> Any:
 def make_feeder(plane: EmailPlane, inbox: Any) -> Any:
     from abstractruntime.email import EmailInboxFeeder
 
-    return EmailInboxFeeder(inbox, account_ref=plane.account_ref)
+    from .notifications import NotificationOutbox
+
+    # Second loop guard behind the marker header: a Message-ID this account sent automatically
+    # (recorded in the plane's outbox) is never admitted, even if a server dropped the header.
+    return EmailInboxFeeder(inbox, account_ref=plane.account_ref, is_own_sent=NotificationOutbox(plane).was_sent)
 
 
 # ---------------------------------------------------------------------------------------
@@ -257,6 +261,8 @@ class MailWatcher:
         report = self.feeder.poll(ctx, force=force)
         out["new"] = len(report.appended)
         out["skipped"] = int(report.duplicates)
+        # This account's own automatic mail (notices, automation sends): never an event.
+        out["own_automatic"] = int(report.own_automatic)
         out["reset"] = bool(report.reset)
         out["unprocessable"] = len(report.unprocessable)
         if report.reset:

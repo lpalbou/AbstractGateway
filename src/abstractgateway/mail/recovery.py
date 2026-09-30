@@ -254,7 +254,10 @@ def _issue(*, user_id: str, tenant_id: str, purpose: str, client_ip: str) -> Non
         ctx = email_context(plane)
         to = str(ctx.registered_address or ctx.account.address or "").strip()
         subject, text = _render(purpose, code)
-        guarded_send(ctx, OutgoingMessage(to=(to,), subject=subject, text=text))
+        # Automatic mail (RFC 3834) with the framework marker: the watcher never admits it,
+        # so a sign-in code never reaches an automation (or its model) reading this inbox.
+        guarded_send(ctx, OutgoingMessage(to=(to,), subject=subject, text=text,
+                                          auto_submitted="auto-generated", automation_marker=f"sign-in-code:{purpose}"))
     except EmailError as err:
         with _LOCK:
             doc = _load()
