@@ -1832,6 +1832,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .users-table td.actions > button + button { margin-left: 6px; }
 	    .users-table .row-confirm > td { padding-top: 0; }
 	    .users-override { color: var(--warn, var(--warning)); }
+	    .users-mailbox__body { min-width: 0; overflow-wrap: break-word; word-break: normal; }
+	    .users-mailbox__body .small { white-space: nowrap; }
 	    button.small { min-height: 28px; padding: 3px 10px; font-size: var(--font-size-sm); }
 	    .user-create-form { max-width: 520px; }
 	    .user-create-form .modal-actions { margin-top: 4px; }
@@ -1885,6 +1887,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      .users-table td.actions > button + button { margin-left: 0; }
 	      .users-table td.actions::before { flex-basis: 100%; }
 	      .users-table .row-confirm { border-top: 0; padding-top: 0; }
+	      /* Mailbox cell: status, note and Reset each on their own line; never a word split. */
+	      .users-table td.users-mailbox { align-items: flex-start; overflow-wrap: normal; }
+	      .users-mailbox__body { flex: 1 1 auto; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+	      .users-mailbox__body .users-override { display: block; }
+	      .users-mailbox__body button.small { min-height: 44px; padding: 6px 14px; font-size: var(--font-size-base); }
 	    }
 	    @media (prefers-reduced-motion: reduce) {
 	      .plain-disclosure > summary::before, .account-advanced > summary::before { transition: none; }
@@ -11635,15 +11642,21 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           + `<td data-label="Active" class="users-active"></td>`;
         const mailboxCell = tr.querySelector ? tr.querySelector(".users-mailbox") : tr.children[3];
         if (mailboxCell) {
+          // One body element: the status, the note and Reset stack on phones
+          // (the phone td is a flex row with its label) and sit inline above.
+          const body = document.createElement("div");
+          body.className = "users-mailbox__body";
           const text = document.createElement("span");
+          text.className = "users-mailbox__status";
           text.textContent = userMailboxText(acc);
-          mailboxCell.append(text);
+          body.append(text);
+          mailboxCell.append(body);
           const mnote = userMailboxNote(acc);
           if (mnote.text) {
             const noteEl = document.createElement("span");
             noteEl.className = "users-override";
             noteEl.textContent = ` · ${mnote.text} `;
-            mailboxCell.append(noteEl);
+            body.append(noteEl);
           }
           if (mnote.reset) {
             const reset = document.createElement("button");
@@ -11653,7 +11666,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             reset.title = "Clear the old per-user setting: this user follows “Mailboxes for users” again";
             reset.setAttribute("aria-label", `Reset the mailbox setting for ${u.user_id}`);
             reset.onclick = () => resetUserMailboxOverride(u, reset);
-            mailboxCell.append(reset);
+            body.append(reset);
           }
         }
         const activeCell = tr.querySelector ? tr.querySelector(".users-active") : tr.children[5];

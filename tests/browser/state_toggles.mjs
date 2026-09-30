@@ -142,9 +142,6 @@ try {
     const bobCell = (await page.textContent("tr[data-user='bob'] .users-mailbox")).trim();
     check(bobCell.includes("agent email tools not allowed for this user") && (await page.locator("tr[data-user='bob'] .users-mailbox button").count()) === 1, "old per-user override shown with Reset", bobCell);
     check(!(await page.textContent("tr[data-user='alice'] .users-mailbox")).includes("not allowed"), "no note without an override");
-    await page.click("tr[data-user='bob'] .users-mailbox button");
-    await page.waitForFunction(() => !document.querySelector("tr[data-user='bob'] .users-mailbox").textContent.includes("not allowed"), null, { timeout: 10000 });
-    check(true, "Reset clears the override");
     await page.click("tr[data-user='bob'] .users-active [role=switch]");
     await page.waitForSelector("#users-table .row-confirm");
     const confirmText = await page.textContent("#users-table .row-confirm");
@@ -154,6 +151,8 @@ try {
     check((await page.locator("#users-table .row-confirm").count()) === 0, "Cancel closes the confirmation");
     // Create user modal.
     await page.click("#open-create-user");
+    const adv = await page.evaluate(() => { const d = document.querySelector("#user-create-form details"); const r = document.getElementById("new-runtime"); return { open: d.open, runtimeShown: r.checkVisibility() }; });
+    check(adv.open === false && adv.runtimeShown === false, "Create user Advanced collapsed by default", adv);
     await page.evaluate(() => { for (const d of document.querySelectorAll("#user-create-form details")) d.open = true; });
     await labelScale(page, "#user-create-form", "create user modal");
     const emailTop = await page.evaluate(() => { const i = document.getElementById("new-email"); return !i.closest("details"); });
@@ -180,6 +179,19 @@ try {
     await page.click("#my-email-tab-other");
     const grid = await page.evaluate(() => { const g = document.querySelector("#my-email-servers .af-form__grid-2"); return getComputedStyle(g).gridTemplateColumns.split(" ").length; });
     check(grid === 1, "short fields stack at 390 px", grid);
+    await page.waitForSelector("tr[data-user='bob'] .users-mailbox__body");
+    const cell = await page.evaluate(() => {
+      const body = document.querySelector("tr[data-user='bob'] .users-mailbox__body");
+      const kids = Array.from(body.children).map((k) => k.getBoundingClientRect());
+      const status = body.querySelector(".users-mailbox__status");
+      const r = document.createRange(); r.selectNodeContents(status);
+      return { tops: kids.map((k) => Math.round(k.top)), lefts: kids.map((k) => Math.round(k.left)), statusLines: r.getClientRects().length, resetH: Math.round(kids[kids.length - 1].height) };
+    });
+    const stacked = cell.tops.every((t, i) => i === 0 || t > cell.tops[i - 1]) && new Set(cell.lefts).size === 1;
+    check(stacked && cell.statusLines === 1 && cell.resetH >= 44, "phone Mailbox cell stacks status / note / Reset, no word split", cell);
+    await page.click("tr[data-user='bob'] .users-mailbox button");
+    await page.waitForFunction(() => !document.querySelector("tr[data-user='bob'] .users-mailbox").textContent.includes("not allowed"), null, { timeout: 10000 });
+    check(true, "Reset clears the override");
     await labelScale(page, "#my-email-section", "account page (phone)");
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
     check(!overflow, "no horizontal page scroll at 390 px");

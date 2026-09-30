@@ -106,6 +106,9 @@ def test_users_table_and_create_user_follow_design() -> None:
     # Email address at the top level, before Advanced; Advanced = Runtime + Tenant.
     assert form.index('for="new-email">Email address</label>') < form.index("<summary>Advanced</summary>")
     assert "Where sign-in codes and notifications go. Leave empty if they have none; they can add it later." in form
+    # Advanced is collapsed by default (no `open` attribute on the disclosure).
+    assert re.search(r'<details class="plain-disclosure"><summary>Advanced</summary>', form)
+    assert not re.search(r"<details[^>]*\bopen\b[^>]*><summary>Advanced</summary>", form)
     advanced = _slice(form, "<summary>Advanced</summary>", "</details>")
     assert 'for="new-runtime">Runtime</label>' in advanced and 'for="new-tenant">Tenant</label>' in advanced
     assert "new-email" not in advanced
