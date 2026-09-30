@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Mail sent to test a new "When an email arrives" automation right after creating it triggers it.
+  The mail watcher reads nothing until an email automation exists and its first read only marks
+  where new mail starts; that read came up to a minute after the automation was created (checks
+  that read nothing counted as polls, and nothing woke the watcher), and mail arriving in that
+  minute was treated as already there. Creating an email automation now wakes the watcher, which
+  marks the start within seconds.
+
 ## [0.8.1] - 2026-09-30
 
 Needs AbstractCore 2.20.2 and AbstractRuntime 0.8.1 (the floors are raised; the terminal console

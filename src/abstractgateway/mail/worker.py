@@ -32,6 +32,8 @@ class EmailWorker:
         self.plane = plane
         self.tick_s = float(tick_s)
         self._stop = threading.Event()
+        # Set by nudge(): the next tick runs now instead of after tick_s.
+        self._wake = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._recovered = False
 
@@ -105,8 +107,15 @@ class EmailWorker:
 
     def _loop(self) -> None:
         while not self._stop.is_set():
+            self._wake.clear()
             self.tick()
-            self._stop.wait(self.tick_s)
+            self._wake.wait(self.tick_s)
+
+    def nudge(self) -> None:
+        """Run a tick now (a new email automation: the watcher takes its baseline right away,
+        so mail sent to test it seconds later is new mail, not history)."""
+
+        self._wake.set()
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
@@ -123,6 +132,7 @@ class EmailWorker:
 
     def stop(self) -> None:
         self._stop.set()
+        self._wake.set()
         t = self._thread
         if t is not None:
             t.join(timeout=10.0)
