@@ -552,7 +552,7 @@ change from the console, the TUI or the CLI (another process) is live at once.
 
 | Setting | Meaning | Default |
 |---|---|---|
-| `allowed_origins` | Browser origins whose pages may call the gateway, **added** to the always-allowed `http://localhost:*`, `http://127.0.0.1:*` (and, in a network mode, the gateway's own LAN origins). | none |
+| `allowed_origins` | Browser origins whose pages may call the gateway, **added** to the always-allowed `http://localhost:*`, `http://127.0.0.1:*` (and, in a network mode, the gateway's own LAN origins). An https page calling its own address through a TLS proxy on the gateway machine that keeps the browser's `Host` (for example `tailscale serve`) needs no entry: see [Reached through Tailscale](#reached-through-tailscale-https). | none |
 | `trust_proxy` | Take the client address from `X-Forwarded-For` (sign-in lockouts, audit log). Only when your own proxy sits in front of every request: otherwise any client chooses the address the gateway sees. | off |
 
 **Validation** (one place, the gateway; every door shows its sentence
@@ -637,7 +637,10 @@ resolution. Each row says whether the gateway listens there now
 (`reachable`). The WAN address (`kind: public`) is looked up only on request
 (`?lookup_public=1`, admin, `internet` mode only; one HTTPS GET to
 `api.ipify.org`), never on a poll. `copy_hint` is the URL to copy first (the
-LAN IPv4 when listening on the network, else loopback).
+LAN IPv4 when listening on the network, else loopback). `browser_url` is the
+address the caller itself uses (`https://<host>.<tailnet>.ts.net` behind
+`tailscale serve`), and `browser_url_listed` says whether it is one of the
+addresses above (false behind a proxy or tunnel).
 
 ### API (`gateway_network_v1`)
 
@@ -679,6 +682,28 @@ A trimmed `GET` in `lan` mode, running and applied:
   "warnings": ["Traffic is plain HTTP: …"]
 }
 ```
+
+### Reached through Tailscale (https)
+
+Reached through Tailscale? On the gateway machine run
+`tailscale serve --bg http://127.0.0.1:<port>` and open
+`https://<host>.<tailnet>.ts.net/` (the console at `/console`, the apps at
+`/apps/<app>/`). `tailscale serve reset` undoes it. Voice and camera in the
+browser need this https address: browsers offer the microphone, the camera,
+the clipboard and `crypto.randomUUID` only on https pages (or on the gateway
+machine itself), never on a plain `http://` address such as
+`http://100.x.y.z:8080`.
+
+The gateway can stay in `localhost` mode: Tailscale delivers each request to
+`127.0.0.1` with the browser's `Host` kept and `X-Forwarded-Proto: https`
+added. The gateway believes forwarded headers from a loopback peer only, and
+it accepts a page whose Origin is `https://` plus that same `Host`, so no
+`allowed_origins` entry is needed; sign-in cookies are marked `Secure`. The
+first-run `#claim=` link works from the gateway machine only; from another
+device, sign in with your user name and token. Tailscale issues and renews the
+certificate; the address is reachable from your tailnet only (`tailscale
+funnel` would publish it to the internet, and needs the `internet` mode's
+precautions).
 
 ### CLI
 
@@ -2039,13 +2064,22 @@ restart. Each origin is validated (`scheme://host[:port]`, no path, no trailing
 slash); `*` and wildcard patterns are accepted only as typed and are flagged.
 See [configuration.md](docs/configuration.md#reverse-proxy-allowed-origins-and-trust-proxy).
 
+One more case is allowed without a list entry: an https page asking its own
+address. The Origin is `https://` plus the request's `Host`, and the request
+itself arrived over TLS: either native TLS, or `X-Forwarded-Proto: https`
+from a proxy on the gateway machine (the only peer whose forwarded headers
+are believed). This is `tailscale serve` or a local nginx that keeps the
+browser's `Host`. DNS rebinding cannot produce it. The browser writes the
+Origin, a rebinding page is plain `http://`, and an `https://` rebinding page
+would need a certificate for its own name from the proxy on this machine.
+
 A gateway started with `ABSTRACTGATEWAY_ALLOWED_ORIGINS` in its environment
 uses that list instead (a deployment pin): every surface says "This gateway was
 started with ABSTRACTGATEWAY_ALLOWED_ORIGINS in its environment" and reports
 `overridden_by_env: true`; the saved setting applies once it starts without it.
 
-Evidence: `GatewayAuthPolicy.allowed_origins`, `_effective_allowed_origins()` and
-`_origin_allowed()` in `src/abstractgateway/security/gateway_security.py`;
+Evidence: `GatewayAuthPolicy.allowed_origins`, `_effective_allowed_origins()`,
+`_origin_allowed()` and `_https_same_origin()` in `src/abstractgateway/security/gateway_security.py`;
 `live_reverse_proxy()` in `src/abstractgateway/network_exposure.py`.
 
 Important nuance:
@@ -2430,6 +2464,13 @@ The gateway relays each request to the app's own server on `127.0.0.1`
   refused. A request or WebSocket whose `Origin` is not the gateway's own
   address (another site, or another port on the same host) is refused too
   (403 `cross_origin`).
+- **Public assets.** What a browser fetches without cookies answers without
+  a session: the web app manifest (`manifest.webmanifest`, `manifest.json`,
+  `site.webmanifest`), `favicon*`, `icon*`, `apple-touch-icon*` and
+  `icons/<file>` at the app's root, GET/HEAD only. They are relayed with no
+  cookie and returned only when the app answers 200/304 with a manifest or
+  image type, with no `Set-Cookie`. Pages, scripts, `sw.js` and everything
+  under `api/` stay signed-in only.
 - **Streaming.** Responses are relayed as they arrive (live updates, server-sent
   events), and WebSockets frame by frame.
 - **What the app receives.** The path with `/apps/<app>` removed, plus
@@ -2782,7 +2823,7 @@ All routes are under `/api/gateway/apps` and need a signed-in principal, except 
 
 | Method and path | Who | What |
 |---|---|---|
-| `GET /apps?latest=true` | any user | Node.js status, one row per app (`kind` `web` with `interfaces[]`, see "Terminal versions", and `install_parts`; then the Assistant, `kind` `desktop` with `desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason}`) and `console_tui` (the gateway console's terminal app). `latest=false` skips the npm registry and GitHub release lookups (cached 10 minutes). |
+| `GET /apps?latest=true` | any user | Node.js status, one row per app (`kind` `web` with `interfaces[]`, see "Terminal versions", and `install_parts`; then the Assistant, `kind` `desktop` with `desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason}`) and `console_tui` (the gateway console's terminal app). `gateway_url` is where the app servers reach the gateway (on its machine); `browser_gateway_url` is the address the caller uses (e.g. `https://<host>.ts.net` behind `tailscale serve`), the one to show in any command or link. `latest=false` skips the npm registry and GitHub release lookups (cached 10 minutes). |
 | `POST /apps/runtime/install` | admin | Install Node.js (a job), or `job: null` when one is already usable. |
 | `POST /apps/{id}/install` `{"version"?, "launch"?, "with_terminal"?}` | admin | ONE job: Node.js if needed, download, check, dependencies, then the terminal app when the row's `install_parts` has `"tui"` (`with_terminal: false` skips it); the job's `parts` are its child rows. Starts nothing unless `launch: true`. For `assistant`: installs `abstractassistant` into the gateway's Python (every `abstract*` package is pinned to its current version in the same command). |
 | `POST /apps/{id}/update` `{"version"?}` | admin | A job: install the latest (or given) version; a running app is restarted on it. |
@@ -4281,7 +4322,10 @@ workspace roots, mounted roots, ignored paths, and size limits are enforced on
 the server. Browser-local files should be uploaded through
 `POST /api/gateway/attachments/upload`; browser-local file paths are not
 interpreted as Gateway workspace paths. In hosted user-auth mode, server
-workspace import/export and `/files/*` helpers require an admin principal.
+workspace import/export and `/files/*` helpers require an admin principal. They
+never list, read or write the gateway data folder or the account's credential
+folders (`.ssh`, `.aws`, `Library/Keychains`, ...), even when the workspace root
+contains them (403).
 Ordinary users can still upload browser-local files and list/search artifacts in
 their own routed runtime.
 
@@ -6888,9 +6932,9 @@ shows the cause and the fix.
 
 Mail that is already in your mailbox when the watcher starts is never an event. The watcher marks
 where new mail starts when you connect an account and whenever an email automation becomes active
-after a time with none (creating one takes that mark within seconds, so a message you send to test
-it right after counts); mail that arrived while none of your email automations was active is not
-processed later. A gateway restart keeps the mark: mail that arrives while the gateway is down is
+after a time with none (creating or resuming one takes that mark within seconds, so a message you
+send to test it right after counts); mail that arrived while none of your email automations was
+active is not processed later. A gateway restart keeps the mark: mail that arrives while the gateway is down is
 read when it is back.
 
 How often an automation **runs** on new mail is its own trigger setting: every 60 seconds when it
@@ -7010,7 +7054,9 @@ Sign-in by email means that whoever controls a user's mailbox can sign in as tha
 where mailboxes are not as well protected as gateway tokens. The Users table
 shows each user's mailbox state (`connected`, `not connected`, `needs action`, `turned off by an
 administrator`, …). Administrators see the state, the address and the last error — never messages,
-the user's recipient list or credentials.
+the user's recipient list or credentials. The administrator's server file helpers (`/files/*`,
+workspace import and export) never serve the gateway data folder, where every user's runs,
+received mail and sealed credentials live, even when it sits inside the server workspace.
 
 The administrator's own account (the default runtime) is configured like everyone else's. It is the
 gateway's account, separate from AbstractCore's own local account (`abstractcore email`); on the
@@ -7298,13 +7344,22 @@ map $http_upgrade $connection_upgrade {
 ```
 
 Run nginx on the gateway machine, as here, so the gateway believes its
-`X-Forwarded-For` (it believes it from a loopback peer only). Then set the
-browser origin once:
+`X-Forwarded-For` and `X-Forwarded-Proto` (it believes them from a loopback
+peer only). An https page calling its own address through such a proxy
+(Origin `https://` + the kept `Host`) is accepted without further setup. A
+proxy on another machine, or one that rewrites `Host`, needs the browser
+origin set once:
 `abstractgateway network set --allowed-origins https://gateway.example.com`.
 `X-Forwarded-For $remote_addr` replaces anything the browser sent. The apps
 themselves always listen on `127.0.0.1`; nothing else needs to reach them,
 and no other port needs to be exposed. A tunnel (Cloudflare Tunnel,
 Tailscale Funnel, ngrok) to the gateway's port works the same way.
+
+Reached through Tailscale? On the gateway machine run
+`tailscale serve --bg http://127.0.0.1:<port>` and open
+`https://<host>.<tailnet>.ts.net/`; `tailscale serve reset` undoes it. Voice
+and camera in the browser need this https address. See
+[configuration.md](docs/configuration.md#reached-through-tailscale-https).
 
 ## Where local clients find the gateway (`~/.abstractframework/gateway.json`)
 
@@ -8612,6 +8667,12 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
   INBOX) without reconnecting; `404 email_not_configured` without a mailbox.
 - `GET /api/gateway/admin/users` rows carry `email_account.capabilities` (`{value, source}` for
   `email` and `email_agent_tools`), so the Users table can show a per-user override with a Reset.
+- `GET /api/gateway/apps` carries `browser_gateway_url`, the address the caller uses (the https
+  origin behind a proxy). `gateway_url` stays the address the app servers use.
+- `GET /api/gateway/network` carries `browser_url` (the caller's address) and
+  `browser_url_listed` (false behind a proxy or tunnel).
+- Docs: "Reached through Tailscale (https)" in configuration.md and deployment.md, and the
+  https same-origin rule in security.md.
 
 ### Changed
 - The administrator's one switch is **Mailboxes for users** (capability `email`, on by default).
@@ -8671,6 +8732,53 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
   the sign-in card's styles, and its checkbox rule was reused outside the card. The console now
   uses the kit's sign-in card styles; labels are 14 px, helper text 13 px.
 - The Sandbox's system prompt field no longer shows "optional" as a placeholder.
+- Resuming a paused `email.received` automation wakes the email worker at once, as creating one
+  already did: the watcher takes its new-mail mark within seconds, so mail arriving right after
+  the resume triggers the automation (it was taken as history until the worker's next tick, up to
+  15 s later). The runner calls the worker after each applied automation command
+  (`GatewayRunner.add_automation_command_listener`).
+- Installing two apps that need Node.js at the same time, or clicking **Install Node.js** while an
+  app install is fetching it, no longer fails one of them. Both installs used to download into one
+  shared partial file, and the second failed with `FileNotFoundError`; a retry worked. Now one
+  Node.js install runs at a time. The second waits for it and uses the Node.js it installed, so it
+  is downloaded only once. Every download also writes its own partial file and renames it into
+  place when done.
+- Stopping the gateway while it is still starting (Ctrl-C or `SIGTERM` a few seconds after
+  `serve`) now waits for the startup. Before, the stop returned at once, and the startup went on to
+  start the runner, the email worker and the bridges of a gateway that had already stopped. The
+  stop now cancels the startup, which starts nothing more and stops what it built. It waits for
+  it, and for the background task that restarts each user's runner, before stopping the service.
+  In the same way, apps that were still starting are waited for and stopped. Before, an app could
+  start after the others were stopped and outlive the gateway.
+- The identity card's moments no longer depend on the clock minute. A state-history line is
+  treated as the history copy of a sleep/wake/pause change made through the gateway when a marker
+  with the same verb and the same reason follows it within an hour. Before, the rule was "same
+  verb in the same minute". A change made across a minute boundary then showed twice, and the
+  entity's "asleep at birth" moment disappeared when a sleep through the gateway fell in the same
+  minute (backlog 0920).
+- Behind `tailscale serve` (or any TLS proxy on the gateway machine that keeps the browser's
+  `Host`), signing in to the console at `https://<host>.<tailnet>.ts.net/` no longer fails with
+  403 "origin not allowed". An https page asking its own address is accepted when the request
+  came over TLS (native, or `X-Forwarded-Proto: https` from a loopback proxy). No
+  `allowed_origins` entry is needed. A plain-http Origin never qualifies.
+- Apps served at `/apps/<app>/` answer their web app manifest and icons (`manifest.webmanifest`,
+  `favicon*`, `icon*`, `apple-touch-icon*`, `icons/<file>`) without an app session, because
+  browsers fetch them without cookies. The console no longer logs `manifest.webmanifest 401`.
+  These requests are relayed with no cookie and answered only with a manifest or image type,
+  with no `Set-Cookie`. Pages, scripts, `sw.js` and `api/` still need the session.
+
+### Security
+- The server file helpers (`GET /files/list|search|read|skim`, workspace import and export) never
+  serve the gateway data folder or the account's credential folders, the same rule as the run
+  workspace browser and every run's tools. The server workspace root defaults to the gateway's
+  working directory, which is the data folder under the OS service and contains it after a launch
+  from a parent folder: an administrator could read another user's received mail and run ledgers
+  through `/files/read`. Administrators never read mail.
+
+### Tests
+- Two CI timing flakes are now deterministic. The automations test `test_d2_waiting_only_on_a_person`
+  expects that an occurrence names its run for a moment before the run exists, and it forces that
+  moment. `test_identity_card_composes_a_life` fixes its timestamps instead of reading the clock.
 
 ## [0.9.0] - 2026-09-30
 
