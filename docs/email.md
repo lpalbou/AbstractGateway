@@ -101,6 +101,10 @@ call is an ordinary tool call recorded in the run's ledger. Your own send-email 
 automations (fixed templates you wrote), notifications and recovery codes do not need the switch:
 they only need a connected, allowed account.
 
+A run started without a tool list (`POST /runs/start` with no `input_data.tools`) gets its
+workflow's default tools plus the email tools while your agent email tools are active; an explicit
+tool list, even an empty one, is used as given.
+
 ## Recipient policy and send limits
 
 Every send — an agent's `send_email`, an automation's send action, a notification, a recovery
@@ -115,7 +119,10 @@ code — goes through the same checks, in this order:
 3. the **send limits**: 20 messages per rolling hour and 100 per day by default, editable by you.
 
 On top of the policy, the approval gate still decides whether an agent's send runs unattended: a
-send to anyone but you (or an automation's pre-authorised recipients) waits for your approval.
+send to anyone but you (or an automation's pre-authorised recipients) waits for your approval, and
+a send to you runs without asking in chats and automations alike. "You" is the address My email
+shows as your registered address: the email on your user account (or the gateway's registered
+address for the operator), else the connected mailbox's own address.
 
 ```bash
 curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/policy" \
@@ -142,6 +149,16 @@ configuration and the send-email action.
 
 Inbound mail is data, never instructions: it reaches a model inside a fixed "untrusted" frame, and
 nothing it says can widen who a run may mail or which tools it has.
+
+An automation never runs on mail the framework sent itself. Every message sent automatically
+through your account (notifications, recovery codes, and anything an automation sends, including
+its send-email action) carries `Auto-Submitted: auto-generated` (RFC 3834) and an
+`X-AbstractFramework-Automation` header, and its Message-ID is recorded in your outbox. The
+watcher skips such messages from your own address, and a recorded Message-ID even when a server
+dropped the headers, so a filter that matches an automation's own result email ("Email me the
+result") never re-triggers it. By default the trigger also ignores automatic mail from others
+(auto-replies, vacation notices, other automations); set `"auto_submitted": "admit"` in its
+configuration to run on those too.
 
 ## Notifications
 

@@ -304,7 +304,7 @@ def test_route_options_survive_a_provider_only_save(scoped_store: Path) -> None:
     assert stored["options"] == {"voice": "aria"}
 
 
-def test_a_save_that_moves_the_route_to_another_provider_drops_the_old_engine_s_options(scoped_store: Path) -> None:
+def test_a_save_that_moves_the_route_to_another_provider_drops_the_old_engine_s_speculation_request(scoped_store: Path) -> None:
     """0.7.0 end-to-end: `PUT .../output/text {"provider": "lmstudio", "model": ...}` over the
     MLX tier route kept `speculation: native_mtp` (an MLX construction knob) on LM Studio."""
     from abstractgateway.core_config import save_gateway_capability_default
@@ -312,11 +312,12 @@ def test_a_save_that_moves_the_route_to_another_provider_drops_the_old_engine_s_
     base = scoped_store.parent.parent
     mtp = {"speculation": {"mode": "native_mtp", "num_draft_tokens": 2, "require_acceleration": False}}
     # The text route is stored under `input.text` (AbstractCore's TEXT_ROUTE_STORAGE_KEY).
-    _write_core_side(scoped_store, "input.text", {"provider": "mlx", "model": "mlx-community/Qwen3.8-Flash-Next-4bit", "options": mtp})
+    _write_core_side(scoped_store, "input.text", {"provider": "mlx", "model": "mlx-community/Qwen3.8-Flash-Next-4bit",
+                                                  "options": {**mtp, "profile": "local"}})
     save_gateway_capability_default("output", "text", provider="lmstudio", model="llama-3.2-1b-instruct", base_dir=base)
     stored = _stored_routes(scoped_store)["input.text"]
     assert (stored["provider"], stored["model"]) == ("lmstudio", "llama-3.2-1b-instruct")
-    assert not stored.get("options")
+    assert stored["options"] == {"profile": "local"}  # only the speculation request was MLX's
     # Options named with the move win.
     save_gateway_capability_default("output", "text", provider="ollama", model="qwen3.5:9b", options={"keep_alive": "5m"}, base_dir=base)
     assert _stored_routes(scoped_store)["input.text"]["options"] == {"keep_alive": "5m"}

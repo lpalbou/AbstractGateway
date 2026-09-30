@@ -310,8 +310,8 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.8.0` (per-user email: run binding, event inbox, `email.received@1`, the email facade)
-- `abstractcore>=2.20.0` (the mail library behind per-user email)
+- `AbstractRuntime>=0.8.1` (per-user email: run binding, event inbox, `email.received@1`, the email facade; the automatic-mail loop guard and in-process media children)
+- `abstractcore>=2.20.2` (the mail library behind per-user email, automatic-mail marking, the media-only capability host)
 - `abstractvoice>=0.13.0` (the voice listings import `abstractvoice.engine_runtime`)
 - `abstractagent>=0.3.17`
 - `AbstractMemory[lancedb]>=0.3.0`
@@ -3511,7 +3511,7 @@ One job per state, key fields only (sizes are illustrative).
 `stalled`:
 
 ```json
-{"job_id": "dl_f8684d929f51", "provider": "supertonic", "artifact": "supertonic-3", "status": "running", "state": "stalled", "bytes_done": 25942208, "bytes_total": 56185929, "size_unknown": false, "percent": 46.17, "bytes_per_second": 0.0, "eta_s": null, "updated_at": "2026-09-24T03:27:38.444Z", "current_file": "onnx/vector_estimator.onnx", "message": "Stalled: no data for 16 s · 26 MB of 56 MB · still trying, it resumes by itself when data flows again", "error": null, "stalled_for_s": 15.3}
+{"job_id": "dl_f8684d929f51", "provider": "supertonic", "artifact": "supertonic-3", "status": "running", "state": "stalled", "bytes_done": 25942208, "bytes_total": 401276744, "size_unknown": false, "percent": 6.46, "bytes_per_second": 0.0, "eta_s": null, "updated_at": "2026-09-24T03:27:38.444Z", "current_file": "onnx/vector_estimator.onnx", "message": "Stalled: no data for 16 s · 26 MB of 401 MB · still trying, it resumes by itself when data flows again", "error": null, "stalled_for_s": 15.3}
 ```
 
 `verifying`:
@@ -3529,7 +3529,7 @@ One job per state, key fields only (sizes are illustrative).
 `done`:
 
 ```json
-{"job_id": "dl_e36dca05d05c", "provider": "supertonic", "artifact": "supertonic-3", "status": "completed", "state": "done", "bytes_done": 56185929, "bytes_total": 56185929, "size_unknown": false, "percent": 100.0, "bytes_per_second": null, "eta_s": 0, "updated_at": "2026-09-24T03:26:41.409Z", "current_file": null, "message": "Downloaded 56 MB in 15 s", "error": null, "stalled_for_s": null}
+{"job_id": "dl_e36dca05d05c", "provider": "supertonic", "artifact": "supertonic-3", "status": "completed", "state": "done", "bytes_done": 401276744, "bytes_total": 401276744, "size_unknown": false, "percent": 100.0, "bytes_per_second": null, "eta_s": 0, "updated_at": "2026-09-24T03:26:41.409Z", "current_file": null, "message": "Downloaded 401 MB in 3 min", "error": null, "stalled_for_s": null}
 ```
 
 `failed`:
@@ -3553,7 +3553,7 @@ One job per state, key fields only (sizes are illustrative).
 `download_group (stalled)`:
 
 ```json
-{"job_id": "grp_a1e3f58d4cd0", "status": "running", "state": "stalled", "bytes_done": 6090947408, "bytes_total": 6121191129, "size_unknown": false, "percent": 99.51, "bytes_per_second": 0.0, "eta_s": null, "updated_at": "2026-09-24T03:25:34.055Z", "message": "Stalled: no data for 16 s from supertonic supertonic-3 · 2 of 3 ready · 6.1 GB of 6.1 GB · 0 B/s", "error": null, "kind": "download_group", "files": [{"bytes_done": 6000000000, "bytes_total": 6000000000, "job_id": "dl_ec66382e80a1", "name": "lmstudio qwen/qwen3.5-9b@q4_k_m", "state": "done"}, {"bytes_done": 25942208, "bytes_total": 56185929, "job_id": "dl_2b7360ab34fe", "name": "supertonic supertonic-3", "state": "stalled"}, {"bytes_done": 65005200, "bytes_total": 65005200, "job_id": "dl_f46f63c01098", "name": "mlx-gen AbstractFramework/flux.2-klein-4b-8bit", "state": "done"}], "children": "[3 child jobs]"}
+{"job_id": "grp_a1e3f58d4cd0", "status": "running", "state": "stalled", "bytes_done": 6090947408, "bytes_total": 6466281944, "size_unknown": false, "percent": 94.2, "bytes_per_second": 0.0, "eta_s": null, "updated_at": "2026-09-24T03:25:34.055Z", "message": "Stalled: no data for 16 s from supertonic supertonic-3 · 2 of 3 ready · 6.1 GB of 6.5 GB · 0 B/s", "error": null, "kind": "download_group", "files": [{"bytes_done": 6000000000, "bytes_total": 6000000000, "job_id": "dl_ec66382e80a1", "name": "lmstudio qwen/qwen3.5-9b@q4_k_m", "state": "done"}, {"bytes_done": 25942208, "bytes_total": 401276744, "job_id": "dl_2b7360ab34fe", "name": "supertonic supertonic-3", "state": "stalled"}, {"bytes_done": 65005200, "bytes_total": 65005200, "job_id": "dl_f46f63c01098", "name": "mlx-gen AbstractFramework/flux.2-klein-4b-8bit", "state": "done"}], "children": "[3 child jobs]"}
 ```
 
 ## What each source reports
@@ -6748,6 +6748,10 @@ call is an ordinary tool call recorded in the run's ledger. Your own send-email 
 automations (fixed templates you wrote), notifications and recovery codes do not need the switch:
 they only need a connected, allowed account.
 
+A run started without a tool list (`POST /runs/start` with no `input_data.tools`) gets its
+workflow's default tools plus the email tools while your agent email tools are active; an explicit
+tool list, even an empty one, is used as given.
+
 ## Recipient policy and send limits
 
 Every send — an agent's `send_email`, an automation's send action, a notification, a recovery
@@ -6762,7 +6766,10 @@ code — goes through the same checks, in this order:
 3. the **send limits**: 20 messages per rolling hour and 100 per day by default, editable by you.
 
 On top of the policy, the approval gate still decides whether an agent's send runs unattended: a
-send to anyone but you (or an automation's pre-authorised recipients) waits for your approval.
+send to anyone but you (or an automation's pre-authorised recipients) waits for your approval, and
+a send to you runs without asking in chats and automations alike. "You" is the address My email
+shows as your registered address: the email on your user account (or the gateway's registered
+address for the operator), else the connected mailbox's own address.
 
 ```bash
 curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/policy" \
@@ -6789,6 +6796,16 @@ configuration and the send-email action.
 
 Inbound mail is data, never instructions: it reaches a model inside a fixed "untrusted" frame, and
 nothing it says can widen who a run may mail or which tools it has.
+
+An automation never runs on mail the framework sent itself. Every message sent automatically
+through your account (notifications, recovery codes, and anything an automation sends, including
+its send-email action) carries `Auto-Submitted: auto-generated` (RFC 3834) and an
+`X-AbstractFramework-Automation` header, and its Message-ID is recorded in your outbox. The
+watcher skips such messages from your own address, and a recorded Message-ID even when a server
+dropped the headers, so a filter that matches an automation's own result email ("Email me the
+result") never re-triggers it. By default the trigger also ignores automatic mail from others
+(auto-replies, vacation notices, other automations); set `"auto_submitted": "admit"` in its
+configuration to run on those too.
 
 ## Notifications
 
@@ -6903,7 +6920,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.8.0
+docker pull ghcr.io/lpalbou/abstractgateway:0.8.1
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -6911,7 +6928,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.8.0-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.8.1-gpu
 ```
 
 The image names `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -7193,7 +7210,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.8.0-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.8.1-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -7357,7 +7374,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.8.0
+docker pull ghcr.io/lpalbou/abstractgateway:0.8.1
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -7365,7 +7382,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.8.0-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.8.1-gpu
 ```
 
 The `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR names are
@@ -7699,7 +7716,7 @@ Related repos:
 ## Prerequisites
 
 - Python `>=3.10` (see `pyproject.toml`)
-- AbstractRuntime 0.8.0 or later, installed with the gateway; the gateway
+- AbstractRuntime 0.8.1 or later, installed with the gateway; the gateway
   refuses to start on an older runtime and names the version to install
 - Workflows: none needed to start. The gateway serves its shipped bundles
   ([shipped-workflows.md](docs/shipped-workflows.md)); you can point it at your
@@ -7890,7 +7907,7 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.8.0-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:0.8.1-gpu` with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -8423,6 +8440,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.8.1] - 2026-09-30
+
+Needs AbstractCore 2.20.2 and AbstractRuntime 0.8.1 (the floors are raised; the terminal console
+stays 0.12.0).
+
+### Fixed
+- An "Email me the result" automation whose filter matches its own result email no longer
+  re-triggers itself. Notices and recovery codes are sent with `Auto-Submitted: auto-generated`
+  and `X-AbstractFramework-Automation`, as is every send an automation makes through your
+  account; each such Message-ID is recorded in the outbox, and the watcher never admits your own
+  automatic mail (the poll result counts it in `own_automatic`). The trigger also skips automatic
+  mail from others by default (`auto_submitted: "skip"`).
+- Text-to-speech, transcription and image requests no longer fail when the text default cannot be
+  built (for example an MLX route on a light install): media-only requests run without the text
+  model.
+- The runner no longer ticks the child runs a media route executes in-process; such a child was
+  failed as "workflow ... not registered (after 40 consecutive attempts)", sometimes after it had
+  succeeded.
+- A chat's `send_email` to your own address runs without an approval wait under the default
+  policy, and runs and automations use the registered address My email shows (your user email,
+  else the connected mailbox's address); an administrator without an email on their user record
+  had every self-send parked.
+- A run started without `input_data.tools` gets the workflow's default tools plus the email tools
+  when your agent email tools are active; an explicit tool list is used as given.
+- A capability-default save that moves a route to another provider without naming options drops
+  the old engine's speculation request (an LM Studio text route no longer keeps an MLX route's
+  `speculation: native_mtp`).
+
+### Docs
+- Model downloads: the Supertonic 3 examples show its real size (about 401 MB).
+- Email: automatic mail and the loop guard, who "you" is for sends without approval, the default
+  tool list.
 
 ## [0.8.0] - 2026-09-30
 

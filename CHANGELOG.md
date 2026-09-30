@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-09-30
+
+Needs AbstractCore 2.20.2 and AbstractRuntime 0.8.1 (the floors are raised; the terminal console
+stays 0.12.0).
+
+### Fixed
+- An "Email me the result" automation whose filter matches its own result email no longer
+  re-triggers itself. Notices and recovery codes are sent with `Auto-Submitted: auto-generated`
+  and `X-AbstractFramework-Automation`, as is every send an automation makes through your
+  account; each such Message-ID is recorded in the outbox, and the watcher never admits your own
+  automatic mail (the poll result counts it in `own_automatic`). The trigger also skips automatic
+  mail from others by default (`auto_submitted: "skip"`).
+- Text-to-speech, transcription and image requests no longer fail when the text default cannot be
+  built (for example an MLX route on a light install): media-only requests run without the text
+  model.
+- The runner no longer ticks the child runs a media route executes in-process; such a child was
+  failed as "workflow ... not registered (after 40 consecutive attempts)", sometimes after it had
+  succeeded.
+- A chat's `send_email` to your own address runs without an approval wait under the default
+  policy, and runs and automations use the registered address My email shows (your user email,
+  else the connected mailbox's address); an administrator without an email on their user record
+  had every self-send parked.
+- A run started without `input_data.tools` gets the workflow's default tools plus the email tools
+  when your agent email tools are active; an explicit tool list is used as given.
+- A capability-default save that moves a route to another provider without naming options drops
+  the old engine's speculation request (an LM Studio text route no longer keeps an MLX route's
+  `speculation: native_mtp`).
+
+### Docs
+- Model downloads: the Supertonic 3 examples show its real size (about 401 MB).
+- Email: automatic mail and the loop guard, who "you" is for sends without approval, the default
+  tool list.
+
 ## [0.8.0] - 2026-09-30
 
 AbstractGateway 0.8.0 ships with the terminal console 0.12.0 (see

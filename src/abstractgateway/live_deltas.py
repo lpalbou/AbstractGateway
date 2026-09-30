@@ -89,7 +89,9 @@ _role_lock = threading.Lock()
 # 0.7.3: an explicitly loaded image/video model serves generation in-process.
 # 0.8.0: per-user email (framework backlog 0992): the run binding and host resolver
 # (`Runtime.set_email_context_resolver` / `set_email_binding` / `set_event_inbox`).
-ABSTRACTRUNTIME_FLOOR = "0.8.0"
+# 0.8.1: the run facade's in-process children (`run_facade.inline_run_active`, the runner skips
+# them) and the feeder's own-automatic-mail guard (`EmailInboxFeeder(is_own_sent=...)`).
+ABSTRACTRUNTIME_FLOOR = "0.8.1"
 
 
 class LiveDeltaError(RuntimeError):
@@ -859,6 +861,19 @@ def require_runtime_features(runtime: Any) -> None:
         missing.append("the session history window (abstractruntime.session_history.HISTORY_REPLAY_MAX_TOKENS)")
     if not callable(getattr(runtime, "set_email_context_resolver", None)) or not callable(getattr(runtime, "set_event_inbox", None)):
         missing.append("per-user email (Runtime.set_email_context_resolver / set_event_inbox)")
+    try:
+        from abstractruntime.integrations.abstractcore.run_facade import inline_run_active  # noqa: F401
+    except ImportError:
+        missing.append("in-process media children (abstractruntime.integrations.abstractcore.run_facade.inline_run_active)")
+    try:
+        import inspect
+
+        from abstractruntime.email import EmailInboxFeeder
+
+        if "is_own_sent" not in inspect.signature(EmailInboxFeeder.__init__).parameters:
+            missing.append("the mail watcher's own-automatic-mail guard (EmailInboxFeeder(is_own_sent=...))")
+    except ImportError:
+        missing.append("the mail watcher (abstractruntime.email.EmailInboxFeeder)")
     if missing:
         try:
             from importlib.metadata import version
