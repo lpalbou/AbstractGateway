@@ -295,6 +295,7 @@ pub fn open(ctx: &Ctx, cx: Scope) {
         let theme = use_theme(mcx);
         let store = ctx2.store;
         let op = store.op;
+        let op_notice = store.notice;
         let is_admin = admin(&ctx2);
 
         let c_p = ctx2.clone();
@@ -410,7 +411,7 @@ pub fn open(ctx: &Ctx, cx: Scope) {
             // Wrapped to the panel (never cut): at 80 columns the one-line
             // key list lost "r reload · Esc close".
             let keys = if is_admin {
-                "p pause/resume · R restart · Q quit · u check for update · U install update · L start at login · r reload · Esc close"
+                "space switch · p Workflows paused · L Start at login · R restart · Q quit · u check for update · U install update · r reload · Esc close"
             } else {
                 "only an admin can pause, restart, quit or update this gateway · r reload · Esc close"
             };
@@ -437,15 +438,18 @@ pub fn open(ctx: &Ctx, cx: Scope) {
             let b_l = c_l.clone();
             let (kb_r, kb_q, kb_s) = (k_r.clone(), k_q.clone(), k_s.clone());
             let kb_l = k_l.clone();
-            // Rebuilt when the runner answer changes: the pause button
-            // names the verb it will perform (web parity).
-            // TWO rows (process verbs, update verbs): one row of five ran
-            // past the panel border at 80 columns.
-            dyn_view_scoped(LayoutStyle::column().h(2).shrink(0.0), move |bcx| {
+            // Rebuilt when the runner / start-at-login answers change.
+            // THREE rows: the two switches (persistent states), the
+            // process verbs, the update verbs (one row ran past the panel
+            // border at 80 columns).
+            dyn_view_scoped(LayoutStyle::column().h(3).shrink(0.0), move |bcx| {
                 let t = theme.get().tokens;
-                let label = match op.runner.get() {
-                    Loadable::Ready(r) if r.paused => "Resume workflows",
-                    _ => "Pause workflows",
+                let runner = op.runner.get();
+                let paused = cx.signal(matches!(&runner, Loadable::Ready(r) if r.paused));
+                let paused_na = match &runner {
+                    Loadable::Ready(_) => None,
+                    Loadable::Failed(e) => Some(format!("unavailable: {e}")),
+                    _ => Some("reading…".to_string()),
                 };
                 let (b_p, b_r, b_q, b_u, b_s) = (
                     b_p.clone(),
@@ -455,14 +459,46 @@ pub fn open(ctx: &Ctx, cx: Scope) {
                     b_s.clone(),
                 );
                 let (kb_r, kb_q, kb_s) = (kb_r.clone(), kb_q.clone(), kb_s.clone());
-                let process = Element::new()
-                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                let login = op.start_at_login.get();
+                let login_on = cx.signal(matches!(&login, Loadable::Ready(st) if st.enabled));
+                let login_na = match &login {
+                    Loadable::Ready(st) => st.switch_unavailable(),
+                    Loadable::Failed(e) => Some(format!("unavailable: {e}")),
+                    _ => Some("reading…".to_string()),
+                };
+                let repair = login.ready().and_then(|st| st.repair_label());
+                let mut switches = Element::new()
+                    .style(LayoutStyle::row().gap(3).h(1).shrink(0.0))
                     .child(
-                        Button::new(label)
-                            .on_click(move || toggle_pause(&b_p))
+                        super::switch::Switch::new("Workflows paused", paused)
+                            .unavailable(paused_na)
+                            .notice(op_notice)
+                            .on_request(move |_| toggle_pause(&b_p))
                             .element(bcx, &t)
                             .build(),
-                    )
+                    );
+                {
+                    let (b_l, kb_l) = (b_l.clone(), kb_l.clone());
+                    switches = switches.child(
+                        super::switch::Switch::new("Start at login", login_on)
+                            .unavailable(login_na)
+                            .notice(op_notice)
+                            .on_request(move |_| toggle_start_at_login(cx, &b_l, &*kb_l))
+                            .element(bcx, &t)
+                            .build(),
+                    );
+                }
+                if let Some(label) = repair {
+                    let (b_l, kb_l) = (b_l.clone(), kb_l.clone());
+                    switches = switches.child(
+                        Button::new(label)
+                            .on_click(move || toggle_start_at_login(cx, &b_l, &*kb_l))
+                            .element(bcx, &t)
+                            .build(),
+                    );
+                }
+                let process = Element::new()
+                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
                     .child(
                         Button::new("Restart…")
                             .on_click(move || restart(cx, &b_r, &*kb_r))
@@ -476,11 +512,7 @@ pub fn open(ctx: &Ctx, cx: Scope) {
                             .build(),
                     )
                     .build();
-                let login_label = match op.start_at_login.get() {
-                    Loadable::Ready(st) => st.verb().map(|v| format!("Start at login: {v}…")),
-                    _ => None,
-                };
-                let mut update = Element::new()
+                let update = Element::new()
                     .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
                     .child(
                         Button::new("Check for update")
@@ -494,18 +526,10 @@ pub fn open(ctx: &Ctx, cx: Scope) {
                             .element(bcx, &t)
                             .build(),
                     );
-                if let Some(label) = login_label {
-                    let (b_l, kb_l) = (b_l.clone(), kb_l.clone());
-                    update = update.child(
-                        Button::new(label)
-                            .on_click(move || toggle_start_at_login(cx, &b_l, &*kb_l))
-                            .element(bcx, &t)
-                            .build(),
-                    );
-                }
                 let update = update.build();
                 Element::new()
-                    .style(LayoutStyle::column().gap(0).h(2).shrink(0.0))
+                    .style(LayoutStyle::column().gap(0).h(3).shrink(0.0))
+                    .child(switches.build())
                     .child(process)
                     .child(update)
                     .build()

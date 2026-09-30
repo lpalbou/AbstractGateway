@@ -1,7 +1,7 @@
 //! Per-user email routes (framework backlog 0992): the caller's own
 //! mailbox (`/me/email*`), notification preferences (`/me/notifications*`)
-//! and the admin's per-user switch (`/admin/users/{id}/email`, status and
-//! on/off only — administrators never read mail).
+//! and the admin's per-user status and override reset
+//! (`/admin/users/{id}/email` — administrators never read mail).
 //!
 //! A child module of `api` (one `#[path]` line there) so it reaches the
 //! client's private transport without widening it.
@@ -19,6 +19,72 @@ impl GatewayClient {
     /// `PUT /me/email` — test, then store (the password travels in the body only).
     pub fn connect_my_email(&self, body: &Value) -> ApiResult<Value> {
         self.send("PUT", "/me/email", body, true)
+    }
+
+    /// `POST /me/email/discover {"address"}` — the mailbox's IMAP/SMTP
+    /// servers found from the address (CONTRACT §5.3; nothing is stored).
+    pub fn discover_my_email(&self, address: &str) -> ApiResult<Value> {
+        self.send(
+            "POST",
+            "/me/email/discover",
+            &json!({ "address": address }),
+            true,
+        )
+    }
+
+    /// `PUT /me/email/address {"address"}` — my Email address (sign-in
+    /// codes, notifications; not a mailbox). `""` clears it.
+    pub fn set_my_email_address(&self, address: &str) -> ApiResult<Value> {
+        self.send(
+            "PUT",
+            "/me/email/address",
+            &json!({ "address": address }),
+            false,
+        )
+    }
+
+    /// `PUT /me/email/notifications {job_failed?, approval_needed?}` — the
+    /// two notification switches; answers like `GET /me/email`.
+    pub fn set_my_notification_switches(&self, body: &Value) -> ApiResult<Value> {
+        self.send("PUT", "/me/email/notifications", body, false)
+    }
+
+    /// `GET /session/recovery` (public) — is "Forgot your token?" offered.
+    pub fn recovery_available(&self) -> ApiResult<Value> {
+        self.get("/session/recovery", false)
+    }
+
+    /// `POST /session/recovery/request` (public) — email a code; the answer
+    /// is honest (`sent`, `to`, `message`, `reason_code`, `retry_after_s`).
+    pub fn recovery_request(
+        &self,
+        user_id: &str,
+        tenant_id: &str,
+        purpose: &str,
+    ) -> ApiResult<Value> {
+        self.send(
+            "POST",
+            "/session/recovery/request",
+            &json!({"user_id": user_id, "tenant_id": tenant_id, "purpose": purpose}),
+            true,
+        )
+    }
+
+    /// `POST /session/recovery/redeem` (public) — the emailed code for a
+    /// session; with `reset_token` the answer carries the new `token`.
+    pub fn recovery_redeem(
+        &self,
+        user_id: &str,
+        tenant_id: &str,
+        purpose: &str,
+        code: &str,
+    ) -> ApiResult<Value> {
+        self.send(
+            "POST",
+            "/session/recovery/redeem",
+            &json!({"user_id": user_id, "tenant_id": tenant_id, "purpose": purpose, "code": code}),
+            true,
+        )
     }
 
     /// `POST /me/email/test` — per-leg `{imap, smtp, ok}`.
@@ -39,6 +105,17 @@ impl GatewayClient {
     /// `PUT /me/email/limits` — `{per_hour, per_day}`.
     pub fn set_my_email_limits(&self, body: &Value) -> ApiResult<Value> {
         self.send("PUT", "/me/email/limits", body, false)
+    }
+
+    /// `PUT /me/email/folder {"folder"}` — the IMAP folder read (empty =
+    /// INBOX); 404 `email_not_configured` without a mailbox.
+    pub fn set_my_email_folder(&self, folder: &str) -> ApiResult<Value> {
+        self.send(
+            "PUT",
+            "/me/email/folder",
+            &json!({ "folder": folder }),
+            false,
+        )
     }
 
     /// `PUT /me/email/enabled` — the user's own switch.
@@ -101,13 +178,11 @@ impl GatewayClient {
         )
     }
 
-    /// `PUT /admin/users/{id}/email` (admin) — turn email on/off for a user.
-    pub fn set_user_email_enabled(
-        &self,
-        user_id: &str,
-        tenant_id: &str,
-        enabled: bool,
-    ) -> ApiResult<Value> {
+    /// `PUT /admin/users/{id}/email {"inherit": [...]}` (admin) — clear an
+    /// old per-user override so the user follows the gateway-wide
+    /// "Mailboxes for users" switch again (a one-shot Reset; the console
+    /// never creates per-user overrides).
+    pub fn reset_user_mailbox_override(&self, user_id: &str, tenant_id: &str) -> ApiResult<Value> {
         self.send(
             "PUT",
             &format!(
@@ -115,26 +190,7 @@ impl GatewayClient {
                 urlencode(user_id),
                 urlencode(tenant_id)
             ),
-            &json!({ "enabled": enabled }),
-            false,
-        )
-    }
-
-    /// `PUT /admin/users/{id}/email` (admin) — make Agent email tools available (or not).
-    pub fn set_user_email_agent_tools(
-        &self,
-        user_id: &str,
-        tenant_id: &str,
-        available: bool,
-    ) -> ApiResult<Value> {
-        self.send(
-            "PUT",
-            &format!(
-                "/admin/users/{}/email?tenant_id={}",
-                urlencode(user_id),
-                urlencode(tenant_id)
-            ),
-            &json!({ "agent_tools": available }),
+            &json!({ "inherit": ["email", "email_agent_tools"] }),
             false,
         )
     }

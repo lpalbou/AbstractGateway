@@ -76,8 +76,8 @@ KEYS: Tab focus · Enter activate · Ctrl+N next step · Ctrl+P / Esc back
       Ctrl+G setup guide (browse: reopen; guide: go to any step, leave,
       or Skip setup) ·
       r refresh · F1 / ? About · F2 docs assistant (signed in) ·
-      F3 gateway host (pause/resume, restart, quit, update, start at
-      login) ·
+      F3 gateway host (switches Workflows paused and Start at login;
+      restart, quit, update) ·
       Ctrl+L repaint · q / Ctrl+C quit
 
 SCREENS: 1 Connection · 2 Providers · 3 Routes · 4 Users & Entities ·

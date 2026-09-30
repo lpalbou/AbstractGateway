@@ -20,7 +20,7 @@ use crate::worker::Cmd;
 /// data of deleted users (`/admin/runtime-reservations`). The entity
 /// roster verbs stay open (their own admin-only acts are gated inside the
 /// manage menu).
-pub const ADMIN_KEYS: &[&str] = &["a", "e", "t", "d", "v"];
+pub const ADMIN_KEYS: &[&str] = &["a", "e", "t", "d", "v", "x"];
 
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
@@ -48,7 +48,6 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ctx_mypolicy = ctx.clone();
     let ctx_myemail = ctx.clone();
     let ctx_mail = ctx.clone();
-    let ctx_tools = ctx.clone();
     let ctx_summon = ctx.clone();
     let ctx_talk = ctx.clone();
     let ctx_tpl = ctx.clone();
@@ -156,45 +155,30 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         // The caller's OWN mailbox (web: "My email" on the Users tab) — any
         // human principal, see ui/my_email.rs.
         .shortcut(KeyChord::plain(Key::Char('@')), move |_| super::my_email::open(cx, &ctx_myemail))
-        // The admin's per-user email switch (status + on/off only; the admin
-        // never reads a user's mail).
-        // The admin's per-user "Agent email tools available" capability.
-        .shortcut(KeyChord::plain(Key::Char('X')), move |_| {
-            if !super::util::admin_gate(&store, "making agent email tools available to a user") {
-                return;
-            }
-            if let Some(u) = selected_user(&ctx_tools) {
-                ctx_tools.send(crate::worker::Cmd::Operator(crate::worker::operator::OpCmd::Email {
-                    action: crate::worker::operator::EmailAction::AdminSetAgentTools {
-                        user_id: u.user_id.clone(),
-                        tenant_id: u.tenant_id.clone(),
-                        available: !u.mailbox_agent_tools,
-                    },
-                    form_id: None,
-                }));
-            } else {
-                store
-                    .notice
-                    .set(Some("no user selected — nobody to switch agent email tools for".into()));
-            }
-        })
+        // Reset an old per-user mailbox override (a one-shot action; the
+        // console never creates per-user overrides — "Mailboxes for users"
+        // is the one switch, state-toggles §7).
         .shortcut(KeyChord::plain(Key::Char('x')), move |_| {
-            if !super::util::admin_gate(&store, "turning email on or off for a user") {
+            if !super::util::admin_gate(&store, "resetting a user's mailbox override") {
                 return;
             }
-            if let Some(u) = selected_user(&ctx_mail) {
-                ctx_mail.send(crate::worker::Cmd::Operator(crate::worker::operator::OpCmd::Email {
-                    action: crate::worker::operator::EmailAction::AdminSetEnabled {
-                        user_id: u.user_id.clone(),
-                        tenant_id: u.tenant_id.clone(),
-                        enabled: !u.mailbox_admin_enabled,
-                    },
-                    form_id: None,
-                }));
-            } else {
-                store
+            match selected_user(&ctx_mail) {
+                Some(u) if u.mailbox_view().1 => {
+                    ctx_mail.send(crate::worker::Cmd::Operator(crate::worker::operator::OpCmd::Email {
+                        action: crate::worker::operator::EmailAction::AdminResetMailbox {
+                            user_id: u.user_id.clone(),
+                            tenant_id: u.tenant_id.clone(),
+                        },
+                        form_id: None,
+                    }));
+                }
+                Some(u) => store.notice.set(Some(format!(
+                    "{} has no mailbox override — nothing to reset",
+                    u.user_id
+                ))),
+                None => store
                     .notice
-                    .set(Some("no user selected — nobody to switch email for".into()));
+                    .set(Some("no user selected — nothing to reset".into())),
             }
         })
         .shortcut(KeyChord::plain(Key::Char('i')), move |_| {
@@ -255,6 +239,9 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         .grow(1.0)
                         .padding(Edges::all(1)),
                 )
+                // The administrator's ONE email switch (+ Advanced), above
+                // the table (DESIGN §5.2).
+                .child(email_switches(cx, ctx, t))
                 .child(dyn_view_scoped(LayoutStyle::default().grow(1.0).min_h(1), {
                     let ctx_act = ctx.clone();
                     move |gcx| {
@@ -290,13 +277,68 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                             |d: &crate::store::UsersData| d.humans.is_empty(),
                             empty_text,
                             |d| {
-                                users_table(gcx, &tt, &d.humans, ui.user_sel, move |_| {
-                                    // Activation (Enter / Space / double-
-                                    // click) = the `e` edit path, one body.
-                                    edit_selected_user(cx, &ctx_act);
-                                })
+                                let me = own_key(&store);
+                                let ctx_space = ctx_act.clone();
+                                users_table(
+                                    gcx,
+                                    &tt,
+                                    &d.humans,
+                                    ui.user_sel,
+                                    me,
+                                    move |_| {
+                                        // Activation (Enter / double-click) =
+                                        // the `e` edit path, one body.
+                                        edit_selected_user(cx, &ctx_act);
+                                    },
+                                    // Space switches the row's one switch
+                                    // (Active), state-toggles rule.
+                                    move || switch_selected_active(cx, &ctx_space),
+                                )
                             },
                         )
+                    }
+                }))
+                // The selected user's switch, highlighted (the table's cells
+                // carry the marker only — the engine Table has no per-cell
+                // ink), with the keys that act on the row.
+                .child(dyn_view_scoped(LayoutStyle::line(1).shrink(0.0), {
+                    let ctx_sw = ctx.clone();
+                    move |scx| {
+                        if store.conn.with(ConnPhase::is_known_non_admin) {
+                            return line(vec![span(String::new(), tt.text)]);
+                        }
+                        let idx = ui.user_sel.get();
+                        let Some(u) = store
+                            .users
+                            .with(|d| d.ready().and_then(|d| d.humans.get(idx).cloned()))
+                        else {
+                            return line(vec![span(String::new(), tt.text)]);
+                        };
+                        let own = own_key(&store)
+                            .map(|k| k == (u.user_id.clone(), u.tenant_id.clone()))
+                            .unwrap_or(false);
+                        let on = scx.signal(u.enabled);
+                        let ctx_req = ctx_sw.clone();
+                        Element::new()
+                            .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
+                            .child(line(vec![span_bold(u.user_id.clone(), tt.text)]))
+                            .child(
+                                super::switch::Switch::new("Active", on)
+                                    .unavailable(own.then(|| OWN_ACCOUNT_REASON.to_string()))
+                                    .notice(store.notice)
+                                    .on_request(move |_| switch_selected_active(cx, &ctx_req))
+                                    .element(scx, &tt)
+                                    .build(),
+                            )
+                            .child(line(vec![span(
+                                if u.mailbox_view().1 {
+                                    "  space switches Active · e edits · x resets the mailbox override"
+                                } else {
+                                    "  space switches Active · e edits"
+                                },
+                                tt.text_faint,
+                            )]))
+                            .build()
                     }
                 }))
                 .element(t)
@@ -675,63 +717,314 @@ fn selected_user(ctx: &Ctx) -> Option<UserRow> {
         .with_untracked(|d| d.ready().and_then(|d| d.humans.get(idx).cloned()))
 }
 
+/// "Mailboxes for users" — the administrator's one email switch.
+pub const MAILBOXES_LABEL: &str = "Mailboxes for users";
+pub const MAILBOXES_HELP: &str = "Users may connect their own mailbox for their agents, automations and notifications. You never see anyone's mail.";
+pub const AGENT_TOOLS_LABEL: &str = "Agent email tools for users";
+pub const AGENT_TOOLS_HELP: &str = "Each user still opts in on their own page.";
+pub const RECOVERY_LABEL: &str = "Sign-in by email";
+pub const RECOVERY_HELP: &str = "Shows 'Forgot your token?' on the sign-in page. Whoever controls a user's mailbox can then sign in as that user.";
+
+/// The gateway-wide email switches (`/admin/email/capabilities`): each
+/// applies at once, the status line names the new state; no Save.
+fn email_switches(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
+    use crate::worker::operator::{EmailAction, OpCmd};
+    let store = ctx.store;
+    let ui = ctx.ui;
+    let tt = *t;
+    let form_id = crate::worker::next_form_id();
+    let busy = cx.signal(Option::<&'static str>::None);
+    let advanced = cx.signal(false);
+    let sw_mail = cx.signal(true);
+    let sw_tools = cx.signal(true);
+    let sw_rec = cx.signal(true);
+    // Read the defaults once an admin is here (and again after a reset).
+    {
+        let ctx_load = ctx.clone();
+        cx.effect(move || {
+            let admin = store.conn.with(ConnPhase::is_admin);
+            let not_asked = store
+                .op
+                .email_caps
+                .with(|c| matches!(c, Loadable::NotAsked));
+            if admin && not_asked {
+                store.op.email_caps.set(Loadable::Loading);
+                ctx_load.send(Cmd::Operator(OpCmd::Email {
+                    action: EmailAction::LoadCaps,
+                    form_id: None,
+                }));
+            }
+        });
+    }
+    cx.effect(move || {
+        if let Loadable::Ready(c) = store.op.email_caps.get() {
+            sw_mail.set(c.email);
+            sw_tools.set(c.agent_tools);
+            sw_rec.set(c.recovery);
+        }
+    });
+    cx.effect(move || {
+        if let Some((fid, _)) = ui.write_done.get() {
+            if fid == form_id {
+                ui.write_done.set(None);
+                busy.set(None);
+            }
+        }
+    });
+    let request = {
+        let ctx = ctx.clone();
+        move |key: &'static str, want: bool| {
+            if !super::util::admin_gate(&ctx.store, "changing the gateway's email switches") {
+                return;
+            }
+            if busy.get_untracked().is_some() {
+                return;
+            }
+            busy.set(Some(key));
+            ctx.send(Cmd::Operator(OpCmd::Email {
+                action: EmailAction::CapsDefaults(json!({ key: want }).into()),
+                form_id: Some(form_id),
+            }));
+        }
+    };
+    let row = move |scx: Scope,
+                    key: &'static str,
+                    label: &'static str,
+                    help: &'static str,
+                    sig: Signal<bool>,
+                    indent: bool| {
+        let request = request.clone();
+        let unavailable = match store.op.email_caps.get_untracked() {
+            Loadable::Failed(e) => Some(format!("couldn't read the email switches: {e}")),
+            Loadable::Ready(_) => None,
+            _ => Some("reading…".to_string()),
+        };
+        // The switch on its row, its description under it (wrapped, never
+        // cut: "Sign-in by email" carries a security warning).
+        let pad = if indent { 2 } else { 0 };
+        let w = (abstracttui::app::use_viewport(scx).get_untracked().w - 10 - pad).max(20) as usize;
+        let mut col = Element::new()
+            .style(LayoutStyle::column().gap(0).shrink(0.0))
+            .child(
+                // Indented by padding (a spacer beside a full-width switch
+                // pushed it over the block border).
+                Element::new()
+                    .style(LayoutStyle::column().h(1).shrink(0.0).padding(Edges {
+                        left: pad,
+                        right: 0,
+                        top: 0,
+                        bottom: 0,
+                    }))
+                    .child(
+                        super::switch::Switch::new(label, sig)
+                            .fill()
+                            .unavailable(unavailable)
+                            .busy_when(move || busy.get() == Some(key))
+                            .notice(store.notice)
+                            .on_request(move |want| request(key, want))
+                            .element(scx, &tt)
+                            .build(),
+                    )
+                    .build(),
+            );
+        let lead = " ".repeat(pad as usize + 4);
+        for l in super::util::wrap_text(help, w) {
+            col = col.child(line(vec![span(format!("{lead}{l}"), tt.text_faint)]));
+        }
+        col.build()
+    };
+    dyn_view_scoped(LayoutStyle::column().gap(0).shrink(0.0), move |scx| {
+        if !store.conn.with(ConnPhase::is_admin) {
+            return Element::new().style(LayoutStyle::default().h(0)).build();
+        }
+        // Rebuilt when the read lands or fails (the unavailable reason),
+        // or Advanced opens — never by a switch press.
+        let _ = store.op.email_caps.with(|c| match c {
+            Loadable::Ready(_) => 1,
+            Loadable::Failed(_) => 2,
+            _ => 0,
+        });
+        let open = advanced.get();
+        let mut col = Element::new()
+            .style(LayoutStyle::column().gap(0).shrink(0.0))
+            .child(row(
+                scx,
+                "email",
+                MAILBOXES_LABEL,
+                MAILBOXES_HELP,
+                sw_mail,
+                false,
+            ))
+            .child(
+                Button::new(if open {
+                    "Advanced ▾"
+                } else {
+                    "Advanced ▸  agent email tools, sign-in by email"
+                })
+                .on_click(move || advanced.update(|v| *v = !*v))
+                .element(scx, &tt)
+                .build(),
+            );
+        if open {
+            col = col
+                .child(row(
+                    scx,
+                    "email_agent_tools",
+                    AGENT_TOOLS_LABEL,
+                    AGENT_TOOLS_HELP,
+                    sw_tools,
+                    true,
+                ))
+                .child(row(
+                    scx,
+                    "email_recovery",
+                    RECOVERY_LABEL,
+                    RECOVERY_HELP,
+                    sw_rec,
+                    true,
+                ));
+        }
+        col.child(line(vec![span(String::new(), tt.text)])).build()
+    })
+}
+
+/// Why your own row's Active switch is unavailable (state-toggles §4).
+pub const OWN_ACCOUNT_REASON: &str = "You can't deactivate your own account.";
+
+/// The signed-in principal's `(user_id, tenant_id)`.
+fn own_key(store: &crate::store::Store) -> Option<(String, String)> {
+    store.conn.with_untracked(|c| match c {
+        ConnPhase::Connected(id) | ConnPhase::Verifying(id) => {
+            Some((id.user_id.clone(), id.tenant_id.clone()))
+        }
+        _ => None,
+    })
+}
+
+/// The Active switch of the selected user: OFF asks first (the user is
+/// signed out and cannot sign in), ON applies at once; your own row is
+/// unavailable, with the reason.
+fn switch_selected_active(cx: Scope, ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "switching a user's Active state") {
+        return;
+    }
+    let Some(u) = selected_user(ctx) else {
+        ctx.store
+            .notice
+            .set(Some("no user selected — nothing to switch".into()));
+        return;
+    };
+    if own_key(&ctx.store) == Some((u.user_id.clone(), u.tenant_id.clone())) {
+        ctx.store.notice.set(Some(OWN_ACCOUNT_REASON.into()));
+        return;
+    }
+    let send = {
+        let ctx = ctx.clone();
+        let u = u.clone();
+        move |active: bool| {
+            ctx.send(Cmd::PatchUser {
+                user_id: u.user_id.clone(),
+                tenant_id: u.tenant_id.clone(),
+                body: json!({ "enabled": active }).into(),
+                form_id: None,
+            })
+        }
+    };
+    if u.enabled {
+        super::confirm_danger(
+            cx,
+            ctx.ui,
+            format!(
+                "Deactivate {}? They are signed out until you turn Active back on.",
+                u.user_id
+            ),
+            "Deactivate",
+            "Cancel",
+            move || send(false),
+        );
+    } else {
+        send(true);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn users_table(
     cx: Scope,
     t: &TokenSet,
     data: &[UserRow],
     sel: Signal<usize>,
+    me: Option<(String, String)>,
     on_activate: impl FnMut(usize) + 'static,
+    mut on_space: impl FnMut() + 'static,
 ) -> View {
     let vw = abstracttui::app::use_viewport(cx).get().w;
     let wide = vw >= 104;
     let mut rows: Vec<Vec<String>> = data
         .iter()
         .map(|u| {
+            let own = me
+                .as_ref()
+                .map(|(id, tn)| *id == u.user_id && *tn == u.tenant_id)
+                .unwrap_or(false);
             let mut row = vec![
                 u.user_id.clone(),
-                u.tenant_id.clone(),
                 u.roles.join(", "),
-                if u.enabled { "yes".into() } else { "NO".into() },
-                u.runtime_id.clone(),
-            ];
-            if wide {
-                row.push(if u.email.is_empty() {
+                if u.email.is_empty() {
                     "—".into()
                 } else {
                     u.email.clone()
-                });
-                row.push(if u.mailbox_agent_tools {
-                    format!("{} · agent tools", u.mailbox)
+                },
+                u.mailbox_view().0,
+                u.runtime_id.clone(),
+                // The Active switch's marker (the row below the table
+                // carries the highlighted switch of the selected user).
+                if own {
+                    format!("{} (you)", super::switch::marker(u.enabled, true))
                 } else {
-                    u.mailbox.clone()
-                });
-                row.push(u.created_at.chars().take(10).collect());
+                    super::switch::marker(u.enabled, false).to_string()
+                },
+            ];
+            if wide {
+                row.push(u.tenant_id.clone());
             }
             row
         })
         .collect();
-    // User/runtime ids and email addresses discriminate on their TAIL;
-    // the role list and the enabled/created columns are bounded.
+    // User ids and addresses discriminate on their TAIL; the role list,
+    // the mailbox words and the switch marker are bounded.
     let mut rules = vec![
-        widths::ColRule::tail("user", 12),
-        widths::ColRule::tail("tenant", 8),
-        widths::ColRule::head("roles", 12),
-        widths::ColRule::head("enabled", 7),
-        widths::ColRule::tail("runtime", 12),
+        widths::ColRule::tail("user", 10),
+        widths::ColRule::head("role", 10),
+        widths::ColRule::tail("email address", 14),
+        widths::ColRule::head("mailbox", 14),
+        widths::ColRule::tail("runtime", 8),
+        widths::ColRule::head("active", 9),
     ];
     if wide {
-        rules.push(widths::ColRule::tail("email", 16));
-        rules.push(widths::ColRule::head("mailbox", 12));
-        rules.push(widths::ColRule::head("created", 10));
+        rules.push(widths::ColRule::tail("tenant", 8));
     }
     let cols = widths::columns(&rules, &mut rows, vw - widths::BLOCK_CHROME);
-    Table::new(cols)
+    let table = Table::new(cols)
         .rows(rows)
         .selection(sel)
         .on_activate(on_activate)
         .layout(LayoutStyle::default().grow(1.0))
         .element(cx, t)
         .autofocus()
+        .build();
+    // Space is the switch key (the Table would alias it to activation):
+    // caught on the way down, before the Table sees it.
+    Element::new()
+        .style(LayoutStyle::column().grow(1.0))
+        .on(abstracttui::ui::Phase::Capture, move |ectx, ev| {
+            if let abstracttui::ui::UiEvent::Key(k) = ev {
+                if k.key == Key::Char(' ') && k.mods.0 == 0 {
+                    on_space();
+                    ectx.stop_propagation();
+                }
+            }
+        })
+        .child(table)
         .build()
 }
 
@@ -854,14 +1147,13 @@ fn confirm_delete(cx: Scope, ctx: &Ctx, u: UserRow) {
 fn open_user_form(cx: Scope, ctx: &Ctx, existing: Option<UserRow>) {
     let create = existing.is_none();
     let ctx2 = ctx.clone();
-    super::open_form_guarded(ctx, cx, Size::new(66, 21), move |mcx, close, guard| {
+    super::open_form_guarded(ctx, cx, Size::new(84, 26), move |mcx, close, guard| {
         let theme = use_theme(mcx);
         let t0 = theme.get().tokens;
         let ex = existing.clone();
 
         let user_id = mcx.signal(ex.as_ref().map(|u| u.user_id.clone()).unwrap_or_default());
         let email = mcx.signal(ex.as_ref().map(|u| u.email.clone()).unwrap_or_default());
-        let enabled = mcx.signal(ex.as_ref().map(|u| u.enabled).unwrap_or(true));
         let roles = mcx.signal(
             ex.as_ref()
                 .map(|u| u.roles.clone())
@@ -873,6 +1165,8 @@ fn open_user_form(cx: Scope, ctx: &Ctx, existing: Option<UserRow>) {
         // fabricating a value into the field.
         let tenant = mcx.signal(String::new());
         let runtime = mcx.signal(String::new());
+        // Advanced (create only): the tenant and runtime binding.
+        let advanced = mcx.signal(false);
         let form_error = mcx.signal(Option::<String>::None);
         let in_flight = mcx.signal(false);
         let esc_armed = mcx.signal(false);
@@ -884,7 +1178,6 @@ fn open_user_form(cx: Scope, ctx: &Ctx, existing: Option<UserRow>) {
                 user_id.get_untracked(),
                 email.get_untracked(),
                 roles.get_untracked(),
-                enabled.get_untracked(),
             );
             super::install_dirty_guard_with(
                 mcx,
@@ -893,7 +1186,6 @@ fn open_user_form(cx: Scope, ctx: &Ctx, existing: Option<UserRow>) {
                     user_id.get_untracked() != initial.0
                         || email.get_untracked() != initial.1
                         || roles.get_untracked() != initial.2
-                        || enabled.get_untracked() != initial.3
                         || !tenant.get_untracked().is_empty()
                         || !runtime.get_untracked().is_empty()
                 },
@@ -902,7 +1194,6 @@ fn open_user_form(cx: Scope, ctx: &Ctx, existing: Option<UserRow>) {
                         user_id.get(),
                         email.get(),
                         roles.get(),
-                        enabled.get(),
                         tenant.get(),
                         runtime.get(),
                     );
@@ -930,7 +1221,7 @@ fn open_user_form(cx: Scope, ctx: &Ctx, existing: Option<UserRow>) {
             .child(line(vec![span_bold(title, t0.accent)]))
             .child(field(
                 &t0,
-                "user id",
+                "User ID",
                 if create {
                     TextInput::new()
                         .value(user_id)
@@ -944,10 +1235,29 @@ fn open_user_form(cx: Scope, ctx: &Ctx, existing: Option<UserRow>) {
                     line(vec![span(user_id.get_untracked(), t0.text_muted)])
                 },
             ))
-            .child(field(&t0, "email", {
+            .child(if create {
+                helper_line(&t0, USER_ID_HELP)
+            } else {
+                Element::new().style(LayoutStyle::default().h(0)).build()
+            })
+            .child(field(
+                &t0,
+                "Role",
+                MultiSelect::new(vec![
+                    SelectOption::keyed("user", "User — runs workflows on their own runtime"),
+                    SelectOption::keyed("admin", "Admin — manages this gateway"),
+                    SelectOption::keyed("readonly", "Read-only — can look, not change"),
+                ])
+                .values(roles)
+                .placeholder("pick a role…")
+                .layout(LayoutStyle::default().w(46).h(1).shrink(0.0))
+                .element(mcx, &t0)
+                .build(),
+            ))
+            .child(field(&t0, "Email address", {
                 let e = TextInput::new()
                     .value(email)
-                    .placeholder("optional")
+                    .placeholder("")
                     .layout(LayoutStyle::default().w(36).h(1))
                     .element(mcx, &t0);
                 if create {
@@ -956,61 +1266,62 @@ fn open_user_form(cx: Scope, ctx: &Ctx, existing: Option<UserRow>) {
                     e.autofocus().build()
                 }
             }))
-            .child(field(
-                &t0,
-                "roles",
-                MultiSelect::new(vec![
-                    SelectOption::keyed("user", "user"),
-                    SelectOption::keyed("admin", "admin"),
-                    SelectOption::keyed("readonly", "readonly"),
-                ])
-                .values(roles)
-                .placeholder("pick roles…")
-                .layout(LayoutStyle::default().w(30).h(1).shrink(0.0))
-                .element(mcx, &t0)
-                .build(),
-            ))
+            .child(helper_line(&t0, EMAIL_ADDRESS_HELP))
             .child(if create {
-                field(
-                    &t0,
-                    "tenant",
-                    TextInput::new()
-                        .value(tenant)
-                        .placeholder("blank = default tenant")
-                        .placeholder_while_focused(true)
-                        .layout(LayoutStyle::default().w(30).h(1))
-                        .element(mcx, &t0)
-                        .build(),
-                )
+                // A disclosure (not a setting): opens the two rarely-set
+                // bindings below.
+                dyn_view_scoped(LayoutStyle::line(1).shrink(0.0), move |dcx| {
+                    let t = theme.get().tokens;
+                    Button::new(if advanced.get() {
+                        "Advanced ▾"
+                    } else {
+                        "Advanced ▸  runtime, tenant"
+                    })
+                    .on_click(move || advanced.update(|v| *v = !*v))
+                    .element(dcx, &t)
+                    .build()
+                })
             } else {
                 Element::new().style(LayoutStyle::default().h(0)).build()
             })
-            .child(if create {
-                field(
-                    &t0,
-                    "runtime binding",
-                    TextInput::new()
-                        .value(runtime)
-                        .placeholder("blank = own runtime named after the user")
-                        .placeholder_while_focused(true)
-                        .layout(LayoutStyle::default().w(40).h(1))
-                        .element(mcx, &t0)
-                        .build(),
-                )
-            } else {
-                Element::new().style(LayoutStyle::default().h(0)).build()
-            })
-            .child(field(
-                &t0,
-                "",
-                Checkbox::new("enabled")
-                    .checked(enabled)
-                    .element(mcx, &t0)
-                    .build(),
+            .child(dyn_view_scoped(
+                LayoutStyle::column().gap(0).shrink(0.0),
+                move |acx| {
+                    if !(create && advanced.get()) {
+                        return Element::new().style(LayoutStyle::default().h(0)).build();
+                    }
+                    let t = theme.get().tokens;
+                    Element::new()
+                        .style(LayoutStyle::column().gap(0).shrink(0.0))
+                        .child(field(
+                            &t,
+                            "Runtime",
+                            TextInput::new()
+                                .value(runtime)
+                                .placeholder("")
+                                .layout(LayoutStyle::default().w(30).h(1))
+                                .element(acx, &t)
+                                .build(),
+                        ))
+                        .child(helper_line(&t, RUNTIME_HELP))
+                        .child(field(
+                            &t,
+                            "Tenant",
+                            TextInput::new()
+                                .value(tenant)
+                                .placeholder("default")
+                                .placeholder_while_focused(true)
+                                .layout(LayoutStyle::default().w(30).h(1))
+                                .element(acx, &t)
+                                .build(),
+                        ))
+                        .child(helper_line(&t, TENANT_HELP))
+                        .build()
+                },
             ))
             .child(if create {
                 line(vec![span(
-                    "the gateway mints the token — shown once after create",
+                    "The gateway makes their token when you create the user; it is shown once.",
                     t0.text_faint,
                 )])
             } else {
@@ -1039,19 +1350,23 @@ fn open_user_form(cx: Scope, ctx: &Ctx, existing: Option<UserRow>) {
                                     }
                                     let uid = user_id.get_untracked().trim().to_string();
                                     if create && uid.is_empty() {
-                                        form_error.set(Some("user id is required".into()));
+                                        form_error.set(Some("Type a User ID.".into()));
                                         return;
                                     }
                                     let roles_v = roles.get_untracked();
                                     if roles_v.is_empty() {
-                                        form_error.set(Some("pick at least one role".into()));
+                                        form_error.set(Some("Pick a role.".into()));
                                         return;
                                     }
+                                    // Active is the table's switch (space), not a
+                                    // form field: a new user starts active.
                                     let mut body = json!({
                                         "roles": roles_v,
-                                        "enabled": enabled.get_untracked(),
                                         "email": email.get_untracked().trim(),
                                     });
+                                    if create {
+                                        body["enabled"] = Value::Bool(true);
+                                    }
                                     form_error.set(None);
                                     in_flight.set(true);
                                     if create {
@@ -1096,6 +1411,23 @@ fn open_user_form(cx: Scope, ctx: &Ctx, existing: Option<UserRow>) {
     });
 }
 
+pub const USER_ID_HELP: &str = "Letters, digits, dots or dashes. This is how they sign in.";
+pub const EMAIL_ADDRESS_HELP: &str =
+    "Where sign-in codes and notifications go. Leave empty if they have none; they can add it later.";
+pub const RUNTIME_HELP: &str =
+    "The data plane their runs, flows and sessions live in. Empty = their own, named after them.";
+pub const TENANT_HELP: &str = "Leave 'default' unless you run several tenants.";
+
+/// A faint helper under a form field, indented to the field column and
+/// wrapped (never cut) to the form's width.
+fn helper_line(t: &TokenSet, text: &str) -> View {
+    let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+    for l in super::util::wrap_text(text, 58) {
+        col = col.child(line(vec![span(l, t.text_faint)]));
+    }
+    field(t, "", col.build())
+}
+
 /// The once-shown token modal (create-user / rotate-token).
 pub fn open_token_modal(cx: Scope, ctx: &Ctx, user: String, token: String) {
     let ctx2 = ctx.clone();
@@ -1113,7 +1445,9 @@ pub fn open_token_modal(cx: Scope, ctx: &Ctx, user: String, token: String) {
                 t0.accent,
             )]))
             .child(line(vec![span(
-                "This token is shown ONCE. Copy it now — the gateway stores only a hash.",
+                format!(
+                    "Give this token to {user}. It is shown once — the gateway stores only a hash."
+                ),
                 t0.warn,
             )]))
             .child(line(vec![span_bold(tok_show, t0.text)]))

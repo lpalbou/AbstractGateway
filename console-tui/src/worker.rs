@@ -1929,7 +1929,14 @@ fn handle(
                 let verify = require_client(client).and_then(|c| c.network());
                 (write, verify)
             });
-            let note = network_proxy_note(&write);
+            let mut note = network_proxy_note(&write);
+            // The switch's status line names the NEW state first.
+            if let (Some(on), Ok(_)) = (trust_proxy, &write) {
+                note = format!(
+                    "“Trust the proxy's client address” is {} — {note}",
+                    if on { "on" } else { "off" }
+                );
+            }
             let s = *store;
             wake.post(move || s.notice.set(Some(note.clone())));
             if let Ok(v) = verify {
@@ -2288,10 +2295,19 @@ fn handle(
                 .get("rotate_token")
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            let action = format!(
-                "PATCH user '{user_id}'{}",
-                if rotating { " (rotate token)" } else { "" }
-            );
+            // The Active switch sends `{enabled}` alone: its status line
+            // says the NEW state (state-toggles rule), not the verb.
+            let active_only = body.as_object().map(|m| m.len() == 1).unwrap_or(false);
+            let action = match body.get("enabled").and_then(Value::as_bool) {
+                Some(true) if active_only => format!("{user_id} is active — can sign in"),
+                Some(false) if active_only => {
+                    format!("{user_id} is inactive — signed out, cannot sign in")
+                }
+                _ => format!(
+                    "PATCH user '{user_id}'{}",
+                    if rotating { " (rotate token)" } else { "" }
+                ),
+            };
             let (write, verify) =
                 with_busy(store, wake, &format!("updating user {user_id}"), || {
                     let write = require_client(client)

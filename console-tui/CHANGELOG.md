@@ -1,5 +1,56 @@
 # Changelog — abstractgateway-console
 
+## [Unreleased]
+
+Needs abstractcore-console 0.4. The new email routes (`POST /me/email/discover`, `PUT /me/email/address`,
+`PUT /me/email/notifications`) and the honest sign-in-by-email answers need the AbstractGateway release that
+carries them; against an older gateway the page still reads (missing fields fall back), and a write to a route the
+gateway does not have fails with its error.
+
+### Changed
+- **Switches for every on/off setting.** A setting reads `[x] Feature` (accent, bold) when on, `[ ] Feature` when off
+  and `[-] Feature — reason` (dimmed) when it can't be used here. Space or Enter switches it, the change applies at
+  once, and the status line names the new state ("Agent email tools are on."). No Save button for a switch, and no
+  "Turn on / Turn off" labels anywhere.
+- **My email** (Users → `@`) is one page in this order: **Email address** (with its own Save), **Mailbox**,
+  **Notifications**, **Agent email tools**, **Advanced**.
+  - Mailbox, not connected: tabs **Google**, **Microsoft** and **Other**. Other asks only the email address and the
+    password; the mail servers are looked up from the address and shown on one line, and **Server settings** stay
+    folded unless nothing was found. One **Connect** saves and tests. Connected: one status line ("Connected as
+    me@x.com · Google · checked …"), **Test**, and **Disconnect** with an inline confirmation.
+  - Notifications are two switches, **Job failed** and **Approval needed**, unavailable with the reason until a
+    mailbox is connected.
+  - **Agent email tools** is one switch with the reason when it can't be used ("Connect a mailbox first.", "Your
+    admin turned mailboxes off.", "Your admin turned agent email tools off.").
+  - Advanced: recipient rules (add and remove apply at once), send limits (Enter saves), the **Folder** (Enter saves,
+    `PUT /me/email/folder`; empty = INBOX; unavailable until a mailbox is connected), the **Use this mailbox** switch
+    and **Send a test notification**.
+- **Users** (admin): **Mailboxes for users** is the one email switch above the table, with **Agent email tools for
+  users** and **Sign-in by email** under Advanced. The table reads User, Role, Email address, Mailbox, Runtime and
+  **Active**; Space switches Active (turning it off asks first; your own row can't be switched). An old per-user
+  mailbox override shows "not allowed for this user" and `x` resets it. `x`/`X` no longer switch email or agent tools
+  per user.
+- **Create user**: User ID, Role, **Email address** at the top level with what it is for; Runtime and Tenant under
+  Advanced, each with a one-line explanation. The token panel says "Give this token to <user>. It is shown once."
+- **Gateway host** (`F3`) and the setup guide's last step: **Workflows paused** and **Start at login** are switches
+  (Start at login still asks first; a broken registration offers a separate repair).
+- **Network**: **Trust the proxy's client address (X-Forwarded-For)** is a switch.
+- **Runtimes**: the page says what a runtime is. The "Stream replies" dialog is one switch that applies at once.
+- Providers: a profile's on/off in its form is the **Profile in use** switch. Entities: "Disable grant" is now
+  **Revoke grant**.
+
+### Added
+- **Sign-in by email** on the Connection screen, when the gateway offers it: "Forgot your token? Email me a sign-in
+  code" sends a code to the account's email address and shows the gateway's answer as it is (where the code went, or
+  why none was sent). Type the 8-digit code (**Use code** works from the 8th digit), resend after 30 seconds, or go
+  back to the token. The code step says "The code signs you in with a new token." After **Use code** the status line
+  reads "Signed in with a new token — your old token no longer works. This console keeps it in memory; launch with
+  --token <token> next time." (said once the new sign-in is verified) and the token is shown once to copy. An account
+  without an email address gets the gateway's message and **Back to token** only (no resend).
+- Users: an old per-user override is read from the gateway (`email_account.capabilities`, a `user` source) — "not
+  allowed for this user" (or "agent email tools not allowed for this user") with `x` to reset; mailboxes off for
+  everyone reads "mailboxes off", with nothing to reset.
+
 ## 0.12.0 (2026-09-30)
 
 Needs abstractcore-console 0.4 and AbstractGateway 0.8.0 (per-user email).

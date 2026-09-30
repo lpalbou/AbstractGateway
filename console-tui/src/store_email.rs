@@ -123,7 +123,33 @@ pub struct MyEmail {
     pub agent_tools_reason: String,
     /// Which account this is (the admin's gateway account vs AbstractCore's local one).
     pub store_label: String,
+    /// `registered_address`: "self" for runs (the stored email address,
+    /// else the connected mailbox's own); empty before the field existed.
+    pub registered_address: String,
+    /// `email_address`: the user's Email address as stored ("" = none) —
+    /// the account page's field. `None` on a gateway that predates it.
+    pub stored_email_address: Option<String>,
+    /// The two notification switches (`notifications`), `None` on a gateway
+    /// whose `/me/email` does not carry them (read from `/me/notifications`).
+    pub notify_job_failed: Option<bool>,
+    pub notify_approval_needed: Option<bool>,
+    /// Why the notification switches can't be used (`notifications_unavailable_reason`).
+    pub notifications_unavailable_reason: String,
+    /// Why the Agent email tools switch can't be used (`agent_tools.unavailable_reason`).
+    pub agent_tools_unavailable_reason: String,
+    /// The admin's "Mailboxes for users" as it applies to this user (`email_available`).
+    pub email_available: Option<bool>,
+    /// `oauth_providers`: `(id, available, reason)` for the Google / Microsoft tabs.
+    pub oauth_providers: Vec<(String, bool, String)>,
 }
+
+/// The reasons the account page shows on an unavailable switch (DESIGN §6),
+/// used when the gateway's answer carries none.
+pub const REASON_CONNECT_MAILBOX: &str = "Connect a mailbox first.";
+pub const REASON_ADMIN_MAILBOXES_OFF: &str = "Your admin turned mailboxes off.";
+pub const REASON_ADMIN_AGENT_TOOLS_OFF: &str = "Your admin turned agent email tools off.";
+pub const REASON_MAILBOX_NOT_IN_USE: &str =
+    "Switch on \u{201c}Use this mailbox\u{201d} (Advanced) first.";
 
 fn leg_text(v: Option<&Value>) -> String {
     match v {
@@ -211,10 +237,37 @@ impl MyEmail {
             },
             watcher_last_poll: s(&watcher, "last_poll"),
             admin_disabled,
-            agent_tools_enabled: b(&agent, "enabled").unwrap_or(false),
+            agent_tools_enabled: b(&agent, "on")
+                .or_else(|| b(&agent, "enabled"))
+                .unwrap_or(false),
             agent_tools_available: b(&agent, "available").unwrap_or(false),
             agent_tools_active: b(&agent, "active").unwrap_or(false),
             store_label: v.get("store").map(|st| s(st, "label")).unwrap_or_default(),
+            registered_address: s(v, "registered_address"),
+            stored_email_address: v
+                .get("email_address")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            notify_job_failed: v.get("notifications").and_then(|n| b(n, "job_failed")),
+            notify_approval_needed: v.get("notifications").and_then(|n| b(n, "approval_needed")),
+            notifications_unavailable_reason: s(v, "notifications_unavailable_reason"),
+            agent_tools_unavailable_reason: s(&agent, "unavailable_reason"),
+            email_available: b(v, "email_available"),
+            oauth_providers: v
+                .get("oauth_providers")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .map(|p| {
+                            (
+                                s(p, "id"),
+                                b(p, "available").unwrap_or(false),
+                                s(p, "reason"),
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
             agent_tools_reason: s(&agent, "reason"),
             notices: v
                 .get("notices")
@@ -263,6 +316,99 @@ impl MyEmail {
         }
     }
 
+    /// Mailboxes are off for this user (the admin's switch or an old override).
+    pub fn mailboxes_off(&self) -> bool {
+        self.email_available == Some(false) || !self.admin_enabled
+    }
+
+    /// Why the Agent email tools switch is unavailable (None = it can be
+    /// switched): the gateway's reason, else the same order the gateway
+    /// uses — mailboxes off, agent tools off, no mailbox, not in use.
+    pub fn agent_tools_unavailable(&self) -> Option<String> {
+        if !self.agent_tools_unavailable_reason.is_empty() {
+            return Some(self.agent_tools_unavailable_reason.clone());
+        }
+        if self.mailboxes_off() {
+            Some(REASON_ADMIN_MAILBOXES_OFF.into())
+        } else if !self.agent_tools_available && self.configured {
+            Some(REASON_ADMIN_AGENT_TOOLS_OFF.into())
+        } else if !self.configured {
+            Some(REASON_CONNECT_MAILBOX.into())
+        } else if !self.enabled {
+            Some(REASON_MAILBOX_NOT_IN_USE.into())
+        } else {
+            None
+        }
+    }
+
+    /// Why the two notification switches are unavailable (None = usable).
+    pub fn notifications_unavailable(&self) -> Option<String> {
+        if !self.notifications_unavailable_reason.is_empty() {
+            return Some(self.notifications_unavailable_reason.clone());
+        }
+        if self.mailboxes_off() {
+            Some(REASON_ADMIN_MAILBOXES_OFF.into())
+        } else if !self.configured {
+            Some(REASON_CONNECT_MAILBOX.into())
+        } else if !self.enabled {
+            Some(REASON_MAILBOX_NOT_IN_USE.into())
+        } else {
+            None
+        }
+    }
+
+    /// The Email address field's value: `email_address` (the stored one,
+    /// possibly empty); on an older gateway the registered address, else
+    /// the mailbox's own.
+    pub fn email_address(&self) -> String {
+        if let Some(stored) = &self.stored_email_address {
+            return stored.clone();
+        }
+        if self.registered_address.is_empty() {
+            self.address.clone()
+        } else {
+            self.registered_address.clone()
+        }
+    }
+
+    /// The sign-in method in words ("Google", "Microsoft", "password").
+    pub fn method_text(&self) -> String {
+        match self.auth_kind.as_str() {
+            "" => String::new(),
+            "password" => "Other (address + password)".into(),
+            k if k.contains("google") => "Google".into(),
+            k if k.contains("microsoft") => "Microsoft".into(),
+            other => other.to_string(),
+        }
+    }
+
+    /// The connected state line: "Connected as me@x.com · Google · checked
+    /// 2026-09-30 18:00" (or the recorded error).
+    pub fn connected_text(&self) -> String {
+        let mut out = format!("Connected as {}", self.address);
+        let method = self.method_text();
+        if !method.is_empty() {
+            out.push_str(" · ");
+            out.push_str(&method);
+        }
+        if let Some(err) = &self.last_error {
+            out.push_str(" · needs action: ");
+            out.push_str(&err.text());
+        } else if !self.last_test.is_empty() {
+            out.push_str(" · checked ");
+            out.push_str(&short_time(&self.last_test));
+        }
+        out
+    }
+
+    /// `(id, available, reason)` of an OAuth provider tab.
+    pub fn oauth_provider(&self, id: &str) -> Option<(bool, String)> {
+        self.oauth_providers
+            .iter()
+            .find(|(p, _, _)| p == id)
+            .map(|(_, a, r)| (*a, r.clone()))
+    }
+
     pub fn usage_text(&self) -> String {
         match (self.per_hour, self.per_day) {
             (Some(_), Some(_)) => format!(
@@ -271,6 +417,111 @@ impl MyEmail {
             ),
             _ => String::new(),
         }
+    }
+}
+
+/// The sign-in-by-email flow of the Connection screen (DESIGN §4).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Recovery {
+    /// The gateway URL `available` was read for (a new URL asks again).
+    pub checked_url: String,
+    /// `GET /session/recovery` `available`; `None` = not read yet.
+    pub available: Option<bool>,
+    pub step: RecoveryStep,
+    /// The last inline error (a refused code, an unreachable gateway).
+    pub error: Option<String>,
+    /// The token a redeemed code returned (the UI moves it into the token
+    /// field and connects, then clears it).
+    pub new_token: Option<String>,
+    /// The user the token belongs to (said once after sign-in).
+    pub signed_in_user: String,
+    /// The status line said "Signed in with a new token" after the
+    /// connection with it was verified.
+    pub announced: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum RecoveryStep {
+    /// The link "Forgot your token? Email me a sign-in code".
+    #[default]
+    Idle,
+    /// The request is in flight ("Sending…").
+    Sending,
+    /// The code step: the gateway's honest answer and the resend clock.
+    Code(RecoveryAnswer),
+    /// The code is being checked ("Checking the code…").
+    Redeeming(RecoveryAnswer),
+}
+
+/// `POST /session/recovery/request`'s answer (DESIGN §4.1).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RecoveryAnswer {
+    pub user_id: String,
+    pub sent: bool,
+    pub to: String,
+    pub message: String,
+    pub reason_code: String,
+    pub retry_after_s: Option<i64>,
+    /// When the answer landed (unix ms): the 30 s resend cooldown counts
+    /// from here.
+    pub at_ms: u64,
+}
+
+/// The status line after a redeemed code (the terminal console signs in
+/// with a new token: `reset_token`, decision 2026-09-30).
+pub const SIGNED_IN_NEW_TOKEN: &str = "Signed in with a new token — your old token no longer works. This console keeps it in memory; launch with --token <token> next time.";
+/// The code step's extra line (only this console: the code rotates the token).
+pub const CODE_GIVES_NEW_TOKEN: &str = "The code signs you in with a new token.";
+
+/// Seconds a "Send a new code" waits after a request (DESIGN §4).
+pub const RESEND_COOLDOWN_S: u64 = 30;
+
+impl RecoveryAnswer {
+    pub fn from_value(user_id: &str, v: &Value, at_ms: u64) -> RecoveryAnswer {
+        let sent = b(v, "sent").unwrap_or(false);
+        let mut message = s(v, "message");
+        if message.is_empty() {
+            // A gateway older than DESIGN §4.1 answers the same words for
+            // every account: say exactly that much.
+            message = "If this account has an email address, a sign-in code is on its way. It expires in 10 minutes.".into();
+        }
+        RecoveryAnswer {
+            user_id: user_id.to_string(),
+            sent: sent || v.get("sent").is_none(),
+            to: s(v, "to"),
+            message,
+            reason_code: s(v, "reason_code"),
+            retry_after_s: n(v, "retry_after_s"),
+            at_ms,
+        }
+    }
+
+    /// Seconds left before "Send a new code" works again (0 = now): the
+    /// 30 s cooldown, or the gateway's `retry_after_s` when longer.
+    pub fn resend_wait_s(&self, now_ms: u64) -> u64 {
+        let wait = self
+            .retry_after_s
+            .map(|r| r.max(0) as u64)
+            .unwrap_or(0)
+            .max(RESEND_COOLDOWN_S);
+        let elapsed = now_ms.saturating_sub(self.at_ms) / 1000;
+        wait.saturating_sub(elapsed)
+    }
+}
+
+/// An 8-digit code (DESIGN §4: "Use code" stays unavailable until then).
+pub fn code_complete(code: &str) -> bool {
+    let c = code.trim();
+    c.len() == 8 && c.chars().all(|ch| ch.is_ascii_digit())
+}
+
+/// "2026-09-30T18:00:00+00:00" → "2026-09-30 18:00" (a timestamp in a
+/// status line; anything else unchanged).
+pub fn short_time(ts: &str) -> String {
+    if ts.len() >= 16 && ts.as_bytes().get(10) == Some(&b'T') {
+        format!("{} {}", &ts[..10], &ts[11..16])
+    } else {
+        ts.to_string()
     }
 }
 
@@ -329,6 +580,17 @@ impl MyNotifications {
         }
     }
 
+    /// `(job_failed, approval_needed)` read from the events list of a
+    /// gateway that predates the two-switch model (`job_failed` OR
+    /// `automation_failed`, as the gateway's own migration maps them).
+    pub fn two_switches(&self) -> (bool, bool) {
+        let on = |id: &str| self.events.iter().any(|e| e.id == id && e.email);
+        (
+            on("job_failed") || on("automation_failed"),
+            on("approval_needed"),
+        )
+    }
+
     pub fn channel_text(&self) -> String {
         if self.available {
             format!(
@@ -376,30 +638,249 @@ impl EmailCaps {
     }
 }
 
-/// The admin Users table's agent-tools availability for a user.
-pub fn agent_tools_available(user: &Value) -> bool {
-    user.get("email_account")
-        .and_then(|a| b(a, "agent_tools_available"))
-        .unwrap_or(false)
+/// The status sentence of an admin email switch (`PUT
+/// /admin/email/capabilities` with one key): the NEW state, in the words
+/// of DESIGN §5.2.
+pub fn caps_state_text(body: &Value) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    let on = |k: &str| body.get(k).and_then(Value::as_bool);
+    match on("email") {
+        Some(true) => out.push("Mailboxes are on for all users."),
+        Some(false) => out.push("Mailboxes are off for all users."),
+        None => {}
+    }
+    match on("email_agent_tools") {
+        Some(true) => {
+            out.push("Agent email tools are available to users (each user still opts in).")
+        }
+        Some(false) => out.push("Agent email tools are off for all users."),
+        None => {}
+    }
+    match on("email_recovery") {
+        Some(true) => out.push("Sign-in by email is on."),
+        Some(false) => out.push("Sign-in by email is off."),
+        None => {}
+    }
+    if out.is_empty() {
+        "Email defaults saved.".into()
+    } else {
+        out.join(" ")
+    }
 }
 
-/// The admin Users table's mailbox cell (`/admin/users` rows carry
-/// `email_account: {configured, address, state, admin_enabled}`).
-pub fn mailbox_state(user: &Value) -> (String, bool) {
-    match user.get("email_account") {
-        Some(acc) if acc.is_object() => (
-            {
-                let st = s(acc, "state");
-                if st.is_empty() {
-                    "—".into()
-                } else {
-                    st
-                }
-            },
-            b(acc, "admin_enabled").unwrap_or(true),
+/// The admin Users table's Mailbox cell (`/admin/users` rows carry
+/// `email_account: {configured, address, state, admin_enabled,
+/// capabilities: {email, email_agent_tools: {value, source}}}`): the
+/// connection in words — "connected as me@x.com", "not connected" —
+/// whether mailboxes are off for this user (`admin_enabled: false`), and
+/// the per-user override read from `capabilities` (a `user` source with
+/// value false; `None` when the gateway does not send `capabilities`).
+pub fn mailbox_cell(user: &Value) -> (String, bool, Option<bool>) {
+    let Some(acc) = user.get("email_account").filter(|a| a.is_object()) else {
+        return ("—".into(), false, None);
+    };
+    let state = s(acc, "state");
+    let address = s(acc, "address");
+    let configured = b(acc, "configured").unwrap_or(false);
+    let not_allowed = b(acc, "admin_enabled") == Some(false);
+    let conn = if !configured {
+        if state == "unknown" {
+            "unknown".to_string()
+        } else {
+            "not connected".to_string()
+        }
+    } else if address.is_empty() {
+        "connected".to_string()
+    } else if state == "needs action" {
+        format!("needs action · {address}")
+    } else if state == "turned off by the user" {
+        format!("connected as {address} · not in use")
+    } else {
+        format!("connected as {address}")
+    };
+    let user_off = |cap: &str| {
+        acc.get("capabilities")
+            .and_then(|c| c.get(cap))
+            .map(|c| s(c, "source") == "user" && b(c, "value") == Some(false))
+    };
+    let flag = match (user_off("email"), user_off("email_agent_tools")) {
+        (None, None) => None,
+        (e, t) => Some(e.unwrap_or(false) || t.unwrap_or(false)),
+    };
+    (conn, not_allowed, flag)
+}
+
+/// The cell as shown, with the note. A per-user override (the old UI's,
+/// or the capabilities migration's pin) reads "not allowed for this user"
+/// — or "agent email tools not allowed for this user" when only the tools
+/// are pinned off — and `x` resets it. Mailboxes off without an override
+/// (the admin's "Mailboxes for users" switch) reads "mailboxes off":
+/// nothing to reset. `override_flag` is the gateway's (`None`: a gateway
+/// that does not say — no Reset is offered). Returns `(text, resettable)`.
+pub fn mailbox_cell_text(
+    conn: &str,
+    not_allowed: bool,
+    override_flag: Option<bool>,
+) -> (String, bool) {
+    match (override_flag == Some(true), not_allowed) {
+        (true, true) => (format!("{conn} · not allowed for this user"), true),
+        (true, false) => (
+            format!("{conn} · agent email tools not allowed for this user"),
+            true,
         ),
-        _ => ("—".into(), true),
+        (false, true) => (format!("{conn} · mailboxes off"), false),
+        (false, false) => (conn.to_string(), false),
     }
+}
+
+/// `POST /me/email/discover` (CONTRACT §5.3): the mail servers found for an
+/// address, by a deterministic lookup (known providers, autoconfig, ISPDB,
+/// SRV, MX). Unknown fields are ignored; a missing field reads empty.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Discovery {
+    pub address: String,
+    pub domain: String,
+    pub found: bool,
+    pub source: String,
+    pub provider: String,
+    pub imap: Option<MailServer>,
+    pub smtp: Option<MailServer>,
+    pub username: String,
+}
+
+impl Discovery {
+    pub fn from_value(v: &Value) -> Discovery {
+        Discovery {
+            address: s(v, "address"),
+            domain: s(v, "domain"),
+            found: b(v, "found").unwrap_or(false),
+            source: s(v, "source"),
+            provider: s(v, "provider"),
+            imap: MailServer::from_value(v.get("imap")),
+            smtp: MailServer::from_value(v.get("smtp")),
+            username: s(v, "username"),
+        }
+    }
+
+    /// "imap.fastmail.com · 993 · SSL  ·  smtp.fastmail.com · 465 · SSL"
+    /// (DESIGN §6); `None` when discovery found nothing to show.
+    pub fn summary(&self) -> Option<String> {
+        if !self.found {
+            return None;
+        }
+        let leg = |m: &MailServer| {
+            let mut out = m.host.clone();
+            if let Some(p) = m.port {
+                out.push_str(&format!(" · {p}"));
+            }
+            if !m.security.is_empty() {
+                out.push_str(&format!(" · {}", security_label(&m.security)));
+            }
+            out
+        };
+        let parts: Vec<String> = [self.imap.as_ref(), self.smtp.as_ref()]
+            .into_iter()
+            .flatten()
+            .map(leg)
+            .collect();
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join("  ·  "))
+        }
+    }
+
+    /// The sentence shown when nothing was found (Server settings open by
+    /// themselves).
+    pub fn not_found_text(&self) -> String {
+        let domain = if self.domain.is_empty() {
+            self.address
+                .rsplit_once('@')
+                .map(|(_, d)| d.to_string())
+                .unwrap_or_default()
+        } else {
+            self.domain.clone()
+        };
+        format!("Couldn't find the mail servers for {domain}. Enter them here.")
+    }
+}
+
+/// "ssl" → "SSL", "starttls" → "STARTTLS".
+pub fn security_label(sec: &str) -> String {
+    sec.to_uppercase()
+}
+
+/// The domain of an address worth asking discovery about (`None` for a
+/// half-typed address).
+pub fn address_domain(address: &str) -> Option<String> {
+    let a = address.trim();
+    let (local, domain) = a.rsplit_once('@')?;
+    if local.is_empty() || !domain.contains('.') || domain.ends_with('.') {
+        return None;
+    }
+    Some(domain.to_lowercase())
+}
+
+/// Hand-entered Server settings (the folded block of the Other tab).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ServerSettings {
+    pub imap_host: String,
+    pub imap_port: String,
+    pub imap_security: String,
+    pub smtp_host: String,
+    pub smtp_port: String,
+    pub smtp_security: String,
+    pub username: String,
+    pub display_name: String,
+    pub folder: String,
+}
+
+/// The Other tab's ONE Connect (`PUT /me/email`, save + test): the address
+/// and the password; the servers only when the user entered them under
+/// Server settings (else the gateway discovers them, CONTRACT §5.4).
+pub fn other_connect_body(
+    address: &str,
+    password: &str,
+    servers: Option<&ServerSettings>,
+) -> Result<Value, String> {
+    if address.trim().is_empty() {
+        return Err("Type the email address of the mailbox.".into());
+    }
+    if password.is_empty() {
+        return Err("Type the password (an app password if your provider needs one).".into());
+    }
+    let mut body = json!({"address": address.trim(), "password": password, "test": true});
+    if let Some(sv) = servers {
+        if !sv.imap_host.trim().is_empty() {
+            body["imap"] = json!({
+                "host": sv.imap_host.trim(),
+                "port": port_value(&sv.imap_port, "IMAP")?,
+                "security": if sv.imap_security.is_empty() { "ssl" } else { sv.imap_security.as_str() },
+                "folder": if sv.folder.trim().is_empty() { "INBOX" } else { sv.folder.trim() },
+            });
+        }
+        if !sv.smtp_host.trim().is_empty() {
+            body["smtp"] = json!({
+                "host": sv.smtp_host.trim(),
+                "port": port_value(&sv.smtp_port, "SMTP")?,
+                "security": if sv.smtp_security.is_empty() { "ssl" } else { sv.smtp_security.as_str() },
+            });
+        }
+        if !sv.username.trim().is_empty() {
+            body["username"] = json!(sv.username.trim());
+        }
+        if !sv.display_name.trim().is_empty() {
+            body["display_name"] = json!(sv.display_name.trim());
+        }
+    }
+    Ok(body)
+}
+
+/// `PUT /me/email/notifications` — one switch at a time.
+pub fn notification_switch_body(key: &str, on: bool) -> Value {
+    let mut m = serde_json::Map::new();
+    m.insert(key.to_string(), Value::Bool(on));
+    Value::Object(m)
 }
 
 fn port_value(raw: &str, label: &str) -> Result<Value, String> {
@@ -505,6 +986,15 @@ pub fn notifications_body(events: &[NotifyEvent]) -> Value {
 /// else the error's own text.
 pub fn email_error_text(e: &crate::api::ApiError) -> String {
     if let Some(body) = &e.body {
+        // A connect that names its failing step ("Sign-in refused by
+        // imap.x.com — check the password.") or a discovery that found
+        // nothing: the gateway's one sentence is the whole answer.
+        let msg = s(body, "message");
+        let named =
+            body.get("step").is_some() || s(body, "reason_code") == "email_discovery_failed";
+        if named && !msg.is_empty() {
+            return msg;
+        }
         let cause = s(body, "cause");
         if !cause.is_empty() {
             let fix = s(body, "fix");
@@ -561,9 +1051,6 @@ mod tests {
             caps.body(),
             json!({"email": true, "email_agent_tools": false, "email_recovery": true})
         );
-        assert!(agent_tools_available(
-            &json!({"email_account": {"agent_tools_available": true}})
-        ));
         assert_eq!(
             e.agent_tools_text(),
             "off — no connected, turned-on email account"
@@ -638,12 +1125,168 @@ mod tests {
     #[test]
     fn mailbox_cell_reads_the_admin_row() {
         assert_eq!(
-            mailbox_state(&json!({"email_account": {"state": "connected", "admin_enabled": true}})),
-            ("connected".to_string(), true)
+            mailbox_cell(
+                &json!({"email_account": {"configured": true, "address": "a@x.io", "state": "connected", "admin_enabled": true}})
+            ),
+            ("connected as a@x.io".to_string(), false, None)
         );
+        assert_eq!(
+            mailbox_cell(
+                &json!({"email_account": {"configured": false, "state": "not connected", "admin_enabled": true}})
+            ),
+            ("not connected".to_string(), false, None)
+        );
+        let (conn, off, flag) = mailbox_cell(
+            &json!({"email_account": {"configured": true, "address": "b@x.io", "state": "turned off by an administrator", "admin_enabled": false,
+                "capabilities": {"email": {"value": false, "source": "user"}, "email_agent_tools": {"value": true, "source": "gateway"}}}}),
+        );
+        assert_eq!(
+            (conn.as_str(), off, flag),
+            ("connected as b@x.io", true, Some(true))
+        );
+        assert_eq!(
+            mailbox_cell_text(&conn, off, flag),
+            (
+                "connected as b@x.io · not allowed for this user".to_string(),
+                true
+            )
+        );
+        // Mailboxes off for everyone (a gateway source): nothing to reset.
+        let (_, off, flag) = mailbox_cell(
+            &json!({"email_account": {"configured": false, "state": "x", "admin_enabled": false,
+                "capabilities": {"email": {"value": false, "source": "gateway"}, "email_agent_tools": {"value": true, "source": "built-in"}}}}),
+        );
+        assert_eq!(flag, Some(false));
+        assert_eq!(
+            mailbox_cell_text("not connected", off, flag),
+            ("not connected · mailboxes off".to_string(), false)
+        );
+        // Only the tools pinned off (the migration's pin).
+        let (_, off, flag) = mailbox_cell(
+            &json!({"email_account": {"configured": false, "state": "x", "admin_enabled": true,
+                "capabilities": {"email": {"value": true, "source": "gateway"}, "email_agent_tools": {"value": false, "source": "user"}}}}),
+        );
+        assert_eq!(
+            mailbox_cell_text("not connected", off, flag),
+            (
+                "not connected · agent email tools not allowed for this user".to_string(),
+                true
+            )
+        );
+        // A gateway that does not send capabilities: no Reset offered.
+        assert_eq!(
+            mailbox_cell_text("c", true, None),
+            ("c · mailboxes off".to_string(), false)
+        );
+        assert_eq!(mailbox_cell(&json!({})), ("—".to_string(), false, None));
+    }
+
+    #[test]
+    fn the_account_page_reads_the_new_fields_and_tolerates_old_gateways() {
+        let e = MyEmail::from_value(&json!({
+            "configured": false, "address": "", "registered_address": "box@x.io", "email_address": ""
+        }));
+        assert_eq!(e.email_address(), "", "email_address wins, even empty");
+        let old = MyEmail::from_value(&json!({"configured": true, "address": "box@x.io"}));
+        assert_eq!(old.email_address(), "box@x.io");
+        assert_eq!(old.notify_job_failed, None);
+        assert_eq!(
+            MyEmail::from_value(&json!({"configured": false}))
+                .agent_tools_unavailable()
+                .as_deref(),
+            Some(REASON_CONNECT_MAILBOX)
+        );
+        assert_eq!(
+            MyEmail::from_value(
+                &json!({"configured": true, "enabled": true, "email_available": false})
+            )
+            .notifications_unavailable()
+            .as_deref(),
+            Some(REASON_ADMIN_MAILBOXES_OFF)
+        );
+    }
+
+    #[test]
+    fn discovery_summary_and_the_one_connect_body() {
+        let d = Discovery::from_value(&json!({
+            "address": "me@fastmail.test", "domain": "fastmail.test", "found": true,
+            "imap": {"host": "imap.fastmail.com", "port": 993, "security": "ssl"},
+            "smtp": {"host": "smtp.fastmail.com", "port": 465, "security": "ssl"}
+        }));
+        assert_eq!(
+            d.summary().as_deref(),
+            Some("imap.fastmail.com · 993 · SSL  ·  smtp.fastmail.com · 465 · SSL")
+        );
+        let none = Discovery::from_value(&json!({"address": "me@nowhere.test", "found": false}));
+        assert_eq!(none.summary(), None);
+        assert_eq!(
+            none.not_found_text(),
+            "Couldn't find the mail servers for nowhere.test. Enter them here."
+        );
+        assert_eq!(address_domain("me@x.io").as_deref(), Some("x.io"));
+        assert_eq!(address_domain("me@x"), None);
+        let body = other_connect_body(" me@x.io ", "pw", None).unwrap();
+        assert_eq!(
+            body,
+            json!({"address": "me@x.io", "password": "pw", "test": true})
+        );
+        assert!(other_connect_body("me@x.io", "", None).is_err());
+        let sv = ServerSettings {
+            imap_host: "imap.x.io".into(),
+            imap_port: "993".into(),
+            smtp_host: "smtp.x.io".into(),
+            smtp_port: "465".into(),
+            ..ServerSettings::default()
+        };
+        let body = other_connect_body("me@x.io", "pw", Some(&sv)).unwrap();
+        assert_eq!(body["imap"]["folder"], json!("INBOX"));
+        assert_eq!(body["smtp"]["port"], json!(465));
+        assert_eq!(
+            notification_switch_body("job_failed", false),
+            json!({"job_failed": false})
+        );
+    }
+
+    #[test]
+    fn recovery_answers_codes_and_admin_state_texts() {
+        let legacy = RecoveryAnswer::from_value("a", &json!({"ok": true}), 0);
         assert!(
-            !mailbox_state(&json!({"email_account": {"state": "turned off by an administrator", "admin_enabled": false}})).1
+            legacy.sent,
+            "an old constant answer still opens the code step"
         );
-        assert_eq!(mailbox_state(&json!({})), ("—".to_string(), true));
+        assert!(legacy
+            .message
+            .starts_with("If this account has an email address"));
+        let a = RecoveryAnswer::from_value("a", &json!({"sent": true, "message": "m"}), 10_000);
+        assert_eq!(a.resend_wait_s(10_000), 30);
+        assert_eq!(a.resend_wait_s(25_000), 15);
+        assert_eq!(a.resend_wait_s(41_000), 0);
+        assert!(code_complete(" 12345678 "));
+        assert!(!code_complete("1234567"));
+        assert!(!code_complete("1234567a"));
+        assert_eq!(
+            caps_state_text(&json!({"email": true})),
+            "Mailboxes are on for all users."
+        );
+        assert_eq!(
+            caps_state_text(&json!({"email_recovery": false})),
+            "Sign-in by email is off."
+        );
+    }
+
+    #[test]
+    fn a_failed_connect_says_the_step_in_the_gateways_words() {
+        let e = crate::api::ApiError {
+            kind: crate::api::ApiErrorKind::Http(422),
+            message: "x".into(),
+            body: Some(json!({"reason_code": "email_auth_failed", "step": "imap",
+                "message": "Sign-in refused by imap.x.com — check the password.",
+                "cause": "The server refused the sign-in.", "fix": "Check the password."})),
+            timed_out: false,
+        };
+        assert_eq!(
+            email_error_text(&e),
+            "Sign-in refused by imap.x.com — check the password."
+        );
     }
 }

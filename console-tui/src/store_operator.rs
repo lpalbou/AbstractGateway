@@ -61,6 +61,13 @@ pub struct OperatorStore {
     pub email_oauth: Signal<Option<(String, String)>>,
     /// `GET /admin/email/capabilities` (admin): the gateway-wide email defaults.
     pub email_caps: Signal<Loadable<super::email::EmailCaps>>,
+    /// `POST /me/email/discover` for the Other tab's address (the address
+    /// it answered for, and the servers found).
+    pub email_discovery: Signal<Option<(String, Loadable<super::email::Discovery>)>>,
+    /// "Forgot your token? Email me a sign-in code" on the Connection
+    /// screen (`/session/recovery*`, DESIGN §4). NOT reset with the other
+    /// domains: it belongs to the sign-in, which happens between probes.
+    pub recovery: Signal<super::email::Recovery>,
 }
 
 impl OperatorStore {
@@ -78,6 +85,8 @@ impl OperatorStore {
             my_notifications: cx.signal(Loadable::default()),
             email_oauth: cx.signal(None),
             email_caps: cx.signal(Loadable::default()),
+            email_discovery: cx.signal(None),
+            recovery: cx.signal(super::email::Recovery::default()),
         }
     }
 
@@ -96,6 +105,7 @@ impl OperatorStore {
         self.my_notifications.set(Loadable::NotAsked);
         self.email_oauth.set(None);
         self.email_caps.set(Loadable::NotAsked);
+        self.email_discovery.set(None);
         self.runner_poll_gen.update(|g| *g += 1);
     }
 }
@@ -155,18 +165,43 @@ impl StartAtLogin {
         }
     }
 
-    /// The verb the toggle performs (None: nothing to do from here).
+    /// The confirm button of a change (None: nothing to do from here) —
+    /// it names the outcome, never "Turn on/off".
     pub fn verb(&self) -> Option<&'static str> {
         if !self.can_change {
             None
         } else if self.enabled {
-            Some("Turn off")
+            Some("Stop starting at login")
         } else {
             Some(match self.state.as_str() {
                 "broken" => "Repair",
                 "other" => "Use this gateway",
-                _ => "Turn on",
+                _ => "Start at login",
             })
+        }
+    }
+
+    /// Why the "Start at login" switch can't be used here (None = it can).
+    pub fn switch_unavailable(&self) -> Option<String> {
+        if self.can_change {
+            None
+        } else if self.reason.is_empty() {
+            Some("can't be changed from here".into())
+        } else {
+            Some(self.reason.clone())
+        }
+    }
+
+    /// A one-shot repair offered beside the switch: a broken registration,
+    /// or one that starts another gateway.
+    pub fn repair_label(&self) -> Option<&'static str> {
+        if !self.can_change || self.enabled {
+            return None;
+        }
+        match self.state.as_str() {
+            "broken" => Some("Repair start at login…"),
+            "other" => Some("Start this gateway at login instead…"),
+            _ => None,
         }
     }
 

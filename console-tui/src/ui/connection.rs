@@ -166,6 +166,9 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .child(dyn_view(LayoutStyle::column().gap(0).shrink(0.0), move || {
             status_view(&tt, &store.conn.get(), ui.token_source.get())
         }))
+        // "Forgot your token? Email me a sign-in code" (DESIGN §4): only
+        // while not signed in, and only when the gateway offers it.
+        .child(pin(recovery_view(cx, ctx, t)))
         // An ignored gateway pointer file (~/.abstractframework/gateway.json):
         // why, in one line; nothing when the file is fine or absent.
         .child(dyn_view(LayoutStyle::default().shrink(0.0), move || {
@@ -216,6 +219,381 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .element(t)
         .style_signal(move || roomy_or_tight(tight.get()))
         .build()
+}
+
+/// The quiet link (DESIGN §4.5).
+pub const RECOVERY_LINK: &str = "Forgot your token? Email me a sign-in code";
+/// A wrong, expired or used code (the gateway's words when it has none).
+pub const CODE_REFUSED: &str = "That code is wrong, expired or already used. Send a new one.";
+
+fn quiet_link() -> abstracttui::widgets::ButtonStyle {
+    abstracttui::widgets::ButtonStyle {
+        fg: abstracttui::theme::TokenId::Accent,
+        bg: abstracttui::theme::TokenId::Surface,
+        ..abstracttui::widgets::ButtonStyle::default()
+    }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Sign-in by email: link → "Sending…" → the code step with the gateway's
+/// honest answer, an 8-digit code field, "Use code" (unavailable until 8
+/// digits), "Send a new code" with its 30 s cooldown, "Back to token".
+/// A redeemed code returns a new token: it goes into the token field, the
+/// console signs in with it, and the token is shown once to copy.
+fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
+    use crate::store::email::{code_complete, RecoveryStep};
+    use crate::worker::operator::{OpCmd, RecoveryAction};
+    use crate::worker::Cmd;
+    let store = ctx.store;
+    let ui = ctx.ui;
+    let tt = *t;
+    let rec = store.op.recovery;
+    let user = cx.signal("admin".to_string());
+    let code = cx.signal(String::new());
+    let clock = cx.signal(0u64);
+    let signed_out = cx.memo(move || {
+        !store.conn.with(|c| {
+            matches!(
+                c,
+                ConnPhase::Connected(_) | ConnPhase::Verifying(_) | ConnPhase::Probing
+            )
+        })
+    });
+    // Ask the gateway once per URL whether the link is offered.
+    {
+        let ctx_chk = ctx.clone();
+        cx.effect(move || {
+            if !signed_out.get() {
+                return;
+            }
+            let known = store.conn.with(|c| {
+                matches!(
+                    c,
+                    ConnPhase::Unauthorized(_) | ConnPhase::Forbidden(_) | ConnPhase::NotConnected
+                )
+            });
+            if !known {
+                return;
+            }
+            let url = crate::ui::normalize_url(&ui.conn_url.get_untracked());
+            if url.is_empty() || rec.with_untracked(|r| r.checked_url == url) {
+                return;
+            }
+            rec.update(|r| r.checked_url = url.clone());
+            ctx_chk.send(Cmd::Operator(OpCmd::Recovery(RecoveryAction::Check {
+                url,
+            })));
+        });
+    }
+    // A redeemed code: the new token signs this console in (once).
+    {
+        let ctx_in = ctx.clone();
+        cx.effect(move || {
+            let Some(tok) = rec.with(|r| r.new_token.clone()) else {
+                return;
+            };
+            if ui.conn_token.get_untracked() != tok {
+                ui.conn_token.set(tok);
+                code.set(String::new());
+                ctx_in.connect_typed();
+            }
+        });
+    }
+    // Signed in with the redeemed token: say it once the connection is
+    // verified (the probe's own acknowledgement would otherwise be the
+    // last word in the status line).
+    cx.effect(move || {
+        let connected = store.conn.with(|c| matches!(c, ConnPhase::Connected(_)));
+        let pending = rec.with(|r| r.new_token.is_some() && !r.announced);
+        // After the sign-in's own reads settle (their notices come first).
+        let settled = store.busy.with(|b| b.is_empty());
+        if connected && pending && settled {
+            store
+                .notice
+                .set(Some(crate::store::email::SIGNED_IN_NEW_TOKEN.into()));
+            rec.update(|r| r.announced = true);
+        }
+    });
+    // The resend cooldown ticks once a second, only while it runs.
+    {
+        let ticker: std::rc::Rc<std::cell::RefCell<Option<abstracttui::reactive::IntervalHandle>>> =
+            std::rc::Rc::new(std::cell::RefCell::new(None));
+        cx.effect(move || {
+            let _ = clock.get();
+            let waiting = rec.with(|r| match &r.step {
+                RecoveryStep::Code(a) | RecoveryStep::Redeeming(a) => a.resend_wait_s(now_ms()) > 0,
+                _ => false,
+            });
+            let mut slot = ticker.borrow_mut();
+            match (waiting, slot.is_some()) {
+                (true, false) => {
+                    *slot = Some(abstracttui::reactive::interval(
+                        cx,
+                        std::time::Duration::from_secs(1),
+                        move || clock.update(|c| *c += 1),
+                    ));
+                }
+                (false, true) => {
+                    if let Some(h) = slot.take() {
+                        h.cancel();
+                    }
+                }
+                _ => {}
+            }
+        });
+    }
+    let request = {
+        let ctx = ctx.clone();
+        move || {
+            let uid = user.get_untracked().trim().to_string();
+            if uid.is_empty() {
+                rec.update(|r| r.error = Some("Type your gateway user first.".into()));
+                return;
+            }
+            let url = crate::ui::normalize_url(&ui.conn_url.get_untracked());
+            rec.update(|r| {
+                r.error = None;
+                if matches!(r.step, RecoveryStep::Idle) {
+                    r.step = RecoveryStep::Sending;
+                }
+            });
+            ctx.send(Cmd::Operator(OpCmd::Recovery(RecoveryAction::Request {
+                url,
+                user_id: uid,
+                tenant_id: "default".into(),
+            })));
+        }
+    };
+    let redeem = {
+        let ctx = ctx.clone();
+        move || {
+            let c = code.get_untracked();
+            if !code_complete(&c) {
+                return;
+            }
+            let Some(answer) = rec.with_untracked(|r| match &r.step {
+                RecoveryStep::Code(a) => Some(a.clone()),
+                _ => None,
+            }) else {
+                return;
+            };
+            let url = crate::ui::normalize_url(&ui.conn_url.get_untracked());
+            rec.update(|r| {
+                r.error = None;
+                r.step = RecoveryStep::Redeeming(answer.clone());
+            });
+            ctx.send(Cmd::Operator(OpCmd::Recovery(RecoveryAction::Redeem {
+                url,
+                user_id: answer.user_id.clone(),
+                tenant_id: "default".into(),
+                code: c.trim().to_string().into(),
+            })));
+        }
+    };
+    dyn_view_scoped(LayoutStyle::column().gap(0).shrink(0.0), move |rcx| {
+        let t = tt;
+        let r = rec.get();
+        // The token a code returned, shown once (even once signed in).
+        if let Some(tok) = r.new_token.clone() {
+            let tok_copy = tok.clone();
+            return Element::new()
+                .style(LayoutStyle::column().gap(0).shrink(0.0))
+                .child(line(vec![span_bold(
+                    format!("Signed in as {} with a new token.", r.signed_in_user),
+                    t.ok,
+                )]))
+                .child({
+                    // Wrapped (never cut): the one time the token is shown.
+                    let w = (abstracttui::app::use_viewport(rcx).get_untracked().w - 6).max(20)
+                        as usize;
+                    let mut c = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+                    for l in super::util::wrap_text(
+                        "Your new token — shown once; your old token no longer works. Copy it now:",
+                        w,
+                    ) {
+                        c = c.child(line(vec![span(l, t.warn)]));
+                    }
+                    c.build()
+                })
+                .child(line(vec![span_bold(tok, t.text)]))
+                .child(
+                    Element::new()
+                        .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                        .child(
+                            Button::new("Copy")
+                                .on_click(move || {
+                                    copy_to_clipboard(tok_copy.clone());
+                                    store
+                                        .notice
+                                        .set(Some("token copied to the clipboard".into()));
+                                })
+                                .element(rcx, &t)
+                                .build(),
+                        )
+                        .child(
+                            Button::new("Done")
+                                .on_click(move || rec.update(|r| r.new_token = None))
+                                .element(rcx, &t)
+                                .build(),
+                        )
+                        .build(),
+                )
+                .build();
+        }
+        if !signed_out.get() || r.available != Some(true) {
+            return Element::new().style(LayoutStyle::default().h(0)).build();
+        }
+        let error_line = |t: &TokenSet| match &r.error {
+            Some(e) => line(vec![span(format!("✗ {e}"), t.error)]),
+            None => Element::new().style(LayoutStyle::default().h(0)).build(),
+        };
+        match &r.step {
+            RecoveryStep::Idle => {
+                let request = request.clone();
+                Element::new()
+                    .style(LayoutStyle::column().gap(0).shrink(0.0))
+                    .child(field(
+                        &t,
+                        "Gateway user",
+                        TextInput::new()
+                            .value(user)
+                            .layout(LayoutStyle::default().w(24).h(1))
+                            .element(rcx, &t)
+                            .build(),
+                    ))
+                    .child(field(
+                        &t,
+                        "",
+                        Button::new(RECOVERY_LINK)
+                            .style(quiet_link())
+                            .on_click(request)
+                            .element(rcx, &t)
+                            .build(),
+                    ))
+                    .child(error_line(&t))
+                    .build()
+            }
+            RecoveryStep::Sending => field(&t, "", line(vec![span("◌ Sending…", t.info)])),
+            RecoveryStep::Code(a) | RecoveryStep::Redeeming(a) => {
+                let checking = matches!(r.step, RecoveryStep::Redeeming(_));
+                let (request, redeem, redeem_enter) =
+                    (request.clone(), redeem.clone(), redeem.clone());
+                // The gateway's honest answer, wrapped (never cut).
+                let msg_w =
+                    (abstracttui::app::use_viewport(rcx).get_untracked().w - 6).max(20) as usize;
+                let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+                for l in super::util::wrap_text(&a.message, msg_w) {
+                    col = col.child(line(vec![span(l, if a.sent { t.ok } else { t.warn })]));
+                }
+                if a.sent {
+                    col = col.child(line(vec![span(
+                        crate::store::email::CODE_GIVES_NEW_TOKEN,
+                        t.text_muted,
+                    )]));
+                }
+                if a.sent {
+                    col = col
+                        .child(super::util::field_w(
+                            &t,
+                            "Code from the email",
+                            20,
+                            TextInput::new()
+                                .value(code)
+                                .placeholder("8 digits")
+                                .placeholder_while_focused(true)
+                                .on_submit(move |_| redeem_enter())
+                                .layout(LayoutStyle::default().w(12).h(1))
+                                .element(rcx, &t)
+                                .autofocus()
+                                .build(),
+                        ))
+                        .child(error_line(&t))
+                        .child(field(
+                            &t,
+                            "",
+                            // Rebuilt as the code is typed: "Use code"
+                            // becomes available at the 8th digit.
+                            dyn_view_scoped(
+                                LayoutStyle::row().gap(2).h(1).shrink(0.0),
+                                move |bcx| {
+                                    let ready = code_complete(&code.get());
+                                    let redeem = redeem.clone();
+                                    Button::new(if checking {
+                                        "Checking the code…"
+                                    } else {
+                                        "Use code"
+                                    })
+                                    .disabled(!ready || checking)
+                                    .on_click(redeem)
+                                    .element(bcx, &t)
+                                    .build()
+                                },
+                            ),
+                        ));
+                } else {
+                    col = col.child(error_line(&t));
+                }
+                // No email address: a new code can't be sent either — the
+                // message says so; only "Back to token" is offered.
+                let can_resend = a.sent || a.reason_code != "no_email_address";
+                let a_clock = a.clone();
+                col.child(super::util::field_w(
+                    &t,
+                    "",
+                    1,
+                    Element::new()
+                        .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                        // Its own region: the countdown re-renders this
+                        // button only, never the code field being typed.
+                        .child(dyn_view_scoped(
+                            LayoutStyle::row().h(1).shrink(0.0),
+                            move |kcx| {
+                                if !can_resend {
+                                    return Element::new()
+                                        .style(LayoutStyle::default().w(0).h(1))
+                                        .build();
+                                }
+                                let _ = clock.get();
+                                let wait = a_clock.resend_wait_s(now_ms());
+                                let label = if wait > 0 {
+                                    format!("Send a new code (in {wait} s)")
+                                } else {
+                                    "Send a new code".to_string()
+                                };
+                                let request = request.clone();
+                                Button::new(label)
+                                    .style(quiet_link())
+                                    .disabled(wait > 0 || checking)
+                                    .on_click(request)
+                                    .element(kcx, &t)
+                                    .build()
+                            },
+                        ))
+                        .child(
+                            Button::new("Back to token")
+                                .style(quiet_link())
+                                .on_click(move || {
+                                    code.set(String::new());
+                                    rec.update(|r| {
+                                        r.step = RecoveryStep::Idle;
+                                        r.error = None;
+                                    });
+                                })
+                                .element(rcx, &t)
+                                .build(),
+                        )
+                        .build(),
+                ))
+                .build()
+            }
+        }
+    })
 }
 
 /// At or under this many terminal rows the Connection screen drops its

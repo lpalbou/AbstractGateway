@@ -1140,7 +1140,7 @@ fn open_own_time_modal(cx: Scope, ctx: &Ctx, name: String) {
                                 .build(),
                         )
                         .child(
-                            Button::new("Disable grant")
+                            Button::new("Revoke grant")
                                 .on_click(move || {
                                     if !super::util::admin_gate(&ctx_off.store, "revoking own time") {
                                         return;

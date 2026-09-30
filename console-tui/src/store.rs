@@ -975,14 +975,17 @@ pub struct UserRow {
     /// `None` = pre-contract gateway; the partition falls back to the
     /// documented roles convention.
     pub principal_kind: Option<String>,
-    /// The mailbox cell (framework backlog 0992): the gateway's state words
-    /// (`connected`, `not connected`, `needs action`, `turned off by an
-    /// administrator`, …) — status only, never content.
+    /// The Mailbox cell (framework backlog 0992, state-toggles §7): the
+    /// connection in words ("connected as me@x.com" / "not connected") —
+    /// status only, never content.
     pub mailbox: String,
-    /// The admin's per-user email switch (`false` = turned off).
-    pub mailbox_admin_enabled: bool,
-    /// Agent email tools available to this user (the admin's per-user capability).
-    pub mailbox_agent_tools: bool,
+    /// Mailboxes are off for this user (`email_account.admin_enabled:
+    /// false`) — by an old per-user override or by the gateway-wide switch
+    /// (`mailbox_override_flag` tells which).
+    pub mailbox_not_allowed: bool,
+    /// A per-user override from `email_account.capabilities` (`None`:
+    /// the gateway does not send them).
+    pub mailbox_override_flag: Option<bool>,
 }
 
 impl UserRow {
@@ -996,10 +999,19 @@ impl UserRow {
             runtime_id: s(v, "runtime_id").unwrap_or_default(),
             created_at: s(v, "created_at").unwrap_or_default(),
             principal_kind: s(v, "principal_kind"),
-            mailbox: email::mailbox_state(v).0,
-            mailbox_admin_enabled: email::mailbox_state(v).1,
-            mailbox_agent_tools: email::agent_tools_available(v),
+            mailbox: email::mailbox_cell(v).0,
+            mailbox_not_allowed: email::mailbox_cell(v).1,
+            mailbox_override_flag: email::mailbox_cell(v).2,
         })
+    }
+
+    /// The Mailbox cell as shown and whether `x` has an override to reset.
+    pub fn mailbox_view(&self) -> (String, bool) {
+        email::mailbox_cell_text(
+            &self.mailbox,
+            self.mailbox_not_allowed,
+            self.mailbox_override_flag,
+        )
     }
 
     /// The kind partition, contract-first: `principal_kind` is the ONE
