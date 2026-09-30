@@ -244,13 +244,22 @@ map $http_upgrade $connection_upgrade {
 ```
 
 Run nginx on the gateway machine, as here, so the gateway believes its
-`X-Forwarded-For` (it believes it from a loopback peer only). Then set the
-browser origin once:
+`X-Forwarded-For` and `X-Forwarded-Proto` (it believes them from a loopback
+peer only). An https page calling its own address through such a proxy
+(Origin `https://` + the kept `Host`) is accepted without further setup. A
+proxy on another machine, or one that rewrites `Host`, needs the browser
+origin set once:
 `abstractgateway network set --allowed-origins https://gateway.example.com`.
 `X-Forwarded-For $remote_addr` replaces anything the browser sent. The apps
 themselves always listen on `127.0.0.1`; nothing else needs to reach them,
 and no other port needs to be exposed. A tunnel (Cloudflare Tunnel,
 Tailscale Funnel, ngrok) to the gateway's port works the same way.
+
+Reached through Tailscale? On the gateway machine run
+`tailscale serve --bg http://127.0.0.1:<port>` and open
+`https://<host>.<tailnet>.ts.net/`; `tailscale serve reset` undoes it. Voice
+and camera in the browser need this https address. See
+[configuration.md](./configuration.md#reached-through-tailscale-https).
 
 ## Where local clients find the gateway (`~/.abstractframework/gateway.json`)
 

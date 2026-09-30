@@ -97,6 +97,13 @@ The gateway relays each request to the app's own server on `127.0.0.1`
   refused. A request or WebSocket whose `Origin` is not the gateway's own
   address (another site, or another port on the same host) is refused too
   (403 `cross_origin`).
+- **Public assets.** What a browser fetches without cookies answers without
+  a session: the web app manifest (`manifest.webmanifest`, `manifest.json`,
+  `site.webmanifest`), `favicon*`, `icon*`, `apple-touch-icon*` and
+  `icons/<file>` at the app's root, GET/HEAD only. They are relayed with no
+  cookie and returned only when the app answers 200/304 with a manifest or
+  image type, with no `Set-Cookie`. Pages, scripts, `sw.js` and everything
+  under `api/` stay signed-in only.
 - **Streaming.** Responses are relayed as they arrive (live updates, server-sent
   events), and WebSockets frame by frame.
 - **What the app receives.** The path with `/apps/<app>` removed, plus
@@ -449,7 +456,7 @@ All routes are under `/api/gateway/apps` and need a signed-in principal, except 
 
 | Method and path | Who | What |
 |---|---|---|
-| `GET /apps?latest=true` | any user | Node.js status, one row per app (`kind` `web` with `interfaces[]`, see "Terminal versions", and `install_parts`; then the Assistant, `kind` `desktop` with `desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason}`) and `console_tui` (the gateway console's terminal app). `latest=false` skips the npm registry and GitHub release lookups (cached 10 minutes). |
+| `GET /apps?latest=true` | any user | Node.js status, one row per app (`kind` `web` with `interfaces[]`, see "Terminal versions", and `install_parts`; then the Assistant, `kind` `desktop` with `desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason}`) and `console_tui` (the gateway console's terminal app). `gateway_url` is where the app servers reach the gateway (on its machine); `browser_gateway_url` is the address the caller uses (e.g. `https://<host>.ts.net` behind `tailscale serve`), the one to show in any command or link. `latest=false` skips the npm registry and GitHub release lookups (cached 10 minutes). |
 | `POST /apps/runtime/install` | admin | Install Node.js (a job), or `job: null` when one is already usable. |
 | `POST /apps/{id}/install` `{"version"?, "launch"?, "with_terminal"?}` | admin | ONE job: Node.js if needed, download, check, dependencies, then the terminal app when the row's `install_parts` has `"tui"` (`with_terminal: false` skips it); the job's `parts` are its child rows. Starts nothing unless `launch: true`. For `assistant`: installs `abstractassistant` into the gateway's Python (every `abstract*` package is pinned to its current version in the same command). |
 | `POST /apps/{id}/update` `{"version"?}` | admin | A job: install the latest (or given) version; a running app is restarted on it. |

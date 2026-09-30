@@ -318,13 +318,22 @@ restart. Each origin is validated (`scheme://host[:port]`, no path, no trailing
 slash); `*` and wildcard patterns are accepted only as typed and are flagged.
 See [configuration.md](./configuration.md#reverse-proxy-allowed-origins-and-trust-proxy).
 
+One more case is allowed without a list entry: an https page asking its own
+address. The Origin is `https://` plus the request's `Host`, and the request
+itself arrived over TLS: either native TLS, or `X-Forwarded-Proto: https`
+from a proxy on the gateway machine (the only peer whose forwarded headers
+are believed). This is `tailscale serve` or a local nginx that keeps the
+browser's `Host`. DNS rebinding cannot produce it. The browser writes the
+Origin, a rebinding page is plain `http://`, and an `https://` rebinding page
+would need a certificate for its own name from the proxy on this machine.
+
 A gateway started with `ABSTRACTGATEWAY_ALLOWED_ORIGINS` in its environment
 uses that list instead (a deployment pin): every surface says "This gateway was
 started with ABSTRACTGATEWAY_ALLOWED_ORIGINS in its environment" and reports
 `overridden_by_env: true`; the saved setting applies once it starts without it.
 
-Evidence: `GatewayAuthPolicy.allowed_origins`, `_effective_allowed_origins()` and
-`_origin_allowed()` in `src/abstractgateway/security/gateway_security.py`;
+Evidence: `GatewayAuthPolicy.allowed_origins`, `_effective_allowed_origins()`,
+`_origin_allowed()` and `_https_same_origin()` in `src/abstractgateway/security/gateway_security.py`;
 `live_reverse_proxy()` in `src/abstractgateway/network_exposure.py`.
 
 Important nuance:

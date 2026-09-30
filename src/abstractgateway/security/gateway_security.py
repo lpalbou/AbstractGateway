@@ -694,6 +694,36 @@ class GatewaySecurityMiddleware:
                 return True
         return False
 
+    def _https_same_origin(self, scope: dict, origin: str) -> bool:
+        """An https page asking its own address: Origin `https://<Host>` on a
+        request that itself arrived over TLS (scope scheme https/wss: native
+        TLS, or X-Forwarded-Proto from a proxy on THIS machine, the only peer
+        uvicorn believes it from, cli.py). This is `tailscale serve` (or any
+        TLS-terminating reverse proxy here, Host preserved) in front of the
+        loopback gateway. DNS rebinding cannot produce it: the Origin is
+        written by the browser, and a rebound `https://evil.example` page
+        would need a certificate for that name from the proxy here. A plain
+        http Origin never qualifies (the rebinding case)."""
+        from urllib.parse import urlsplit
+
+        if str(scope.get("scheme") or "").lower() not in ("https", "wss"):
+            return False
+        try:
+            o = urlsplit(str(origin).strip())
+        except ValueError:
+            return False
+        if o.scheme != "https" or not o.netloc or o.path or o.query or o.fragment:
+            return False
+        host = str(self._header(scope, "host") or "").strip().lower()
+        if not host:
+            return False
+
+        def norm(netloc: str) -> str:
+            n = netloc.lower()
+            return n[: -len(":443")] if n.endswith(":443") else n
+
+        return norm(o.netloc) == norm(host)
+
     def _token_valid(self, token: str) -> bool:
         # Constant-time compare against any configured token.
         for t in self._policy.tokens:
@@ -1002,7 +1032,7 @@ class GatewaySecurityMiddleware:
         try:
             # Origin checks (only when Origin is present).
             origin = self._header(scope, "origin")
-            if origin is not None and not self._origin_allowed(origin):
+            if origin is not None and not self._origin_allowed(origin) and not self._https_same_origin(scope, origin):
                 await self._reject(_send_wrapped, status=403, detail="Forbidden (origin not allowed)")
                 return
 

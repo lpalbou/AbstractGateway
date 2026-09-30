@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Behind `tailscale serve` (or any TLS proxy on the gateway machine that keeps the browser's
+  `Host`), signing in to the console at `https://<host>.<tailnet>.ts.net/` no longer fails with
+  403 "origin not allowed". An https page asking its own address is accepted when the request
+  came over TLS (native, or `X-Forwarded-Proto: https` from a loopback proxy). No
+  `allowed_origins` entry is needed. A plain-http Origin never qualifies.
+- Apps served at `/apps/<app>/` answer their web app manifest and icons (`manifest.webmanifest`,
+  `favicon*`, `icon*`, `apple-touch-icon*`, `icons/<file>`) without an app session, because
+  browsers fetch them without cookies. The console no longer logs `manifest.webmanifest 401`.
+  These requests are relayed with no cookie and answered only with a manifest or image type,
+  with no `Set-Cookie`. Pages, scripts, `sw.js` and `api/` still need the session.
+
+### Added
+- `GET /api/gateway/apps` carries `browser_gateway_url`, the address the caller uses (the https
+  origin behind a proxy). `gateway_url` stays the address the app servers use.
+- `GET /api/gateway/network` carries `browser_url` (the caller's address) and
+  `browser_url_listed` (false behind a proxy or tunnel).
+- Docs: "Reached through Tailscale (https)" in configuration.md and deployment.md, and the
+  https same-origin rule in security.md.
+
 ## [0.9.0] - 2026-09-30
 
 The web console works on phones, tablets and any window size. It follows the AbstractFramework

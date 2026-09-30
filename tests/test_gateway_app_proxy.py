@@ -82,7 +82,32 @@ class Upstream:
                 else:
                     await websocket.send_bytes(b"echo:" + msg["bytes"])
 
-        app = Starlette(routes=[Route("/", page), Route("/sse", sse), Route("/cookie", cookie), WebSocketRoute("/ws", ws), Route("/{rest:path}", echo, methods=["GET", "POST", "PUT", "DELETE", "HEAD"])])
+        # The public assets a real app's dist/ carries (Code: manifest.webmanifest,
+        # icon.svg, favicon.svg), with the app servers' Content-Types; a
+        # single-page app answers a MISSING file with its HTML shell.
+        def asset(ctype: str, body: bytes):
+            async def serve(request):
+                up.seen.append({"path": request.scope["raw_path"].decode(), "headers": headers_of(request.scope), "method": request.method})
+                r = Response(body, media_type=ctype)
+                r.raw_headers.append((b"set-cookie", b"abstractobserver_pref=1; Path=/apps/observer/"))
+                return r
+
+            return serve
+
+        async def shell(request):
+            up.seen.append({"path": request.scope["raw_path"].decode(), "headers": headers_of(request.scope), "method": request.method})
+            return HTMLResponse("<!doctype html><script>window.__ABSTRACT_UI_CONFIG__={}</script><div id=root></div>")
+
+        assets = [
+            Route("/manifest.webmanifest", asset("application/manifest+json", b'{"name":"AbstractObserver","icons":[{"src":"icon.svg"}]}'), methods=["GET", "HEAD", "POST"]),
+            Route("/icon.svg", asset("image/svg+xml", b"<svg xmlns='http://www.w3.org/2000/svg'/>")),
+            Route("/favicon.ico", asset("image/x-icon", b"\x00\x00\x01\x00")),
+            Route("/apple-touch-icon-180x180.png", asset("image/png", b"\x89PNG")),
+            Route("/icons/icon-512.png", asset("image/png", b"\x89PNG")),
+            Route("/favicon.svg", shell),  # missing file: the SPA shell
+            Route("/icon-192.png", asset("text/html; charset=utf-8", b"<p>not an image</p>")),
+        ]
+        app = Starlette(routes=[Route("/", page), Route("/sse", sse), Route("/cookie", cookie), WebSocketRoute("/ws", ws), *assets, Route("/{rest:path}", echo, methods=["GET", "POST", "PUT", "DELETE", "HEAD"])])
 
         async def with_identity(scope, receive, send):
             async def send2(message):
@@ -353,3 +378,154 @@ def test_every_relayed_request_carries_x_forwarded_host(env) -> None:
     for bad in ("a_b.attacker.com", "", "evil host"):
         with pytest.raises(ValueError):
             proxy._forward_headers({"host": bad}, spec=spec, client="203.0.113.9", proto="https", host=bad)
+
+
+# ---------------------------------------------------------------------------
+# Public assets: what a browser fetches WITHOUT cookies (manifest, icons)
+# ---------------------------------------------------------------------------
+
+# Headers a browser sends for `<link rel=manifest>` (credentials omitted) behind
+# `tailscale serve`: Host preserved, same-origin Origin, no cookie.
+TS_HOST = "mac-mini.tail43a344.ts.net"
+
+
+@pytest.mark.parametrize(
+    "path,ctype",
+    [
+        ("/manifest.webmanifest", "application/manifest+json"),
+        ("/icon.svg", "image/svg+xml"),
+        ("/favicon.ico", "image/x-icon"),
+        ("/apple-touch-icon-180x180.png", "image/png"),
+        ("/icons/icon-512.png", "image/png"),
+    ],
+)
+@pytest.mark.parametrize(
+    "host,origin,base",
+    [
+        ("127.0.0.1:18823", None, "http://127.0.0.1:18823"),
+        (TS_HOST, f"https://{TS_HOST}", f"https://{TS_HOST}"),
+        ("192.168.1.20:8080", "http://192.168.1.20:8080", "http://192.168.1.20:8080"),
+    ],
+)
+def test_manifest_and_icons_are_served_without_a_session(env, path, ctype, host, origin, base) -> None:
+    """The manifest 401 behind a proxy (operator P1, 2026-09-30): browsers fetch
+    `<link rel=manifest>` (and a manifest's icons, and iOS its home-screen
+    icon) without cookies. Those paths answer without the app session, with
+    NO cookie forwarded and NO cookie set; everything else stays gated."""
+    app, _m, up = env
+    anon = TestClient(app, base_url=base)
+    headers = {"host": host, "sec-fetch-mode": "cors", "sec-fetch-dest": "manifest" if "manifest" in path else "image"}
+    if origin:
+        headers["origin"] = origin
+    # A stale app cookie (expired session) and the console's own: neither may reach the app.
+    headers["cookie"] = "abstractobserver_gateway_session=expired; abstractgateway_session=console"
+    r = anon.get("/apps/observer" + path, headers=headers)
+    assert r.status_code == 200, (path, r.status_code, r.text[:200])
+    assert r.headers["content-type"].startswith(ctype)
+    assert r.headers.get_list("set-cookie") == [], "a public asset never sets a cookie"
+    seen = up.seen[-1]
+    assert seen["path"] == path
+    assert "cookie" not in seen["headers"], "no cookie is forwarded for a public asset"
+    assert seen["headers"]["x-forwarded-host"] == host and seen["headers"]["x-forwarded-prefix"] == "/apps/observer"
+    head = anon.head("/apps/observer" + path, headers=headers)
+    assert head.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "method,path,why",
+    [
+        ("GET", "/favicon.svg", "a missing icon answered with the app's HTML shell"),
+        ("GET", "/icon-192.png", "an allowlisted name the app answers as text/html"),
+        ("GET", "/", "the page"),
+        ("GET", "/index.html", "the page by name"),
+        ("GET", "/assets/index-abc.js", "the bundle"),
+        ("GET", "/sw.js", "the service worker"),
+        ("GET", "/api/gateway/runs", "the API"),
+        ("GET", "/api/icon.svg", "an icon name under api/"),
+        ("GET", "/api/manifest.webmanifest", "a manifest name under api/"),
+        ("GET", "/x/manifest.webmanifest", "a manifest name in a subdirectory"),
+        ("GET", "/icons/../api/x.png", "dot segments"),
+        ("GET", "/icons/%2e%2e%2fapi.png", "encoded dot segments"),
+        ("GET", "/icon%2Esvg", "an encoded name"),
+        ("GET", "/icons/a/b.png", "two levels under icons/"),
+        ("POST", "/manifest.webmanifest", "a write"),
+        ("GET", "/manifest.webmanifest.js", "a suffix"),
+    ],
+)
+def test_everything_else_still_needs_the_app_session(env, method, path, why) -> None:
+    app, _m, up = env
+    anon = TestClient(app, base_url=f"https://{TS_HOST}")
+    r = anon.request(method, "/apps/observer" + path, headers={"host": TS_HOST, "origin": f"https://{TS_HOST}", "sec-fetch-mode": "cors"})
+    assert r.status_code == 401 and r.json()["reason"] == "app_sign_in_required", (why, r.status_code, r.text[:200])
+    assert "__ABSTRACT_UI_CONFIG__" not in r.text
+
+
+def test_public_asset_path_matrix() -> None:
+    from abstractgateway.app_proxy import public_asset_path
+
+    for ok in ("/manifest.webmanifest", "/manifest.webmanifest?v=3", "/manifest.json", "/site.webmanifest", "/favicon.ico", "/favicon-32x32.png",
+               "/icon.svg", "/icon-192.png", "/apple-touch-icon.png", "/apple-touch-icon-precomposed.png", "/icons/maskable_512.webp"):
+        assert public_asset_path("GET", ok), ok
+        assert public_asset_path("HEAD", ok), ok
+        assert not public_asset_path("POST", ok), ok
+        assert not public_asset_path("OPTIONS", ok), ok
+    for bad in ("", "/", "/index.html", "/api/icon.svg", "/icons/../x.png", "/icon..svg/..", "/icons/a/b.png", "/icon%2esvg", "/ICON.SVG", "/favicon.ico/x"):
+        assert not public_asset_path("GET", bad), bad
+
+
+def test_a_signed_in_browser_still_gets_its_cookies_on_the_same_paths(env) -> None:
+    """With a session the request is an ordinary one: the app's cookies go
+    through and the app may set its own."""
+    app, _m, up = env
+    browser = _signed_in(app)
+    r = browser.get("/apps/observer/manifest.webmanifest")
+    assert r.status_code == 200
+    assert "abstractobserver_gateway_session=" in up.seen[-1]["headers"].get("cookie", "")
+    assert r.headers.get_list("set-cookie") == ["abstractobserver_pref=1; Path=/apps/observer/"]
+
+
+# ---------------------------------------------------------------------------
+# Behind `tailscale serve` (Host preserved, X-Forwarded-Proto https from a
+# loopback peer, so the request's scheme is https)
+# ---------------------------------------------------------------------------
+
+
+def test_the_whole_app_flow_behind_a_tls_proxy_on_this_machine(env) -> None:
+    """Console-side open -> handover -> app page -> API -> SSE -> WebSocket,
+    all on https://<host>.ts.net with the browser's Origin (the operator's
+    P1 path). Before the gateway accepted an https page asking its own
+    address, every POST/WebSocket with that Origin was 403 (origin not
+    allowed) at the security middleware."""
+    app, _m, up = env
+    base = f"https://{TS_HOST}"
+    origin = {"origin": base}
+    admin = TestClient(app, headers=AUTH, base_url=base)
+    body = admin.post("/api/gateway/apps/observer/open", json={"origin": base}, headers=origin)
+    assert body.status_code == 200, body.text
+    assert body.json()["app_url"] == f"{base}/apps/observer/"
+    browser = TestClient(app, base_url=base)
+    h = browser.get(body.json()["open_url"], follow_redirects=False)
+    assert h.status_code == 303 and h.headers["location"] == "/apps/observer/"
+    cookies = h.headers.get_list("set-cookie")
+    assert cookies and all("Secure" in c and "Path=/apps/observer/" in c and "SameSite=lax" in c for c in cookies), cookies
+    r = browser.post("/apps/observer/api/thing", content=b"{}", headers={**origin, "content-type": "application/json"})
+    assert r.status_code == 200, r.text
+    assert r.json()["headers"]["x-forwarded-proto"] == "https" and r.json()["headers"]["x-forwarded-host"] == TS_HOST
+    with browser.stream("GET", "/apps/observer/sse", headers=origin) as s:
+        assert b"".join(s.iter_raw()).decode().count("event: tick") == 3
+    jar = "; ".join(f"{c.name}={c.value}" for c in browser.cookies.jar)
+    with browser.websocket_connect("/apps/observer/ws", headers={"host": TS_HOST, "cookie": jar, **origin}) as ws:
+        assert json.loads(ws.receive_text())["prefix"] == "/apps/observer"
+        ws.send_text("ping")
+        assert ws.receive_text() == "echo:ping"
+
+
+def test_apps_overview_names_the_callers_address(env) -> None:
+    """`gateway_url` stays where the app servers reach the gateway;
+    `browser_gateway_url` is the https origin the remote caller uses."""
+    app, _m, _up = env
+    d = TestClient(app, headers=AUTH, base_url=f"https://{TS_HOST}").get("/api/gateway/apps?latest=false", headers={"x-forwarded-proto": "https"}).json()
+    assert d["gateway_url"] == "http://127.0.0.1:18823"
+    assert d["browser_gateway_url"] == f"https://{TS_HOST}"
+    d = TestClient(app, headers=AUTH, base_url="http://127.0.0.1:18823").get("/api/gateway/apps?latest=false").json()
+    assert d["browser_gateway_url"] == "http://127.0.0.1:18823"
