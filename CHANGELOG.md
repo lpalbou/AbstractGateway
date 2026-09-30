@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Installing two apps that need Node.js at the same time, or clicking **Install Node.js** while an
+  app install is fetching it, no longer fails one of them. Both installs used to download into one
+  shared partial file, and the second failed with `FileNotFoundError`; a retry worked. Now one
+  Node.js install runs at a time. The second waits for it and uses the Node.js it installed, so it
+  is downloaded only once. Every download also writes its own partial file and renames it into
+  place when done.
+- Stopping the gateway while it is still starting (Ctrl-C or `SIGTERM` a few seconds after
+  `serve`) now waits for the startup. Before, the stop returned at once, and the startup went on to
+  start the runner, the email worker and the bridges of a gateway that had already stopped. The
+  stop now cancels the startup, which starts nothing more and stops what it built. It waits for
+  it, and for the background task that restarts each user's runner, before stopping the service.
+  In the same way, apps that were still starting are waited for and stopped. Before, an app could
+  start after the others were stopped and outlive the gateway.
+- The identity card's moments no longer depend on the clock minute. A state-history line is
+  treated as the history copy of a sleep/wake/pause change made through the gateway when a marker
+  with the same verb and the same reason follows it within an hour. Before, the rule was "same
+  verb in the same minute". A change made across a minute boundary then showed twice, and the
+  entity's "asleep at birth" moment disappeared when a sleep through the gateway fell in the same
+  minute (backlog 0920).
+
+### Tests
+- Two CI timing flakes are now deterministic. The automations test `test_d2_waiting_only_on_a_person`
+  expects that an occurrence names its run for a moment before the run exists, and it forces that
+  moment. `test_identity_card_composes_a_life` fixes its timestamps instead of reading the clock.
+
 ## [0.9.0] - 2026-09-30
 
 The web console works on phones, tablets and any window size. It follows the AbstractFramework
