@@ -42,8 +42,12 @@ gateway does not have fails with its error.
 - **Sign-in by email** on the Connection screen, when the gateway offers it: "Forgot your token? Email me a sign-in
   code" sends a code to the account's email address and shows the gateway's answer as it is (where the code went, or
   why none was sent). Type the 8-digit code (**Use code** works from the 8th digit), resend after 30 seconds, or go
-  back to the token. The code gives this console a new token: it signs in with it and shows it once to copy; the old
-  token stops working.
+  back to the token. The code step says "The code signs you in with a new token." After **Use code** the status line
+  reads "Signed in with a new token — your old token no longer works. This console keeps it in memory; launch with
+  --token <token> next time." and the token is shown once to copy.
+- Users: an old per-user override is read from the gateway (`email_account.capabilities`, a `user` source) — "not
+  allowed for this user" (or "agent email tools not allowed for this user") with `x` to reset; mailboxes off for
+  everyone reads "mailboxes off", with nothing to reset.
 
 ## 0.12.0 (2026-09-30)
 

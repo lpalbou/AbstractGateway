@@ -390,13 +390,22 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             return Element::new()
                 .style(LayoutStyle::column().gap(0).shrink(0.0))
                 .child(line(vec![span_bold(
-                    format!("Signed in with an emailed code as {}.", r.signed_in_user),
+                    format!("Signed in as {} with a new token.", r.signed_in_user),
                     t.ok,
                 )]))
-                .child(line(vec![span(
-                    "Your new token, shown once (your old token no longer works):",
-                    t.warn,
-                )]))
+                .child({
+                    // Wrapped (never cut): the one time the token is shown.
+                    let w = (abstracttui::app::use_viewport(rcx).get_untracked().w - 6).max(20)
+                        as usize;
+                    let mut c = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+                    for l in super::util::wrap_text(
+                        "Your new token — shown once; your old token no longer works. Copy it now:",
+                        w,
+                    ) {
+                        c = c.child(line(vec![span(l, t.warn)]));
+                    }
+                    c.build()
+                })
                 .child(line(vec![span_bold(tok, t.text)]))
                 .child(
                     Element::new()
@@ -466,6 +475,12 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
                 for l in super::util::wrap_text(&a.message, msg_w) {
                     col = col.child(line(vec![span(l, if a.sent { t.ok } else { t.warn })]));
+                }
+                if a.sent {
+                    col = col.child(line(vec![span(
+                        crate::store::email::CODE_GIVES_NEW_TOKEN,
+                        t.text_muted,
+                    )]));
                 }
                 if a.sent {
                     col = col

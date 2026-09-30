@@ -217,7 +217,9 @@ fn users_payload() -> Value {
          "enabled": false, "runtime_id": "bob", "created_at": "2026-07-02T00:00:00Z",
          "email_account": {"configured": true, "address": "bob@example.test",
                            "state": "turned off by an administrator",
-                           "admin_enabled": false, "agent_tools_available": false}}
+                           "admin_enabled": false, "agent_tools_available": false,
+                           "capabilities": {"email": {"value": false, "source": "user"},
+                                            "email_agent_tools": {"value": true, "source": "gateway"}}}}
     ]})
 }
 
@@ -451,6 +453,19 @@ fn capture_sign_in() {
         });
         h.turns(2);
         h.shoot("sign-in-no-email-address");
+        // The code worked: signed in with a new token, shown once.
+        h.store.op.recovery.update(|r| {
+            r.step = RecoveryStep::Idle;
+            r.new_token = Some("agw_example_new_token_0123456789".into());
+            r.signed_in_user = "admin".into();
+        });
+        h.store.notice.set(Some(
+            abstractgateway_console::store::email::SIGNED_IN_NEW_TOKEN.into(),
+        ));
+        h.admin();
+        h.ui.screen.set(ui::SCREEN_CONNECTION);
+        h.turns(3);
+        h.shoot("sign-in-signed-in-new-token");
     }
 }
 

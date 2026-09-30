@@ -1134,12 +1134,15 @@ fn recovery(store: &Store, wake: &WakeHandle, action: RecoveryAction) {
                     .and_then(|v| v.get("token").and_then(Value::as_str))
                     .map(str::to_string);
                 match (&got, token) {
-                    (Ok(_), Some(tok)) => s.op.recovery.update(|r| {
-                        r.error = None;
-                        r.step = RecoveryStep::Idle;
-                        r.new_token = Some(tok.clone());
-                        r.signed_in_user = user_id.clone();
-                    }),
+                    (Ok(_), Some(tok)) => {
+                        s.notice.set(Some(crate::store::email::SIGNED_IN_NEW_TOKEN.into()));
+                        s.op.recovery.update(|r| {
+                            r.error = None;
+                            r.step = RecoveryStep::Idle;
+                            r.new_token = Some(tok.clone());
+                            r.signed_in_user = user_id.clone();
+                        })
+                    }
                     (Ok(_), None) => {
                         let text = "The gateway accepted the code but sent no token back, so this console can't sign in with it. Sign in on the web console instead.".to_string();
                         s.notice.set(Some(text.clone()));

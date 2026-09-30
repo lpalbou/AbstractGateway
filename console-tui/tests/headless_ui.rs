@@ -10499,8 +10499,9 @@ fn users_table_has_the_design_columns_and_the_active_switch() {
     h.goto_screen(3);
     let mut users = users_fixture();
     users["users"][1]["email_account"] = json!({"configured": true, "address": "a@x.io", "state": "connected", "admin_enabled": true});
-    users["users"][0]["email_account"] =
-        json!({"configured": false, "state": "not connected", "admin_enabled": false});
+    users["users"][0]["email_account"] = json!({"configured": false, "state": "not connected", "admin_enabled": false,
+            "capabilities": {"email": {"value": false, "source": "user"},
+                             "email_agent_tools": {"value": true, "source": "built-in"}}});
     h.store
         .users
         .set(Loadable::Ready(users_from_payload(&users)));
@@ -10745,6 +10746,7 @@ fn sign_in_by_email_sends_then_shows_the_code_step() {
         "{s}"
     );
     assert!(s.contains("Code from the email"), "{s}");
+    assert!(s.contains("The code signs you in with a new token."), "{s}");
     assert!(
         s.contains("Send a new code (in 30 s)") || s.contains("Send a new code (in 29 s)"),
         "cooldown:\n{s}"
@@ -10801,7 +10803,8 @@ fn sign_in_by_email_sends_then_shows_the_code_step() {
         h.find_cmd(|c| matches!(c, Cmd::Connect { .. })).is_some(),
         "it signs in"
     );
-    assert!(s.contains("Your new token, shown once"), "{s}");
+    assert!(s.contains("Your new token — shown once"), "{s}");
+    assert!(s.contains("Signed in as admin with a new token."), "{s}");
 }
 
 #[test]

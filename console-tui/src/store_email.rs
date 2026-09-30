@@ -464,6 +464,12 @@ pub struct RecoveryAnswer {
     pub at_ms: u64,
 }
 
+/// The status line after a redeemed code (the terminal console signs in
+/// with a new token: `reset_token`, decision 2026-09-30).
+pub const SIGNED_IN_NEW_TOKEN: &str = "Signed in with a new token — your old token no longer works. This console keeps it in memory; launch with --token <token> next time.";
+/// The code step's extra line (only this console: the code rotates the token).
+pub const CODE_GIVES_NEW_TOKEN: &str = "The code signs you in with a new token.";
+
 /// Seconds a "Send a new code" waits after a request (DESIGN §4).
 pub const RESEND_COOLDOWN_S: u64 = 30;
 
@@ -660,11 +666,12 @@ pub fn caps_state_text(body: &Value) -> String {
 }
 
 /// The admin Users table's Mailbox cell (`/admin/users` rows carry
-/// `email_account: {configured, address, state, admin_enabled}`): the
-/// connection in words — "connected as me@x.com", "not connected" — and
-/// whether mailboxes are off for this user (`admin_enabled: false`).
-/// Returns `(connection text, mailboxes off for this user, explicit
-/// per-user override flag when the gateway sends one)`.
+/// `email_account: {configured, address, state, admin_enabled,
+/// capabilities: {email, email_agent_tools: {value, source}}}`): the
+/// connection in words — "connected as me@x.com", "not connected" —
+/// whether mailboxes are off for this user (`admin_enabled: false`), and
+/// the per-user override read from `capabilities` (a `user` source with
+/// value false; `None` when the gateway does not send `capabilities`).
 pub fn mailbox_cell(user: &Value) -> (String, bool, Option<bool>) {
     let Some(acc) = user.get("email_account").filter(|a| a.is_object()) else {
         return ("—".into(), false, None);
@@ -688,30 +695,38 @@ pub fn mailbox_cell(user: &Value) -> (String, bool, Option<bool>) {
     } else {
         format!("connected as {address}")
     };
-    (conn, not_allowed, b(acc, "override"))
+    let user_off = |cap: &str| {
+        acc.get("capabilities")
+            .and_then(|c| c.get(cap))
+            .map(|c| s(c, "source") == "user" && b(c, "value") == Some(false))
+    };
+    let flag = match (user_off("email"), user_off("email_agent_tools")) {
+        (None, None) => None,
+        (e, t) => Some(e.unwrap_or(false) || t.unwrap_or(false)),
+    };
+    (conn, not_allowed, flag)
 }
 
-/// The cell as shown, with the note: an old per-user override reads "not
-/// allowed for this user" (`x` resets it); mailboxes off for everyone (the
-/// admin's "Mailboxes for users" switch) reads "mailboxes off" — that is
-/// not an override, there is nothing to reset. `mailboxes_on` is the
-/// gateway-wide switch when known. Returns `(text, resettable override)`.
+/// The cell as shown, with the note. A per-user override (the old UI's,
+/// or the capabilities migration's pin) reads "not allowed for this user"
+/// — or "agent email tools not allowed for this user" when only the tools
+/// are pinned off — and `x` resets it. Mailboxes off without an override
+/// (the admin's "Mailboxes for users" switch) reads "mailboxes off":
+/// nothing to reset. `override_flag` is the gateway's (`None`: a gateway
+/// that does not say — no Reset is offered). Returns `(text, resettable)`.
 pub fn mailbox_cell_text(
     conn: &str,
     not_allowed: bool,
     override_flag: Option<bool>,
-    mailboxes_on: Option<bool>,
 ) -> (String, bool) {
-    let is_override = match override_flag {
-        Some(flag) => flag && not_allowed,
-        None => not_allowed && mailboxes_on != Some(false),
-    };
-    if is_override {
-        (format!("{conn} · not allowed for this user"), true)
-    } else if not_allowed {
-        (format!("{conn} · mailboxes off"), false)
-    } else {
-        (conn.to_string(), false)
+    match (override_flag == Some(true), not_allowed) {
+        (true, true) => (format!("{conn} · not allowed for this user"), true),
+        (true, false) => (
+            format!("{conn} · agent email tools not allowed for this user"),
+            true,
+        ),
+        (false, true) => (format!("{conn} · mailboxes off"), false),
+        (false, false) => (conn.to_string(), false),
     }
 }
 
@@ -1119,32 +1134,46 @@ mod tests {
             ("not connected".to_string(), false, None)
         );
         let (conn, off, flag) = mailbox_cell(
-            &json!({"email_account": {"configured": true, "address": "b@x.io", "state": "turned off by an administrator", "admin_enabled": false}}),
+            &json!({"email_account": {"configured": true, "address": "b@x.io", "state": "turned off by an administrator", "admin_enabled": false,
+                "capabilities": {"email": {"value": false, "source": "user"}, "email_agent_tools": {"value": true, "source": "gateway"}}}}),
         );
         assert_eq!(
             (conn.as_str(), off, flag),
-            ("connected as b@x.io", true, None)
+            ("connected as b@x.io", true, Some(true))
         );
-        // Mailboxes on for everyone, off for b: an old override (Reset).
         assert_eq!(
-            mailbox_cell_text(&conn, off, flag, Some(true)),
+            mailbox_cell_text(&conn, off, flag),
             (
                 "connected as b@x.io · not allowed for this user".to_string(),
                 true
             )
         );
-        // Mailboxes off for everyone: not an override, nothing to reset.
-        assert_eq!(
-            mailbox_cell_text(&conn, off, flag, Some(false)),
-            ("connected as b@x.io · mailboxes off".to_string(), false)
+        // Mailboxes off for everyone (a gateway source): nothing to reset.
+        let (_, off, flag) = mailbox_cell(
+            &json!({"email_account": {"configured": false, "state": "x", "admin_enabled": false,
+                "capabilities": {"email": {"value": false, "source": "gateway"}, "email_agent_tools": {"value": true, "source": "built-in"}}}}),
         );
-        // An explicit flag from the gateway wins.
+        assert_eq!(flag, Some(false));
         assert_eq!(
-            mailbox_cell_text(&conn, true, Some(true), Some(false)),
+            mailbox_cell_text("not connected", off, flag),
+            ("not connected · mailboxes off".to_string(), false)
+        );
+        // Only the tools pinned off (the migration's pin).
+        let (_, off, flag) = mailbox_cell(
+            &json!({"email_account": {"configured": false, "state": "x", "admin_enabled": true,
+                "capabilities": {"email": {"value": true, "source": "gateway"}, "email_agent_tools": {"value": false, "source": "user"}}}}),
+        );
+        assert_eq!(
+            mailbox_cell_text("not connected", off, flag),
             (
-                "connected as b@x.io · not allowed for this user".to_string(),
+                "not connected · agent email tools not allowed for this user".to_string(),
                 true
             )
+        );
+        // A gateway that does not send capabilities: no Reset offered.
+        assert_eq!(
+            mailbox_cell_text("c", true, None),
+            ("c · mailboxes off".to_string(), false)
         );
         assert_eq!(mailbox_cell(&json!({})), ("—".to_string(), false, None));
     }

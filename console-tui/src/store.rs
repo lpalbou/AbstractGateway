@@ -981,9 +981,10 @@ pub struct UserRow {
     pub mailbox: String,
     /// Mailboxes are off for this user (`email_account.admin_enabled:
     /// false`) — by an old per-user override or by the gateway-wide switch
-    /// (`email::mailbox_cell_text` tells which).
+    /// (`mailbox_override_flag` tells which).
     pub mailbox_not_allowed: bool,
-    /// `email_account.override` when the gateway sends it.
+    /// A per-user override from `email_account.capabilities` (`None`:
+    /// the gateway does not send them).
     pub mailbox_override_flag: Option<bool>,
 }
 
@@ -1004,14 +1005,12 @@ impl UserRow {
         })
     }
 
-    /// The Mailbox cell as shown and whether `x` has an override to reset
-    /// (`mailboxes_on`: the gateway-wide "Mailboxes for users", when read).
-    pub fn mailbox_view(&self, mailboxes_on: Option<bool>) -> (String, bool) {
+    /// The Mailbox cell as shown and whether `x` has an override to reset.
+    pub fn mailbox_view(&self) -> (String, bool) {
         email::mailbox_cell_text(
             &self.mailbox,
             self.mailbox_not_allowed,
             self.mailbox_override_flag,
-            mailboxes_on,
         )
     }
 
