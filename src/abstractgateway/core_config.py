@@ -368,6 +368,13 @@ def _merge_over_stored_route(
     if options is None:
         stored_options = stored.get("options")
         merged["options"] = dict(stored_options) if isinstance(stored_options, dict) else {}
+        old_provider = str(stored.get("provider") or "").strip().lower()
+        if named["provider"] and old_provider and old_provider != str(provider or "").strip().lower():
+            # Route options are the stored ENGINE's construction knobs (an MLX route's
+            # `speculation: native_mtp`): a save that moves the route to another provider and
+            # names no options starts clean -- AbstractCore's `update_capability_default` rule
+            # (0.7.0 end-to-end: an LM Studio text route kept the MLX tier's MTP options).
+            merged["options"] = {}
     return merged
 
 
