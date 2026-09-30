@@ -735,7 +735,11 @@ def public_status(plane: EmailPlane) -> Dict[str, Any]:
     out["agent_tools"] = agent_tools_status(plane)
     # Additive fields for the account page (CONTRACT 2026-09-30 §5.4, DESIGN §6).
     out["email_available"] = admin_on
-    out["registered_address"] = registered_address(plane)
+    # `email_address`: the user's email address as stored (users registry; "" when none) — the
+    # account page's field. `registered_address` stays "self" for runs: that address, else the
+    # connected mailbox's own (filled here too when no mailbox exists yet).
+    out["email_address"] = registered_address(plane)
+    out["registered_address"] = str(out.get("registered_address") or "") or self_address(plane)
     out["oauth_providers"] = oauth_providers_for_users()
     from .notifications import read_preferences
 

@@ -58,7 +58,10 @@ is set for compatibility. Admin principals can manage users through:
 - `GET /api/gateway/admin/users?kind=human|entity|all` (default `all`)
 - `POST /api/gateway/admin/users`
 - `GET /api/gateway/admin/users/{user_id}?tenant_id=...`
-- `PATCH /api/gateway/admin/users/{user_id}?tenant_id=...`
+- `PATCH /api/gateway/admin/users/{user_id}?tenant_id=...` (`enabled` is the Active switch:
+  false = signed out and unable to sign in; an admin cannot deactivate their own account,
+  `409 cannot_deactivate_self`, nor the last active admin, `409 last_admin`; `email` is the
+  user's email address)
 - `DELETE /api/gateway/admin/users/{user_id}?tenant_id=...`
 - `GET /api/gateway/admin/runtime-reservations`
 - `POST /api/gateway/admin/runtime-reservations/{runtime_id}/transfer`
