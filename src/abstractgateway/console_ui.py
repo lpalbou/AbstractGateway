@@ -354,7 +354,7 @@ CONSOLE_UI_CSS = r"""
     .ui-apps-settings__rows { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 14px 18px; min-width: 0; }
     .ui-apps-setting { display: grid; align-content: start; gap: 6px; min-width: 0; }
     .ui-apps-setting__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
-    .ui-apps-setting__head label { margin: 0; font-size: var(--font-size-md); font-weight: 650; color: var(--text-primary); text-transform: none; letter-spacing: 0; }
+    .ui-apps-setting__head label { margin: 0; font-size: var(--font-size-md); font-weight: 600; color: var(--text-primary); text-transform: none; letter-spacing: 0; }
     .ui-apps-setting input { width: 100%; min-width: 0; margin: 0; font-family: var(--font-mono); }
     #island-address { font-family: var(--font-mono); font-size: var(--font-size-sm); max-width: 26ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     @media (max-width: 1023.98px) { #island-address { display: none; } }

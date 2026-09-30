@@ -555,6 +555,8 @@ const browserIntl = {{
 }};
 
 const context = vm.createContext({{
+  // Web Crypto, as in every browser (randomId: DESIGN §11).
+  crypto: globalThis.crypto,
   document,
   fetch,
 	  Headers,

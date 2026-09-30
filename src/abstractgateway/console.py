@@ -1781,6 +1781,100 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     .core-console-unavailable { display: grid; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel-2); }
     .core-console-unavailable h2 { margin: 0; font-size: 1.05em; }
 /*__CONSOLE_UI_CSS__*/
+	    /* ---- State toggles, users and the account page (DESIGN §2/§3/§5/§6/§12).
+	       The kit supplies af-switch, af-form, af-card, af-tabs and the sign-in
+	       card; these rules only lay them out in the console. Type scale: labels
+	       at body size (14 px, 500), helpers small and muted. */
+	    .switch-list { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+	    .switch-list > .af-switch__reason { margin: -2px 0 6px 0; }
+	    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+	    /* The column header says Active: the switch keeps its accessible name, the visible label goes. */
+	    .users-active .af-switch__text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+	    .kv-switch .af-switch__text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+	    .users-active .af-switch__reason { display: block; max-width: 180px; margin-top: 2px; }
+	    .inline-state { margin: 0; min-height: 1.2em; color: var(--muted); font-size: var(--font-size-sm); font-weight: 400; }
+	    .inline-state.ok { color: var(--text); }
+	    .inline-state.error { color: var(--error); font-size: var(--font-size-base); }
+	    span.inline-state { display: inline; min-height: 0; margin-left: 6px; }
+	    .plain-disclosure { border: 0; padding: 0; background: transparent; }
+	    .plain-disclosure > summary {
+	      display: inline-flex; align-items: center; gap: 6px; min-height: 36px;
+	      cursor: pointer; color: var(--muted); font-size: var(--font-size-base); font-weight: 500;
+	      list-style: none;
+	    }
+	    .plain-disclosure > summary::-webkit-details-marker { display: none; }
+	    .plain-disclosure > summary::before { content: "›"; display: inline-block; width: 1em; text-align: center; transition: transform .15s; }
+	    .plain-disclosure[open] > summary::before { transform: rotate(90deg); }
+	    .plain-disclosure[open] > summary { color: var(--text); margin-bottom: 8px; }
+	    .link-button {
+	      min-height: 0; padding: 2px 0; border: 0; background: transparent; color: var(--muted);
+	      font-size: var(--font-size-base); font-weight: 400; text-decoration: underline;
+	      text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); cursor: pointer;
+	    }
+	    .link-button:hover:not(:disabled) { color: var(--text); filter: none; }
+	    .inline-confirm {
+	      display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px;
+	      padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--error) 35%, transparent);
+	      border-radius: var(--radius-md); background: color-mix(in srgb, var(--error) 7%, transparent);
+	      color: var(--text); font-size: var(--font-size-base);
+	    }
+	    .inline-confirm > span { flex: 1 1 260px; }
+	    .inline-confirm[hidden] { display: none; }
+	    /* Users (admin): the one switch above the table, then the table. */
+	    .users-caps { display: flex; flex-direction: column; gap: 6px; max-width: 720px; margin: 0 0 14px; }
+	    .users-table td { font-size: var(--font-size-base); vertical-align: middle; }
+	    .users-table td.actions { white-space: nowrap; }
+	    .users-table .row-confirm > td { padding-top: 0; }
+	    .users-override { color: var(--warn, var(--warning)); }
+	    button.small { min-height: 28px; padding: 3px 10px; font-size: var(--font-size-sm); }
+	    .user-create-form { max-width: 520px; }
+	    .user-create-form .modal-actions { margin-top: 4px; }
+	    /* The user's account page: cards in one column, forms at most 720 px. */
+	    .account-page { display: flex; flex-direction: column; gap: 14px; max-width: 760px; min-width: 0; }
+	    .account-page__head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+	    .account-page__head .section-title { margin: 0; }
+	    .account-card { margin: 0; box-shadow: none; }
+	    .account-card .af-card__title { font-size: var(--font-size-lg); }
+	    .account-card[hidden], #my-email-connect[hidden], #my-email-connected[hidden] { display: none; }
+	    .account-advanced > summary {
+	      cursor: pointer; font-size: var(--font-size-lg); font-weight: 600; color: var(--text); min-height: 32px;
+	      display: flex; align-items: center; gap: 8px; list-style: none;
+	    }
+	    .account-advanced > summary::-webkit-details-marker { display: none; }
+	    .account-advanced > summary::before { content: "›"; display: inline-block; width: 1em; text-align: center; color: var(--muted); transition: transform .15s; }
+	    .account-advanced[open] > summary::before { transform: rotate(90deg); }
+	    .account-advanced[open] > summary { margin-bottom: 10px; }
+	    .mailbox-status { margin: 0; font-size: var(--font-size-base); color: var(--text); overflow-wrap: anywhere; }
+	    .mailbox-status::before { content: ""; display: inline-block; width: 8px; height: 8px; margin-right: 8px; border-radius: 999px; background: var(--success); vertical-align: middle; }
+	    .mailbox-actions { justify-content: flex-start; margin-top: 10px; }
+	    .servers-line { margin: 0; color: var(--muted); font-size: var(--font-size-sm); font-family: var(--font-mono); overflow-wrap: anywhere; }
+	    .servers-line .link-button { font-family: var(--font-sans); font-size: var(--font-size-sm); margin-left: 6px; }
+	    .chip-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0; padding: 0; list-style: none; }
+	    .chip { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 10px; border: 1px solid var(--line-soft); border-radius: 999px; font-size: var(--font-size-sm); background: var(--panel-2, var(--panel)); }
+	    .chip__remove { min-height: 24px; min-width: 24px; padding: 0 6px; border: 0; border-radius: 999px; background: transparent; color: var(--muted); font-size: 15px; line-height: 1; }
+	    .chip__remove:hover { color: var(--error); filter: none; }
+	    .chip-list__empty { color: var(--muted); font-size: var(--font-size-sm); }
+	    @media (max-width: 767.98px) {
+	      /* DESIGN §12: phones use the full width — the account page's cards are
+	         flat sections with a hairline divider (no card in a card), and the
+	         users table becomes one block per user with label/value lines
+	         (one page scroll, no inner horizontal scroll box). */
+	      .account-page { gap: 0; max-width: none; }
+	      .account-card { border: 0; background: transparent; padding: 16px 0; border-top: 1px solid var(--line-soft); }
+	      .users-table-wrap { overflow: visible; }
+	      #tab-users #users-section { border: 0; background: transparent; box-shadow: none; padding: 8px 0 0; }
+	      .users-table, .users-table tbody, .users-table tr, .users-table td { display: block; width: 100%; }
+	      .users-table thead { display: none; }
+	      .users-table tr { padding: 10px 0; border-top: 1px solid var(--line-soft); }
+	      .users-table td { display: flex; align-items: center; gap: 10px; padding: 3px 0; border: 0; min-width: 0; overflow-wrap: anywhere; }
+	      .users-table td[data-label]::before { content: attr(data-label); flex: 0 0 104px; color: var(--muted); font-size: var(--font-size-sm); }
+	      .users-table td.actions { flex-wrap: wrap; white-space: normal; }
+	      .users-table td.actions::before { flex-basis: 100%; }
+	      .users-table .row-confirm { border-top: 0; padding-top: 0; }
+	    }
+	    @media (prefers-reduced-motion: reduce) {
+	      .plain-disclosure > summary::before, .account-advanced > summary::before { transition: none; }
+	    }
 	  </style>
 </head>
 <body>
@@ -1798,7 +1892,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    </div>
 	    <nav class="shell_nav">
 	      <button id="tab-button-users" class="tab-button shell_nav_item" type="button" title="People, tokens, and summoned entities"><span class="shell_nav_icon" aria-hidden="true">☾</span><span class="shell_nav_label">Users &amp; Entities</span></button>
-	      <button id="tab-button-runtimes" class="tab-button shell_nav_item" type="button" title="Execution planes: runs, sessions, data and caches"><span class="shell_nav_icon" aria-hidden="true">◎</span><span class="shell_nav_label">Runtimes</span></button>
+	      <button id="tab-button-runtimes" class="tab-button shell_nav_item" type="button" title="Each user's data plane: runs, flows, sessions and memory"><span class="shell_nav_icon" aria-hidden="true">◎</span><span class="shell_nav_label">Runtimes</span></button>
 	      <button id="tab-button-workflows" class="tab-button shell_nav_item" type="button" title="Registered workflows: versions, import, export, delete"><span class="shell_nav_icon" aria-hidden="true">⑂</span><span class="shell_nav_label">Workflows</span></button>
 	      <button id="tab-button-providers" class="tab-button shell_nav_item" type="button" title="LLM provider connections and endpoint profiles"><span class="shell_nav_icon" aria-hidden="true">◇</span><span class="shell_nav_label">Providers</span></button>
 	      <button id="tab-button-defaults" class="tab-button shell_nav_item" type="button" title="Which provider/model serves each capability (vision, audio, image...)"><span class="shell_nav_icon" aria-hidden="true">◆</span><span class="shell_nav_label">Multimodal</span></button>
@@ -2013,7 +2107,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <div class="section-head">
 	                <div>
 	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">◎</span><span>Runtimes</span></h2>
-	                  <p class="section-note">Every execution plane on this gateway: the default runtime, each user's own runtime, and each entity's own runtime. Click a runtime to open its runs and cache below; the default runtime's cache also lists every machine-wide store.</p>
+	                  <p class="section-note">A runtime is a user's own data plane: their runs, flows, sessions and memory. Each user gets one, named after them, unless an admin bound them to a shared one. Entities have their own too. Click a runtime to open its runs and cache below; the default runtime's cache also lists every machine-wide store.</p>
 	                </div>
 	                <button id="runtimes-refresh" class="secondary icon-only" title="Reload the runtime inventory" aria-label="Refresh runtimes"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
 	              </div>
@@ -2213,7 +2307,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <label id="sandbox-provider-label" class="hidden">Provider<select id="sandbox-provider"></select></label>
 	              <label id="sandbox-model-label" class="hidden">Model<select id="sandbox-model"></select></label>
 	              <div class="sandbox-composer-toolbar">
-	                <label id="sandbox-system-label" class="sandbox-system-compact">System prompt<input id="sandbox-system" placeholder="optional"></label>
+	                <label id="sandbox-system-label" class="sandbox-system-compact" title="Instructions sent before your message. Leave empty for none.">System prompt<input id="sandbox-system"></label>
 	                <label id="sandbox-reasoning-label" class="sandbox-system-compact" title="Reasoning effort for reasoning models. Default sends nothing; the model behaves as before.">Reasoning<select id="sandbox-reasoning">
 	                  <option value="">default</option>
 	                  <option value="none">none</option>
@@ -2271,7 +2365,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <div id="gateway-host-message" class="message"></div>
 	              <div class="entity-live-line">
 	                <span id="gateway-host-state" class="state-pill">…</span>
-	                <button id="gateway-host-pause" class="secondary hidden" type="button" title="Pause: no new workflow step starts until you resume; work already inside a call finishes first">Pause workflows</button>
+	                <button id="gateway-host-pause" type="button" role="switch" class="af-switch af-switch--sm hidden" aria-checked="false" title="On: no new workflow step starts until you switch it off; work already inside a call finishes first"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Workflows paused</span></span></button>
 	                <span id="gateway-host-detail" class="muted"></span>
 	              </div>
 	              <div class="entity-overview">
@@ -2283,7 +2377,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                     facts about this machine, and this line names them. -->
 	                <div class="entity-kv"><span class="entity-kv-key">Desktop icon</span><span class="entity-kv-val"><span id="gateway-host-tray-note" class="muted"></span></span></div>
 	                <!-- Start at login: a real switch (admin), confirmed, verified by GET. -->
-	                <div id="gateway-host-login-row" class="entity-kv hidden"><span class="entity-kv-key">Start at login</span><span class="entity-kv-val"><span id="gateway-host-login-text" class="muted">…</span> <button id="gateway-host-login-toggle" class="secondary hidden" type="button"></button></span></div>
+	                <div id="gateway-host-login-row" class="entity-kv hidden"><span class="entity-kv-key">Start at login</span><span class="entity-kv-val"><span id="gateway-host-login-text" class="muted">…</span> <button id="gateway-host-login-toggle" type="button" role="switch" class="af-switch af-switch--sm kv-switch hidden" aria-checked="false" aria-label="Start at login"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Start at login</span></span></button></span></div>
 	              </div>
 	              <div class="actions">
 	                <button id="gateway-host-restart" class="secondary hidden" type="button">Restart gateway…</button>
@@ -2450,7 +2544,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                 <div class="af-card__header"><h3 id="my-email-registered-title" class="af-card__title">Email address</h3></div>
                 <div class="af-form">
                   <div class="af-form__field">
-                    <label class="af-form__label" for="my-email-registered">Email address</label>
+                    <label class="af-form__label sr-only" for="my-email-registered">Email address</label>
                     <div class="af-form__inline">
                       <input id="my-email-registered" type="email" autocomplete="email" spellcheck="false" aria-describedby="my-email-registered-help my-email-registered-error">
                       <button id="my-email-registered-save" class="secondary" type="button">Save</button>
@@ -3657,10 +3751,26 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // 50,000 tokens) and records the receipt (run.session_history), shown
 	    // when earlier messages were not replayed. New conversation = new session.
 	    const ASSISTANT_BUNDLE = { registry_scope: "tenant_catalog", bundle_id: "docs-qa", bundle_version: "0.1.1", flow_id: "docsqa001" };
+	    // The kit's randomId() (ui-kit 0.3.3, random_id.ts), ported: browsers
+	    // withhold crypto.randomUUID over plain http (a console opened from
+	    // another machine), so a v4 UUID is built from getRandomValues then
+	    // (DESIGN §11). Never Math.random.
+	    function randomId() {
+	      const c = typeof crypto !== "undefined" ? crypto : null;
+	      if (c && typeof c.randomUUID === "function") {
+	        try { return c.randomUUID(); } catch {}
+	      }
+	      if (c && typeof c.getRandomValues === "function") {
+	        const b = Array.from(c.getRandomValues(new Uint8Array(16)));
+	        b[6] = (b[6] & 0x0f) | 0x40;
+	        b[8] = (b[8] & 0x3f) | 0x80;
+	        const h = b.map((x) => x.toString(16).padStart(2, "0")).join("");
+	        return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+	      }
+	      throw new Error("randomId: Web Crypto (crypto.getRandomValues) is unavailable");
+	    }
 	    function assistantNewSessionId() {
-	      let id = "";
-	      try { if (typeof crypto !== "undefined" && crypto.randomUUID) id = crypto.randomUUID(); } catch {}
-	      return "gateway-docs-assistant:" + (id || (Date.now() + "-" + Math.random().toString(16).slice(2)));
+	      return "gateway-docs-assistant:" + randomId();
 	    }
 	    const assistantState = { open: false, busy: false, corpus: null, corpusWarned: false, sessionId: assistantNewSessionId() };
 	    function assistantReplayNote(history) {
@@ -3777,7 +3887,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    const TAB_TITLES = {
 	      users: ["Users & Entities", "People, tokens, and the summoned entities living on this gateway"],
-	      runtimes: ["Runtimes", "Execution planes: runs, sessions, data and caches"],
+	      runtimes: ["Runtimes", "Each user's own data plane: runs, flows, sessions and memory"],
       workflows: ["Workflows", "Registered workflows: versions, import, export, delete"],
 	      providers: ["Providers", "LLM provider connections and endpoint profiles"],
 	      defaults: ["Multimodal Capabilities", "Which provider/model serves each capability route"],
@@ -7902,8 +8012,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    // Client-supplied idempotency key for the /commands door (UUID preferred).
 	    function cmdId() {
-	      try { if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID(); } catch {}
-	      return "cmd-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+	      return randomId();
 	    }
 	    async function cancelRun(runId) {
 	      const go = await confirmAction({ title: "Cancel run?", message: `Cancel run ${runId}? Any in-flight work stops at the next tick.`, confirmLabel: "Cancel run", danger: true });
@@ -11063,9 +11172,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        } else {
 	          detail.textContent = runner.runner_in_process === false ? "Workflows run in a separate runner process; pausing reaches it through the shared data folder." : "";
 	        }
-	        btn.textContent = paused ? "Resume workflows" : "Pause workflows";
+	        // A persistent state = a switch labelled by the state (DESIGN §2).
+	        btn.setAttribute("aria-checked", paused ? "true" : "false");
+	        btn.removeAttribute("aria-busy");
 	        btn.classList.toggle("hidden", !admin);
-	        btn.disabled = false;
 	        const caps = runner.capabilities || {};
 	        const restart = $("gateway-host-restart"); const quit = $("gateway-host-quit");
 	        restart.classList.toggle("hidden", !admin); quit.classList.toggle("hidden", !admin);
@@ -11145,7 +11255,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      text.textContent = st.can_change ? `${lead} — ${st.summary}` : `${lead} — can't be changed here: ${st.reason}`;
 	      btn.classList.toggle("hidden", !st.can_change);
 	      btn.disabled = false;
-	      btn.textContent = st.enabled ? "Turn off…" : ({ broken: "Repair…", other: "Use this gateway…" }[st.state] || "Turn on…");
+	      // A switch labelled by the feature (DESIGN §2). Needs-repair and
+	      // another gateway's registration read OFF: switching on repairs or
+	      // replaces it (the confirmation says which).
+	      btn.setAttribute("aria-checked", st.enabled ? "true" : "false");
+	      btn.title = st.enabled ? "On: this gateway starts when you log in" : ({ broken: "Needs repair: switch on to repair", other: "Another gateway starts at login: switch on to use this one" }[st.state] || "Off: nothing starts the gateway at login");
 	    }
 	    async function loadStartAtLogin(scope) {
 	      try { renderStartAtLogin(scope, await api("/api/gateway/host/start-at-login")); }
@@ -11155,8 +11269,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const st = startAtLoginState[scope]; if (!st || !st.can_change) return;
 	      const turnOn = !st.enabled;
 	      const ok = await confirmAction(turnOn
-	        ? { title: "Start AbstractGateway at login?", message: `Registers ${st.mechanism_label} so this gateway starts when you log in.${st.state === "other" ? ` It replaces the registration for another gateway (${st.other_data_dir || "another data folder"}).` : ""} The gateway running now is not restarted.`, confirmLabel: "Turn on" }
-	        : { title: "Stop starting at login?", message: "The gateway keeps running now; it will not start at your next login.", confirmLabel: "Turn off" });
+	        ? { title: "Start AbstractGateway at login?", message: `Registers ${st.mechanism_label} so this gateway starts when you log in.${st.state === "other" ? ` It replaces the registration for another gateway (${st.other_data_dir || "another data folder"}).` : ""} The gateway running now is not restarted.`, confirmLabel: "Start at login" }
+	        : { title: "Stop starting at login?", message: "The gateway keeps running now; it will not start at your next login.", confirmLabel: "Stop starting at login" });
 	      if (!ok) return;
 	      const btn = $(`${scope}-login-toggle`); if (btn) btn.disabled = true;
 	      let err = "";
@@ -11171,12 +11285,19 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    async function toggleGatewayPause() {
 	      const runner = state.hostRunner || {}; const btn = $("gateway-host-pause");
-	      btn.disabled = true;
+	      if (btn.getAttribute("aria-busy") === "true") return;
+	      const pause = !runner.paused;
+	      btn.setAttribute("aria-checked", pause ? "true" : "false");
+	      btn.setAttribute("aria-busy", "true");
 	      try {
-	        const out = await api(runner.paused ? "/api/gateway/host/resume" : "/api/gateway/host/pause", { method: "POST", body: JSON.stringify({}) });
+	        const out = await api(pause ? "/api/gateway/host/pause" : "/api/gateway/host/resume", { method: "POST", body: JSON.stringify({}) });
 	        renderGatewayHost(out, null);
-	        _gwMsg("");
-	      } catch (e) { _gwMsg(String(e.message || e), "error"); btn.disabled = false; }
+	        _gwMsg(pause ? "Workflows are paused: nothing new runs until you switch this off." : "Workflows are running.", "ok");
+	      } catch (e) {
+	        btn.setAttribute("aria-checked", runner.paused ? "true" : "false");
+	        btn.removeAttribute("aria-busy");
+	        _gwMsg(String(e.message || e), "error");
+	      }
 	    }
 	    async function restartGateway() {
 	      const ok = await confirmAction({ title: "Restart AbstractGateway?", message: "Running workflows pause at their next step and continue after the restart. The console is unavailable for a few seconds.", confirmLabel: "Restart" });
@@ -13372,7 +13493,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       box.innerHTML = firstRunTiles([
         ["Console", `<code class="ui-ellip is-block" title="${esc(url)}/console">${esc(url)}/console</code>`, "Bookmark it: this is your gateway's home"],
         ["Default text model", `<span class="ui-ellip is-block" title="${esc(model)}">${esc(model)}</span>`, "Change it any time in Multimodal"],
-        ["Starts at login", `<span id="first-run-login-text" class="ui-ellip is-block">…</span>`, `<button id="first-run-login-toggle" class="secondary hidden" type="button"></button>`],
+        ["Starts at login", `<span id="first-run-login-text" class="ui-ellip is-block">…</span>`, `<button id="first-run-login-toggle" type="button" role="switch" class="af-switch af-switch--sm kv-switch hidden" aria-checked="false" aria-label="Start at login"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Start at login</span></span></button>`],
         ["This guide", "Setup guide", "The button at the top right reopens it"],
       ])
         + `<div class="ui-advanced"><div class="ui-section-title"><h3>From the command line</h3></div>`
