@@ -10827,6 +10827,11 @@ fn sign_in_by_email_says_the_honest_refusals() {
         !s.contains("Code from the email"),
         "no code field when nothing was sent:\n{s}"
     );
+    assert!(
+        !s.contains("Send a new code"),
+        "no resend when the account has no email address:\n{s}"
+    );
+    assert!(s.contains("Back to token"), "{s}");
     let a = RecoveryAnswer::from_value(
         "bob",
         &json!({"sent": false, "reason_code": "too_many_requests", "retry_after_s": 600, "message": "Too many codes requested for this account. Try again in 10 minutes."}),
@@ -10871,4 +10876,42 @@ fn switch_ink_on_screen_marks_on_off_and_unavailable() {
     let na = paint_at(&h, "[-] Job failed");
     assert!(!na.attrs.contains(BOLD), "unavailable is not bold");
     assert_ne!(na.fg, off.fg, "unavailable is faint, not the plain ink");
+}
+
+#[test]
+fn my_email_advanced_folder_saves_on_enter_and_is_unavailable_without_a_mailbox() {
+    use abstractgateway_console::worker::operator::EmailAction;
+    let mut h = harness_sized(Size::new(140, 90));
+    let s = open_my_email(&mut h, &my_email_fixture());
+    click_text(&mut h, &s, "│ Advanced ▸  recipient");
+    let s = h.turns(3);
+    let (row, line_txt) = s
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("Folder ") && l.contains('▐'))
+        .unwrap_or_else(|| panic!("an editable Folder field:\n{s}"));
+    let field_col = line_txt[..line_txt.find('▐').unwrap()].chars().count();
+    let _ = h.drain_cmds();
+    h.key(
+        format!(
+            "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+            field_col + 3,
+            row + 1,
+            field_col + 3,
+            row + 1
+        )
+        .as_bytes(),
+    );
+    h.turns(1);
+    h.type_text("\r");
+    h.turns(2);
+    match email_action(&mut h) {
+        Some(EmailAction::Folder(f)) => assert_eq!(f, "INBOX"),
+        other => panic!("PUT /me/email/folder, got {other:?}"),
+    }
+    let mut h = harness_sized(Size::new(140, 90));
+    let s = open_my_email(&mut h, &my_email_not_connected());
+    click_text(&mut h, &s, "│ Advanced ▸  recipient");
+    let s = h.turns(3);
+    assert!(s.contains("[-] Folder — Connect a mailbox first."), "{s}");
 }

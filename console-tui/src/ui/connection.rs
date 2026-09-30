@@ -305,6 +305,21 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             }
         });
     }
+    // Signed in with the redeemed token: say it once the connection is
+    // verified (the probe's own acknowledgement would otherwise be the
+    // last word in the status line).
+    cx.effect(move || {
+        let connected = store.conn.with(|c| matches!(c, ConnPhase::Connected(_)));
+        let pending = rec.with(|r| r.new_token.is_some() && !r.announced);
+        // After the sign-in's own reads settle (their notices come first).
+        let settled = store.busy.with(|b| b.is_empty());
+        if connected && pending && settled {
+            store
+                .notice
+                .set(Some(crate::store::email::SIGNED_IN_NEW_TOKEN.into()));
+            rec.update(|r| r.announced = true);
+        }
+    });
     // The resend cooldown ticks once a second, only while it runs.
     {
         let ticker: std::rc::Rc<std::cell::RefCell<Option<abstracttui::reactive::IntervalHandle>>> =
@@ -524,6 +539,9 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 } else {
                     col = col.child(error_line(&t));
                 }
+                // No email address: a new code can't be sent either — the
+                // message says so; only "Back to token" is offered.
+                let can_resend = a.sent || a.reason_code != "no_email_address";
                 let a_clock = a.clone();
                 col.child(super::util::field_w(
                     &t,
@@ -536,6 +554,11 @@ fn recovery_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         .child(dyn_view_scoped(
                             LayoutStyle::row().h(1).shrink(0.0),
                             move |kcx| {
+                                if !can_resend {
+                                    return Element::new()
+                                        .style(LayoutStyle::default().w(0).h(1))
+                                        .build();
+                                }
                                 let _ = clock.get();
                                 let wait = a_clock.resend_wait_s(now_ms());
                                 let label = if wait > 0 {

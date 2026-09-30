@@ -107,6 +107,17 @@ impl GatewayClient {
         self.send("PUT", "/me/email/limits", body, false)
     }
 
+    /// `PUT /me/email/folder {"folder"}` — the IMAP folder read (empty =
+    /// INBOX); 404 `email_not_configured` without a mailbox.
+    pub fn set_my_email_folder(&self, folder: &str) -> ApiResult<Value> {
+        self.send(
+            "PUT",
+            "/me/email/folder",
+            &json!({ "folder": folder }),
+            false,
+        )
+    }
+
     /// `PUT /me/email/enabled` — the user's own switch.
     pub fn set_my_email_enabled(&self, enabled: bool) -> ApiResult<Value> {
         self.send(

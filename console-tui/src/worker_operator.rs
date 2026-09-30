@@ -177,6 +177,8 @@ pub enum EmailAction {
     AgentTools(bool),
     /// POST /me/email/discover — the servers for the Other tab's address.
     Discover(String),
+    /// PUT /me/email/folder — the IMAP folder read (empty = INBOX).
+    Folder(String),
     /// PUT /me/email/address — my Email address (not a mailbox).
     SetAddress(String),
     /// PUT /me/email/notifications — one of the two switches.
@@ -1141,6 +1143,7 @@ fn recovery(store: &Store, wake: &WakeHandle, action: RecoveryAction) {
                             r.step = RecoveryStep::Idle;
                             r.new_token = Some(tok.clone());
                             r.signed_in_user = user_id.clone();
+                            r.announced = false;
                         })
                     }
                     (Ok(_), None) => {
@@ -1611,6 +1614,17 @@ fn email_write(
                     ("saving my recipient rules", "Recipient rules saved.".into())
                 }
                 EmailAction::Limits(_) => ("saving my send limits", "Send limits saved.".into()),
+                EmailAction::Folder(f) => (
+                    "saving my mailbox folder",
+                    format!(
+                        "Folder set to {}.",
+                        if f.trim().is_empty() {
+                            "INBOX"
+                        } else {
+                            f.trim()
+                        }
+                    ),
+                ),
                 EmailAction::Enabled(true) => (
                     "switching Use this mailbox",
                     "“Use this mailbox” is on.".into(),
@@ -1637,6 +1651,7 @@ fn email_write(
                         EmailAction::Disconnect => c.disconnect_my_email(),
                         EmailAction::Policy(body) => c.set_my_email_policy(body),
                         EmailAction::Limits(body) => c.set_my_email_limits(body),
+                        EmailAction::Folder(f) => c.set_my_email_folder(f.trim()),
                         EmailAction::Enabled(on) => c.set_my_email_enabled(*on),
                         EmailAction::AgentTools(on) => c.set_my_email_agent_tools(*on),
                         _ => unreachable!("handled above"),
@@ -1677,6 +1692,14 @@ fn email_write(
                                 .is_none_or(|w| Some(w) == have)
                         };
                         want("per_hour", got.per_hour) && want("per_day", got.per_day)
+                    }
+                    EmailAction::Folder(f) => {
+                        let want = if f.trim().is_empty() {
+                            "INBOX"
+                        } else {
+                            f.trim()
+                        };
+                        got.imap.as_ref().map(|i| i.folder.as_str()) == Some(want)
                     }
                     EmailAction::Enabled(on) => got.enabled == *on,
                     EmailAction::AgentTools(on) => got.agent_tools_enabled == *on,

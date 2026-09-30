@@ -71,6 +71,7 @@ struct Page {
     new_entry: Signal<String>,
     per_hour: Signal<String>,
     per_day: Signal<String>,
+    folder: Signal<String>,
     oauth_advanced: Signal<bool>,
     client_id: Signal<String>,
     client_secret: Signal<String>,
@@ -259,6 +260,7 @@ pub fn open(cx: Scope, ctx: &Ctx) {
             new_entry: mcx.signal(String::new()),
             per_hour: mcx.signal(String::new()),
             per_day: mcx.signal(String::new()),
+            folder: mcx.signal(String::new()),
             oauth_advanced: mcx.signal(false),
             client_id: mcx.signal(String::new()),
             client_secret: mcx.signal(String::new()),
@@ -295,6 +297,11 @@ pub fn open(cx: Scope, ctx: &Ctx) {
                     .set(e.per_day.map(|v| v.to_string()).unwrap_or_default());
                 if let Some(i) = &e.imap {
                     p.servers.folder.set(i.folder.clone());
+                    p.folder.set(if i.folder.is_empty() {
+                        "INBOX".to_string()
+                    } else {
+                        i.folder.clone()
+                    });
                 }
                 if e.auth_kind == "password" {
                     p.tab.set(TAB_OTHER);
@@ -1295,22 +1302,40 @@ fn advanced_body(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> Vi
         ),
         p.wrap_w,
     ));
-    // Folder (read from the connected mailbox; set under Server settings).
-    let folder = e
-        .imap
-        .as_ref()
-        .map(|i| {
-            if i.folder.is_empty() {
-                "INBOX".to_string()
-            } else {
-                i.folder.clone()
-            }
-        })
-        .unwrap_or_else(|| "INBOX".into());
-    col = col.child(line(vec![
-        span_bold("Folder  ", t0.text_muted),
-        span(folder, t0.text),
-    ]));
+    // Folder: the IMAP folder read (PUT /me/email/folder, Enter saves;
+    // empty = INBOX). Unavailable, with the reason, without a mailbox.
+    if e.configured {
+        let ctx_f = ctx.clone();
+        col = col.child(field_w(
+            &t0,
+            "    Folder",
+            12,
+            input(p.folder, 20, false)
+                .on_submit(move |v: &str| {
+                    let v = v.trim().to_string();
+                    let shown = if v.is_empty() {
+                        "INBOX".to_string()
+                    } else {
+                        v.clone()
+                    };
+                    send(
+                        &ctx_f,
+                        p,
+                        "folder",
+                        EmailAction::Folder(v),
+                        format!("Folder set to {shown}."),
+                    )
+                })
+                .element(cx, &t0)
+                .build(),
+        ));
+        col = col.child(helper(&t0, "    Enter saves it; empty = INBOX.", p.wrap_w));
+    } else {
+        col = col.child(line(vec![
+            span("    [-] Folder — ", t0.text_faint),
+            span(crate::store::email::REASON_CONNECT_MAILBOX, t0.text_faint),
+        ]));
+    }
     // Use this mailbox (the user's own on/off).
     let ctx_use = ctx.clone();
     let use_sig = p.sw_use;

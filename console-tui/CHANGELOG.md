@@ -22,8 +22,9 @@ gateway does not have fails with its error.
     mailbox is connected.
   - **Agent email tools** is one switch with the reason when it can't be used ("Connect a mailbox first.", "Your
     admin turned mailboxes off.", "Your admin turned agent email tools off.").
-  - Advanced: recipient rules (add and remove apply at once), send limits (Enter saves), the folder, the **Use this
-    mailbox** switch and **Send a test notification**.
+  - Advanced: recipient rules (add and remove apply at once), send limits (Enter saves), the **Folder** (Enter saves,
+    `PUT /me/email/folder`; empty = INBOX; unavailable until a mailbox is connected), the **Use this mailbox** switch
+    and **Send a test notification**.
 - **Users** (admin): **Mailboxes for users** is the one email switch above the table, with **Agent email tools for
   users** and **Sign-in by email** under Advanced. The table reads User, Role, Email address, Mailbox, Runtime and
   **Active**; Space switches Active (turning it off asks first; your own row can't be switched). An old per-user
@@ -44,7 +45,8 @@ gateway does not have fails with its error.
   why none was sent). Type the 8-digit code (**Use code** works from the 8th digit), resend after 30 seconds, or go
   back to the token. The code step says "The code signs you in with a new token." After **Use code** the status line
   reads "Signed in with a new token — your old token no longer works. This console keeps it in memory; launch with
-  --token <token> next time." and the token is shown once to copy.
+  --token <token> next time." (said once the new sign-in is verified) and the token is shown once to copy. An account
+  without an email address gets the gateway's message and **Back to token** only (no resend).
 - Users: an old per-user override is read from the gateway (`email_account.capabilities`, a `user` source) — "not
   allowed for this user" (or "agent email tools not allowed for this user") with `x` to reset; mailboxes off for
   everyone reads "mailboxes off", with nothing to reset.

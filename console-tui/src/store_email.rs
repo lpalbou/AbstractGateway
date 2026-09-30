@@ -435,6 +435,9 @@ pub struct Recovery {
     pub new_token: Option<String>,
     /// The user the token belongs to (said once after sign-in).
     pub signed_in_user: String,
+    /// The status line said "Signed in with a new token" after the
+    /// connection with it was verified.
+    pub announced: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
