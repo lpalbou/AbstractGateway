@@ -2156,7 +2156,14 @@ CONSOLE_UI_JS = r"""
       // validation message, which field is saving, the last save's result
       // line, and the disclosure's open state once the user toggled it.
       proxy: { draft: "", error: "", saving: "", saved: null, open: null } };
-    function netPrimaryUrl() { return (netStore.data && netStore.data.copy_hint) || ""; }
+    // The top bar's "Gateway address": on an https page (behind `tailscale serve`
+    // or a reverse proxy) the address the person is using — the network page's
+    // plain-http LAN/tailnet address is not a secure context. Otherwise the
+    // address other devices use (GET /network `copy_hint`).
+    function netPrimaryUrl() {
+      try { if (location.protocol === "https:") return String(location.origin); } catch { /* not a browser */ }
+      return (netStore.data && netStore.data.copy_hint) || "";
+    }
     function netAddressRow(a, primary) {
       const url = a.url || "";
       const label = a.kind === "lan" && a.interface_label ? `${NET_KIND_LABEL.lan} · ${a.interface_label}` : (NET_KIND_LABEL[a.kind] || a.kind || "Address");
@@ -2197,6 +2204,7 @@ CONSOLE_UI_JS = r"""
       let out = `<div class="ui-section-title"><h3>Who can reach this gateway</h3><span class="ui-sub">Running now: <b>${esc(eff.label || "unknown")}</b>${eff.port ? ` · port ${esc(eff.port)}` : ""}</span></div>`
         + `<div class="ui-seg" role="radiogroup" aria-label="Who can reach this gateway">${opts}</div>`;
       if (!admin) out += `<p class="ui-card__note">Only an admin can change who can reach this gateway.</p>`;
+      out += `<p class="ui-card__note" data-net-tailscale-hint>Reached through Tailscale? On the gateway machine run <code>tailscale serve --bg http://127.0.0.1:${esc(eff.port || 8080)}</code> and open https://&lt;host&gt;.&lt;tailnet&gt;.ts.net/ — <code>tailscale serve reset</code> undoes it; voice and camera in the browser need this https address.</p>`;
       if (netStore.refused) {
         const r = netStore.refused;
         out += `<div class="ui-alert tone-warn" role="alert"><strong>${esc(r.reason || "This mode is not available right now.")}</strong>`

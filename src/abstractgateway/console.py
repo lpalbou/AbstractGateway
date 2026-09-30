@@ -13513,10 +13513,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         setTimeout(() => { btn.textContent = "Copy"; }, ok ? 1500 : 4000);
       }
     }
+    // The address the person is using (behind `tailscale serve` that is the
+    // https name, never the gateway machine's own loopback / LAN address from
+    // the host snapshot): every same-gateway link is built from the page origin.
     function gatewayBaseUrl() {
-      const gw = (firstRun.host && firstRun.host.gateway) || {};
-      if (gw.url) return String(gw.url);
-      try { return String(location.origin || "http://127.0.0.1:8080"); } catch { return "http://127.0.0.1:8080"; }
+      return String(location.origin);
     }
     function renderFirstRunApps() {
       // Install / Open / Start / Stop through the gateway's apps service
