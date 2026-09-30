@@ -34,6 +34,8 @@ stays 0.12.0).
 - A capability-default save that moves a route to another provider without naming options drops
   the old engine's speculation request (an LM Studio text route no longer keeps an MLX route's
   `speculation: native_mtp`).
+- A live stream no longer misses a run's end when the runner wrote the run's last line just as the
+  API process reached the end of the stream file (the open reply never got its closing frame).
 
 ### Docs
 - Model downloads: the Supertonic 3 examples show its real size (about 401 MB).

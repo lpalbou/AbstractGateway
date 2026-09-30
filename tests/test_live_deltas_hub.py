@@ -317,6 +317,35 @@ def test_tailer_buffers_partial_lines_and_follows_delete_and_recreate(tmp_path: 
     assert [o["event"]["seq"] for o in tail.read_lines()] == [1]
 
 
+def test_a_final_line_written_just_before_the_delete_is_never_lost(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # The runner appends its terminal line and deletes the file at once. A tail that
+    # reached the end of the file just before those two steps must still read the
+    # line (it is in the file its descriptor holds); it was lost when the deletion
+    # was noticed after the read (the CI flake of the test below).
+    path = tmp_path / "x.deltas.jsonl"
+    one = json.dumps({"event": _delta("root", "c1", 0, "a"), "chain": ["root"]})
+    final = json.dumps({"terminal": {"run_id": "root", "status": "failed"}, "chain": ["root"]})
+    path.write_text(one + "\n")
+    tail = ld._FileTail(path)
+    real_read = os.read
+    fired: List[bool] = []
+
+    def read_then_writer_finishes(fd: int, n: int) -> bytes:
+        chunk = real_read(fd, n)
+        if not chunk and fd == tail._fd and not fired:
+            fired.append(True)
+            with open(path, "a") as fh:  # the writer's last line, then its delete
+                fh.write(final + "\n")
+            path.unlink()
+        return chunk
+
+    monkeypatch.setattr(ld.os, "read", read_then_writer_finishes)
+    got = tail.read_lines() + tail.read_lines()
+    assert fired, "the writer finished while the tail was at the end of the file"
+    assert [next(iter(o)) for o in got] == ["event", "terminal"]
+    assert tail._fd is None, "the deleted file is closed once read to its end"
+
+
 def test_api_role_subscription_tails_the_runner_file(tmp_path: Path, loop, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ld, "_process_role", ld.ROLE_API)
     scope = ld.scope_key(tmp_path)
