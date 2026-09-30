@@ -22,7 +22,7 @@
 //! clears) · Tab to the trust-proxy checkbox (Space toggles and saves).
 
 use abstracttui::prelude::*;
-use abstracttui::widgets::{Checkbox, List, TextInput};
+use abstracttui::widgets::{List, TextInput};
 
 use super::util::{field_w, line, span, span_bold, wrap_text};
 use super::widths::BLOCK_CHROME;
@@ -528,22 +528,27 @@ fn proxy_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &NetworkData) -> View {
             .child(line(vec![span("Enter saves · empty clears", t.text_faint)]))
             .build(),
     ));
+    // A persistent setting = a switch labelled by the feature; it applies
+    // at once and the shown state is the gateway's read-back.
     let trust = cx.signal(p.trust_proxy);
     let ctx_t = ctx.clone();
-    col = col.child(
-        Checkbox::new(
-            "trust the proxy's client address (X-Forwarded-For): only when your own proxy sits in front of every request",
+    col = col
+        .child(
+            super::switch::Switch::new("Trust the proxy's client address (X-Forwarded-For)", trust)
+                .notice(ctx.store.notice)
+                .on_request(move |on| {
+                    ctx_t.send(Cmd::SetNetworkProxy {
+                        allowed_origins: None,
+                        trust_proxy: Some(on),
+                    })
+                })
+                .element(cx, t)
+                .build(),
         )
-        .checked(trust)
-        .on_change(move |on| {
-            ctx_t.send(Cmd::SetNetworkProxy {
-                allowed_origins: None,
-                trust_proxy: Some(on),
-            })
-        })
-        .element(cx, t)
-        .build(),
-    );
+        .child(line(vec![span(
+            "    only when your own proxy sits in front of every request · space switch",
+            t.text_faint,
+        )]));
     col.build()
 }
 

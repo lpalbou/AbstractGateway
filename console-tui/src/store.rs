@@ -975,14 +975,13 @@ pub struct UserRow {
     /// `None` = pre-contract gateway; the partition falls back to the
     /// documented roles convention.
     pub principal_kind: Option<String>,
-    /// The mailbox cell (framework backlog 0992): the gateway's state words
-    /// (`connected`, `not connected`, `needs action`, `turned off by an
-    /// administrator`, …) — status only, never content.
+    /// The Mailbox cell (framework backlog 0992, state-toggles §7): the
+    /// connection in words ("connected as me@x.com" / "not connected") —
+    /// status only, never content.
     pub mailbox: String,
-    /// The admin's per-user email switch (`false` = turned off).
-    pub mailbox_admin_enabled: bool,
-    /// Agent email tools available to this user (the admin's per-user capability).
-    pub mailbox_agent_tools: bool,
+    /// An old per-user override turned mailboxes off for this user: the
+    /// cell says "not allowed for this user" and `x` resets it.
+    pub mailbox_override: bool,
 }
 
 impl UserRow {
@@ -996,9 +995,8 @@ impl UserRow {
             runtime_id: s(v, "runtime_id").unwrap_or_default(),
             created_at: s(v, "created_at").unwrap_or_default(),
             principal_kind: s(v, "principal_kind"),
-            mailbox: email::mailbox_state(v).0,
-            mailbox_admin_enabled: email::mailbox_state(v).1,
-            mailbox_agent_tools: email::agent_tools_available(v),
+            mailbox: email::mailbox_cell(v).0,
+            mailbox_override: email::mailbox_cell(v).1,
         })
     }
 

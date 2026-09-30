@@ -462,7 +462,6 @@ pub fn finish_row(gcx: Scope, screen: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     }
     let login_state = store.op.start_at_login.get();
     let login = super::host::start_at_login_text(&login_state, admin);
-    let login_verb = login_state.ready().and_then(|st| st.verb());
     let model = model.unwrap_or_else(|| "not set yet".into());
     let facts = line(vec![
         span("Console ", t.text_muted),
@@ -523,14 +522,32 @@ pub fn finish_row(gcx: Scope, screen: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 .element(gcx, t)
                 .build(),
         );
-        if let Some(verb) = login_verb {
+        // The "Start at login" switch (a persistent state, confirmed then
+        // verified), plus a one-shot repair when the registration is broken.
+        if let Some(st) = login_state.ready() {
             let c_login = ctx.clone();
+            let on = gcx.signal(st.enabled);
             buttons = buttons.child(
-                Button::new(format!("Start at login: {verb}…"))
-                    .on_click(move || super::host::toggle_start_at_login(screen, &c_login, &|| {}))
+                super::switch::Switch::new("Start at login", on)
+                    .unavailable(st.switch_unavailable())
+                    .notice(store.notice)
+                    .on_request(move |_| {
+                        super::host::toggle_start_at_login(screen, &c_login, &|| {})
+                    })
                     .element(gcx, t)
                     .build(),
             );
+            if let Some(label) = st.repair_label() {
+                let c_fix = ctx.clone();
+                buttons = buttons.child(
+                    Button::new(label)
+                        .on_click(move || {
+                            super::host::toggle_start_at_login(screen, &c_fix, &|| {})
+                        })
+                        .element(gcx, t)
+                        .build(),
+                );
+            }
         }
     }
     // 30+ rows: the facts and the web's command-line block get their own

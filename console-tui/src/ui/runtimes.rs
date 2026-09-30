@@ -23,6 +23,13 @@ use crate::store::{
 };
 use crate::worker::Cmd;
 
+/// The page note (DESIGN §7): what a runtime is, in the words every
+/// surface uses — the block title carries the first sentence, the line
+/// under the table the second.
+pub const RUNTIME_TITLE: &str =
+    "Runtimes — a runtime is a user's own data plane: their runs, flows, sessions and memory";
+pub const RUNTIME_FOOTNOTE: &str = "Each user gets one, named after them, unless an admin bound them to a shared one  ·  sizes are on-disk data dirs  ·  w workspace policy (user rows)";
+
 /// The Runtimes screen is admin-only end to end: every read and write it
 /// makes is an `/admin/*` route, and the web console hides the whole tab
 /// for a non-admin (console.py renderAccount). A principal known NOT to
@@ -349,7 +356,10 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .child(
             Block::new()
                 .border(BorderKind::Rounded)
-                .title("Runtimes — where each user's and entity's data lives")
+                // What a runtime is (DESIGN §7): the title says the first
+                // sentence, the line under the table the second — no row
+                // taken from the table.
+                .title(RUNTIME_TITLE)
                 .fill(t.surface)
                 // min_h: the inventory is the screen's PRIMARY surface
                 // (choosing happens here) — without a floor, the
@@ -396,7 +406,7 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     },
                 ))
                 .child(line(vec![span(
-                    "sizes are on-disk data dirs; entity rows carry operator state + liveness  ·  w workspace policy (user rows)",
+                    RUNTIME_FOOTNOTE,
                     t.text_faint,
                 )]))
                 .element(t)
@@ -1699,7 +1709,8 @@ pub fn streaming_default_body(current: &crate::store::StreamingDefault, on: bool
     serde_json::json!({ "agents": { "streaming_default": on } })
 }
 
-/// "Stream replies by default" form: one checkbox (agents.streaming_default).
+/// "Stream replies by default" dialog: one switch (agents.streaming_default),
+/// applied at once.
 fn open_streaming_default_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData) {
     if !current.writable {
         ctx.store
@@ -1717,66 +1728,92 @@ fn open_streaming_default_form(cx: Scope, ctx: &Ctx, current: RuntimeConfigData)
         let form_error = mcx.signal(Option::<String>::None);
         let in_flight = mcx.signal(false);
         let form_id = crate::worker::next_form_id();
-        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
+        // A switch applies at once (no Save); the dialog stays open and
+        // says the new state, a refusal reverts it with the reason.
         let on = mcx.signal(sd.value);
+        let ok_note = mcx.signal(Option::<String>::None);
+        let wanted = mcx.signal(sd.value);
+        {
+            let ui = ctx2.ui;
+            mcx.effect(move || {
+                if let Some((fid, outcome)) = ui.write_done.get() {
+                    if fid == form_id {
+                        ui.write_done.set(None);
+                        in_flight.set(false);
+                        match outcome {
+                            Ok(_) => {
+                                let w = wanted.get_untracked();
+                                on.set(w);
+                                form_error.set(None);
+                                ok_note.set(Some(format!(
+                                    "Stream replies is {}.",
+                                    if w { "on" } else { "off" }
+                                )));
+                            }
+                            Err(e) => {
+                                ok_note.set(None);
+                                form_error.set(Some(e));
+                            }
+                        }
+                    }
+                }
+            });
+        }
         let ctx_save = ctx2.clone();
         let close_cancel = close.clone();
         let sd_now = sd.clone();
         Element::new()
-            .focusable()
-            .autofocus()
             .style(LayoutStyle::column().gap(0))
             .child(line(vec![span_bold(sd.label.clone(), t0.accent)]))
             .child(line(vec![span(ellipsize(&sd.help, 96), t0.text_faint)]))
-            .child(field(
-                &t0,
-                "stream replies",
-                Checkbox::new(
-                    "interactive runs that do not ask either way stream their replies live",
-                )
-                .checked(on)
-                .element(mcx, &t0)
-                .build(),
-            ))
+            .child(
+                super::switch::Switch::new("Stream replies", on)
+                    .busy_when(move || in_flight.get())
+                    .on_request(move |want| {
+                        if in_flight.get_untracked() {
+                            return;
+                        }
+                        let current = crate::store::StreamingDefault {
+                            value: on.get_untracked(),
+                            ..sd_now.clone()
+                        };
+                        let body = streaming_default_body(&current, want);
+                        if body.as_object().map(|m| m.is_empty()).unwrap_or(true) {
+                            return;
+                        }
+                        wanted.set(want);
+                        form_error.set(None);
+                        ok_note.set(None);
+                        in_flight.set(true);
+                        ctx_save.send(Cmd::SaveRuntimeConfig {
+                            body: body.into(),
+                            form_id: Some(form_id),
+                        });
+                    })
+                    .element(mcx, &t0)
+                    .autofocus()
+                    .build(),
+            )
             .child(line(vec![span(
-                format!(
-                    "now: {} ({})",
-                    if sd.value { "on" } else { "off" },
-                    sd.source
-                ),
+                "    interactive runs that do not ask either way stream their replies live",
                 t0.text_faint,
             )]))
+            .child(line(vec![span(
+                format!("source before this dialog: {}", sd.source),
+                t0.text_faint,
+            )]))
+            .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
+                let t = theme.get().tokens;
+                match ok_note.get() {
+                    Some(v) => line(vec![span(format!("✓ {v}"), t.ok)]),
+                    None => line(vec![span("space switch · Esc close", t.text_faint)]),
+                }
+            }))
             .child(super::message_slot(theme, form_error, in_flight))
             .child(
-                Element::new()
-                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                    .child(
-                        Button::new("Save")
-                            .on_click(move || {
-                                if in_flight.get_untracked() {
-                                    return;
-                                }
-                                let body = streaming_default_body(&sd_now, on.get_untracked());
-                                if body.as_object().map(|m| m.is_empty()).unwrap_or(true) {
-                                    form_error.set(Some("nothing changed".into()));
-                                    return;
-                                }
-                                form_error.set(None);
-                                in_flight.set(true);
-                                ctx_save.send(Cmd::SaveRuntimeConfig {
-                                    body: body.into(),
-                                    form_id: Some(form_id),
-                                });
-                            })
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .child(
-                        Button::new("Cancel (Esc)")
-                            .on_click(move || close_cancel())
-                            .element(mcx, &t0)
-                            .build(),
-                    )
+                Button::new("Close (Esc)")
+                    .on_click(move || close_cancel())
+                    .element(mcx, &t0)
                     .build(),
             )
             .build()

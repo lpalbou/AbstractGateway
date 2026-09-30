@@ -27,6 +27,7 @@ pub mod review;
 pub mod routes;
 pub mod runtimes;
 pub mod sandbox;
+pub mod switch;
 pub mod users;
 pub mod util;
 /// Setup: the first-run guide's welcome step + the first-run lifecycle.
@@ -1928,6 +1929,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 }
                 3 => {
                     pairs.push(("a", "add user"));
+                    pairs.push(switch::KEY_HINT);
                     pairs.push(("e", "edit"));
                     pairs.push(("t", "rotate token"));
                     pairs.push(("d", "delete"));
@@ -1939,8 +1941,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     pairs.push(("v", "kept data of deleted users"));
                     pairs.push(("w", "my workspace policy"));
                     pairs.push(("@", "my email"));
-                    pairs.push(("x", "email on/off (user)"));
-                    pairs.push(("X", "agent email tools (user)"));
+                    pairs.push(("x", "reset mailbox override"));
                     pairs.push(("r", "refresh"));
                 }
                 // The whole Runtimes screen is admin-only: no verbs.

@@ -859,11 +859,13 @@ pub fn open_profile_form(cx: Scope, ctx: &Ctx, mode: ProfileFormMode) {
                                 .build(),
                         ));
                     }
+                    // The profile's on/off, saved with the form's other
+                    // fields (form-field switch: Space flips it, Save
+                    // writes it with the rest).
                     col.child(field(
                         &t,
                         "",
-                        Checkbox::new("enabled")
-                            .checked(enabled)
+                        super::switch::Switch::new("Profile in use", enabled)
                             .element(bcx, &t)
                             .build(),
                     ))

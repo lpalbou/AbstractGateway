@@ -17,7 +17,8 @@ use serde_json::Value;
 use super::{finish_write, load, publish_ready, require_client, with_busy, Body, Cmd, Secret};
 use crate::api::{ApiError, ApiErrorKind, GatewayClient};
 use crate::store::email::{
-    email_error_text, notifications_body, EmailCaps, MyEmail, MyNotifications,
+    caps_state_text, email_error_text, notifications_body, Discovery, EmailCaps, MyEmail,
+    MyNotifications,
 };
 use crate::store::operator::{
     my_policy_body, seed_report_text, start_again_hint, tray_note, HostRunner, HostUpdate,
@@ -124,7 +125,37 @@ pub enum OpCmd {
         action: EmailAction,
         form_id: Option<u64>,
     },
+    /// Sign-in by email on the Connection screen (public routes: a
+    /// throwaway client without a token for `url`).
+    Recovery(RecoveryAction),
 }
+
+/// "Forgot your token? Email me a sign-in code" (DESIGN §4).
+#[derive(Clone, Debug)]
+pub enum RecoveryAction {
+    /// GET /session/recovery — is the link shown for this gateway.
+    Check { url: String },
+    /// POST /session/recovery/request.
+    Request {
+        url: String,
+        user_id: String,
+        tenant_id: String,
+    },
+    /// POST /session/recovery/redeem.
+    Redeem {
+        url: String,
+        user_id: String,
+        tenant_id: String,
+        code: Secret,
+    },
+}
+
+/// The purpose the terminal console requests and redeems. A `sign_in`
+/// code yields a browser session (an httponly cookie plus a CSRF cookie)
+/// this bearer-token client cannot carry; `reset_token` yields a new token,
+/// shown once — what a person who forgot their token needs here (the web
+/// console keeps `sign_in`, DESIGN §4.5).
+pub const RECOVERY_PURPOSE: &str = "reset_token";
 
 /// The "My email" writes (web parity: the Users tab's My email section,
 /// and the admin's per-user switch on the Users table).
@@ -144,6 +175,12 @@ pub enum EmailAction {
     Enabled(bool),
     /// PUT /me/email/agent-tools — the agents' email tools (default off).
     AgentTools(bool),
+    /// POST /me/email/discover — the servers for the Other tab's address.
+    Discover(String),
+    /// PUT /me/email/address — my Email address (not a mailbox).
+    SetAddress(String),
+    /// PUT /me/email/notifications — one of the two switches.
+    NotificationSwitch { key: String, on: bool },
     /// PUT /me/notifications.
     Notifications(Body),
     /// POST /me/notifications/test.
@@ -154,18 +191,9 @@ pub enum EmailAction {
     OAuthPoll(String),
     /// POST /me/email/oauth/cancel.
     OAuthCancel(String),
-    /// PUT /admin/users/{id}/email (admin) — on/off only.
-    AdminSetEnabled {
-        user_id: String,
-        tenant_id: String,
-        enabled: bool,
-    },
-    /// PUT /admin/users/{id}/email `{agent_tools}` (admin) — make Agent email tools available.
-    AdminSetAgentTools {
-        user_id: String,
-        tenant_id: String,
-        available: bool,
-    },
+    /// PUT /admin/users/{id}/email `{inherit}` (admin) — Reset: clear an
+    /// old per-user override (the user follows "Mailboxes for users").
+    AdminResetMailbox { user_id: String, tenant_id: String },
     /// GET /admin/email/capabilities (admin).
     LoadCaps,
     /// PUT /admin/email/capabilities (admin) — the gateway-wide email defaults.
@@ -391,10 +419,10 @@ pub(super) fn handle(
         }
 
         OpCmd::SetPaused { pause } => {
-            let (verb, label) = if pause {
-                ("PAUSE", "pausing workflows")
+            let label = if pause {
+                "pausing workflows"
             } else {
-                ("RESUME", "resuming workflows")
+                "resuming workflows"
             };
             let (write, verify) = with_busy(store, wake, label, || {
                 let write = require_client(client).and_then(|c| {
@@ -418,7 +446,13 @@ pub(super) fn handle(
             finish_write(
                 store,
                 wake,
-                format!("{verb} workflows (gateway host)"),
+                // The NEW state (state-toggles rule), not the verb.
+                if pause {
+                    "Workflows are paused (the gateway keeps answering; nothing new starts)."
+                        .to_string()
+                } else {
+                    "Workflows are running.".to_string()
+                },
                 write,
                 verified,
                 None,
@@ -557,7 +591,11 @@ pub(super) fn handle(
             finish_write(
                 store,
                 wake,
-                format!("START AT LOGIN {}", if enabled { "on" } else { "off" }),
+                if enabled {
+                    "Start at login is on: the gateway starts at your next login.".to_string()
+                } else {
+                    "Start at login is off.".to_string()
+                },
                 write,
                 verified,
                 None,
@@ -1009,6 +1047,139 @@ pub(super) fn handle(
         OpCmd::Email { action, form_id } => {
             email_write(client, store, wake, tx, action, form_id, on_done)
         }
+
+        OpCmd::Recovery(action) => recovery(store, wake, action),
+    }
+}
+
+/// The recovery routes are public: a fresh client for the URL on the
+/// Connection screen, never the (possibly refused) token.
+fn recovery(store: &Store, wake: &WakeHandle, action: RecoveryAction) {
+    use crate::store::email::{RecoveryAnswer, RecoveryStep};
+    let s = *store;
+    match action {
+        RecoveryAction::Check { url } => {
+            let got = GatewayClient::new(&url, None).recovery_available();
+            let available = got
+                .ok()
+                .and_then(|v| v.get("available").and_then(Value::as_bool))
+                .unwrap_or(false);
+            wake.post(move || {
+                s.op.recovery.update(|r| {
+                    r.checked_url = url.clone();
+                    r.available = Some(available);
+                    if !available {
+                        r.step = RecoveryStep::Idle;
+                    }
+                })
+            });
+        }
+        RecoveryAction::Request {
+            url,
+            user_id,
+            tenant_id,
+        } => {
+            let got = with_busy(store, wake, "requesting a sign-in code", || {
+                GatewayClient::new(&url, None).recovery_request(
+                    &user_id,
+                    &tenant_id,
+                    RECOVERY_PURPOSE,
+                )
+            });
+            let at = now_ms();
+            wake.post(move || match &got {
+                Ok(v) => {
+                    let answer = RecoveryAnswer::from_value(&user_id, v, at);
+                    s.notice.set(Some(answer.message.clone()));
+                    s.op.recovery.update(|r| {
+                        r.error = None;
+                        r.step = RecoveryStep::Code(answer.clone());
+                    });
+                }
+                Err(e) => {
+                    let text = recovery_error_text(e);
+                    s.notice.set(Some(text.clone()));
+                    s.op.recovery.update(|r| {
+                        r.error = Some(text.clone());
+                        // A resend that fails keeps the code step (the
+                        // first code may still be on its way).
+                        r.step = match std::mem::take(&mut r.step) {
+                            RecoveryStep::Code(a) | RecoveryStep::Redeeming(a) => {
+                                RecoveryStep::Code(a)
+                            }
+                            _ => RecoveryStep::Idle,
+                        };
+                    });
+                }
+            });
+        }
+        RecoveryAction::Redeem {
+            url,
+            user_id,
+            tenant_id,
+            code,
+        } => {
+            let got = with_busy(store, wake, "checking the sign-in code", || {
+                GatewayClient::new(&url, None).recovery_redeem(
+                    &user_id,
+                    &tenant_id,
+                    RECOVERY_PURPOSE,
+                    code.0.trim(),
+                )
+            });
+            wake.post(move || {
+                let token = got
+                    .as_ref()
+                    .ok()
+                    .and_then(|v| v.get("token").and_then(Value::as_str))
+                    .map(str::to_string);
+                match (&got, token) {
+                    (Ok(_), Some(tok)) => s.op.recovery.update(|r| {
+                        r.error = None;
+                        r.step = RecoveryStep::Idle;
+                        r.new_token = Some(tok.clone());
+                        r.signed_in_user = user_id.clone();
+                    }),
+                    (Ok(_), None) => {
+                        let text = "The gateway accepted the code but sent no token back, so this console can't sign in with it. Sign in on the web console instead.".to_string();
+                        s.notice.set(Some(text.clone()));
+                        s.op.recovery.update(|r| {
+                            r.error = Some(text.clone());
+                            if let RecoveryStep::Redeeming(a) = std::mem::take(&mut r.step) {
+                                r.step = RecoveryStep::Code(a);
+                            }
+                        });
+                    }
+                    (Err(e), _) => {
+                        let text = recovery_error_text(e);
+                        s.notice.set(Some(text.clone()));
+                        s.op.recovery.update(|r| {
+                            r.error = Some(text.clone());
+                            if let RecoveryStep::Redeeming(a) = std::mem::take(&mut r.step) {
+                                r.step = RecoveryStep::Code(a);
+                            }
+                        });
+                    }
+                }
+            });
+        }
+    }
+}
+
+/// A recovery refusal in the gateway's words (`message`), else what failed.
+fn recovery_error_text(e: &ApiError) -> String {
+    if let Some(msg) = e
+        .body
+        .as_ref()
+        .and_then(|b| b.get("message"))
+        .and_then(Value::as_str)
+        .filter(|m| !m.is_empty())
+    {
+        return msg.to_string();
+    }
+    match e.kind {
+        ApiErrorKind::Unreachable => format!("Can't reach the gateway: {}", e.message),
+        _ => e.message.clone(),
     }
 }
 
@@ -1248,10 +1419,15 @@ fn email_write(
                 let verify = require_client(client).and_then(|c| c.email_capabilities());
                 (write, verify)
             });
+            // A switch sends ONE key: only the keys sent are compared.
             let verified = verify.as_ref().ok().map(|v| {
                 let got = EmailCaps::from_value(v).body();
-                if got == body.0 {
-                    Ok("GET /admin/email/capabilities holds the saved defaults".to_string())
+                let held = body
+                    .as_object()
+                    .map(|m| m.iter().all(|(k, want)| got.get(k) == Some(want)))
+                    .unwrap_or(false);
+                if held {
+                    Ok("GET /admin/email/capabilities holds it".to_string())
                 } else {
                     Err(format!(
                         "GET /admin/email/capabilities holds {got}, not {}",
@@ -1262,7 +1438,7 @@ fn email_write(
             finish_write(
                 store,
                 wake,
-                "PUT email defaults".into(),
+                caps_state_text(&body.0),
                 write,
                 verified,
                 form_id,
@@ -1274,18 +1450,108 @@ fn email_write(
             let _ = tx.send(Cmd::LoadUsers);
         }
 
-        EmailAction::AdminSetAgentTools {
-            user_id,
-            tenant_id,
-            available,
-        } => {
+        EmailAction::Discover(address) => {
+            let a = address.clone();
+            wake.post({
+                let a = a.clone();
+                move || op.email_discovery.set(Some((a.clone(), Loadable::Loading)))
+            });
+            let got = with_busy(store, wake, "looking up the mail servers", || {
+                require_client(client).and_then(|c| c.discover_my_email(&address))
+            })
+            .map_err(email_err);
+            wake.post(move || {
+                // Only the answer for the address still typed is kept.
+                let current = op
+                    .email_discovery
+                    .with_untracked(|d| d.as_ref().map(|(x, _)| x.clone()));
+                if current.as_deref() != Some(a.as_str()) {
+                    return;
+                }
+                op.email_discovery.set(Some((
+                    a.clone(),
+                    match &got {
+                        Ok(v) => Loadable::Ready(Discovery::from_value(v)),
+                        Err(e) => Loadable::Failed(e.clone()),
+                    },
+                )));
+            });
+        }
+
+        EmailAction::SetAddress(address) => {
+            let want = address.trim().to_string();
+            let (write, verify) = with_busy(store, wake, "saving my email address", || {
+                let write = require_client(client)
+                    .and_then(|c| c.set_my_email_address(&want))
+                    .map_err(email_err);
+                let verify = require_client(client).and_then(|c| c.my_email());
+                (write, verify)
+            });
+            let verified = verify.as_ref().ok().map(|v| {
+                let got = MyEmail::from_value(v).registered_address;
+                if got.eq_ignore_ascii_case(&want) {
+                    Ok("GET /me/email holds it".to_string())
+                } else {
+                    Err(format!("GET /me/email says {got:?}"))
+                }
+            });
+            let action = if want.is_empty() {
+                "Email address cleared.".to_string()
+            } else {
+                "Email address saved.".to_string()
+            };
+            let wrote = write.is_ok();
+            finish_write(store, wake, action, write, verified, form_id, on_done);
+            if let (true, Ok(v)) = (wrote, verify) {
+                publish_ready(wake, op.my_email, MyEmail::from_value(&v));
+            }
+        }
+
+        EmailAction::NotificationSwitch { key, on } => {
+            let body = crate::store::email::notification_switch_body(&key, on);
+            let (write, verify) = with_busy(store, wake, "saving a notification switch", || {
+                let write = require_client(client)
+                    .and_then(|c| c.set_my_notification_switches(&body))
+                    .map_err(email_err);
+                let verify = require_client(client).and_then(|c| c.my_email());
+                (write, verify)
+            });
+            let verified = verify.as_ref().ok().map(|v| {
+                let got = MyEmail::from_value(v);
+                let now = if key == "job_failed" {
+                    got.notify_job_failed
+                } else {
+                    got.notify_approval_needed
+                };
+                if now == Some(on) {
+                    Ok("GET /me/email holds it".to_string())
+                } else {
+                    Err(format!("GET /me/email says {key}={now:?}"))
+                }
+            });
+            let label = if key == "job_failed" {
+                "Job failed"
+            } else {
+                "Approval needed"
+            };
+            let action = format!(
+                "“{label}” notifications are {}.",
+                if on { "on" } else { "off" }
+            );
+            finish_write(store, wake, action, write, verified, form_id, on_done);
+            if let Ok(v) = verify {
+                publish_ready(wake, op.my_email, MyEmail::from_value(&v));
+            }
+        }
+
+        EmailAction::AdminResetMailbox { user_id, tenant_id } => {
             let (write, verify) = with_busy(
                 store,
                 wake,
-                "switching agent email tools for the user",
+                "resetting the mailbox override for the user",
                 || {
                     let write = require_client(client)
-                        .and_then(|c| c.set_user_email_agent_tools(&user_id, &tenant_id, available))
+                        .and_then(|c| c.reset_user_mailbox_override(&user_id, &tenant_id))
                         .map_err(email_err);
                     let verify = require_client(client)
                         .and_then(|c| c.user_email_status(&user_id, &tenant_id));
@@ -1293,73 +1559,29 @@ fn email_write(
                 },
             );
             let verified = verify.as_ref().ok().map(|v| {
-                let got = v
-                    .get("agent_tools")
-                    .and_then(|a| a.get("available"))
-                    .and_then(Value::as_bool);
-                if got == Some(available) {
-                    Ok(format!(
-                        "GET /admin/users/{user_id}/email — agent tools {}",
-                        if available {
-                            "available"
-                        } else {
-                            "not available"
-                        }
-                    ))
-                } else {
-                    Err(format!(
-                        "GET /admin/users/{user_id}/email still says available={got:?}"
-                    ))
-                }
-            });
-            let verb = if available {
-                "MAKE AVAILABLE"
-            } else {
-                "MAKE UNAVAILABLE"
-            };
-            finish_write(
-                store,
-                wake,
-                format!("{verb} agent email tools for {user_id}"),
-                write,
-                verified,
-                form_id,
-                on_done,
-            );
-            let _ = tx.send(Cmd::LoadUsers);
-        }
-
-        EmailAction::AdminSetEnabled {
-            user_id,
-            tenant_id,
-            enabled,
-        } => {
-            let (write, verify) = with_busy(store, wake, "switching email for the user", || {
-                let write = require_client(client)
-                    .and_then(|c| c.set_user_email_enabled(&user_id, &tenant_id, enabled))
-                    .map_err(email_err);
-                let verify =
-                    require_client(client).and_then(|c| c.user_email_status(&user_id, &tenant_id));
-                (write, verify)
-            });
-            let verified = verify.as_ref().ok().map(|v| {
-                let got = v.get("admin_enabled").and_then(Value::as_bool);
-                if got == Some(enabled) {
+                let source = |cap: &str| {
+                    v.get("capabilities")
+                        .and_then(|c| c.get(cap))
+                        .and_then(|c| c.get("source"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string()
+                };
+                if source("email") != "user" && source("email_agent_tools") != "user" {
                     Ok(format!(
                         "GET /admin/users/{user_id}/email — {}",
                         v.get("state").and_then(Value::as_str).unwrap_or("?")
                     ))
                 } else {
                     Err(format!(
-                        "GET /admin/users/{user_id}/email still says admin_enabled={got:?}"
+                        "GET /admin/users/{user_id}/email still carries a per-user override"
                     ))
                 }
             });
-            let verb = if enabled { "TURN ON" } else { "TURN OFF" };
             finish_write(
                 store,
                 wake,
-                format!("{verb} email for {user_id}"),
+                format!("{user_id} follows Mailboxes for users again"),
                 write,
                 verified,
                 form_id,
@@ -1369,25 +1591,40 @@ fn email_write(
         }
 
         other => {
-            let (label, action_text) = match &other {
-                EmailAction::Connect(_) => {
-                    ("connecting my email (test, then store)", "CONNECT my email")
+            // The journal/status text names the NEW state (state-toggles rule).
+            let (label, action_text): (&str, String) = match &other {
+                EmailAction::Connect(body) => (
+                    "connecting my mailbox (test, then store)",
+                    format!(
+                        "Mailbox connected as {}.",
+                        body.get("address").and_then(Value::as_str).unwrap_or("?")
+                    ),
+                ),
+                EmailAction::Test => ("testing my mailbox", "Mailbox test passed.".into()),
+                EmailAction::Disconnect => {
+                    ("disconnecting my mailbox", "Mailbox disconnected.".into())
                 }
-                EmailAction::Test => ("testing my email", "TEST my email"),
-                EmailAction::Disconnect => ("disconnecting my email", "DISCONNECT my email"),
-                EmailAction::Policy(_) => ("saving my recipient policy", "PUT my recipient policy"),
-                EmailAction::Limits(_) => ("saving my send limits", "PUT my send limits"),
-                EmailAction::Enabled(true) => ("turning my email on", "TURN ON my email"),
-                EmailAction::Enabled(false) => ("turning my email off", "TURN OFF my email"),
+                EmailAction::Policy(_) => {
+                    ("saving my recipient rules", "Recipient rules saved.".into())
+                }
+                EmailAction::Limits(_) => ("saving my send limits", "Send limits saved.".into()),
+                EmailAction::Enabled(true) => (
+                    "switching Use this mailbox",
+                    "“Use this mailbox” is on.".into(),
+                ),
+                EmailAction::Enabled(false) => (
+                    "switching Use this mailbox",
+                    "“Use this mailbox” is off: no watching, sending or notifications.".into(),
+                ),
                 EmailAction::AgentTools(true) => (
-                    "turning my agents' email tools on",
-                    "TURN ON agent email tools",
+                    "switching Agent email tools",
+                    "Agent email tools are on.".into(),
                 ),
                 EmailAction::AgentTools(false) => (
-                    "turning my agents' email tools off",
-                    "TURN OFF agent email tools",
+                    "switching Agent email tools",
+                    "Agent email tools are off.".into(),
                 ),
-                _ => ("writing my email settings", "WRITE my email"),
+                _ => ("writing my email settings", "Email settings saved.".into()),
             };
             let (write, verify) = with_busy(store, wake, label, || {
                 let write = require_client(client)
@@ -1452,15 +1689,7 @@ fn email_write(
                 .as_ref()
                 .map(|v| v.get("ok").and_then(Value::as_bool) != Some(false))
                 .unwrap_or(false);
-            finish_write(
-                store,
-                wake,
-                action_text.into(),
-                write,
-                verified,
-                form_id,
-                on_done,
-            );
+            finish_write(store, wake, action_text, write, verified, form_id, on_done);
             if let Ok(v) = verify {
                 let _ = wrote;
                 publish_ready(wake, op.my_email, MyEmail::from_value(&v));

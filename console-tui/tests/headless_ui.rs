@@ -2171,14 +2171,14 @@ fn create_user_flow_and_token_shown_once() {
     let s = h.turns(2);
     assert!(s.contains("New gateway user"), "form:\n{s}");
     assert!(
-        s.contains("shown once after create"),
+        s.contains("The gateway makes their token when you create the user; it is shown once."),
         "token teaching:\n{s}"
     );
 
     h.type_text("bob");
     h.turn();
-    // user id → email → roles → tenant → runtime → enabled → Create
-    for _ in 0..6 {
+    // User ID → Role → Email address → Advanced ▸ → Create user
+    for _ in 0..4 {
         h.key(b"\t");
         h.turn();
     }
@@ -2216,7 +2216,10 @@ fn create_user_flow_and_token_shown_once() {
     let s = h.turns(3);
     assert!(s.contains("Access token for 'bob'"), "token modal:\n{s}");
     assert!(s.contains("agw_once_only_XYZ"), "token visible ONCE:\n{s}");
-    assert!(s.contains("shown ONCE"), "the once warning:\n{s}");
+    assert!(
+        s.contains("Give this token to bob. It is shown once"),
+        "the once warning:\n{s}"
+    );
 }
 
 #[test]
@@ -8396,7 +8399,8 @@ fn network_reverse_proxy_shows_values_and_where_they_come_from() {
         "trust proxy: off [default]",
         "applies to the next request",
         "Enter saves · empty clears",
-        "trust the proxy's client address (X-Forwarded-For): only when your own proxy sits in front",
+        "[ ] Trust the proxy's client address (X-Forwarded-For)",
+        "only when your own proxy sits in front of every request",
     ] {
         assert!(s.contains(needle), "missing {needle:?}:\n{s}");
     }
@@ -8552,9 +8556,10 @@ fn paused_banner_shows_on_every_screen_and_f2_panel_resumes() {
     assert!(s.contains("Gateway host"), "F3 opens the host panel:\n{s}");
     assert!(s.contains("Paused — still running"), "state pill:\n{s}");
     assert!(
-        s.contains("Resume workflows"),
-        "the button names its verb:\n{s}"
+        s.contains("[x] Workflows paused"),
+        "a switch labelled by the state:\n{s}"
     );
+    assert!(!s.contains("Resume workflows"), "never the verb:\n{s}");
     assert!(
         h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::LoadHost { admin: true })))
             .is_some(),
@@ -8702,10 +8707,11 @@ fn host_panel_start_at_login_toggle_confirms_then_puts() {
         "{s}"
     );
     assert!(
-        s.contains("Start at login: Turn on…"),
-        "button names the verb:\n{s}"
+        s.contains("[ ] Start at login"),
+        "a switch labelled by the feature:\n{s}"
     );
-    assert!(s.contains("L start at login"), "key listed:\n{s}");
+    assert!(!s.contains("Turn on"), "never the verb:\n{s}");
+    assert!(s.contains("L Start at login"), "key listed:\n{s}");
     h.type_text("L");
     let s = h.turns(2);
     assert!(
@@ -8751,7 +8757,10 @@ fn host_panel_start_at_login_toggle_confirms_then_puts() {
         s.contains("can't be changed here: no systemd user manager"),
         "{s}"
     );
-    assert!(!s.contains("Start at login: Turn on…"), "{s}");
+    assert!(
+        s.contains("[-] Start at login — no systemd user manager"),
+        "unavailable with the reason:\n{s}"
+    );
     h.type_text("L");
     h.turns(2);
     assert!(
@@ -8788,7 +8797,8 @@ fn finish_step_offers_start_at_login() {
         s.contains("starts at login on — On — a systemd user unit starts the gateway at login"),
         "{s}"
     );
-    assert!(s.contains("Start at login: Turn off…"), "{s}");
+    assert!(s.contains("[x] Start at login"), "{s}");
+    assert!(!s.contains("Turn off"), "{s}");
 }
 
 /// `e` shows the destination (the console's downloads folder, never the
@@ -10134,8 +10144,10 @@ fn footer_lists_the_arrow_keys_for_screens() {
 }
 
 // ---------------------------------------------------------------------
-// My email (framework backlog 0992): the caller's own mailbox, the admin's
-// per-user switch — web parity (console.py "My email", Users "Mailbox").
+// My email (DESIGN 2026-09-30 §6): the account page — Email address,
+// Mailbox (tabs / connected), two notification switches, the Agent email
+// tools switch, Advanced; the Users screen's admin switches (§5) and
+// Active switch; sign-in by email on the Connection screen (§4).
 // ---------------------------------------------------------------------
 
 fn click_text(h: &mut Harness, screen: &str, text: &str) {
@@ -10157,282 +10169,416 @@ fn click_text(h: &mut Harness, screen: &str, text: &str) {
 fn my_email_fixture() -> Value {
     json!({
         "schema": "email_settings_v1", "configured": true, "enabled": true,
-        "admin_enabled": true, "effective_enabled": true,
+        "admin_enabled": true, "effective_enabled": true, "email_available": true,
         "address": "me@example.test", "username": "me@example.test", "auth_kind": "password",
+        "registered_address": "me@example.test",
         "imap": {"host": "imap.example.test", "port": 993, "security": "ssl", "folder": "INBOX"},
         "smtp": {"host": "smtp.example.test", "port": 587, "security": "starttls"},
         "secret_storage": "os-keychain",
         "policy": {"mode": "allowlist", "entries": ["me@example.test"], "default": false},
         "limits": {"per_hour": 20, "per_day": 100, "used_last_hour": 0, "used_last_day": 2},
         "status": {"last_test": "2026-09-30T00:00:00+00:00", "legs": {"imap": {"ok": true}, "smtp": {"ok": true}}},
-        "watcher": {"state": "watching", "last_poll": "2026-09-30T00:01:00+00:00"}
+        "watcher": {"state": "watching", "last_poll": "2026-09-30T00:01:00+00:00"},
+        "agent_tools": {"on": false, "enabled": false, "available": true, "unavailable_reason": null, "active": false},
+        "notifications": {"job_failed": true, "approval_needed": false},
+        "oauth_providers": [
+            {"id": "google", "available": true, "reason": null},
+            {"id": "microsoft", "available": false, "reason": "No Microsoft sign-in client on this gateway: add one under Advanced, or ask your admin."}
+        ]
     })
 }
 
-#[test]
-fn users_at_opens_my_email_with_the_web_words() {
-    use abstractgateway_console::store::email::{MyEmail, MyNotifications};
-    use abstractgateway_console::worker::operator::OpCmd;
-    let mut h = harness_sized(Size::new(140, 44));
+fn my_email_not_connected() -> Value {
+    json!({
+        "schema": "email_settings_v1", "configured": false, "enabled": true,
+        "admin_enabled": true, "effective_enabled": false, "email_available": true,
+        "address": "", "registered_address": "me@fastmail.test",
+        "policy": {"mode": "allowlist", "entries": [], "default": true},
+        "limits": {"per_hour": 20, "per_day": 100, "used_last_hour": 0, "used_last_day": 0},
+        "status": {}, "watcher": {"state": "idle"},
+        "agent_tools": {"on": false, "enabled": false, "available": false,
+                        "unavailable_reason": "Connect a mailbox first.", "active": false},
+        "notifications": {"job_failed": true, "approval_needed": true},
+        "notifications_unavailable_reason": "Connect a mailbox first.",
+        "oauth_providers": [{"id": "google", "available": true, "reason": null},
+                            {"id": "microsoft", "available": true, "reason": null}]
+    })
+}
+
+fn open_my_email(h: &mut Harness, v: &Value) -> String {
+    use abstractgateway_console::store::email::MyEmail;
     h.connect_as_admin();
     h.goto_screen(3);
     h.store
         .users
         .set(Loadable::Ready(users_from_payload(&users_fixture())));
     h.turns(2);
-    let _ = h.drain_cmds();
     h.type_text("@");
-    let s = h.turns(2);
-    assert!(s.contains("My email"), "form opens:\n{s}");
-    assert!(
-        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::LoadMyEmail)))
-            .is_some(),
-        "it reads GET /me/email and /me/notifications"
-    );
+    h.turns(2);
     h.store
         .op
         .my_email
-        .set(Loadable::Ready(MyEmail::from_value(&my_email_fixture())));
-    h.store
-        .op
-        .my_notifications
-        .set(Loadable::Ready(MyNotifications::from_value(&json!({
-            "channels": {"email": {"available": true, "to": "me@example.test"}},
-            "events": [
-                {"id": "automation_result", "label": "Automation results", "email": true},
-                {"id": "job_failed", "label": "Job failed", "email": false}
-            ],
-            "outbox": {"sent": 3, "queued": 0, "failed": 0, "unknown": 0, "last_failure": null}
-        }))));
-    let s = h.turns(2);
-    assert!(s.contains("state: connected"), "state line:\n{s}");
-    assert!(s.contains("me@example.test"), "address:\n{s}");
-    assert!(
-        s.contains("encrypted, key in the OS keychain"),
-        "credentials:\n{s}"
-    );
-    assert!(s.contains("watcher: watching"), "watcher:\n{s}");
-    assert!(s.contains("Save and test"), "account verbs:\n{s}");
-    assert!(s.contains("Disconnect"), "disconnect:\n{s}");
+        .set(Loadable::Ready(MyEmail::from_value(v)));
+    h.turns(3)
+}
 
-    // Disconnect asks once more inside the form (no confirm dialog), then sends.
+fn email_action(h: &mut Harness) -> Option<abstractgateway_console::worker::operator::EmailAction> {
+    use abstractgateway_console::worker::operator::OpCmd;
+    match h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::Email { .. }))) {
+        Some(Cmd::Operator(OpCmd::Email { action, .. })) => Some(action),
+        _ => None,
+    }
+}
+
+#[test]
+fn my_email_page_reads_in_the_design_order_with_the_design_words() {
+    use abstractgateway_console::worker::operator::OpCmd;
+    let mut h = harness_sized(Size::new(140, 60));
+    let s = open_my_email(&mut h, &my_email_fixture());
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::LoadMyEmail)))
+            .is_some(),
+        "it reads GET /me/email"
+    );
+    let at = |needle: &str| {
+        s.find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} missing:\n{s}"))
+    };
+    // Email address → Mailbox → Notifications → Agent email tools → Advanced.
+    assert!(at("│Email address") < at("│Mailbox"), "{s}");
+    assert!(at("│Mailbox") < at("│Notifications"), "{s}");
+    assert!(at("│Notifications") < at("[ ] Agent email tools"), "{s}");
+    assert!(
+        at("[ ] Agent email tools") < at("│ Advanced ▸  recipient"),
+        "{s}"
+    );
+    assert!(
+        s.contains("Where sign-in codes and notifications go"),
+        "{s}"
+    );
+    assert!(
+        s.contains(
+            "Connected as me@example.test · Other (address + password) · checked 2026-09-30 00:00"
+        ),
+        "the connected status line:\n{s}"
+    );
+    assert!(s.contains("Test") && s.contains("Disconnect"), "{s}");
+    // The switches: on = [x], off = [ ].
+    assert!(s.contains("[x] Job failed"), "{s}");
+    assert!(s.contains("[ ] Approval needed"), "{s}");
+    // Never the old verbs, never a Save for a switch.
+    for banned in [
+        "Save and test",
+        "Turn off",
+        "Turn on",
+        "Save notifications",
+        "Save email defaults",
+        "smtp.example.com",
+        "optional",
+    ] {
+        assert!(!s.contains(banned), "{banned:?} is gone:\n{s}");
+    }
+}
+
+#[test]
+fn my_email_disconnect_asks_inline_then_sends() {
+    use abstractgateway_console::worker::operator::EmailAction;
+    let mut h = harness_sized(Size::new(140, 60));
+    let s = open_my_email(&mut h, &my_email_fixture());
     let _ = h.drain_cmds();
     click_text(&mut h, &s, "Disconnect");
     let s = h.turns(2);
     assert!(
-        s.contains("Disconnect now (deletes the credentials)"),
-        "armed:\n{s}"
+        s.contains("Disconnect this mailbox? Your agents lose email until you connect again."),
+        "inline confirmation:\n{s}"
     );
-    assert!(
-        h.find_cmd(|c| is_op(c, |o| matches!(o, OpCmd::Email { .. })))
-            .is_none(),
-        "nothing sent yet"
-    );
-    click_text(&mut h, &s, "Disconnect now");
+    assert!(email_action(&mut h).is_none(), "nothing sent yet");
+    click_text(&mut h, &s, "Disconnect    Cancel");
     h.turns(2);
     assert!(
-        h.find_cmd(|c| is_op(c, |o| matches!(
-            o,
-            OpCmd::Email {
-                action: abstractgateway_console::worker::operator::EmailAction::Disconnect,
-                ..
-            }
-        )))
-        .is_some(),
-        "the second press sends DELETE /me/email"
+        matches!(email_action(&mut h), Some(EmailAction::Disconnect)),
+        "the confirmation's Disconnect sends DELETE /me/email"
     );
-
-    // The notifications section lists the gateway's events and the channel.
-    let s = h.turns(1);
-    click_text(&mut h, &s, "Notifications");
-    let s = h.turns(2);
-    assert!(
-        s.contains("Notifications are emailed to me@example.test"),
-        "channel:\n{s}"
-    );
-    assert!(
-        s.contains("Automation results") && s.contains("Job failed"),
-        "events:\n{s}"
-    );
-    assert!(s.contains("3 sent, 0 waiting, 0 failed."), "outbox:\n{s}");
-    assert!(s.contains("Send test notification"), "test verb:\n{s}");
 }
 
 #[test]
-fn my_email_save_refuses_without_a_password_and_sends_the_web_body() {
-    use abstractgateway_console::store::email::MyEmail;
-    use abstractgateway_console::worker::operator::{EmailAction, OpCmd};
-    let mut h = harness_sized(Size::new(140, 44));
-    h.connect_as_admin();
-    h.goto_screen(3);
-    h.turns(2);
-    h.type_text("@");
-    h.turns(1);
-    h.store
-        .op
-        .my_email
-        .set(Loadable::Ready(MyEmail::from_value(&my_email_fixture())));
-    let s = h.turns(2);
+fn my_email_switches_apply_at_once_and_say_the_new_state() {
+    use abstractgateway_console::worker::operator::EmailAction;
+    let mut h = harness_sized(Size::new(140, 60));
+    let s = open_my_email(&mut h, &my_email_fixture());
     let _ = h.drain_cmds();
-    click_text(&mut h, &s, "Save and test");
+    click_text(&mut h, &s, "Approval needed");
     let s = h.turns(2);
+    match email_action(&mut h) {
+        Some(EmailAction::NotificationSwitch { key, on }) => {
+            assert_eq!(key, "approval_needed");
+            assert!(on, "an OFF switch asks for ON");
+        }
+        other => panic!("PUT /me/email/notifications, got {other:?}"),
+    }
+    assert!(s.contains("Approval needed · saving…"), "busy:\n{s}");
+    // The shown state stays the gateway's until the write is verified.
+    assert!(s.contains("[ ] Approval needed"), "{s}");
+    click_text(&mut h, &s, "Agent email tools");
+    h.turns(2);
     assert!(
-        s.contains("give the password"),
-        "refused before sending:\n{s}"
+        email_action(&mut h).is_none(),
+        "a second write waits for the first"
     );
-    assert!(h
-        .find_cmd(|c| is_op(c, |o| matches!(
-            o,
-            OpCmd::Email {
-                action: EmailAction::Connect(_),
-                ..
-            }
-        )))
-        .is_none());
 }
 
 #[test]
-fn users_table_shows_the_mailbox_and_x_switches_email_for_the_user() {
+fn my_email_unavailable_switches_say_why_and_send_nothing() {
+    let mut h = harness_sized(Size::new(140, 60));
+    let s = open_my_email(&mut h, &my_email_not_connected());
+    assert!(
+        s.contains("[-] Job failed — Connect a mailbox first."),
+        "{s}"
+    );
+    assert!(
+        s.contains("[-] Agent email tools — Connect a mailbox first."),
+        "{s}"
+    );
+    let _ = h.drain_cmds();
+    click_text(&mut h, &s, "Agent email tools —");
+    h.turns(2);
+    assert!(
+        email_action(&mut h).is_none(),
+        "an unavailable switch sends nothing"
+    );
+    assert_eq!(
+        h.store.notice.get_untracked().as_deref(),
+        Some("Connect a mailbox first."),
+        "the press says the reason"
+    );
+}
+
+#[test]
+fn my_email_agent_tools_reason_follows_the_admin() {
+    let mut h = harness_sized(Size::new(140, 60));
+    let mut v = my_email_fixture();
+    v["agent_tools"] = json!({"on": false, "available": false, "unavailable_reason": "Your admin turned agent email tools off.", "active": false});
+    let s = open_my_email(&mut h, &v);
+    assert!(
+        s.contains("[-] Agent email tools — Your admin turned agent email tools off."),
+        "{s}"
+    );
+    // A gateway older than the contract (no unavailable_reason, no
+    // registered_address): the page still reads, with the same reasons.
+    let mut old = my_email_fixture();
+    old["agent_tools"] =
+        json!({"enabled": false, "available": false, "active": false, "reason": "not available"});
+    old.as_object_mut().unwrap().remove("registered_address");
+    old.as_object_mut().unwrap().remove("notifications");
+    let e = abstractgateway_console::store::email::MyEmail::from_value(&old);
+    assert_eq!(
+        e.agent_tools_unavailable().as_deref(),
+        Some("Your admin turned agent email tools off.")
+    );
+    assert_eq!(e.email_address(), "me@example.test");
+    assert_eq!(e.notify_job_failed, None);
+}
+
+#[test]
+fn my_email_other_tab_asks_address_and_password_and_discovers_the_servers() {
+    use abstractgateway_console::store::email::Discovery;
+    use abstractgateway_console::worker::operator::EmailAction;
+    let mut h = harness_sized(Size::new(140, 60));
+    let s = open_my_email(&mut h, &my_email_not_connected());
+    assert!(
+        s.contains("Google") && s.contains("Microsoft") && s.contains("Other"),
+        "the three tabs:\n{s}"
+    );
+    assert!(s.contains("Sign in with Google"), "{s}");
+    let _ = h.drain_cmds();
+    click_text(&mut h, &s, "Other");
+    let s = h.turns(3);
+    match email_action(&mut h) {
+        Some(EmailAction::Discover(a)) => assert_eq!(a, "me@fastmail.test"),
+        other => panic!("the Other tab looks the servers up, got {other:?}"),
+    }
+    assert!(s.contains("Password"), "{s}");
+    assert!(
+        s.contains("Use an app password if your provider needs one."),
+        "{s}"
+    );
+    assert!(
+        !s.contains("IMAP server"),
+        "Server settings stay folded:\n{s}"
+    );
+    h.store.op.email_discovery.set(Some((
+        "me@fastmail.test".into(),
+        Loadable::Ready(Discovery::from_value(&json!({
+            "address": "me@fastmail.test", "domain": "fastmail.test", "found": true, "source": "known",
+            "imap": {"host": "imap.fastmail.com", "port": 993, "security": "ssl"},
+            "smtp": {"host": "smtp.fastmail.com", "port": 465, "security": "ssl"},
+            "username": "me@fastmail.test"
+        }))),
+    )));
+    let s = h.turns(3);
+    assert!(
+        s.contains("imap.fastmail.com · 993 · SSL  ·  smtp.fastmail.com · 465 · SSL"),
+        "the discovery summary:\n{s}"
+    );
+    assert!(s.contains("Edit"), "{s}");
+    // ONE Connect: refused without a password, before anything is sent.
+    click_text(&mut h, &s, "│ Connect ");
+    let s = h.turns(2);
+    assert!(s.contains("Type the password"), "{s}");
+    assert!(email_action(&mut h).is_none());
+    // With the password: address + password only (the gateway discovers).
+    let pw_row = s
+        .lines()
+        .position(|l| l.contains("Password"))
+        .expect("password row");
+    let pw_col = s
+        .lines()
+        .nth(pw_row)
+        .unwrap()
+        .find('▐')
+        .map(|c| s.lines().nth(pw_row).unwrap()[..c].chars().count())
+        .unwrap();
+    h.key(
+        format!(
+            "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+            pw_col + 3,
+            pw_row + 1,
+            pw_col + 3,
+            pw_row + 1
+        )
+        .as_bytes(),
+    );
+    h.turns(1);
+    h.type_text("app-pw");
+    let s = h.turns(2);
+    click_text(&mut h, &s, "│ Connect ");
+    h.turns(2);
+    match email_action(&mut h) {
+        Some(EmailAction::Connect(body)) => {
+            assert_eq!(body.0["address"], json!("me@fastmail.test"));
+            assert_eq!(body.0["password"], json!("app-pw"));
+            assert!(
+                body.0.get("imap").is_none() && body.0.get("smtp").is_none(),
+                "{:?}",
+                body.0.get("imap")
+            );
+        }
+        other => panic!("PUT /me/email, got {other:?}"),
+    }
+}
+
+#[test]
+fn my_email_server_settings_open_by_themselves_when_discovery_finds_nothing() {
+    use abstractgateway_console::store::email::Discovery;
+    let mut h = harness_sized(Size::new(140, 60));
+    let mut v = my_email_not_connected();
+    v["auth_kind"] = json!("password");
+    open_my_email(&mut h, &v);
+    h.store.op.email_discovery.set(Some((
+        "me@fastmail.test".into(),
+        Loadable::Ready(Discovery::from_value(&json!({
+            "address": "me@fastmail.test", "domain": "fastmail.test", "found": false, "tried": []
+        }))),
+    )));
+    let s = h.turns(3);
+    assert!(
+        s.contains("Couldn't find the mail servers for fastmail.test. Enter them here."),
+        "{s}"
+    );
+    assert!(
+        s.contains("IMAP server") && s.contains("SMTP server"),
+        "opened:\n{s}"
+    );
+}
+
+#[test]
+fn users_table_has_the_design_columns_and_the_active_switch() {
     use abstractgateway_console::worker::operator::{EmailAction, OpCmd};
     let mut h = harness_sized(Size::new(160, 44));
     h.connect_as_admin();
     h.goto_screen(3);
     let mut users = users_fixture();
     users["users"][1]["email_account"] = json!({"configured": true, "address": "a@x.io", "state": "connected", "admin_enabled": true});
+    users["users"][0]["email_account"] =
+        json!({"configured": false, "state": "not connected", "admin_enabled": false});
     h.store
         .users
         .set(Loadable::Ready(users_from_payload(&users)));
-    let s = h.turns(2);
-    assert!(s.contains("mailbox"), "column header:\n{s}");
-    assert!(s.contains("connected"), "alice's mailbox state:\n{s}");
+    let s = h.turns(3);
+    for col in [
+        "user",
+        "role",
+        "email address",
+        "mailbox",
+        "runtime",
+        "active",
+    ] {
+        assert!(s.contains(col), "column {col:?}:\n{s}");
+    }
+    assert!(!s.contains("enabled"), "no State/enabled column:\n{s}");
+    assert!(s.contains("connected as a@x.io"), "{s}");
+    assert!(
+        s.contains("not allowed for this user"),
+        "the old override:\n{s}"
+    );
+    assert!(s.contains("[-] (you)"), "own row unavailable:\n{s}");
+    // Own row (admin, selected first): space says why, sends nothing.
     let _ = h.drain_cmds();
-    h.key(b"\x1b[B"); // select alice (second row)
-    h.turns(1);
+    h.type_text(" ");
+    h.turns(2);
+    assert_eq!(
+        h.store.notice.get_untracked().as_deref(),
+        Some("You can't deactivate your own account.")
+    );
+    assert!(h.find_cmd(|c| matches!(c, Cmd::PatchUser { .. })).is_none());
+    // x resets the old override (a one-shot action).
     h.type_text("x");
-    h.turns(2);
-    let sent = h.find_cmd(|c| {
-        is_op(c, |o| {
-            matches!(
-                o,
-                OpCmd::Email {
-                    action: EmailAction::AdminSetEnabled { .. },
-                    ..
-                }
-            )
-        })
-    });
-    let Some(Cmd::Operator(OpCmd::Email {
-        action: EmailAction::AdminSetEnabled {
-            user_id, enabled, ..
-        },
-        ..
-    })) = sent
-    else {
-        panic!("x sends PUT /admin/users/{{id}}/email");
-    };
-    assert_eq!(user_id, "alice");
-    assert!(!enabled, "a connected mailbox is switched OFF");
-}
-
-#[test]
-fn my_email_agent_tools_are_off_by_default_and_toggle_through_the_gateway() {
-    use abstractgateway_console::store::email::MyEmail;
-    use abstractgateway_console::worker::operator::{EmailAction, OpCmd};
-    let mut h = harness_sized(Size::new(140, 50));
-    h.connect_as_admin();
-    h.goto_screen(3);
-    h.turns(2);
-    h.type_text("@");
-    h.turns(1);
-    let mut v = my_email_fixture();
-    v["agent_tools"] = json!({"enabled": false, "available": false, "active": false, "reason": "not available — ask your admin"});
-    h.store
-        .op
-        .my_email
-        .set(Loadable::Ready(MyEmail::from_value(&v)));
-    let s = h.turns(2);
-    click_text(&mut h, &s, "Policy, limits & tools");
-    let s = h.turns(2);
-    assert!(
-        s.contains("not available — ask your admin"),
-        "unavailable:\n{s}"
-    );
-    assert!(
-        !s.contains("Turn agent email tools on"),
-        "no switch when unavailable:\n{s}"
-    );
-    v["agent_tools"] = json!({"enabled": false, "available": true, "active": false, "reason": "off (your choice; default)"});
-    h.store
-        .op
-        .my_email
-        .set(Loadable::Ready(MyEmail::from_value(&v)));
-    let s = h.turns(2);
-    click_text(&mut h, &s, "Policy, limits & tools");
-    let s = h.turns(2);
-    assert!(
-        s.contains("agent email tools: off — off (your choice; default)"),
-        "state:\n{s}"
-    );
-    let _ = h.drain_cmds();
-    click_text(&mut h, &s, "Turn agent email tools on");
     h.turns(2);
     assert!(
         h.find_cmd(|c| is_op(c, |o| matches!(
             o,
             OpCmd::Email {
-                action: EmailAction::AgentTools(true),
+                action: EmailAction::AdminResetMailbox { .. },
                 ..
             }
         )))
         .is_some(),
-        "PUT /me/email/agent-tools {{enabled: true}}"
+        "x sends PUT /admin/users/{{id}}/email {{inherit}}"
     );
+    // Alice: space asks before deactivating, then PATCHes {enabled:false}.
+    h.key(b"\x1b[B");
+    h.turns(1);
+    h.type_text(" ");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Deactivate alice? They are signed out until you turn"),
+        "confirm:\n{s}"
+    );
+    assert!(h.find_cmd(|c| matches!(c, Cmd::PatchUser { .. })).is_none());
+    h.key(b"\x1b[A"); // up to "Deactivate" (Cancel is the default)
+    h.turns(1);
+    h.key(b"\r");
+    h.turns(2);
+    match h.find_cmd(|c| matches!(c, Cmd::PatchUser { .. })) {
+        Some(Cmd::PatchUser { user_id, body, .. }) => {
+            assert_eq!(user_id, "alice");
+            assert_eq!(body.0, json!({"enabled": false}));
+        }
+        other => panic!("PATCH user, got {other:?}"),
+    }
 }
 
 #[test]
-fn users_shift_x_makes_agent_tools_available_and_admins_edit_the_defaults() {
+fn users_admin_switch_mailboxes_for_users_applies_at_once() {
     use abstractgateway_console::store::email::EmailCaps;
     use abstractgateway_console::worker::operator::{EmailAction, OpCmd};
-    let mut h = harness_sized(Size::new(160, 50));
+    let mut h = harness_sized(Size::new(160, 44));
     h.connect_as_admin();
     h.goto_screen(3);
-    let mut users = users_fixture();
-    users["users"][1]["email_account"] = json!({"configured": true, "address": "a@x.io", "state": "connected", "admin_enabled": true, "agent_tools_available": false});
     h.store
         .users
-        .set(Loadable::Ready(users_from_payload(&users)));
+        .set(Loadable::Ready(users_from_payload(&users_fixture())));
     h.turns(2);
-    let _ = h.drain_cmds();
-    h.key(b"\x1b[B");
-    h.turns(1);
-    h.type_text("X");
-    h.turns(2);
-    let sent = h.find_cmd(|c| {
-        is_op(c, |o| {
-            matches!(
-                o,
-                OpCmd::Email {
-                    action: EmailAction::AdminSetAgentTools { .. },
-                    ..
-                }
-            )
-        })
-    });
-    let Some(Cmd::Operator(OpCmd::Email {
-        action: EmailAction::AdminSetAgentTools {
-            user_id, available, ..
-        },
-        ..
-    })) = sent
-    else {
-        panic!("X sends PUT /admin/users/{{id}}/email {{agent_tools}}");
-    };
-    assert_eq!(user_id, "alice");
-    assert!(available);
-
-    let _ = h.drain_cmds();
-    h.type_text("@");
-    h.turns(1);
     assert!(
         h.find_cmd(|c| is_op(c, |o| matches!(
             o,
@@ -10442,39 +10588,251 @@ fn users_shift_x_makes_agent_tools_available_and_admins_edit_the_defaults() {
             }
         )))
         .is_some(),
-        "an admin's My email reads the gateway defaults"
+        "the Users screen reads the email switches"
     );
-    h.store.op.my_email.set(Loadable::Ready(
-        abstractgateway_console::store::email::MyEmail::from_value(&my_email_fixture()),
-    ));
     h.store.op.email_caps.set(Loadable::Ready(EmailCaps {
         email: true,
-        agent_tools: false,
-        recovery: true,
+        agent_tools: true,
+        recovery: false,
     }));
+    let s = h.turns(3);
+    assert!(s.contains("[x] Mailboxes for users"), "{s}");
+    assert!(s.contains("You never see anyone's mail."), "{s}");
+    assert!(!s.contains("Sign-in by email"), "Advanced is folded:\n{s}");
+    click_text(&mut h, &s, "Advanced ▸");
     let s = h.turns(2);
-    click_text(&mut h, &s, "Email for users (admin)");
-    let s = h.turns(2);
-    assert!(
-        s.contains("Agent email tools available to users"),
-        "defaults:\n{s}"
-    );
-    assert!(
-        s.contains("whoever controls a user's mailbox can sign in as that user"),
-        "recovery note:\n{s}"
-    );
+    assert!(s.contains("[x] Agent email tools for users"), "{s}");
+    assert!(s.contains("[ ] Sign-in by email"), "{s}");
+    assert!(!s.contains("Save"), "no Save for a switch:\n{s}");
     let _ = h.drain_cmds();
-    click_text(&mut h, &s, "Save email defaults");
+    click_text(&mut h, &s, "Mailboxes for users");
+    h.turns(2);
+    match email_action(&mut h) {
+        Some(EmailAction::CapsDefaults(body)) => assert_eq!(body.0, json!({"email": false})),
+        other => panic!("PUT /admin/email/capabilities, got {other:?}"),
+    }
+    assert_eq!(
+        abstractgateway_console::store::email::caps_state_text(&json!({"email": false})),
+        "Mailboxes are off for all users."
+    );
+}
+
+#[test]
+fn create_user_asks_the_email_address_at_the_top_level() {
+    let mut h = harness_sized(Size::new(140, 44));
+    h.connect_as_admin();
+    h.goto_screen(3);
+    h.store
+        .users
+        .set(Loadable::Ready(users_from_payload(&users_fixture())));
+    h.turns(2);
+    h.type_text("a");
+    let s = h.turns(2);
+    assert!(
+        s.contains("User ID")
+            && s.contains("Letters, digits, dots or dashes. This is how they sign in."),
+        "{s}"
+    );
+    assert!(s.contains("Role") && s.contains("Email address"), "{s}");
+    assert!(
+        s.contains("Where sign-in codes and notifications go. Leave empty if")
+            && s.contains("they have none; they can add it later."),
+        "{s}"
+    );
+    assert!(
+        !s.contains("The data plane their runs") && !s.contains("Tenant"),
+        "Advanced folded:\n{s}"
+    );
+    assert!(
+        !s.contains("optional") && !s.contains("never used for auth"),
+        "{s}"
+    );
+    click_text(&mut h, &s, "Advanced ▸  runtime");
+    let s = h.turns(2);
+    assert!(
+        s.contains("The data plane their runs, flows and sessions live in.")
+            && s.contains("Empty = their own, named after them."),
+        "{s}"
+    );
+    assert!(
+        s.contains("Leave 'default' unless you run several tenants."),
+        "{s}"
+    );
+    assert!(!s.contains("binding"), "{s}");
+}
+
+fn signed_out(h: &mut Harness) {
+    h.ui.wizard.set(false);
+    h.ui.screen.set(ui::SCREEN_CONNECTION);
+    h.store.conn.set(ConnPhase::Unauthorized(
+        "Missing or invalid gateway token".into(),
+    ));
+    h.turns(2);
+}
+
+#[test]
+fn sign_in_link_shows_only_when_the_gateway_offers_it() {
+    use abstractgateway_console::worker::operator::{OpCmd, RecoveryAction};
+    let mut h = harness_sized(Size::new(120, 40));
+    signed_out(&mut h);
+    let s = h.turns(2);
+    assert!(
+        !s.contains("Forgot your token?"),
+        "not before the gateway says:\n{s}"
+    );
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(
+            o,
+            OpCmd::Recovery(RecoveryAction::Check { .. })
+        )))
+        .is_some(),
+        "it asks GET /session/recovery"
+    );
+    h.store.op.recovery.update(|r| r.available = Some(false));
+    let s = h.turns(2);
+    assert!(!s.contains("Forgot your token?"), "{s}");
+    h.store.op.recovery.update(|r| r.available = Some(true));
+    let s = h.turns(2);
+    assert!(
+        s.contains("Forgot your token? Email me a sign-in code"),
+        "{s}"
+    );
+    assert!(
+        !s.contains("Code from the email"),
+        "no code field yet:\n{s}"
+    );
+}
+
+#[test]
+fn sign_in_by_email_sends_then_shows_the_code_step() {
+    use abstractgateway_console::store::email::{RecoveryAnswer, RecoveryStep};
+    use abstractgateway_console::worker::operator::{OpCmd, RecoveryAction};
+    let mut h = harness_sized(Size::new(120, 40));
+    signed_out(&mut h);
+    h.store.op.recovery.update(|r| r.available = Some(true));
+    let s = h.turns(2);
+    let _ = h.drain_cmds();
+    click_text(&mut h, &s, "Forgot your token?");
+    let s = h.turns(2);
+    assert!(s.contains("Sending…"), "busy:\n{s}");
+    match h.find_cmd(|c| {
+        is_op(c, |o| {
+            matches!(o, OpCmd::Recovery(RecoveryAction::Request { .. }))
+        })
+    }) {
+        Some(Cmd::Operator(OpCmd::Recovery(RecoveryAction::Request { user_id, .. }))) => {
+            assert_eq!(user_id, "admin")
+        }
+        other => panic!("POST /session/recovery/request, got {other:?}"),
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let answer = RecoveryAnswer::from_value(
+        "admin",
+        &json!({"sent": true, "to": "a•••@•••", "expires_in_s": 600,
+                "message": "A sign-in code is on its way to a•••@•••. It expires in 10 minutes."}),
+        now,
+    );
+    h.store
+        .op
+        .recovery
+        .update(|r| r.step = RecoveryStep::Code(answer.clone()));
+    let s = h.turns(3);
+    assert!(
+        s.contains("A sign-in code is on its way to a•••@•••. It expires in 10 minutes."),
+        "{s}"
+    );
+    assert!(s.contains("Code from the email"), "{s}");
+    assert!(
+        s.contains("Send a new code (in 30 s)") || s.contains("Send a new code (in 29 s)"),
+        "cooldown:\n{s}"
+    );
+    assert!(s.contains("Back to token"), "{s}");
+    assert!(
+        !s.contains("Forgot your token?"),
+        "the link is replaced:\n{s}"
+    );
+    // Use code needs 8 digits: 7 digits + Enter sends nothing.
+    let _ = h.drain_cmds();
+    h.type_text("1234567\r");
     h.turns(2);
     assert!(
         h.find_cmd(|c| is_op(c, |o| matches!(
             o,
-            OpCmd::Email {
-                action: EmailAction::CapsDefaults(_),
-                ..
-            }
+            OpCmd::Recovery(RecoveryAction::Redeem { .. })
+        )))
+        .is_none(),
+        "7 digits are not a code"
+    );
+    h.type_text("8\r");
+    let s = h.turns(2);
+    assert!(
+        h.find_cmd(|c| is_op(c, |o| matches!(
+            o,
+            OpCmd::Recovery(RecoveryAction::Redeem { .. })
         )))
         .is_some(),
-        "PUT /admin/email/capabilities"
+        "8 digits + Enter redeem"
     );
+    assert!(s.contains("Checking the code…"), "{s}");
+    // A refused code: inline, the code step stays.
+    h.store.op.recovery.update(|r| {
+        r.step = RecoveryStep::Code(answer.clone());
+        r.error = Some("That code is wrong, expired or already used. Send a new one.".into());
+    });
+    let s = h.turns(2);
+    assert!(
+        s.contains("✗ That code is wrong, expired or already used. Send a new one."),
+        "{s}"
+    );
+    // The redeemed token signs the console in.
+    let _ = h.drain_cmds();
+    h.store.op.recovery.update(|r| {
+        r.step = RecoveryStep::Idle;
+        r.error = None;
+        r.new_token = Some("tok-NEW".into());
+        r.signed_in_user = "admin".into();
+    });
+    let s = h.turns(3);
+    assert_eq!(h.ui.conn_token.get_untracked(), "tok-NEW");
+    assert!(
+        h.find_cmd(|c| matches!(c, Cmd::Connect { .. })).is_some(),
+        "it signs in"
+    );
+    assert!(s.contains("Your new token, shown once"), "{s}");
+}
+
+#[test]
+fn sign_in_by_email_says_the_honest_refusals() {
+    use abstractgateway_console::store::email::{RecoveryAnswer, RecoveryStep};
+    let mut h = harness_sized(Size::new(120, 40));
+    signed_out(&mut h);
+    h.store.op.recovery.update(|r| {
+        r.available = Some(true);
+        r.step = RecoveryStep::Code(RecoveryAnswer::from_value(
+            "bob",
+            &json!({"sent": false, "reason_code": "no_email_address",
+                    "message": "This account has no email address, so a code can't be sent. Ask your gateway admin for a token."}),
+            0,
+        ));
+    });
+    let s = h.turns(3);
+    assert!(s.contains("This account has no email address"), "{s}");
+    assert!(
+        !s.contains("Code from the email"),
+        "no code field when nothing was sent:\n{s}"
+    );
+    let a = RecoveryAnswer::from_value(
+        "bob",
+        &json!({"sent": false, "reason_code": "too_many_requests", "retry_after_s": 600, "message": "Too many codes requested for this account. Try again in 10 minutes."}),
+        1_000_000,
+    );
+    assert_eq!(
+        a.resend_wait_s(1_000_000),
+        600,
+        "the gateway's wait wins over 30 s"
+    );
+    assert_eq!(a.resend_wait_s(1_000_000 + 601_000), 0);
 }
