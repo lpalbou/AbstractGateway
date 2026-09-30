@@ -27,7 +27,9 @@ dependencies = [
   # 0.7.3: an explicitly loaded image or video model serves generation
   # in-process (the console Load button reuses the loaded pipeline instead of
   # reloading the model per request).
-  "AbstractRuntime>=0.7.3",
+  # 0.8.0: per-user email (framework backlog 0992) — run binding + resolver `use`, durable event
+  # inbox, email.received@1, the send-email action, the email facade, per-caller email toolsets.
+  "AbstractRuntime>=0.8.0",
   # Floor only (no extras; Runtime chooses them). The gateway relies on
   # AbstractCore 2.16.1 (abstractcore.utils.identity for the About rows,
   # process-wide model residency and eject semantics, host-job download
@@ -41,7 +43,9 @@ dependencies = [
   # input.voice route; 2.19.2: speech input in the fresh-install seed
   # (recommended-v2) and apply-recommended --only stt, which the consoles
   # render); Runtime alone would keep an older Core on upgrade.
-  "abstractcore>=2.19.2",
+  # 2.20.0: the mail library (abstractcore.comms.email: account store, vault, OAuth, verified TLS,
+  # recipient policy and send limits) behind the runtime's email facade.
+  "abstractcore>=2.20.0",
   # Imported directly (routes/gateway.py voice listings):
   # abstractvoice.engine_runtime (0.13.0) decides which local voice engines
   # are available, and voice_openai_api_key (0.13.0) carries the Providers
@@ -101,7 +105,7 @@ tray = [
 # deployment entry point, Gateway's `apple` profile installs the full native
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
-  "AbstractRuntime[apple]>=0.7.3",
+  "AbstractRuntime[apple]>=0.8.0",
   "abstractagent[apple]>=0.3.17",
   "AbstractMemory[all-apple]>=0.3.0",
 ]
@@ -109,13 +113,15 @@ apple = [
 # Native/container GPU Gateway profile. This is the full local GPU aggregate for
 # Python installs and for the NVIDIA Docker image.
 gpu = [
-  "AbstractRuntime[gpu]>=0.7.3",
+  "AbstractRuntime[gpu]>=0.8.0",
   "abstractagent[gpu]>=0.3.17",
   "AbstractMemory[all-gpu]>=0.3.0",
 ]
 dev = [
   "pytest>=7.0.0",
   "httpx>=0.27.0",
+  # Hermetic SMTP server for the email tests (abstractcore.testing.mailserver).
+  "aiosmtpd>=1.4.4,<2.0.0",
 ]
 
 docs = [

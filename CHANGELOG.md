@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Targets AbstractGateway 0.8.0 with the terminal console 0.12.0 (see
 [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md)). Needs AbstractCore 2.20.0 (the mail library) and
-AbstractRuntime 0.8.0 (account binding, event inbox, `email.received@1`).
+AbstractRuntime 0.8.0 (account binding, event inbox, `email.received@1`); the dependency floors are
+`abstractcore>=2.20.0` and `AbstractRuntime>=0.8.0` (also in the `apple` and `gpu` settings), and a host refuses to
+build on a runtime without the email seams.
 
 ### Added
 - **Per-user email: one user, one runtime, one mailbox** ([docs/email.md](docs/email.md)). Every signed-in person

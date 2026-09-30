@@ -39,8 +39,8 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.7.3`
-- `abstractcore>=2.19.2`
+- `AbstractRuntime>=0.8.0` (per-user email: run binding, event inbox, `email.received@1`, the email facade)
+- `abstractcore>=2.20.0` (the mail library behind per-user email)
 - `abstractvoice>=0.13.0` (the voice listings import `abstractvoice.engine_runtime`)
 - `abstractagent>=0.3.17`
 - `AbstractMemory[lancedb]>=0.3.0`

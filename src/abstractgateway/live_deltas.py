@@ -87,7 +87,9 @@ _role_lock = threading.Lock()
 # names each engine's own models (the Voice screen), and Runtime depends on
 # AbstractCore's three install settings (the release matrix moves together).
 # 0.7.3: an explicitly loaded image/video model serves generation in-process.
-ABSTRACTRUNTIME_FLOOR = "0.7.3"
+# 0.8.0: per-user email (framework backlog 0992): the run binding and host resolver
+# (`Runtime.set_email_context_resolver` / `set_email_binding` / `set_event_inbox`).
+ABSTRACTRUNTIME_FLOOR = "0.8.0"
 
 
 class LiveDeltaError(RuntimeError):
@@ -855,6 +857,8 @@ def require_runtime_features(runtime: Any) -> None:
         from abstractruntime.session_history import HISTORY_REPLAY_MAX_TOKENS  # noqa: F401
     except ImportError:
         missing.append("the session history window (abstractruntime.session_history.HISTORY_REPLAY_MAX_TOKENS)")
+    if not callable(getattr(runtime, "set_email_context_resolver", None)) or not callable(getattr(runtime, "set_event_inbox", None)):
+        missing.append("per-user email (Runtime.set_email_context_resolver / set_event_inbox)")
     if missing:
         try:
             from importlib.metadata import version
