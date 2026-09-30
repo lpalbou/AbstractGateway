@@ -139,13 +139,19 @@ configuration surfaces exist in a terminal through the `abstractgateway-console`
 Rust app (`cargo install abstractgateway-console`). See
 [docs/console.md](docs/console.md).
 
+Each user can connect their own mailbox (Users → **My email** in the web
+console, `@` in the terminal console, or `/api/gateway/me/email`): automations
+can run when mail arrives, results and approvals can be emailed to the user,
+and agents can use email tools when an administrator makes them available. See
+[docs/email.md](docs/email.md).
+
 ## Docker server
 
 Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.7.4
+docker pull ghcr.io/lpalbou/abstractgateway:0.8.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -153,7 +159,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.7.4-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.8.0-gpu
 ```
 
 The `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR names are
@@ -360,6 +366,7 @@ Published docs site: https://www.lpalbou.info/AbstractGateway/
 - Architecture: [docs/architecture.md](docs/architecture.md)
 - API overview: [docs/api.md](docs/api.md)
 - Automations: [docs/automations.md](docs/automations.md)
+- Email: [docs/email.md](docs/email.md)
 - Configuration: [docs/configuration.md](docs/configuration.md)
 - Consoles: [docs/console.md](docs/console.md)
 - Apps: [docs/apps.md](docs/apps.md)

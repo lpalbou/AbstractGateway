@@ -69,7 +69,7 @@ Administrators set a bring-your-own client per provider with
 
 Your agents and workflows — chats, workflow runs and automations, from every client (Code,
 Assistant, Observer, the consoles) — get the email tools (list and search mail, read a message,
-send, reply, download an attachment) only when **all** of these hold:
+list folders, send, reply, download an attachment) only when **all** of these hold:
 
 1. an administrator made **Agent email tools** available to you (they are not, by default);
 2. your account is connected and turned on, and email is allowed for you;
@@ -80,7 +80,9 @@ send, reply, download an attachment) only when **all** of these hold:
 The rule is applied twice: when your toolsets are built (the tools are listed only then; turning
 the switch reloads your workflows so the change applies at once) and again when a tool runs (a
 call without all three is refused with the cause and the fix). `GET /api/gateway/discovery/tools`
-shows the email tools as enabled only for a caller whose agent tools are active. Every email tool
+shows the email tools as enabled only for a caller whose agent tools are active; otherwise each
+disabled email row names why: not available to you (ask your administrator), email turned off for
+you by an administrator, no connected account, or your own switch is off. Every email tool
 call is an ordinary tool call recorded in the run's ledger. Your own send-email actions in
 automations (fixed templates you wrote), notifications and recovery codes do not need the switch:
 they only need a connected, allowed account.

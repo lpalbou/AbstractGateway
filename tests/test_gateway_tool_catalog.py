@@ -52,7 +52,7 @@ def test_disabled_toolsets_are_visible_rows_with_real_specs() -> None:
         items = r.json()["items"]
         by_name = {t["name"]: t for t in items}
 
-        for name in ("send_email", "read_email", "list_emails", "list_email_accounts",
+        for name in ("send_email", "read_email", "list_emails", "list_email_accounts", "list_email_folders",
                      "send_telegram_message", "send_whatsapp_message"):
             assert name in by_name, f"{name} missing from the catalog"
             row = by_name[name]
@@ -63,10 +63,10 @@ def test_disabled_toolsets_are_visible_rows_with_real_specs() -> None:
             if "email" in name:
                 # Per user (framework backlog 0992), never an environment gate: the runtime's
                 # typed off-reason. The static-token operator has no account and agent tools
-                # are not made available by default -> the administrator's reason.
+                # are not made available by default -> "not available, ask your administrator".
                 from abstractruntime.integrations.abstractcore.default_tools import EMAIL_OFF_REASONS
 
-                assert row["enable_gate"] == EMAIL_OFF_REASONS["admin_disabled"]
+                assert row["enable_gate"] == EMAIL_OFF_REASONS["not_available"]
             else:
                 assert "ABSTRACT_ENABLE" in row["enable_gate"]
             # Real spec, never fabricated: the description comes from the callable.

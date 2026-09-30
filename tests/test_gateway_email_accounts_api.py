@@ -218,6 +218,15 @@ def test_gateway_defaults_and_per_user_overrides_decide_what_is_available(gatewa
     assert c.put("/api/gateway/me/email", headers=gateway["alice"], json=connect_body(ALICE, imap, smtp)).status_code == 200
     at = c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["agent_tools"]
     assert at == {"enabled": False, "available": False, "active": False, "reason": "not available — ask your admin"}
+    # The toolset listing names the same case with the runtime's typed reason, not "turned off".
+    from abstractruntime.integrations.abstractcore.default_tools import EMAIL_OFF_REASONS
+
+    from abstractgateway.mail.accounts import agent_tools_off_reason
+
+    assert agent_tools_off_reason(plane_of("alice")) == "not_available"
+    items = c.get("/api/gateway/discovery/tools", headers=gateway["alice"]).json()["items"]
+    gates = {t["enable_gate"] for t in items if t["name"] in ("send_email", "list_email_folders")}
+    assert gates == {EMAIL_OFF_REASONS["not_available"]}
     r = c.put("/api/gateway/me/email/agent-tools", headers=gateway["alice"], json={"enabled": True})
     assert r.status_code == 409 and r.json()["detail"]["reason_code"] == "email_disabled"
     assert "administrator" in r.json()["detail"]["fix"]
@@ -225,11 +234,19 @@ def test_gateway_defaults_and_per_user_overrides_decide_what_is_available(gatewa
     # Gateway-wide default on: available to everyone; a per-user override wins.
     r = c.put("/api/gateway/admin/email/capabilities", headers=ADMIN, json={"email_agent_tools": True})
     assert r.status_code == 200
+    assert agent_tools_off_reason(plane_of("alice")) == "agent_tools_off"
     assert c.put("/api/gateway/me/email/agent-tools", headers=gateway["alice"], json={"enabled": True}).json()["agent_tools"]["active"] is True
+    assert agent_tools_off_reason(plane_of("alice")) is None
+    # Available but email itself turned off for the user by the administrator: "admin_disabled".
+    assert c.put("/api/gateway/admin/users/alice/email", headers=ADMIN, json={"enabled": False}).status_code == 200
+    assert agent_tools_off_reason(plane_of("alice")) == "admin_disabled"
+    assert c.put("/api/gateway/admin/users/alice/email", headers=ADMIN, json={"enabled": True}).status_code == 200
+    assert agent_tools_off_reason(plane_of("alice")) is None
     r = c.put("/api/gateway/admin/users/alice/email", headers=ADMIN, json={"agent_tools": False})
     assert r.json()["capabilities"]["email_agent_tools"] == {"value": False, "source": "user"}
     at = c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["agent_tools"]
     assert at["enabled"] is True and at["available"] is False and at["active"] is False
+    assert agent_tools_off_reason(plane_of("alice")) == "not_available"
     # Enforced where toolsets are listed and where tools run, not only in the status view.
     items = c.get("/api/gateway/discovery/tools", headers=gateway["alice"]).json()["items"]
     assert {t["name"]: t["enabled"] for t in items if t["name"] == "send_email"} == {"send_email": False}

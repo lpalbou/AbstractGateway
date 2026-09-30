@@ -7,7 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Targets AbstractGateway 0.8.0 with the terminal console 0.12.0 (see
+## [0.8.0] - 2026-09-30
+
+AbstractGateway 0.8.0 ships with the terminal console 0.12.0 (see
 [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md)). Needs AbstractCore 2.20.0 (the mail library) and
 AbstractRuntime 0.8.0 (account binding, event inbox, `email.received@1`); the dependency floors are
 `abstractcore>=2.20.0` and `AbstractRuntime>=0.8.0` (also in the `apple` and `gpu` settings), and a host refuses to
@@ -30,7 +32,7 @@ build on a runtime without the email seams.
 - The administrator's gateway account starts, once, from AbstractCore's own local account when the gateway has none;
   the consoles say which account is being edited.
 - **Agent email tools** per user, off by default (`PUT /api/gateway/me/email/agent-tools`, web console My email,
-  terminal console **Policy, limits & tools**): agents and workflows get list/search/read/send/reply/attachment
+  terminal console **Policy, limits & tools**): agents and workflows get list/search/read/folders/send/reply/attachment
   tools only when the administrator made them available, the account is connected and allowed, and the switch is on —
   applied when the toolsets are built (the switch reloads the user's workflows) and again when a tool runs. The run
   binding follows the account, so user-authored send-email actions and notifications work with the switch off.
@@ -69,11 +71,11 @@ build on a runtime without the email seams.
   `policy.email_allowed_recipients`, `policy.untrusted_input_tools` and the `email.received@1` trigger configuration
   to the runtime, which validates them.
 - Tool listings (`/discovery/tools`, `/discovery/capabilities`, skills' tool checks) follow the caller's agent-tools
-  state; a disabled email row names the runtime's typed reason (not connected, turned off by an administrator,
-  agent tools off).
+  state; a disabled email row names the runtime's typed reason (not available to the user — ask your
+  administrator, email turned off by an administrator, not connected, agent tools off).
 - Maintenance notices (triage, entity repair, backlog runner) are emailed to the administrator's registered address
   through the administrator's own account and the notification outbox.
-- The email tool catalog row lists `reply_email`, `search_emails` and `get_email_attachment`.
+- The email tool catalog row lists `reply_email`, `search_emails`, `get_email_attachment` and `list_email_folders`.
 
 ### Removed
 - The email bridge (`ABSTRACT_EMAIL_BRIDGE` and its polling variables) and every `ABSTRACT_EMAIL_*` configuration

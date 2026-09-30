@@ -1,8 +1,8 @@
 # Changelog — abstractgateway-console
 
-## Unreleased (0.12.0)
+## 0.12.0 (2026-09-30)
 
-Needs AbstractGateway 0.8.0 (per-user email).
+Needs abstractcore-console 0.4 and AbstractGateway 0.8.0 (per-user email).
 
 ### Added
 - **My email** (Users screen → `@`): your own mailbox with the web console's fields and words — account (IMAP/SMTP,

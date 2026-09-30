@@ -6709,7 +6709,7 @@ Administrators set a bring-your-own client per provider with
 
 Your agents and workflows — chats, workflow runs and automations, from every client (Code,
 Assistant, Observer, the consoles) — get the email tools (list and search mail, read a message,
-send, reply, download an attachment) only when **all** of these hold:
+list folders, send, reply, download an attachment) only when **all** of these hold:
 
 1. an administrator made **Agent email tools** available to you (they are not, by default);
 2. your account is connected and turned on, and email is allowed for you;
@@ -6720,7 +6720,9 @@ send, reply, download an attachment) only when **all** of these hold:
 The rule is applied twice: when your toolsets are built (the tools are listed only then; turning
 the switch reloads your workflows so the change applies at once) and again when a tool runs (a
 call without all three is refused with the cause and the fix). `GET /api/gateway/discovery/tools`
-shows the email tools as enabled only for a caller whose agent tools are active. Every email tool
+shows the email tools as enabled only for a caller whose agent tools are active; otherwise each
+disabled email row names why: not available to you (ask your administrator), email turned off for
+you by an administrator, no connected account, or your own switch is off. Every email tool
 call is an ordinary tool call recorded in the run's ledger. Your own send-email actions in
 automations (fixed templates you wrote), notifications and recovery codes do not need the switch:
 they only need a connected, allowed account.
@@ -6878,7 +6880,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.7.4
+docker pull ghcr.io/lpalbou/abstractgateway:0.8.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -6886,7 +6888,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.7.4-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.8.0-gpu
 ```
 
 The image names `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -7168,7 +7170,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.7.4-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.8.0-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -7320,13 +7322,19 @@ configuration surfaces exist in a terminal through the `abstractgateway-console`
 Rust app (`cargo install abstractgateway-console`). See
 [docs/console.md](docs/console.md).
 
+Each user can connect their own mailbox (Users → **My email** in the web
+console, `@` in the terminal console, or `/api/gateway/me/email`): automations
+can run when mail arrives, results and approvals can be emailed to the user,
+and agents can use email tools when an administrator makes them available. See
+[docs/email.md](docs/email.md).
+
 ## Docker server
 
 Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.7.4
+docker pull ghcr.io/lpalbou/abstractgateway:0.8.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -7334,7 +7342,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.7.4-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.8.0-gpu
 ```
 
 The `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR names are
@@ -7541,6 +7549,7 @@ Published docs site: https://www.lpalbou.info/AbstractGateway/
 - Architecture: [docs/architecture.md](docs/architecture.md)
 - API overview: [docs/api.md](docs/api.md)
 - Automations: [docs/automations.md](docs/automations.md)
+- Email: [docs/email.md](docs/email.md)
 - Configuration: [docs/configuration.md](docs/configuration.md)
 - Consoles: [docs/console.md](docs/console.md)
 - Apps: [docs/apps.md](docs/apps.md)
@@ -7667,7 +7676,7 @@ Related repos:
 ## Prerequisites
 
 - Python `>=3.10` (see `pyproject.toml`)
-- AbstractRuntime 0.7.0 or later, installed with the gateway; the gateway
+- AbstractRuntime 0.8.0 or later, installed with the gateway; the gateway
   refuses to start on an older runtime and names the version to install
 - Workflows: none needed to start. The gateway serves its shipped bundles
   ([shipped-workflows.md](docs/shipped-workflows.md)); you can point it at your
@@ -7858,7 +7867,7 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.7.4-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:0.8.0-gpu` with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -8392,7 +8401,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Targets AbstractGateway 0.8.0 with the terminal console 0.12.0 (see
+## [0.8.0] - 2026-09-30
+
+AbstractGateway 0.8.0 ships with the terminal console 0.12.0 (see
 [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md)). Needs AbstractCore 2.20.0 (the mail library) and
 AbstractRuntime 0.8.0 (account binding, event inbox, `email.received@1`); the dependency floors are
 `abstractcore>=2.20.0` and `AbstractRuntime>=0.8.0` (also in the `apple` and `gpu` settings), and a host refuses to
@@ -8415,7 +8426,7 @@ build on a runtime without the email seams.
 - The administrator's gateway account starts, once, from AbstractCore's own local account when the gateway has none;
   the consoles say which account is being edited.
 - **Agent email tools** per user, off by default (`PUT /api/gateway/me/email/agent-tools`, web console My email,
-  terminal console **Policy, limits & tools**): agents and workflows get list/search/read/send/reply/attachment
+  terminal console **Policy, limits & tools**): agents and workflows get list/search/read/folders/send/reply/attachment
   tools only when the administrator made them available, the account is connected and allowed, and the switch is on —
   applied when the toolsets are built (the switch reloads the user's workflows) and again when a tool runs. The run
   binding follows the account, so user-authored send-email actions and notifications work with the switch off.
@@ -8454,11 +8465,11 @@ build on a runtime without the email seams.
   `policy.email_allowed_recipients`, `policy.untrusted_input_tools` and the `email.received@1` trigger configuration
   to the runtime, which validates them.
 - Tool listings (`/discovery/tools`, `/discovery/capabilities`, skills' tool checks) follow the caller's agent-tools
-  state; a disabled email row names the runtime's typed reason (not connected, turned off by an administrator,
-  agent tools off).
+  state; a disabled email row names the runtime's typed reason (not available to the user — ask your
+  administrator, email turned off by an administrator, not connected, agent tools off).
 - Maintenance notices (triage, entity repair, backlog runner) are emailed to the administrator's registered address
   through the administrator's own account and the notification outbox.
-- The email tool catalog row lists `reply_email`, `search_emails` and `get_email_attachment`.
+- The email tool catalog row lists `reply_email`, `search_emails`, `get_email_attachment` and `list_email_folders`.
 
 ### Removed
 - The email bridge (`ABSTRACT_EMAIL_BRIDGE` and its polling variables) and every `ABSTRACT_EMAIL_*` configuration

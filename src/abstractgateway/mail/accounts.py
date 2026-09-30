@@ -463,12 +463,16 @@ def agent_tools_status(plane: EmailPlane) -> Dict[str, Any]:
 
 def agent_tools_off_reason(plane: EmailPlane) -> Optional[str]:
     """AbstractRuntime's typed off-reason for the email toolset of this plane (None = active):
-    "admin_disabled" (email turned off, or agent tools not made available, by an administrator),
-    "not_connected" (no connected, turned-on account), "agent_tools_off" (the user's choice)."""
+    "not_available" (the administrator has not made agent email tools available to this user),
+    "admin_disabled" (email turned off for this user by an administrator), "not_connected" (no
+    connected, turned-on account), "agent_tools_off" (the user's choice). Same order as
+    `agent_tools_status` and `require_agent_tools`."""
 
     if agent_tools_active(plane):
         return None
-    if not admin_email_enabled(plane) or not agent_tools_available(plane):
+    if not agent_tools_available(plane):
+        return "not_available"
+    if not admin_email_enabled(plane):
         return "admin_disabled"
     if not email_usable(plane):
         return "not_connected"

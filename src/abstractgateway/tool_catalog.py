@@ -84,9 +84,11 @@ _WHY_BY_TOOLSET = {
 # core here. DRIFT-PINNED: a test enables all comms kinds and asserts this
 # map equals runtime's composed toolset names — never sync-by-vigilance.
 _COMMS_KIND_TOOLS: Dict[str, Tuple[str, ...]] = {
-    # AbstractRuntime 0.8 (framework backlog 0992): reply/search/attachment joined.
+    # AbstractRuntime 0.8 (framework backlog 0992): reply/search/attachment and the
+    # read-only list_email_folders joined (same order as runtime's composition).
     "email": (
         "list_email_accounts",
+        "list_email_folders",
         "send_email",
         "reply_email",
         "list_emails",
