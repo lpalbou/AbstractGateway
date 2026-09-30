@@ -11,6 +11,8 @@ And the structural absence: there is NO DELETE route for entities.
 from __future__ import annotations
 
 import copy
+import json
+from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -219,9 +221,28 @@ def test_identity_card_composes_a_life():
 
         from abstractruntime.identity.life import write_entity_state
 
-        write_entity_state(
-            registry.entities_dir / "castor", "awake", reason="loop resumed runtime-side"
-        )
+        from abstractgateway.entity_replay import read_host_markers
+
+        # Pin the timestamps instead of depending on the wall clock (the old
+        # "same verb, same clock minute" matching made this test pass or fail
+        # with the minute the entity was created in, CI flake 0920): the
+        # door's own state line sits 90 s before its marker (another minute),
+        # and the entity's birth "asleep" line sits exactly at the marker's
+        # time. The door sleep must still render once, and the birth sleep
+        # must render as its own moment.
+        home_dir = registry.entities_dir / "castor"
+        (door_marker,) = [m for m in read_host_markers(registry.entities_dir, "castor") if (m.get("payload") or {}).get("kind") == "sleep"]
+        marker_at = datetime.fromisoformat(str(door_marker["observed_at"]).replace("Z", "+00:00"))
+        history = home_dir / "state_history.jsonl"
+        lines = [json.loads(x) for x in history.read_text(encoding="utf-8").splitlines() if x.strip()]
+        births = [e for e in lines if str(e.get("reason") or "").startswith("newborn")]
+        doors = [e for e in lines if "host under load" in str(e.get("reason") or "")]
+        assert len(births) == 1 and len(doors) == 1, lines
+        births[0]["changed_at"] = marker_at.isoformat()
+        doors[0]["changed_at"] = (marker_at - timedelta(seconds=90)).isoformat()
+        history.write_text("".join(json.dumps(e) + "\n" for e in lines), encoding="utf-8")
+
+        write_entity_state(home_dir, "awake", reason="loop resumed runtime-side")
 
         moments = client.get("/api/gateway/entities/Castor/card").json()["moments"]
         state_moments = [(m["kind"], m["details"].get("reason") or "") for m in moments if m["kind"] in ("sleep", "wake")]
@@ -229,9 +250,11 @@ def test_identity_card_composes_a_life():
         # principal stamp (hypnos 10:20 lesson); the runtime-side write has
         # no door, so no stamp — both are honest.
         sleep_reasons = [r for k, r in state_moments if k == "sleep"]
-        assert len(sleep_reasons) == 1  # door dedup held
-        assert "host under load" in sleep_reasons[0]
-        assert "[by person:admin via POST /entities/Castor/state]" in sleep_reasons[0]
+        door_sleeps = [r for r in sleep_reasons if "host under load" in r]
+        assert len(door_sleeps) == 1, sleep_reasons  # door dedup held across a minute boundary
+        assert "[by person:admin via POST /entities/Castor/state]" in door_sleeps[0]
+        assert [r for r in sleep_reasons if r.startswith("newborn")] == [births[0]["reason"]], sleep_reasons  # the birth moment is its own
+        assert len(sleep_reasons) == 2, sleep_reasons
         assert ("wake", "loop resumed runtime-side") in state_moments
 
 

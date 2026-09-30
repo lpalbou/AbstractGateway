@@ -613,20 +613,44 @@ def _create_flow(c: TestClient, flow_id: str, request_id: str) -> str:
     return r.json()["automation_id"]
 
 
-def test_d2_waiting_only_on_a_person(live: TestClient) -> None:
+def test_d2_waiting_only_on_a_person(live: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     """A root parked on its subworkflow (like an Agent node) is RUNNING; only a
     wait on a person (typed pending wait) reads `waiting`."""
+    import threading
+
     slow = _create_flow(live, "slow", "slow")
     _command(live, slow, "automation.run_now", "s1")
     row = wait_until(lambda: (lambda r: r[0] if r and r[0]["status"] not in ("admitted",) else None)(_occurrences(live, slow)), timeout_s=10)
     from abstractgateway.service import get_gateway_service
 
-    root = get_gateway_service().host.run_store.load(row["run_id"])
-    wait_until(lambda: get_gateway_service().host.run_store.load(row["run_id"]).status.value == "waiting", timeout_s=10)
+    # The controller records `automation.dispatched` (the occurrence reads
+    # "running" with its run id) BEFORE the effect creates that run, so the
+    # run can be absent from the store for a moment: that window is the CI
+    # flake (`load()` returned None -> AttributeError). It is forced here on
+    # the test's own first look, then the wait reads "not created yet" as
+    # "not waiting yet" instead of crashing.
+    store = get_gateway_service().host.run_store
+    real_load = store.load
+    test_thread = threading.get_ident()
+    hidden_once = {row["run_id"]}
+
+    def _load(run_id, *a, **k):  # noqa: ANN001
+        if threading.get_ident() == test_thread and run_id in hidden_once:
+            hidden_once.discard(run_id)
+            return None
+        return real_load(run_id, *a, **k)
+
+    monkeypatch.setattr(store, "load", _load)
+
+    def _run_status(run_id: str):
+        run = get_gateway_service().host.run_store.load(run_id)
+        return run.status.value if run is not None else None
+
+    wait_until(lambda: _run_status(row["run_id"]) == "waiting", timeout_s=10)
+    assert not hidden_once  # the absent-run window was exercised
     row = _occurrences(live, slow)[0]
     assert row["status"] == "running" and row["waits"] == [], row
     assert live.get(f"/api/gateway/automations/{slow}", headers=HEADERS).json()["summary"]["last_occurrence"]["status"] == "running"
-    del root
 
     ask = _create_flow(live, "ask", "ask")
     _command(live, ask, "automation.run_now", "a1")

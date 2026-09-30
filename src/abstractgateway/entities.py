@@ -777,6 +777,37 @@ class EntityCreateResult:
         return out
 
 
+# How long a door state change may take between its state line(s) and its
+# host marker (a dream pass runs in between).
+DOOR_MOMENT_WINDOW_S = 3600.0
+
+
+def _moment_time(value: str) -> Optional[datetime]:
+    try:
+        t = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return t if t.tzinfo is not None else t.replace(tzinfo=timezone.utc)
+
+
+def _is_door_state_line(kind: str, reason: str, at: str, markers: List[tuple]) -> bool:
+    """True when a state-history line (verb `kind`, `reason`, time `at`) is
+    the ledger half of a door transition recorded as one of `markers`
+    ((verb, reason, observed_at) tuples)."""
+    t = _moment_time(at)
+    for mk, mr, mt in markers:
+        if mk != kind or mr != reason:
+            continue
+        m = _moment_time(mt)
+        if t is None or m is None:
+            if str(mt)[:16] == str(at)[:16]:
+                return True
+            continue
+        if -1.0 <= (m - t).total_seconds() <= DOOR_MOMENT_WINDOW_S:
+            return True
+    return False
+
+
 class EntityRegistry:
     """The gateway's entity lifecycle owner over one data root.
 
@@ -2361,7 +2392,7 @@ class EntityRegistry:
             kind = p.get("kind")
             at = str(m.get("observed_at") or "")
             if kind in ("sleep", "wake", "pause"):
-                marker_state_times.append((str(kind), at))
+                marker_state_times.append((str(kind), str(p.get("reason") or ""), at))
             moments.append(
                 {
                     "kind": kind,
@@ -2384,10 +2415,15 @@ class EntityRegistry:
                     continue
                 kind = verb_of.get(str(entry.get("state") or ""), str(entry.get("state") or "state"))
                 at = str(entry.get("changed_at") or "")
-                # Door transitions appear in BOTH ledgers within the same
-                # write; treat a marker of the same verb in the same minute
-                # as the same moment.
-                if any(mk == kind and mt[:16] == at[:16] for mk, mt in marker_state_times):
+                # Door transitions appear in BOTH ledgers: the door writes the
+                # state line(s) first (a dream sleep writes up to three), then
+                # the marker, with the same verb and reason. A line is the
+                # door's own when a marker of the same verb and reason follows
+                # it within DOOR_MOMENT_WINDOW_S. (It used to be "same verb in
+                # the same clock minute": a door write across a minute
+                # boundary showed twice, and the entity's birth "asleep" line
+                # vanished whenever a door sleep landed in its minute.)
+                if _is_door_state_line(kind, str(entry.get("reason") or ""), at, marker_state_times):
                     continue
                 moments.append(
                     {"kind": kind, "at": at, "seq": None, "details": {"reason": str(entry.get("reason") or "")}}

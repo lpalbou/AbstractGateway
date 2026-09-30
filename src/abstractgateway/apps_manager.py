@@ -1738,6 +1738,13 @@ class AppsManager:
         self._state_lock = threading.Lock()
         self._registry_cache: Dict[str, Tuple[float, Any]] = {}
         self._node_cache: Optional[Tuple[float, Dict[str, Any]]] = None
+        # One Node.js install at a time: two app installs that both need Node
+        # (or the Install Node.js button during an app install) used to run
+        # `install_node` side by side on the same download cache and target
+        # folder, and the loser failed. The second waits for the first and
+        # reuses what it installed (`_node_installs` counts completed installs).
+        self._node_install_lock = threading.Lock()
+        self._node_installs = 0
         self._handover: Dict[str, Tuple[float, str, Any, str, str]] = {}  # code -> (expires, app_id, principal, host, path)
         self._tui_handover: Dict[str, Tuple[float, str, Any, str]] = {}  # code -> (expires, app_id, principal, gateway_url)
         self._desktop_handover: Dict[str, Tuple[float, Any, str, str]] = {}  # code -> (expires, principal, base_url, file)
@@ -1995,7 +2002,9 @@ class AppsManager:
     def _download(self, job: Job, url: str, dest: Path, *, expected_size: Optional[int], phase: _Phase, what: str) -> Tuple[bytes, bytes]:
         """Stream `url` to `dest`; returns (sha256, sha512) digests."""
         dest.parent.mkdir(parents=True, exist_ok=True)
-        part = dest.with_name(dest.name + ".part")
+        # A private partial file per download, renamed into place at the end:
+        # two downloads of the same file never write into one another.
+        part = dest.with_name(f"{dest.name}.{secrets.token_hex(4)}.part")
         h256, h512 = hashlib.sha256(), hashlib.sha512()
         req = urllib.request.Request(url, headers={"User-Agent": "abstractgateway-apps"})
         job.indeterminate = False
@@ -2158,6 +2167,26 @@ class AppsManager:
         size = int(file.get("size") or 0) or None
         sha256 = str((file.get("digests") or {}).get("sha256") or "")
         job.log(f"Node.js {version}: {file.get('filename')} ({_mb(size)}), sha256 {sha256}")
+        seen = self._node_installs
+        if not self._node_install_lock.acquire(blocking=False):
+            job.say("Waiting for another Node.js install to finish…")
+            while not self._node_install_lock.acquire(timeout=0.2):
+                job.check_cancel()
+        try:
+            if self._node_installs != seen:
+                managed = self._managed_node()
+                if managed and managed.get("version") == version and managed.get("npm") and _run_version([managed["path"]]):
+                    job.log(f"Node.js {version} was installed by the install that ran first; using it")
+                    self._node_cache = None
+                    job.say(f"Node.js {version} installed in {self.node_root / version}", percent=phase.hi)
+                    return {"node_version": version, "node_path": managed["path"]}
+            res = self._install_node_locked(job, phase, version, file, size, sha256)
+            self._node_installs += 1
+            return res
+        finally:
+            self._node_install_lock.release()
+
+    def _install_node_locked(self, job: Job, phase: _Phase, version: str, file: Dict[str, Any], size: Optional[int], sha256: str) -> Dict[str, Any]:
         target = self.node_root / version
         cache = self.node_root / "downloads" / str(file.get("filename"))
         dl = _Phase(job, phase.lo, phase.at(0.85))
@@ -2558,19 +2587,28 @@ class AppsManager:
             except Exception:
                 logger.warning("stopping app %s failed", p.spec.id, exc_info=True)
 
-    def autostart(self, *, gateway_url: Optional[str] = None) -> List[Dict[str, Any]]:
+    def autostart(self, *, gateway_url: Optional[str] = None, cancel: Optional[threading.Event] = None) -> List[Dict[str, Any]]:
         """Gateway boot: stop leftovers of a previous run, then start every
-        installed app marked enabled. Returns one outcome row per app."""
+        installed app marked enabled. Returns one outcome row per app.
+        `cancel` (the gateway is shutting down) stops it between apps, and
+        an app whose start was under way when it was set is stopped again."""
         if gateway_url:
             self.gateway_url = str(gateway_url).rstrip("/")
         outcomes: List[Dict[str, Any]] = []
         self.reap_orphans()
         for spec in APPS:
+            if cancel is not None and cancel.is_set():
+                break
             st = self.app_state(spec.id)
             if not st.get("enabled"):
                 continue
             try:
                 row = self.launch(spec.id, gateway_url=gateway_url)
+                if cancel is not None and cancel.is_set():
+                    proc = self._procs.get(spec.id)
+                    if proc is not None:
+                        proc.stop()
+                    break
                 outcomes.append({"app_id": spec.id, "ok": True, "url": row.get("url")})
                 logger.info("app %s started at %s (enabled)", spec.id, row.get("url"))
             except AppsError as exc:
@@ -3776,22 +3814,44 @@ def get_apps_manager(data_dir: Optional[Path] = None) -> AppsManager:
         return m
 
 
+# The lifespan's autostart thread and its cancel event: a shutdown that lands
+# while the enabled apps are still starting waits for that thread before it
+# stops the apps, so no app is started after the stop (it would outlive the
+# gateway as an orphan child).
+_AUTOSTART: Optional[Tuple[threading.Thread, threading.Event]] = None
+AUTOSTART_STOP_WAIT_S = READY_TIMEOUT_S + 10.0
+
+
 def start_apps_on_boot() -> None:
     """Lifespan hook: start the enabled apps on a background thread (never
     raises, never delays the listener)."""
+    global _AUTOSTART
+    cancel = threading.Event()
+
     def _run() -> None:
         try:
-            outcomes = get_apps_manager().autostart()
+            outcomes = get_apps_manager().autostart(cancel=cancel)
             for o in outcomes:
                 line = f"Browser app {o['app_id']}: " + (f"started at {o['url']}" if o["ok"] else f"did not start: {o['message']}")
                 print(line, file=sys.stderr, flush=True)
         except Exception:  # noqa: BLE001
             logger.warning("starting the enabled browser apps failed", exc_info=True)
 
-    threading.Thread(target=_run, name="apps-autostart", daemon=True).start()
+    t = threading.Thread(target=_run, name="apps-autostart", daemon=True)
+    _AUTOSTART = (t, cancel)
+    t.start()
 
 
 def stop_apps_on_shutdown() -> None:
+    global _AUTOSTART
+    pending, _AUTOSTART = _AUTOSTART, None
+    if pending is not None:
+        t, cancel = pending
+        cancel.set()
+        if t is not threading.current_thread() and t.is_alive():
+            t.join(timeout=AUTOSTART_STOP_WAIT_S)
+            if t.is_alive():
+                logger.warning("shutdown: browser apps were still starting after %.0fs", AUTOSTART_STOP_WAIT_S)
     with _MANAGERS_LOCK:
         managers = list(_MANAGERS.values())
     for m in managers:
