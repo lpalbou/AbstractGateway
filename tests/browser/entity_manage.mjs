@@ -169,10 +169,23 @@ try {
     const mind = page.locator("#entity-mind-picker");
     check(await mind.locator('[role="tab"][aria-selected="true"]').textContent() === "Gateway default", "the Mind picker starts on Gateway default");
     await mind.locator('[role="tab"]', { hasText: "Custom" }).click();
+    // Kit AfSelect: wait until discovery has enabled the trigger, open it, type the name
+    // into its search box and take the first option (a configured-but-undiscovered
+    // provider/model stays reachable through 'Use "<name>"').
     const pickCustom = async (label, value) => {
-      await mind.locator(`button[aria-label="${label}"]`).click();
-      await page.keyboard.type(value);
-      await page.keyboard.press("Enter");
+      const trigger = mind.locator(`button[aria-label="${label}"]`);
+      await page.waitForFunction((l) => {
+        const b = document.querySelector(`#entity-mind-picker button[aria-label="${l}"]`);
+        return b && !b.disabled;
+      }, label, { timeout: 30000 });
+      await trigger.click();
+      const search = page.locator(".af-select-search-input").last();
+      await search.waitFor({ state: "visible", timeout: 10000 });
+      await search.fill(value);
+      // The first option is 'Use "<name>"' or, when discovery lists the name, the name itself.
+      const first = page.locator('[role="option"]').first();
+      await first.waitFor({ state: "visible", timeout: 10000 });
+      await first.click();
     };
     await pickCustom("Provider", "lmstudio");
     await pickCustom("Model", "some/model");
