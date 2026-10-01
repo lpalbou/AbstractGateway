@@ -15,6 +15,14 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
 (`abstractcore.comms.email.discovery.server_defaults`).
 
 ### Added
+- Entity visibility by role: an admin sees every user and entity; anyone else sees only themself and
+  the entities they created. `POST /entities` records `created_by` (`{tenant_id, user_id}`) in the
+  new home's manifest; `GET /entities` is filtered and every `/entities/{name}/…` route answers 404
+  (the same as a missing entity) for an entity the caller may not see. Entities created before this
+  release have no creator and are visible to admins only (nothing is rewritten).
+- `GET /api/gateway/me/accounts` (your own row plus the entities you created, the `/admin/accounts`
+  row shape) and `GET /api/gateway/me/accounts/{id}/activity`; `/admin/accounts` entity rows carry
+  `created_by`.
 - `GET /api/gateway/admin/accounts`: users and entities in one list (role, email address, mailbox
   state, runtime, Active, entity state) with each row's actions and, when one cannot apply, the
   reason (an entity has no mailbox, no token to rotate and no delete).
