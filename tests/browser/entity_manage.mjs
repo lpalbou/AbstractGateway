@@ -36,6 +36,7 @@ if (KIT && fs.existsSync(path.join(KIT, "src", "label_scale.ts"))) {
 
 const failures = [];
 let checks = 0;
+let step = "start";
 function check(ok, what, detail) {
   checks += 1;
   if (!ok) failures.push(detail === undefined ? what : `${what}: ${JSON.stringify(detail)}`);
@@ -58,14 +59,18 @@ async function signIn(page) {
   await page.waitForFunction(() => document.body.classList.contains("signed-in"), null, { timeout: 30000 });
   await page.keyboard.press("Escape").catch(() => {});
   await page.evaluate(() => document.getElementById("tab-button-users").click());
-  await page.waitForSelector(`#users-section tr[data-user="${ENTITY}"]`, { timeout: 20000 });
+  try {
+    await page.waitForSelector(`#users-section tr[data-user="${ENTITY}"]`, { timeout: 20000 });
+  } catch (e) {
+    const why = await page.evaluate(() => ({ users: (document.getElementById("users-message") || {}).textContent, rows: Array.from(document.querySelectorAll("#users-section tr[data-user]")).map((t) => t.getAttribute("data-user")), active: (document.querySelector(".tab-panel.active, section.active") || {}).id }));
+    throw new Error(`the Accounts table has no visible row ${ENTITY}: ${JSON.stringify(why)}`);
+  }
 }
 
-// The row's Manage action: a VISIBLE button on an entity row (DESIGN-v3 §13.2: entities
-// Email · Logs · Manage · ⋯ (Archive)). No fallback: a missing button fails here, loudly.
+// The row's Manage action: a visible button on entity rows (accounts-web §1.1, C3F ruling).
 async function openFromRow(page) {
-  const row = page.locator(`#users-section tr[data-user="${ENTITY}"]`);
-  await row.locator('.accounts-actions__buttons > button[data-action="manage"]').click({ timeout: 10000 });
+  step = "open Manage from the row";
+  await page.locator(`#users-section tr[data-user="${ENTITY}"] [data-action="manage"]`).click();
   await page.waitForSelector("#entity-manage-backdrop:not([hidden])", { timeout: 10000 });
   await page.waitForFunction(() => /Now:/.test(document.getElementById("entity-state-current").textContent || ""), null, { timeout: 20000 });
 }
@@ -96,7 +101,8 @@ try {
         modal: dlg.getAttribute("aria-modal"), classes: dlg.className, title: document.getElementById("entity-manage-title").textContent,
         backdropFixed: getComputedStyle(bd).position, usersShown: getComputedStyle(users).display !== "none" && !users.classList.contains("hidden"),
         rowRendered: Boolean(users.querySelector("tr[data-user]")) && users.querySelector("tr[data-user]").getClientRects().length > 0,
-        width: r.width, focusInside: dlg.contains(document.activeElement), filter: getComputedStyle(bd).backdropFilter || getComputedStyle(bd).webkitBackdropFilter || "",
+        width: r.width, focusInside: dlg.contains(document.activeElement), focusId: document.activeElement && document.activeElement.id,
+        rawMoments: /\b[a-z]+_[a-z_]*changed\b/.test(document.getElementById("entity-overview").textContent || ""), filter: getComputedStyle(bd).backdropFilter || getComputedStyle(bd).webkitBackdropFilter || "",
       };
     });
     check(shape.modal === "true", "Manage is role=dialog aria-modal=true", shape);
@@ -106,13 +112,15 @@ try {
     check(/blur/.test(shape.filter), "the backdrop is blurred", shape.filter);
     check(shape.usersShown && shape.rowRendered, "the Accounts table stays visible behind the modal", shape);
     check(shape.width >= 1000, "the modal is wide at 1440", shape.width);
-    check(shape.focusInside, "focus moves into the modal");
+    check(shape.focusInside && shape.focusId === "entity-manage-title", "focus moves into the modal, on its title", shape.focusId);
+    check(!shape.rawMoments, "recent moments are plain words, not event codes");
     check(page.url() === urlBefore, "opening Manage does not navigate", page.url());
     const hits = await page.evaluate(() => window.checkLabelScale(document.getElementById("entity-manage-section")));
     check(hits.length === 0, "labels in the modal keep the type scale (<= 15 px, <= 600)", hits);
 
     // ---- Every tab: no verb toggles, no Save buttons, nothing that duplicates the Accounts row.
     for (const tab of ["overview", "talk", "lifecycle", "substrate", "tools", "prompt"]) {
+      step = `tab ${tab}`;
       await page.click(`#entity-subtab-${tab}`);
       await page.waitForTimeout(150);
       const selected = await page.getAttribute(`#entity-subtab-${tab}`, "aria-selected");
@@ -130,6 +138,7 @@ try {
     }
 
     // ---- Awake switch: on wakes, off asks inline first, then sleeps.
+    step = "Awake switch";
     await page.click("#entity-subtab-lifecycle");
     const before = await page.getAttribute("#entity-state-awake", "aria-checked");
     if (before === "true") {
@@ -151,6 +160,7 @@ try {
     }
 
     // ---- A failed save says why (the API message), auto-save says Saved.
+    step = "substrate save";
     await page.click("#entity-subtab-substrate");
     await page.route("**/api/gateway/entities/*/substrate", (route) => (route.request().method() === "PUT"
       ? route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ detail: { reason_code: "test", message: "Refused by the browser test." } }) })
@@ -180,6 +190,7 @@ try {
     check(escaped === 0, "focus stays trapped inside the modal", escapedTo);
 
     // ---- Esc closes, focus returns to the row.
+    step = "Esc";
     await page.keyboard.press("Escape");
     await page.waitForTimeout(200);
     const closed = await page.evaluate(() => ({
@@ -191,6 +202,7 @@ try {
     check(closed.inRow, "closing returns focus to the entity's row", closed);
 
     // ---- Backdrop click closes too.
+    step = "backdrop";
     await openFromRow(page);
     await page.mouse.click(10, 450);
     await page.waitForTimeout(200);
@@ -217,6 +229,8 @@ try {
     }
     await ctx.close();
   }
+} catch (e) {
+  failures.push(`aborted at ${step}: ${String((e && e.message) || e).split("\n")[0]}`);
 } finally {
   await browser.close();
 }
