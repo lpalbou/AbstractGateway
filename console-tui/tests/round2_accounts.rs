@@ -40,12 +40,12 @@ fn accounts(size: (i32, i32)) -> Harness {
             {"user_id": "alice", "tenant_id": "default", "email": "alice@example.test",
              "roles": ["user"], "enabled": true, "runtime_id": "alice"}
         ]}))));
-    h.store
-        .entities
-        .set(Loadable::Ready(entities_from_payload(&json!({"entities": [
+    h.store.entities.set(Loadable::Ready(entities_from_payload(
+        &json!({"entities": [
             {"name": "Castor", "slug": "castor", "handle": "castor@gw",
              "state": {"state": "awake"}}
-        ]}))));
+        ]}),
+    )));
     h.turns(3);
     h.sent();
     h
@@ -89,7 +89,10 @@ fn an_entity_row_shows_its_unavailable_actions_with_reasons() {
     select(&mut h, "castor");
     let s = h.turns(2);
     assert!(s.contains("Unavailable —"), "{s}");
-    assert!(s.contains("Delete: An entity's name is kept for life"), "{s}");
+    assert!(
+        s.contains("Delete: An entity's name is kept for life"),
+        "{s}"
+    );
     // d says why and sends nothing.
     h.key(b"d");
     assert_eq!(

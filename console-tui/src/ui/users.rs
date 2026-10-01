@@ -735,12 +735,19 @@ fn selected_row_lines(scx: Scope, ctx: &Ctx, tt: &TokenSet) -> View {
         Element::new()
             .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
             .child(badge(tt, r.kind_label(), kind_tone(r.kind_label())))
-            .child(line(vec![span_bold(r.id.clone(), tt.text)]))
+            .child(super::util::line_styled(
+                LayoutStyle::default()
+                    .w(r.id.chars().count() as i32 + 1)
+                    .h(1)
+                    .shrink(0.0),
+                vec![span_bold(r.id.clone(), tt.text)],
+            ))
             .child(
                 super::switch::Switch::new("Active", on)
                     .unavailable(r.refusal("suspend"))
                     .notice(store.notice)
                     .on_request(move |_| switch_selected_active(scx, &ctx_req))
+                    .layout(LayoutStyle::default().grow(1.0).h(1))
                     .element(scx, tt)
                     .build(),
             )
@@ -788,10 +795,14 @@ fn selected_row_lines(scx: Scope, ctx: &Ctx, tt: &TokenSet) -> View {
 fn kind_legend(t: &TokenSet) -> View {
     Element::new()
         .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
-        .child(line(vec![span("kind:", t.text_faint)]))
+        .child(super::util::line_styled(
+            LayoutStyle::default().w(5).h(1).shrink(0.0),
+            vec![span("kind:", t.text_faint)],
+        ))
         .child(badge(t, "Admin", kind_tone("Admin")))
         .child(badge(t, "User", kind_tone("User")))
         .child(badge(t, "Entity", kind_tone("Entity")))
+        .child(line(vec![span(String::new(), t.text_faint)]))
         .build()
 }
 
