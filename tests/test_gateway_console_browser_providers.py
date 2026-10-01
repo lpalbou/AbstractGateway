@@ -29,6 +29,7 @@ pytestmark = pytest.mark.e2e
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "browser" / "providers.mjs"
 FAKE_KEY = "sk-browser-fixture-not-a-real-key-0001"
+BOB = "bob-providers-browser-token-01"
 
 
 def _free_port() -> int:
@@ -72,6 +73,8 @@ def providers_gateway(tmp_path: Path):
         ):
             code, out = _call(base, "POST", "/config/provider-endpoint-profiles", admin, body)
             assert code == 200, out
+        code, out = _call(base, "POST", "/admin/users", admin, {"user_id": "bob", "roles": ["user"], "token": BOB})
+        assert code == 200, out
         yield base, admin
     finally:
         _stop(proc)
@@ -81,7 +84,7 @@ def test_providers_page_merges_engines_in_a_browser(providers_gateway) -> None:
     node = require_node()
     modules = _playwright_modules()
     base, admin = providers_gateway
-    proc = subprocess.run([node, str(SCRIPT), base, admin, str(modules), FAKE_KEY], capture_output=True, text=True, timeout=600, check=False)
+    proc = subprocess.run([node, str(SCRIPT), base, admin, str(modules), FAKE_KEY, BOB], capture_output=True, text=True, timeout=600, check=False)
     assert proc.returncode == 0, proc.stderr[-4000:]
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["failures"] == [], out["failures"]

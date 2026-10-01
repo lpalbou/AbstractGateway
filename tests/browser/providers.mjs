@@ -8,8 +8,8 @@
 import { createRequire } from "node:module";
 import path from "node:path";
 
-const [BASE, ADMIN, PW, FAKE_KEY] = process.argv.slice(2);
-if (!FAKE_KEY) throw new Error("providers.mjs needs 4 arguments");
+const [BASE, ADMIN, PW, FAKE_KEY, BOB] = process.argv.slice(2);
+if (!BOB) throw new Error("providers.mjs needs 5 arguments (… <fake-openai-key> <bob-token>)");
 const require = createRequire(path.join(PW, "/"));
 const { chromium } = require("playwright-core");
 
@@ -63,10 +63,10 @@ async function routeEngines(page) {
   });
 }
 
-async function signIn(page) {
+async function signIn(page, user = "admin", token = ADMIN) {
   await page.waitForSelector("#login-form");
-  await page.fill("#login-user", "admin");
-  await page.fill("#login-token", ADMIN);
+  await page.fill("#login-user", user);
+  await page.fill("#login-token", token);
   await page.click("#login-button");
   await page.waitForFunction(() => document.body.classList.contains("signed-in"), null, { timeout: 30000 });
   await page.keyboard.press("Escape").catch(() => {});
@@ -215,6 +215,67 @@ try {
   const overflow = await p2.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1);
   check(!overflow, "no horizontal page scroll at 390");
   await ctx2.close();
+
+  // 9. 834 px: nothing in the Providers tab is wider than its section (the long AbstractCore
+  // store path under Available Providers wraps), and the text budget holds.
+  const ctx3 = await browser.newContext({ viewport: { width: 834, height: 1194 }, hasTouch: true, isMobile: true });
+  const p3 = await ctx3.newPage();
+  p3.on("pageerror", (e) => failures.push(`pageerror(834): ${e.message}`));
+  await routeEngines(p3);
+  await p3.goto(`${BASE}/console#providers`);
+  await signIn(p3);
+  await waitCards(p3);
+  await p3.waitForFunction(() => { const n = document.getElementById("endpoint-profiles-authority"); return n && !n.classList.contains("hidden") && n.textContent.trim().length > 0; }, null, { timeout: 10000 }).catch(() => {});
+  // The store path note: shown, and a long path WITHOUT break opportunities (a real data dir
+  // such as /Users/<name>/tmp/abstractframework/untracked/... has no hyphen to break at) wraps.
+  const note = await p3.evaluate(() => {
+    const n = document.getElementById("endpoint-profiles-authority");
+    const c = n.querySelector("code");
+    const shown = { visible: n.getClientRects().length > 0, text: n.textContent };
+    if (c) c.textContent = "/Users/someone/tmp/abstractframework/untracked/round3/scratch/providers/after/home/.abstractcore/config/abstractcore.json";
+    return { ...shown, code: c ? Math.round(c.getBoundingClientRect().right) : null, sec: Math.round(n.closest("section").getBoundingClientRect().right) };
+  });
+  check(note.visible && /abstractcore/i.test(note.text), "the store path note is shown", note.text);
+  check(note.code !== null && note.code <= note.sec + 1, "a long store path wraps inside its section at 834", note);
+  const wide = await p3.evaluate(() => {
+    const out = [];
+    for (const sec of document.querySelectorAll("#tab-providers section")) {
+      const r = sec.getBoundingClientRect();
+      for (const el of sec.querySelectorAll("p, code, span, strong, b, div")) {
+        if (el.closest("table") || !el.getClientRects().length) continue;
+        const e = el.getBoundingClientRect();
+        if (e.right > r.right + 1) out.push({ id: sec.id, tag: el.tagName, cls: el.className, text: (el.textContent || "").slice(0, 60), right: Math.round(e.right), max: Math.round(r.right) });
+      }
+    }
+    return out;
+  });
+  check(wide.length === 0, "nothing overflows a Providers section at 834", wide.slice(0, 5));
+  // The connection's purpose is the "Add connection" tooltip; no sentence repeated on every card.
+  const helpers = await p3.$$eval("#engines-core-root .provider-connection .ui-card__note", (els) => els.map((e) => e.textContent.trim()));
+  check(helpers.length === 0, "no helper sentence repeated per card", helpers);
+  const tips = await p3.$$eval("#engines-core-root [data-provider-connect]", (els) => els.map((e) => e.getAttribute("title") || ""));
+  check(tips.length >= 3 && tips.every((t) => t.includes("address workflows use")), "Add connection says what it is for", tips);
+  for (const sel of ["#local-providers-section .section-note", "#provider-setup-section .section-note"]) {
+    const h = await p3.$eval(sel, (e) => Math.round(e.getBoundingClientRect().height / (parseFloat(getComputedStyle(e).lineHeight) || 20)));
+    check(h <= 1, `${sel} is one line at 834`, h);
+  }
+  await ctx3.close();
+
+  // 10. A non-admin's cards: no Install / Start / Stop / Cancel / Continue, Browse models and Learn more stay.
+  const ctx4 = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const p4 = await ctx4.newPage();
+  p4.on("pageerror", (e) => failures.push(`pageerror(bob): ${e.message}`));
+  await routeEngines(p4);
+  await p4.goto(`${BASE}/console#providers`);
+  await signIn(p4, "bob", BOB);
+  await waitCards(p4);
+  const nb = {};
+  for (const id of ["ollama", "lmstudio", "mlx", "llamacpp", "vllm", "huggingface"]) nb[id] = await buttons(p4, id);
+  const adminOnly = ["Install", "Install now", "Start", "Stop", "Cancel", "Continue with administrator password", "Re-check", "Try again"];
+  check(Object.values(nb).every((list) => !list.some((t) => adminOnly.includes(t))), "non-admin: no admin engine action rendered", nb);
+  check(nb.ollama.includes("Browse models") && nb.mlx.includes("Browse models") && Object.values(nb).every((l) => l.includes("Learn more")), "non-admin: Browse models + Learn more stay", nb);
+  check(!(await p4.textContent("#engines-core-root")).includes("Only an admin"), "non-admin: no apology sentence");
+  await ctx4.close();
 } finally {
   await browser.close();
 }

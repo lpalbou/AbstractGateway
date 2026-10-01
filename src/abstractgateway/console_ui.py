@@ -1235,17 +1235,20 @@ CONSOLE_UI_JS = r"""
           const msg = (job.error && job.error.message) || job.message || "The install did not finish.";
           body += `<div class="ui-alert tone-err" role="alert"><strong>${esc(msg)}</strong></div>`;
         }
-        const inst = act("install");
+        // Install / Start / Stop are an admin's actions: a non-admin's card does
+        // not render them (UX rule: unavailable actions are not shown); Browse
+        // models and Learn more stay.
+        const inst = admin ? act("install") : null;
         if (inst) {
-          const title = !admin ? "Only an admin can install engines" : (inst.enabled ? `Install ${e.name || e.id} on this computer` : (inst.reason || "Installing is not available right now"));
-          actions += engineBtn("install", e, failed ? "Try again" : (install.needs_admin ? "Install (administrator)" : "Install"), true, ` title="${esc(title)}"${admin && inst.enabled ? "" : " disabled"}`);
+          const title = inst.enabled ? `Install ${e.name || e.id} on this computer` : (inst.reason || "Installing is not available right now");
+          actions += engineBtn("install", e, failed ? "Try again" : (install.needs_admin ? "Install (administrator)" : "Install"), true, ` title="${esc(title)}"${inst.enabled ? "" : " disabled"}`);
           if (!inst.enabled && inst.reason) body += `<p class="ui-card__note">${esc(inst.reason)}</p>`;
         }
-        const start = act("start");
-        if (start && view.key !== "running") actions += engineBtn("start", e, start.label || "Start", !inst, ` title="${esc(start.reason || `Start ${e.name || e.id}`)}"${admin && start.enabled ? "" : " disabled"}`);
+        const start = admin ? act("start") : null;
+        if (start && view.key !== "running") actions += engineBtn("start", e, start.label || "Start", !inst, ` title="${esc(start.reason || `Start ${e.name || e.id}`)}"${start.enabled ? "" : " disabled"}`);
         if (((view.key === "running" || view.key === "ready" || view.key === "starting") && e.installed) || more.browse) actions += engineBtn("models", Object.assign({}, e, { id: e.provider || e.id }), "Browse models", false);
-        const stop = act("stop");
-        if (stop) actions += engineBtn("stop", e, stop.label || "Stop", false, ` title="${esc(stop.reason || `Stop ${e.name || e.id}`)}"${admin && stop.enabled ? "" : " disabled"}`);
+        const stop = admin ? act("stop") : null;
+        if (stop) actions += engineBtn("stop", e, stop.label || "Stop", false, ` title="${esc(stop.reason || `Stop ${e.name || e.id}`)}"${stop.enabled ? "" : " disabled"}`);
         const page = act("open_page");
         if (page && page.url && (!inst || !inst.enabled)) actions += `<a class="ui-btn is-ghost" href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Download page</a>`;
         if (page && act("recheck") && (!inst || !inst.enabled)) actions += engineBtn("refresh", e, "I installed it, check again", false);

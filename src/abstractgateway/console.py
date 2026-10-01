@@ -654,8 +654,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
        instruction), and names the file so the answer to "what did I just
        change" is on screen. Wider than .section-note because a config
        path is long and must not wrap mid-path. */
-    .authority-note { color: var(--subtle); font-size: var(--font-size-xs); max-width: 900px; margin-top: 4px; }
-    .authority-note code { padding: 1px 5px; font-size: var(--font-size-xs); }
+    .authority-note { color: var(--subtle); font-size: var(--font-size-xs); max-width: 900px; margin-top: 4px; overflow-wrap: anywhere; min-width: 0; }
+    .authority-note code { padding: 1px 5px; font-size: var(--font-size-xs); overflow-wrap: anywhere; word-break: break-all; white-space: normal; }
     .authority-note.authority-readonly { color: var(--warn); }
     label {
       display: grid;
@@ -1010,6 +1010,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .provider-preset strong { display: block; color: var(--text); line-height: 1.25; }
 	    .provider-preset span { display: block; color: var(--muted); font-size: var(--font-size-sm); font-weight: 500; line-height: 1.3; margin-top: 3px; }
 	    .provider-preset span.provider-preset__state { margin-top: 6px; font-weight: 600; }
+	    /* One-line intros (DESIGN-v3 §7 text budget): the page is wide enough. */
+	    #tab-providers .section-note { max-width: none; }
 	    .provider-preset span.provider-preset__state.is-on { color: var(--success); }
 	    /* Local provider cards: the server connection (DESIGN-v3 §7). Flat: a
 	       top rule, no nested card. */
@@ -2508,7 +2510,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            <div class="section-head">
 	              <div>
 	                <h2 class="section-title"><span class="section-icon icon-gear" aria-hidden="true">⚙</span><span>Local providers</span></h2>
-	                <p class="section-note">Engines that run models on this computer: install, start and stop them, browse their models, and set the address the gateway uses to reach their server.</p>
+	                <p class="section-note">Engines that run models on this computer, and their server connections.</p>
 	              </div>
 	            </div>
 	            <div id="engines-core-root" class="core-console-root"><!--__ABSTRACTCORE_ENGINES_HTML__--></div>
@@ -2518,7 +2520,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            <div class="section-head">
 	              <div>
 	                <h2 class="section-title"><span class="section-icon" aria-hidden="true">◇</span><span>Remote providers</span></h2>
-	                <p class="section-note">Cloud accounts and any OpenAI-compatible server. The gateway keeps the API key server-side and shows only its fingerprint; the connection then appears under Available Providers for Flow nodes and capability defaults.</p>
+	                <p class="section-note">Cloud accounts and OpenAI-compatible servers. Keys stay on the gateway; only fingerprints are shown.</p>
 	              </div>
 	            </div>
 	            <div id="provider-preset-grid" class="provider-preset-grid"></div>
@@ -9702,9 +9704,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           + `<button type="button" class="ui-btn is-quiet" data-provider-connection-edit="${esc(p.id)}">${configured ? "Override" : "Edit"}</button></li>`;
       }).join("");
       // A fixed-id connection (vLLM) is edited, never added twice.
-      const add = conn.profileId && items ? "" : `<button type="button" class="ui-btn is-quiet" data-provider-connect="${esc(e.id)}">${items ? "Add connection" : "Set up connection"}</button>`;
+      const add = conn.profileId && items ? "" : `<button type="button" class="ui-btn is-quiet" data-provider-connect="${esc(e.id)}" title="The address workflows use to reach this server; add one for a server on another computer.">${items ? "Add connection" : "Set up connection"}</button>`;
       out.body = `<div class="provider-connection" data-provider-connection="${esc(e.id)}"><div class="provider-connection__head"><span class="provider-connection__title">Connection</span>${add}</div>`
-        + `<p class="ui-card__note">The address workflows use to reach this server; add one for a server on another computer.</p>`
         + (items ? `<ul class="provider-connection__list">${items}</ul>` : "")
         + `</div>`;
       return out;
