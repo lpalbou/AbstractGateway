@@ -5168,7 +5168,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        $("entities-message").textContent = note;
 	        $("entities-message").className = "message ok";  // a birth is good news, not debris
 	        // Admins see the new entity as an Accounts row (DESIGN-v2 §2.1): same note there.
-	        if (state.principal && state.principal.admin) { await refreshUsersOnly(); usersMessage(note, "ok"); }
+	        if (state.principal) { await refreshUsersOnly(); usersMessage(note, "ok"); }
 	      } catch (err) {
 	        msg.textContent = String(err.message || err);
 	      } finally {
@@ -5287,8 +5287,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // Drill-out: restore the sections the drill-in hid (users stays
       // admin-gated — renderAccount owns its visibility, re-applied here).
       // Admins see entities as rows of the Accounts table (DESIGN-v2 §2.1); the roster panel is the non-admin view.
-      $("entities-list-section").classList.toggle("hidden", Boolean(state.principal && state.principal.admin));
-      if (state.principal && state.principal.admin) $("users-section").classList.remove("hidden");
+      $("entities-list-section").classList.add("hidden");
+      if (state.principal) $("users-section").classList.remove("hidden");
 	    }
 	    async function openEntityManage(name) {
 	      state.manageName = name;
@@ -6824,8 +6824,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     }
     async function refreshUsersOnly() {
       try {
-        const out = await api("/api/gateway/admin/users");
-        state.users = out.users || [];
+        if (accountsAdmin()) {
+          const out = await api("/api/gateway/admin/users");
+          state.users = out.users || [];
+        }
         await loadAccounts();
       } catch (e) {
         usersMessage(emailErrorText(e), "error");
@@ -11824,10 +11826,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // The drill-in (open manage panel) supersedes the admin toggle for
       // users-section — a background refresh must not re-show it under
       // the manage view.
-      $("users-section").classList.toggle("hidden", !p.admin || Boolean(state.manageName));
-      // DESIGN-v2 §2: for an admin the entities are rows of the Accounts table and the
-      // admin's own email UI opens from their row (Email); a user keeps both on the page.
-      if (!state.manageName) $("entities-list-section").classList.toggle("hidden", Boolean(p.admin));
+      $("users-section").classList.toggle("hidden", Boolean(state.manageName));
+      // RBAC: a non-admin sees the same table (own row + own entities) without the admin tools.
+      $("open-create-user").classList.toggle("hidden", !p.admin);
+      $("email-caps-section").classList.toggle("hidden", !p.admin);
+      // DESIGN-v2 §2: the entities are rows of the Accounts table (for everyone, RBAC-scoped);
+      // the admin's own email UI opens from their row (Email); a user keeps it on the page too.
+      if (!state.manageName) $("entities-list-section").classList.add("hidden");
       if (!$("my-email-section").classList.contains("in-modal")) $("my-email-section").classList.toggle("hidden", Boolean(p.admin));
       $("runtimes-section").classList.toggle("hidden", !p.admin);
       // Retained runtimes: shown only for admins AND only when reservations
@@ -12013,9 +12018,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function accountUserRecord(a) {
       return (state.users || []).find((u) => String(u.user_id) === String(a.id) && String(u.tenant_id || "default") === String(a.tenant_id || "default")) || null;
     }
+    // RBAC (operator ruling 2026-10-01, rbac lane): an admin reads every account from
+    // /admin/accounts; anyone else reads /me/accounts (their own row + the entities they created).
+    function accountsAdmin() { return Boolean(state.principal && state.principal.admin); }
     async function loadAccounts() {
-      const out = await api("/api/gateway/admin/accounts");
-      if (!out || !Array.isArray(out.accounts)) throw new Error("GET /admin/accounts answered without an accounts list (gateway-api seam, DESIGN-v2 §6).");
+      const path = accountsAdmin() ? "/api/gateway/admin/accounts" : "/api/gateway/me/accounts";
+      const out = await api(path);
+      if (!out || !Array.isArray(out.accounts)) throw new Error(`GET ${path.replace("/api/gateway", "")} answered without an accounts list (gateway seam, DESIGN-v2 §6).`);
       accountsUi.rows = out.accounts;
       renderAccounts(out.accounts);
       return out.accounts;
@@ -12336,7 +12345,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       inlineState("account-logs-message", "Loading…", "");
       let out;
       try {
-        out = await api(`/api/gateway/admin/accounts/${encodeURIComponent(a.id)}/activity?limit=100&kind=${encodeURIComponent(accountsUi.logsKind)}`);
+        out = await api(`/api/gateway/${accountsAdmin() ? "admin" : "me"}/accounts/${encodeURIComponent(a.id)}/activity?limit=100&kind=${encodeURIComponent(accountsUi.logsKind)}`);
       } catch (e) {
         inlineState("account-logs-message", emailErrorText(e), "error");
         return;
@@ -14309,6 +14318,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         $("defaults-message").textContent = String(err.message || err);
         $("defaults-message").className = "message error";
       }
+      if (!me.principal?.admin) {
+        try { await loadAccounts(); } catch (err) { usersMessage(emailErrorText(err), "error"); }
+      }
       if (me.principal?.admin) {
         try {
           const users = await api("/api/gateway/admin/users");
@@ -14326,6 +14338,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           $("reservations-message").textContent = String(err.message || err);
           $("reservations-message").className = "message error";
         }
+        // (the admin branch loaded the Accounts table above)
         // No trailing loadRuns(): runs load through the
         // runtimes tab's selection flow — a non-runtimes tab never pays
         // for them, and the runtimes branch above already covers it.

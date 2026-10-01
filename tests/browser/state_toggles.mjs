@@ -343,6 +343,10 @@ try {
     await page.waitForSelector("#my-email-connected", { state: "visible", timeout: 10000 });
     const status = (await page.textContent("#my-email-status")).trim();
     check(status.startsWith("Connected as alice@fastmail.com · IMAP"), "connected status line", status);
+    // RBAC: a user sees the Accounts table scoped to themself (GET /me/accounts), no admin tools.
+    await page.waitForSelector("#users-table tr.accounts-row", { timeout: 10000 });
+    const mine = await page.evaluate(() => ({ rows: Array.from(document.querySelectorAll("#users-table tr.accounts-row")).map((t) => t.dataset.user), createUser: document.getElementById("open-create-user").checkVisibility(), caps: document.getElementById("email-caps-section").checkVisibility(), createEntity: document.getElementById("accounts-create-entity").checkVisibility() }));
+    check(JSON.stringify(mine) === JSON.stringify({ rows: ["alice"], createUser: false, caps: false, createEntity: true }), "non-admin Accounts: own row only, no Create user, no Email for everyone", mine);
     check((await page.getAttribute("#my-email-enabled", "aria-checked")) === "true" && (await page.textContent("#my-email-enabled .af-switch__label")) === "Active", "Active switch in the connected mailbox card");
     check(await page.locator("#my-email-oauth-cancel").isHidden(), "Cancel sign-in hidden when no sign-in is pending");
     check(await page.locator("#my-email-connect").isHidden(), "no form fields in the connected view");
