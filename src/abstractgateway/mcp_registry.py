@@ -38,9 +38,10 @@ REGISTRY_FILENAME = "mcp_servers.json"
 SECRETS_DIRNAME = "mcp_secrets"
 TEST_TIMEOUT_S = 10.0
 TRANSPORTS = ("stdio", "http")
+# Served while no server is offered to agents (agents CAN use MCP tools since lane mcp-runs: the
+# sentence says what makes them available, never "not yet").
 AGENTS_NOTE = (
-    "Agents can't call MCP tools yet: registering a server records it and checks the connection; "
-    "using its tools in runs comes in a later version."
+    "No server is offered to agents yet: turn on Enabled for agents for a tested server to offer its tools."
 )
 # Served instead of AGENTS_NOTE once at least one server is offered to agents.
 AGENTS_OFFERED_NOTE = (

@@ -62,7 +62,7 @@ def test_add_edit_archive_and_headers_never_in_clear(env) -> None:
         listing = client.get("/api/gateway/mcp/servers", headers=ADMIN)
         assert SECRET not in listing.text
         assert listing.json()["agents_can_call"] is False
-        assert listing.json()["agents_note"].startswith("Agents can't call MCP tools yet")
+        assert listing.json()["agents_note"].startswith("No server is offered to agents yet")
         registry_text = (data / "config" / "mcp_servers.json").read_text()
         assert SECRET not in registry_text and json.loads(registry_text)["version"] == 2
         # The value is sealed in the secret store, not readable in any file in clear.
