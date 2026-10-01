@@ -1766,6 +1766,15 @@ what agents send with their email tools are not in it, and `note` says so. `obse
 `/apps/observer/#run/<run_id>` for a run, `/apps/observer/#automations` for an automation event; `ts_local`
 is `ts` in the gateway's local time (ISO 8601 with its offset).
 
+A run id is created by the run-start route, so it is not in the request path: `POST /runs/start` and
+`POST /runs/schedule` write `run {run_id, workflow, bundle_id, bundle_version, entrypoint, scheduled}` on
+their audit line (`workflow` is the entrypoint's name, else the bundle id). A run event's `detail` is that
+workflow name. A run-start line written before this version has no run id: its `detail` is "Run id not
+recorded (before this version)" and it has no `run_id` and no `observer_path` (nothing is guessed from
+times). A notification event's `detail` is its kind in words: "Approval needed", "Job failed", "Job
+finished", "Automation result", "Automation failed", "Test notification"; any other kind is shown as
+written.
+
 ## Email
 
 Per-user email ([email.md](./email.md)): every route acts on the **caller's own** account, resolved

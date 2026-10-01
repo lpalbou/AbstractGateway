@@ -50,6 +50,21 @@ CONNECTED_DETAIL: Dict[Tuple[str, str], str] = {
     ("oauth2", "microsoft"): "Microsoft sign-in",
 }
 
+# Notification kinds (mail/notifications.py `queue_notice` kinds and the test notice) in plain
+# words, for `email.notification_sent` details. Explicit table; a kind not in it shows as-is.
+NOTIFICATION_KIND_LABELS: Dict[str, str] = {
+    "approval_needed": "Approval needed",
+    "job_failed": "Job failed",
+    "job_finished": "Job finished",
+    "automation_result": "Automation result",
+    "automation_failed": "Automation failed",
+    "test": "Test notification",
+}
+
+# A run-start line written before the run routes recorded their run id on the audit line
+# (routes/gateway.py `_audit_run_started`): said plainly, never guessed or joined by time.
+RUN_ID_NOT_RECORDED = "Run id not recorded (before this version)"
+
 # Observer links: the Observer's hash routes (abstractobserver src/ui/automations.ts
 # `parse_app_hash`, wired in src/ui/app.tsx on load and hashchange): `#automations` (the
 # Automations page) and, since abstractobserver round2 32926ba, `#run/<run_id>` (that run in
@@ -277,6 +292,8 @@ def _classify(doc: Dict[str, Any], user_id: str, tenant_id: str) -> Optional[Dic
         out["run_id"] = str(run.get("run_id") or "") or None
         out["observer_path"] = observer_path_for(out["run_id"])
         out["detail"] = str(run.get("workflow") or "") or None
+        if ok and out["run_id"] is None:
+            out["detail"] = RUN_ID_NOT_RECORDED
     elif kind == "automation":
         auto = doc.get("automation") if isinstance(doc.get("automation"), dict) else {}
         command = str(auto.get("command") or "")
@@ -332,7 +349,8 @@ def _email_event(doc: Dict[str, Any], event: str, spec: Tuple[str, str]) -> Dict
         if isinstance(doc.get("enabled"), bool):
             detail = "On." if doc.get("enabled") else "Off."
     elif event == "email.notification_sent":
-        detail = str(doc.get("kind") or "") or None
+        code = str(doc.get("kind") or "")
+        detail = NOTIFICATION_KIND_LABELS.get(code, code) or None
     elif event == "email.connected":
         auth = str(doc.get("auth_kind") or "")
         provider = str(doc.get("provider") or "") if auth == "oauth2" else ""

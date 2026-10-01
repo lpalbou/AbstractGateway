@@ -8468,13 +8468,29 @@ def _restamp_discussion_turn(svc: Any, *, session_id: str, input_data: Dict[str,
 from ..workflow_sources import bundle_source  # noqa: E402 - the /bundles `source` rule
 
 
-def _audit_run_started(request: Request, *, run_id: str, workflow: str, scheduled: bool = False) -> None:
-    """Name the started run on this request's audit line (`run` {run_id, workflow, scheduled}):
-    the account Logs read it (account_activity.py); the raw path alone carries no run id."""
+def _audit_run_started(request: Request, *, run_id: str, selection: Dict[str, Any], fallback: str, scheduled: bool = False) -> None:
+    """Name the started run on this request's audit line (`run` {run_id, workflow, bundle_id,
+    bundle_version, entrypoint, scheduled}): the run id is created by the handler (it is in the
+    response, never in the path), so the route writes it here; the account Logs read it
+    (account_activity.py). `selection` is the run's `workflow_selection` (what really runs):
+    `workflow` is its entrypoint name, else the bundle id, else `fallback` (what the client sent)."""
+    sel = selection if isinstance(selection, dict) else {}
+
+    def _s(key: str) -> Optional[str]:
+        value = str(sel.get(key) or "").strip()
+        return value or None
+
     try:
         detail = getattr(request.state, "audit_detail", None)
         detail = dict(detail) if isinstance(detail, dict) else {}
-        detail["run"] = {"run_id": run_id, "workflow": workflow, "scheduled": bool(scheduled)}
+        detail["run"] = {
+            "run_id": run_id,
+            "workflow": _s("name") or _s("bundle_id") or (str(fallback or "").strip() or None),
+            "bundle_id": _s("bundle_id"),
+            "bundle_version": _s("bundle_version"),
+            "entrypoint": _s("flow_id"),
+            "scheduled": bool(scheduled),
+        }
         request.state.audit_detail = detail
     except Exception:  # noqa: BLE001 - auditing never breaks a run start
         pass
@@ -8655,11 +8671,12 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to start run: {e}")
     # The audit line records which run this request started (account activity, DESIGN-v2 §6).
-    _audit_run_started(request, run_id=str(run_id), workflow=str(req.bundle_id or flow_id or ""))
+    resolved_workflow = _resolved_workflow_after_start(svc, str(run_id), workflow_selection)
+    _audit_run_started(request, run_id=str(run_id), selection=resolved_workflow, fallback=str(req.bundle_id or flow_id or ""))
     return StartRunResponse(
         run_id=str(run_id),
         runner_warning=_runner_inactive_warning(svc),
-        resolved_workflow=_resolved_workflow_after_start(svc, str(run_id), workflow_selection),
+        resolved_workflow=resolved_workflow,
     )
 
 
@@ -8987,7 +9004,8 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
         run_id = host.start_run(flow_id=scheduled_workflow_id, bundle_id=None, input_data=wrapper_vars, actor_id="gateway", session_id=session_id)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to start scheduled run: {e}")
-    _audit_run_started(request, run_id=str(run_id), workflow=str(scheduled_workflow_id or ""), scheduled=True)
+    # The audit line names the TARGET the schedule launches (like resolved_workflow below).
+    _audit_run_started(request, run_id=str(run_id), selection=workflow_selection, fallback=str(scheduled_workflow_id or ""), scheduled=True)
 
     # resolved_workflow names the TARGET the schedule launches (the parent
     # run itself is the generated scheduled:<uuid> wrapper).
