@@ -1337,7 +1337,13 @@ class WorkflowBundleGatewayHost:
                 return read_skill_body(str(name or ""), data_dir=Path(data_root), max_chars=int(max_chars or 16000))
 
             gateway_tool_map.setdefault("read_skill", _gateway_read_skill)
-            base_executor: Any = MappingToolExecutor(gateway_tool_map)
+            # Tools of MCP servers an admin enabled for agents (mcp_run_tools.py): routed by name,
+            # UNDER the approval gate below, the registry re-read at every call.
+            from ..mcp_run_tools import McpRoutingToolExecutor
+
+            base_executor: Any = McpRoutingToolExecutor(
+                MappingToolExecutor(gateway_tool_map), data_dir=Path(catalog_root or data_root)
+            )
             if tool_mode in {"local", "local_all"}:
                 tool_executor = base_executor
             elif tool_mode in {"approval", "local_approval", "local-approval"}:
@@ -1676,7 +1682,22 @@ class WorkflowBundleGatewayHost:
             except Exception:
                 pass
 
-            logic = ReActLogic(tools=all_tool_defs)
+            # MCP tools offered to agents join the registry LIVE (mcp_run_tools.py): the logic's
+            # `tools` is read at every agent step, so an admin turning a server on or off needs no
+            # host rebuild; a run still sees only the names in its own tool list.
+            from ..mcp_run_tools import offered_tool_specs
+
+            mcp_registry_dir = Path(catalog_root or data_root)
+
+            class _McpAwareReActLogic(ReActLogic):
+                @property
+                def tools(self) -> list[Any]:  # type: ignore[override]
+                    static = list(self._tools)
+                    taken = {getattr(t, "name", None) for t in static}
+                    extra = [t for t in _tool_defs_from_specs(offered_tool_specs(mcp_registry_dir)) if t.name not in taken]
+                    return static + extra
+
+            logic = _McpAwareReActLogic(tools=all_tool_defs)
 
             from abstractruntime.visualflow_compiler.visual.agent_ids import visual_react_workflow_id
 
@@ -2475,7 +2496,14 @@ class WorkflowBundleGatewayHost:
         # when this user's Agent email tools are active (run_default_tools.py; 0.7.0 E2E F2).
         from ..run_default_tools import apply_default_email_tools
 
+        caller_sent_tools = "tools" in vars0
         apply_default_email_tools(self, workflow_id=workflow_id, vars0=vars0)
+        # MCP tools of servers enabled for agents (mcp_run_tools.py): default list, offered-only,
+        # initialize preflight (a failing server is skipped with `_runtime.mcp_notes`), never under
+        # untrusted input.
+        from ..mcp_run_tools import prepare_run_mcp_tools
+
+        prepare_run_mcp_tools(self, workflow_id=workflow_id, vars0=vars0, caller_sent_tools=caller_sent_tools)
         rt_ns = _ensure_runtime_namespace(vars0)
 
         # Email account binding (framework backlog 0992 B1): a client never
