@@ -2136,20 +2136,28 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .entity-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; min-width: 0; }
 	    .entity-actions > .inline-state { flex: 1 1 200px; }
 	    .entity-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 12px 16px; min-width: 0; }
-	    .entity-manage .switch-list { max-width: 720px; }
+	    .entity-manage .af-card__header { flex-direction: column; align-items: flex-start; }
+	    .entity-manage .inline-state:empty { display: none; }
+	    .entity-manage .af-form__field input:not([type="checkbox"]), .entity-manage .af-form__field select { min-height: 38px; }
+	    .entity-manage .entity-matrix-table { width: 100%; }
+	    .entity-manage .entity-matrix-table th { text-transform: none; letter-spacing: 0; }
+	    .entity-manage .entity-matrix-table tbody th { font-family: var(--font-mono, ui-monospace, monospace); font-weight: 400; }
+	    @media (min-width: 768px) { .entity-manage { height: min(880px, 90vh); height: min(880px, 90dvh); } }
 	    .entity-confirm { margin: 0; }
 	    .entity-check { display: inline-flex; align-items: center; gap: 6px; font-size: var(--font-size-base); font-weight: 500; text-transform: none; letter-spacing: 0; margin: 0; color: var(--text); }
 	    .entity-check input { width: auto; margin: 0; }
 	    .entity-card--danger { border-color: color-mix(in srgb, var(--danger) 35%, var(--ui-border-1)); }
-	    .entity-disclosure { border: 1px solid var(--ui-border-1); border-radius: var(--radius-md); padding: 0 16px; display: flex; flex-direction: column; gap: 12px; }
+	    .entity-disclosure { display: block; border: 1px solid var(--ui-border-1); border-radius: var(--radius-md); padding: 0 16px; }
 	    .entity-disclosure[open] { padding-bottom: 16px; }
+	    .entity-disclosure > :not(summary) + * { margin-top: 12px; }
 	    .entity-disclosure > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-size: var(--font-size-base); font-weight: 500; color: var(--text); }
-	    .entity-card .entity-disclosure { border: 0; padding: 0; border-top: 1px solid var(--line-soft); border-radius: 0; }
+	    .entity-card .entity-disclosure { border: 0; padding: 0; border-top: 1px solid var(--line-soft); }
 	    .entity-disclosure--danger > summary { color: color-mix(in srgb, var(--danger) 72%, var(--text)); }
 	    .entity-pre { margin: 0; white-space: pre-wrap; font-size: var(--font-size-md); color: var(--muted); max-height: 320px; overflow: auto; }
 	    .entity-manage .entity-overview { display: grid; gap: 6px; margin: 0; }
 	    .entity-manage .entity-kv { font-size: var(--font-size-base); }
 	    .entity-manage .entity-kv-key { min-width: 160px; }
+	    .entity-manage .entity-kv-head { color: var(--text); font-weight: 600; padding-top: 8px; }
 	    .entity-manage .entity-kv-val { word-break: normal; overflow-wrap: anywhere; }
 	    .entity-manage .entity-live-line { margin: 0; font-size: var(--font-size-base); }
 	    .entity-manage .entity-drives { margin: 0; }
@@ -2177,9 +2185,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    @media (max-width: 767.98px) {
 	      .entity-manage-tabs { position: sticky; top: calc(54px + var(--safe-top, 0px)); z-index: 1; padding: 0 8px; border-bottom: 1px solid var(--ui-border-1); }
 	      .entity-manage-body .entity-subpanel { gap: 0; }
-	      .entity-manage .entity-card { border: 0; border-radius: 0; background: transparent; padding: 16px 0; border-top: 1px solid var(--line-soft); }
+	      .entity-manage .entity-card { border: 0; background: transparent; padding: 16px 0; border-top: 1px solid var(--line-soft); }
 	      .entity-manage .entity-subpanel > .entity-card:first-child, .entity-manage .entity-subpanel > .entity-stop-banner + .entity-card { border-top: 0; padding-top: 4px; }
-	      .entity-manage .entity-disclosure:not(.entity-card .entity-disclosure) { border: 0; border-top: 1px solid var(--line-soft); border-radius: 0; padding: 0; }
+	      .entity-manage .entity-disclosure:not(.entity-card .entity-disclosure) { border: 0; border-top: 1px solid var(--line-soft); padding: 0; }
 	      .entity-manage .entity-kv { flex-direction: column; gap: 0; }
 	      .entity-manage .entity-kv-key { min-width: 0; }
 	      .entity-manage .entity-chat-transcript { max-height: none; }
@@ -3388,7 +3396,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       </div>
       <div class="af-tabs entity-manage-tabs">
         <div class="af-tabs__list" role="tablist" aria-label="Manage sections">
-          <button id="entity-subtab-overview" class="af-tabs__tab" role="tab" type="button" aria-controls="entity-subpanel-overview" aria-selected="true">Overview</button>
+          <button id="entity-subtab-overview" class="af-tabs__tab" data-af-autofocus role="tab" type="button" aria-controls="entity-subpanel-overview" aria-selected="true">Overview</button>
           <button id="entity-subtab-talk" class="af-tabs__tab" role="tab" type="button" aria-controls="entity-subpanel-talk" aria-selected="false" tabindex="-1">Talk</button>
           <button id="entity-subtab-lifecycle" class="af-tabs__tab" role="tab" type="button" aria-controls="entity-subpanel-lifecycle" aria-selected="false" tabindex="-1">Lifecycle</button>
           <button id="entity-subtab-substrate" class="af-tabs__tab" role="tab" type="button" aria-controls="entity-subpanel-substrate" aria-selected="false" tabindex="-1">Mind &amp; voice</button>
@@ -3464,8 +3472,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             </div>
             <p id="entity-state-out" class="inline-state" role="status" aria-live="polite"></p>
           </section>
-          <section class="af-card entity-card" aria-labelledby="entity-owntime-title">
-            <div class="af-card__header"><h3 id="entity-owntime-title" class="af-card__title">Personal time</h3></div>
+          <section class="af-card entity-card" aria-label="Personal time">
             <div class="switch-list entity-admin-only">
               <button type="button" role="switch" id="entity-owntime-toggle" class="af-switch af-switch--row" aria-checked="false" aria-describedby="entity-owntime-toggle-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Personal time</span><span class="af-switch__desc" id="entity-owntime-toggle-desc">On: it explores on its own schedule and spends tokens without anyone watching. Off: it acts only when visited or given work.</span></span></button><span id="entity-owntime-toggle-reason" class="af-switch__reason" hidden></span>
             </div>
@@ -3530,12 +3537,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             </div>
             <div class="entity-actions">
               <button id="entity-voice-audition" class="secondary" type="button">Hear a sample</button>
-              <button id="entity-voice-clear" class="secondary entity-admin-only" type="button" hidden>Use the gateway default</button>
+              <button id="entity-voice-clear" class="secondary entity-admin-only hidden" type="button">Use the gateway default</button>
             </div>
             <div id="entity-voice-out" class="entity-voice-out" role="status" aria-live="polite"></div>
           </section>
           <details class="entity-disclosure entity-disclosure--danger entity-admin-only">
-            <summary>Repair: rebuild its memory index</summary>
+            <summary>Danger zone: rebuild its memory index</summary>
             <p class="af-form__help">Only when the status below says MISMATCH: re-computes every memory's search vector with the gateway's embedding model. Type that model's name to confirm you mean it.</p>
             <p id="entity-embedding-status" class="entity-line"></p>
             <div class="entity-grid">
@@ -3565,7 +3572,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             </div>
             <div class="entity-actions entity-admin-only">
               <button id="entity-workorder-save" class="secondary" type="button">Give this task</button>
-              <button id="entity-workorder-clear" class="secondary" type="button" hidden>End the work order</button>
+              <button id="entity-workorder-clear" class="secondary hidden" type="button">End the work order</button>
               <p id="entity-workorder-out" class="inline-state" role="status" aria-live="polite"></p>
             </div>
             <details class="entity-disclosure"><summary>Finished tasks</summary><pre id="entity-workorder-history" class="entity-pre"></pre></details>
@@ -5647,7 +5654,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          // demotes to an internal birth marker on its own line.
 	          ["Entity ID", card.handle || card.entity_id || (card.manifest && card.manifest.entity_id) || ""],
 	          ["Internal ID (birth marker)", card.entity_id || (card.manifest && card.manifest.entity_id) || ""],
-	          ["Born", card.born || card.created_at || ""],
+	          ["Born", String(card.born || card.created_at || "").slice(0, 16).replace("T", " ")],
 	          ["Age (days)", card.age_days != null ? String(card.age_days) : ""],
           ["Mind", card.mind_substrate ? `${card.mind_substrate.provider || "?"} / ${card.mind_substrate.model || "?"}${card.mind_substrate.thinking ? ` / reasoning ${card.mind_substrate.thinking}` : ""}` : ""],
           ["Sleeps", sleep.sleeps != null ? `${sleep.sleeps}` : (sleep.sleep_count != null ? `${sleep.sleep_count}` : "")],
@@ -5667,7 +5674,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (moments.length) {
 	          const head = document.createElement("div");
 	          head.className = "entity-kv";
-	          const key = document.createElement("span"); key.className = "entity-kv-key"; key.textContent = "Recent moments";
+	          const key = document.createElement("span"); key.className = "entity-kv-key entity-kv-head"; key.textContent = "Recent moments";
 	          head.append(key); box.append(head);
 	          for (const m of moments) {
 	            const line = document.createElement("div");
@@ -5743,7 +5750,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          line = `Now: ${v.note || "no gateway default voice is set, so the speech engine decides."}`;
 	        }
 	        _entOut("entity-voice-current", line);
-	        $("entity-voice-clear").hidden = !v.provider;
+	        $("entity-voice-clear").classList.toggle("hidden", !v.provider);
 	        await loadEntityVoiceProviders(v.provider || "", v.model || "", v.voice || "");
 	      } catch (e) {
 	        if (manageStale(token)) return;
@@ -5887,7 +5894,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          ? "It has a work order: it works on this task from its next day on."
 	          : "No work order: it spends its days on its personal time.");
 	        $("entity-workorder-text").value = w.order || "";
-	        $("entity-workorder-clear").hidden = !w.active;
+	        $("entity-workorder-clear").classList.toggle("hidden", !w.active);
 	        $("entity-workorder-save").textContent = w.active ? "Give this task instead" : "Give this task";
 	        const hist = $("entity-workorder-history");
 	        if (hist) hist.textContent = w.done_history || "No finished tasks yet.";
@@ -6268,12 +6275,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      _entOut("entity-loop-status", loopBits.join(" · "));
       // Overview cognition line (working + billed spend + labeled gaps).
       const spend = (cog.spend && cog.spend.lifetime) || {};
-      const cogBits = [cog.working ? "WORKING" : "idle", `phase: ${phase || "sleep"}`];
-      if (cog.settling) cogBits.push("settling (state written, loop catching up)");
-      if (cog.visit && cog.visit.open) cogBits.push(`visit: turn ${cog.visit.turn_n || 0} (${cog.visit.status || "?"})`);
-      cogBits.push(`spend: ${spend.tokens_total || 0} tk / ${spend.llm_calls || 0} calls`);
+      const cogBits = [cog.working ? "Working" : "Idle"];
+      if (cog.settling) cogBits.push("settling (its new state is written; its process is catching up)");
+      if (cog.visit && cog.visit.open) cogBits.push(`in a visit, turn ${cog.visit.turn_n || 0} (${cog.visit.status || "?"})`);
+      cogBits.push(`${spend.tokens_total || 0} tokens spent in ${spend.llm_calls || 0} model calls since birth`);
       const lv = cog.spend && cog.spend.live_visit;
-      if (lv) cogBits.push(`this visit: ${lv.tokens_total || 0} tk`);
+      if (lv) cogBits.push(`${lv.tokens_total || 0} tokens in this visit`);
       for (const w of (cog.warnings || [])) cogBits.push(String(w));
       _entOut("entity-cognition-line", cogBits.join(" · "));
       _paintDrives(cog);
