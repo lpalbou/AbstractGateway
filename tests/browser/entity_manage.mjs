@@ -61,16 +61,11 @@ async function signIn(page) {
   await page.waitForSelector(`#users-section tr[data-user="${ENTITY}"]`, { timeout: 20000 });
 }
 
-// The row's Manage action: the Accounts lane puts it in the row's "More actions" menu (§1.1).
+// The row's Manage action: a VISIBLE button on an entity row (DESIGN-v3 §13.2: entities
+// Email · Logs · Manage · ⋯ (Archive)). No fallback: a missing button fails here, loudly.
 async function openFromRow(page) {
   const row = page.locator(`#users-section tr[data-user="${ENTITY}"]`);
-  const more = row.locator('[aria-haspopup="menu"]');
-  if (await more.count()) {
-    await more.first().click();
-    await page.getByRole("menuitem", { name: "Manage" }).click();
-  } else {
-    await row.locator('[data-action="manage"]').click();
-  }
+  await row.locator('.accounts-actions__buttons > button[data-action="manage"]').click({ timeout: 10000 });
   await page.waitForSelector("#entity-manage-backdrop:not([hidden])", { timeout: 10000 });
   await page.waitForFunction(() => /Now:/.test(document.getElementById("entity-state-current").textContent || ""), null, { timeout: 20000 });
 }
