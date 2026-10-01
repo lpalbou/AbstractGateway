@@ -873,7 +873,11 @@ def account_email_view(principal: GatewayPrincipal) -> Dict[str, Any]:
             "mailbox": {"state": "unavailable", "address": None, "provider": None, "reason": REASON_SHARED_RUNTIME_NO_MAILBOX},
         }
     plane = plane_for_principal(principal)
-    return {"email_address": registered_address(plane) or None, "mailbox": mailbox_view(plane)}
+    # The address shown is where sign-in codes and notifications actually go (): the
+    # registered address, else the account's own connected mailbox (a mailbox connected before
+    # "connecting sets the address" existed left the registered address empty; showing "No address"
+    # next to "Connected as x" was the round-2 confusion all over again).
+    return {"email_address": self_address(plane) or None, "mailbox": mailbox_view(plane)}
 
 
 def _admin_state_label(pub: Dict[str, Any], admin_on: bool, last_error: Optional[Dict[str, Any]]) -> str:

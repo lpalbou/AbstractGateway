@@ -67,6 +67,20 @@ def test_user_rows_show_their_own_mailbox_and_paused_state(gateway, imap, smtp) 
     assert rows["bob"]["email_address"] == "bob@example.test"
 
 
+def test_an_empty_address_with_a_connected_mailbox_shows_the_mailbox_address(gateway, imap, smtp) -> None:
+    """Sign-in codes and notifications go to the registered address, else the connected mailbox
+    (self_address). A mailbox connected before "connecting sets the address" left the address empty:
+    the card and the row must show where mail really goes, never "No address" beside "Connected as"."""
+    c = gateway["client"]
+    assert c.put("/api/gateway/me/email", headers=gateway["alice"], json=connect_body(ALICE, imap, smtp)).status_code == 200
+    r = c.put("/api/gateway/me/email/address", headers=gateway["alice"], json={"address": ""})
+    assert r.status_code == 200, r.text
+    card = c.get("/api/gateway/me/email", headers=gateway["alice"]).json()
+    assert card["email_address"] == ALICE
+    rows = {a["id"]: a for a in c.get("/api/gateway/admin/accounts", headers=ADMIN).json()["accounts"]}
+    assert rows["alice"]["email_address"] == ALICE
+
+
 def _spark(name: str) -> dict:
     from abstractmemory import DEFAULT_SPARK_TEMPLATE
 
