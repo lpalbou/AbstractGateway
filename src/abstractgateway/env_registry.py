@@ -318,12 +318,8 @@ _EXPLICIT: Tuple[EnvVarSpec, ...] = (
     _spec("ABSTRACTGATEWAY_STOP_KILL_SWITCH_S", BEHAVIOR, console_path="runtime.stop_kill_switch_s",
           effective="next-request", note="seconds after a cancel before a still-decoding model call is killed in process (never the gateway); 0 disables"),
     # Entity lane.
-    _spec("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER", BEHAVIOR, console_path="entities.substrate",
-          note="operator-env rung of the ruled substrate chain (request > home > env > refusal); console rung replaces THIS rung, never reorders (adversary P0-3)"),
-    _spec("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL", BEHAVIOR, console_path="entities.substrate", note="see PROVIDER row"),
-    _spec("ABSTRACTGATEWAY_ENTITY_CHAT_BASE_URL", BEHAVIOR, console_path="entities.substrate"),
-    _spec("ABSTRACTGATEWAY_ENTITY_CHAT_CONTEXT_WINDOW", BEHAVIOR, console_path="entities.substrate"),
-    _spec("ABSTRACTGATEWAY_ENTITY_CHAT_SHELF_SIZE", BEHAVIOR, console_path="entities.substrate"),
+    # (ABSTRACTGATEWAY_ENTITY_CHAT_* removed in round 3: an entity's mind is
+    # its own choice or the gateway's text route; geometry has code defaults.)
     _spec("ABSTRACTGATEWAY_ENTITY_CREATE_QUOTA", BEHAVIOR, console_path="entities.quotas"),
     _spec("ABSTRACTGATEWAY_ENTITY_MAX_ITERATIONS_CEILING", BEHAVIOR, console_path="entities.quotas"),
     _spec("ABSTRACTGATEWAY_ENTITY_SELF_REPAIR", BEHAVIOR, console_path="entities.self_repair"),

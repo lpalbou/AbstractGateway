@@ -200,14 +200,11 @@ def test_summon_unknown_entity_404(client: TestClient):
     assert r.status_code == 404
 
 
-def test_summon_without_substrate_refuses_loudly(client: TestClient, monkeypatch: pytest.MonkeyPatch):
-    """flow c5253 P1-1: a summon with no provider/model used to get SILENT
-    SUBSTRATE SUBSTITUTION (the gateway capability default answered, the
-    home's substrate.yaml never consulted, warnings empty). The chain is
-    the chat lane's: request > home substrate.yaml > operator env > LOUD
-    REFUSAL — never a code/capability default."""
-    monkeypatch.delenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER", raising=False)
-    monkeypatch.delenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL", raising=False)
+def test_summon_without_any_text_model_refuses_plainly(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    """The chain is the chat lane's: request > home substrate.yaml > the
+    gateway's text route (round 3). Only a gateway with no text model at all
+    refuses, in one plain sentence without environment variables."""
+    monkeypatch.setattr("abstractgateway.entity_chat.gateway_text_mind", lambda: {"provider": None, "model": None, "base_url": None, "reasoning": None})
     assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
     assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
 
@@ -218,14 +215,32 @@ def test_summon_without_substrate_refuses_loudly(client: TestClient, monkeypatch
     assert r.status_code == 400, r.text
     detail = r.json()["detail"]
     assert detail["refused"] is True
-    assert any("no mind substrate chosen" in reason for reason in detail["reasons"]), detail
+    from abstractgateway.entity_chat import NO_TEXT_MODEL_REFUSAL
+
+    assert any(NO_TEXT_MODEL_REFUSAL in reason for reason in detail["reasons"]), detail
+    assert not any("ABSTRACTGATEWAY" in reason for reason in detail["reasons"]), detail
+
+
+def test_summon_without_entity_mind_uses_the_gateway_text_route(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    """Round 3: no own mind -> the gateway default answers, named as such."""
+    monkeypatch.setattr(
+        "abstractgateway.entity_chat.gateway_text_mind",
+        lambda: {"provider": "mock", "model": "route-model", "base_url": None, "reasoning": None},
+    )
+    assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
+    assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
+    r = client.post(
+        "/api/gateway/entities/Castor/summon",
+        json={"prompt": "hi", "bundle_id": "min", "flow_id": "root"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["substrate"] == {"provider": "mock", "model": "route-model", "source": "gateway default"}
 
 
 def test_summon_resolves_home_substrate(client: TestClient, monkeypatch: pytest.MonkeyPatch):
     """The home's persisted substrate.yaml is the second chain step, and the
     resolved pair is stamped caller-visible with its source."""
-    monkeypatch.delenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER", raising=False)
-    monkeypatch.delenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL", raising=False)
+    monkeypatch.setattr("abstractgateway.entity_chat.gateway_text_mind", lambda: {"provider": None, "model": None, "base_url": None, "reasoning": None})
     assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
     assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
     r0 = client.put(
@@ -248,8 +263,7 @@ def test_summon_reasoning_effort_shown_equals_what_runs(client: TestClient, monk
     substrate block and the run's _runtime.thinking must be the SAME value
     — even when the caller seeds _runtime.thinking directly (a request-level
     spelling, folded into resolution, never a silent survivor)."""
-    monkeypatch.delenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER", raising=False)
-    monkeypatch.delenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL", raising=False)
+    monkeypatch.setattr("abstractgateway.entity_chat.gateway_text_mind", lambda: {"provider": None, "model": None, "base_url": None, "reasoning": None})
     assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
     assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
     # Home stores the triple with an effort.

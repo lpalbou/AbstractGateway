@@ -179,24 +179,24 @@ def test_lifecycle_state_loop_verify_and_reembed_refusal() -> None:
 
 def test_creation_defaults_serves_the_dropdown_default_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     """The 'Gateway default' dropdown option reads ONE authoritative endpoint
-    (operator directive 2026-07-13): the entity substrate env pair when set,
-    labeled #FALLBACK nulls when not — never a fabricated default. The route
+    (operator directive 2026-07-13): the gateway's text route (round 3), and
+    nulls plus the plain no-text-model sentence when none is configured. The route
     is a literal segment declared before /{name} (route-order pin: it must
     answer as itself, not as an entity named 'creation-defaults')."""
     with _client() as client:
-        monkeypatch.delenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER", raising=False)
-        monkeypatch.delenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL", raising=False)
+        monkeypatch.setattr("abstractgateway.entity_chat.gateway_text_mind", lambda: {"provider": None, "model": None, "base_url": None, "reasoning": None})
         r = client.get("/api/gateway/entities/creation-defaults")
         assert r.status_code == 200, r.text
         body = r.json()
         assert body["substrate"]["provider"] is None
-        assert any("#FALLBACK" in w and "substrate" in w for w in body["warnings"])
+        from abstractgateway.entity_chat import NO_TEXT_MODEL_REFUSAL
 
-        monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER", "lmstudio")
-        monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL", "qwen3-0.6b")
+        assert NO_TEXT_MODEL_REFUSAL in body["warnings"]
+
+        monkeypatch.setattr("abstractgateway.entity_chat.gateway_text_mind", lambda: {"provider": "lmstudio", "model": "qwen3-0.6b", "base_url": None, "reasoning": None})
         r2 = client.get("/api/gateway/entities/creation-defaults")
         sub = r2.json()["substrate"]
-        assert sub == {"provider": "lmstudio", "model": "qwen3-0.6b", "source": "operator-env"}
+        assert sub == {"provider": "lmstudio", "model": "qwen3-0.6b", "source": "gateway"}
 
         # The name can never be claimed by an entity (route-shadow class).
         refused = client.post("/api/gateway/entities", json={"name": "creation-defaults", "spark": {"name": "creation-defaults"}})

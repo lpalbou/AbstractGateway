@@ -53,9 +53,10 @@ DEFAULT_IDLE_TIMEOUT_S = 15 * 60
 DEFAULT_YIELD_WAIT_S = 55.0
 
 # Attention-geometry defaults (maintainer ruling 2026-07-08): the wide summon
-# posture is the DEFAULT, not a tuning trick. Env vars
-# ABSTRACTGATEWAY_ENTITY_CHAT_SHELF_SIZE / _CONTEXT_WINDOW and the request
-# body override; these constants are the floor experience every entity gets.
+# posture is the DEFAULT, not a tuning trick. The request body overrides;
+# these constants are the floor experience every entity gets. There is no
+# environment variable for them (round 3, 2026-10-01: settings are never env
+# vars).
 # Shelf widened 24 -> 36 (maintainer, 2026-07-09: "it needs to retrieve more
 # memories to function") -> 50 (maintainer c2468, 2026-07-15: "increase the
 # max memories from 30 to 50" — his "30" was 36 minus the 6 identity seats,
@@ -108,29 +109,42 @@ def resolve_entity_output_cap(explicit: Optional[int] = None) -> Optional[int]:
     except ValueError:
         return None
     return value if value > 0 else None
-# Mind substrate has NO code default (maintainer ruling 2026-07-09 04:26:
-# "I decide which provider and model is used ... NO FALLBACK" — a code
-# constant silently electing a provider, paid OVH in the removed case, is
-# exactly the fallback class the ADR forbids). Refined 06:32 ("i don't see
-# the point in having potentially different models for visit and own time,
-# remove that"): the entity carries ONE persisted substrate — an operator
-# file in his home (substrate.yaml, beside tool_policy.yaml) — set once,
-# shown by the UI, used by BOTH visits and his own time. Resolution:
-# request body (explicit override) > home substrate.yaml > operator env >
-# LOUD REFUSAL. Every step is an explicit operator choice; still no code
-# default anywhere.
+# The entity's mind (round 3, operator 2026-10-01: "no env-var fallbacks for
+# entity minds"). ONE persisted choice per entity -- an operator file in its
+# home (substrate.yaml, beside tool_policy.yaml) -- used by visits, summons
+# and its own time alike. Resolution: request body (explicit override) >
+# the entity's own mind (substrate.yaml) > the gateway's text route
+# (AbstractCore `output.text`, the console's default -- the same route runs
+# use) > refusal only when the gateway has no text model at all. There is no
+# environment variable in this chain any more (ABSTRACTGATEWAY_ENTITY_CHAT_*
+# were removed) and no code default: an entity without its own mind thinks
+# with the gateway default.
 SUBSTRATE_FILENAME = "substrate.yaml"
-SUBSTRATE_REFUSAL = (
-    "no mind substrate chosen for this entity: set it once "
-    "(PUT /{name}/substrate, or the UI's substrate picker) — "
-    "the operator decides; the gateway never falls back on its own. "
-    "The choice persists per entity in substrate.yaml under the entity's home "
-    "directory; ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER and "
-    "ABSTRACTGATEWAY_ENTITY_CHAT_MODEL set a host-wide fallback for every "
-    "entity that has none. AbstractCore's output.text default is deliberately "
-    "not consulted here: it answers which model this host uses for text, not "
-    "which mind this being is."
+NO_TEXT_MODEL_REFUSAL = (
+    "This gateway has no text model yet: open Setup in the console, choose "
+    "Use recommended defaults, then try again."
 )
+# Kept as an alias: the door's callers import this name.
+SUBSTRATE_REFUSAL = NO_TEXT_MODEL_REFUSAL
+MIND_SOURCE_REQUEST = "request"
+MIND_SOURCE_ENTITY = "entity"
+MIND_SOURCE_GATEWAY = "gateway"
+
+
+def gateway_text_mind() -> Dict[str, Any]:
+    """The gateway's text route (`output.text`, then `input.text`) read through
+    the AbstractCore config seam -- the gateway-wide store, never a per-user
+    overlay: an entity is not a user's session. Returns `{provider, model,
+    base_url, reasoning}` with None for what is not configured."""
+    from .core_config import text_default
+
+    row = text_default(base_dir=None)
+    return {
+        "provider": (str(row.get("provider") or "").strip() or None),
+        "model": (str(row.get("model") or "").strip() or None),
+        "base_url": (str(row.get("base_url") or "").strip() or None),
+        "reasoning": (str(row.get("reasoning") or "").strip() or None),
+    }
 
 
 def read_entity_substrate(home_dir: Any) -> Dict[str, str]:
@@ -158,6 +172,13 @@ def read_entity_substrate(home_dir: Any) -> Dict[str, str]:
             if t:
                 out = dict(out)
                 out["thinking"] = t
+        # MTP intent (round 3) is a gateway-written key the runtime reader
+        # does not return: read it from the file the gateway wrote.
+        if isinstance(out, dict) and out.get("provider") and out.get("model") and "speculation" not in out:
+            local = _read_substrate_locally(home_dir)
+            if "speculation" in local:
+                out = dict(out)
+                out["speculation"] = local["speculation"]
         return out
     except ImportError:
         pass  # older runtime without identity.substrate — parse locally
@@ -191,13 +212,32 @@ def _read_substrate_locally(home_dir: Any) -> Dict[str, str]:
         t = str(data.get("thinking") or "").strip()
         if t:
             out["thinking"] = t
+        spec = normalize_speculation(data.get("speculation"))
+        if spec is not None:
+            out["speculation"] = spec
         return out
     except Exception:
         return {}
 
 
+def normalize_speculation(value: Any) -> Any:
+    """The MTP intent at rest and on the wire (the kit's SpeculationValue):
+    False = explicitly off; {"mode": "native_mtp", "num_draft_tokens": N,
+    "require_acceleration": True} = on at depth N; None = not chosen (the
+    gateway/model default applies). Anything else reads as None."""
+    if value is False:
+        return False
+    if isinstance(value, dict):
+        if str(value.get("mode") or "") == "off":
+            return False
+        n = value.get("num_draft_tokens")
+        if value.get("mode") == "native_mtp" and isinstance(n, int) and not isinstance(n, bool) and n >= 1:
+            return {"mode": "native_mtp", "num_draft_tokens": int(n), "require_acceleration": True}
+    return None
+
+
 def write_entity_substrate(
-    home_dir: Any, *, provider: str, model: str, thinking: Optional[str] = None
+    home_dir: Any, *, provider: str, model: str, thinking: Optional[str] = None, speculation: Any = None
 ) -> None:
     """Persist the operator's one-per-entity substrate choice (his home,
     operator-owned like tool_policy.yaml; the entity's tools cannot touch
@@ -213,10 +253,13 @@ def write_entity_substrate(
         raise ValueError("substrate needs BOTH provider and model (explicit operator choice)")
     import yaml
 
-    data: Dict[str, str] = {"provider": p, "model": m}
+    data: Dict[str, Any] = {"provider": p, "model": m}
     t = str(thinking or "").strip()
     if t:
         data["thinking"] = t
+    spec = normalize_speculation(speculation)
+    if spec is not None:
+        data["speculation"] = spec
     # Atomic write (adversary cycle-2 N7): a crash mid-write must never
     # leave malformed YAML that reads as "substrate unset".
     target = Path(home_dir) / SUBSTRATE_FILENAME
@@ -225,38 +268,94 @@ def write_entity_substrate(
     tmp.replace(target)
 
 
+def clear_entity_substrate(home_dir: Any) -> bool:
+    """Remove the entity's own mind: it thinks with the gateway default again.
+    Returns True when a file was removed."""
+    from pathlib import Path
+
+    target = Path(home_dir) / SUBSTRATE_FILENAME
+    if not target.exists():
+        return False
+    target.unlink()
+    return True
+
+
+def resolve_entity_mind(
+    provider: Optional[str], model: Optional[str], *, home_dir: Any = None,
+    thinking: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Request override > the entity's own mind (substrate.yaml) > the
+    gateway's text route > refusal (no text model configured at all).
+
+    Returns `{provider, model, thinking, speculation, base_url, source}`:
+    `source` is "request", "entity" or "gateway" (which step supplied the
+    provider/model pair); `base_url` is the text route's own endpoint when the
+    pair came from it (the round-3 base_url rule: runs on the default reach
+    the route's address), else None. A request that names only one of
+    provider/model completes it from the entity's own mind; a pair that is
+    still half-filled refuses with a plain sentence. Reasoning effort and MTP
+    follow the pair's source and never refuse."""
+    p = (provider or "").strip()
+    m = (model or "").strip()
+    t = (thinking or "").strip()
+    source = MIND_SOURCE_REQUEST if (p or m) else ""
+    stored: Dict[str, Any] = read_entity_substrate(home_dir) if home_dir is not None else {}
+    speculation = None
+    base_url: Optional[str] = None
+    if stored:
+        # The entity's own mind fills what the request left out (explicit
+        # pieces, never a silent mix with the gateway default).
+        p = p or str(stored.get("provider") or "")
+        m = m or str(stored.get("model") or "")
+        t = t or str(stored.get("thinking") or "")
+        source = source or MIND_SOURCE_ENTITY
+        if p == stored.get("provider") and m == stored.get("model"):
+            speculation = stored.get("speculation")
+    elif not p and not m:
+        route = gateway_text_mind()
+        if not (route["provider"] and route["model"]):
+            raise ChatOpenRefused(400, NO_TEXT_MODEL_REFUSAL)
+        p, m = route["provider"], route["model"]
+        t = t or (route["reasoning"] or "")
+        base_url = route["base_url"]
+        source = MIND_SOURCE_GATEWAY
+    if not p or not m:
+        missing = "model" if p else "provider"
+        raise ChatOpenRefused(
+            400,
+            f"The mind needs a {missing} as well: choose both in the entity's Mind settings, "
+            "or use the Gateway default.",
+        )
+    return {
+        "provider": p, "model": m, "thinking": (t or None), "speculation": speculation,
+        "base_url": base_url, "source": source,
+    }
+
+
 def resolve_substrate(
     provider: Optional[str], model: Optional[str], *, home_dir: Any = None,
     thinking: Optional[str] = None,
 ) -> Tuple[str, str, Optional[str]]:
-    """Request override > home substrate.yaml > operator env > refuse.
-    Never a code default (NO FALLBACK).
+    """(provider, model, thinking) from `resolve_entity_mind` -- the one chain."""
+    mind = resolve_entity_mind(provider, model, home_dir=home_dir, thinking=thinking)
+    return mind["provider"], mind["model"], mind["thinking"]
 
-    This chain deliberately does NOT read AbstractCore's `output.text` default.
-    That route answers "what model does this host use for text"; this one
-    answers "which mind is THIS being", and the two agreeing would be a
-    coincidence rather than a contract. An entity without a chosen mind refuses
-    so the choice stays the operator's.
 
-    Returns (provider, model, thinking). The reasoning effort follows the
-    same chain but NEVER refuses: a mind without a declared effort is
-    valid, so absent stays absent (None). There is no environment variable
-    for it — the home file is the one persisted choice."""
-    import os as _os
+LOCAL_BASE_URL_PROVIDERS = ("lmstudio", "openai-compatible", "openai_compatible")
 
-    p = (provider or "").strip()
-    m = (model or "").strip()
-    t = (thinking or "").strip()
-    if (not (p and m) or not t) and home_dir is not None:
-        stored = read_entity_substrate(home_dir)
-        p = p or stored.get("provider", "")
-        m = m or stored.get("model", "")
-        t = t or stored.get("thinking", "")
-    p = p or (_os.getenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER") or "").strip()
-    m = m or (_os.getenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL") or "").strip()
-    if not p or not m:
-        raise ChatOpenRefused(400, SUBSTRATE_REFUSAL)
-    return p, m, (t or None)
+
+def entity_base_url(provider: str, explicit: Optional[str] = None, *, mind_base_url: Optional[str] = None) -> Optional[str]:
+    """The endpoint for an entity's mind: the request's explicit base_url >
+    the gateway text route's own base_url when the provider is the route's
+    provider > None (the provider's own address applies)."""
+    e = str(explicit or "").strip()
+    if e:
+        return e
+    if mind_base_url:
+        return str(mind_base_url).strip() or None
+    from .provider_defaults import default_text_route_connection_kwargs
+
+    return default_text_route_connection_kwargs(provider, base_dir=None).get("base_url") or None
 
 
 class ChatOpenRefused(Exception):
@@ -279,22 +378,30 @@ class _RuntimeLLMAdapter:
     RunState-safe dicts, so this adapter lifts `content` back into the
     attribute shape the chat driver expects."""
 
-    def __init__(self, provider: str, *, model: str, thinking: Optional[str] = None, **llm_kwargs: Any) -> None:
+    def __init__(
+        self, provider: str, *, model: str, thinking: Optional[str] = None, speculation: Any = None, **llm_kwargs: Any
+    ) -> None:
         from abstractruntime.integrations.abstractcore import LocalAbstractCoreLLMClient
 
         self._client = LocalAbstractCoreLLMClient(provider=provider, model=model, llm_kwargs=dict(llm_kwargs))
         # The mind's reasoning effort (substrate triple). Injected into each
         # call's params on the one wire name; None sends nothing.
         self._thinking = str(thinking or "").strip() or None
+        # The mind's MTP intent (round 3): None sends nothing; False or a
+        # native_mtp request rides params["speculation"] (the runtime's wire).
+        self._speculation = normalize_speculation(speculation)
 
     def generate(self, **kwargs: Any) -> Any:
         from types import SimpleNamespace
 
         kwargs.setdefault("prompt", "")
-        if self._thinking:
+        if self._thinking or self._speculation is not None:
             params = kwargs.get("params")
             params = dict(params) if isinstance(params, dict) else {}
-            params.setdefault("thinking", self._thinking)
+            if self._thinking:
+                params.setdefault("thinking", self._thinking)
+            if self._speculation is not None:
+                params.setdefault("speculation", self._speculation)
             kwargs["params"] = params
         out = self._client.generate(**kwargs)
         if isinstance(out, dict):
@@ -305,7 +412,8 @@ class _RuntimeLLMAdapter:
 def _default_llm_factory(provider: str, **kwargs: Any) -> Any:
     model = str(kwargs.pop("model", "") or "")
     thinking = kwargs.pop("thinking", None)
-    return _RuntimeLLMAdapter(provider, model=model, thinking=thinking, **kwargs)
+    speculation = kwargs.pop("speculation", None)
+    return _RuntimeLLMAdapter(provider, model=model, thinking=thinking, speculation=speculation, **kwargs)
 
 
 def _woken_reason() -> str:
@@ -411,52 +519,12 @@ class EntityChatHost:
         enable_tools: bool = True,
         enable_workspace: bool = False,
     ) -> Dict[str, Any]:
-        import os as _os
-
-        base_url = (base_url or _os.getenv("ABSTRACTGATEWAY_ENTITY_CHAT_BASE_URL") or "http://127.0.0.1:1234/v1").strip()
-        # Attention geometry is operator config too (same ruling): an
-        # undeclared context window collapses to the 20k floor (token budget
-        # 2400) and the default 12-seat shelf pins every turn to 6 self +
-        # 3 STM + 3 stimulus — the observed "only 6 memories" ceiling.
-        # ints via env so the web UI need not know the numbers.
-        # Works-or-loud (live lesson, 2026-07-08): a pasted non-breaking space
-        # glued SHELF_SIZE=24 to the next export and the first cut of this
-        # parser swallowed it SILENTLY — the operator set the knob and nothing
-        # moved. Malformed values now salvage a leading integer when one
-        # exists, and always say so in the open's warnings.
+        # Attention geometry (maintainer ruling 2026-07-08, after the live A/B
+        # on Castor): the wide posture IS the default. Resolution order:
+        # request body > these code defaults. No environment variable (round 3).
         env_warnings: List[str] = []
-
-        def _env_int(name: str) -> Optional[int]:
-            import re as _re
-
-            raw = (_os.getenv(name) or "").strip()
-            if not raw:
-                return None
-            try:
-                return int(raw)
-            except ValueError:
-                lead = _re.match(r"\s*(\d+)", raw)
-                if lead:
-                    env_warnings.append(
-                        f"#FALLBACK {name}={raw!r} is malformed (stray characters — a pasted "
-                        f"non-breaking space?); using its leading integer {lead.group(1)}"
-                    )
-                    return int(lead.group(1))
-                env_warnings.append(f"#FALLBACK {name}={raw!r} is not an integer; ignored")
-                return None
-
-        # Maintainer ruling (2026-07-08, after the live A/B on Castor): the
-        # wide posture IS the default — shelf 24, context 65536 ("it feels
-        # like castor has grown up"; 32768 verified live, then doubled).
-        # Resolution order: request body > env > these defaults. Seats bind
-        # before tokens at shelf 24 (~200-token digests ≈ 4.8k < 12% of 64k),
-        # so the wide window buys headroom, not prompt bloat.
-        if context_window is None:
-            context_window = _env_int("ABSTRACTGATEWAY_ENTITY_CHAT_CONTEXT_WINDOW")
         if context_window is None:
             context_window = DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW
-        if shelf_size is None:
-            shelf_size = _env_int("ABSTRACTGATEWAY_ENTITY_CHAT_SHELF_SIZE")
         if shelf_size is None:
             shelf_size = DEFAULT_ENTITY_CHAT_SHELF_SIZE
         import time as _time
@@ -485,11 +553,14 @@ class EntityChatHost:
         # unrelated substrate check (doctoring, operator GO 2026-07-13).
         self._registry._refuse_if_held(slug)
 
-        # ONE substrate per entity (maintainer ruling 2026-07-09 06:32:
-        # visits and own time share the SAME mind). Request override > the
-        # home's persisted substrate.yaml > operator env > loud refusal.
-        # The third element is the mind's reasoning effort (optional).
-        provider, model, thinking = resolve_substrate(provider, model, home_dir=home_dir)
+        # ONE mind per entity (maintainer ruling 2026-07-09 06:32: visits and
+        # own time share the SAME mind). Request override > the entity's own
+        # mind (substrate.yaml) > the gateway's text route; refusal only when
+        # the gateway has no text model at all.
+        mind = resolve_entity_mind(provider, model, home_dir=home_dir)
+        provider, model, thinking = mind["provider"], mind["model"], mind["thinking"]
+        speculation = mind["speculation"]
+        base_url = entity_base_url(provider, base_url, mind_base_url=mind["base_url"])
 
         with self._lock:
             self._reap_idle_locked()
@@ -633,7 +704,10 @@ class EntityChatHost:
             if thinking:
                 # The mind's reasoning effort rides every turn of this visit.
                 llm_kwargs["thinking"] = thinking
-            if str(provider).strip().lower() in ("lmstudio", "openai-compatible", "openai_compatible"):
+            if speculation is not None:
+                # The mind's MTP intent (round 3) rides every turn like thinking.
+                llm_kwargs["speculation"] = speculation
+            if base_url:
                 llm_kwargs["base_url"] = base_url
             factory = self._llm_factory or _default_llm_factory
             llm = factory(str(provider).strip().lower(), **llm_kwargs)
@@ -695,7 +769,7 @@ class EntityChatHost:
             yielded_loop=yielded,
             woke_for_visit=woke_for_visit,
             opened_at=datetime.now(timezone.utc).isoformat(),
-            model_info={"provider": str(provider), "model": str(model)},
+            model_info={"provider": str(provider), "model": str(model), "source": str(mind["source"])},
             lease=lease,
             last_activity=_time.monotonic(),
             prior_state=dict(prior_state),
@@ -717,6 +791,9 @@ class EntityChatHost:
             "budget_profile": dict(session.profile),
             "yielded_loop": yielded,
             "warnings": quiet,
+            # Which mind this visit thinks with and where it came from
+            # ("entity" = its own choice, "gateway" = the gateway default).
+            "mind": {"provider": str(provider), "model": str(model), "thinking": thinking, "source": mind["source"]},
         }
         if salvage:
             out["salvage"] = {

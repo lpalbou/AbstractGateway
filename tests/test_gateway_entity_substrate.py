@@ -2,8 +2,8 @@
 
 The choice persists in the home (substrate.yaml), is exposed by GET/PUT
 /{name}/substrate, and is resolved identically by visits and the own-time
-loop: request override > home file > operator env > loud refusal. Never a
-code default.
+loop: request override > home file > the gateway's text route; refusal only when
+the gateway has no text model at all (round 3: no environment variables).
 """
 
 from __future__ import annotations
@@ -22,42 +22,102 @@ from abstractgateway.entity_chat import (  # noqa: E402
 )
 
 
-def test_resolution_order_request_beats_home_beats_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _route(monkeypatch: pytest.MonkeyPatch, provider=None, model=None, base_url=None, reasoning=None) -> None:
+    monkeypatch.setattr(
+        "abstractgateway.entity_chat.gateway_text_mind",
+        lambda: {"provider": provider, "model": model, "base_url": base_url, "reasoning": reasoning},
+    )
+
+
+def test_resolution_order_request_beats_home_beats_gateway_text_route(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractgateway.entity_chat import NO_TEXT_MODEL_REFUSAL, resolve_entity_mind
+
     home = tmp_path / "castor"
     home.mkdir()
-    monkeypatch.delenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER", raising=False)
-    monkeypatch.delenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL", raising=False)
 
-    # Nothing anywhere: loud refusal (no code default).
-    with pytest.raises(ChatOpenRefused):
+    # No text model anywhere: the one plain refusal, no env var named.
+    _route(monkeypatch)
+    with pytest.raises(ChatOpenRefused) as refused:
         resolve_substrate(None, None, home_dir=home)
+    assert refused.value.detail == NO_TEXT_MODEL_REFUSAL
+    assert "ABSTRACTGATEWAY" not in refused.value.detail and "env" not in refused.value.detail.lower()
 
-    # Operator env answers when the home carries no choice.
-    monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER", "env-provider")
-    monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL", "env-model")
-    assert resolve_substrate(None, None, home_dir=home) == ("env-provider", "env-model", None)
+    # The gateway's text route answers when the entity has no mind of its own,
+    # with the route's endpoint and reasoning.
+    _route(monkeypatch, "lmstudio", "route-model", "http://10.0.0.9:1234/v1", "low")
+    mind = resolve_entity_mind(None, None, home_dir=home)
+    assert mind == {
+        "provider": "lmstudio", "model": "route-model", "thinking": "low", "speculation": None,
+        "base_url": "http://10.0.0.9:1234/v1", "source": "gateway",
+    }
 
-    # The home's persisted choice beats env (one substrate per entity).
+    # The entity's own mind beats the gateway default.
     write_entity_substrate(home, provider="endpoint:ovh-provider", model="gpt-oss-120b")
     assert read_entity_substrate(home) == {"provider": "endpoint:ovh-provider", "model": "gpt-oss-120b"}
-    assert resolve_substrate(None, None, home_dir=home) == ("endpoint:ovh-provider", "gpt-oss-120b", None)
+    mind = resolve_entity_mind(None, None, home_dir=home)
+    assert (mind["provider"], mind["model"], mind["source"], mind["base_url"]) == (
+        "endpoint:ovh-provider", "gpt-oss-120b", "entity", None
+    )
 
     # An explicit request override beats everything (still explicit).
     assert resolve_substrate("lmstudio", "tiny", home_dir=home) == ("lmstudio", "tiny", None)
 
 
-def test_partial_choices_never_mix_silently(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A request naming only a provider fills the model from the SAME
-    resolution chain — and refuses when no complete pair exists."""
+def test_removed_environment_variables_have_no_effect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """ABSTRACTGATEWAY_ENTITY_CHAT_* are gone (round 3): set, they change nothing."""
     home = tmp_path / "e"
     home.mkdir()
-    monkeypatch.delenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER", raising=False)
-    monkeypatch.delenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL", raising=False)
+    for name, value in {
+        "ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER": "env-provider",
+        "ABSTRACTGATEWAY_ENTITY_CHAT_MODEL": "env-model",
+        "ABSTRACTGATEWAY_ENTITY_CHAT_BASE_URL": "http://env.invalid:9/v1",
+    }.items():
+        monkeypatch.setenv(name, value)
+    _route(monkeypatch)
     with pytest.raises(ChatOpenRefused):
+        resolve_substrate(None, None, home_dir=home)
+    _route(monkeypatch, "lmstudio", "route-model")
+    assert resolve_substrate(None, None, home_dir=home) == ("lmstudio", "route-model", None)
+    from abstractgateway.entity_chat import entity_base_url
+
+    assert entity_base_url("lmstudio", None) != "http://env.invalid:9/v1"
+    import abstractgateway.env_registry as env_registry
+
+    registry_text = Path(env_registry.__file__).read_text(encoding="utf-8")
+    assert '_spec("ABSTRACTGATEWAY_ENTITY_CHAT_' not in registry_text
+
+
+def test_partial_choices_never_mix_silently(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A request naming only a provider fills the model from the entity's own
+    mind — and refuses with a plain sentence when no complete pair exists."""
+    home = tmp_path / "e"
+    home.mkdir()
+    _route(monkeypatch, "ollama", "route-model")
+    with pytest.raises(ChatOpenRefused) as refused:
         resolve_substrate("lmstudio", None, home_dir=home)
+    assert "needs a model" in refused.value.detail
     write_entity_substrate(home, provider="p1", model="m1")
     # Provider-only override + home model: explicit pieces, no silence.
     assert resolve_substrate("lmstudio", None, home_dir=home) == ("lmstudio", "m1", None)
+
+
+def test_speculation_round_trips_and_follows_its_own_pair(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """MTP intent (round 3) is stored with the mind and applies only to that
+    provider/model pair; False is an explicit off; garbage reads as unset."""
+    from abstractgateway.entity_chat import resolve_entity_mind
+
+    home = tmp_path / "e"
+    home.mkdir()
+    _route(monkeypatch, "lmstudio", "route-model")
+    spec = {"mode": "native_mtp", "num_draft_tokens": 2, "require_acceleration": True}
+    write_entity_substrate(home, provider="mlx", model="m", speculation=spec)
+    assert read_entity_substrate(home)["speculation"] == spec
+    assert resolve_entity_mind(None, None, home_dir=home)["speculation"] == spec
+    assert resolve_entity_mind("mlx", "other", home_dir=home)["speculation"] is None
+    write_entity_substrate(home, provider="mlx", model="m", speculation=False)
+    assert read_entity_substrate(home)["speculation"] is False
+    (home / "substrate.yaml").write_text("provider: mlx\nmodel: m\nspeculation: {mode: native_mtp, num_draft_tokens: 0}\n", encoding="utf-8")
+    assert "speculation" not in read_entity_substrate(home)
 
 
 def test_thinking_field_round_trips_and_resolves(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -69,8 +129,7 @@ def test_thinking_field_round_trips_and_resolves(tmp_path: Path, monkeypatch: py
     effort is valid); a request override of the effort wins over the file."""
     home = tmp_path / "castor"
     home.mkdir()
-    monkeypatch.delenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER", raising=False)
-    monkeypatch.delenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL", raising=False)
+    monkeypatch.setattr("abstractgateway.entity_chat.gateway_text_mind", lambda: {"provider": None, "model": None, "base_url": None, "reasoning": None})
 
     # Write with an effort: reads back as the triple.
     write_entity_substrate(home, provider="endpoint:ovh-provider", model="gpt-oss-120b", thinking="high")

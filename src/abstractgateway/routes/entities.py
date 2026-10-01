@@ -1203,19 +1203,16 @@ def entity_creation_defaults() -> Dict[str, Any]:
 
     out: Dict[str, Any] = {"schema_version": 1, "warnings": []}
 
-    # LLM substrate default: the operator env is the gateway-wide entity
-    # substrate choice (the 2026-07-09 resolution chain); discovery's
-    # default_provider/model is the abstractcore-wide default beneath it.
-    env_p = (_os.getenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER") or "").strip()
-    env_m = (_os.getenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL") or "").strip()
-    if env_p and env_m:
-        out["substrate"] = {"provider": env_p, "model": env_m, "source": "operator-env"}
+    # Mind default: the gateway's text route (round 3 -- an entity without
+    # its own mind thinks with the gateway default; no environment variable).
+    from ..entity_chat import NO_TEXT_MODEL_REFUSAL, gateway_text_mind
+
+    route = gateway_text_mind()
+    if route["provider"] and route["model"]:
+        out["substrate"] = {"provider": route["provider"], "model": route["model"], "source": "gateway"}
     else:
         out["substrate"] = {"provider": None, "model": None, "source": "unset"}
-        out["warnings"].append(
-            "#FALLBACK no gateway-wide entity substrate configured (ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER/_MODEL) "
-            "— a creation without an explicit substrate will refuse at first summon; pick one in the form"
-        )
+        out["warnings"].append(NO_TEXT_MODEL_REFUSAL)
 
     # Embedding default: the execution-host embedding.text capability route.
     try:
@@ -2592,21 +2589,19 @@ def _chat_host():
 
 
 class OpenChatRequest(BaseModel):
-    # None = resolve the entity's ONE persisted substrate (substrate.yaml in
-    # his home), then operator env (ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER/_MODEL),
-    # then LOUD REFUSAL — the operator decides the mind substrate; never a
-    # code default (maintainer rulings 2026-07-09 04:26 + 06:32).
-    provider: Optional[str] = Field(default=None, description="abstractcore provider (None = stored substrate.yaml, then operator env, else refuse)")
-    model: Optional[str] = Field(default=None, description="Chat model (None = stored substrate.yaml, then operator env, else refuse)")
-    base_url: Optional[str] = Field(default=None, description="LMStudio-compatible endpoint (lmstudio-class providers only; None = operator env or local default)")
+    # None = the entity's own mind (substrate.yaml in its home), then the
+    # gateway's text route (round 3); refusal only without any text model.
+    provider: Optional[str] = Field(default=None, description="abstractcore provider (None = the entity's own mind, else the gateway's text route)")
+    model: Optional[str] = Field(default=None, description="Chat model (None = the entity's own mind, else the gateway's text route)")
+    base_url: Optional[str] = Field(default=None, description="Endpoint override (None = the text route's own endpoint for its provider, else the provider's address)")
     participants: Optional[List[str]] = Field(default=None, description='Who is present, e.g. ["person:laurent"]; default person:operator')
     context_window: Optional[int] = Field(
         default=None,
-        description="Declared window; below 20,000 refuses (None = env override or the wide default 65536)",
+        description="Declared window (None = the wide default 65536)",
     )
     shelf_size: Optional[int] = Field(
         default=None,
-        description="Recall shelf seats (None = env override or the wide default 50 — "
+        description="Recall shelf seats (None = the wide default 50 — "
         "maintainer 2026-07-09: widened so the entity retrieves enough memories to function)",
     )
     max_output_tokens: Optional[int] = Field(
@@ -3231,10 +3226,10 @@ def _summon_core(
     # provider/model used to fall through to the gateway CAPABILITY default
     # silently — the home's substrate.yaml never consulted, the substitution
     # named nowhere. The chain is the chat/loop lane's, from the SAME
-    # resolver (request > home substrate.yaml > operator env > LOUD
-    # REFUSAL), and the resolved pair is stamped into the run inputs AND the
-    # response so the substrate is always caller-visible.
-    from ..entity_chat import ChatOpenRefused, read_entity_substrate, resolve_substrate
+    # resolver (request > home substrate.yaml > the gateway's text route;
+    # round 3), and the resolved pair is stamped into the run inputs AND the
+    # response so the source is always caller-visible.
+    from ..entity_chat import ChatOpenRefused, read_entity_substrate, resolve_entity_mind
 
     req_provider = str(input_data.get("provider") or "").strip()
     req_model = str(input_data.get("model") or "").strip()
@@ -3265,7 +3260,7 @@ def _summon_core(
             if req_thinking:
                 break
     try:
-        resolved_provider, resolved_model, resolved_thinking = resolve_substrate(
+        _mind = resolve_entity_mind(
             req_provider, req_model, home_dir=home.home_dir, thinking=req_thinking or None
         )
     except ChatOpenRefused as e:
@@ -3277,7 +3272,14 @@ def _summon_core(
                 "entity_id": home.entity_id,
             },
         )
-    # Display-only source label (the CHAIN authority stays resolve_substrate):
+    resolved_provider, resolved_model, resolved_thinking = _mind["provider"], _mind["model"], _mind["thinking"]
+    if _mind["speculation"] is not None and "speculation" not in input_data:
+        # The entity's MTP intent (round 3) rides the run like thinking; a
+        # caller's explicit `speculation` input wins.
+        _rt_spec = dict(input_data["_runtime"]) if isinstance(input_data.get("_runtime"), dict) else {}
+        _rt_spec.setdefault("speculation", _mind["speculation"])
+        input_data["_runtime"] = _rt_spec
+    # Display-only source label (the CHAIN authority stays resolve_entity_mind):
     # which chain step filled each field, honest under mixed resolution
     # (e.g. provider from the request, model from the home).
     _stored = read_entity_substrate(home.home_dir)
@@ -3287,7 +3289,7 @@ def _summon_core(
             return "request"
         if stored_val:
             return "home substrate.yaml"
-        return "operator env"
+        return "gateway default"
 
     _p_src = _substrate_src(req_provider, str(_stored.get("provider") or ""))
     _m_src = _substrate_src(req_model, str(_stored.get("model") or ""))
@@ -4897,8 +4899,15 @@ def put_entity_prompt(name: str, req: PutPromptOverlayRequest) -> Dict[str, Any]
 
 
 class PutSubstrateRequest(BaseModel):
-    provider: str = Field(..., min_length=1, description="abstractcore provider (explicit operator choice)")
-    model: str = Field(..., min_length=1, description="Model (explicit operator choice)")
+    provider: Optional[str] = Field(default=None, description="abstractcore provider (required unless clear)")
+    model: Optional[str] = Field(default=None, description="Model (required unless clear)")
+    # true = remove the entity's own mind: it thinks with the gateway default
+    # (the text route) again. The change is recorded like any mind swap.
+    clear: bool = Field(default=False)
+    # MTP intent (round 3, the kit's SpeculationValue): absent = keep the
+    # stored value; null = clear; false = explicitly off; {"mode":
+    # "native_mtp", "num_draft_tokens": N, "require_acceleration": true}.
+    speculation: Optional[Any] = Field(default=None)
     # Optional reasoning effort for the mind (reasoning-first-citizen plan).
     # Absent = keep whatever is stored; explicit null = clear; a value sets
     # it (presence is read from model_fields_set). Spelled `thinking` on the
@@ -4908,9 +4917,12 @@ class PutSubstrateRequest(BaseModel):
 
 @router.get("/{name}/substrate")
 def get_entity_substrate(name: str) -> Dict[str, Any]:
-    import os as _os
-
-    from ..entity_chat import read_entity_substrate
+    """The entity's mind: its OWN choice (provider/model/thinking/speculation;
+    null when it has none) plus `gateway_default` (the gateway's text route)
+    and `effective` (what its next visit thinks with). `source` is "entity"
+    (its own choice), "gateway" (the gateway default) or "unset" (the gateway
+    has no text model: `note` says what to do)."""
+    from ..entity_chat import NO_TEXT_MODEL_REFUSAL, gateway_text_mind, read_entity_substrate
 
     registry = _registry()
     try:
@@ -4918,18 +4930,28 @@ def get_entity_substrate(name: str) -> Dict[str, Any]:
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     stored = read_entity_substrate(registry.entities_dir / manifest.slug)
+    route = gateway_text_mind()
+    gateway_default = (
+        {"provider": route["provider"], "model": route["model"], "thinking": route["reasoning"]}
+        if route["provider"] and route["model"] else None
+    )
     if stored:
-        return {
+        own = {
             "provider": stored["provider"],
             "model": stored["model"],
             "thinking": stored.get("thinking") or None,
-            "source": "entity",
+            "speculation": stored.get("speculation"),
         }
-    env_p = (_os.getenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER") or "").strip()
-    env_m = (_os.getenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL") or "").strip()
-    if env_p and env_m:
-        return {"provider": env_p, "model": env_m, "thinking": None, "source": "operator-env"}
-    return {"provider": None, "model": None, "thinking": None, "source": "unset"}
+        return {**own, "source": "entity", "effective": dict(own), "gateway_default": gateway_default}
+    out: Dict[str, Any] = {
+        "provider": None, "model": None, "thinking": None, "speculation": None,
+        "source": "gateway" if gateway_default else "unset",
+        "effective": dict(gateway_default) if gateway_default else None,
+        "gateway_default": gateway_default,
+    }
+    if not gateway_default:
+        out["note"] = NO_TEXT_MODEL_REFUSAL
+    return out
 
 
 @router.put("/{name}/substrate")
@@ -4962,17 +4984,37 @@ def put_entity_substrate(name: str, req: PutSubstrateRequest) -> Dict[str, Any]:
 
 
 def _put_entity_substrate_locked(name: str, req: PutSubstrateRequest, *, registry, manifest) -> Dict[str, Any]:
-    from ..entity_chat import read_entity_substrate, write_entity_substrate
+    from ..entity_chat import (
+        clear_entity_substrate,
+        normalize_speculation,
+        read_entity_substrate,
+        write_entity_substrate,
+    )
     from ..security.principal import current_gateway_principal
     home_dir = registry.entities_dir / manifest.slug
+    prior = read_entity_substrate(home_dir) or {}
+    if req.clear:
+        return _clear_entity_substrate_locked(name, registry=registry, manifest=manifest, prior=prior,
+                                              clear=clear_entity_substrate)
     # Strip-validate BEFORE the marker (adversary P2-2: min_length=1 accepts
     # " "; the writer strips and raises AFTER the substrate_changed marker
     # landed — a recorded mind-swap that never happened).
     provider_in = str(req.provider or "").strip()
     model_in = str(req.model or "").strip()
     if not provider_in or not model_in:
-        raise HTTPException(status_code=400, detail="provider and model must both be non-empty")
-    prior = read_entity_substrate(home_dir) or {}
+        raise HTTPException(
+            status_code=400,
+            detail="Choose both a provider and a model, or use the Gateway default.",
+        )
+    if "speculation" in req.model_fields_set:
+        speculation_in = normalize_speculation(req.speculation)
+        if req.speculation is not None and speculation_in is None:
+            raise HTTPException(
+                status_code=400,
+                detail="MTP must be off (false) or {\"mode\": \"native_mtp\", \"num_draft_tokens\": N} with N of 1 or more.",
+            )
+    else:
+        speculation_in = prior.get("speculation")
     # Reasoning effort: absent field = keep the stored value (a client that
     # predates the field can never erase it); explicit null = clear; a
     # value sets it. The value must be from the advertised vocabulary
@@ -5028,9 +5070,52 @@ def _put_entity_substrate_locked(name: str, req: PutSubstrateRequest, *, registr
             "an unrecorded mind swap is not allowed; retry when the home is reachable",
         )
     try:
-        write_entity_substrate(home_dir, provider=provider_in, model=model_in, thinking=thinking_in)
+        write_entity_substrate(
+            home_dir, provider=provider_in, model=model_in, thinking=thinking_in, speculation=speculation_in
+        )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    return get_entity_substrate(name)
+
+
+def _clear_entity_substrate_locked(name: str, *, registry, manifest, prior: Dict[str, Any], clear) -> Dict[str, Any]:
+    """Back to the Gateway default: marker first (old -> gateway default),
+    then the file goes. Clearing a mind that is already the default is a
+    no-op (no marker)."""
+    from ..security.principal import current_gateway_principal
+
+    home_dir = registry.entities_dir / manifest.slug
+    if not prior:
+        return get_entity_substrate(name)
+    principal = current_gateway_principal()
+    actor = f"person:{principal.user_id}" if principal is not None else "person:operator"
+    try:
+        from ..entity_replay import record_host_marker
+
+        home = registry.get_home(manifest.slug)
+        record_host_marker(
+            entities_dir=registry.entities_dir,
+            slug=manifest.slug,
+            entity_id=manifest.entity_id,
+            kind="substrate_changed",
+            journal_seq=int(home.memory.current_seq()),
+            details={
+                "channel": "operator",
+                "by": actor,
+                "old": {
+                    "provider": prior.get("provider"),
+                    "model": prior.get("model"),
+                    "thinking": prior.get("thinking") or None,
+                },
+                "new": {"source": "gateway"},
+            },
+        )
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(
+            status_code=503,
+            detail=f"Mind not changed: the change could not be recorded in its history ({e}). Try again.",
+        )
+    clear(home_dir)
     return get_entity_substrate(name)
 
 
@@ -5498,9 +5583,9 @@ def post_entity_task_status(name: str, task_id: str, req: PostTaskStatusRequest)
 
 
 class StartLoopRequest(BaseModel):
-    provider: Optional[str] = Field(default=None, description="abstractcore provider (None = stored substrate.yaml, then operator env, else refuse)")
-    model: Optional[str] = Field(default=None, description="Model (None = stored substrate.yaml, then operator env, else refuse)")
-    base_url: Optional[str] = Field(default=None, description="LMStudio-compatible endpoint (lmstudio-class providers)")
+    provider: Optional[str] = Field(default=None, description="abstractcore provider (None = the entity's own mind, else the gateway's text route)")
+    model: Optional[str] = Field(default=None, description="Model (None = the entity's own mind, else the gateway's text route)")
+    base_url: Optional[str] = Field(default=None, description="Endpoint override (None = the text route's own endpoint for its provider)")
     # No `le=` on any of these four (2026-08-02 caps audit, same reasoning the
     # context_window note below already records): each is an OPERATOR-declared
     # budget for this entity's own time, and an upper bound here does not
@@ -5512,8 +5597,8 @@ class StartLoopRequest(BaseModel):
         default=30.0, ge=0.0,
         description="24/7 mode: elected rest becomes a nap of this length (0 = rest ends the loop)",
     )
-    # None = resolve like the chat surface: env override, then the wide
-    # defaults (shelf 50, context 65536 — maintainer rulings 2026-07-08/09 + c2468).
+    # None = the wide defaults, like the chat surface (shelf 50, context
+    # 65536 — maintainer rulings 2026-07-08/09 + c2468); no environment variable.
     # `le=64` removed: the chat door (OpenChatRequest.shelf_size) has never had a
     # ceiling, so the SAME knob refused at one door and accepted at the other.
     shelf_size: Optional[int] = Field(default=None, ge=1)
@@ -5674,43 +5759,27 @@ def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
             "his own time and a visit never overlap; retry after the visit ends",
         )
 
-    # Substrate resolves like the chat surface: request > operator env >
-    # LOUD REFUSAL — never a code default (maintainer ruling 2026-07-09
-    # 04:26: "I decide which provider and model is used ... NO FALLBACK";
-    # refined 06:32: ONE substrate per entity — the loop resolves the SAME
-    # persisted choice as visits). Attention geometry keeps its shared code
-    # floors (a geometry floor is posture, not a substrate election).
+    # The mind resolves like the chat surface: request > the entity's own
+    # mind > the gateway's text route (round 3); refusal only without any
+    # text model. ONE mind per entity — the loop resolves the SAME persisted
+    # choice as visits. Attention geometry keeps its shared code floors.
     from ..entity_chat import (
         DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW,
         DEFAULT_ENTITY_CHAT_SHELF_SIZE,
         ChatOpenRefused,
-        resolve_substrate,
+        entity_base_url,
+        resolve_entity_mind,
     )
 
     try:
-        provider, model, thinking = resolve_substrate(req.provider, req.model, home_dir=home_dir)
+        mind = resolve_entity_mind(req.provider, req.model, home_dir=home_dir)
     except ChatOpenRefused as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
-    base_url = (req.base_url or _os.getenv("ABSTRACTGATEWAY_ENTITY_CHAT_BASE_URL") or "http://127.0.0.1:1234/v1").strip()
+    provider, model, thinking = mind["provider"], mind["model"], mind["thinking"]
+    base_url = entity_base_url(provider, req.base_url, mind_base_url=mind["base_url"])
 
-    def _env_int(env_name: str) -> Optional[int]:
-        raw = (_os.getenv(env_name) or "").strip()
-        if not raw:
-            return None
-        try:
-            return int(raw)
-        except ValueError:
-            import re as _re
-
-            lead = _re.match(r"\s*(\d+)", raw)
-            return int(lead.group(1)) if lead else None
-
-    shelf_size = req.shelf_size
-    if shelf_size is None:
-        shelf_size = _env_int("ABSTRACTGATEWAY_ENTITY_CHAT_SHELF_SIZE") or DEFAULT_ENTITY_CHAT_SHELF_SIZE
-    context_window = req.context_window
-    if context_window is None:
-        context_window = _env_int("ABSTRACTGATEWAY_ENTITY_CHAT_CONTEXT_WINDOW") or DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW
+    shelf_size = req.shelf_size if req.shelf_size is not None else DEFAULT_ENTITY_CHAT_SHELF_SIZE
+    context_window = req.context_window if req.context_window is not None else DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW
 
     # SOFT context recommendation + soft acceptable ceiling (operator
     # re-ruling 2026-08-01: 50k recommended target, "acceptable to go to
