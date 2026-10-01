@@ -2676,6 +2676,20 @@ class WorkflowBundleGatewayHost:
         # already display from history bundles. Client-provided context.messages
         # always win (never overwritten); read failures degrade to no-seed with
         # a labeled record, never a blocked start.
+        # Session isolation for attachments, at the host so EVERY caller gets it (the HTTP door,
+        # bridges, entities, automations): a run never attaches an artifact another session owns,
+        # whatever the client sent (artifact_scope.py; operator report 2026-10-01). Raises
+        # ForeignSessionArtifact (a ValueError) — a refused start, never a silent drop.
+        if sid:
+            from ..artifact_scope import refuse_foreign_session_artifacts
+
+            refuse_foreign_session_artifacts(
+                input_data=vars0,
+                session_id=sid,
+                artifact_store=getattr(self.runtime, "artifact_store", None),
+                run_store=getattr(self.runtime, "run_store", None),
+            )
+
         if sid and _bool_text(vars0.get("use_session_history")) is True:
             self._seed_session_history(vars0=vars0, rt_ns=rt_ns, session_id=sid)
 
