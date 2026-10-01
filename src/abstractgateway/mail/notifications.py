@@ -30,7 +30,7 @@ The outbox (`<plane>/email/outbox.sqlite3`) makes delivery exactly-once-or-visib
   automatically (the user may have received it);
 - SMTP 4xx / network problems are retried with backoff; 5xx, sign-in and policy refusals are
   `failed` with the typed cause and fix (and shown in the status);
-- over the send limits (20/hour, 100/day by default, the user's own), notices wait for the
+- over the send limits (100/hour, 1000/day by default, the user's own), notices wait for the
   window and then go out as ONE digest message.
 
 Every notice is automatic mail (RFC 3834): it carries `Auto-Submitted: auto-generated` and the

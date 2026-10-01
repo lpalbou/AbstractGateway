@@ -1512,7 +1512,10 @@ def import_core_account_once() -> List[str]:
         gw.connect(st.account, ctx.secret, test=False, registered_address=registered_address(plane) or None)
         if not st.policy_is_default:
             gw.set_policy(mode=st.policy.mode, add=list(st.policy.entries), clear=True)
-        gw.set_limits(per_hour=st.limits.per_hour, per_day=st.limits.per_day)
+        # Only limits someone set are copied; core limits that follow the defaults (nothing
+        # stored, limits_source "default") stay unstored here too, so they keep following them.
+        if st.limits_source != "default":
+            gw.set_limits(per_hour=st.limits.per_hour, per_day=st.limits.per_day)
         _write_private_json(marker, {"done": True, "at": _now_iso(), "source": "abstractcore"})
         audit_email_event("email.legacy_imported", tenant_id=plane.tenant_id, user_id=plane.user_id, actor="gateway", outcome="imported", reason="abstractcore local account")
         notes.append(

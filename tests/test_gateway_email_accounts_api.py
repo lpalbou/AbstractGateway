@@ -33,7 +33,8 @@ def test_connect_test_disconnect_round_trip(gateway, imap, smtp) -> None:
     assert body["registered_address"] == ALICE
     # The default recipient policy: an allowlist holding the registered address.
     assert body["policy"]["mode"] == "allowlist" and body["policy"]["entries"] == [ALICE]
-    assert body["limits"]["per_hour"] == 20 and body["limits"]["per_day"] == 100
+    assert body["limits"]["per_hour"] == 100 and body["limits"]["per_day"] == 1000
+    assert body["limits"]["source"] == "default"
     assert PASSWORDS[ALICE] not in r.text
     assert "config_file" not in body
 
@@ -288,3 +289,31 @@ def test_gateway_defaults_and_per_user_overrides_decide_what_is_available(gatewa
     assert r.json()["capabilities"]["email_agent_tools"] == {"value": True, "source": "gateway"}
     rows = {u["user_id"]: u for u in c.get("/api/gateway/admin/users", headers=ADMIN).json()["users"]}
     assert rows["alice"]["email_account"]["state"] == "connected"
+
+
+def test_send_limits_defaults_user_values_and_a_stored_legacy_value(gateway, imap, smtp) -> None:
+    """Defaults 100/1000; a user's 20/100 is kept as theirs; a 20/100 an older version stored at
+    connect (no set_by marker) is kept too: it cannot be told apart from a user's choice."""
+
+    c = gateway["client"]
+    r = c.put("/api/gateway/me/email", headers=gateway["alice"], json=connect_body(ALICE, imap, smtp))
+    assert r.status_code == 200, r.text
+    lim = r.json()["limits"]
+    assert (lim["per_hour"], lim["per_day"], lim["source"]) == (100, 1000, "default")
+
+    r = c.put("/api/gateway/me/email/limits", headers=gateway["alice"], json={"per_hour": 20, "per_day": 100})
+    assert r.status_code == 200, r.text
+    lim = r.json()["limits"]
+    assert (lim["per_hour"], lim["per_day"], lim["source"]) == (20, 100, "user")
+    stored = json.loads(plane_of("alice").account_config_file.read_text())["email"]["limits"]
+    assert stored == {"per_hour": 20, "per_day": 100, "set_by": "user"}
+
+    # Bob's mailbox as AbstractCore 2.21 left it: the then-defaults stored without a marker.
+    r = c.put("/api/gateway/me/email", headers=gateway["bob"], json=connect_body(BOB, imap, smtp))
+    assert r.status_code == 200, r.text
+    path = plane_of("bob").account_config_file
+    doc = json.loads(path.read_text())
+    doc["email"]["limits"] = {"per_hour": 20, "per_day": 100}
+    path.write_text(json.dumps(doc))
+    lim = c.get("/api/gateway/me/email", headers=gateway["bob"]).json()["limits"]
+    assert (lim["per_hour"], lim["per_day"], lim["source"]) == (20, 100, "legacy")

@@ -6,6 +6,8 @@ wiring (binding + resolver answering only for the plane's own account)."""
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from email_fixtures import *  # noqa: F401,F403 - fixtures
@@ -274,3 +276,28 @@ def test_core_local_account_is_imported_once_for_the_admin(gateway, imap, smtp, 
     assert "configured separately" in pub["store"]["label"]
     assert gateway["client"].post("/api/gateway/me/email/test", headers=ADMIN).json()["ok"] is True
     assert import_core_account_once() == []  # once
+    # The core account's limits followed the defaults: the gateway copy follows them too.
+    assert pub["limits"]["source"] == "default" and (pub["limits"]["per_hour"], pub["limits"]["per_day"]) == (100, 1000)
+
+
+def test_core_import_copies_limits_someone_set_and_keeps_a_legacy_value(gateway, imap, smtp, tmp_path, monkeypatch) -> None:
+    from abstractcore.comms.email import EmailAccount, EmailAccountStore, EmailSecret, ImapSettings, SmtpSettings
+
+    from abstractgateway.mail.accounts import admin_plane, import_core_account_once, public_status
+
+    core_file = tmp_path / "core" / "abstractcore.json"
+    monkeypatch.setenv("ABSTRACTCORE_CONFIG_FILE", str(core_file))
+    account = EmailAccount.build(
+        address=ADMIN_ADDR,
+        imap=ImapSettings.build("localhost", port=imap.port, security="ssl"),
+        smtp=SmtpSettings.build("localhost", port=smtp.port, security="starttls"),
+    )
+    core = EmailAccountStore(config_file=core_file)
+    core.connect(account, EmailSecret(PASSWORDS[ADMIN_ADDR]), test=False)
+    # What AbstractCore 2.21 left after a connect: the then-defaults, without a set_by marker.
+    doc = json.loads(core_file.read_text())
+    doc["email"]["limits"] = {"per_hour": 20, "per_day": 100}
+    core_file.write_text(json.dumps(doc))
+    import_core_account_once()
+    pub = public_status(admin_plane())
+    assert (pub["limits"]["per_hour"], pub["limits"]["per_day"]) == (20, 100)
