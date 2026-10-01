@@ -169,7 +169,7 @@ def test_policy_limits_and_user_switch(gateway, imap, smtp) -> None:
 
     r = c.put("/api/gateway/me/email/policy", headers=gateway["alice"], json={"mode": "allowlist", "entries": [ALICE, "example.org"]})
     assert r.status_code == 200, r.text
-    assert r.json()["policy"] == {"mode": "allowlist", "entries": [ALICE, "example.org"], "always_allow": [ALICE, "example.org"], "always_deny": [], "default": False}
+    assert r.json()["policy"] == {"mode": "allowlist", "entries": [ALICE, "example.org"], "always_allow": [ALICE, "example.org"], "always_deny": [], "default": False, "self_addresses": [ALICE]}
     r = c.post("/api/gateway/me/email/policy/check", headers=gateway["alice"], json={"addresses": ["a@example.org", "x@elsewhere.test"]})
     assert r.status_code == 200, r.text
     verdicts = {v["address"]: v["allowed"] for v in r.json()["recipients"]}

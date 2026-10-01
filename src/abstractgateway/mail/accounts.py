@@ -56,6 +56,7 @@ from .core_mail import (
     SecretVault,
     SmtpSettings,
     discover_servers,
+    normalize_address,
     provider_preset,
     require_servers,
     resolve_oauth_client,
@@ -785,6 +786,20 @@ def public_status(plane: EmailPlane) -> Dict[str, Any]:
     # "receive_only"); connects store both legs since 0.10.1.
     out["send_capable"] = bool(out.get("configured")) and isinstance(out.get("smtp"), dict)
     out["registered_address"] = str(out.get("registered_address") or "") or self_address(plane)
+    # The own addresses the recipient rules always allow (shown as a fixed chip, never removable):
+    # the store's (registered + mailbox) plus the users-registry "self" for runs.
+    pol = out.get("policy")
+    if isinstance(pol, dict):
+        selves = [str(a) for a in (pol.get("self_addresses") or [])]
+        me = self_address(plane)
+        if me:
+            try:
+                me = normalize_address(me)
+            except ValueError:
+                me = ""
+        if me and me not in selves:
+            selves.append(me)
+        pol["self_addresses"] = selves
     out["oauth_providers"] = oauth_providers_for_users()
     from .notifications import read_preferences
 

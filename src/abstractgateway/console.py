@@ -868,18 +868,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      border: 1px solid color-mix(in srgb, var(--error) 55%, transparent); border-radius: var(--radius-md);
 	      background: color-mix(in srgb, var(--error) 14%, transparent); color: var(--text); font-weight: 700;
 	    }
-	    .entity-state-btn { background: transparent; border: 1px solid var(--ui-border-1); color: var(--muted); }
-	    .entity-state-btn.pressed {
-	      color: var(--text);
-	      background: color-mix(in srgb, var(--success) 22%, var(--panel-2));
-	      border-color: color-mix(in srgb, var(--success) 55%, transparent);
-	      font-weight: 700;
-	    }
-	    .entity-state-btn.pressed:disabled { opacity: 1; cursor: default; }
-	    .owntime-btn { display: inline-flex; align-items: center; gap: 8px; border-radius: var(--radius-lg); padding: 10px 16px; font-size: var(--font-size-md); font-weight: 600; border: 2px solid var(--line); background: rgba(255, 255, 255, .03); color: var(--muted); margin: 6px 0; }
-	    .owntime-btn.on-ticking { color: var(--ok); border-color: rgba(52, 211, 153, .7); background: rgba(52, 211, 153, .14); }
-	    .owntime-btn.on-parked { color: var(--cyan); border-color: color-mix(in srgb, var(--info) 60%, transparent); background: color-mix(in srgb, var(--info) 10%, transparent); }
-	    .owntime-btn.stopping { color: var(--warn); border-color: rgba(245, 158, 11, .6); background: color-mix(in srgb, var(--warning) 10%, transparent); }
 	    .entity-warn-pill { font-size: var(--font-size-xs); color: var(--warn); border-color: color-mix(in srgb, var(--warning) 40%, transparent); background: color-mix(in srgb, var(--warning) 7%, transparent); margin-left: 6px; }
 	    /* Drive bars (cognition-health directive): RATIO with both counts
 	       visible — never a bare percentage; all-resolved/all-explored gets
@@ -2048,8 +2036,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .advanced-sentences { gap: 10px; }
 	    .advanced-sentence { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: var(--font-size-base); color: var(--text); }
 	    .advanced-sentence select { width: auto; }
-	    .advanced-sentence input.advanced-num { width: 5.5em; text-align: right; }
-	    .advanced-sentence input.advanced-folder { width: 12em; max-width: 100%; }
+	    /* #my-email-section: outranks the kit's `.af-form input { width: 100% }` so the limits read as one
+	       sentence with two small number fields (wrapping on phones) and the folder label is a sentence label. */
+	    #my-email-section .advanced-sentence input.advanced-num { width: 6em; flex: 0 0 auto; text-align: right; }
+	    #my-email-section .advanced-sentence input.advanced-folder { width: 14em; max-width: 100%; flex: 0 1 auto; }
+	    #my-email-section .advanced-sentence label { display: inline; margin: 0; text-transform: none; letter-spacing: normal; font-size: inherit; font-weight: inherit; color: inherit; }
+	    .chip.chip--fixed { padding-right: 10px; }
 	    .advanced-sentences .af-form__help { margin: -4px 0 4px; }
 	    .advanced-add { max-width: 520px; }
 	    .recipient-rules { display: grid; gap: 12px; }
@@ -2159,6 +2151,88 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .account-modal-body .account-page__head { display: none; }
 	    .account-modal-lead { margin: 0 0 14px; padding: 10px 12px; border-left: 3px solid var(--info, var(--accent)); background: color-mix(in srgb, var(--info, var(--accent)) 8%, transparent); border-radius: var(--radius-sm); font-size: var(--font-size-base); line-height: 1.45; }
 	    .account-other-mailbox { margin-top: 12px; }
+	    /* Entity Manage modal (round 3 §12): the kit's af-modal--wide shell; these rules only lay
+	       the content out on the console type scale (labels 14 px/500, helpers ≥ 13 px, ≥ 14 px on
+	       touch), kit cards and switches. Phones: the kit makes it a full-screen sheet; the cards go
+	       flat (no card in a card) and the page has one scroll. */
+	    .entity-manage--readonly .entity-admin-only { display: none !important; }
+	    .entity-manage-tabs { flex: 0 0 auto; padding: 0 20px; background: var(--bg-secondary); }
+	    .entity-manage-tabs .af-tabs__list { border-bottom: 0; }
+	    .entity-manage-tabs .af-tabs__tab { font-size: var(--font-size-base); font-weight: 500; }
+	    .entity-manage-body .entity-subpanel { display: flex; flex-direction: column; gap: 16px; padding: 0; min-width: 0; }
+	    .entity-manage-body .entity-subpanel.hidden { display: none; }
+	    .entity-manage .af-card__desc, .entity-manage .af-switch__desc, .entity-manage .af-switch__reason,
+	    .entity-manage .inline-state, .entity-manage .af-form__help { font-size: var(--af-helper-size, 13px); }
+	    .entity-manage .inline-state.error { font-size: var(--font-size-base); }
+	    .entity-manage .af-form__field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+	    .entity-manage .af-form__label { font-size: var(--font-size-base); font-weight: 500; color: var(--text); text-transform: none; letter-spacing: 0; margin: 0; }
+	    .entity-manage .af-form__field input:not([type="checkbox"]), .entity-manage .af-form__field select, .entity-manage .af-form__field textarea { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; font-size: var(--font-size-base); font-family: inherit; }
+	    .entity-manage .af-form__inline { align-items: flex-end; }
+	    .entity-manage .af-form__inline > textarea { flex: 1 1 auto; }
+	    .entity-line { margin: 0; color: var(--text-secondary, var(--text)); font-size: var(--font-size-base); line-height: 1.45; overflow-wrap: anywhere; }
+	    .entity-line:empty { display: none; }
+	    .entity-line-muted { color: var(--muted); font-size: var(--af-helper-size, 13px); }
+	    .entity-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; min-width: 0; }
+	    .entity-actions > .inline-state { flex: 1 1 200px; }
+	    .entity-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 12px 16px; min-width: 0; }
+	    .entity-manage .af-card__header { flex-direction: column; align-items: flex-start; }
+	    .entity-manage .inline-state:empty { display: none; }
+	    .entity-manage .af-form__field input:not([type="checkbox"]), .entity-manage .af-form__field select { min-height: 38px; }
+	    .entity-manage .entity-matrix-table { width: 100%; }
+	    .entity-manage .entity-matrix-table th { text-transform: none; letter-spacing: 0; }
+	    .entity-manage .entity-matrix-table tbody th { font-family: var(--font-mono, ui-monospace, monospace); font-weight: 400; }
+	    @media (min-width: 768px) { .entity-manage { height: min(880px, 90vh); height: min(880px, 90dvh); } }
+	    .entity-confirm { margin: 0; }
+	    .entity-check { display: inline-flex; align-items: center; gap: 6px; font-size: var(--font-size-base); font-weight: 500; text-transform: none; letter-spacing: 0; margin: 0; color: var(--text); }
+	    .entity-check input { width: auto; margin: 0; }
+	    .entity-card--danger { border-color: color-mix(in srgb, var(--danger) 35%, var(--ui-border-1)); }
+	    .entity-disclosure { display: block; border: 1px solid var(--ui-border-1); border-radius: var(--radius-md); padding: 0 16px; }
+	    .entity-disclosure[open] { padding-bottom: 16px; }
+	    .entity-disclosure > :not(summary) + * { margin-top: 12px; }
+	    .entity-disclosure > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-size: var(--font-size-base); font-weight: 500; color: var(--text); }
+	    .entity-card .entity-disclosure { border: 0; padding: 0; border-top: 1px solid var(--line-soft); }
+	    .entity-disclosure--danger > summary { color: color-mix(in srgb, var(--danger) 72%, var(--text)); }
+	    .entity-pre { margin: 0; white-space: pre-wrap; font-size: var(--font-size-md); color: var(--muted); max-height: 320px; overflow: auto; }
+	    .entity-manage .entity-overview { display: grid; gap: 6px; margin: 0; }
+	    .entity-manage .entity-kv { font-size: var(--font-size-base); }
+	    .entity-manage .entity-kv-key { min-width: 160px; }
+	    .entity-manage .entity-kv-head { color: var(--text); font-weight: 600; padding-top: 8px; }
+	    .entity-manage .entity-kv-val { word-break: normal; overflow-wrap: anywhere; }
+	    .entity-manage .entity-live-line { margin: 0; font-size: var(--font-size-base); }
+	    .entity-manage .entity-drives { margin: 0; }
+	    .entity-manage .drive-row { font-size: var(--font-size-md); }
+	    .entity-candidates { display: flex; flex-direction: column; gap: 12px; }
+	    .entity-candidate { display: flex; flex-direction: column; gap: 6px; padding-top: 12px; border-top: 1px solid var(--line-soft); }
+	    .entity-candidate__title { margin: 0; font-weight: 500; font-size: var(--font-size-base); }
+	    .entity-candidate-form { max-width: none; gap: 12px; }
+	    .entity-manage .entity-stop-banner { margin: 0; }
+	    .entity-manage .entity-matrix { margin: 0; }
+	    .entity-manage .entity-matrix-table th, .entity-manage .entity-matrix-table td { font-size: var(--font-size-md); }
+	    .entity-manage .entity-matrix-table input[type="checkbox"] { width: 18px; height: 18px; margin: 0; }
+	    .entity-manage .entity-chat-transcript { margin: 0; }
+	    .entity-manage .entity-prompt-layers { margin: 0; gap: 14px; }
+	    .entity-manage .entity-prompt-layer textarea { font-size: var(--font-size-md); }
+	    .entity-voice-out { display: flex; flex-direction: column; gap: 8px; font-size: var(--af-helper-size, 13px); color: var(--text-secondary, var(--text)); }
+	    .entity-voice-out:empty { display: none; }
+	    @media (pointer: coarse) {
+	      .entity-manage .entity-matrix-table td { padding: 0; }
+	      .entity-manage .entity-matrix-table input[type="checkbox"] { width: 24px; height: 24px; margin: 10px; }
+	      .entity-manage-tabs .af-tabs__tab, .entity-manage button:not(.af-switch):not(.af-modal__close) { min-height: 44px; }
+	      .entity-manage .af-form__field input:not([type="checkbox"]), .entity-manage .af-form__field select { min-height: 44px; font-size: 16px; }
+	      .entity-manage .af-form__field textarea { font-size: 16px; }
+	    }
+	    @media (max-width: 767.98px) {
+	      .entity-manage-tabs { position: sticky; top: calc(54px + var(--safe-top, 0px)); z-index: 1; padding: 0 8px; border-bottom: 1px solid var(--ui-border-1); }
+	      .entity-manage-body .entity-subpanel { gap: 0; }
+	      .entity-manage-tabs .af-tabs__list { flex-wrap: wrap; overflow-x: visible; }
+	      .entity-manage .entity-card { box-shadow: none; border: 0; border-radius: 0; background: transparent; padding: 16px 0; border-top: 1px solid var(--line-soft); }
+	      .entity-manage .entity-subpanel > .entity-card:first-child, .entity-manage .entity-subpanel > .entity-stop-banner + .entity-card { border-top: 0; padding-top: 4px; }
+	      .entity-manage .entity-disclosure { box-shadow: none; background: transparent; border-radius: 0; }
+	      .entity-manage .entity-disclosure:not(.entity-card .entity-disclosure) { border: 0; border-top: 1px solid var(--line-soft); padding: 0; }
+	      .entity-manage .entity-kv { flex-direction: column; gap: 0; }
+	      .entity-manage .entity-kv-key { min-width: 0; }
+	      .entity-manage .entity-chat-transcript { max-height: none; }
+	    }
 	    .account-logs-filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
 	    .account-logs-chip { min-height: 30px; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--text); font-size: var(--font-size-md); font-weight: 500; }
 	    .account-logs-chip[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 16%, transparent); border-color: color-mix(in srgb, var(--accent) 60%, transparent); font-weight: 600; }
@@ -3067,7 +3141,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                     <p id="my-email-policy-help" class="af-form__help">Denied always wins. Your own address is always allowed. A domain also covers its subdomains. To, Cc and Bcc are all checked: a message with any refused recipient is not sent.</p>
                   </div>
                   <div class="advanced-sentence">
-                    <span>At most</span>
+                    <span>Send at most</span>
                     <input id="my-email-per-hour" class="advanced-num" type="number" min="0" inputmode="numeric" aria-label="Most emails per hour">
                     <span>per hour and</span>
                     <input id="my-email-per-day" class="advanced-num" type="number" min="0" inputmode="numeric" aria-label="Most emails per day">
@@ -3101,174 +3175,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <tbody id="entities-table"></tbody>
 	              </table>
 	              <div id="entities-message" class="message"></div>
-	            </section>
-	            <section id="entity-manage-section" class="session-only hidden">
-	              <div class="section-head">
-	                <div>
-	                  <h2 class="section-title"><span class="section-icon icon-gear" aria-hidden="true">⚙</span><span>Manage <span id="entity-manage-name">entity</span></span></h2>
-	                  <p class="section-note" id="entity-manage-sub">Lifecycle, substrate, capabilities, and prompt for this summoned entity.</p>
-	                </div>
-                <button id="entity-manage-close" class="secondary" title="Back to the entities list"><span class="button-icon" aria-hidden="true">←</span><span>Entities</span></button>
-              </div>
-              <p id="entity-admin-note" class="section-note hidden">You are viewing as a non-admin. Configuration (state, substrate, capabilities, prompt, re-embed) requires an admin session — those controls are hidden.</p>
-	              <nav class="entity-subtabs">
-	                <button id="entity-subtab-overview" class="entity-subtab active" type="button">Overview</button>
-	                <button id="entity-subtab-talk" class="entity-subtab" type="button">Talk</button>
-	                <button id="entity-subtab-lifecycle" class="entity-subtab" type="button">Lifecycle</button>
-	                <button id="entity-subtab-substrate" class="entity-subtab" type="button">Substrate</button>
-	                <button id="entity-subtab-tools" class="entity-subtab" type="button">Capabilities</button>
-	                <button id="entity-subtab-prompt" class="entity-subtab" type="button">Prompt</button>
-	              </nav>
-	              <div id="entity-subpanel-overview" class="entity-subpanel">
-	                <div id="entity-cognition-line" class="section-note"></div>
-	                <div id="entity-drives" class="entity-drives hidden" title="Drive ratios from the entity's own memory: open questions and interests are the pull forward — never-100% is the design, not a defect."></div>
-	                <details id="entity-candidates-box" class="entity-advanced hidden"><summary>Sleep candidates awaiting review (<span id="entity-candidates-count">0</span>)</summary>
-	                  <div class="section-note">Sleep proposes; waking evidence disposes. Promote needs two independent corroborating records; reject needs a reason (the honest no — judgment, not erasure).</div>
-	                  <div id="entity-candidates-list"></div>
-	                </details>
-	                <div id="entity-overview" class="entity-overview"></div>
-	                <button id="entity-verify" class="secondary" title="Verify the memory hash chain and spark attestation — pure read, never deposits usage"><span class="button-icon" aria-hidden="true">✓</span><span>Verify chain</span></button>
-	                <div id="entity-verify-out" class="section-note"></div>
-	              </div>
-	              <div id="entity-subpanel-talk" class="entity-subpanel hidden">
-	                <h3 class="entity-config-title">Visit <span class="entity-config-hint">a hosted chat session with this entity (the same driver the CLI runs). Opening ENDS the personal phase (mutually exclusive); closing runs the reflection pass and the standing grant re-enters personal.</span></h3>
-	                <div class="entity-btn-row">
-	                  <button id="entity-chat-open" class="secondary" title="Open a hosted visit: prelude + memory recall run, and the conversation forms memories (billable)"><span class="button-icon" aria-hidden="true">☾</span><span>Open visit</span></button>
-	                  <button id="entity-chat-close" class="secondary hidden" title="Close the visit gracefully — the entity's reflection pass runs"><span class="button-icon" aria-hidden="true">×</span><span>Close visit (reflect)</span></button>
-	                </div>
-	                <div id="entity-chat-status" class="section-note"></div>
-	                <div id="entity-chat-transcript" class="entity-chat-transcript"></div>
-	                <div class="inline entity-chat-composer">
-	                  <label>Message<textarea id="entity-chat-input" rows="2" placeholder="say something…"></textarea></label>
-	                  <button id="entity-chat-send" class="secondary" disabled title="Send (Enter)"><span class="button-icon" aria-hidden="true">➤</span><span>Send</span></button>
-	                </div>
-	              </div>
-	              <div id="entity-subpanel-lifecycle" class="entity-subpanel hidden">
-	                <!-- LIVENESS AXIS: the STOPPED banner outranks every chip;
-	                     Stop is a distinct emergency affordance, never a radio position.
-	                     GROUPING: each hazard domain is its
-	                     own bordered card — five domains flowing as one flat column
-	                     did not read. -->
-	                <div id="entity-stop-banner" class="entity-stop-banner hidden">
-	                  <span id="entity-stop-banner-text">STOPPED — the kill switch is engaged: every door refuses and every process gate blocks.</span>
-	                  <button id="entity-restore" class="secondary" title="Release the kill switch — the existing wake verb; lands awake unconditionally">Restore</button>
-	                </div>
-	                <div id="entity-live-line" class="entity-live-line"></div>
-	                <div class="entity-config-group">
-	                  <h3 class="entity-config-title">State <span class="entity-config-hint">awake serves visits/work; asleep is the consolidation window (memory processes run — the entity stays alive and reachable; visits auto-wake).</span></h3>
-	                  <div id="entity-state-current" class="section-note"></div>
-	                  <div class="entity-btn-row" role="radiogroup" aria-label="entity state">
-	                    <button id="entity-state-awake" class="secondary entity-state-btn" role="radio" aria-checked="false" title="Awake: serves visits and work">Wake</button>
-	                    <button id="entity-state-asleep" class="secondary entity-state-btn" role="radio" aria-checked="false" title="Sleep: consolidation window — memory processes run; still alive and reachable (visits auto-wake)">Sleep</button>
-	                    <label class="entity-checkbox" title="With Sleep: run the dream pass inside the consolidation window"><input id="entity-state-dream" type="checkbox"> dream pass (with sleep)</label>
-	                  </div>
-	                  <label>Reason<input id="entity-state-reason" placeholder="optional — carried into the wake cue + host marker"></label>
-	                  <div id="entity-state-out" class="section-note"></div>
-	                </div>
-	                <div class="entity-config-group entity-config-group-danger">
-	                  <h3 class="entity-config-title">Stop <span class="entity-config-hint">the liveness axis — a kill switch above the state machine, not a state. In-flight work halts without reflection; every door refuses until Restore.</span></h3>
-	                  <div class="entity-btn-row">
-	                    <button id="entity-stop" class="danger" title="STOP — the kill switch: in-flight work halts without reflection; every door refuses until Restore. For graceful rest, use Sleep.">Stop (kill switch)</button>
-	                  </div>
-	                </div>
-	                <div class="entity-config-group">
-	                  <h3 class="entity-config-title">Personal time <span class="entity-config-hint">the entity's own time — free exploration on its own tick. Starting arms the standing grant AND starts the loop; stopping revokes both. Spends real tokens unattended.</span></h3>
-	                  <div class="entity-btn-row">
-	                    <button id="entity-owntime-toggle" class="owntime-btn" aria-pressed="false" title="Personal time: arm the standing grant and start the autonomous loop; press again to stop and revoke. Spends real tokens while running.">PERSONAL — checking…</button>
-	                    <button id="entity-loop-freeze" class="danger" title="Emergency: kill the personal-time loop process NOW and stop the entity — for hard failures and imminent threats only">Freeze (emergency)</button>
-	                  </div>
-	                  <div id="entity-loop-status" class="section-note"></div>
-	                  <details class="entity-advanced">
-	                    <summary>Schedule (defaults: tick 20s · 8 ticks/day · rest 30min · grant until revoked)</summary>
-	                    <div class="inline">
-	                      <label>Grant duration hours<input id="entity-grant-hours" type="number" min="0" max="720" placeholder="blank = until revoked" title="How long the standing personal grant stays armed"></label>
-	                      <label>Tick seconds<input id="entity-loop-tick" type="number" min="1" max="3600" placeholder="20" title="Seconds between autonomous ticks"></label>
-	                      <label>Ticks / day window<input id="entity-loop-ticks" type="number" min="1" max="500" placeholder="8" title="Ticks per day window before the rest period"></label>
-	                      <label>Rest minutes<input id="entity-loop-rest" type="number" min="0" max="1440" placeholder="30" title="Rest between day windows"></label>
-	                    </div>
-	                  </details>
-	                  <div id="entity-loop-out" class="section-note"></div>
-	                </div>
-	              </div>
-	              <div id="entity-subpanel-substrate" class="entity-subpanel hidden">
-	                <h3 class="entity-config-title">Substrate <span class="entity-config-hint">the entity's mind — provider + model. Blank source = inherits the gateway default.</span></h3>
-	                <div id="entity-substrate-current" class="section-note"></div>
-	                <div class="inline">
-	                  <label>Provider<input id="entity-substrate-provider" placeholder="abstractcore provider"></label>
-	                  <label>Model<input id="entity-substrate-model" placeholder="model id"></label>
-	                  <label title="Reasoning effort for reasoning models. None disables; leave on 'not set' to send nothing.">Reasoning<select id="entity-substrate-thinking">
-	                    <option value="">not set</option>
-	                    <option value="none">none</option>
-	                    <option value="minimal">minimal</option>
-	                    <option value="low">low</option>
-	                    <option value="medium">medium</option>
-	                    <option value="high">high</option>
-	                    <option value="xhigh">xhigh</option>
-	                  </select></label>
-	                </div>
-	                <button id="entity-substrate-save" class="secondary" title="Persist this provider/model choice (and optional reasoning effort) as the entity's mind substrate (host-marked)"><span class="button-icon" aria-hidden="true">✓</span><span>Save substrate</span></button>
-	                <div id="entity-substrate-out" class="section-note"></div>
-	                <!-- Card 015 wave 3 (disclosure P0-3, second half): the re-embed
-	                     repair belongs beside the MIND it repairs (embedding = the
-	                     semantic space), behind a danger-zone disclosure — not in
-	                     Lifecycle where it read as a routine state verb. Element ids
-	                     unchanged (the JS wiring is id-based). -->
-	                <details class="entity-advanced entity-config-group-danger">
-	                  <summary class="entity-danger-title">Danger zone — Re-embed (CRITICAL repair)</summary>
-	                  <div class="entity-config-block">
-	                    <h3 class="entity-config-title entity-danger-title">Re-embed (repair) <span class="entity-config-hint">CRITICAL repair verb: re-derives every vector with the gateway's resolved embedder (atomic swap). The model field is a verification — type the resolved embedder shown below.</span></h3>
-	                    <div id="entity-embedding-status" class="section-note"></div>
-	                    <div class="inline">
-	                      <label>Embedding model (verification)<input id="entity-reembed-model" placeholder="must match the resolved embedder"></label>
-	                      <label>Reason<input id="entity-reembed-reason" placeholder="why — journaled + host-marked"></label>
-	                    </div>
-	                    <button id="entity-reembed" class="danger" title="CRITICAL repair: re-derive every memory vector with the gateway's resolved embedder (atomic swap; journaled + host-marked)"><span class="button-icon icon-retry" aria-hidden="true">⟳</span><span>Re-embed</span></button>
-	                    <div id="entity-reembed-out" class="section-note"></div>
-	                  </div>
-	                </details>
-	                <div class="entity-config-group">
-	                  <h3 class="entity-config-title">Voice <span class="entity-config-hint">the entity's spoken voice — a full provider/model/voice triple stored in the home (voice.yaml, marker-first). Unset = the gateway's default voice chain.</span></h3>
-	                  <div id="entity-voice-current" class="section-note"></div>
-	                  <div class="inline">
-	                    <label>Provider<select id="entity-voice-provider"><option value="">Choose a provider…</option></select></label>
-	                    <label>Model<select id="entity-voice-model" disabled><option value="">Select provider first</option></select></label>
-	                    <label>Voice<select id="entity-voice-voice" disabled><option value="">Select model first</option></select></label>
-	                  </div>
-	                  <div class="entity-btn-row">
-	                    <button id="entity-voice-audition" class="secondary" title="Hear the CURRENT SELECTION before saving — synthesizes a sample through the entity's own TTS lane"><span class="button-icon" aria-hidden="true">▶</span><span>Audition</span></button>
-	                    <button id="entity-voice-save" class="secondary" title="Persist this voice triple as the entity's own voice (host-marked voice_changed)"><span class="button-icon" aria-hidden="true">✓</span><span>Save voice</span></button>
-	                    <button id="entity-voice-clear" class="secondary" title="Remove the entity's own voice — falls back down the gateway default chain (host-marked)"><span class="button-icon" aria-hidden="true">×</span><span>Clear</span></button>
-	                  </div>
-	                  <div id="entity-voice-out" class="section-note"></div>
-	                </div>
-	              </div>
-	              <div id="entity-subpanel-tools" class="entity-subpanel hidden">
-	                <div class="entity-config-group">
-	                  <h3 class="entity-config-title">Work order <span class="entity-config-hint">a mission the entity works instead of its own time. Its PRESENCE shifts the next day-open to phase=work — the WORK column grants below apply (execute_command included where you grant it). The entity declares done/blocked; you never write for it, and clearing archives visibly.</span></h3>
-	                  <div id="entity-workorder-current" class="section-note"></div>
-	                  <label>Order<textarea id="entity-workorder-text" rows="4" placeholder="the task, in plain words — it rides the entity's system prompt all work day"></textarea></label>
-	                  <div class="entity-btn-row">
-	                    <button id="entity-workorder-save" class="secondary" title="Set this as the standing work order (marker-first; the loop enters phase=work at its next day-open)"><span class="button-icon" aria-hidden="true">✓</span><span>Set work order</span></button>
-	                    <button id="entity-workorder-clear" class="secondary" title="Archive + remove the standing order — personal time returns next day-open"><span class="button-icon" aria-hidden="true">×</span><span>Clear (personal returns)</span></button>
-	                  </div>
-	                  <div id="entity-workorder-out" class="section-note"></div>
-	                  <details class="entity-advanced"><summary>Completed orders (the entity's verdicts, never deleted)</summary><pre id="entity-workorder-history" class="entity-prompt-preview"></pre></details>
-	                </div>
-	                <h3 class="entity-config-title">Per-phase capabilities <span class="entity-config-hint">the operator's word per phase. Only changed phases are written; a phase cleared of every tool resets to the framework default (or denies all, below). The WORK column applies on a work-order day; execute_command lets the entity run commands then.</span></h3>
-	                <div id="entity-manage-matrix" class="entity-matrix"></div>
-	                <label id="entity-tools-denyall-row" class="entity-checkbox"><input id="entity-tools-denyall" type="checkbox"> treat fully-cleared phases as DENY-ALL (explicit empty grant) instead of reset-to-default</label>
-	                <div class="entity-btn-row">
-	                  <button id="entity-tools-save" class="secondary" title="Persist the per-phase tool grants (only changed phases are written)"><span class="button-icon" aria-hidden="true">✓</span><span>Save capabilities</span></button>
-	                </div>
-	                <div id="entity-tools-out" class="section-note"></div>
-	              </div>
-	              <div id="entity-subpanel-prompt" class="entity-subpanel hidden">
-	                <h3 class="entity-config-title">Prompt overlay <span class="entity-config-hint">editable layers on the system prompt. Blank = the built-in default for that layer. Identity is never editable here.</span></h3>
-	                <div id="entity-prompt-layers" class="entity-prompt-layers"></div>
-	                <button id="entity-prompt-save" class="secondary" title="Persist the operator prompt layer (defaults stay live underneath)"><span class="button-icon" aria-hidden="true">✓</span><span>Save prompt</span></button>
-	                <div id="entity-prompt-out" class="section-note"></div>
-	                <details class="entity-advanced"><summary>Preview: the composed system prompt (as the next visit would see it)</summary><pre id="entity-prompt-preview" class="entity-prompt-preview"></pre></details>
-	              </div>
 	            </section>
 	          </div>
 	        </div>
@@ -3628,6 +3534,225 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       </div>
       <div class="af-modal__footer">
         <p id="account-logs-note" class="af-modal__footer-note"></p>
+      </div>
+    </div>
+  </div>
+  <!-- Entity Manage (round 3 §12): the kit's af-modal (wide), bound through the islands'
+       bindModal like Email/Logs. Opening never navigates away: the Accounts table stays behind.
+       State on/off = kit switches labelled by the feature; one-shot acts stay buttons; settings
+       save themselves ("Saved"); Active, Email, Logs and Archive live on the Accounts row only. -->
+  <div id="entity-manage-backdrop" class="af-modal-backdrop" hidden>
+    <div id="entity-manage-section" class="af-modal af-modal--wide entity-manage" role="dialog" aria-modal="true" aria-labelledby="entity-manage-title">
+      <div class="af-modal__header">
+        <h2 id="entity-manage-title" class="af-modal__title">Manage — <span id="entity-manage-name">entity</span></h2>
+        <button id="entity-manage-close" class="af-modal__close" type="button" aria-label="Close">×</button>
+      </div>
+      <div class="af-tabs entity-manage-tabs">
+        <div class="af-tabs__list" role="tablist" aria-label="Manage sections">
+          <button id="entity-subtab-overview" class="af-tabs__tab" data-af-autofocus role="tab" type="button" aria-controls="entity-subpanel-overview" aria-selected="true">Overview</button>
+          <button id="entity-subtab-talk" class="af-tabs__tab" role="tab" type="button" aria-controls="entity-subpanel-talk" aria-selected="false" tabindex="-1">Talk</button>
+          <button id="entity-subtab-lifecycle" class="af-tabs__tab" role="tab" type="button" aria-controls="entity-subpanel-lifecycle" aria-selected="false" tabindex="-1">Lifecycle</button>
+          <button id="entity-subtab-substrate" class="af-tabs__tab" role="tab" type="button" aria-controls="entity-subpanel-substrate" aria-selected="false" tabindex="-1">Mind &amp; voice</button>
+          <button id="entity-subtab-tools" class="af-tabs__tab" role="tab" type="button" aria-controls="entity-subpanel-tools" aria-selected="false" tabindex="-1">Work &amp; tools</button>
+          <button id="entity-subtab-prompt" class="af-tabs__tab" role="tab" type="button" aria-controls="entity-subpanel-prompt" aria-selected="false" tabindex="-1">Prompt</button>
+        </div>
+      </div>
+      <div id="entity-manage-body" class="af-modal__body entity-manage-body">
+        <div id="entity-subpanel-overview" class="entity-subpanel" role="tabpanel" aria-labelledby="entity-subtab-overview">
+          <section class="af-card entity-card" aria-labelledby="entity-status-title">
+            <div class="af-card__header">
+              <h3 id="entity-status-title" class="af-card__title">Right now</h3>
+              <p class="af-card__desc">What it is doing, read live every few seconds.</p>
+            </div>
+            <div id="entity-live-line" class="entity-live-line"></div>
+            <p id="entity-cognition-line" class="entity-line"></p>
+            <div id="entity-drives" class="entity-drives hidden" title="Open questions and interests are its pull forward; a drive at 100% means nothing is left to pull it."></div>
+          </section>
+          <section class="af-card entity-card" aria-labelledby="entity-identity-title">
+            <div class="af-card__header"><h3 id="entity-identity-title" class="af-card__title">Identity</h3></div>
+            <div id="entity-overview" class="entity-overview"></div>
+            <div class="entity-actions">
+              <button id="entity-verify" class="secondary" type="button">Verify memory</button>
+              <p id="entity-verify-out" class="inline-state" role="status" aria-live="polite"></p>
+            </div>
+            <p class="af-form__help">Verify memory checks that its memory history and birth record were never altered. It only reads.</p>
+          </section>
+          <details id="entity-candidates-box" class="entity-disclosure hidden">
+            <summary>Memories from sleep waiting for your review (<span id="entity-candidates-count">0</span>)</summary>
+            <p class="af-form__help">Sleep proposes new long-term memories. Keep one with two independent records that back it up, or reject it with a reason.</p>
+            <div id="entity-candidates-list" class="entity-candidates"></div>
+          </details>
+        </div>
+        <div id="entity-subpanel-talk" class="entity-subpanel hidden" role="tabpanel" aria-labelledby="entity-subtab-talk">
+          <section class="af-card entity-card" aria-labelledby="entity-talk-title">
+            <div class="af-card__header">
+              <h3 id="entity-talk-title" class="af-card__title">Visit</h3>
+              <p class="af-card__desc">Talk with it in a hosted visit: the conversation becomes its memories, and closing the visit runs its reflection. A visit pauses its personal time until you close it.</p>
+            </div>
+            <div class="entity-actions">
+              <button id="entity-chat-open" class="secondary" type="button">Open visit</button>
+              <button id="entity-chat-close" class="secondary hidden" type="button">Close visit</button>
+              <p id="entity-chat-status" class="inline-state" role="status" aria-live="polite"></p>
+            </div>
+            <div id="entity-chat-transcript" class="entity-chat-transcript" aria-live="polite"></div>
+            <div class="af-form__field entity-chat-composer">
+              <label class="af-form__label" for="entity-chat-input">Message</label>
+              <div class="af-form__inline"><textarea id="entity-chat-input" rows="2" aria-describedby="entity-chat-input-help"></textarea><button id="entity-chat-send" class="secondary" type="button" disabled>Send</button></div>
+              <p id="entity-chat-input-help" class="af-form__help">Enter sends; Shift+Enter starts a new line. Open a visit first.</p>
+            </div>
+          </section>
+        </div>
+        <div id="entity-subpanel-lifecycle" class="entity-subpanel hidden" role="tabpanel" aria-labelledby="entity-subtab-lifecycle">
+          <div id="entity-stop-banner" class="entity-stop-banner hidden" role="status">
+            <span id="entity-stop-banner-text">Stopped: it does nothing and refuses visits. Turn Active on in its Accounts row to let it act again.</span>
+          </div>
+          <section class="af-card entity-card" aria-labelledby="entity-state-title">
+            <div class="af-card__header"><h3 id="entity-state-title" class="af-card__title">Awake or asleep</h3></div>
+            <div class="switch-list entity-admin-only">
+              <button type="button" role="switch" id="entity-state-awake" class="af-switch af-switch--row" aria-checked="false" aria-describedby="entity-state-awake-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Awake</span><span class="af-switch__desc" id="entity-state-awake-desc">On: it serves visits and work. Off: it sleeps, its memory consolidates, and the next visit wakes it.</span></span></button><span id="entity-state-awake-reason" class="af-switch__reason" hidden></span>
+            </div>
+            <div id="entity-sleep-confirm" class="inline-confirm entity-confirm" role="group" aria-label="Confirm sleep" hidden>
+              <span>Put it to sleep? An open visit closes and its reflection runs first.</span>
+              <label class="entity-check"><input id="entity-state-dream" type="checkbox"> Dream pass</label>
+              <button id="entity-sleep-now" class="secondary" type="button">Sleep</button>
+              <button id="entity-sleep-cancel" class="secondary" type="button">Cancel</button>
+            </div>
+            <p id="entity-state-current" class="entity-line"></p>
+            <div class="af-form__field entity-admin-only">
+              <label class="af-form__label" for="entity-state-reason">Reason</label>
+              <input id="entity-state-reason" type="text" autocomplete="off" aria-describedby="entity-state-reason-help">
+              <p id="entity-state-reason-help" class="af-form__help">Optional: recorded in its history with the next change you make on this tab, and given to it when it wakes.</p>
+            </div>
+            <p id="entity-state-out" class="inline-state" role="status" aria-live="polite"></p>
+          </section>
+          <section class="af-card entity-card" aria-label="Personal time">
+            <div class="switch-list entity-admin-only">
+              <button type="button" role="switch" id="entity-owntime-toggle" class="af-switch af-switch--row" aria-checked="false" aria-describedby="entity-owntime-toggle-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Personal time</span><span class="af-switch__desc" id="entity-owntime-toggle-desc">On: it explores on its own schedule and spends tokens without anyone watching. Off: it acts only when visited or given work.</span></span></button><span id="entity-owntime-toggle-reason" class="af-switch__reason" hidden></span>
+            </div>
+            <p id="entity-loop-status" class="entity-line"></p>
+            <details id="entity-schedule-box" class="entity-disclosure entity-admin-only">
+              <summary>Schedule</summary>
+              <p class="af-form__help">Used the next time Personal time is switched on. Blank fields keep the defaults.</p>
+              <div class="entity-grid">
+                <div class="af-form__field"><label class="af-form__label" for="entity-grant-hours">Hours allowed</label><input id="entity-grant-hours" type="number" min="0" max="720" inputmode="decimal" aria-describedby="entity-grant-hours-help"><p id="entity-grant-hours-help" class="af-form__help">How long personal time may last before it ends by itself; blank = until you switch it off.</p></div>
+                <div class="af-form__field"><label class="af-form__label" for="entity-loop-tick">Seconds between steps</label><input id="entity-loop-tick" type="number" min="1" max="3600" placeholder="20" inputmode="decimal" aria-describedby="entity-loop-tick-help"><p id="entity-loop-tick-help" class="af-form__help">The pause between two of its steps; default 20.</p></div>
+                <div class="af-form__field"><label class="af-form__label" for="entity-loop-ticks">Steps per day</label><input id="entity-loop-ticks" type="number" min="1" max="500" placeholder="8" inputmode="numeric" aria-describedby="entity-loop-ticks-help"><p id="entity-loop-ticks-help" class="af-form__help">How many steps it takes before it rests; default 8.</p></div>
+                <div class="af-form__field"><label class="af-form__label" for="entity-loop-rest">Rest minutes</label><input id="entity-loop-rest" type="number" min="0" max="1440" placeholder="30" inputmode="decimal" aria-describedby="entity-loop-rest-help"><p id="entity-loop-rest-help" class="af-form__help">How long it rests between two days of steps; default 30.</p></div>
+              </div>
+            </details>
+            <p id="entity-loop-out" class="inline-state" role="status" aria-live="polite"></p>
+          </section>
+          <section class="af-card entity-card entity-card--danger entity-admin-only" aria-labelledby="entity-freeze-title">
+            <div class="af-card__header">
+              <h3 id="entity-freeze-title" class="af-card__title">Emergency freeze</h3>
+              <p class="af-card__desc">Kills its personal-time process now and stops it: work in progress ends without reflection. For hard failures only; turn Active on in its Accounts row to bring it back.</p>
+            </div>
+            <div class="entity-actions"><button id="entity-loop-freeze" class="danger" type="button">Freeze now</button></div>
+            <div id="entity-freeze-confirm" class="inline-confirm entity-confirm" role="group" aria-label="Confirm freeze" hidden>
+              <span>Freeze it now? Its process is killed, an open visit closes without reflection, and it refuses everything until Active is turned back on.</span>
+              <button id="entity-freeze-now" class="danger" type="button">Freeze</button>
+              <button id="entity-freeze-cancel" class="secondary" type="button">Cancel</button>
+            </div>
+          </section>
+        </div>
+        <div id="entity-subpanel-substrate" class="entity-subpanel hidden" role="tabpanel" aria-labelledby="entity-subtab-substrate">
+          <section class="af-card entity-card" aria-labelledby="entity-mind-title">
+            <div class="af-card__header">
+              <h3 id="entity-mind-title" class="af-card__title">Mind</h3>
+              <p class="af-card__desc">The model it thinks with. Changes save by themselves.</p>
+            </div>
+            <p id="entity-substrate-current" class="entity-line"></p>
+            <div class="entity-grid entity-admin-only">
+              <div class="af-form__field"><label class="af-form__label" for="entity-substrate-provider">Provider</label><input id="entity-substrate-provider" type="text" autocomplete="off" spellcheck="false" aria-describedby="entity-substrate-provider-help"><p id="entity-substrate-provider-help" class="af-form__help">The provider that runs its model, for example lmstudio or openai.</p></div>
+              <div class="af-form__field"><label class="af-form__label" for="entity-substrate-model">Model</label><input id="entity-substrate-model" type="text" autocomplete="off" spellcheck="false" aria-describedby="entity-substrate-model-help"><p id="entity-substrate-model-help" class="af-form__help">The model id at that provider.</p></div>
+              <div class="af-form__field"><label class="af-form__label" for="entity-substrate-thinking">Reasoning</label><select id="entity-substrate-thinking" aria-describedby="entity-substrate-thinking-help">
+                <option value="">Not set</option>
+                <option value="none">none</option>
+                <option value="minimal">minimal</option>
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+                <option value="xhigh">xhigh</option>
+              </select><p id="entity-substrate-thinking-help" class="af-form__help">How hard a reasoning model thinks; Not set sends nothing.</p></div>
+            </div>
+            <p id="entity-substrate-out" class="inline-state" role="status" aria-live="polite"></p>
+          </section>
+          <section class="af-card entity-card" aria-labelledby="entity-voice-title">
+            <div class="af-card__header">
+              <h3 id="entity-voice-title" class="af-card__title">Voice</h3>
+              <p class="af-card__desc">How it sounds when it speaks. Choosing a voice saves it; without one it uses the gateway's default voice.</p>
+            </div>
+            <p id="entity-voice-current" class="entity-line"></p>
+            <div class="entity-grid">
+              <div class="af-form__field"><label class="af-form__label" for="entity-voice-provider">Provider</label><select id="entity-voice-provider" aria-describedby="entity-voice-provider-help"><option value="">Choose a provider…</option></select><p id="entity-voice-provider-help" class="af-form__help">The speech engine.</p></div>
+              <div class="af-form__field"><label class="af-form__label" for="entity-voice-model">Model</label><select id="entity-voice-model" disabled aria-describedby="entity-voice-model-help"><option value="">Select provider first</option></select><p id="entity-voice-model-help" class="af-form__help">The speech model of that engine.</p></div>
+              <div class="af-form__field"><label class="af-form__label" for="entity-voice-voice">Voice</label><select id="entity-voice-voice" disabled aria-describedby="entity-voice-voice-help"><option value="">Select model first</option></select><p id="entity-voice-voice-help" class="af-form__help">The voice it speaks with.</p></div>
+            </div>
+            <div class="entity-actions">
+              <button id="entity-voice-audition" class="secondary" type="button">Hear a sample</button>
+              <button id="entity-voice-clear" class="secondary entity-admin-only hidden" type="button">Use the gateway default</button>
+            </div>
+            <div id="entity-voice-out" class="entity-voice-out" role="status" aria-live="polite"></div>
+          </section>
+          <details id="entity-reembed-box" class="entity-disclosure entity-disclosure--danger entity-admin-only">
+            <summary>Danger zone: rebuild its memory index</summary>
+            <p class="af-form__help">Only when the status below says MISMATCH: re-computes every memory's search vector with the gateway's embedding model. Type that model's name to confirm you mean it.</p>
+            <p id="entity-embedding-status" class="entity-line"></p>
+            <div class="entity-grid">
+              <div class="af-form__field"><label class="af-form__label" for="entity-reembed-model">Embedding model</label><input id="entity-reembed-model" type="text" autocomplete="off" spellcheck="false" aria-describedby="entity-reembed-model-help"><p id="entity-reembed-model-help" class="af-form__help">Type the gateway's embedding model shown above; it must match.</p></div>
+              <div class="af-form__field"><label class="af-form__label" for="entity-reembed-reason">Reason</label><input id="entity-reembed-reason" type="text" autocomplete="off" aria-describedby="entity-reembed-reason-help"><p id="entity-reembed-reason-help" class="af-form__help">Why you rebuild it; recorded in its history.</p></div>
+            </div>
+            <div class="entity-actions"><button id="entity-reembed" class="danger" type="button">Rebuild index</button></div>
+            <div id="entity-reembed-confirm" class="inline-confirm entity-confirm" role="group" aria-label="Confirm rebuild" hidden>
+              <span>Rebuild every memory vector now? The swap is atomic and recorded in its history.</span>
+              <button id="entity-reembed-now" class="danger" type="button">Rebuild</button>
+              <button id="entity-reembed-cancel" class="secondary" type="button">Cancel</button>
+            </div>
+            <p id="entity-reembed-out" class="inline-state" role="status" aria-live="polite"></p>
+          </details>
+        </div>
+        <div id="entity-subpanel-tools" class="entity-subpanel hidden" role="tabpanel" aria-labelledby="entity-subtab-tools">
+          <section class="af-card entity-card" aria-labelledby="entity-workorder-title">
+            <div class="af-card__header">
+              <h3 id="entity-workorder-title" class="af-card__title">Work order</h3>
+              <p class="af-card__desc">A task it works on instead of its personal time, from its next day on, with the Work tools below. It says itself when the task is done or blocked.</p>
+            </div>
+            <p id="entity-workorder-current" class="entity-line"></p>
+            <div class="af-form__field">
+              <label class="af-form__label" for="entity-workorder-text">Task</label>
+              <textarea id="entity-workorder-text" rows="4" aria-describedby="entity-workorder-text-help"></textarea>
+              <p id="entity-workorder-text-help" class="af-form__help">The task in plain words; it is part of its instructions every work day.</p>
+            </div>
+            <div class="entity-actions entity-admin-only">
+              <button id="entity-workorder-save" class="secondary" type="button">Give this task</button>
+              <button id="entity-workorder-clear" class="secondary hidden" type="button">End the work order</button>
+              <p id="entity-workorder-out" class="inline-state" role="status" aria-live="polite"></p>
+            </div>
+            <details id="entity-workorder-history-box" class="entity-disclosure"><summary>Finished tasks</summary><pre id="entity-workorder-history" class="entity-pre"></pre></details>
+          </section>
+          <section class="af-card entity-card" aria-labelledby="entity-tools-title">
+            <div class="af-card__header">
+              <h3 id="entity-tools-title" class="af-card__title">Tools per phase</h3>
+              <p class="af-card__desc">Which tools it may use in each phase of its day. Each box saves when you tick it.</p>
+            </div>
+            <div id="entity-manage-matrix" class="entity-matrix"></div>
+            <div id="entity-tools-denyall-row" class="switch-list entity-admin-only">
+              <button type="button" role="switch" id="entity-tools-denyall" class="af-switch af-switch--row" aria-checked="false" aria-describedby="entity-tools-denyall-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Empty phase means no tools</span><span class="af-switch__desc" id="entity-tools-denyall-desc">On: a phase with every box cleared has no tools at all. Off: it goes back to the default tools.</span></span></button><span id="entity-tools-denyall-reason" class="af-switch__reason" hidden></span>
+            </div>
+            <p id="entity-tools-out" class="inline-state" role="status" aria-live="polite"></p>
+          </section>
+        </div>
+        <div id="entity-subpanel-prompt" class="entity-subpanel hidden" role="tabpanel" aria-labelledby="entity-subtab-prompt">
+          <section class="af-card entity-card" aria-labelledby="entity-prompt-title">
+            <div class="af-card__header">
+              <h3 id="entity-prompt-title" class="af-card__title">Instructions</h3>
+              <p class="af-card__desc">Layers you may rewrite in its system prompt; an empty layer uses the built-in text. Its identity is never editable. Each layer saves when you leave it.</p>
+            </div>
+            <div id="entity-prompt-layers" class="entity-prompt-layers"></div>
+            <p id="entity-prompt-out" class="inline-state" role="status" aria-live="polite"></p>
+            <details id="entity-prompt-preview-box" class="entity-disclosure"><summary>The full prompt its next visit will see</summary><pre id="entity-prompt-preview" class="entity-pre"></pre></details>
+          </section>
+        </div>
       </div>
     </div>
   </div>
@@ -4992,6 +5117,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          box.dataset.phase = pid;
 	          box.dataset.tool = tool.id;
 	          box.checked = Boolean(grantByPhase[pid] && grantByPhase[pid].has(tool.id));
+	          box.setAttribute("aria-label", `${tool.label || tool.id} in ${phaseLabels[pid] || pid}`);
 	          td.append(box);
 	          tr.append(td);
 	        }
@@ -5528,24 +5654,20 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // ---- Manage an existing entity ----
 	    const ENTITY_SUBTABS = ["overview", "talk", "lifecycle", "substrate", "tools", "prompt"];
 	    // Entity CONFIG is admin-gated at the server (substrate/tool-policy/prompt/
-	    // state/loop/reembed). Reflect that in the UI so a non-admin sees why a
-	    // button would 403 instead of clicking into a refusal. Create + all GETs
-	    // stay user-level, so viewing an entity's config is allowed for everyone.
-	    const ENTITY_ADMIN_CONTROLS = [
-	      "entity-advanced", "entity-state-awake", "entity-state-asleep", "entity-stop", "entity-restore",
-	      "entity-owntime-toggle", "entity-loop-freeze", "entity-substrate-save",
-	      "entity-voice-save", "entity-voice-clear",
-	      "entity-workorder-save", "entity-workorder-clear",
-	      "entity-tools-save", "entity-tools-denyall-row", "entity-prompt-save", "entity-reembed",
-	    ];
+	    // state/loop/reembed). A non-admin sees the current values as text; the
+	    // controls that would only answer 403 are not rendered (round 3: no greyed
+	    // controls, no apology sentence). Create + all GETs stay user-level.
+	    const ENTITY_ADMIN_CONTROLS = ["entity-advanced"];
 	    function applyEntityAdminGating() {
 	      const admin = Boolean(state.principal && state.principal.admin);
 	      for (const id of ENTITY_ADMIN_CONTROLS) {
 	        const el = $(id);
 	        if (el) el.classList.toggle("hidden", !admin);
 	      }
-	      const banner = $("entity-admin-note");
-	      if (banner) banner.classList.toggle("hidden", admin);
+	      $("entity-manage-section").classList.toggle("entity-manage--readonly", !admin);
+	      // What stays visible to a non-admin reads, never writes (the voice pickers stay
+	      // usable for "Hear a sample"; only an admin's choice saves).
+	      $("entity-workorder-text").readOnly = !admin;
 	      const createNote = $("entity-create-admin-note");
 	      if (createNote) createNote.classList.toggle("hidden", admin);
 	    }
@@ -5553,9 +5675,28 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      for (const id of ENTITY_SUBTABS) {
 	        const btn = $(`entity-subtab-${id}`);
 	        const panel = $(`entity-subpanel-${id}`);
-	        if (btn) btn.classList.toggle("active", id === name);
-	        if (panel) panel.classList.toggle("hidden", id !== name);
+	        const on = id === name;
+	        btn.classList.toggle("active", on);
+	        btn.setAttribute("aria-selected", on ? "true" : "false");
+	        btn.tabIndex = on ? 0 : -1;
+	        panel.classList.toggle("hidden", !on);
 	      }
+	      const body = $("entity-manage-body");
+	      if (body) body.scrollTop = 0;
+	    }
+	    function entitySubtabKey(ev) {
+	      // The kit tabs pattern: arrows move between tabs, Home/End jump to the ends.
+	      const i = ENTITY_SUBTABS.findIndex((id) => `entity-subtab-${id}` === (ev.target && ev.target.id));
+	      if (i < 0) return;
+	      let j = -1;
+	      if (ev.key === "ArrowRight") j = (i + 1) % ENTITY_SUBTABS.length;
+	      else if (ev.key === "ArrowLeft") j = (i - 1 + ENTITY_SUBTABS.length) % ENTITY_SUBTABS.length;
+	      else if (ev.key === "Home") j = 0;
+	      else if (ev.key === "End") j = ENTITY_SUBTABS.length - 1;
+	      if (j < 0) return;
+	      ev.preventDefault();
+	      setEntitySubtab(ENTITY_SUBTABS[j]);
+	      $(`entity-subtab-${ENTITY_SUBTABS[j]}`).focus();
 	    }
 	    function _resetChatUi() {
 	      // Chat state is per-entity: leaving it across manage opens routed
@@ -5566,18 +5707,51 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      _entOut("entity-chat-status", "");
 	      chatUiState();
 	    }
+	    // Every inline confirmation of the modal (sleep, freeze, rebuild): one open at a time,
+	    // closed with the modal. A nested confirm dialog would fight the modal's focus trap.
+	    const ENTITY_CONFIRMS = ["entity-sleep-confirm", "entity-freeze-confirm", "entity-reembed-confirm"];
+	    function entityConfirmsHide() {
+	      for (const id of ENTITY_CONFIRMS) $(id).hidden = true;
+	      for (const el of $("entity-candidates-list").querySelectorAll(".entity-candidate-form")) el.hidden = true;
+	    }
+	    function entityConfirmShow(id, focusId) {
+	      entityConfirmsHide();
+	      $(id).hidden = false;
+	      try { $(focusId).focus(); } catch {}
+	    }
 	    function closeEntityManage() {
+	      const backdrop = $("entity-manage-backdrop");
 	      state.manageName = "";
 	      state.manageToken = (state.manageToken || 0) + 1; // stops the live poll
 	      _resetChatUi();
-      $("entity-manage-section").classList.add("hidden");
-      // Drill-out: restore the sections the drill-in hid (users stays
-      // admin-gated — renderAccount owns its visibility, re-applied here).
-      // Admins see entities as rows of the Accounts table (DESIGN-v2 §2.1); the roster panel is the non-admin view.
-      $("entities-list-section").classList.add("hidden");
-      if (state.principal) $("users-section").classList.remove("hidden");
+	      entityConfirmsHide();
+	      if (backdrop.hidden) return;
+	      backdrop.hidden = true;
+	      const release = state.manageRelease;
+	      state.manageRelease = null;
+	      if (release) release();
+	      // Focus goes back to what opened the modal. When that was an item of the row's
+	      // "More actions" menu (closed by now) or a click that never focused (WebKit), the
+	      // row's menu button takes it (DESIGN-v3 §12).
+	      const opener = state.manageOpener;
+	      const id = state.manageOpenerRow;
+	      state.manageOpener = null;
+	      state.manageOpenerRow = "";
+	      const usable = (el) => el && el.isConnected !== false && typeof el.focus === "function" && !(el.closest && el.closest("[hidden], .hidden, [role='menu']")) && el !== document.body;
+	      let target = usable(opener) ? opener : null;
+	      if (!target && id) {
+	        const row = Array.from(document.querySelectorAll("#users-section tr[data-user]")).find((tr) => tr.getAttribute("data-user") === id);
+	        target = row ? row.querySelector('[aria-haspopup="menu"]') : null;
+	        if (!target && row) console.error(`AbstractGateway console: the Accounts row of ${id} has no "More actions" menu button to return focus to (accounts-web seam, DESIGN-v3 §1.1/§12).`);
+	      }
+	      try { if (target) target.focus({ preventScroll: true }); } catch {}
 	    }
 	    async function openEntityManage(name) {
+	      const backdrop = $("entity-manage-backdrop");
+	      if (!backdrop.hidden) closeEntityManage();
+	      const active = (typeof document !== "undefined" && document.activeElement) || null;
+	      state.manageOpener = active;
+	      state.manageOpenerRow = name;
 	      state.manageName = name;
 	      // Generation token: five loaders write into SHARED DOM
 	      // nodes. Opening B while A's slower fetch is in flight must not let
@@ -5587,16 +5761,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      state.manageToken = (state.manageToken || 0) + 1;
 	      const token = state.manageToken;
 	      _resetChatUi();
+	      entityConfirmsHide();
+	      for (const id of ["entity-state-out", "entity-loop-out", "entity-substrate-out", "entity-voice-out", "entity-workorder-out", "entity-tools-out", "entity-prompt-out", "entity-reembed-out", "entity-verify-out"]) _entOut(id, "");
 	      $("entity-manage-name").textContent = name;
-      $("entity-manage-section").classList.remove("hidden");
-      // Drill-in: the manage panel replaces the tab's
-      // list/users sections instead of appending below them — the scroll
-      // hunt was the complaint the old scrollIntoView bandaged.
-      $("entities-list-section").classList.add("hidden");
-      $("users-section").classList.add("hidden");
 	      applyEntityAdminGating();
 	      setEntitySubtab("overview");
-	      try { $("entity-manage-section").scrollIntoView({ behavior: "smooth", block: "start" }); } catch {}
+	      // A modal over the Accounts page (round 3 §12): nothing behind it is hidden or scrolled.
+	      backdrop.hidden = false;
+	      state.manageRelease = bindAccountModal(backdrop, closeEntityManage);
 	      try {
 	        await Promise.all([
 	          loadEntityOverview(name, token), loadEntitySubstrate(name, token),
@@ -5607,7 +5779,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          loadEntityEmbedding(name, token), refreshEntityLive(name, token),
 	        ]);
 	      } catch (e) {
-	        $("entities-message").textContent = String(e.message || e);
+	        if (!manageStale(token)) inlineState("entity-verify-out", String(e.message || e), "error");
 	      }
 	      _scheduleLivePoll(name, token);
 	    }
@@ -5640,9 +5812,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          // demotes to an internal birth marker on its own line.
 	          ["Entity ID", card.handle || card.entity_id || (card.manifest && card.manifest.entity_id) || ""],
 	          ["Internal ID (birth marker)", card.entity_id || (card.manifest && card.manifest.entity_id) || ""],
-	          ["Born", card.born || card.created_at || ""],
+	          ["Born", String(card.born || card.created_at || "").slice(0, 16).replace("T", " ")],
 	          ["Age (days)", card.age_days != null ? String(card.age_days) : ""],
-          ["State", card.state ? `${card.state.state || card.state}${card.state.mode ? ` (${card.state.mode})` : ""}` : ""],
           ["Mind", card.mind_substrate ? `${card.mind_substrate.provider || "?"} / ${card.mind_substrate.model || "?"}${card.mind_substrate.thinking ? ` / reasoning ${card.mind_substrate.thinking}` : ""}` : ""],
           ["Sleeps", sleep.sleeps != null ? `${sleep.sleeps}` : (sleep.sleep_count != null ? `${sleep.sleep_count}` : "")],
 	        ];
@@ -5661,7 +5832,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (moments.length) {
 	          const head = document.createElement("div");
 	          head.className = "entity-kv";
-	          const key = document.createElement("span"); key.className = "entity-kv-key"; key.textContent = "Recent moments";
+	          const key = document.createElement("span"); key.className = "entity-kv-key entity-kv-head"; key.textContent = "Recent moments";
 	          head.append(key); box.append(head);
 	          for (const m of moments) {
 	            const line = document.createElement("div");
@@ -5683,7 +5854,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const s = await api(`/api/gateway/entities/${encodeURIComponent(name)}/substrate`);
 	        if (manageStale(token)) return;
 	        const thinkingNote = s.thinking ? ` / reasoning ${s.thinking}` : "";
-	        _entOut("entity-substrate-current", `Current: ${s.provider || "(unset)"} / ${s.model || "(unset)"}${thinkingNote} — source: ${s.source || "unset"}`);
+	        _entOut("entity-substrate-current", (s.provider || s.model)
+	          ? `Now: ${s.provider || "?"} / ${s.model || "?"}${thinkingNote}${s.source && s.source !== "home" ? ` (from ${s.source})` : ""}`
+	          : "Now: the gateway's default model.");
 	        $("entity-substrate-provider").value = s.provider || "";
 	        $("entity-substrate-model").value = s.model || "";
 	        const thinkSel = $("entity-substrate-thinking");
@@ -5728,13 +5901,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        // note — never a bare "unset" the operator must decode.
 	        let line;
 	        if (v.provider) {
-	          line = `Current: ${v.provider} / ${v.model || "?"} / ${v.voice || "?"} — his own choice (overrides the gateway default)`;
+	          line = `Now: ${v.provider} / ${v.model || "?"} / ${v.voice || "?"}, its own voice.`;
 	        } else if (v.effective && v.effective.provider) {
-	          line = `Current: inheriting the gateway default — ${v.effective.provider} / ${v.effective.model || "?"} / ${v.effective.voice || "(provider default)"}`;
+	          line = `Now: the gateway default, ${v.effective.provider} / ${v.effective.model || "?"} / ${v.effective.voice || "the provider's default voice"}.`;
 	        } else {
-	          line = `Current: unset — ${v.note || "no gateway voice default configured; the voice engine decides"}`;
+	          line = `Now: ${v.note || "no gateway default voice is set, so the speech engine decides."}`;
 	        }
 	        _entOut("entity-voice-current", line);
+	        $("entity-voice-clear").classList.toggle("hidden", !v.provider);
 	        await loadEntityVoiceProviders(v.provider || "", v.model || "", v.voice || "");
 	      } catch (e) {
 	        if (manageStale(token)) return;
@@ -5797,36 +5971,37 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	    }
 	    async function entityVoiceSave() {
-	      const name = state.manageEntity;
-	      if (!name) return;
+	      // Choosing the voice saves the whole triple (round 3: no Save button). A bare
+	      // voice id never saves alone: it would leak across providers.
+	      const name = state.manageName;
+	      if (!name || !(state.principal && state.principal.admin)) return;
 	      const provider = $("entity-voice-provider").value;
 	      const model = $("entity-voice-model").value;
 	      const voice = $("entity-voice-voice").value;
-	      if (!provider || !model || !voice) {
-	        _entOut("entity-voice-out", "select provider, model AND voice — the triple is whole (a bare voice id leaks across providers).");
-	        return;
-	      }
+	      if (!provider || !model || !voice) return;
 	      try {
 	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/voice`, { method: "PUT", body: JSON.stringify({ provider, model, voice }) });
-	        _entOut("entity-voice-out", "saved (voice_changed marker recorded).");
+	        if (state.manageName !== name) return;
+	        _entOut("entity-voice-out", `Saved: it speaks with ${provider} / ${model} / ${voice}.`);
 	        await loadEntityVoice(name, state.manageToken);
 	      } catch (e) {
-	        _entOut("entity-voice-out", "save failed: " + (e.message || e));
+	        _entOut("entity-voice-out", "Not saved: " + String(e.message || e));
 	      }
 	    }
 	    async function entityVoiceClear() {
-	      const name = state.manageEntity;
+	      const name = state.manageName;
 	      if (!name) return;
 	      try {
 	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/voice`, { method: "PUT", body: JSON.stringify({ clear: true }) });
-	        _entOut("entity-voice-out", "cleared — the entity falls back down the gateway default chain (marker recorded).");
+	        if (state.manageName !== name) return;
+	        _entOut("entity-voice-out", "Saved: it speaks with the gateway's default voice.");
 	        await loadEntityVoice(name, state.manageToken);
 	      } catch (e) {
-	        _entOut("entity-voice-out", "clear failed: " + (e.message || e));
+	        _entOut("entity-voice-out", "Not changed: " + String(e.message || e));
 	      }
 	    }
 	    async function entityVoiceAudition() {
-	      const name = state.manageEntity;
+	      const name = state.manageName;
 	      if (!name) return;
 	      const btn = $("entity-voice-audition");
 	      if (btn.disabled) return;
@@ -5853,14 +6028,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        out.textContent = "";
 	        const line = document.createElement("div");
 	        line.className = "message ok";
-	        line.textContent = `Synthesized in ${sec}s with ${provider}/${model}${voice ? "/" + voice : " (provider default voice)"} — this is the unsaved selection; Save makes it his.`;
+	        line.textContent = `Sample made in ${sec}s with ${provider} / ${model}${voice ? " / " + voice : " (the provider's default voice)"}.`;
 	        out.append(line);
 	        renderSandboxArtifact(out, { runId: res.run_id, ref: res.audio_artifact, mode: "audio", label: "Audition audio" });
 	      } catch (e) {
 	        out.textContent = "";
 	        const line = document.createElement("div");
 	        line.className = "message error";
-	        line.textContent = "Audition failed: " + (e.message || e);
+	        line.textContent = "No sample: " + (e.message || e);
 	        out.append(line);
 	      } finally {
 	        btn.disabled = false;
@@ -5874,38 +6049,48 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const w = await api(`/api/gateway/entities/${encodeURIComponent(name)}/work-order`);
 	        if (manageStale(token)) return;
 	        _entOut("entity-workorder-current", w.active
-	          ? "A work order is STANDING — the entity runs phase=work at its next day-open."
-	          : "No work order — the entity runs its own (personal) time.");
+	          ? "It has a work order: it works on this task from its next day on."
+	          : "No work order: it spends its days on its personal time.");
 	        $("entity-workorder-text").value = w.order || "";
+	        $("entity-workorder-clear").classList.toggle("hidden", !w.active);
+	        $("entity-workorder-save").textContent = w.active ? "Give this task instead" : "Give this task";
 	        const hist = $("entity-workorder-history");
-	        if (hist) hist.textContent = w.done_history || "(no completed orders yet)";
+	        if (hist) hist.textContent = w.done_history || "No finished tasks yet.";
 	      } catch (e) {
 	        if (manageStale(token)) return;
-	        _entOut("entity-workorder-current", "work order unavailable: " + (e.message || e));
+	        _entOut("entity-workorder-current", "Work order unavailable: " + (e.message || e));
 	      }
 	    }
 	    async function entityWorkOrderSave() {
-	      const name = state.manageEntity;
+	      const name = state.manageName;
 	      if (!name) return;
 	      const order = $("entity-workorder-text").value.trim();
-	      if (!order) { _entOut("entity-workorder-out", "write the task, or use Clear to remove the standing order."); return; }
+	      if (!order) { inlineState("entity-workorder-out", "Write the task first.", "error"); return; }
+	      const btn = $("entity-workorder-save");
+	      btn.disabled = true;
 	      try {
 	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/work-order`, { method: "PUT", body: JSON.stringify({ order }) });
-	        _entOut("entity-workorder-out", "set (work_order_changed marker recorded; phase=work at next day-open).");
+	        inlineState("entity-workorder-out", "Given: it starts on this task at its next day.", "ok", 6000);
 	        await loadEntityWorkOrder(name, state.manageToken);
 	      } catch (e) {
-	        _entOut("entity-workorder-out", "set failed: " + (e.message || e));
+	        inlineState("entity-workorder-out", "Not given: " + String(e.message || e), "error");
+	      } finally {
+	        btn.disabled = false;
 	      }
 	    }
 	    async function entityWorkOrderClear() {
-	      const name = state.manageEntity;
+	      const name = state.manageName;
 	      if (!name) return;
+	      const btn = $("entity-workorder-clear");
+	      btn.disabled = true;
 	      try {
 	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/work-order`, { method: "PUT", body: JSON.stringify({ clear: true }) });
-	        _entOut("entity-workorder-out", "cleared + archived — personal time returns next day-open.");
+	        inlineState("entity-workorder-out", "Ended: the task is kept under Finished tasks, and personal time returns at its next day.", "ok", 6000);
 	        await loadEntityWorkOrder(name, state.manageToken);
 	      } catch (e) {
-	        _entOut("entity-workorder-out", "clear failed: " + (e.message || e));
+	        inlineState("entity-workorder-out", "Not ended: " + String(e.message || e), "error");
+	      } finally {
+	        btn.disabled = false;
 	      }
 	    }
 	    async function loadEntityToolPolicy(name, token) {
@@ -5917,10 +6102,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const tools = (tp.all_tools || []).map((t) => ({ id: t, label: t }));
 	        const grantByPhase = {};
 	        for (const p of phaseIds) grantByPhase[p] = new Set((tp.phases[p] && tp.phases[p].tools) || []);
-	        renderMatrix($("entity-manage-matrix"), phaseIds, phaseLabels, tools, grantByPhase);
+	        const box = $("entity-manage-matrix");
+	        renderMatrix(box, phaseIds, phaseLabels, tools, grantByPhase);
+	        const admin = Boolean(state.principal && state.principal.admin);
+	        for (const cb of box.querySelectorAll("input[type=checkbox]")) cb.disabled = !admin;
 	      } catch (e) {
 	        if (manageStale(token)) return;
-	        $("entity-manage-matrix").textContent = "capabilities unavailable: " + (e.message || e);
+	        $("entity-manage-matrix").textContent = "Tools unavailable: " + (e.message || e);
 	      }
 	    }
 	    async function loadEntityPrompt(name, token) {
@@ -5929,29 +6117,40 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (manageStale(token)) return;
 	        const box = $("entity-prompt-layers");
 	        box.textContent = "";
+	        const admin = Boolean(state.principal && state.principal.admin);
 	        const layers = Array.isArray(p.editable) ? p.editable : Object.keys(p.layers || {});
 	        for (const key of layers) {
+	          const fid = `entity-prompt-layer-${key}`.replace(/[^A-Za-z0-9_-]/g, "-");
 	          const wrap = document.createElement("div");
-	          wrap.className = "entity-prompt-layer";
+	          wrap.className = "af-form__field entity-prompt-layer";
 	          const lab = document.createElement("label");
+	          lab.className = "af-form__label";
+	          lab.htmlFor = fid;
 	          const src = p.layers && p.layers[key] && p.layers[key].source;
-	          lab.textContent = key + (src === "overlay" ? " (rewritten)" : " (default)");
+	          lab.textContent = key;
 	          const ta = document.createElement("textarea");
+	          ta.id = fid;
 	          ta.dataset.layer = key;
 	          ta.rows = 6;
+	          ta.readOnly = !admin;
 	          ta.value = (p.layers && p.layers[key] && p.layers[key].text) || "";
-	          ta.placeholder = (p.defaults && p.defaults[key]) || "(built-in default)";
-	          lab.append(ta);
-	          wrap.append(lab);
+	          ta.placeholder = (p.defaults && p.defaults[key]) || "(built-in text)";
+	          ta.setAttribute("aria-describedby", `${fid}-help`);
+	          ta.onchange = () => entityPromptSave();
+	          const help = document.createElement("p");
+	          help.id = `${fid}-help`;
+	          help.className = "af-form__help";
+	          help.textContent = src === "overlay" ? "Rewritten by you; empty it to use the built-in text again." : "The built-in text; edit it to rewrite this layer.";
+	          wrap.append(lab, ta, help);
 	          box.append(wrap);
 	        }
-	        if (!layers.length) box.textContent = "no editable prompt layers.";
+	        if (!layers.length) box.textContent = "No layer can be rewritten.";
 	        // The server's safety warnings are load-bearing (e.g. "the rewrite no
 	        // longer explains the diary election syntax") — never swallowed.
 	        const warn = Array.isArray(p.warnings) ? p.warnings.filter(Boolean) : [];
 	        if (warn.length) {
-	          const note = document.createElement("div");
-	          note.className = "section-note entity-danger-title";
+	          const note = document.createElement("p");
+	          note.className = "af-form__error";
 	          note.textContent = warn.join(" | ");
 	          box.append(note);
 	        }
@@ -5959,7 +6158,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (preview) preview.textContent = p.preview || "(preview unavailable)";
 	      } catch (e) {
 	        if (manageStale(token)) return;
-	        $("entity-prompt-layers").textContent = "prompt unavailable: " + (e.message || e);
+	        $("entity-prompt-layers").textContent = "Instructions unavailable: " + (e.message || e);
 	      }
 	    }
 	    async function loadEntityEmbedding(name, token) {
@@ -5968,9 +6167,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (manageStale(token)) return;
 	        const pin = e.pin || {};
 	        const bits = [];
-	        bits.push(`home pin: ${pin.model_id || "(unpinned)"}${pin.dimension ? ` (dim ${pin.dimension})` : ""}`);
-	        bits.push(`door's resolved embedder: ${e.resolved_embedder || "(none)"}`);
-	        if (e.match === "mismatch") bits.push("MISMATCH — the home refuses vector opens until re-embedded or the route is restored");
+	        bits.push(`its index was built with ${pin.model_id || "no recorded model"}${pin.dimension ? ` (${pin.dimension} dimensions)` : ""}`);
+	        bits.push(`the gateway's embedding model is ${e.resolved_embedder || "not set"}`);
+	        if (e.match === "mismatch") bits.push("MISMATCH: its memory search is refused until you rebuild the index or restore that model");
         _entOut("entity-embedding-status", bits.join(" · "));
         // NO PREFILL (pre-filling the verification
         // field converts the typed ceremony into a click-through — the exact
@@ -5978,7 +6177,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         // the status line above; the operator types it knowingly.
       } catch (err) {
 	        if (manageStale(token)) return;
-	        _entOut("entity-embedding-status", "embedding status unavailable: " + (err.message || err));
+	        _entOut("entity-embedding-status", "Index status unavailable: " + (err.message || err));
 	      }
 	    }
 	    // ---- ONE live truth painter ----
@@ -5986,103 +6185,101 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // badge, the state buttons' pressed states, the own-time push button,
 	    // the loop line, the Overview cognition line, the Talk availability, and
 	    // the table row. No element derives state from click assumptions.
-	    function _loopWords(loop) {
-	      if (!loop || !loop.running) return "own-time loop: not running";
-	      const phase = String(loop.phase || "");
-	      if (loop.stop_requested) return "own-time loop: stopping at the next tick boundary…";
-	      if (phase === "day") return "own-time loop: TICKING (spending tokens)";
-	      return "own-time loop: alive, parked between days (quiet — not spending)";
-	    }
 	    function _paintOwntimeButton(cog) {
-	      // ARMED ≠ IN-PHASE (semantics c1436): the button renders the GRANT;
-	      // the loop's live posture rides as secondary text; when the two axes
-	      // DISAGREE the honest render is the disagreement itself (uic's rule
-	      // — a surface that can only draw coherent states draws a lie during
-	      // exactly the incident windows).
-	      const btn = $("entity-owntime-toggle");
-	      if (!btn) return;
+	      // ARMED ≠ IN-PHASE (semantics c1436): the switch is ON while the grant is
+	      // armed or the loop is alive (switching it off stops both); the loop's live
+	      // posture rides in the status line, and when the two axes DISAGREE that
+	      // line says so (a surface that can only draw coherent states draws a lie
+	      // during exactly the incident windows).
+	      const sw = $("entity-owntime-toggle");
 	      const loop = cog.loop || {};
 	      const grant = cog.personal || {};
 	      const armed = Boolean(grant.armed);
 	      const running = Boolean(loop.running);
-	      btn.classList.remove("on-ticking", "on-parked", "stopping");
-      if (armed && running && loop.stop_requested) {
-        btn.classList.add("stopping");
-        btn.setAttribute("aria-pressed", "true");
-        btn.textContent = "Stop personal time — stopping at next boundary…";
-      } else if (armed && running && String(loop.phase || "") === "day") {
-        btn.classList.add("on-ticking");
-        btn.setAttribute("aria-pressed", "true");
-        btn.textContent = "Stop personal time (ON — ticking, spending)";
-      } else if (armed && running) {
-        btn.classList.add("on-parked");
-        btn.setAttribute("aria-pressed", "true");
-        btn.textContent = "Stop personal time (ON — parked, quiet)";
-      } else if (armed && !running) {
-        btn.classList.add("stopping");
-        btn.setAttribute("aria-pressed", "true");
-        btn.textContent = "Revoke grant (armed, loop not running)";
-      } else if (!armed && running) {
-        btn.classList.add("stopping");
-        btn.setAttribute("aria-pressed", "false");
-        btn.textContent = "loop alive, GRANT ABSENT — click Stop/Freeze to reconcile";
-      } else {
-        btn.setAttribute("aria-pressed", "false");
-        btn.textContent = "Start personal time";
-      }
-    }
+	      const stopped = cog.liveness === "stopped";
+	      afSwitchSet(sw, { checked: armed || running, reason: stopped && !(armed || running) ? "Stopped: turn Active on in its Accounts row first." : "" });
+	      let posture;
+	      if (armed && running && loop.stop_requested) posture = "Stopping at the end of its current step.";
+	      else if (armed && running && String(loop.phase || "") === "day") posture = "On: taking steps now, spending tokens.";
+	      else if (armed && running) posture = "On: resting between days, not spending.";
+	      else if (armed && !running) posture = "Allowed, but its process is not running: switch off, then on, to restart it.";
+	      else if (!armed && running) posture = "Its process is running without permission: switch off to stop it.";
+	      else posture = "Off.";
+	      sw.setAttribute("data-posture", (armed && running) ? (loop.stop_requested ? "stopping" : (String(loop.phase || "") === "day" ? "ticking" : "parked")) : (armed || running ? "mismatch" : "off"));
+	      return posture;
+	    }
 	    // ---- Sleep-candidate review desk (W3 second half): list + promote/
-	    // reject through the engine verbs. Reject prompts for the mandatory
-	    // reason; promote asks for corroborating record ids (the independence
-	    // test lives engine-side and refuses thin evidence loudly).
+	    // reject through the engine verbs. Each act opens an inline form in the
+	    // row (reject needs its reason; keep needs >= 2 corroborating record ids —
+	    // the independence test lives engine-side and its refusal is shown verbatim).
 	    async function loadEntityCandidates(name, token) {
 	      try {
 	        const out = await api(`/api/gateway/entities/${encodeURIComponent(name)}/candidates`);
 	        if (manageStale(token)) return;
 	        const cands = out.candidates || [];
 	        const box = $("entity-candidates-box");
-	        if (!box) return;
 	        box.classList.toggle("hidden", cands.length === 0);
-	        const cnt = $("entity-candidates-count");
-	        if (cnt) cnt.textContent = String(cands.length);
+	        $("entity-candidates-count").textContent = String(cands.length);
 	        const list = $("entity-candidates-list");
-	        if (!list) return;
-	        list.innerHTML = "";
-	        for (const c of cands.slice(0, 20)) {
+	        list.textContent = "";
+	        cands.slice(0, 20).forEach((c, i) => {
 	          const row = document.createElement("div");
-	          row.className = "entity-config-group";
-	          const title = document.createElement("div");
-	          title.textContent = `${c.proposed_kind ? "[" + c.proposed_kind + " offer] " : ""}${c.title || c.record_id} — ${String(c.digest || "").slice(0, 140)}`;
+	          row.className = "entity-candidate";
+	          const title = document.createElement("p");
+	          title.className = "entity-candidate__title";
+	          title.textContent = `${c.proposed_kind ? c.proposed_kind + ": " : ""}${c.title || c.record_id}`;
+	          const digest = document.createElement("p");
+	          digest.className = "af-form__help";
+	          digest.textContent = String(c.digest || "").slice(0, 200);
 	          const btns = document.createElement("div");
-	          btns.className = "entity-btn-row";
-	          const promote = document.createElement("button");
-	          promote.className = "secondary";
-	          promote.textContent = "Promote…";
-	          promote.onclick = async () => {
-	            const ids = prompt("Corroborating record ids (comma-separated, >=2 independent origins):");
-	            if (!ids) return;
-	            const reason = prompt("Why promote? (journal-recorded)");
-	            if (!reason) return;
-	            try {
-	              await api(`/api/gateway/entities/${encodeURIComponent(name)}/candidates/${encodeURIComponent(c.record_id)}/promote`, { method: "POST", body: JSON.stringify({ corroborating_ids: ids.split(",").map(s => s.trim()).filter(Boolean), reason }) });
-	              await loadEntityCandidates(name, token);
-	            } catch (e) { alert("promote refused: " + (e.message || e)); }
+	          btns.className = "entity-actions";
+	          const keep = document.createElement("button"); keep.type = "button"; keep.className = "secondary"; keep.textContent = "Keep…";
+	          const reject = document.createElement("button"); reject.type = "button"; reject.className = "secondary"; reject.textContent = "Reject…";
+	          btns.append(keep, reject);
+	          const form = document.createElement("div");
+	          form.className = "entity-candidate-form af-form";
+	          form.hidden = true;
+	          const fid = `entity-cand-${i}`;
+	          form.innerHTML = `<div class="af-form__field entity-cand-ids"><label class="af-form__label" for="${fid}-ids">Backing records</label><input id="${fid}-ids" type="text" autocomplete="off" spellcheck="false" aria-describedby="${fid}-ids-help"><p id="${fid}-ids-help" class="af-form__help">Ids of at least two independent records that confirm it, separated by commas.</p></div>`
+	            + `<div class="af-form__field"><label class="af-form__label" for="${fid}-why">Reason</label><input id="${fid}-why" type="text" autocomplete="off" aria-describedby="${fid}-why-help"><p id="${fid}-why-help" class="af-form__help">Why you decide this; recorded in its journal.</p></div>`
+	            + `<div class="entity-actions"><button type="button" class="secondary entity-cand-go"></button><button type="button" class="secondary entity-cand-cancel">Cancel</button><p class="inline-state entity-cand-out" role="status" aria-live="polite"></p></div>`;
+	          const go = form.querySelector(".entity-cand-go");
+	          const ids = form.querySelector(`#${fid}-ids`);
+	          const why = form.querySelector(`#${fid}-why`);
+	          const outEl = form.querySelector(".entity-cand-out");
+	          let mode = "";
+	          const openForm = (m) => {
+	            entityConfirmsHide();
+	            mode = m;
+	            form.querySelector(".entity-cand-ids").hidden = m !== "promote";
+	            go.textContent = m === "promote" ? "Keep it" : "Reject it";
+	            outEl.textContent = "";
+	            form.hidden = false;
+	            try { (m === "promote" ? ids : why).focus(); } catch {}
 	          };
-	          const reject = document.createElement("button");
-	          reject.className = "secondary";
-	          reject.textContent = "Reject…";
-	          reject.onclick = async () => {
-	            const reason = prompt("The honest no — why reject? (mandatory, journal-recorded)");
-	            if (!reason) return;
+	          keep.onclick = () => openForm("promote");
+	          reject.onclick = () => openForm("reject");
+	          form.querySelector(".entity-cand-cancel").onclick = () => { form.hidden = true; };
+	          go.onclick = async () => {
+	            const reason = String(why.value || "").trim();
+	            const corroborating = String(ids.value || "").split(",").map((x) => x.trim()).filter(Boolean);
+	            if (!reason) { outEl.className = "inline-state error entity-cand-out"; outEl.textContent = "Give a reason first."; return; }
+	            if (mode === "promote" && corroborating.length < 2) { outEl.className = "inline-state error entity-cand-out"; outEl.textContent = "Name at least two backing records."; return; }
+	            go.disabled = true;
 	            try {
-	              await api(`/api/gateway/entities/${encodeURIComponent(name)}/candidates/${encodeURIComponent(c.record_id)}/reject`, { method: "POST", body: JSON.stringify({ reason }) });
+	              const body = mode === "promote" ? { corroborating_ids: corroborating, reason } : { reason };
+	              await api(`/api/gateway/entities/${encodeURIComponent(name)}/candidates/${encodeURIComponent(c.record_id)}/${mode}`, { method: "POST", body: JSON.stringify(body) });
 	              await loadEntityCandidates(name, token);
-	            } catch (e) { alert("reject refused: " + (e.message || e)); }
+	            } catch (e) {
+	              outEl.className = "inline-state error entity-cand-out";
+	              outEl.textContent = (mode === "promote" ? "Not kept: " : "Not rejected: ") + String(e.message || e);
+	            } finally {
+	              go.disabled = false;
+	            }
 	          };
-	          btns.append(promote, reject);
-	          row.append(title, btns);
+	          row.append(title, digest, btns, form);
 	          list.append(row);
-	        }
+	        });
 	      } catch (e) {
 	        // Candidates are garnish on the overview — a failed read hides the box.
 	        const box = $("entity-candidates-box");
@@ -6182,83 +6379,66 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const badgeKey = stopped ? "stopped" : (phase || "sleep");
       const sleepNote = cog.sleep_detail === "resting" ? " (resting)" : (cog.sleep_detail === "dreaming" ? " (dreaming)" : (cog.sleep_detail === "bounded" ? " (bounded)" : ""));
       const badgeText = stopped ? "STOPPED (kill switch)" : (phase ? `phase: ${String(phase).toUpperCase()}${phase === "sleep" ? sleepNote : (cog.resting ? " (resting)" : "")}` : "SLEEP (settling)");
-      // The banner outranks every chip (ruled UI shape); Restore is the exit.
-      const banner = $("entity-stop-banner");
-      if (banner) banner.classList.toggle("hidden", !stopped);
-      const stopBtn = $("entity-stop");
-      if (stopBtn) stopBtn.disabled = stopped || !(state.principal && state.principal.admin);
-      // Live line: phase badge + state detail + read time.
-      const line = $("entity-live-line");
-      if (line) {
-        line.textContent = "";
-        const badge = document.createElement("span");
-        badge.className = `entity-live-badge phase-${badgeKey}`;
-        badge.textContent = badgeText;
-        line.append(badge);
-	        const stateWord = document.createElement("span");
-	        // The ruled detail line names both spellings when stopped: the
-	        // engraved key and the served axis (c1559 spelling point 3).
-	        stateWord.textContent = stopped
-	          ? "state: paused — served as liveness: stopped (the kill switch)"
-	          : `state: ${(st.state === "awake" || !st.state) ? "resting" : st.state}${st.mode ? ` (${st.mode})` : ""}`;
-	        line.append(stateWord);
-	        if (st.warning) {
-	          const warn = document.createElement("span");
-	          warn.className = "entity-warn-pill";
-	          warn.textContent = String(st.warning);
-	          line.append(warn);
-	        }
-	        const at = document.createElement("span");
-	        at.className = "entity-config-hint";
-	        at.textContent = `checked ${new Date().toISOString().slice(11, 19)}Z`;
-	        line.append(at);
+	      // The banner outranks every chip (ruled UI shape). Its exit is the Accounts
+	      // row's Active switch (resume), so Manage carries no second Stop/Restore.
+	      $("entity-stop-banner").classList.toggle("hidden", !stopped);
+	      // Live line: phase badge + state detail + read time.
+	      const line = $("entity-live-line");
+	      line.textContent = "";
+	      const badge = document.createElement("span");
+	      badge.className = `entity-live-badge phase-${badgeKey}`;
+	      badge.textContent = badgeText;
+	      line.append(badge);
+	      const stateWord = document.createElement("span");
+	      stateWord.textContent = stopped
+	        ? "Stopped (Active is off, or it was frozen)"
+	        : `state: ${(st.state === "awake" || !st.state) ? "resting" : st.state}${st.mode ? ` (${st.mode})` : ""}`;
+	      line.append(stateWord);
+	      if (st.warning) {
+	        const warn = document.createElement("span");
+	        warn.className = "entity-warn-pill";
+	        warn.textContent = String(st.warning);
+	        line.append(warn);
 	      }
-	      // State buttons: the current state renders pressed + disabled (an
-	      // idle re-click rewrites the state file + lands a marker for nothing).
-	      // While STOPPED the whole radio disables — Restore is the one exit
-	      // (the existing wake verb, lands awake unconditionally).
-	      const admin = Boolean(state.principal && state.principal.admin);
-	      const stateBtns = { awake: ["entity-state-awake", "Wake"], asleep: ["entity-state-asleep", "Sleep"] };
-      for (const key of Object.keys(stateBtns)) {
-        const b = $(stateBtns[key][0]);
-        if (!b) continue;
-        const current = String(st.state || "awake") === key;
-        b.classList.toggle("pressed", current);
-        b.setAttribute("aria-checked", current ? "true" : "false"); // radio semantics: assistive tech reads the current state
-        // The words say it too (P1-5: fill alone was read inverted once).
-        b.textContent = stateBtns[key][1] + (current ? " · current" : "");
-        b.disabled = current || !admin || stopped;
-      }
-	      const stBits = [`current: ${(st.state === "awake" || !st.state) ? "resting" : st.state}`];
+	      const at = document.createElement("span");
+	      at.className = "entity-line-muted";
+	      at.textContent = `checked ${new Date().toISOString().slice(11, 19)}Z`;
+	      line.append(at);
+	      // Awake switch (round 3: a state switch labelled by the feature, never Wake/Sleep
+	      // verbs). While STOPPED it is unavailable: Active on the Accounts row is the exit.
+	      const awake = String(st.state || "awake") !== "asleep" && !stopped;
+	      const awakeSw = $("entity-state-awake");
+	      if (awakeSw.getAttribute("aria-busy") !== "true") {
+	        afSwitchSet(awakeSw, { checked: awake, reason: stopped ? "Stopped: turn Active on in its Accounts row first." : "" });
+	      }
+	      const stBits = [stopped ? "Now: stopped" : (String(st.state || "awake") === "asleep" ? "Now: asleep" : "Now: awake")];
 	      if (st.reason) stBits.push(`reason: ${st.reason}`);
-	      if (st.changed_at) stBits.push(`since: ${String(st.changed_at).slice(0, 19)}`);
+	      if (st.changed_at) stBits.push(`since ${String(st.changed_at).slice(0, 16).replace("T", " ")}`);
 	      _entOut("entity-state-current", stBits.join(" · "));
-	      // Own-time push button + honest loop words + the grant axis.
-	      _paintOwntimeButton(cog);
+	      // Personal time switch + honest loop words + the grant axis.
+	      const posture = _paintOwntimeButton(cog);
 	      const grant = cog.personal || {};
-	      const loopBits = [_loopWords(loop)];
-	      if (loop.pid) loopBits.push(`pid ${loop.pid}`);
-	      if (loop.stopped_by) loopBits.push(`stopped by: ${loop.stopped_by}`);
+	      const loopBits = [posture];
+	      if (loop.stopped_by) loopBits.push(`stopped by ${loop.stopped_by}`);
 	      if (loop.note) loopBits.push(String(loop.note));
 	      if (grant.armed) {
-	        const g = [`grant: ARMED (${grant.mode || "?"}`];
-	        if (grant.expires_at) g.push(`until ${String(grant.expires_at).slice(0, 16)}Z`);
+	        const g = [];
+	        if (grant.expires_at) g.push(`allowed until ${String(grant.expires_at).slice(0, 16).replace("T", " ")} UTC`);
 	        if (grant.granted_by) g.push(`by ${grant.granted_by}`);
-	        loopBits.push(g.join(", ") + ")");
+	        if (g.length) loopBits.push(g.join(" "));
 	      } else if (grant.mode === undefined && grant.source === "not-recorded") {
-	        loopBits.push(String(grant.note || "grant axis unavailable"));
-	      } else {
-	        loopBits.push("grant: not armed (personal is off by default)");
+	        loopBits.push(String(grant.note || "permission state unavailable"));
 	      }
-	      _entOut("entity-loop-status", loopBits.join(" — "));
+	      if (loop.pid) loopBits.push(`process ${loop.pid}`);
+	      _entOut("entity-loop-status", loopBits.join(" · "));
       // Overview cognition line (working + billed spend + labeled gaps).
       const spend = (cog.spend && cog.spend.lifetime) || {};
-      const cogBits = [cog.working ? "WORKING" : "idle", `phase: ${phase || "sleep"}`];
-      if (cog.settling) cogBits.push("settling (state written, loop catching up)");
-      if (cog.visit && cog.visit.open) cogBits.push(`visit: turn ${cog.visit.turn_n || 0} (${cog.visit.status || "?"})`);
-      cogBits.push(`spend: ${spend.tokens_total || 0} tk / ${spend.llm_calls || 0} calls`);
+      const cogBits = [cog.working ? "Working" : "Idle"];
+      if (cog.settling) cogBits.push("settling (its new state is written; its process is catching up)");
+      if (cog.visit && cog.visit.open) cogBits.push(`in a visit, turn ${cog.visit.turn_n || 0} (${cog.visit.status || "?"})`);
+      cogBits.push(`${spend.tokens_total || 0} tokens spent in ${spend.llm_calls || 0} model calls since birth`);
       const lv = cog.spend && cog.spend.live_visit;
-      if (lv) cogBits.push(`this visit: ${lv.tokens_total || 0} tk`);
+      if (lv) cogBits.push(`${lv.tokens_total || 0} tokens in this visit`);
       for (const w of (cog.warnings || [])) cogBits.push(String(w));
       _entOut("entity-cognition-line", cogBits.join(" · "));
       _paintDrives(cog);
@@ -6266,7 +6446,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const chatOpenBtn = $("entity-chat-open");
       if (chatOpenBtn && !state.chatId) {
         chatOpenBtn.disabled = stopped;
-        if (stopped) _entOut("entity-chat-status", "stopped (the kill switch) — every door refuses until an admin restores.");
+        if (stopped) _entOut("entity-chat-status", "Stopped: it refuses visits until Active is turned on in its Accounts row.");
       }
       // Table row State cell for this entity repaints from the same read —
       // as a badge (same tone map as the list render, phase appended).
@@ -6281,177 +6461,220 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       }
 	    }
 	    async function setEntityState(target) {
-	      const name = state.manageName; if (!name) return;
+	      // The Awake switch's two directions. Sleep first asks inline (it closes an open
+	      // visit); the switch only moves once the gateway answered (the live read paints it).
+	      const name = state.manageName; if (!name) return false;
 	      const reason = ($("entity-state-reason").value || "").trim();
 	      const dream = target === "asleep" && $("entity-state-dream").checked;
-	      if (target === "paused") {
-	        // The STOP act (liveness axis, c1559): the ruled confirm discloses
-	        // the hard freeze in the ruled words. Never one silent click.
-	        const go = await confirmAction({
-	          title: `Stop ${name}? (kill switch)`,
-	          message: "Stop is the kill switch — a hard freeze: in-flight work halts without reflection; every door refuses and every process gate blocks until an admin restores. For graceful rest, use sleep.",
-	          confirmLabel: "Stop",
-	          danger: true,
-	        });
-	        if (!go) return;
-	      }
-	      if (target === "asleep") {
-	        // Sleep states its side effect too: an open visit
-	        // is closed (with reflection) by this act.
-	        const go = await confirmAction({
-	          title: `Put ${name} to sleep?`,
-	          message: "Sleep closes any open visit gracefully (its reflection runs), then opens the consolidation window — the door refuses summons until woken." + (dream ? " The dream pass runs inside the window." : ""),
-	          confirmLabel: "Sleep",
-	        });
-	        if (!go) return;
-	      }
+	      const sw = $("entity-state-awake");
+	      afSwitchSet(sw, { busy: true });
 	      try {
 	        const r = await api(`/api/gateway/entities/${encodeURIComponent(name)}/state`, {
 	          method: "POST", body: JSON.stringify({ state: target, reason, dream }),
 	        });
-	        const bits = [`state → ${target}${dream ? " (+dream)" : ""}`];
+	        const bits = [target === "asleep" ? `Asleep${dream ? ", with a dream pass" : ""}.` : "Awake."];
 	        if (r && (r.closed_visit || r.closed_visit_run)) {
-	          bits.push("open visit closed");
+	          bits.push("The open visit was closed.");
 	          _resetChatUi(); // the server tore the session down; stale Send would 4xx
 	        }
 	        if (r && r.closed_visit_run && r.closed_visit_run.teardown_failed) {
-	          bits.push(`TEARDOWN FAILED: ${r.closed_visit_run.error || "?"}`);
+	          bits.push(`Closing the visit failed: ${r.closed_visit_run.error || "no reason given"}.`);
 	        }
-	        _entOut("entity-state-out", bits.join(" — "));
-	        await Promise.all([loadEntityOverview(name), refreshEntityLive(name), loadEntities()]);
-	      } catch (e) { _entOut("entity-state-out", String(e.message || e)); }
+	        inlineState("entity-state-out", bits.join(" "), "ok", 6000);
+	      } catch (e) {
+	        inlineState("entity-state-out", (target === "asleep" ? "Still awake: " : "Still asleep: ") + String(e.message || e), "error");
+	      } finally {
+	        afSwitchSet(sw, { busy: false });
+	        await Promise.all([loadEntityOverview(name), refreshEntityLive(name), loadEntities()]).catch(() => {});
+	      }
+	      return true;
 	    }
-    async function entityOwntimeToggle() {
-      // ONE CLICK = THE AUTHORIZATION (clicking 'personal'
-      // authorizes the entity to tick itself, no extra guardrails): /loop/start arms the
-      // grant itself and wakes an asleep entity — the click IS the grant.
-      // The optional hours field still writes a timer first; OFF = stop +
-      // revoke. Semantics from the RENDERED server truth; the response
-      // never paints the button — only the next live read does.
-      const name = state.manageName; if (!name) return;
-      const cog = state._cog || {};
-      const running = Boolean(cog.loop && cog.loop.running);
-      const armed = Boolean(cog.personal && cog.personal.armed);
-      const btn = $("entity-owntime-toggle");
-      if (btn) btn.disabled = true;
-      const put = (mode, expires) => api(`/api/gateway/entities/${encodeURIComponent(name)}/personal-grant`, {
-        method: "PUT", body: JSON.stringify(expires ? { mode, expires_at: expires } : { mode }),
-      });
-      try {
-        if (armed || running) {
-          const reason = ($("entity-state-reason").value || "").trim();
-          if (running) {
-            await api(`/api/gateway/entities/${encodeURIComponent(name)}/loop/stop`, { method: "POST", body: JSON.stringify({ mode: "graceful", reason }) });
-          }
-          if (armed) await put("disabled");
-          _entOut("entity-loop-out", "own time off — stop honored at the next boundary.");
-        } else {
-          const body = {};
-          const tick = parseFloat($("entity-loop-tick").value);
-          const ticks = parseInt($("entity-loop-ticks").value, 10);
-          const rest = parseFloat($("entity-loop-rest").value);
-          if (!Number.isNaN(tick)) body.tick_seconds = tick;
-          if (!Number.isNaN(ticks)) body.ticks_per_day = ticks;
-          if (!Number.isNaN(rest)) body.rest_minutes = rest;
-          const hours = parseFloat($("entity-grant-hours").value);
-          const timed = !Number.isNaN(hours) && hours > 0;
-          if (timed) {
-            // A timed window is the one case start can't express itself.
-            await put("timer", new Date(Date.now() + hours * 3600 * 1000).toISOString());
-          }
-          await api(`/api/gateway/entities/${encodeURIComponent(name)}/loop/start`, { method: "POST", body: JSON.stringify(body) });
-          _entOut("entity-loop-out", timed ? `own time started (${hours}h window).` : "own time started.");
-        }
-      } catch (e) {
-        // The B2 refusal contract: {reason_code, message, loop} — speak the
-        // message verbatim; the live repaint below adopts the real status,
-        // so the click that revealed staleness paints the truth.
-        _entOut("entity-loop-out", "Own time: " + String((e.detail && e.detail.message) || e.message || e));
-      } finally {
-        if (btn) btn.disabled = false;
-        try { await refreshEntityLive(name); } catch {}
-      }
-    }
+	    async function entityAwakeSwitch() {
+	      const sw = $("entity-state-awake");
+	      if (sw.getAttribute("aria-disabled") === "true" || sw.getAttribute("aria-busy") === "true") return;
+	      if (afSwitchChecked(sw)) {
+	        entityConfirmShow("entity-sleep-confirm", "entity-sleep-now");
+	        return;
+	      }
+	      entityConfirmsHide();
+	      await setEntityState("awake");
+	    }
+	    async function entityOwntimeToggle() {
+	      // ONE CLICK = THE AUTHORIZATION (clicking 'personal'
+	      // authorizes the entity to tick itself, no extra guardrails): /loop/start arms the
+	      // grant itself and wakes an asleep entity — the click IS the grant.
+	      // The optional hours field still writes a timer first; OFF = stop +
+	      // revoke. Semantics from the RENDERED server truth; the response
+	      // never paints the switch — only the next live read does.
+	      const name = state.manageName; if (!name) return;
+	      const sw = $("entity-owntime-toggle");
+	      if (sw.getAttribute("aria-disabled") === "true" || sw.getAttribute("aria-busy") === "true") return;
+	      const cog = state._cog || {};
+	      const running = Boolean(cog.loop && cog.loop.running);
+	      const armed = Boolean(cog.personal && cog.personal.armed);
+	      afSwitchSet(sw, { busy: true });
+	      const put = (mode, expires) => api(`/api/gateway/entities/${encodeURIComponent(name)}/personal-grant`, {
+	        method: "PUT", body: JSON.stringify(expires ? { mode, expires_at: expires } : { mode }),
+	      });
+	      try {
+	        if (armed || running) {
+	          const reason = ($("entity-state-reason").value || "").trim();
+	          if (running) {
+	            await api(`/api/gateway/entities/${encodeURIComponent(name)}/loop/stop`, { method: "POST", body: JSON.stringify({ mode: "graceful", reason }) });
+	          }
+	          if (armed) await put("disabled");
+	          inlineState("entity-loop-out", "Personal time is off: it stops at the end of its current step.", "ok", 6000);
+	        } else {
+	          const body = {};
+	          const tick = parseFloat($("entity-loop-tick").value);
+	          const ticks = parseInt($("entity-loop-ticks").value, 10);
+	          const rest = parseFloat($("entity-loop-rest").value);
+	          if (!Number.isNaN(tick)) body.tick_seconds = tick;
+	          if (!Number.isNaN(ticks)) body.ticks_per_day = ticks;
+	          if (!Number.isNaN(rest)) body.rest_minutes = rest;
+	          const hours = parseFloat($("entity-grant-hours").value);
+	          const timed = !Number.isNaN(hours) && hours > 0;
+	          if (timed) {
+	            // A timed window is the one case start can't express itself.
+	            await put("timer", new Date(Date.now() + hours * 3600 * 1000).toISOString());
+	          }
+	          await api(`/api/gateway/entities/${encodeURIComponent(name)}/loop/start`, { method: "POST", body: JSON.stringify(body) });
+	          inlineState("entity-loop-out", timed ? `Personal time is on for ${hours} h.` : "Personal time is on.", "ok", 6000);
+	        }
+	      } catch (e) {
+	        // The B2 refusal contract: {reason_code, message, loop} — speak the
+	        // message verbatim; the live repaint below adopts the real status,
+	        // so the click that revealed staleness paints the truth.
+	        inlineState("entity-loop-out", "Personal time unchanged: " + String((e.detail && e.detail.message) || e.message || e), "error");
+	      } finally {
+	        afSwitchSet(sw, { busy: false });
+	        try { await refreshEntityLive(name); } catch {}
+	      }
+	    }
 	    async function entityLoopFreeze() {
 	      const name = state.manageName; if (!name) return;
 	      const reason = ($("entity-state-reason").value || "").trim();
-	      const go = await confirmAction({
-	        title: `FREEZE ${name}?`,
-	        message: "Emergency hibernation: the loop process is killed NOW (no ceremony, no further writes), any open visit closes without reflection, and the entity is set to paused — the door refuses visits until an admin wakes them. For hard failures and imminent threats only.",
-	        confirmLabel: "Freeze",
-	        danger: true,
-	      });
-	      if (!go) return;
+	      const btn = $("entity-freeze-now");
+	      btn.disabled = true;
 	      try {
 	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/loop/stop`, { method: "POST", body: JSON.stringify({ mode: "freeze", reason: reason || "console emergency freeze" }) });
-	        _entOut("entity-loop-out", "loop killed — entity STOPPED (liveness axis); Restore requires an admin.");
+	        $("entity-freeze-confirm").hidden = true;
+	        inlineState("entity-state-out", "Frozen: its process was killed and it is stopped. Turn Active on in its Accounts row to bring it back.", "ok", 0);
 	        _resetChatUi(); // freeze tears down any open visit without reflection
-	        await Promise.all([loadEntityOverview(name), refreshEntityLive(name), loadEntities()]);
+	        await Promise.all([loadEntityOverview(name), refreshEntityLive(name), loadEntities()]).catch(() => {});
+	      } catch (e) {
+	        inlineState("entity-state-out", "Not frozen: " + String(e.message || e), "error");
+	      } finally {
+	        btn.disabled = false;
 	      }
-	      catch (e) { _entOut("entity-loop-out", String(e.message || e)); }
 	    }
 	    async function entitySubstrateSave() {
+	      // Auto-save (round 3): any change of provider, model or reasoning saves once both
+	      // provider and model are filled.
 	      const name = state.manageName; if (!name) return;
 	      const provider = ($("entity-substrate-provider").value || "").trim();
 	      const model = ($("entity-substrate-model").value || "").trim();
-	      if (!provider || !model) { _entOut("entity-substrate-out", "provider and model are both required."); return; }
+	      if (!provider || !model) { inlineState("entity-substrate-out", "Not saved yet: fill both provider and model.", "error"); return; }
 	      // Reasoning effort: the select's "not set" sends an explicit null
 	      // (clear) — the editor shows the stored value, so an untouched
 	      // select round-trips it and a deliberate reset truly clears.
 	      const thinkingSel = $("entity-substrate-thinking");
 	      const body = { provider, model, thinking: thinkingSel && thinkingSel.value ? thinkingSel.value : null };
-	      try { await api(`/api/gateway/entities/${encodeURIComponent(name)}/substrate`, { method: "PUT", body: JSON.stringify(body) }); _entOut("entity-substrate-out", "saved."); await loadEntitySubstrate(name); }
-	      catch (e) { _entOut("entity-substrate-out", String(e.message || e)); }
+	      inlineState("entity-substrate-out", "Saving…", "", 0);
+	      try {
+	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/substrate`, { method: "PUT", body: JSON.stringify(body) });
+	        if (state.manageName !== name) return;
+	        inlineState("entity-substrate-out", "Saved", "ok", 3000);
+	        await loadEntitySubstrate(name);
+	      } catch (e) {
+	        inlineState("entity-substrate-out", "Not saved: " + String(e.message || e), "error");
+	      }
 	    }
 	    async function entityToolsSave() {
+	      // Auto-save (round 3): each tick saves the phases that changed. A phase with
+	      // every box cleared follows the "Empty phase means no tools" switch: on = an
+	      // explicit empty grant, off = back to the framework's default tools (null).
 	      const name = state.manageName; if (!name) return;
 	      const policy = readMatrix($("entity-manage-matrix"));
-	      if (!Object.keys(policy).length) { _entOut("entity-tools-out", "no changes to save."); return; }
-	      // Clearing every box in a phase is ambiguous: reset-to-default (null →
-	      // the server deletes the phase entry, the evolving framework grant
-	      // applies) vs deny-all (explicit []). The checkbox picks; the confirm
-	      // names the consequence so the operator never watches boxes snap back
-	      // checked without having chosen that.
+	      if (!Object.keys(policy).length) return;
 	      const cleared = Object.keys(policy).filter((p) => policy[p] === null);
-	      if (cleared.length) {
-	        const denyAll = $("entity-tools-denyall").checked;
-	        if (denyAll) for (const p of cleared) policy[p] = [];
-	        const go = await confirmAction({
-	          title: denyAll ? "Deny ALL tools in cleared phases?" : "Reset cleared phases to defaults?",
-	          message: denyAll
-	            ? `Phases ${cleared.join(", ")} will carry an EXPLICIT EMPTY grant — the entity has no tools at all in ${cleared.length === 1 ? "that phase" : "those phases"} until you change it.`
-	            : `Phases with every box cleared (${cleared.join(", ")}) are RESET to the framework's evolving default grant — this does NOT deny all tools. Tick the deny-all checkbox if you meant an empty grant.`,
-	          confirmLabel: denyAll ? "Deny all" : "Reset to defaults",
-	          danger: denyAll,
-	        });
-	        if (!go) { _entOut("entity-tools-out", "not saved."); return; }
+	      const denyAll = afSwitchChecked($("entity-tools-denyall"));
+	      if (denyAll) for (const p of cleared) policy[p] = [];
+	      inlineState("entity-tools-out", "Saving…", "", 0);
+	      try {
+	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/tool-policy`, { method: "PUT", body: JSON.stringify({ policy }) });
+	        if (state.manageName !== name) return;
+	        const note = cleared.length
+	          ? (denyAll ? ` ${cleared.join(", ")}: no tools at all.` : ` ${cleared.join(", ")}: back to the default tools.`)
+	          : "";
+	        inlineState("entity-tools-out", "Saved." + note, "ok", cleared.length ? 8000 : 3000);
+	        await loadEntityToolPolicy(name);
+	      } catch (e) {
+	        inlineState("entity-tools-out", "Not saved: " + String(e.message || e), "error");
+	        await loadEntityToolPolicy(name);
 	      }
-	      try { await api(`/api/gateway/entities/${encodeURIComponent(name)}/tool-policy`, { method: "PUT", body: JSON.stringify({ policy }) }); _entOut("entity-tools-out", "capabilities saved."); await loadEntityToolPolicy(name); }
-	      catch (e) { _entOut("entity-tools-out", String(e.message || e)); }
+	    }
+	    let _entityToolsTimer = null;
+	    function entityToolsChanged() {
+	      if (_entityToolsTimer) clearTimeout(_entityToolsTimer);
+	      _entityToolsTimer = setTimeout(() => { _entityToolsTimer = null; entityToolsSave(); }, 500);
 	    }
 	    async function entityPromptSave() {
+	      // Auto-save (round 3): a layer saves when the field is left after a change.
 	      const name = state.manageName; if (!name) return;
 	      const overlay = {};
 	      for (const ta of $("entity-prompt-layers").querySelectorAll("textarea")) {
 	        overlay[ta.dataset.layer] = ta.value || "";
 	      }
-	      try { await api(`/api/gateway/entities/${encodeURIComponent(name)}/prompt`, { method: "PUT", body: JSON.stringify({ overlay }) }); _entOut("entity-prompt-out", "prompt saved."); await loadEntityPrompt(name); }
-	      catch (e) { _entOut("entity-prompt-out", String(e.message || e)); }
+	      inlineState("entity-prompt-out", "Saving…", "", 0);
+	      try {
+	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/prompt`, { method: "PUT", body: JSON.stringify({ overlay }) });
+	        if (state.manageName !== name) return;
+	        inlineState("entity-prompt-out", "Saved", "ok", 3000);
+	        await loadEntityPrompt(name);
+	      } catch (e) {
+	        inlineState("entity-prompt-out", "Not saved: " + String(e.message || e), "error");
+	      }
+	    }
+	    function entityReembedAsk() {
+	      const embedding_model = ($("entity-reembed-model").value || "").trim();
+	      if (!embedding_model) { inlineState("entity-reembed-out", "Type the gateway's embedding model first: it must match the one shown above.", "error"); return; }
+	      inlineState("entity-reembed-out", "");
+	      entityConfirmShow("entity-reembed-confirm", "entity-reembed-cancel");
 	    }
 	    async function entityReembed() {
 	      const name = state.manageName; if (!name) return;
 	      const embedding_model = ($("entity-reembed-model").value || "").trim();
 	      const reason = ($("entity-reembed-reason").value || "").trim();
-	      if (!embedding_model) { _entOut("entity-reembed-out", "embedding model (verification) is required — it must match the door's resolved embedder."); return; }
-	      const go = await confirmAction({ title: "Re-embed " + name + "?", message: "This re-derives every vector in the home's semantic index against the resolved embedder (atomic swap under the maintenance lease). The act is journaled and host-marked.", confirmLabel: "Re-embed", danger: true });
-	      if (!go) return;
-	      try { const r = await api(`/api/gateway/entities/${encodeURIComponent(name)}/reembed`, { method: "POST", body: JSON.stringify({ embedding_model, reason }) }); _entOut("entity-reembed-out", "re-embed done: " + JSON.stringify(r).slice(0, 200)); }
-	      catch (e) { _entOut("entity-reembed-out", String(e.message || e)); }
+	      const btn = $("entity-reembed-now");
+	      btn.disabled = true;
+	      inlineState("entity-reembed-out", "Rebuilding…", "", 0);
+	      try {
+	        const r = await api(`/api/gateway/entities/${encodeURIComponent(name)}/reembed`, { method: "POST", body: JSON.stringify({ embedding_model, reason }) });
+	        $("entity-reembed-confirm").hidden = true;
+	        const n = r && (r.reembedded || r.count || r.records);
+	        inlineState("entity-reembed-out", n != null ? `Rebuilt: ${n} memories.` : "Rebuilt.", "ok", 0);
+	        await loadEntityEmbedding(name);
+	      } catch (e) {
+	        inlineState("entity-reembed-out", "Not rebuilt: " + String(e.message || e), "error");
+	      } finally {
+	        btn.disabled = false;
+	      }
 	    }
 	    async function entityVerify() {
 	      const name = state.manageName; if (!name) return;
-	      try { const v = await api(`/api/gateway/entities/${encodeURIComponent(name)}/verify`); _entOut("entity-verify-out", v.ok || v.verified ? "chain verified ✓" : ("verify: " + JSON.stringify(v).slice(0, 200))); }
-	      catch (e) { _entOut("entity-verify-out", String(e.message || e)); }
+	      const btn = $("entity-verify");
+	      btn.disabled = true;
+	      inlineState("entity-verify-out", "Checking…", "", 0);
+	      try {
+	        const v = await api(`/api/gateway/entities/${encodeURIComponent(name)}/verify`);
+	        if (v.ok || v.verified) inlineState("entity-verify-out", "Intact: nothing was altered.", "ok", 0);
+	        else inlineState("entity-verify-out", "Not intact: " + String(v.error || v.reason || v.message || JSON.stringify(v).slice(0, 200)), "error");
+	      } catch (e) {
+	        inlineState("entity-verify-out", "Not checked: " + String(e.message || e), "error");
+	      } finally {
+	        btn.disabled = false;
+	      }
 	    }
 
 	    // ---- Talk: hosted chat visit (open -> turns -> close+reflect) ----
@@ -7345,11 +7568,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         inlineState("my-email-policy-state", "", "");
       }
       recipientRulesUi.base = base;
-      const pol = policy || { mode: "allowlist", always_allow: [], always_deny: [] };
-      if (!Array.isArray(pol.always_allow) || !Array.isArray(pol.always_deny)) {
-        throw new Error("The email policy has no always_allow / always_deny lists (gateway older than this console?)");
+      const pol = policy || { mode: "allowlist", always_allow: [], always_deny: [], self_addresses: [] };
+      if (!Array.isArray(pol.always_allow) || !Array.isArray(pol.always_deny) || !Array.isArray(pol.self_addresses)) {
+        throw new Error("The email policy has no always_allow / always_deny / self_addresses (gateway older than this console?)");
       }
-      recipientRulesUi.policy = { mode: pol.mode === "denylist" ? "denylist" : "allowlist", always_allow: pol.always_allow.slice(), always_deny: pol.always_deny.slice() };
+      recipientRulesUi.policy = { mode: pol.mode === "denylist" ? "denylist" : "allowlist", always_allow: pol.always_allow.slice(), always_deny: pol.always_deny.slice(), self_addresses: pol.self_addresses.slice() };
       $("my-email-policy-mode").value = recipientRulesUi.policy.mode;
       for (const which of Object.keys(RECIPIENT_RULE_LISTS)) renderRecipientRuleList(which);
     }
@@ -7363,6 +7586,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         li.className = "chip";
         const t = document.createElement("span");
         t.textContent = entry;
+        if (recipientRulesUi.policy.self_addresses.includes(entry)) {
+          // The own address is always allowed: a fixed chip, never removable.
+          li.className = "chip chip--fixed";
+          t.textContent = `${entry} (your address)`;
+          li.append(t);
+          ul.append(li);
+          continue;
+        }
         const x = document.createElement("button");
         x.type = "button";
         x.className = "chip__remove";
@@ -15549,20 +15780,19 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("entity-manage-close").onclick = closeEntityManage;
 	    for (const sub of ENTITY_SUBTABS) {
 	      $(`entity-subtab-${sub}`).onclick = () => setEntitySubtab(sub);
+	      $(`entity-subtab-${sub}`).onkeydown = entitySubtabKey;
 	    }
-	    $("entity-state-awake").onclick = () => setEntityState("awake");
-	    $("entity-state-asleep").onclick = () => setEntityState("asleep");
-	    // The STOP act rides the engraved paused verb (at-rest unchanged, c1559);
-	    // Restore = the existing wake verb, lands awake unconditionally.
-	    $("entity-stop").onclick = () => setEntityState("paused");
-	    $("entity-restore").onclick = () => setEntityState("awake");
+	    // Lifecycle: the Awake switch (Sleep asks inline first), Personal time, Freeze.
+	    $("entity-state-awake").onclick = entityAwakeSwitch;
+	    $("entity-sleep-now").onclick = async () => { $("entity-sleep-confirm").hidden = true; await setEntityState("asleep"); };
+	    $("entity-sleep-cancel").onclick = () => { $("entity-sleep-confirm").hidden = true; $("entity-state-awake").focus(); };
 	    $("entity-owntime-toggle").onclick = entityOwntimeToggle;
-	    $("entity-loop-freeze").onclick = entityLoopFreeze;
-	    $("entity-substrate-save").onclick = entitySubstrateSave;
-	    $("entity-voice-save").onclick = entityVoiceSave;
+	    $("entity-loop-freeze").onclick = () => entityConfirmShow("entity-freeze-confirm", "entity-freeze-cancel");
+	    $("entity-freeze-now").onclick = entityLoopFreeze;
+	    $("entity-freeze-cancel").onclick = () => { $("entity-freeze-confirm").hidden = true; $("entity-loop-freeze").focus(); };
+	    // Mind & voice: changes save themselves.
+	    for (const id of ["entity-substrate-provider", "entity-substrate-model", "entity-substrate-thinking"]) $(id).onchange = entitySubstrateSave;
 	    $("entity-voice-clear").onclick = entityVoiceClear;
-	    $("entity-workorder-save").onclick = entityWorkOrderSave;
-	    $("entity-workorder-clear").onclick = entityWorkOrderClear;
 	    $("entity-voice-audition").onclick = entityVoiceAudition;
 	    $("entity-voice-provider").onchange = () => loadEntityVoiceModels($("entity-voice-provider").value, "", "");
 	    $("entity-voice-model").onchange = () => {
@@ -15570,10 +15800,24 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const m = $("entity-voice-model").value;
 	      if (p && m) loadEntityVoiceVoices(p, m, "");
 	    };
-	    $("entity-tools-save").onclick = entityToolsSave;
-	    $("entity-prompt-save").onclick = entityPromptSave;
-	    $("entity-reembed").onclick = entityReembed;
+	    $("entity-voice-voice").onchange = entityVoiceSave;
+	    $("entity-reembed").onclick = entityReembedAsk;
+	    $("entity-reembed-now").onclick = entityReembed;
+	    $("entity-reembed-cancel").onclick = () => { $("entity-reembed-confirm").hidden = true; $("entity-reembed").focus(); };
+	    // Work & tools: the work order is a one-shot act; each tool tick saves.
+	    $("entity-workorder-save").onclick = entityWorkOrderSave;
+	    $("entity-workorder-clear").onclick = entityWorkOrderClear;
+	    $("entity-manage-matrix").onchange = (ev) => { if (ev && ev.target && ev.target.type === "checkbox") entityToolsChanged(); };
+	    afSwitchBind($("entity-tools-denyall"), () => true);
 	    $("entity-verify").onclick = entityVerify;
+	    // A closed disclosure's content is inert: the modal's focus trap then never counts its
+	    // (invisible) controls, so Tab from the last summary wraps instead of leaving the dialog.
+	    for (const id of ["entity-candidates-box", "entity-schedule-box", "entity-reembed-box", "entity-workorder-history-box", "entity-prompt-preview-box"]) {
+	      const d = $(id);
+	      const sync = () => { for (const c of Array.from(d.children || [])) if (c.tagName !== "SUMMARY") c.inert = !d.open; };
+	      d.ontoggle = sync;
+	      sync();
+	    }
 	    $("runs-status").onchange = () => { state.runsOffset = 0; loadRuns(); };
 	    $("runs-root-only").onchange = () => { state.runsOffset = 0; loadRuns(); };
 	    {

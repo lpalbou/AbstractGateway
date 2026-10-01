@@ -67,8 +67,9 @@ def test_chip_unification_single_recipe(html: str) -> None:
 
 def test_radius_scale_normalized(html: str) -> None:
     """Radii ride the token scale. Documented exceptions: 999px (pill), 50%
-    (circle), inherit, and the pc-chat-item 12px (the shared uic transcript
-    recipe — snapping it locally would drift from the kit's pen)."""
+    (circle), inherit, the pc-chat-item 12px (the shared uic transcript
+    recipe — snapping it locally would drift from the kit's pen), and 0 (no
+    rounding: a phone's flat section with a hairline divider, round 3 §12)."""
     offenders = []
     # The abstractuic kit's component CSS (<style id="af-kit-css">, vendored
     # verbatim by console_islands_sync) carries the kit's own radii; this pin
@@ -79,7 +80,7 @@ def test_radius_scale_normalized(html: str) -> None:
         value = m.group(1).strip()
         if value.startswith("var(--radius-"):
             continue
-        if value in ("999px", "50%", "inherit", "12px"):
+        if value in ("999px", "50%", "inherit", "12px", "0"):
             continue
         offenders.append(value)
     assert not offenders, f"off-token radii: {offenders}"
