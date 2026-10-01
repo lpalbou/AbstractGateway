@@ -191,8 +191,7 @@ The **Workflows** tab starts with what workflows are: the programs your apps
 and automations run, packaged as bundles (`.flow` files) that ship with the
 gateway, that you import, or that you publish from AbstractFlow.
 
-The table has one row per bundle, in two groups: **Shared by the gateway — all
-users** (bundles that ship with the gateway and those an admin imported or
+The table has one row per bundle, in two groups: **Shared with everyone** (bundles that ship with the gateway and those an admin imported or
 published) and **Mine** (bundles you imported or published yourself; shown only
 when you have some). An admin's own imports are shared, so admins see one group.
 A user sees the shared bundles an admin left available, and their own.
@@ -202,10 +201,10 @@ A user sees the shared bundles an admin left available, and their own.
 | **Name** | the default entrypoint's name, with the bundle id under it, and **Deprecated** / **Archived** pills when they apply |
 | **What it does** | the default entrypoint's description (the whole text when the row is expanded) |
 | **Version** | the latest version ("+2 older" when there are more; a manifest version 0.0.0 reads "unversioned") |
-| **Source** | a badge: "Shipped", "Imported" or "Published from AbstractFlow" |
+| **Source** | a badge: "Shipped", "Imported" or "From AbstractFlow" |
 | **Used by** | the plain names of the apps that ask for its interfaces, each with a (?) that explains it, or "No app" |
 | **Available to users** | (administrators only, shared bundles) a switch; off hides the workflow from users' lists and app pickers |
-| **Actions** | **Export**, **Open in AbstractFlow**, and **Archive** for imported and published bundles |
+| **Actions** | **Export**, **Open** (in AbstractFlow, a new tab) and **Archive** for imported and published bundles |
 
 Click a row to expand it: each version with its channel, date and the same
 actions, and its entrypoints with their names, descriptions and the apps that
@@ -230,7 +229,7 @@ admin." Turning it back on does not resume those automations; each user resumes
 their own. Admins always see every workflow, and an app's default workflow
 (**Default workflow per app**) keeps running for everyone even when it is hidden.
 
-**Open in AbstractFlow** opens the workflow in the visual editor in a new tab
+**Open** opens the workflow in the visual editor in a new tab
 (AbstractFlow must be running: **Apps > Flow Editor**). A bundle published from
 one of your flows opens that flow; any other bundle opens as an unsaved copy
 titled `<name> · <bundle id>@<version>`, so Save creates your own flow and never

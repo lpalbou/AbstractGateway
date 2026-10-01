@@ -8,8 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **Workflow ownership.** The Workflows page groups bundles into **Shared by the gateway — all users** and
-  **Mine** (what you imported or published), with a Shipped / Imported / Published from AbstractFlow badge.
+- **Workflow ownership.** The Workflows page groups bundles into **Shared with everyone** and
+  **Mine** (what you imported or published), with a Shipped / Imported / From AbstractFlow badge.
   `GET /bundles` items carry `owner` (`gateway` or `user`), `shipped`, `available` and `archived`; imports and
   publishes stamp `metadata.owner` (user, tenant, time). Users can import: the bundle lands in **Mine**.
 - **Available to users** (administrators): a switch per shared workflow, also
@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refuses their new runs, schedules and automations ("This workflow isn't available to users on this gateway.
   Ask an admin."), and pauses their existing automations on it with that reason; turning it back on does not
   resume them. Admins always see every workflow; an app's default workflow keeps running for everyone.
-- **Open in AbstractFlow** on every workflow: opens it in the visual editor (AbstractFlow's
+- **Open** (in AbstractFlow) on every workflow: opens it in the visual editor (AbstractFlow's
   `?bundle=<id>&version=<v>` link). `GET /bundles/{bundle_id}` also returns `source`, `shipped` and `owner`.
 - Paused automations show why the gateway paused them (`paused_reason` in `GET /automations`).
 

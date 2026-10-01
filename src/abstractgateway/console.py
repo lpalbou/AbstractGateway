@@ -1924,21 +1924,20 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .workflows-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
 	    .workflows-table th { white-space: nowrap; }
 	    .workflows-table td { vertical-align: top; padding-top: 10px; padding-bottom: 10px; overflow-wrap: anywhere; }
-	    .workflows-table th.workflows-col-name { width: 18%; }
-	    .workflows-table th.workflows-col-what { width: auto; }
-	    .workflows-table th.workflows-col-version { width: 6.5rem; }
-	    .workflows-table th.workflows-col-source { width: 11rem; }
-	    .workflows-table th.workflows-col-usedby { width: 13rem; }
-	    .workflows-table th.workflows-col-available { width: 9.5rem; }
-	    .workflows-table th.workflows-col-actions { width: 15.5rem; }
-	    .workflows-table th.workflows-col-source { width: 9.5rem; }
+	    /* Fixed columns at their minimum; Name and What it does share the rest. Below the width
+	       these minimums need (computed in workflowsLayout, never a guessed breakpoint) the table
+	       becomes one flat card per bundle (.workflows-cards), so it never scrolls sideways. */
+	    .workflows-table th.workflows-col-name, .workflows-table th.workflows-col-what { width: auto; }
+	    .workflows-table th.workflows-col-version { width: 5.5rem; }
+	    .workflows-table th.workflows-col-source { width: 7.5rem; }
+	    .workflows-table th.workflows-col-usedby { width: 9.5rem; }
+	    .workflows-table th.workflows-col-available { width: 8.5rem; white-space: normal; }
+	    .workflows-table th.workflows-col-actions { width: 11rem; }
 	    .workflows-name__wrap { display: flex; gap: 6px; align-items: flex-start; }
 	    .workflows-name__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 	    .workflows-name__text small { font-size: var(--af-helper-size, var(--font-size-md)); font-family: var(--font-mono); overflow-wrap: anywhere; }
 	    .workflows-chevron { color: var(--muted); width: 1em; flex: 0 0 auto; }
 	    .workflows-what { color: var(--text); }
-	    .workflows-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
-	    .workflows-row[aria-expanded="true"] .workflows-clamp { display: block; -webkit-line-clamp: unset; line-clamp: none; overflow: visible; }
 	    .workflows-fold-what, .workflows-fold-meta { display: none; }
 	    .workflows-fold-what, .workflows-fold-meta { font-size: var(--af-helper-size, var(--font-size-md)); color: var(--muted); font-weight: 400; }
 	    .workflows-fold-what { color: var(--text); font-size: var(--font-size-base); }
@@ -1950,11 +1949,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    /* Ownership groups (DESIGN-v3 §5.1): a plain heading row per group, no nested card. */
 	    .workflows-table tr.workflows-group > th { text-align: left; padding: 18px 0 6px; border-bottom: 1px solid var(--line); font-size: var(--font-size-base); font-weight: 600; color: var(--text); white-space: normal; }
 	    .workflows-table tr.workflows-group:first-child > th { padding-top: 6px; }
-	    .workflows-group__count { margin-left: 8px; font-weight: 400; font-size: var(--af-helper-size, var(--font-size-md)); }
 	    .workflows-badge { margin: 0; white-space: normal; }
 	    .workflows-name__text .pill { align-self: flex-start; margin: 2px 0 0; }
 	    .workflows-row--archived .workflows-name strong, .workflows-row--archived .workflows-what { color: var(--muted); }
-	    .workflows-th-available__label { display: inline-flex; align-items: center; gap: 6px; }
+	    .workflows-open-flow { display: inline-flex; align-items: center; gap: 6px; }
+	    .workflows-open-flow .button-icon svg { width: 14px; height: 14px; }
 	    .workflows-available .af-switch__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 	    .workflows-confirm > td { padding-top: 0; }
 	    .workflows-confirm-box { margin-top: 8px; }
@@ -1993,43 +1992,32 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .workflows-settings { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
 	    .workflows-settings .af-switch--row { width: 100%; max-width: none; }
 	    .workflows-settings .ui-advanced { display: block; margin-top: 6px; }
-	    /* 768-1023 px: the table keeps Name | Version | Used by | Actions; what it does and the
-	       source fold under the name. */
 	    @media (max-width: 1023.98px) {
-	      .workflows-table .workflows-th-what, .workflows-table .workflows-th-source, .workflows-table td.workflows-what, .workflows-table td.workflows-source { display: none; }
-	      .workflows-table th.workflows-col-name { width: auto; }
-	      .workflows-table th.workflows-col-version { width: 6.5rem; }
-	      .workflows-table th.workflows-col-usedby { width: 11rem; }
-	      .workflows-table th.workflows-col-actions { width: 13rem; }
-	      .workflows-fold-what { display: -webkit-box; margin-top: 2px; }
-	      .workflows-fold-meta { display: block; }
-	      .workflows-fold-version { display: none; }
 	      .agent-defaults { grid-template-columns: minmax(0, 1fr); }
 	    }
-	    /* < 768 px: one flat block per bundle — name + actions, what it does, ONE meta line
-	       "Version x · source", then "Used by · …" (DESIGN §12: label · value on one line). */
-	    @media (max-width: 767.98px) {
-	      .workflows-table, .workflows-table tbody, .workflows-table tr, .workflows-table td { display: block; width: 100%; }
-	      .workflows-table thead { display: none; }
-	      .workflows-table tr.workflows-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
-	      .workflows-table tr.workflows-row > td { padding: 0; border: 0; width: auto; }
-	      .workflows-table td.workflows-name { grid-column: 1 / -1; grid-row: 1; }
-	      .workflows-table td.workflows-available { grid-column: 1 / -1; grid-row: 3; }
-	      .workflows-table td.workflows-available:empty { display: none; }
-	      .workflows-available .af-switch__label { position: static; width: auto; height: auto; overflow: visible; clip: auto; }
-	      .workflows-table tr.workflows-group > th { display: block; padding: 18px 0 6px; }
-	      .workflows-table td.workflows-actions { grid-column: 1 / -1; grid-row: 4; margin-top: 4px; }
-	      .workflows-actions .actions { justify-content: flex-start; }
-	      .workflows-table td.workflows-version-cell { display: none; }
-	      .workflows-fold-version { display: inline; }
-	      .workflows-usedby { grid-column: 1 / -1; grid-row: 2; display: flex !important; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
-	      .workflows-usedby__item + .workflows-usedby__item::before { content: "·"; margin-right: 6px; color: var(--muted); }
-	      .workflows-table td.workflows-usedby::before { content: "Used by · "; color: var(--muted); }
-	      .workflows-usedby__item + .workflows-usedby__item { margin-top: 0; }
+	    /* Cards (.workflows-cards, set by workflowsLayout when the table's minimum width does not
+	       fit): one flat block per bundle — name, what it does, ONE meta line "Version x · badge",
+	       "Used by · …", the availability switch, then the actions (DESIGN §12). */
+	    .workflows-cards .workflows-table, 	    .workflows-cards .workflows-table tbody, 	    .workflows-cards .workflows-table tr, 	    .workflows-cards .workflows-table td { display: block; width: 100%; }
+	    .workflows-cards .workflows-table thead { display: none; }
+	    .workflows-cards .workflows-table tr.workflows-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px 10px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
+	    .workflows-cards .workflows-table tr.workflows-row > td { padding: 0; border: 0; width: auto; }
+	    .workflows-cards .workflows-table td.workflows-what, 	    .workflows-cards .workflows-table td.workflows-source, 	    .workflows-cards .workflows-table td.workflows-version-cell { display: none; }
+	    .workflows-cards .workflows-fold-what { display: block; margin-top: 2px; }
+	    .workflows-cards .workflows-fold-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+	    .workflows-cards .workflows-table td.workflows-available:empty { display: none; }
+	    .workflows-cards .workflows-available .af-switch__label { position: static; width: auto; height: auto; overflow: visible; clip: auto; }
+	    .workflows-cards .workflows-table tr.workflows-group > th { display: block; padding: 18px 0 6px; }
+	    .workflows-cards .workflows-actions .actions { justify-content: flex-start; }
+	    .workflows-cards .workflows-usedby { display: flex !important; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+	    .workflows-cards .workflows-usedby__item + .workflows-usedby__item::before { content: "·"; margin-right: 6px; color: var(--muted); }
+	    .workflows-cards .workflows-table td.workflows-usedby::before { content: "Used by · "; color: var(--muted); }
+	    .workflows-cards .workflows-usedby__item + .workflows-usedby__item { margin-top: 0; }
+	    .workflows-cards .workflows-confirm, 	    .workflows-cards .workflows-confirm > td { display: block; padding: 0 0 10px; border: 0; }
+	    .workflows-cards .workflows-detail > td { padding: 8px 0 12px; }
+	    .workflows-cards .workflows-entry { grid-template-columns: minmax(0, 1fr); }
+	    @media (pointer: coarse), (max-width: 767.98px) {
 	      .workflows-actions .actions > button { min-height: 44px; }
-	      .workflows-confirm, .workflows-confirm > td { display: block; padding: 0 0 10px; border: 0; }
-	      .workflows-detail > td { padding: 8px 0 12px; }
-	      .workflows-entry { grid-template-columns: minmax(0, 1fr); }
 	    }
 	    /* ---- Account email UI (DESIGN-v2 §3): IMAP servers always visible, one row per
 	       server (Server · Port · Security) from 768 px; Advanced as plain sentences. */
@@ -3690,6 +3678,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      mail: svgIcon('<rect x="3" y="5.5" width="18" height="13" rx="2"></rect><path d="m3.5 7 8.5 6 8.5-6"></path>'),
 	      logs: svgIcon('<path d="M8 6.5h12M8 12h12M8 17.5h12"></path><circle cx="4" cy="6.5" r=".9"></circle><circle cx="4" cy="12" r=".9"></circle><circle cx="4" cy="17.5" r=".9"></circle>'),
 	      folder: svgIcon('<path d="M3 7.5a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>'),
+	      openNew: svgIcon('<path d="M14 4h6v6"></path><path d="M20 4l-9 9"></path><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"></path>'),
 	      trash: svgIcon('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4.5h6V7"></path>'),
 	    };
 	    // Card 015 wave 3 (usability P2-1/2): a header-only table reads as
@@ -4287,7 +4276,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    state.workflowsShowDrafts = false;
 	    state.workflowsShowOlder = false;
 	    state.workflowsShowArchived = false;
-	    const WORKFLOW_SOURCE_TEXT = { shipped: "Shipped", imported: "Imported", published: "Published from AbstractFlow" };
+	    const WORKFLOW_SOURCE_TEXT = { shipped: "Shipped", imported: "Imported", published: "From AbstractFlow" };
 	    // F4: a manifest whose bundle_version is the placeholder "0.0.0" (the Assistant orchestrator
 	    // ships so) has no version; say "unversioned" instead of a number that looks like one.
 	    const WORKFLOW_UNVERSIONED = new Set(["0.0.0"]);
@@ -4456,19 +4445,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // Ownership groups (DESIGN-v3 §5.1): what the gateway shares with every user, then the
 	    // signed-in user's own imports and publishes ("Mine", hidden when empty).
 	    const WORKFLOW_GROUPS = [
-	      { kind: "gateway", title: "Shared by the gateway — all users" },
+	      { kind: "gateway", title: "Shared with everyone" },
 	      { kind: "user", title: "Mine" },
 	    ];
 	    const WORKFLOW_AVAILABLE_HELP = "Off hides this workflow from users' lists and app pickers and pauses their automations on it; turning it back on doesn't resume them. Admins always see it, and an app's default workflow keeps running for everyone.";
-	    function workflowGroupRow(title, count) {
+	    function workflowGroupRow(title) {
 	      const tr = document.createElement("tr");
 	      tr.className = "workflows-group";
 	      const th = document.createElement("th");
 	      th.colSpan = workflowColCount();
 	      th.scope = "colgroup";
-	      th.innerHTML = `<span class="workflows-group__title"></span><span class="workflows-group__count muted"></span>`;
+	      th.innerHTML = `<span class="workflows-group__title"></span>`;
 	      th.querySelector(".workflows-group__title").textContent = title;
-	      th.querySelector(".workflows-group__count").textContent = `${count} workflow${count === 1 ? "" : "s"}`;
 	      tr.append(th);
 	      return tr;
 	    }
@@ -4514,9 +4502,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      exportBtn.onclick = (ev) => { ev.stopPropagation(); exportWorkflow(row.bundle_id, v.bundle_version); };
 	      out.push(exportBtn);
 	      const open = document.createElement("button");
-	      open.type = "button"; open.className = "secondary small workflows-open-flow"; open.textContent = "Open in AbstractFlow";
+	      open.type = "button"; open.className = "secondary small workflows-open-flow";
+	      open.innerHTML = `<span class="button-icon" aria-hidden="true">${ICONS.openNew}</span><span>Open</span>`;
 	      open.setAttribute("aria-label", `Open ${label} in AbstractFlow`);
-	      open.title = "Open this workflow in the visual editor (a new tab)";
+	      open.title = "Open in AbstractFlow";
 	      open.onclick = (ev) => { ev.stopPropagation(); openWorkflowInFlow(row, v); };
 	      out.push(open);
 	      const acts = v.actions || {};
@@ -4544,8 +4533,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const head = $("workflows-th-available");
 	      if (head) {
 	        head.hidden = !admin;
-	        const label = head.querySelector(".workflows-th-available__label");
-	        if (admin && label && !label.querySelector(".help-q")) label.append(workflowHelpQ("Available to users", WORKFLOW_AVAILABLE_HELP));
+	        head.title = WORKFLOW_AVAILABLE_HELP;  // the helper is a tooltip only
 	      }
 	      const rows = workflowRows();
 	      if (!rows.length) {
@@ -4558,10 +4546,29 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      for (const group of WORKFLOW_GROUPS) {
 	        const members = rows.filter((r) => r.ownerKind === group.kind);
 	        if (!members.length) continue;
-	        tbody.appendChild(workflowGroupRow(group.title, members.length));
+	        tbody.appendChild(workflowGroupRow(group.title));
 	        for (const row of members) renderWorkflowRow(tbody, row, admin);
 	      }
 	      renderWorkflowsSkipped();
+	      workflowsLayout();
+	    }
+	    // Table or cards, from what the columns need (their minimum widths), not a guessed
+	    // viewport breakpoint: the table never scrolls sideways at any width.
+	    const WORKFLOW_TABLE_MIN_REM = { base: 59.5, available: 9.5 };
+	    function workflowsLayout() {
+	      const section = $("workflows-section");
+	      const scroll = $("workflows-scroll");
+	      if (!section || !scroll) return;
+	      const width = scroll.clientWidth;
+	      if (!width) return;  // hidden tab: decided when it is shown
+	      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+	      const admin = Boolean(state.principal && state.principal.admin);
+	      const need = (WORKFLOW_TABLE_MIN_REM.base + (admin ? WORKFLOW_TABLE_MIN_REM.available : 0)) * rem;
+	      section.classList.toggle("workflows-cards", width < need);
+	      if (!state.workflowsResizeBound && typeof ResizeObserver === "function") {
+	        state.workflowsResizeBound = true;
+	        new ResizeObserver(() => workflowsLayout()).observe(scroll);
+	      }
 	    }
 	    function renderWorkflowRow(tbody, row, admin) {
 	      const key = row.key;

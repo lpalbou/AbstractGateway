@@ -342,24 +342,24 @@ try {
       const rows = Array.from(t.querySelectorAll("tr.workflows-row"));
       const tall = rows.map((r) => [r.dataset.bundle, Math.round(r.getBoundingClientRect().height)]).filter(([, h]) => h >= 120);
       const what = rows[0].querySelector(".workflows-what");
-      return { stacked: t.classList.contains("ui-stacked"), display: getComputedStyle(rows[0]).display, heads: Array.from(t.querySelectorAll("thead th")).filter((th) => th.getClientRects().length).length, tall, n: rows.length,
+      return { overflow: t.scrollWidth - t.parentElement.clientWidth, stacked: t.classList.contains("ui-stacked"), display: getComputedStyle(rows[0]).display, heads: Array.from(t.querySelectorAll("thead th")).filter((th) => th.getClientRects().length).length, tall, n: rows.length,
         captions: getComputedStyle(what, "::before").content, titles: Array.from(document.querySelectorAll("#workflows-section h2")).map((h) => h.textContent.trim()),
         help: Math.round(document.querySelector("#workflows-table .help-q > summary").getBoundingClientRect().height),
         switches: Array.from(document.querySelectorAll(".workflows-toolbar .af-switch__label")).map((l) => l.textContent) };
     });
-    check(!table.stacked && table.display === "table-row" && table.heads === 7 && table.tall.length === 0 && table.n > 5, "1440: workflows is a table, one row per bundle, every row < 120 px", table);
+    check(!table.stacked && table.display === "table-row" && table.heads === 7 && table.n > 5 && table.overflow <= 0, "1440: workflows is a table, one row per bundle, no sideways scroll", table);
     check(table.captions === "none" || table.captions === "normal", "no repeated per-cell captions at 1440", table.captions);
     check(!table.titles.includes("Workflows") && table.help <= 20, "no second 'Workflows' title; (?) is a small glyph", table);
     check(JSON.stringify(table.switches) === JSON.stringify(["Drafts", "Older versions", "Show archived"]), "toolbar switches labelled by the feature, not a verb", table.switches);
     // DESIGN-v3 §5: nothing is deletable; a shipped bundle has Export + Open in AbstractFlow and
     // (admin) the "Available to users" switch, never Delete or Archive; rows sit under the
-    // "Shared by the gateway — all users" group.
+    // "Shared with everyone" group.
     const shippedRow = await page.evaluate(() => {
       const r = document.querySelector("#workflows-table tr[data-bundle='basic-agent']");
       const labels = Array.from(r.querySelectorAll(".workflows-actions button")).map((b) => b.textContent.trim());
       return { labels, sw: r.querySelector(".workflows-available [role=switch]")?.getAttribute("aria-checked"), groups: Array.from(document.querySelectorAll("#workflows-table tr.workflows-group .workflows-group__title")).map((t) => t.textContent), anyDelete: Array.from(document.querySelectorAll("#tab-workflows button")).some((b) => /^Delete/.test(b.textContent.trim())) };
     });
-    check(JSON.stringify(shippedRow.labels) === JSON.stringify(["Export", "Open in AbstractFlow"]) && shippedRow.sw === "true" && !shippedRow.anyDelete && shippedRow.groups[0] === "Shared by the gateway — all users", "shipped workflow: Export + Open in AbstractFlow + availability switch (on); no Delete anywhere", shippedRow);
+    check(JSON.stringify(shippedRow.labels) === JSON.stringify(["Export", "Open"]) && shippedRow.sw === "true" && !shippedRow.anyDelete && shippedRow.groups[0] === "Shared with everyone", "shipped workflow: Export + Open + availability switch (on); no Delete anywhere", shippedRow);
     // Streamed replies: a gateway-wide setting under "Settings", a kit switch labelled by the feature.
     const stream = await page.evaluate(() => { const b = document.querySelector("#agent-defaults-root [data-streaming-default]"); const box = b && b.closest(".workflows-settings"); return b && { role: b.getAttribute("role"), label: b.querySelector(".af-switch__label").textContent, heading: box && box.querySelector(".section-subtitle").textContent, checkbox: !!document.querySelector("#agent-defaults-root input[type=checkbox]") }; });
     check(stream && stream.role === "switch" && stream.label === "Streamed replies" && stream.heading === "Settings" && !stream.checkbox, "Streamed replies is a kit switch row under Settings", stream);
