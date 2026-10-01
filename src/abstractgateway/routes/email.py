@@ -29,6 +29,13 @@ user makes so their agents and automations can read and send mail as them.
     PUT    /me/notifications             {email: {event: bool}}  (v1 five-kind body accepted and mapped)
     POST   /me/notifications/test        send one test notification now
 
+Entity mailboxes (round 3 §3.1: entities are AI users with their own mailbox) — every `/me/email...`
+and `/me/notifications...` route above is mirrored at `/accounts/{account_id}/email...` and
+`/accounts/{account_id}/notifications...` with identical payloads and answers, acting on the
+ENTITY's plane (rooted at its home). Allowed for an admin and for the entity's creator; 403
+`{message}` when the target is a user (users manage their own mailbox through `/me`), is not an
+entity the caller may manage, or is archived. There is no route that reads an entity's mail.
+
 Admin routes — status and the per-user switch only (D3: administrators never read mail):
 
     GET    /admin/users/{user_id}/email          configured / address / state / last error
@@ -108,11 +115,65 @@ async def _call(fn, *args: Any, **kwargs: Any) -> Any:
 
 
 def _self_plane(request: Request) -> tuple[GatewayPrincipal, EmailPlane]:
+    """(the CALLER, the plane acted on). `/me/...`: the caller's own plane. The
+    `/accounts/{account_id}/...` mirror: the entity's plane, after `_entity_target` checked that
+    the caller may manage it (the caller stays the actor in audit lines)."""
     principal = _principal_from_request(request)
+    account_id = request.path_params.get("account_id")
     try:
+        if account_id is not None:
+            plane = mail_accounts.plane_for_principal(_entity_target(principal, str(account_id)))
+            # The entity's mailbox worker runs from the first time its mailbox is touched.
+            from ..mail.worker import sync_entity_workers
+
+            sync_entity_workers()
+            return principal, plane
         return principal, mail_accounts.plane_for_principal(principal)
     except EmailPrincipalRefused as exc:
         raise HTTPException(status_code=403, detail={"reason_code": "email_principal_refused", "message": str(exc)}) from None
+
+
+def _target_principal(request: Request, caller: GatewayPrincipal) -> GatewayPrincipal:
+    """The account whose address/record a route reads or writes: the caller on `/me/...`, the
+    entity on the `/accounts/{account_id}/...` mirror."""
+    account_id = request.path_params.get("account_id")
+    return caller if account_id is None else _entity_target(caller, str(account_id))
+
+
+ENTITY_MAILBOX_NOT_YOURS = "There is no entity named {id!r} whose mailbox you can manage."
+ENTITY_MAILBOX_USER_TARGET = (
+    "{id} is a user: users manage their own mailbox from their own account page; this is for entities."
+)
+
+
+def _entity_target(caller: GatewayPrincipal, account_id: str) -> GatewayPrincipal:
+    """The entity principal `account_id`, when `caller` may configure its mailbox: an admin, or
+    the entity's creator (`entity_access.entity_visible_to` on the home's manifest). 403
+    `{message}` otherwise: a user target (named only to an admin), an entity the caller may not
+    see or that does not exist (the same sentence), an archived entity."""
+    from ..entity_access import entity_archived, entity_home_dir, entity_visible_to, manifest_creator
+    from ..users import GatewayUserRegistry
+
+    def refuse(message: str, code: str = "email_target_refused") -> HTTPException:
+        return HTTPException(status_code=403, detail={"reason_code": code, "message": message})
+
+    rec = GatewayUserRegistry().get_user(account_id)
+    if rec is not None and rec.principal_kind != "entity":
+        if caller.is_admin():
+            raise refuse(ENTITY_MAILBOX_USER_TARGET.format(id=rec.user_id), "email_target_is_user")
+        raise refuse(ENTITY_MAILBOX_NOT_YOURS.format(id=account_id))
+    home = entity_home_dir(account_id)
+    if rec is None or home is None:
+        raise refuse(ENTITY_MAILBOX_NOT_YOURS.format(id=account_id))
+    if not caller.is_admin():
+        _exists, created_by = manifest_creator(home.parent, home.name)
+        if not entity_visible_to(caller, home.name, created_by):
+            raise refuse(ENTITY_MAILBOX_NOT_YOURS.format(id=account_id))
+    if entity_archived(rec.user_id):
+        from ..entity_access import ENTITY_ARCHIVED
+
+        raise refuse(ENTITY_ARCHIVED.format(slug=rec.user_id), "entity_archived")
+    return rec.to_principal()
 
 
 def _actor(principal: GatewayPrincipal) -> str:
@@ -277,7 +338,7 @@ async def me_email_get(request: Request) -> Any:
         out = mail_accounts.public_status(plane)
         # The shared resolver (DESIGN-v2 §2.5): the admin's row in /admin/users and
         # /admin/accounts reads exactly this.
-        view = mail_accounts.account_email_view(principal)
+        view = mail_accounts.account_email_view(_target_principal(request, principal))
         out["email_address"] = view["email_address"] or ""
         out["mailbox"] = view["mailbox"]
         if principal.is_admin() and plane.is_default:
@@ -346,7 +407,8 @@ async def me_email_address(request: Request, body: AddressBody) -> Any:
     principal, _plane = _self_plane(request)
 
     def run() -> Dict[str, Any]:
-        return {"ok": True, **mail_accounts.set_email_address(principal, body.address, actor=_actor(principal))}
+        target = _target_principal(request, principal)
+        return {"ok": True, **mail_accounts.set_email_address(target, body.address, actor=_actor(principal))}
 
     return await _call(run)
 
@@ -476,10 +538,11 @@ async def me_email_agent_tools(request: Request, body: EnabledBody) -> Any:
         reloaded = False
         # The toolsets are built with the host: reload THIS user's host (only when it is
         # already built — never a first build from here) so agents see the change now.
+        # An entity's runtime reads the switch at each tool call (entities.py): no host to reload.
         try:
             from .. import service as service_mod
 
-            built = (
+            built = not plane.is_entity and (
                 service_mod.principal_service_cached(principal)
                 if service_mod.gateway_multi_user_enabled()
                 else service_mod._service is not None
@@ -918,3 +981,41 @@ async def legacy_email_send(request: Request, body: LegacySendBody) -> Any:
         }
 
     return await _call(run)
+
+
+# ---------------------------------------------------------------------------
+# Entity mailboxes: the /accounts/{account_id}/... mirror of every /me/email and
+# /me/notifications route (round 3 §3.1). Registered from the routes above so a /me route
+# added later is mirrored too; `_self_plane` resolves the entity's plane from the path.
+# ---------------------------------------------------------------------------
+
+_MIRRORED_PREFIXES = ("/me/email", "/me/notifications")
+
+
+def _mirror_entity_routes() -> List[str]:
+    from fastapi.routing import APIRoute
+
+    added: List[str] = []
+    prefix = router.prefix
+    for route in list(router.routes):
+        if not isinstance(route, APIRoute) or not route.path.startswith(prefix):
+            continue
+        rel = route.path[len(prefix):]
+        if not rel.startswith(_MIRRORED_PREFIXES):
+            continue
+        target = "/accounts/{account_id}" + rel[len("/me"):]
+        router.add_api_route(
+            target,
+            route.endpoint,
+            methods=sorted(route.methods or ()),
+            summary=f"Entity mailbox: {route.summary or route.name}",
+            description=(route.description or "")
+            + "\n\nEntity mirror (round 3): acts on the mailbox of entity `account_id` (admin or the entity's creator; "
+            "403 `{message}` for a user, an entity you can't manage, or an archived entity).",
+            tags=["email"],
+        )
+        added.append(target)
+    return added
+
+
+ENTITY_MAILBOX_ROUTES = _mirror_entity_routes()

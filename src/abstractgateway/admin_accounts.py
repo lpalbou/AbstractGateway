@@ -447,6 +447,7 @@ def set_active(caller: GatewayPrincipal, account_id: str, *, active: bool, tenan
                 _suspend_entity(account_id, actor)
             if rec is not None:
                 registry.update_user(user_id=rec.user_id, tenant_id=rec.tenant_id, enabled=False)
+        _sync_entity_mail()
     row = account_row(caller, account_id, rec.tenant_id if rec is not None else tenant_id)
     if row is None:
         raise AccountError(404, "account_not_found", f"There is no account named {account_id!r} on this gateway.")
@@ -540,6 +541,7 @@ def archive_account(caller: GatewayPrincipal, account_id: str, *, tenant_id: str
         _mark_entity_archived(account_id, archived=True, actor=actor)
         if rec is not None:
             registry.set_archived(user_id=rec.user_id, tenant_id=rec.tenant_id, archived=True, actor=actor)
+        _sync_entity_mail()  # an archived entity's mail watcher stops
     row = account_row(caller, account_id, rec.tenant_id if rec is not None else tenant_id)
     if row is None:
         raise missing
@@ -572,3 +574,12 @@ def unarchive_account(caller: GatewayPrincipal, account_id: str, *, tenant_id: s
     if row is None:
         raise AccountError(404, "account_not_found", f"There is no account named {account_id!r} on this gateway.")
     return row
+
+
+
+def _sync_entity_mail() -> None:
+    """Entity mailbox workers follow the account (round 3 §3.1): archived or suspended = stopped,
+    active = running."""
+    from .mail.worker import sync_entity_workers
+
+    sync_entity_workers()

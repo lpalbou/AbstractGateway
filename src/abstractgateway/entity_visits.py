@@ -1453,6 +1453,14 @@ class EntityVisitHost:
 
         grant = resolve_tool_grant(Path(er.home.home_dir), "visit")
         tool_defs = _entity_tool_definitions(grant.tools, ToolDefinition)
+        # The entity's own mailbox tools (round 3 §3.1), offered while its "Agent email tools"
+        # switch is active; the door's TOOL_CALLS handler runs them through its account.
+        from .mail.runtime_wiring import entity_email_tool_specs
+
+        email_specs = entity_email_tool_specs(Path(er.home.home_dir).name)
+        tool_defs = tool_defs + [
+            ToolDefinition(name=s["name"], description=s["description"], parameters=s["parameters"]) for s in email_specs
+        ]
         info = dict(model_info or {})
         react = create_react_workflow(
             logic=ReActLogic(tools=tool_defs),
@@ -1473,7 +1481,7 @@ class EntityVisitHost:
             # hand-copy hole). Effective offer + execution allowlist are
             # UNCHANGED (the adapter intersects against logic.tools); only
             # the trace is added.
-            allowed_tools=list(grant.tools),
+            allowed_tools=list(grant.tools) + [s["name"] for s in email_specs],
             final_next_node=HARVEST_NODE,
         )
         return ReactMiddle(nodes=react.nodes, entry="reason", reset_turn=reset_react_turn)
