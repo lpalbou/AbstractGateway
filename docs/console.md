@@ -37,9 +37,8 @@ The sidebar groups the tabs in four sections, in this order:
 | Work | **Workflows** | the workflow bundles on this gateway (name, what each does, version, source, the apps that use it), import, export, delete, the default workflow for each app and the **Streamed replies** setting ([below](#workflows)) |
 | Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches |
 | Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), plus *Advanced: apps settings* and *Advanced: backlog settings (Continuum)* |
-| Models | **Providers** | provider connections (OpenAI, Anthropic, OpenRouter, Portkey, LM Studio, Ollama, custom OpenAI-compatible endpoints) with write-only keys |
+| Models | **Providers** | **Local providers**: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, **Browse models** and its server connection; **Remote providers**: OpenAI, Anthropic, OpenRouter, Portkey and custom OpenAI-compatible connections with write-only keys (shown as fingerprints); then the **Available Providers** table ([below](#models-and-local-providers)) |
 | Models | **Models** | browse models that fit this machine, download them, delete installed ones (below) |
-| Models | **Engines** | the local engines on the gateway host: installed or not, running or not, install, start, stop (below) |
 | Models | **Multimodal** | capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
 | System | **Resources** | memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the **Gateway** card (pause, update, restart, desktop icon, start at login) |
 | System | **Sandbox** | quick chat and media generation against the configured defaults |
@@ -263,9 +262,9 @@ call ends" (the old model is still answering a call), "X: eject failed:
 reason", "X kept in memory: reason" (something else still uses it) and "X
 ejected".
 
-### Models and Engines tabs
+### Models and local providers
 
-Everything these two tabs show and do happens **on the gateway host**: the
+Everything the Models tab and the Providers tab's Local providers show and do happens **on the gateway host**: the
 machine that runs `abstractgateway serve`, not the computer your browser runs
 on. The catalog data, the presence checks and the fit verdicts come from
 AbstractCore (`GET /api/gateway/models/catalog`, contract `model_catalog_v1`);
@@ -339,12 +338,13 @@ The setup guide's **Default model** step shows the same catalog cards with
 filters over. An engine card's **Browse models** opens the tab filtered to that
 engine's builds.
 
-**Engines** (tab id `engines`):
+**Local providers** (the Providers tab, id `providers`; the Engines tab of
+0.10.0 and older merged into it, and a `#engines` link opens Providers):
 
 - One card per engine with a status pill (Ready, Running, Installing, Needs
   your approval, Needs Apple tools, Not installed, Not for this computer),
-  its version, base URL and model count, and one primary action for its
-  state: **Install**, **Start**, **Stop**, **Continue with administrator
+  its version, base URL and model count, **Browse models**, **Learn more**,
+  and one primary action for its state: **Install**, **Start**, **Stop**, **Continue with administrator
   password**, **Install tools** or **Try again**.
 - **Install** opens a confirmation that shows what will run and the host it
   runs on, with a **Preview (dry run)** button. Ollama and LM Studio offer

@@ -1077,7 +1077,7 @@ CONSOLE_UI_JS = r"""
       uiScheduleEnhance();
     }
 
-    // ---- Local engines as cards (wizard step + Engines tab) ----
+    // ---- Local engines as cards (wizard step + the Providers tab's Local providers) ----
     // Contract gateway_engines_v2 (routes/engines.py, docs/engines.md):
     // GET /engines?probe=1 -> {schema, engines:[row], install_allowed, ...};
     // row.actions [{id: install|open_page|recheck|start|stop|docs, label,
@@ -1091,7 +1091,10 @@ CONSOLE_UI_JS = r"""
       { id: "lmstudio", name: "LM Studio", url: "https://lmstudio.ai/download" },
     ];
     const ENGINE_WAITING = ["needs_admin", "needs_tools"];
-    const engineStore = { data: null, error: "", loading: false, jobs: new Map(), confirm: "", views: new Map(), polling: false, message: "", busy: new Set(), pending: new Map(), notices: new Map(), plans: new Map() };
+    const engineStore = { data: null, error: "", loading: false, jobs: new Map(), confirm: "", views: new Map(), polling: false, message: "", busy: new Set(), pending: new Map(), notices: new Map(), plans: new Map(), extras: new Map() };
+    // A view may add to every card (the Providers tab: the provider's connection
+    // and an always-present "Browse models"): `extras.get(viewKey)(engine)` ->
+    // {body, actions, browse}. The engine card itself is never forked.
     // Where an app engine (Ollama, LM Studio on macOS) goes: the row is
     // planned with `location: auto`, so the console asks the gateway for the
     // two real plans (POST /engines/{id}/install {dry_run: true, location:
@@ -1185,7 +1188,8 @@ CONSOLE_UI_JS = r"""
       const attrs = String(extra || "").replace(/ disabled$/, "");
       return `<button type="button" class="ui-btn ${primary ? "is-primary" : "is-ghost"}" data-engine-action="${esc(action)}" data-engine="${esc(e.id)}"${attrs}${busy || off ? " disabled" : ""}${mine ? ' aria-busy="true"' : ""}>${esc(mine ? p.label : text)}</button>`;
     }
-    function engineCardMarkup(e) {
+    function engineCardMarkup(e, extra) {
+      const more = (typeof extra === "function" && extra(e)) || {};
       const job = engineJobOf(e);
       const view = engineState(e, job);
       const install = (e.install && typeof e.install === "object") ? e.install : {};
@@ -1231,17 +1235,20 @@ CONSOLE_UI_JS = r"""
           const msg = (job.error && job.error.message) || job.message || "The install did not finish.";
           body += `<div class="ui-alert tone-err" role="alert"><strong>${esc(msg)}</strong></div>`;
         }
-        const inst = act("install");
+        // Install / Start / Stop are an admin's actions: a non-admin's card does
+        // not render them (UX rule: unavailable actions are not shown); Browse
+        // models and Learn more stay.
+        const inst = admin ? act("install") : null;
         if (inst) {
-          const title = !admin ? "Only an admin can install engines" : (inst.enabled ? `Install ${e.name || e.id} on this computer` : (inst.reason || "Installing is not available right now"));
-          actions += engineBtn("install", e, failed ? "Try again" : (install.needs_admin ? "Install (administrator)" : "Install"), true, ` title="${esc(title)}"${admin && inst.enabled ? "" : " disabled"}`);
+          const title = inst.enabled ? `Install ${e.name || e.id} on this computer` : (inst.reason || "Installing is not available right now");
+          actions += engineBtn("install", e, failed ? "Try again" : (install.needs_admin ? "Install (administrator)" : "Install"), true, ` title="${esc(title)}"${inst.enabled ? "" : " disabled"}`);
           if (!inst.enabled && inst.reason) body += `<p class="ui-card__note">${esc(inst.reason)}</p>`;
         }
-        const start = act("start");
-        if (start && view.key !== "running") actions += engineBtn("start", e, start.label || "Start", !inst, ` title="${esc(start.reason || `Start ${e.name || e.id}`)}"${admin && start.enabled ? "" : " disabled"}`);
-        if ((view.key === "running" || view.key === "ready" || view.key === "starting") && e.installed) actions += engineBtn("models", Object.assign({}, e, { id: e.provider || e.id }), "Browse models", false);
-        const stop = act("stop");
-        if (stop) actions += engineBtn("stop", e, stop.label || "Stop", false, ` title="${esc(stop.reason || `Stop ${e.name || e.id}`)}"${admin && stop.enabled ? "" : " disabled"}`);
+        const start = admin ? act("start") : null;
+        if (start && view.key !== "running") actions += engineBtn("start", e, start.label || "Start", !inst, ` title="${esc(start.reason || `Start ${e.name || e.id}`)}"${start.enabled ? "" : " disabled"}`);
+        if (((view.key === "running" || view.key === "ready" || view.key === "starting") && e.installed) || more.browse) actions += engineBtn("models", Object.assign({}, e, { id: e.provider || e.id }), "Browse models", false);
+        const stop = admin ? act("stop") : null;
+        if (stop) actions += engineBtn("stop", e, stop.label || "Stop", false, ` title="${esc(stop.reason || `Stop ${e.name || e.id}`)}"${stop.enabled ? "" : " disabled"}`);
         const page = act("open_page");
         if (page && page.url && (!inst || !inst.enabled)) actions += `<a class="ui-btn is-ghost" href="${esc(page.url)}" target="_blank" rel="noopener noreferrer">Download page</a>`;
         if (page && act("recheck") && (!inst || !inst.enabled)) actions += engineBtn("refresh", e, "I installed it, check again", false);
@@ -1262,19 +1269,22 @@ CONSOLE_UI_JS = r"""
         // Mission GG: the same five rows as the app cards (head, blurb, body,
         // action row, technical) so `.is-aligned` puts every action row of a
         // grid row at the same level, even a "Learn more"-only one.
-        + `<div class="ui-card__body">${facts.length ? `<ul class="ui-facts">${facts.join("")}</ul>` : ""}${engineNoticeMarkup(e)}${body}${details}</div>`
-        + `<div class="ui-card__actions">${actions}${learn}</div>`
+        + `<div class="ui-card__body">${facts.length ? `<ul class="ui-facts">${facts.join("")}</ul>` : ""}${engineNoticeMarkup(e)}${body}${details}${more.body || ""}</div>`
+        + `<div class="ui-card__actions">${actions}${more.actions || ""}${learn}</div>`
         + `<div class="ui-card__tech"></div>`
         + `</article>`;
     }
-    function engineViewMarkup() {
+    function engineViewMarkup(key) {
+      const extra = engineStore.extras.get(key);
       if (engineStore.error && !engineStore.data) {
         // The gateway could not report its engines: say so plainly, and still
         // offer the two desktop engines' own downloads (never a dead end).
         const upgrade = CORE_CONSOLE.available ? "" : ` ${coreConsoleUnavailableText()}`;
-        const links = ENGINE_DOWNLOAD_LINKS.map((d) => `<article class="ui-card"><div class="ui-card__head"><span class="ui-mark" aria-hidden="true">${esc(ENGINE_MARKS[d.id] || "")}</span>`
+        // A view's extras (the Providers tab: the server connection) still apply.
+        const links = ENGINE_DOWNLOAD_LINKS.map((d) => { const more = (typeof extra === "function" && extra({ id: d.id, name: d.name })) || {}; return `<article class="ui-card"><div class="ui-card__head"><span class="ui-mark" aria-hidden="true">${esc(ENGINE_MARKS[d.id] || "")}</span>`
           + `<div class="ui-card__titles"><div class="ui-card__title">${esc(d.name)}</div></div></div>`
-          + `<div class="ui-card__actions"><a class="ui-btn is-ghost" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">Download ${esc(d.name)}</a></div></article>`).join("");
+          + (more.body ? `<div class="ui-card__body">${more.body}</div>` : "")
+          + `<div class="ui-card__actions"><a class="ui-btn is-ghost" href="${esc(d.url)}" target="_blank" rel="noopener noreferrer">Download ${esc(d.name)}</a>${more.actions || ""}</div></article>`; }).join("");
         return `<div class="ui-alert tone-warn" role="alert"><strong>This gateway cannot list its engines right now.</strong><span>${esc(engineStore.error)}${esc(upgrade)}</span></div>`
           + `<div class="ui-card-grid">${links}</div>`;
       }
@@ -1291,11 +1301,11 @@ CONSOLE_UI_JS = r"""
         + `<button type="button" class="ui-btn is-quiet" data-engine-action="refresh">${engineStore.loading ? "Checking..." : "Check again"}</button>`
         + `<span class="ui-advanced ui-sub">CLI: <code>abstractgateway engines status --probe</code></span></div>`;
       const msg = engineStore.message ? `<div class="ui-alert tone-err" role="alert">${esc(engineStore.message)}</div>` : "";
-      return summary + policy + msg + (ordered.length ? `<div class="ui-card-grid is-aligned">${ordered.map(engineCardMarkup).join("")}</div>` : `<div class="ui-empty">No engines reported by this gateway.</div>`);
+      return summary + policy + msg + (ordered.length ? `<div class="ui-card-grid is-aligned">${ordered.map((e) => engineCardMarkup(e, extra)).join("")}</div>` : `<div class="ui-empty">No engines reported by this gateway.</div>`);
     }
     function engineRender() {
-      for (const el of engineStore.views.values()) {
-        if (el) el.innerHTML = engineViewMarkup();
+      for (const [key, el] of engineStore.views.entries()) {
+        if (el) el.innerHTML = engineViewMarkup(key);
       }
     }
     async function engineRefresh() {
@@ -1433,12 +1443,15 @@ CONSOLE_UI_JS = r"""
         enginePoll();
       }
     }
-    function mountEngineCards(key, el) {
+    function mountEngineCards(key, el, opts) {
       if (!el) return;
       const fresh = !engineStore.views.has(key);
       engineStore.views.set(key, el);
+      if (opts && typeof opts.extra === "function") engineStore.extras.set(key, opts.extra);
       el.onclick = (event) => {
         const b = event && event.target && event.target.closest ? event.target.closest("[data-engine-action]") : null;
+        // A view's own controls inside the cards (the Providers tab's connection buttons).
+        if (!b && opts && typeof opts.onClick === "function") { opts.onClick(event); return; }
         if (!b || b.disabled) return;
         engineAction(b.dataset.engineAction, b.dataset.engine || "", b);
       };

@@ -64,25 +64,29 @@ def _require_screens() -> dict:
 
 def test_tabs_are_appended_with_their_own_ids() -> None:
     html = gateway_console_html()
-    for element_id in ("tab-button-catalog", "tab-button-engines", "tab-catalog", "tab-engines", "catalog-core-root", "engines-core-root"):
+    for element_id in ("tab-button-catalog", "tab-catalog", "catalog-core-root", "engines-core-root"):
         assert html.count(f'id="{element_id}"') == 1, element_id
+    # DESIGN-v3 §7: the Engines tab merged into Providers (no nav item, no panel).
+    for element_id in ("tab-button-engines", "tab-engines"):
+        assert f'id="{element_id}"' not in html, element_id
     # The existing tabs keep their ids and meaning.
     for element_id in ("tab-button-models", "tab-models", "tab-button-runtimes", "tab-runtimes"):
         assert html.count(f'id="{element_id}"') == 1, element_id
-    assert 'const TABS = ["users", "runtimes", "workflows", "providers", "defaults", "sandbox", "models", "catalog", "engines", "apps", "network"];' in html
+    assert 'const TABS = ["users", "runtimes", "workflows", "providers", "defaults", "sandbox", "models", "catalog", "apps", "network"];' in html
+    assert 'const TAB_FOLDS = { entities: "users", engines: "providers" };' in html
     nav = html[html.index('<nav class="shell_nav"') : html.index("</nav>")]
     order = re.findall(r'id="tab-button-([a-z]+)"', nav)
     # DESIGN-v2 §1: four groups, ACCOUNTS / WORK / MODELS / SYSTEM, in that order.
-    assert order == ["users", "workflows", "runtimes", "apps", "providers", "catalog", "engines", "defaults", "models", "sandbox", "network"], order
+    assert order == ["users", "workflows", "runtimes", "apps", "providers", "catalog", "defaults", "models", "sandbox", "network"], order
     captions = re.findall(r'class="shell_nav_caption af-nav-group__caption">([^<]+)<', nav)
     assert captions == ["Accounts", "Work", "Models", "System"], captions
     groups = re.split(r'class="shell_nav_caption', nav)[1:]
     assert [re.findall(r'id="tab-button-([a-z]+)"', g) for g in groups] == [
-        ["users"], ["workflows", "runtimes", "apps"], ["providers", "catalog", "engines", "defaults"], ["models", "sandbox", "network"]]
+        ["users"], ["workflows", "runtimes", "apps"], ["providers", "catalog", "defaults"], ["models", "sandbox", "network"]]
     assert '<span class="shell_nav_label">Accounts</span>' in nav
     assert '<span class="shell_nav_label">Models</span>' in nav
-    assert '<span class="shell_nav_label">Engines</span>' in nav
-    assert 'catalog: ["Models",' in html and 'engines: ["Engines",' in html
+    assert '<span class="shell_nav_label">Engines</span>' not in nav
+    assert 'catalog: ["Models",' in html and 'engines: ["Engines",' not in html
 
 
 def test_fragments_are_spliced_exactly_once() -> None:
@@ -98,9 +102,11 @@ def test_fragments_are_spliced_exactly_once() -> None:
     # The screens' script comes BEFORE the console script that mounts it.
     assert html.index('<script id="abstractcore-console-js">') < html.index("const CORE_CONSOLE =")
     # The spliced html sits inside the right panels.
-    catalog_panel = html[html.index('id="tab-catalog"') : html.index('id="tab-engines"')]
+    catalog_panel = html[html.index('id="tab-catalog"') : html.index('id="tab-apps"')]
     assert 'data-acc-kind="models"' in catalog_panel
-    engines_panel = html[html.index('id="tab-engines"') : html.index('id="tab-users"')]
+    # The engines placeholder sits in the Providers tab's Local providers section
+    # (replaced by the engine cards when the tab opens).
+    engines_panel = html[html.index('id="local-providers-section"') : html.index('id="provider-setup-section"')]
     assert 'data-acc-kind="engines"' in engines_panel
     for token in ("__ABSTRACTCORE_", "__CORE_CONSOLE_CONFIG_JSON__", "__KIT_THEME"):
         assert token not in html, token
@@ -167,7 +173,7 @@ def test_older_abstractcore_renders_an_upgrade_card(monkeypatch) -> None:
     html = gateway_console_html()
     assert "abstractcore-console-js" not in html
     assert 'data-acc-kind="models"' not in html
-    for panel_id, nxt in (("tab-catalog", "tab-engines"), ("tab-engines", "tab-users")):
+    for panel_id, nxt in (("tab-catalog", "tab-apps"), ("local-providers-section", "provider-setup-section")):
         panel = html[html.index(f'id="{panel_id}"') : html.index(f'id="{nxt}"')]
         assert 'data-core-console="unavailable"' in panel
         assert "Models and Engines require abstractcore ≥ 2.14.0" in panel
