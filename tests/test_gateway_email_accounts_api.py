@@ -293,7 +293,8 @@ def test_gateway_defaults_and_per_user_overrides_decide_what_is_available(gatewa
 
 def test_send_limits_defaults_user_values_and_a_stored_legacy_value(gateway, imap, smtp) -> None:
     """Defaults 100/1000; a user's 20/100 is kept as theirs; a 20/100 an older version stored at
-    connect (no set_by marker) is kept too: it cannot be told apart from a user's choice."""
+    connect (no set_by marker) is the old default and follows the new defaults; any other unmarked
+    value is kept as legacy."""
 
     c = gateway["client"]
     r = c.put("/api/gateway/me/email", headers=gateway["alice"], json=connect_body(ALICE, imap, smtp))
@@ -316,4 +317,8 @@ def test_send_limits_defaults_user_values_and_a_stored_legacy_value(gateway, ima
     doc["email"]["limits"] = {"per_hour": 20, "per_day": 100}
     path.write_text(json.dumps(doc))
     lim = c.get("/api/gateway/me/email", headers=gateway["bob"]).json()["limits"]
-    assert (lim["per_hour"], lim["per_day"], lim["source"]) == (20, 100, "legacy")
+    assert (lim["per_hour"], lim["per_day"], lim["source"]) == (100, 1000, "default")
+    doc["email"]["limits"] = {"per_hour": 30, "per_day": 300}
+    path.write_text(json.dumps(doc))
+    lim = c.get("/api/gateway/me/email", headers=gateway["bob"]).json()["limits"]
+    assert (lim["per_hour"], lim["per_day"], lim["source"]) == (30, 300, "legacy")

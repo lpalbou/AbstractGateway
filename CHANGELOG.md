@@ -43,8 +43,9 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
 ### Changed
 - Email send limits default to 100 per hour and 1000 per day (were 20 and 100; AbstractCore's
   defaults). A new mailbox no longer stores the defaults, so it follows them; limits a user sets
-  (`PUT /me/email/limits`, Settings → My email) are kept across upgrades. A 20 / 100 stored before
-  cannot be told apart from a user's choice and is kept (`limits.source` is `legacy`). The one-time
+  (`PUT /me/email/limits`, Settings → My email) are kept across upgrades. An unmarked 20 / 100 stored
+  before is the old default and follows the new defaults; any other unmarked value is kept
+  (`limits.source` is `legacy`). The one-time
   import of AbstractCore's local account copies its limits only when someone set them.
 - The administrator's one switch is **Mailboxes for users** (capability `email`, on by default).
   **Agent email tools for users** (`email_agent_tools`) is now on by default, next to **Sign-in by
