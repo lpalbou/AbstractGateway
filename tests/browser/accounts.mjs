@@ -96,8 +96,9 @@ try {
     check(JSON.stringify([rows.castor.vis, rows.castor.menu]) === JSON.stringify([["email", "logs", "manage"], ["workspace", "archive"]]), "entity: Email · Logs · Manage, menu Workspace · Archive", rows.castor);
     check(rows.castor.more.includes("no token to rotate"), "entity '⋯' says why Rotate is absent", rows.castor.more);
     check(JSON.stringify([rows.admin.vis, rows.admin.menu]) === JSON.stringify([["email", "logs", "workspace"], ["rotate"]]), "own row: no Archive", rows.admin);
-    const ell = await page.evaluate((id) => { const s = document.querySelector(`tr[data-user='${id}'] .accounts-col-email .accounts-ellipsis`); const cs = getComputedStyle(s); return { title: s.title, ellipsis: cs.textOverflow, nowrap: cs.whiteSpace, clipped: s.scrollWidth > s.clientWidth }; }, LONG_ID);
-    check(ell.ellipsis === "ellipsis" && ell.nowrap === "nowrap" && ell.clipped && ell.title.startsWith("alexandra.konstantinopoulou@"), "a long address is one line with an ellipsis and its full value in title", ell);
+    // Wrap, never truncate (operator rule): the long id and address are shown whole; the row grows.
+    const wrapped = await page.evaluate((id) => { const tr = document.querySelector(`tr[data-user='${id}']`); const out = {}; for (const [k, sel] of [["name", ".accounts-name strong"], ["email", ".accounts-col-email .accounts-cell-text"], ["mailbox", ".accounts-mailbox__text"], ["runtime", ".accounts-col-runtime .accounts-cell-text"]]) { const s = tr.querySelector(sel); const cs = getComputedStyle(s); const cell = s.closest("td").getBoundingClientRect(); const box = s.getBoundingClientRect(); out[k] = { text: s.textContent, clipped: box.right > cell.right + 1 || (cs.display !== "inline" && s.scrollWidth > s.clientWidth + 1) || cs.textOverflow === "ellipsis" || cs.whiteSpace === "nowrap", lines: s.getClientRects().length > 1 ? s.getClientRects().length : Math.round(box.height / (parseFloat(cs.lineHeight) || 20)) }; } return out; }, LONG_ID);
+    check(Object.values(wrapped).every((c) => !c.clipped) && wrapped.email.text.startsWith("alexandra.konstantinopoulou@very-long") && wrapped.email.lines >= 2 && wrapped.name.text === LONG_ID, "long id / address / runtime wrap, never truncate", wrapped);
     // The kit menu: ARIA, keyboard, Escape returns focus.
     const more = page.locator("tr[data-user='castor'] .af-menu__button");
     check((await more.getAttribute("aria-haspopup")) === "menu" && (await more.getAttribute("aria-label")) === "More actions for castor", "the '⋯' button is a labelled menu button");
@@ -143,6 +144,8 @@ try {
     check((await ownReq) && (await page.textContent("#my-email-registered-title")).trim() === "Your email address", "closing restores the signed-in user's own base and voice");
     await ctx.close();
   }
+} catch (e) {
+  failures.push(`exception: ${String((e && e.message) || e).split("\n")[0]}`);
 } finally {
   await browser.close();
 }

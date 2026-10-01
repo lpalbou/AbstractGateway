@@ -2042,8 +2042,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      .mail-server-row__host { grid-column: 1 / -1; }
 	    }
 	    /* ---- Accounts (DESIGN-v3 §1): header row, ONE full-width table that never scrolls
-	       sideways: table-layout fixed + colgroup, one-line cells with an ellipsis (full value in
-	       title), Actions = Email · Logs · Workspace|Manage · the kit "⋯" menu (af-menu).
+	       sideways: table-layout fixed + colgroup, cells that wrap (never truncate), Actions = Email · Logs · Workspace|Manage · the kit "⋯" menu (af-menu).
 	       Columns: Runtime 120 px, Active 84 px, Actions 280 px (fits Email · Logs · Workspace · ⋯),
 	       Name 22 %, Email address and Mailbox share the rest. Card list when the table would not
 	       fit: a CONTAINER query on the table's own width, computed from the column minimums
@@ -2066,14 +2065,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .accounts-table col.accounts-c-runtime { width: 120px; }
 	    .accounts-table col.accounts-c-active { width: 84px; }
 	    .accounts-table col.accounts-c-actions { width: 280px; }
-	    .accounts-table th { text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	    .accounts-table th { text-align: left; white-space: normal; overflow-wrap: anywhere; }
 	    .accounts-table th, .accounts-table td { padding-left: 10px; padding-right: 10px; }
 	    .accounts-table td { vertical-align: middle; padding-top: 10px; padding-bottom: 10px; overflow: hidden; }
-	    .accounts-ellipsis { display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	    code.accounts-ellipsis { display: block; width: fit-content; }
+	    /* Wrap, never truncate (operator rule): a long id or address breaks anywhere and the row grows. */
+	    .accounts-cell-text { display: block; min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; word-break: normal; }
+	    code.accounts-cell-text { display: inline; padding: 1px 4px; white-space: normal; overflow: visible; text-overflow: clip; max-width: none; overflow-wrap: anywhere; word-break: break-all; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 	    /* The id keeps its line; the chips wrap under it when the column is narrow. */
 	    .accounts-name__line { display: flex; align-items: center; gap: 4px 8px; min-width: 0; flex-wrap: wrap; }
-	    .accounts-name__line > strong { flex: 0 0 auto; max-width: 100%; font-weight: 600; }
+	    .accounts-name__line > strong { flex: 0 1 auto; min-width: 0; max-width: 100%; font-weight: 600; }
 	    .accounts-name__line > .af-kind-chip, .accounts-archived-chip { flex: 0 0 auto; }
 	    .accounts-archived-chip { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: var(--font-size-sm, 12px); font-weight: 600; line-height: 1.5; white-space: nowrap; }
 	    .accounts-row--archived .accounts-name__line > strong { color: var(--muted); }
@@ -2112,9 +2112,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      .accounts-table td.accounts-actions { grid-column: 1 / -1; grid-row: 4; margin-top: 6px; }
 	      .accounts-table .accounts-mailbox__text { display: none; }
 	      .accounts-phone-line { display: block; overflow-wrap: anywhere; }
-	      .accounts-table td.accounts-col-runtime .accounts-ellipsis { white-space: normal; overflow-wrap: anywhere; width: auto; background: transparent; border: 0; padding: 0; color: inherit; font-size: var(--font-size-md); }
-	      .accounts-table td.accounts-col-runtime .accounts-ellipsis::before { content: "Runtime "; font-family: var(--font-sans, inherit); }
-	      .accounts-name__line > strong { white-space: normal; overflow-wrap: anywhere; }
+	      /* Line 3: a plain muted line, never a box that reads as an input. */
+	      .accounts-table td.accounts-col-runtime .accounts-cell-text { display: block; background: transparent; border: 0; box-shadow: none; border-radius: 0; padding: 0; color: inherit; font-size: var(--font-size-md); }
+	      .accounts-table td.accounts-col-runtime .accounts-cell-text::before { content: "Runtime "; font-family: var(--font-sans, inherit); }
 	      .accounts-actions__buttons { flex-wrap: wrap; gap: 8px; }
 	      /* One flat block per row: the tint and the kind bar paint the row, not each cell. */
 	      .accounts-table tr.accounts-row > td { background: transparent !important; box-shadow: none !important; }
@@ -12223,13 +12223,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (m.state === "unavailable") return "Not available";
       throw new Error(`GET /admin/accounts row ${a.id} has mailbox.state ${JSON.stringify(m.state)} (accounts-api seam, DESIGN-v3 §3.1).`);
     }
-    // The card line "address · mailbox" says the address once: a mailbox on the same
-    // account reads "Mailbox connected" instead of repeating it.
+    // The card line "Email address · Mailbox": the same words as the table's two cells.
     function accountPhoneLine(a) {
-      const m = a.mailbox || {};
-      const address = a.email_address || "No address";
-      const mailbox = (m.state === "connected" && m.address && m.address === a.email_address) ? "Mailbox connected" : accountMailboxText(a);
-      return `${address} · ${mailbox}`;
+      return `${a.email_address || "No address"} · ${accountMailboxText(a)}`;
     }
     function accountIsOwn(a) {
       const p = state.principal || {};
@@ -12370,7 +12366,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       td.className = cls;
       td.setAttribute("data-label", label);
       const span = document.createElement(opts.code ? "code" : "span");
-      span.className = `accounts-ellipsis${opts.muted ? " af-row__muted" : ""}`;
+      span.className = `accounts-cell-text${opts.muted ? " af-row__muted" : ""}`;
       span.textContent = text;
       span.title = opts.title || text;
       td.append(span);
@@ -12401,7 +12397,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         const nameTd = document.createElement("td");
         nameTd.className = "accounts-name";
         nameTd.setAttribute("data-label", "Name");
-        nameTd.innerHTML = `<span class="accounts-name__line"><strong class="accounts-ellipsis" title="${esc(shown)}">${esc(shown)}</strong>`
+        nameTd.innerHTML = `<span class="accounts-name__line"><strong class="accounts-cell-text" title="${esc(shown)}">${esc(shown)}</strong>`
           + `<span class="af-kind-chip af-kind-chip--${kind}" title="${esc(ACCOUNT_ROLE_TITLE[kind])}">${ACCOUNT_KIND_LABEL[kind]}</span>`
           + (archived ? `<span class="accounts-archived-chip" title="Archived: can't sign in or act; runs and history are kept.">Archived</span>` : "")
           + `</span>`;
