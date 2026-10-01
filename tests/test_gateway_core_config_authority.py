@@ -521,6 +521,7 @@ def test_a_split_gateway_read_serves_what_the_core_entry_point_wrote(split_core_
     assert core_config.text_default() == {
         "provider": "ollama",
         "model": "llama4",
+        "base_url": None,
         "reasoning": "low",
         "source": "abstractcore.capability_defaults:output.text",
         "key": "output.text",

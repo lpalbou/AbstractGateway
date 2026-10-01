@@ -152,14 +152,15 @@ def _strip_html_comments(page: str) -> str:
 def _console_owned_sources() -> Tuple[str, str, str, str]:
     """(template, theme CSS, UI CSS, UI JS) without their source comments."""
     from .console_catalog import CATALOG_CSS, CATALOG_JS
+    from .console_skills_mcp import SKILLS_MCP_CSS, SKILLS_MCP_JS
     from .console_themes import KIT_THEME_CSS
     from .console_ui import CONSOLE_UI_CSS, CONSOLE_UI_JS
 
     return (
         _strip_html_comments(_CONSOLE_HTML_TEMPLATE),
         _strip_css_comments(KIT_THEME_CSS),
-        _strip_css_comments(CONSOLE_UI_CSS + CATALOG_CSS),
-        _strip_js_line_comments(CONSOLE_UI_JS + CATALOG_JS),
+        _strip_css_comments(CONSOLE_UI_CSS + CATALOG_CSS + SKILLS_MCP_CSS),
+        _strip_js_line_comments(CONSOLE_UI_JS + CATALOG_JS + SKILLS_MCP_JS),
     )
 
 
@@ -654,8 +655,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
        instruction), and names the file so the answer to "what did I just
        change" is on screen. Wider than .section-note because a config
        path is long and must not wrap mid-path. */
-    .authority-note { color: var(--subtle); font-size: var(--font-size-xs); max-width: 900px; margin-top: 4px; }
-    .authority-note code { padding: 1px 5px; font-size: var(--font-size-xs); }
+    .authority-note { color: var(--subtle); font-size: var(--font-size-xs); max-width: 900px; margin-top: 4px; overflow-wrap: anywhere; min-width: 0; }
+    .authority-note code { padding: 1px 5px; font-size: var(--font-size-xs); overflow-wrap: anywhere; word-break: break-all; white-space: normal; }
     .authority-note.authority-readonly { color: var(--warn); }
     label {
       display: grid;
@@ -1009,6 +1010,20 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    .provider-preset strong { display: block; color: var(--text); line-height: 1.25; }
 	    .provider-preset span { display: block; color: var(--muted); font-size: var(--font-size-sm); font-weight: 500; line-height: 1.3; margin-top: 3px; }
+	    .provider-preset span.provider-preset__state { margin-top: 6px; font-weight: 600; }
+	    /* One-line intros (DESIGN-v3 §7 text budget): the page is wide enough. */
+	    #tab-providers .section-note { max-width: none; }
+	    .provider-preset span.provider-preset__state.is-on { color: var(--success); }
+	    /* Local provider cards: the server connection (DESIGN-v3 §7). Flat: a
+	       top rule, no nested card. */
+	    .provider-connection { display: grid; gap: 6px; margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--line-soft); min-width: 0; }
+	    .provider-connection__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+	    .provider-connection__title { font-size: var(--font-size-sm); font-weight: 600; color: var(--text); }
+	    .provider-connection__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; min-width: 0; }
+	    .provider-connection__row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+	    .provider-connection__text { display: grid; gap: 2px; min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; }
+	    .provider-connection__text .ui-sub { font-size: var(--font-size-sm); color: var(--muted); }
+	    .provider-connection__text code { max-width: 100%; justify-self: start; font-size: var(--font-size-sm); padding: 1px 6px; background: transparent; border: 0; color: var(--muted); }
 	    .setup-summary {
 	      border: 1px solid color-mix(in srgb, var(--info) 22%, transparent);
 	      border-radius: var(--radius-md);
@@ -2186,14 +2201,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <div class="shell_nav_group af-nav-group" role="group" aria-labelledby="nav-group-work">
 	        <div id="nav-group-work" class="shell_nav_caption af-nav-group__caption">Work</div>
 	        <button id="tab-button-workflows" class="tab-button shell_nav_item" type="button" title="Bundles, versions, import and export"><span class="shell_nav_icon" aria-hidden="true">⑂</span><span class="shell_nav_label">Workflows</span></button>
+	        <button id="tab-button-skills" class="tab-button shell_nav_item" type="button" title="Skills agents can load, and the MCP tool servers this gateway knows"><span class="shell_nav_icon" aria-hidden="true">✦</span><span class="shell_nav_label">Skills &amp; MCP</span></button>
 	        <button id="tab-button-runtimes" class="tab-button shell_nav_item" type="button" title="Each user's data plane: runs, flows, sessions and memory"><span class="shell_nav_icon" aria-hidden="true">◎</span><span class="shell_nav_label">Runtimes</span></button>
 	        <button id="tab-button-apps" class="tab-button shell_nav_item" type="button" title="Browser apps (Flow, Code, Observer...): install, start, open"><span class="shell_nav_icon" aria-hidden="true">▣</span><span class="shell_nav_label">Apps</span></button>
 	      </div>
 	      <div class="shell_nav_group af-nav-group" role="group" aria-labelledby="nav-group-models">
 	        <div id="nav-group-models" class="shell_nav_caption af-nav-group__caption">Models</div>
-	        <button id="tab-button-providers" class="tab-button shell_nav_item" type="button" title="LLM provider connections and endpoint profiles"><span class="shell_nav_icon" aria-hidden="true">◇</span><span class="shell_nav_label">Providers</span></button>
+	        <button id="tab-button-providers" class="tab-button shell_nav_item" type="button" title="Local engines (Ollama, LM Studio, MLX...) and remote provider connections"><span class="shell_nav_icon" aria-hidden="true">◇</span><span class="shell_nav_label">Providers</span></button>
 	        <button id="tab-button-catalog" class="tab-button shell_nav_item" type="button" title="Browse, download and delete models that fit this machine"><span class="shell_nav_icon" aria-hidden="true">▤</span><span class="shell_nav_label">Models</span></button>
-	        <button id="tab-button-engines" class="tab-button shell_nav_item" type="button" title="Local engines (Ollama, LM Studio, MLX...): status and install"><span class="shell_nav_icon icon-gear" aria-hidden="true">⚙</span><span class="shell_nav_label">Engines</span></button>
 	        <button id="tab-button-defaults" class="tab-button shell_nav_item" type="button" title="Which provider/model serves each capability (vision, audio, image...)"><span class="shell_nav_icon" aria-hidden="true">◆</span><span class="shell_nav_label">Multimodal</span></button>
 	      </div>
 	      <div class="shell_nav_group af-nav-group" role="group" aria-labelledby="nav-group-system">
@@ -2362,6 +2377,57 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        </div>
 	      </div>
 
+      <div id="tab-skills" class="tab-panel">
+        <!-- SKILLS & MCP (DESIGN-v3 §6, console_skills_mcp.py): kit tabs Skills | MCP servers. -->
+        <section id="skills-mcp-section" class="session-only skmcp-page">
+          <div class="af-tabs">
+            <div class="af-tabs__list" role="tablist" aria-label="Skills and MCP servers">
+              <button id="skmcp-tab-skills" class="af-tabs__tab" role="tab" type="button" data-skmcp-tab="skills" aria-controls="skmcp-pane-skills" aria-selected="true">Skills</button>
+              <button id="skmcp-tab-mcp" class="af-tabs__tab" role="tab" type="button" data-skmcp-tab="mcp" aria-controls="skmcp-pane-mcp" aria-selected="false" tabindex="-1">MCP servers</button>
+            </div>
+            <div id="skmcp-pane-skills" class="af-tabs__panel" role="tabpanel" aria-labelledby="skmcp-tab-skills">
+              <p class="section-note skmcp-purpose">Instructions agents load when a task needs them: curated ones ship with the gateway, imported ones are yours to edit.</p>
+              <div class="skmcp-toolbar">
+                <input id="skills-search" type="search" placeholder="Search by name or description" aria-label="Search skills">
+                <span id="skills-archived-slot" class="workflows-switch"></span>
+                <span class="skmcp-spacer"></span>
+                <button id="skills-import-zip" class="secondary" type="button" title="Import a skill from a .zip of its folder" hidden>Import .zip</button>
+                <button id="skills-import-folder" class="secondary" type="button" title="Import a skill folder (it holds SKILL.md)" hidden>Import folder</button>
+                <input id="skills-import-zip-file" type="file" accept=".zip,application/zip" class="hidden">
+                <input id="skills-import-folder-file" type="file" class="hidden" webkitdirectory multiple>
+              </div>
+              <div id="skills-message" class="message skmcp-message" role="status" aria-live="polite"></div>
+              <p id="skills-warnings" class="skmcp-help"></p>
+              <div class="table-scroll workflows-scroll">
+                <table class="skmcp-table skills-table" data-ui-no-stack>
+                  <thead><tr><th class="sk-col-name">Name</th><th class="sk-col-what sk-th-what">What it does</th><th class="sk-col-version">Version</th><th class="sk-col-trust">Trust</th><th class="sk-col-source sk-th-source">Source</th><th class="sk-col-actions"><span class="sr-only">Actions</span></th></tr></thead>
+                  <tbody id="skills-table"></tbody>
+                </table>
+              </div>
+              <details class="skmcp-shelf">
+                <summary>Shelf folder</summary>
+                <div id="skills-settings-root" class="core-console-root"></div>
+              </details>
+            </div>
+            <div id="skmcp-pane-mcp" class="af-tabs__panel" role="tabpanel" aria-labelledby="skmcp-tab-mcp" hidden>
+              <p id="mcp-truth" class="skmcp-truth"></p>
+              <p class="section-note skmcp-purpose">Tool servers over the Model Context Protocol: Test runs the real handshake and lists their tools.</p>
+              <div class="skmcp-toolbar">
+                <span id="mcp-archived-slot" class="workflows-switch"></span>
+                <span class="skmcp-spacer"></span>
+                <button id="mcp-add" type="button" hidden>Add server</button>
+              </div>
+              <div id="mcp-message" class="message skmcp-message" role="status" aria-live="polite"></div>
+              <div class="table-scroll workflows-scroll">
+                <table class="skmcp-table mcp-table" data-ui-no-stack>
+                  <thead><tr><th class="mcp-col-name">Name</th><th class="mcp-col-transport mcp-th-transport">Transport</th><th class="mcp-col-status">Status</th><th class="mcp-col-tools">Tools</th><th class="mcp-col-actions"><span class="sr-only">Actions</span></th></tr></thead>
+                  <tbody id="mcp-table"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
 	      <div id="tab-runtimes" class="tab-panel">
 	        <div class="tab-grid tab-grid-wide">
 	          <div class="tab-stack">
@@ -2505,11 +2571,27 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 
 	      <div id="tab-providers" class="tab-panel">
 	        <div class="providers-workspace">
+	          <!-- DESIGN-v3 §7: ONE page per provider family. Local providers are
+	               the engine cards (console_ui.py, the same code the setup guide
+	               uses) plus each provider's server connection; remote providers
+	               are the connection presets; the Available Providers table is
+	               the full list, unchanged. The engines placeholder below is
+	               replaced by the cards when the tab opens. -->
+	          <section id="local-providers-section" class="session-only">
+	            <div class="section-head">
+	              <div>
+	                <h2 class="section-title"><span class="section-icon icon-gear" aria-hidden="true">⚙</span><span>Local providers</span></h2>
+	                <p class="section-note">Engines that run models on this computer, and their server connections.</p>
+	              </div>
+	            </div>
+	            <div id="engines-core-root" class="core-console-root"><!--__ABSTRACTCORE_ENGINES_HTML__--></div>
+	          </section>
+
 	          <section id="provider-setup-section" class="session-only">
 	            <div class="section-head">
 	              <div>
-	                <h2 class="section-title"><span class="section-icon" aria-hidden="true">◇</span><span>Provider Connections</span></h2>
-	                <p class="section-note">Pick a provider type to configure. Gateway stores API keys and endpoint URLs server-side, then exposes the connection as an available provider for Flow nodes and Core capability defaults.</p>
+	                <h2 class="section-title"><span class="section-icon" aria-hidden="true">◇</span><span>Remote providers</span></h2>
+	                <p class="section-note">Cloud accounts and OpenAI-compatible servers. Keys stay on the gateway; only fingerprints are shown.</p>
 	              </div>
 	            </div>
 	            <div id="provider-preset-grid" class="provider-preset-grid"></div>
@@ -2729,14 +2811,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <div id="catalog-core-root" class="core-console-root"><!--__ABSTRACTCORE_CATALOG_HTML__--></div>
 	        </section>
 	      </div>
-	      <div id="tab-engines" class="tab-panel">
-	        <div id="engines-core-root" class="core-console-root"><!--__ABSTRACTCORE_ENGINES_HTML__--></div>
-	      </div>
 	      <div id="tab-apps" class="tab-panel">
 	        <div id="apps-root" class="core-console-root"></div>
 	        <div id="apps-settings-root" class="core-console-root"></div>
 	        <div id="backlog-settings-root" class="core-console-root"></div>
-	        <div id="skills-settings-root" class="core-console-root"></div>
 	      </div>
 	      <div id="tab-network" class="tab-panel">
 	        <div id="network-root" class="core-console-root"></div>
@@ -3494,6 +3572,36 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      </div>
 	    </div>
 	  </div>
+  <!-- Skills & MCP modals (console_skills_mcp.py): kit af-modal af-modal--wide, bound by bindModal. -->
+  <div id="skill-modal-backdrop" class="af-modal-backdrop" hidden>
+    <div class="af-modal af-modal--wide" role="dialog" aria-modal="true" aria-labelledby="skill-modal-title">
+      <div class="af-modal__header">
+        <h2 id="skill-modal-title" class="af-modal__title">Skill</h2>
+        <button id="skill-modal-close" class="af-modal__close" type="button" aria-label="Close">×</button>
+      </div>
+      <div id="skill-modal-body" class="af-modal__body"></div>
+      <div class="af-modal__footer">
+        <p id="skill-modal-note" class="af-modal__footer-note" role="status" aria-live="polite"></p>
+        <div id="skill-modal-actions" class="skmcp-footer-actions"></div>
+      </div>
+    </div>
+  </div>
+  <div id="mcp-modal-backdrop" class="af-modal-backdrop" hidden>
+    <div class="af-modal af-modal--wide" role="dialog" aria-modal="true" aria-labelledby="mcp-modal-title">
+      <div class="af-modal__header">
+        <h2 id="mcp-modal-title" class="af-modal__title">Add MCP server</h2>
+        <button id="mcp-modal-close" class="af-modal__close" type="button" aria-label="Close">×</button>
+      </div>
+      <div id="mcp-modal-body" class="af-modal__body"></div>
+      <div class="af-modal__footer">
+        <p id="mcp-modal-note" class="af-modal__footer-note" role="status" aria-live="polite"></p>
+        <div class="skmcp-footer-actions">
+          <button id="mcp-modal-test" class="secondary" type="button">Test connection</button>
+          <button id="mcp-modal-save" type="button">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
   <!-- Account modals (DESIGN-v2 §2.3/§2.4): the kit's af-modal markup (docs/modal.md),
        bound through the islands' bindModal (focus trap, Esc, backdrop click). -->
   <div id="account-email-backdrop" class="af-modal-backdrop" hidden>
@@ -3971,7 +4079,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // door (users & entities), where they run, then setup (providers,
 	    // capability defaults), then validation (sandbox). A stale persisted
 	    // "entities" value folds into "users" below.
-	    const TABS = ["users", "runtimes", "workflows", "providers", "defaults", "sandbox", "models", "catalog", "engines", "apps", "network"];
+	    const TABS = ["users", "runtimes", "workflows", "skills", "providers", "defaults", "sandbox", "models", "catalog", "apps", "network"];
+	    // Retired tab ids and their new homes: a persisted value or a `#<id>` link
+	    // still lands there (entities merged into users; DESIGN-v3 §7: the Engines
+	    // tab merged into Providers).
+	    const TAB_FOLDS = { entities: "users", engines: "providers" };
 	    // The kit's THEME_SPECS (abstractuic theme.ts), generated by
 	    // console_theme_sync — the console offers exactly the framework's
 	    // themes, never a hand-copied subset.
@@ -4257,12 +4369,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      users: ["Accounts", "People who use this gateway and the entities that act on it"],
 	      runtimes: ["Runtimes", "Each user's own data plane: runs, flows, sessions and memory"],
       workflows: ["Workflows", "Bundles, versions, import and export"],
-	      providers: ["Providers", "LLM provider connections and endpoint profiles"],
+      skills: ["Skills & MCP", "Skills agents can load, and MCP tool servers"],
+	      providers: ["Providers", "Local engines and remote provider connections"],
 	      defaults: ["Multimodal Capabilities", "Which provider/model serves each capability route"],
 	      sandbox: ["Sandbox", "Try any provider/model directly — text, image, audio, video"],
 	      models: ["Resources", "Host resources: loaded models, memory and GPU, session caches"],
 	      catalog: ["Models", "Browse, download and delete models that fit this machine"],
-	      engines: ["Engines", "Local engines on the gateway host: status and install"],
 	      apps: ["Apps", "Install and open the apps that work with this gateway"],
 	      network: ["Network", "Who can reach this gateway, and at which addresses"],
 	    };
@@ -4271,7 +4383,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // Legacy persisted tab ids fold into their new homes (entities
 	      // merged into users); unknown ids land on the FIRST tab — the
 	      // landing must agree with the nav order, not point mid-bar.
-	      const fold = tab === "entities" ? "users" : tab;
+	      const fold = TAB_FOLDS[tab] || tab;
 	      const next = TABS.includes(fold) ? fold : TABS[0];
 	      state.activeTab = next;
 	      for (const id of TABS) {
@@ -4289,6 +4401,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        $("page-subtitle").textContent = t[1];
 	      }
 	      writeStringSetting(ACTIVE_TAB_KEY, next);
+	      if (next === "skills") openSkillsMcpPage();  // console_skills_mcp.py
 	      mcOnTabChange(next);  // the catalog's `#catalog?...` link follows the tab (console_catalog.py)
 	    }
 	    // ---- Workflows: the registered workflow registry ----
@@ -9745,15 +9858,88 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (info.id === "openai-compatible") return "custom-endpoint";
       return info.id;
     }
+    // DESIGN-v3 §7 / §13.8: ONE entry per provider. A provider that runs on
+    // this computer is its engine card under Local providers, carrying its
+    // server connection (this table: engine id -> connection family; vLLM's
+    // server is a custom OpenAI-compatible connection with the fixed id
+    // "vllm"). Remote providers are the presets below. The modal's family
+    // select keeps every family.
+    const LOCAL_PROVIDER_CONNECTIONS = {
+      ollama: { family: "ollama" },
+      lmstudio: { family: "lmstudio" },
+      vllm: { family: "openai-compatible", profileId: "vllm", name: "vLLM server", description: "vLLM OpenAI-compatible server." },
+    };
+    const REMOTE_PROVIDER_FAMILIES = ["openai", "anthropic", "openrouter", "portkey", "openai-compatible"];
+    const LOCAL_CONNECTION_PROFILE_IDS = new Set(Object.values(LOCAL_PROVIDER_CONNECTIONS).map((c) => c.profileId).filter(Boolean));
+    function localConnectionProfiles(engineId) {
+      const conn = LOCAL_PROVIDER_CONNECTIONS[engineId];
+      if (!conn) return [];
+      return (state.endpointProfiles || []).filter((p) => p && (conn.profileId ? p.id === conn.profileId : (p.provider_family || "") === conn.family));
+    }
+    function endpointKeyText(p) {
+      return p.api_key_set ? `key ${String(p.api_key_fingerprint || "").slice(0, 8)}` : "no key";
+    }
+    // The Providers tab's additions to each engine card (console_ui.py
+    // mountEngineCards `extra`): "Browse models" whenever the engine runs on
+    // this computer and has catalog builds, and the server connection.
+    function localProviderExtras(e) {
+      const out = { browse: e.supported !== false && !!MC_ENGINE_PROVIDER[e.provider || e.id] };
+      const conn = LOCAL_PROVIDER_CONNECTIONS[e.id];
+      if (!conn) return out;
+      const rows = localConnectionProfiles(e.id);
+      const items = rows.map((p) => {
+        const configured = p.managed === false || p.synthetic === true;
+        const where = p.base_url_configured || p.base_url ? `<code class="ui-ellip" title="${esc(p.base_url || "")}">${esc(p.base_url || "")}</code>` : "provider default address";
+        return `<li class="provider-connection__row"><span class="provider-connection__text"><b>${esc(p.display_name || p.id)}</b> ${where}`
+          + `<span class="ui-sub">${esc(p.enabled === false ? "disabled" : "enabled")} · ${esc(endpointKeyText(p))}</span></span>`
+          + `<button type="button" class="ui-btn is-quiet" data-provider-connection-edit="${esc(p.id)}">${configured ? "Override" : "Edit"}</button></li>`;
+      }).join("");
+      // A fixed-id connection (vLLM) is edited, never added twice.
+      const add = conn.profileId && items ? "" : `<button type="button" class="ui-btn is-quiet" data-provider-connect="${esc(e.id)}" title="The address workflows use to reach this server; add one for a server on another computer.">${items ? "Add connection" : "Set up connection"}</button>`;
+      out.body = `<div class="provider-connection" data-provider-connection="${esc(e.id)}"><div class="provider-connection__head"><span class="provider-connection__title">Connection</span>${add}</div>`
+        + (items ? `<ul class="provider-connection__list">${items}</ul>` : "")
+        + `</div>`;
+      return out;
+    }
+    function openLocalProviderConnection(engineId) {
+      const conn = LOCAL_PROVIDER_CONNECTIONS[engineId];
+      if (!conn) throw new Error(`no connection family for local provider ${engineId}`);
+      openEndpointModalForFamily(conn.family);
+      if (conn.profileId) {
+        $("endpoint-profile-id").value = conn.profileId;
+        $("endpoint-name").value = conn.name || conn.profileId;
+        $("endpoint-description").value = conn.description || "";
+      }
+    }
+    function editEndpointProfileById(profileId) {
+      const p = (state.endpointProfiles || []).find((row) => row && row.id === profileId);
+      if (!p) throw new Error(`no provider connection ${profileId}`);
+      if (p.managed === false || p.synthetic === true) openEndpointModalFromConfiguredProvider(p);
+      else fillEndpointProfileForm(p);
+    }
+    function onLocalProviderClick(event) {
+      const t = event && event.target && event.target.closest ? event.target : null;
+      if (!t) return;
+      const add = t.closest("[data-provider-connect]");
+      if (add) { openLocalProviderConnection(add.dataset.providerConnect); return; }
+      const edit = t.closest("[data-provider-connection-edit]");
+      if (edit) editEndpointProfileById(edit.dataset.providerConnectionEdit);
+    }
     function renderProviderPresets() {
       const grid = $("provider-preset-grid");
       if (!grid) return;
       grid.textContent = "";
-      for (const item of ENDPOINT_FAMILIES) {
+      for (const item of ENDPOINT_FAMILIES.filter((f) => REMOTE_PROVIDER_FAMILIES.includes(f.id))) {
         const button = document.createElement("button");
         button.type = "button";
         button.className = `provider-preset ${state.activeProviderPreset === item.id ? "active" : ""}`;
-        button.innerHTML = `<strong>${esc(item.label)}</strong><span>${esc(item.summary || "")}</span>`;
+        button.id = `provider-preset-${item.id}`;
+        // Its connections, keys as fingerprints only (the table's rule).
+        const mine = (state.endpointProfiles || []).filter((p) => p && (p.provider_family || "") === item.id && !LOCAL_CONNECTION_PROFILE_IDS.has(p.id));
+        const status = !mine.length ? "Not connected"
+          : mine.length === 1 ? `Connected · ${endpointKeyText(mine[0])}`
+          : `${mine.length} connections`;
+        button.innerHTML = `<strong>${esc(item.label)}</strong><span>${esc(item.summary || "")}</span><span class="provider-preset__state${mine.length ? " is-on" : ""}">${esc(status)}</span>`;
 	        button.onclick = () => openEndpointModalForFamily(item.id);
         grid.append(button);
       }
@@ -9911,6 +10097,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const tr = document.createElement("tr");
 	        tr.innerHTML = `<td colspan="6" class="empty">No available providers configured yet.</td>`;
 	        tbody.append(tr);
+	        renderProviderPresets();
+	        engineRender();
 	        return;
 	      }
       for (const p of state.endpointProfiles) {
@@ -9950,6 +10138,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         tr.append(actions);
         tbody.append(tr);
       }
+      // The Remote presets and the Local provider cards show these connections.
+      renderProviderPresets();
+      engineRender();
     }
     async function loadEndpointProfiles() {
       const payload = await api("/api/gateway/config/provider-endpoint-profiles");
@@ -10309,7 +10500,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    function engineMissingMarkup(rec, cls = "ui-field-msg tone-warn") {
 	      const info = engineMissingInfo(rec);
 	      if (!info) return "";
-	      const engines = info.engineRow ? " (Engines tab: Install)" : "";
+	      const engines = info.engineRow ? " (Providers tab, Local providers: Install)" : "";
 	      return `<div class="${cls} capability-engine-missing" role="note">Engine missing: ${esc(info.reason)}${info.install ? ` — install: <code>${esc(info.install)}</code>` : ""}${esc(engines)}</div>`;
 	    }
 	    // AbstractCore's fit verdict `needs_gpu_limit`: the model fits once macOS
@@ -12138,14 +12329,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // `setActiveTab` already folds an unknown id onto the first tab.
 	      // `#catalog?quant=8bit&provider=mlx`: the tab is before the `?`, the
 	      // catalog's filters after it (console_catalog.py reads them).
-	      const wantedTab = String(location.hash || "").replace(/^#/, "").split("?")[0].trim();
+	      const hashTab = String(location.hash || "").replace(/^#/, "").split("?")[0].trim();
+	      const wantedTab = TAB_FOLDS[hashTab] || hashTab;
 	      if (!state.hashApplied && TABS.includes(wantedTab)) {
 	        state.hashApplied = true;
 	        state.activeTab = wantedTab;
 	        setActiveTab(wantedTab);
 	        if (wantedTab === "models") { loadHostState(); startHostStatePoll(); }
 	        if (wantedTab === "users") loadMyEmail();
-	        if (wantedTab === "catalog" || wantedTab === "engines" || wantedTab === "apps" || wantedTab === "network") openCoreTab(wantedTab);
+	        if (wantedTab === "catalog" || wantedTab === "providers" || wantedTab === "apps" || wantedTab === "network") openCoreTab(wantedTab);
 	        // `#apps?open=<id>&path=<p>` (app_proxy.py sends a signed-out page
 	        // load of /apps/<id>/... here): open that app, signed in.
 	        if (wantedTab === "apps") {
@@ -14013,8 +14205,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         mountAppsSettings("tab", $("apps-settings-root"));
         // The backlog folder + exec runner + process manager.
         mountBacklogSettings($("backlog-settings-root"));
-        // The skills shelf (skills.shelf, console_ui.py).
-        mountSkillsShelf("tab", $("skills-settings-root"));
+        // The skills shelf setting lives on the Skills & MCP page now (console_skills_mcp.py).
         return;
       }
       if (tab === "network") {
@@ -14022,10 +14213,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         mountNetworkPanel("tab", $("network-root"));
         return;
       }
-      if (tab === "engines") {
-        // Local engines are CARDS (console_ui.py), not AbstractCore's table:
-        // one card per engine, one primary action per state.
-        mountEngineCards("tab", $("engines-core-root"));
+      if (tab === "providers") {
+        // Local providers are the engine CARDS (console_ui.py), not
+        // AbstractCore's table: one card per engine, one primary action per
+        // state, plus the provider's connection (localProviderExtras).
+        mountEngineCards("providers", $("engines-core-root"), { extra: localProviderExtras, onClick: onLocalProviderClick });
         return;
       }
       if (tab === "catalog") {
@@ -14040,7 +14232,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         });
       }
       if (!CORE_CONSOLE.available) return;  // the panel carries the server-rendered card
-      const kind = tab === "catalog" ? "models" : "engines";
+      const kind = "models";
       const root = $(`${tab}-core-root`);
       if (!mountCoreScreen(kind, root, `tab-${tab}`) && root) {
         root.innerHTML = `<p class="message warn">${esc(coreConsoleUnavailableText())}</p>`;
@@ -14702,7 +14894,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (state.activeTab === "users") loadEntities();
       if (state.activeTab === "runtimes") loadRuntimes();  // data homes ride along inside loadRuntimes (cached)
       if (state.activeTab === "models") { loadHostState(); startHostStatePoll(); }
-      if (state.activeTab === "catalog" || state.activeTab === "engines" || state.activeTab === "apps" || state.activeTab === "network") openCoreTab(state.activeTab);
+      if (state.activeTab === "catalog" || state.activeTab === "providers" || state.activeTab === "apps" || state.activeTab === "network") openCoreTab(state.activeTab);
       try {
         await loadEndpointProfiles();
       } catch (err) {
@@ -15270,6 +15462,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // Runs tab loader fires from there. Cache sizes load when the Cache
 	    // tab opens (shared ensureDataHomes cache).
 	    $("tab-button-runtimes").onclick = () => { setActiveTab("runtimes"); loadRuntimes(); };
+	    bindSkillsMcpPage();
 	    $("tab-button-workflows").onclick = () => { setActiveTab("workflows"); mountWorkflowSwitches(); loadWorkflows(); mountAgentDefaults("workflows", $("agent-defaults-root")); };
 	    $("workflows-refresh").onclick = () => loadWorkflows();
 	    $("workflows-search").oninput = () => renderWorkflows();
@@ -15279,7 +15472,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      await importWorkflows(files);
 	      ev.target.value = "";
 	    };
-	    $("tab-button-providers").onclick = () => setActiveTab("providers");
+	    $("tab-button-providers").onclick = () => { setActiveTab("providers"); openCoreTab("providers"); };
 	    $("tab-button-defaults").onclick = () => setActiveTab("defaults");
 	    $("tab-button-sandbox").onclick = () => setActiveTab("sandbox");
 	    // Models: load now, then start the tab-scoped 5s poll (token-guarded —
@@ -15287,7 +15480,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // out; re-entering the tab starts a fresh chain).
 	    $("tab-button-models").onclick = () => { setActiveTab("models"); loadHostState(); startHostStatePoll(); };
 	    $("tab-button-catalog").onclick = () => { setActiveTab("catalog"); openCoreTab("catalog"); };
-	    $("tab-button-engines").onclick = () => { setActiveTab("engines"); openCoreTab("engines"); };
 	    $("tab-button-apps").onclick = () => { setActiveTab("apps"); openCoreTab("apps"); };
 	    $("tab-button-network").onclick = () => { setActiveTab("network"); openCoreTab("network"); };
 	    $("models-refresh").onclick = () => { loadHostState(); startHostStatePoll(); };

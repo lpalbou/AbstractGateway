@@ -277,7 +277,7 @@ def test_catalog_is_spliced_into_the_page_once() -> None:
     assert html.count("function mountModelCatalog(") == 1
     assert html.count(".mc-card {") == 1
     assert html.count('id="catalog-cards-root"') == 1
-    panel = html[html.index('id="tab-catalog"') : html.index('id="tab-engines"')]
+    panel = html[html.index('id="tab-catalog"') : html.index('id="tab-apps"')]
     assert panel.index('id="catalog-cards-root"') < panel.index('id="catalog-core-root"')
 
 
