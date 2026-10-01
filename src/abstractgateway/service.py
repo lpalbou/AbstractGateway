@@ -185,7 +185,13 @@ def gateway_runner_health_snapshot() -> Dict[str, Any]:
     # probe must never BLOCK behind a build (that re-opens the supervisor
     # false-recycle window). On contention, report building=true and return —
     # a gateway mid-build is alive, not degraded.
-    if not _service_lock.acquire(timeout=0.5):
+    # NON-blocking (boot-time lane 2026-10-01): this runs ON the event loop
+    # (`async def health_check`). The old `acquire(timeout=0.5)` parked the
+    # whole loop for 0.5 s per probe while the eager rehydration built a
+    # service (minutes on a cold checkout: the provider imports), so a
+    # supervisor plus five apps polling /api/health queued far past their
+    # 3 s timeouts and every app gave up ("gateway not reachable").
+    if not _service_lock.acquire(blocking=False):
         return {"initialized": False, "degraded": False, "building": True, "runners": []}
     try:
         services = []

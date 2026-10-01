@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`/api/health` answers at once while the gateway warms up.** While a service was being built (the
+  eager warm-up after start, or a user's first request), each health probe held the whole server for
+  half a second. With the stack supervisor and five apps polling at the same time, probes waited past
+  their 3-second timeout and the apps stopped with "the gateway is not reachable" until the build
+  finished (minutes on a fresh checkout). Health now never waits for a build; it answers
+  `"warming_up": true` (with `runner.building: true`) until the build is done, and `status` stays
+  `healthy`.
+
 ### Added
 - **Rotate your own token.** `POST /api/gateway/me/token/rotate` (any signed-in user) answers your new
   token once; the old one stops working as soon as it answers, a browser session moves to the new

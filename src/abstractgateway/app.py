@@ -498,6 +498,11 @@ async def health_check():
     except Exception as e:
         runner_snapshot = {"initialized": False, "degraded": False, "error": f"{type(e).__name__}: {e}"}
     body["runner"] = runner_snapshot
+    # Warming up (boot-time lane 2026-10-01): a service build is in progress
+    # (eager rehydration / first touch). Alive and serving; some API calls
+    # wait for the build. Never degrades `status`.
+    if runner_snapshot.get("building"):
+        body["warming_up"] = True
     # Host pause (tray/console, 2026-09-05): visible on the liveness probe,
     # but `status` stays healthy — a paused gateway is an operator's choice
     # and a supervisor must never recycle it for that.
