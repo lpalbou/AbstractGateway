@@ -27,7 +27,8 @@ SKILLS_MCP_CSS = r"""
 .skmcp-page .af-tabs__panel { padding-top: 14px; display: flex; flex-direction: column; gap: 12px; }
 .skmcp-purpose { max-width: 80ch; margin: 0; }
 .skmcp-truth { margin: 0; padding: 10px 12px; max-width: 90ch; border-left: 3px solid var(--warning, var(--accent)); background: color-mix(in srgb, var(--warning, var(--accent)) 9%, transparent); border-radius: var(--radius-sm); font-size: var(--font-size-base); line-height: 1.45; }
-.skmcp-shelf { border: 1px solid var(--line-soft); border-radius: var(--radius-md); padding: 12px 14px; }
+.skmcp-shelf { border-top: 1px solid var(--line-soft); padding: 12px 0 0; }
+.skmcp-shelf[open] > summary { margin-bottom: 8px; }
 .skmcp-shelf > summary { cursor: pointer; font-weight: 600; font-size: var(--font-size-base); min-height: 32px; display: flex; align-items: center; }
 .skmcp-shelf > summary .skmcp-shelf__now { font-weight: 400; color: var(--muted); margin-left: 8px; font-size: var(--font-size-md); overflow-wrap: anywhere; }
 .skmcp-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
@@ -50,7 +51,7 @@ SKILLS_MCP_CSS = r"""
 .skmcp-name { font-weight: 600; }
 .skmcp-sub { display: block; color: var(--muted); font-size: var(--af-helper-size, var(--font-size-md)); font-weight: 400; margin-top: 2px; }
 .skmcp-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
-.skmcp-mono { font-family: var(--font-mono); font-size: var(--font-size-md); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skmcp-mono { font-family: var(--font-mono); font-size: var(--font-size-md); display: block; overflow-wrap: anywhere; word-break: break-word; }
 .skmcp-chip { display: inline-flex; align-items: center; min-height: 22px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); font-size: var(--font-size-sm); font-weight: 500; white-space: nowrap; }
 .skmcp-chip.is-ok { border-color: color-mix(in srgb, var(--success, #2f9e44) 55%, transparent); color: var(--success, #2f9e44); }
 .skmcp-chip.is-warn { border-color: color-mix(in srgb, var(--warning, #c77700) 55%, transparent); color: var(--warning, #c77700); }
@@ -152,8 +153,8 @@ SKILLS_MCP_JS = r"""
         if (admin && r.origin === "imported" && !r.archived) acts.push(`<button type="button" class="secondary" data-skill-archive="${n}">Archive</button>`);
         if (admin && r.archived) acts.push(`<button type="button" class="secondary" data-skill-unarchive="${n}">Unarchive</button>`);
         return `<tr class="skmcp-row" data-skill-row="${n}">`
-          + `<td class="sk-name"><span class="skmcp-name">${n}</span><span class="skmcp-sub skmcp-fold skmcp-clamp">${esc(r.description || "")}</span><span class="skmcp-sub skmcp-fold">${source}</span></td>`
-          + `<td class="sk-what"><span class="skmcp-clamp">${esc(r.description || "")}</span></td>`
+          + `<td class="sk-name"><span class="skmcp-name">${n}</span><span class="skmcp-sub skmcp-fold">${esc(r.description || "")}</span><span class="skmcp-sub skmcp-fold">${source}</span></td>`
+          + `<td class="sk-what">${esc(r.description || "")}</td>`
           + `<td class="sk-version">${version}</td>`
           + `<td class="sk-trust">${skillTrustCell(r)}</td>`
           + `<td class="sk-source">${source}</td>`
@@ -201,9 +202,9 @@ SKILLS_MCP_JS = r"""
         if (admin && s.archived) acts.push(`<button type="button" class="secondary" data-mcp-unarchive="${n}">Unarchive</button>`);
         return `<tr class="skmcp-row" data-mcp-row="${n}">`
           + `<td class="mcp-name"><span class="skmcp-name">${n}</span>${s.archived ? ` <span class="skmcp-chip is-muted">Archived</span>` : ""}`
-          + `${s.description ? `<span class="skmcp-sub skmcp-clamp">${esc(s.description)}</span>` : ""}`
-          + `<span class="skmcp-sub skmcp-fold skmcp-mono" title="${reach}">${how} · ${reach}</span></td>`
-          + `<td class="mcp-transport"><span class="skmcp-sub">${how}</span><span class="skmcp-mono" title="${reach}">${reach}</span></td>`
+          + `${s.description ? `<span class="skmcp-sub">${esc(s.description)}</span>` : ""}`
+          + `<span class="skmcp-sub skmcp-fold skmcp-mono">${how} · ${reach}</span></td>`
+          + `<td class="mcp-transport"><span class="skmcp-sub">${how}</span><span class="skmcp-mono">${reach}</span></td>`
           + `<td class="mcp-status"><span class="skmcp-status${st.failed ? " is-failed" : ""}">${esc(st.text)}</span></td>`
           + `<td class="mcp-tools">${mcpToolsCell(s.last_test)}</td>`
           + `<td class="mcp-actions"><div class="skmcp-actions">${acts.join("")}</div></td></tr>`;
@@ -336,12 +337,12 @@ SKILLS_MCP_JS = r"""
       if (!d.editable) lead = `<p class="skmcp-lead">${esc(d.read_only_reason || "This skill is read-only.")}</p>`;
       else if (!admin) lead = `<p class="skmcp-lead">Only an admin can edit skills.</p>`;
       return lead + `<div class="skmcp-form">`
-        + `<div class="skmcp-field"><span class="skmcp-label">Name</span><code>${esc(d.name)}</code><p class="skmcp-help">How agents and run settings refer to this skill; it never changes (duplicate to rename).</p></div>`
-        + `<div class="skmcp-field"><label for="skill-f-version">Version</label><input id="skill-f-version" type="text" autocomplete="off" value="${esc(d.version || "")}"${roAttr}><p class="skmcp-help">Your label for this revision, stored as metadata.version in SKILL.md.</p></div>`
+        + `<div class="skmcp-field"><span class="skmcp-label">Name</span><code>${esc(d.name)}</code><p class="skmcp-help">How agents refer to this skill; it never changes (duplicate to rename).</p></div>`
+        + `<div class="skmcp-field"><label for="skill-f-version">Version</label><input id="skill-f-version" type="text" autocomplete="off" value="${esc(d.version || "")}"${roAttr}></div>`
         + `<div class="skmcp-field skmcp-field--wide"><label for="skill-f-description">What it does</label><input id="skill-f-description" type="text" autocomplete="off" value="${esc(fm.description || "")}"${roAttr}><p class="skmcp-help">One sentence agents read to decide when to load this skill.</p></div>`
-        + `<div class="skmcp-field"><label for="skill-f-license">License</label><input id="skill-f-license" type="text" autocomplete="off" value="${esc(fm.license || "")}"${roAttr}><p class="skmcp-help">The license the skill is shared under, for example MIT.</p></div>`
-        + `<div class="skmcp-field"><span class="skmcp-label">Source</span><span>${esc(d.origin === "imported" ? "Imported" : d.origin === "archived" ? "Imported (archived)" : "Curated registry")}</span><p class="skmcp-help">Curated skills ship with the gateway; imported ones were added here.</p></div>`
-        + `<div class="skmcp-field skmcp-field--wide"><label for="skill-f-md">SKILL.md</label><textarea id="skill-f-md" class="skmcp-editor" spellcheck="false"${roAttr}>${esc(d.skill_md || "")}</textarea><p class="skmcp-help">The instructions agents read when they load the skill. The fields above are written into its frontmatter on Save.</p></div>`
+        + `<div class="skmcp-field"><label for="skill-f-license">License</label><input id="skill-f-license" type="text" autocomplete="off" value="${esc(fm.license || "")}"${roAttr}></div>`
+        + `<div class="skmcp-field"><span class="skmcp-label">Source</span><span>${esc(d.origin === "imported" ? "Imported" : d.origin === "archived" ? "Imported (archived)" : "Curated registry")}</span></div>`
+        + `<div class="skmcp-field skmcp-field--wide"><label for="skill-f-md">SKILL.md</label><textarea id="skill-f-md" class="skmcp-editor" spellcheck="false"${roAttr}>${esc(d.skill_md || "")}</textarea><p class="skmcp-help">What agents read when they load the skill; the fields above are written into its frontmatter on Save.</p></div>`
         + `<div class="skmcp-field skmcp-field--wide"><span class="skmcp-label">Files</span><ul class="skmcp-files">${files}</ul></div>`
         + `</div>`;
     }

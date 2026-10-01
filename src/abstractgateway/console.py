@@ -2355,11 +2355,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
               <button id="skmcp-tab-mcp" class="af-tabs__tab" role="tab" type="button" data-skmcp-tab="mcp" aria-controls="skmcp-pane-mcp" aria-selected="false" tabindex="-1">MCP servers</button>
             </div>
             <div id="skmcp-pane-skills" class="af-tabs__panel" role="tabpanel" aria-labelledby="skmcp-tab-skills">
-              <p class="section-note skmcp-purpose">Skills are written instructions (a SKILL.md and its files) that agents load when a task needs them. Curated skills ship with the gateway; you can import your own and edit them here.</p>
-              <details class="skmcp-shelf" open>
-                <summary>Where skills come from</summary>
-                <div id="skills-settings-root" class="core-console-root"></div>
-              </details>
+              <p class="section-note skmcp-purpose">Instructions agents load when a task needs them: curated ones ship with the gateway, imported ones are yours to edit.</p>
               <div class="skmcp-toolbar">
                 <input id="skills-search" type="search" placeholder="Search by name or description" aria-label="Search skills">
                 <span id="skills-archived-slot" class="workflows-switch"></span>
@@ -2377,10 +2373,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                   <tbody id="skills-table"></tbody>
                 </table>
               </div>
+              <details class="skmcp-shelf">
+                <summary>Shelf folder</summary>
+                <div id="skills-settings-root" class="core-console-root"></div>
+              </details>
             </div>
             <div id="skmcp-pane-mcp" class="af-tabs__panel" role="tabpanel" aria-labelledby="skmcp-tab-mcp" hidden>
               <p id="mcp-truth" class="skmcp-truth"></p>
-              <p class="section-note skmcp-purpose">MCP servers offer tools (search, files, APIs...) over the Model Context Protocol. Register one by the command that starts it or its URL; Test runs the real handshake and lists its tools.</p>
+              <p class="section-note skmcp-purpose">Tool servers over the Model Context Protocol: Test runs the real handshake and lists their tools.</p>
               <div class="skmcp-toolbar">
                 <span id="mcp-archived-slot" class="workflows-switch"></span>
                 <span class="skmcp-spacer"></span>

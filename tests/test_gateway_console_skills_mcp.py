@@ -134,3 +134,21 @@ console.log(JSON.stringify([{ html: mcpModalMarkup(m) }]));
     assert 'type="password"' in html and 'value=""' in html
     assert "Saved · fingerprint ab12cd34ef56; type to replace" in html
     assert 'aria-selected="true"' in html and ">URL</button>" in html and ">Command</button>" in html
+
+
+def test_descriptions_and_transports_wrap_never_truncate() -> None:
+    from abstractgateway.console_skills_mcp import SKILLS_MCP_CSS
+
+    source = _console_script()
+    for fn in ("skillsRowsMarkup", "mcpRowsMarkup"):
+        body = _slice_function(source, fn)
+        assert "skmcp-clamp" not in body and "title=" not in body.split("skillTrustCell")[0], fn
+    mono = re.search(r"\.skmcp-mono \{([^}]*)\}", SKILLS_MCP_CSS).group(1)
+    assert "ellipsis" not in mono and "nowrap" not in mono
+
+
+def test_shelf_folder_is_a_folded_disclosure_at_the_bottom_of_the_skills_tab() -> None:
+    html = gateway_console_html()
+    pane = html[html.index('id="skmcp-pane-skills"') : html.index('id="skmcp-pane-mcp"')]
+    assert pane.index('id="skills-table"') < pane.index("<summary>Shelf folder</summary>") < pane.index('id="skills-settings-root"')
+    assert '<details class="skmcp-shelf">' in pane  # folded (no `open`)
