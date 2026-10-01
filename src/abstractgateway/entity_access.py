@@ -20,7 +20,11 @@ Enforced in the API, not only in the UI:
 A hidden entity answers EXACTLY like a missing one (404, the registry's own not-found sentence),
 so a non-admin cannot probe which names exist through these routes. Creating an entity under a
 name another account already holds is the one place a name's existence shows (names are unique
-per gateway): 409 "That name is taken".
+per gateway): 409 "That name is taken". Entity names are DOOR-GLOBAL principals (users file)
+while homes live per runtime plane, so the check is two-part (`name_taken_detail`): a home with
+that name in the caller's plane that the caller may not see, OR no home in the caller's plane but
+a door-wide user record with that name (an entity living in another plane, or a human account):
+creating there would adopt that principal.
 
 A gateway without user accounts (the single-operator gateway, one shared world) shows everything
 to every caller, as before.
@@ -37,6 +41,7 @@ from fastapi import Request
 from .security.principal import GatewayPrincipal, current_gateway_principal, safe_principal_component
 
 NAME_TAKEN = "That name is taken: another account already has an entity called {slug!r}. Pick another name."
+ACCOUNT_NAME_TAKEN = "That name is taken: an account is already called {slug!r}. Pick another name."
 
 
 def creator_of(principal: Optional[GatewayPrincipal]) -> Optional[dict]:
@@ -127,3 +132,23 @@ def entity_name_guard(request: Request) -> None:
     if name is None:
         return
     require_entity_visible(str(name))
+
+
+def name_taken_detail(caller: Optional[GatewayPrincipal], registry: Any, slug: str) -> Optional[str]:
+    """The 409 sentence when `caller` may not create entity `slug`, else None.
+
+    - A home in the caller's plane: taken unless the caller may see it (its creator, an admin, a
+      single-user gateway) — re-creating your own entity stays the idempotent re-summon.
+    - No home in the caller's plane but a door-wide user record with that name: taken, for
+      everyone (an admin included). The record is an entity whose home is in another plane, or a
+      human account; `create` would adopt it as this entity's principal.
+    - Neither: free (a legacy home whose principal was never minted mints it on create)."""
+    exists, created_by = manifest_creator(registry.entities_dir, slug)
+    if exists:
+        return None if entity_visible_to(caller, slug, created_by) else NAME_TAKEN.format(slug=slug)
+    record = registry.door_principal(slug)
+    if record is None:
+        return None
+    if record.principal_kind == "entity":
+        return NAME_TAKEN.format(slug=slug)
+    return ACCOUNT_NAME_TAKEN.format(slug=slug)

@@ -1274,6 +1274,28 @@ class EntityRegistry:
             principal=principal,
         )
 
+    def _principal_registry_path(self) -> Path:
+        """The door's users file (the one auth reads): the injected path, else the env file, else
+        `<data_dir>/auth/users.json`. ONE resolution for minting and for the name check."""
+        import os
+
+        raw = os.getenv("ABSTRACTGATEWAY_USERS_FILE")
+        return self._users_registry_path or (
+            Path(str(raw)).expanduser().resolve()
+            if raw and str(raw).strip()
+            else self.data_dir / "auth" / "users.json"
+        )
+
+    def door_principal(self, slug: str) -> Optional[Any]:
+        """The door-global user record named `slug` (entity principal or human account), or None.
+        Entity names are door-global principals while homes live per runtime plane, so this is
+        the door-wide name index `POST /entities` checks before creating a home in a plane that
+        does not hold one yet. Raises when the users file cannot be read: an unknown answer must
+        never let a name be adopted."""
+        from .users import GatewayUserRegistry
+
+        return GatewayUserRegistry(path=self._principal_registry_path()).get_user(slug)
+
     def _ensure_entity_principal(
         self, manifest: EntityManifest
     ) -> Tuple[Optional[Dict[str, Any]], List[str]]:
@@ -1299,16 +1321,8 @@ class EntityRegistry:
         adopted (minted=False), never re-minted."""
         from .users import GatewayUserRegistry
 
-        import os
-
-        raw = os.getenv("ABSTRACTGATEWAY_USERS_FILE")
-        registry_path = self._users_registry_path or (
-            Path(str(raw)).expanduser().resolve()
-            if raw and str(raw).strip()
-            else self.data_dir / "auth" / "users.json"
-        )
         try:
-            reg = GatewayUserRegistry(path=registry_path)
+            reg = GatewayUserRegistry(path=self._principal_registry_path())
             existing = reg.get_user(manifest.slug)
             if existing is not None:
                 out = {
