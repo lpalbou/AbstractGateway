@@ -7546,7 +7546,13 @@ def _agent_default_marks(defaults: Dict[str, Any], *, registry_scope: str) -> Di
     return marks
 
 
-@router.get("/bundles")
+@router.get(
+    "/bundles",
+    summary="Workflows on this gateway (one item per bundle)",
+    description="Each item: the bundle's versions, entrypoints (name, description, interfaces), `description` (the "
+    "default entrypoint's description), `source` (shipped: ships with the gateway; published: published from "
+    "AbstractFlow; imported: an uploaded .flow), and actions. `skipped` lists bundles the gateway refused, with the reason.",
+)
 async def list_bundles(
     request: Request,
     all_versions: bool = Query(default=False, description="If true, return one item per bundle version."),
@@ -7647,12 +7653,23 @@ async def list_bundles(
                 )
             if not eps:
                 continue
+            default_ep = str(getattr(man, "default_entrypoint", "") or "") or (
+                str(getattr(entrypoints[0], "flow_id", "") or "") if len(entrypoints) == 1 else ""
+            )
+            default_desc = next(
+                (str(getattr(ep, "description", "") or "") for ep in entrypoints if str(getattr(ep, "flow_id", "") or "") == default_ep),
+                "",
+            )
             items.append(
                 {
                     "bundle_id": str(bid),
                     "bundle_version": exact_version,
                     "bundle_ref": f"{bid}@{exact_version}",
                     "registry_scope": "private",
+                    # Where the bundle came from (workflow_sources.py): shipped | published | imported.
+                    "source": bundle_source(source_meta.get("path") if isinstance(source_meta, dict) else None, metadata_obj),
+                    # What it does: the default entrypoint's description ("" when it has none).
+                    "description": default_desc,
                     "version_channel": version_channel,
                     "is_draft": version_channel == "draft",
                     "is_published": version_channel == "published",
@@ -8401,6 +8418,9 @@ def _restamp_discussion_turn(svc: Any, *, session_id: str, input_data: Dict[str,
         if not str(input_data.get(key) or "").strip() and str(root_vars.get(key) or "").strip():
             input_data[key] = root_vars[key]
     return mounts
+
+
+from ..workflow_sources import bundle_source  # noqa: E402 - the /bundles `source` rule
 
 
 def _audit_run_started(request: Request, *, run_id: str, workflow: str, scheduled: bool = False) -> None:
