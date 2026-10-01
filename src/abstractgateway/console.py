@@ -1928,8 +1928,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .workflows-table th.workflows-col-what { width: auto; }
 	    .workflows-table th.workflows-col-version { width: 6.5rem; }
 	    .workflows-table th.workflows-col-source { width: 11rem; }
-	    .workflows-table th.workflows-col-usedby { width: 15rem; }
-	    .workflows-table th.workflows-col-actions { width: 9.5rem; }
+	    .workflows-table th.workflows-col-usedby { width: 13rem; }
+	    .workflows-table th.workflows-col-available { width: 9.5rem; }
+	    .workflows-table th.workflows-col-actions { width: 15.5rem; }
+	    .workflows-table th.workflows-col-source { width: 9.5rem; }
 	    .workflows-name__wrap { display: flex; gap: 6px; align-items: flex-start; }
 	    .workflows-name__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 	    .workflows-name__text small { font-size: var(--af-helper-size, var(--font-size-md)); font-family: var(--font-mono); overflow-wrap: anywhere; }
@@ -1943,8 +1945,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .workflows-usedby__item { display: block; }
 	    .workflows-usedby__item > .help-q { margin-left: 6px; }
 	    .workflows-usedby__item + .workflows-usedby__item { margin-top: 4px; }
-	    .workflows-actions .actions { flex-wrap: nowrap; justify-content: flex-end; gap: 6px; }
+	    .workflows-actions .actions { flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 	    .workflows-actions .actions > button { white-space: nowrap; }
+	    /* Ownership groups (DESIGN-v3 §5.1): a plain heading row per group, no nested card. */
+	    .workflows-table tr.workflows-group > th { text-align: left; padding: 18px 0 6px; border-bottom: 1px solid var(--line); font-size: var(--font-size-base); font-weight: 600; color: var(--text); white-space: normal; }
+	    .workflows-table tr.workflows-group:first-child > th { padding-top: 6px; }
+	    .workflows-group__count { margin-left: 8px; font-weight: 400; font-size: var(--af-helper-size, var(--font-size-md)); }
+	    .workflows-badge { margin: 0; white-space: normal; }
+	    .workflows-name__text .pill { align-self: flex-start; margin: 2px 0 0; }
+	    .workflows-row--archived .workflows-name strong, .workflows-row--archived .workflows-what { color: var(--muted); }
+	    .workflows-th-available__label { display: inline-flex; align-items: center; gap: 6px; }
+	    .workflows-available .af-switch__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 	    .workflows-confirm > td { padding-top: 0; }
 	    .workflows-confirm-box { margin-top: 8px; }
 	    .workflows-detail > td { background: var(--panel-2, transparent); padding: 10px 14px 14px 36px; }
@@ -1988,8 +1999,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      .workflows-table .workflows-th-what, .workflows-table .workflows-th-source, .workflows-table td.workflows-what, .workflows-table td.workflows-source { display: none; }
 	      .workflows-table th.workflows-col-name { width: auto; }
 	      .workflows-table th.workflows-col-version { width: 6.5rem; }
-	      .workflows-table th.workflows-col-usedby { width: 12rem; }
-	      .workflows-table th.workflows-col-actions { width: 11rem; }
+	      .workflows-table th.workflows-col-usedby { width: 11rem; }
+	      .workflows-table th.workflows-col-actions { width: 13rem; }
 	      .workflows-fold-what { display: -webkit-box; margin-top: 2px; }
 	      .workflows-fold-meta { display: block; }
 	      .workflows-fold-version { display: none; }
@@ -2003,7 +2014,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      .workflows-table tr.workflows-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
 	      .workflows-table tr.workflows-row > td { padding: 0; border: 0; width: auto; }
 	      .workflows-table td.workflows-name { grid-column: 1 / -1; grid-row: 1; }
-	      .workflows-table td.workflows-actions { grid-column: 1 / -1; grid-row: 3; margin-top: 4px; }
+	      .workflows-table td.workflows-available { grid-column: 1 / -1; grid-row: 3; }
+	      .workflows-table td.workflows-available:empty { display: none; }
+	      .workflows-available .af-switch__label { position: static; width: auto; height: auto; overflow: visible; clip: auto; }
+	      .workflows-table tr.workflows-group > th { display: block; padding: 18px 0 6px; }
+	      .workflows-table td.workflows-actions { grid-column: 1 / -1; grid-row: 4; margin-top: 4px; }
 	      .workflows-actions .actions { justify-content: flex-start; }
 	      .workflows-table td.workflows-version-cell { display: none; }
 	      .workflows-fold-version { display: inline; }
@@ -2303,13 +2318,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <input id="workflows-search" type="search" placeholder="Search by name, description or id" aria-label="Search workflows">
 	                <span id="workflows-drafts-slot" class="workflows-switch"></span>
 	                <span id="workflows-older-slot" class="workflows-switch"></span>
+	                <span id="workflows-archived-slot" class="workflows-switch"></span>
 	                <button id="workflows-import" class="secondary" type="button" title="Install a .flow bundle">Import .flow</button>
 	                <input id="workflows-import-file" type="file" accept=".flow" class="hidden" multiple>
 	              </div>
 	              <div id="workflows-message" class="message" role="status" aria-live="polite"></div>
 	              <div class="table-scroll workflows-scroll" id="workflows-scroll">
 	                <table class="workflows-table" data-ui-no-stack>
-	                  <thead><tr><th class="workflows-col-name">Name</th><th class="workflows-col-what workflows-th-what">What it does</th><th class="workflows-col-version">Version</th><th class="workflows-col-source workflows-th-source">Source</th><th class="workflows-col-usedby">Used by</th><th class="workflows-col-actions"><span class="sr-only">Actions</span></th></tr></thead>
+	                  <thead><tr><th class="workflows-col-name">Name</th><th class="workflows-col-what workflows-th-what">What it does</th><th class="workflows-col-version">Version</th><th class="workflows-col-source workflows-th-source">Source</th><th class="workflows-col-usedby">Used by</th><th id="workflows-th-available" class="workflows-col-available" hidden><span class="workflows-th-available__label">Available to users</span></th><th class="workflows-col-actions"><span class="sr-only">Actions</span></th></tr></thead>
 	                  <tbody id="workflows-table"></tbody>
 	                </table>
 	              </div>
@@ -4262,14 +4278,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    state.workflowsSkipped = [];
 	    state.selectedWorkflow = "";
 
-	    // DESIGN-v2 §4.1: one row per bundle -- Name (the default entrypoint's name, the
-	    // bundle id small below) · What it does · Version (latest, "+N older") · Source ·
-	    // Used by (plain app names from the interface table, each with a (?)) · Export /
-	    // Delete. A click expands the row: versions, channel, created, entrypoints.
+	    // DESIGN-v3 §5 (on DESIGN-v2 §4.1): one row per bundle, grouped by owner -- "Shared by the
+	    // gateway — all users" and "Mine". Name (the default entrypoint's name, the bundle id small
+	    // below) · What it does · Version (latest, "+N older") · Source badge · Used by ·
+	    // (admin) Available to users · Export / Open in AbstractFlow / Archive. Nothing is ever
+	    // deleted: shipped bundles have no Archive at all. A click expands the row.
 	    state.workflowsExpanded = new Set();
 	    state.workflowsShowDrafts = false;
 	    state.workflowsShowOlder = false;
-	    const WORKFLOW_SOURCE_TEXT = { shipped: "Shipped with the gateway", imported: "Imported", published: "Published from AbstractFlow" };
+	    state.workflowsShowArchived = false;
+	    const WORKFLOW_SOURCE_TEXT = { shipped: "Shipped", imported: "Imported", published: "Published from AbstractFlow" };
 	    // F4: a manifest whose bundle_version is the placeholder "0.0.0" (the Assistant orchestrator
 	    // ships so) has no version; say "unversioned" instead of a number that looks like one.
 	    const WORKFLOW_UNVERSIONED = new Set(["0.0.0"]);
@@ -4299,10 +4317,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      for (const it of state.workflows) {
 	        const id = String(it.bundle_id || "");
 	        if (!id) continue;
-	        let row = byId.get(id);
+	        if (!it.owner || !["gateway", "user"].includes(it.owner.kind)) {
+	          console.error(`AbstractGateway console: GET /bundles item ${id} has no owner (workflows seam, DESIGN-v3 §5.1).`);
+	        }
+	        // One row per (owner, bundle): a user's own bundle may share an id with a gateway one.
+	        const ownerKind = (it.owner && it.owner.kind) || "gateway";
+	        const key = `${ownerKind}:${id}`;
+	        let row = byId.get(key);
 	        if (!row) {
-	          row = { bundle_id: id, versions: [], deprecated: false };
-	          byId.set(id, row);
+	          row = { key, bundle_id: id, ownerKind, versions: [], deprecated: false };
+	          byId.set(key, row);
 	        }
 	        row.versions.push(it);
 	      }
@@ -4318,6 +4342,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        }
 	        row.description = typeof latestId.description === "string" ? latestId.description : "";
 	        row.source = latestId.source;
+	        row.shipped = latestId.shipped === true;
+	        row.available = latestId.available !== false;
+	        row.archived = row.versions.every((v) => v.archived === true);
 	        row.deprecated = eps.length > 0 && eps.every((e) => e && e.deprecated);
 	        const ifaces = [];
 	        for (const e of eps) for (const i of (e && e.interfaces) || []) if (!ifaces.includes(i)) ifaces.push(i);
@@ -4372,7 +4399,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const tr = document.createElement("tr");
 	      tr.className = "workflows-detail";
 	      const td = document.createElement("td");
-	      td.colSpan = 6;
+	      td.colSpan = workflowColCount();
 	      const versions = state.workflowsShowOlder ? row.versions : [row.latest];
 	      const list = document.createElement("div");
 	      list.className = "workflows-versions";
@@ -4387,20 +4414,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        meta.className = "muted";
 	        meta.textContent = `${v.version_channel || (v.is_draft ? "draft" : "published")} · ${String(v.created_at || "").slice(0, 10)}`;
 	        head.append(title, meta);
+	        if (v.archived) { const pill = document.createElement("span"); pill.className = "pill workflows-archived-pill"; pill.textContent = "Archived"; head.append(pill); }
 	        const acts = document.createElement("span");
 	        acts.className = "actions";
-	        const ex = document.createElement("button");
-	        ex.type = "button"; ex.className = "secondary small"; ex.textContent = "Export";
-	        ex.setAttribute("aria-label", `Export ${row.name} ${v.bundle_version}`);
-	        ex.onclick = () => exportWorkflow(row.bundle_id, v.bundle_version);
-	        acts.append(ex);
-	        if (state.principal && state.principal.admin) {
-	          const del = document.createElement("button");
-	          del.type = "button"; del.className = "secondary danger small"; del.textContent = "Delete";
-	          del.setAttribute("aria-label", `Delete ${row.name} ${v.bundle_version}`);
-	          del.onclick = (ev) => { if (ev && ev.stopPropagation) ev.stopPropagation(); deleteWorkflow(row.bundle_id, String(v.bundle_version || ""), { ...row, versions: [v] }, box); };
-	          acts.append(del);
-	        }
+	        acts.append(...workflowActionButtons(row, v, () => box));
 	        head.append(acts);
 	        box.append(head);
 	        for (const ep of v.entrypoints || []) {
@@ -4433,101 +4450,188 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      tr.append(td);
 	      return tr;
 	    }
+	    function workflowColCount() {
+	      return state.principal && state.principal.admin ? 7 : 6;
+	    }
+	    // Ownership groups (DESIGN-v3 §5.1): what the gateway shares with every user, then the
+	    // signed-in user's own imports and publishes ("Mine", hidden when empty).
+	    const WORKFLOW_GROUPS = [
+	      { kind: "gateway", title: "Shared by the gateway — all users" },
+	      { kind: "user", title: "Mine" },
+	    ];
+	    const WORKFLOW_AVAILABLE_HELP = "Off hides this workflow from users' lists and app pickers and pauses their automations on it; turning it back on doesn't resume them. Admins always see it, and an app's default workflow keeps running for everyone.";
+	    function workflowGroupRow(title, count) {
+	      const tr = document.createElement("tr");
+	      tr.className = "workflows-group";
+	      const th = document.createElement("th");
+	      th.colSpan = workflowColCount();
+	      th.scope = "colgroup";
+	      th.innerHTML = `<span class="workflows-group__title"></span><span class="workflows-group__count muted"></span>`;
+	      th.querySelector(".workflows-group__title").textContent = title;
+	      th.querySelector(".workflows-group__count").textContent = `${count} workflow${count === 1 ? "" : "s"}`;
+	      tr.append(th);
+	      return tr;
+	    }
+	    function workflowSourceBadge(row) {
+	      if (!WORKFLOW_SOURCE_TEXT[row.source]) console.error(`AbstractGateway console: GET /bundles item ${row.bundle_id} has no known source (gateway-api seam, DESIGN-v2 §6): ${row.source}`);
+	      const pill = document.createElement("span");
+	      pill.className = `pill workflows-badge workflows-badge--${row.source || "unknown"}`;
+	      pill.textContent = WORKFLOW_SOURCE_TEXT[row.source] || "Unknown source";
+	      return pill;
+	    }
+	    function workflowAvailabilityCell(row) {
+	      // Admin only (the column is not rendered for anyone else); gateway-owned rows only.
+	      const td = document.createElement("td");
+	      td.className = "workflows-available";
+	      if (!(row.latest.actions && row.latest.actions.can_set_availability)) return td;
+	      const sw = afSwitchCreate({ id: `workflow-available-${row.bundle_id}`, label: "Available to users", ariaLabel: `Available to users: ${row.name}`, checked: row.available !== false, small: true });
+	      sw.button.title = WORKFLOW_AVAILABLE_HELP;
+	      td.append(...sw.nodes);
+	      td.onclick = (ev) => ev.stopPropagation();
+	      afSwitchBind(sw.button, async (next) => {
+	        const res = await api(`/api/gateway/admin/workflows/${encodeURIComponent(row.bundle_id)}/availability`, { method: "PUT", body: JSON.stringify({ available: next }) });
+	        const paused = (res.paused_automations || []).length;
+	        $("workflows-message").textContent = next
+	          ? `${row.name} is available to users again. Automations paused earlier stay paused until their owners resume them.`
+	          : `${row.name} is hidden from users${paused ? `; ${paused} of their automation${paused === 1 ? " was" : "s were"} paused` : ""}.`;
+	        $("workflows-message").className = "message ok";
+	        for (const v of row.versions) v.available = next;
+	        row.available = next;
+	        return next;
+	      }, (e) => { $("workflows-message").textContent = `Not changed: ${emailErrorText(e)}`; $("workflows-message").className = "message error"; });
+	      return td;
+	    }
+	    function workflowActionButtons(row, version, anchorFor) {
+	      // Export · Open in AbstractFlow · Archive (imported/published, when allowed) or
+	      // Unarchive (archived rows). Shipped bundles: never Archive, never Delete (§5.3).
+	      const v = version || row.latest;
+	      const label = version ? `${row.name} ${v.bundle_version}` : row.name;
+	      const out = [];
+	      const exportBtn = document.createElement("button");
+	      exportBtn.type = "button"; exportBtn.className = "secondary small"; exportBtn.textContent = "Export";
+	      exportBtn.setAttribute("aria-label", `Export ${label}`);
+	      exportBtn.title = "Download this version as a .flow file";
+	      exportBtn.onclick = (ev) => { ev.stopPropagation(); exportWorkflow(row.bundle_id, v.bundle_version); };
+	      out.push(exportBtn);
+	      const open = document.createElement("button");
+	      open.type = "button"; open.className = "secondary small workflows-open-flow"; open.textContent = "Open in AbstractFlow";
+	      open.setAttribute("aria-label", `Open ${label} in AbstractFlow`);
+	      open.title = "Open this workflow in the visual editor (a new tab)";
+	      open.onclick = (ev) => { ev.stopPropagation(); openWorkflowInFlow(row, v); };
+	      out.push(open);
+	      const acts = v.actions || {};
+	      if (v.archived && acts.can_archive) {
+	        const un = document.createElement("button");
+	        un.type = "button"; un.className = "secondary small"; un.textContent = "Unarchive";
+	        un.setAttribute("aria-label", `Unarchive ${label}`);
+	        un.onclick = (ev) => { ev.stopPropagation(); unarchiveWorkflow(row, version ? v.bundle_version : null); };
+	        out.push(un);
+	      } else if (!v.archived && acts.can_archive) {
+	        const ar = document.createElement("button");
+	        ar.type = "button"; ar.className = "secondary small workflows-archive"; ar.textContent = "Archive";
+	        ar.setAttribute("aria-label", `Archive ${label}`);
+	        ar.title = "Hide it from lists and stop new runs; the file and past runs stay";
+	        ar.onclick = (ev) => { ev.stopPropagation(); archiveWorkflow(row, version ? v.bundle_version : null, anchorFor()); };
+	        out.push(ar);
+	      }
+	      return out;
+	    }
 	    function renderWorkflows() {
 	      const tbody = $("workflows-table");
 	      tbody.textContent = "";
+	      const admin = Boolean(state.principal && state.principal.admin);
+	      // The "Available to users" column exists for admins only (not rendered otherwise).
+	      const head = $("workflows-th-available");
+	      if (head) {
+	        head.hidden = !admin;
+	        const label = head.querySelector(".workflows-th-available__label");
+	        if (admin && label && !label.querySelector(".help-q")) label.append(workflowHelpQ("Available to users", WORKFLOW_AVAILABLE_HELP));
+	      }
 	      const rows = workflowRows();
 	      if (!rows.length) {
 	        const tr = document.createElement("tr");
 	        const td = document.createElement("td");
-	        td.colSpan = 6; td.className = "message";
+	        td.colSpan = workflowColCount(); td.className = "message";
 	        td.textContent = state.workflows.length ? "No workflow matches this search." : "No workflows registered.";
 	        tr.appendChild(td); tbody.appendChild(tr);
 	      }
-	      for (const row of rows) {
-	        const open = state.workflowsExpanded.has(row.bundle_id);
-	        const tr = document.createElement("tr");
-	        tr.className = "row-selectable workflows-row";
-	        tr.setAttribute("data-bundle", row.bundle_id);
-	        tr.setAttribute("aria-expanded", open ? "true" : "false");
-	        tr.tabIndex = 0;
-	        const toggle = () => selectWorkflow(row.bundle_id);
-	        tr.onclick = toggle;
-	        tr.onkeydown = (ev) => { if (ev && (ev.key === "Enter" || ev.key === " ") && ev.target === tr) { ev.preventDefault(); toggle(); } };
-
-	        const name = document.createElement("td");
-	        name.className = "workflows-name";
-	        name.innerHTML = `<div class="workflows-name__wrap"><span class="workflows-chevron" aria-hidden="true">${open ? "▾" : "▸"}</span><span class="workflows-name__text"><strong></strong><small class="muted"></small></span></div>`;
-	        name.querySelector("strong").textContent = row.name;
-	        name.querySelector("small").textContent = row.bundle_id;
-	        if (row.deprecated) { const pill = document.createElement("span"); pill.className = "pill"; pill.textContent = "Deprecated"; name.querySelector(".workflows-name__text").append(pill); }
-	        const olderCount = row.versions.length - 1;
-	        const versionText = `${workflowVersionLabel(row.latest.bundle_version) || "No version"}${olderCount > 0 ? ` +${olderCount} older` : ""}`;
-	        if (!WORKFLOW_SOURCE_TEXT[row.source]) console.error(`AbstractGateway console: GET /bundles item ${row.bundle_id} has no known source (gateway-api seam, DESIGN-v2 §6): ${row.source}`);
-	        const sourceText = WORKFLOW_SOURCE_TEXT[row.source] || "Unknown source";
-	        // Narrow screens (DESIGN §12): the description and "Version · source" fold under the
-	        // name as label·value lines instead of one captioned block per field.
-	        const foldWhat = document.createElement("span");
-	        foldWhat.className = "workflows-fold-what workflows-clamp";
-	        foldWhat.textContent = row.description || "No description.";
-	        const foldMeta = document.createElement("span");
-	        foldMeta.className = "workflows-fold-meta";
-	        foldMeta.innerHTML = `<span class="workflows-fold-version"></span><span class="workflows-fold-source"></span>`;
-	        foldMeta.querySelector(".workflows-fold-version").textContent = `Version ${versionText} · `;
-	        foldMeta.querySelector(".workflows-fold-source").textContent = sourceText;
-	        name.querySelector(".workflows-name__text").append(foldWhat, foldMeta);
-	        tr.appendChild(name);
-
-	        const what = document.createElement("td");
-	        what.className = "workflows-what";
-	        what.setAttribute("data-label", "What it does");
-	        const whatText = document.createElement("span");
-	        whatText.className = "workflows-clamp";
-	        whatText.textContent = row.description || "No description.";
-	        what.append(whatText);
-	        if (row.description) what.title = row.description;
-	        tr.appendChild(what);
-
-	        const version = document.createElement("td");
-	        version.className = "workflows-version-cell";
-	        version.setAttribute("data-label", "Version");
-	        version.textContent = versionText;
-	        tr.appendChild(version);
-
-	        const source = document.createElement("td");
-	        source.className = "workflows-source";
-	        source.setAttribute("data-label", "Source");
-	        source.textContent = sourceText;
-	        tr.appendChild(source);
-
-	        tr.appendChild(workflowUsedByCell(row));
-
-	        const actions = document.createElement("td");
-	        actions.className = "workflows-actions";
-	        const wrap = document.createElement("div");
-	        wrap.className = "actions";
-	        const exportBtn = document.createElement("button");
-	        exportBtn.className = "secondary small";
-	        exportBtn.textContent = "Export";
-	        exportBtn.setAttribute("aria-label", `Export ${row.name}`);
-	        exportBtn.title = "Download the latest version as a .flow file";
-	        exportBtn.onclick = (ev) => { ev.stopPropagation(); exportWorkflow(row.bundle_id, row.latest.bundle_version); };
-	        wrap.appendChild(exportBtn);
-	        if (state.principal && state.principal.admin) {
-	          const del = document.createElement("button");
-	          del.className = "secondary danger small";
-	          del.textContent = "Delete";
-	          del.setAttribute("aria-label", `Delete ${row.name}`);
-	          del.title = "Remove every version of this workflow";
-	          del.onclick = (ev) => { ev.stopPropagation(); deleteWorkflow(row.bundle_id, null, row, tr); };
-	          wrap.appendChild(del);
-	        }
-	        actions.appendChild(wrap);
-	        tr.appendChild(actions);
-	        tbody.appendChild(tr);
-	        if (open) tbody.appendChild(workflowDetailRow(row));
+	      for (const group of WORKFLOW_GROUPS) {
+	        const members = rows.filter((r) => r.ownerKind === group.kind);
+	        if (!members.length) continue;
+	        tbody.appendChild(workflowGroupRow(group.title, members.length));
+	        for (const row of members) renderWorkflowRow(tbody, row, admin);
 	      }
 	      renderWorkflowsSkipped();
+	    }
+	    function renderWorkflowRow(tbody, row, admin) {
+	      const key = row.key;
+	      const open = state.workflowsExpanded.has(key);
+	      const tr = document.createElement("tr");
+	      tr.className = `row-selectable workflows-row${row.archived ? " workflows-row--archived" : ""}`;
+	      tr.setAttribute("data-bundle", row.bundle_id);
+	      tr.setAttribute("data-owner", row.ownerKind);
+	      tr.setAttribute("aria-expanded", open ? "true" : "false");
+	      tr.tabIndex = 0;
+	      const toggle = () => selectWorkflow(key);
+	      tr.onclick = toggle;
+	      tr.onkeydown = (ev) => { if (ev && (ev.key === "Enter" || ev.key === " ") && ev.target === tr) { ev.preventDefault(); toggle(); } };
+
+	      const name = document.createElement("td");
+	      name.className = "workflows-name";
+	      name.innerHTML = `<div class="workflows-name__wrap"><span class="workflows-chevron" aria-hidden="true">${open ? "▾" : "▸"}</span><span class="workflows-name__text"><strong></strong><small class="muted"></small></span></div>`;
+	      name.querySelector("strong").textContent = row.name;
+	      name.querySelector("small").textContent = row.bundle_id;
+	      const textBox = name.querySelector(".workflows-name__text");
+	      if (row.deprecated) { const pill = document.createElement("span"); pill.className = "pill"; pill.textContent = "Deprecated"; textBox.append(pill); }
+	      if (row.archived) { const pill = document.createElement("span"); pill.className = "pill workflows-archived-pill"; pill.textContent = "Archived"; textBox.append(pill); }
+	      const olderCount = row.versions.length - 1;
+	      const versionText = `${workflowVersionLabel(row.latest.bundle_version) || "No version"}${olderCount > 0 ? ` +${olderCount} older` : ""}`;
+	      // Narrow screens (DESIGN §12): the description and "Version · source" fold under the name.
+	      const foldWhat = document.createElement("span");
+	      foldWhat.className = "workflows-fold-what workflows-clamp";
+	      foldWhat.textContent = row.description || "No description.";
+	      const foldMeta = document.createElement("span");
+	      foldMeta.className = "workflows-fold-meta";
+	      foldMeta.innerHTML = `<span class="workflows-fold-version"></span>`;
+	      foldMeta.querySelector(".workflows-fold-version").textContent = `Version ${versionText} · `;
+	      foldMeta.append(workflowSourceBadge(row));
+	      textBox.append(foldWhat, foldMeta);
+	      tr.appendChild(name);
+
+	      const what = document.createElement("td");
+	      what.className = "workflows-what";
+	      what.setAttribute("data-label", "What it does");
+	      const whatText = document.createElement("span");
+	      whatText.className = "workflows-clamp";
+	      whatText.textContent = row.description || "No description.";
+	      what.append(whatText);
+	      if (row.description) what.title = row.description;
+	      tr.appendChild(what);
+
+	      const version = document.createElement("td");
+	      version.className = "workflows-version-cell";
+	      version.setAttribute("data-label", "Version");
+	      version.textContent = versionText;
+	      tr.appendChild(version);
+
+	      const source = document.createElement("td");
+	      source.className = "workflows-source";
+	      source.setAttribute("data-label", "Source");
+	      source.append(workflowSourceBadge(row));
+	      tr.appendChild(source);
+
+	      tr.appendChild(workflowUsedByCell(row));
+	      if (admin) tr.appendChild(workflowAvailabilityCell(row));
+
+	      const actions = document.createElement("td");
+	      actions.className = "workflows-actions";
+	      const wrap = document.createElement("div");
+	      wrap.className = "actions";
+	      wrap.append(...workflowActionButtons(row, null, () => tr));
+	      actions.appendChild(wrap);
+	      tr.appendChild(actions);
+	      tbody.appendChild(tr);
+	      if (open) tbody.appendChild(workflowDetailRow(row));
 	    }
 
 	    function renderWorkflowsSkipped() {
@@ -4538,10 +4642,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("workflows-skipped-section").classList.toggle("hidden", !rows.length);
 	      const groups = new Map();
 	      for (const rec of rows) {
-	        const key = `${rec.bundle_id}\\u0000${rec.reason}`;
+	        const key = `${rec.bundle_id}|${rec.reason}`;
 	        const g = groups.get(key);
-	        if (g) { g.count += 1; g.paths.push(rec.path); }
-	        else groups.set(key, { bundle_id: rec.bundle_id, reason: rec.reason, count: 1, paths: [rec.path] });
+	        if (g) { g.count += 1; g.paths.push(rec.path); g.versions.push(rec.bundle_version); }
+	        else groups.set(key, { bundle_id: rec.bundle_id, reason: rec.reason, count: 1, paths: [rec.path], versions: [rec.bundle_version], archived: Boolean(rec.archived), can_archive: Boolean(rec.can_archive) });
 	      }
 	      const workflows = new Set(rows.map((r) => r.bundle_id)).size;
 	      $("workflows-skipped-count").textContent = rows.length
@@ -4557,7 +4661,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 
 	        const affected = document.createElement("td");
 	        affected.textContent = g.count === 1 ? "1 version" : `${g.count} versions`;
-	        affected.title = g.paths.join("\\n");
+	        affected.title = g.paths.join(", ");
 	        tr.appendChild(affected);
 
 	        const why = document.createElement("td");
@@ -4565,15 +4669,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        tr.appendChild(why);
 
 	        const actions = document.createElement("td");
-	        if (state.principal && state.principal.admin) {
+	        if (g.can_archive && !g.archived) {
 	          const wrap = document.createElement("div");
 	          wrap.className = "actions";
-	          const del = document.createElement("button");
-	          del.className = "secondary danger";
-	          del.textContent = g.count === 1 ? "Delete" : `Delete ${g.count}`;
-	          del.title = "Remove these unusable bundle files";
-	          del.onclick = () => deleteBrokenGroup(g);
-	          wrap.appendChild(del);
+	          const ar = document.createElement("button");
+	          ar.className = "secondary";
+	          ar.textContent = g.count === 1 ? "Archive" : `Archive ${g.count}`;
+	          ar.title = "Hide these unusable versions; the files stay on disk";
+	          ar.onclick = () => archiveBrokenGroup(g);
+	          wrap.appendChild(ar);
 	          actions.appendChild(wrap);
 	        }
 	        tr.appendChild(actions);
@@ -4581,31 +4685,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	    }
 
-	    async function deleteBrokenGroup(group) {
-	      const versions = (state.workflowsSkipped || [])
-	        .filter((r) => r.bundle_id === group.bundle_id && r.reason === group.reason)
-	        .map((r) => r.bundle_version);
-	      const ok = await confirmAction({
-	        title: `Delete ${versions.length} broken version(s) of ${group.bundle_id}?`,
-	        message: `${group.reason}\\n\\nThese versions cannot run, so nothing that works stops working. The files are removed from disk and there is no undo.`,
-	        confirmLabel: `Delete ${versions.length}`,
-	        danger: true,
-	      });
-	      if (!ok) return;
-	      let removed = 0;
+	    async function archiveBrokenGroup(group) {
+	      let done = 0;
 	      const failed = [];
-	      for (const version of versions) {
+	      for (const version of group.versions) {
 	        try {
-	          const res = await api(`/api/gateway/bundles/${encodeURIComponent(group.bundle_id)}?bundle_version=${encodeURIComponent(version)}&reload=false`, { method: "DELETE" });
-	          removed += Number(res.removed || 0);
-	        } catch (err) { failed.push(`${version}: ${String(err.message || err)}`); }
+	          await api(`/api/gateway/bundles/${encodeURIComponent(group.bundle_id)}/archive`, { method: "POST", body: JSON.stringify({ bundle_version: version }) });
+	          done += 1;
+	        } catch (err) { failed.push(`${version}: ${emailErrorText(err)}`); }
 	      }
-	      // ONE reload after the batch, not one per file: reloading a 231-file
-	      // registry per delete is the freeze, not the deletes.
-	      try { await api("/api/gateway/bundles/reload", { method: "POST" }); } catch (err) { /* listed below */ }
 	      $("workflows-message").textContent = failed.length
-	        ? `Removed ${removed}; failed — ${failed.join("; ")}.`
-	        : `Removed ${removed} broken file(s) for ${group.bundle_id}.`;
+	        ? `Archived ${done}; not archived — ${failed.join("; ")}.`
+	        : `Archived ${done} broken version${done === 1 ? "" : "s"} of ${group.bundle_id}. The files stay on the gateway.`;
 	      $("workflows-message").className = failed.length ? "message error" : "message ok";
 	      await loadWorkflows();
 	    }
@@ -4615,7 +4706,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("workflows-message").className = "message";
 	      try {
 	        const drafts = state.workflowsShowDrafts ? "1" : "0";
-	        const data = await api(`/api/gateway/bundles?all_versions=true&include_drafts=${drafts}&include_deprecated=true`);
+	        const archived = state.workflowsShowArchived ? "1" : "0";
+	        const data = await api(`/api/gateway/bundles?all_versions=true&include_drafts=${drafts}&include_deprecated=true&include_archived=${archived}`);
 	        state.workflows = data.items || [];
 	        state.workflowsSkipped = data.skipped || [];
 	        state.workflowsDefaultId = data.default_bundle_id || "";
@@ -4627,14 +4719,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	    }
 
-	    function selectWorkflow(bundleId) {
-	      const id = String(bundleId || "");
+	    function selectWorkflow(key) {
+	      const id = String(key || "");
 	      if (state.workflowsExpanded.has(id)) state.workflowsExpanded.delete(id);
 	      else state.workflowsExpanded.add(id);
 	      renderWorkflows();
 	    }
 	    function mountWorkflowSwitches() {
-	      // Drafts / Older versions: kit switches labelled by the feature (never a verb), applied at once.
+	      // Drafts / Older versions / Show archived: kit switches labelled by the feature (never a verb), applied at once.
 	      if ($("workflows-drafts-slot").childNodes.length) return;
 	      const drafts = afSwitchCreate({ id: "workflows-show-drafts", label: "Drafts", checked: state.workflowsShowDrafts, small: true });
 	      $("workflows-drafts-slot").append(...drafts.nodes);
@@ -4642,6 +4734,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const older = afSwitchCreate({ id: "workflows-show-older", label: "Older versions", checked: state.workflowsShowOlder, small: true });
 	      $("workflows-older-slot").append(...older.nodes);
 	      afSwitchBind(older.button, async (next) => { state.workflowsShowOlder = next; renderWorkflows(); return next; }, () => {});
+	      const archived = afSwitchCreate({ id: "workflows-show-archived", label: "Show archived", checked: state.workflowsShowArchived, small: true });
+	      $("workflows-archived-slot").append(...archived.nodes);
+	      afSwitchBind(archived.button, async (next) => { state.workflowsShowArchived = next; await loadWorkflows(); return next; }, (e) => { $("workflows-message").textContent = emailErrorText(e); $("workflows-message").className = "message error"; });
 	    }
 
 	    function exportWorkflow(bundleId, bundleVersion) {
@@ -4651,50 +4746,29 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      window.location.href = `/api/gateway/bundles/${encodeURIComponent(bundleId)}/download${qs}`;
 	    }
 
-	    async function workflowUsage(bundleId, bundleVersion, row) {
-	      // Honest impact: the run store has no COUNT operation, so this reports
-	      // what a bounded page can PROVE and says so. It never presents a page
-	      // size as a total — a confident wrong number is what turns a refusal
-	      // into a confirmation.
-	      const ids = [];
-	      const versions = bundleVersion
-	        ? (row ? row.versions.filter((v) => String(v.bundle_version) === String(bundleVersion)) : [])
-	        : (row ? row.versions : []);
-	      for (const v of versions) for (const ep of v.entrypoints || []) if (ep.workflow_id) ids.push(ep.workflow_id);
-	      if (!ids.length && bundleVersion) return null;
-	      let seen = 0; let capped = false;
-	      const limit = 200;
-	      for (const wid of ids.slice(0, 12)) {
-	        try {
-	          const res = await api(`/api/gateway/runs?workflow_id=${encodeURIComponent(wid)}&limit=${limit}`);
-	          const items = res.items || res.runs || [];
-	          seen += items.length;
-	          if (res.has_more || items.length >= limit) capped = true;
-	        } catch (err) { capped = true; }
+	    // AbstractFlow's documented deep link (DESIGN-v3 §5.4, abstractflow docs):
+	    // /apps/flow/?bundle=<bundle_id>&version=<bundle_version>. Opened through the gateway's
+	    // app door (POST /apps/flow/open mints the signed-in handover), in a new tab.
+	    function workflowFlowPath(bundleId, bundleVersion) {
+	      const q = new URLSearchParams({ bundle: String(bundleId), version: String(bundleVersion || "") });
+	      return `/?${q.toString()}`;
+	    }
+	    async function openWorkflowInFlow(row, version) {
+	      const tab = typeof window !== "undefined" && window.open ? window.open("about:blank", "_blank") : null;
+	      try {
+	        const res = await api("/api/gateway/apps/flow/open", { method: "POST", body: JSON.stringify({ origin: appBrowserOrigin(), path: workflowFlowPath(row.bundle_id, version.bundle_version) }) });
+	        if (tab) tab.location = res.open_url; else location.assign(res.open_url);
+	      } catch (e) {
+	        if (tab) tab.close();
+	        const hint = e && e.data && e.data.hint ? ` ${e.data.hint}` : "";
+	        $("workflows-message").textContent = `Could not open AbstractFlow: ${emailErrorText(e)}${hint}`;
+	        $("workflows-message").className = "message error";
 	      }
-	      return { seen, capped };
 	    }
 
-	    // Delete asks INLINE, in the row (round-2 polish): the sentence names what goes, the run
-	    // count (or its floor), and the way back (export first); Delete / Cancel sit beside it.
+	    // Archive asks INLINE, in the row: the sentence says what happens and what stays.
 	    // anchor = the bundle's <tr> (whole bundle) or the version box in the expanded row.
-	    // A shipped bundle lives in the gateway's own flows folder (the default registry, config.py
-	    // _default_flows_dir); nothing copies it back at start, so the confirm says the file stays
-	    // gone until the gateway is reinstalled (routes/gateway.py remove_bundle unlinks it).
-	    const WORKFLOW_SHIPPED_DELETE = " It ships with the gateway: nothing puts it back at the next restart, only reinstalling the gateway does.";
-	    function workflowDeleteSentence(label, bundleVersion, usage, shipped = false) {
-	      const scope = bundleVersion ? "This version is removed from disk" : "Every version of this workflow is removed from disk";
-	      let runs = "";
-	      if (usage && usage.seen) {
-	        runs = usage.capped
-	          ? ` At least ${usage.seen} run${usage.seen === 1 ? "" : "s"} reference it (the run store cannot count exactly); they keep their records but can no longer be replayed or resumed.`
-	          : ` ${usage.seen} run${usage.seen === 1 ? "" : "s"} reference it; they keep their records but can no longer be replayed or resumed.`;
-	      } else if (usage) {
-	        runs = " No runs reference it in the pages checked.";
-	      }
-	      return `Delete ${label}? ${scope}; there is no undo.${shipped ? WORKFLOW_SHIPPED_DELETE : ""}${runs} Export it first if you may need it again.`;
-	    }
-	    function workflowConfirmInline(anchor, text, onConfirm) {
+	    function workflowConfirmInline(anchor, text, confirmLabel, onConfirm) {
 	      for (const old of Array.from(document.querySelectorAll("#tab-workflows .workflows-confirm"))) old.remove();
 	      const box = document.createElement("div");
 	      box.className = "inline-confirm workflows-confirm-box";
@@ -4702,7 +4776,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const span = document.createElement("span");
 	      span.textContent = text;
 	      const yes = document.createElement("button");
-	      yes.type = "button"; yes.className = "danger"; yes.textContent = "Delete";
+	      yes.type = "button"; yes.className = "danger"; yes.textContent = confirmLabel;
 	      const no = document.createElement("button");
 	      no.type = "button"; no.className = "secondary"; no.textContent = "Cancel";
 	      box.append(span, yes, no);
@@ -4711,7 +4785,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        holder = document.createElement("tr");
 	        holder.className = "workflows-confirm";
 	        const td = document.createElement("td");
-	        td.colSpan = 6;
+	        td.colSpan = workflowColCount();
 	        td.append(box);
 	        holder.append(td);
 	        const next = anchor.nextElementSibling;
@@ -4733,29 +4807,34 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      try { no.focus(); } catch {}
 	      return holder;
 	    }
-	    async function deleteWorkflow(bundleId, bundleVersion, row, anchor) {
-	      if (!anchor) throw new Error("deleteWorkflow needs the row (or version box) that asks inline.");
-	      const label = bundleVersion ? `${bundleId}@${bundleVersion}` : bundleId;
-	      let usage = null;
-	      try { usage = await workflowUsage(bundleId, bundleVersion, row); } catch (err) { usage = null; }
-	      const shipped = Boolean(row && (row.versions || []).some((v) => v && v.source === "shipped"));
-	      workflowConfirmInline(anchor, workflowDeleteSentence(label, bundleVersion, usage, shipped), async () => {
-	        $("workflows-message").textContent = `Deleting ${label}…`;
-	        $("workflows-message").className = "message";
+	    function archiveWorkflow(row, bundleVersion, anchor) {
+	      if (!anchor) throw new Error("archiveWorkflow needs the row (or version box) that asks inline.");
+	      const label = bundleVersion ? `${row.name} ${bundleVersion}` : row.name;
+	      const text = `Archive ${label}? It disappears from lists and can't start new runs; the file and every past run stay on the gateway.`;
+	      workflowConfirmInline(anchor, text, "Archive", async () => {
 	        try {
-	          const qs = bundleVersion ? `?bundle_version=${encodeURIComponent(bundleVersion)}&reload=true` : "?reload=true";
-	          const res = await api(`/api/gateway/bundles/${encodeURIComponent(bundleId)}${qs}`, { method: "DELETE" });
-	          $("workflows-message").textContent = `Removed ${res.removed} file(s) for ${label}.`;
+	          await api(`/api/gateway/bundles/${encodeURIComponent(row.bundle_id)}/archive`, { method: "POST", body: JSON.stringify(bundleVersion ? { bundle_version: bundleVersion } : {}) });
+	          $("workflows-message").textContent = `Archived ${label}. Turn on “Show archived” to see it or unarchive it.`;
 	          $("workflows-message").className = "message ok";
-	          if (!bundleVersion) state.workflowsExpanded.delete(bundleId);
 	          await loadWorkflows();
 	        } catch (err) {
-	          $("workflows-message").textContent = `Not deleted: ${String(err.message || err)}`;
+	          $("workflows-message").textContent = `Not archived: ${emailErrorText(err)}`;
 	          $("workflows-message").className = "message error";
 	        }
 	      });
 	    }
-
+	    async function unarchiveWorkflow(row, bundleVersion) {
+	      const label = bundleVersion ? `${row.name} ${bundleVersion}` : row.name;
+	      try {
+	        await api(`/api/gateway/bundles/${encodeURIComponent(row.bundle_id)}/unarchive`, { method: "POST", body: JSON.stringify(bundleVersion ? { bundle_version: bundleVersion } : {}) });
+	        $("workflows-message").textContent = `${label} is back in the lists and can start runs again.`;
+	        $("workflows-message").className = "message ok";
+	        await loadWorkflows();
+	      } catch (err) {
+	        $("workflows-message").textContent = `Not unarchived: ${emailErrorText(err)}`;
+	        $("workflows-message").className = "message error";
+	      }
+	    }
 	    async function importWorkflows(files) {
 	      const list = [...(files || [])];
 	      if (!list.length) return;
@@ -12003,10 +12082,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // would render EMPTY — hide the tab itself and fold a
       // restored runtimes selection back to the first tab.
       $("tab-button-runtimes").classList.toggle("hidden", !p.admin);
-      // Workflows stays visible to everyone — listing and exporting are
-      // user-level. Only the WRITE affordance is admin-gated, matching the
-      // server rule; hiding the tab would hide the workflows a user runs.
-      $("workflows-import").classList.toggle("hidden", !p.admin);
+      // Workflows stays visible to everyone — listing, exporting, opening in
+      // AbstractFlow and importing into "Mine" are user-level.
+      // Import is offered to everyone (DESIGN-v3 §5.1): a user's import lands in their own
+      // registry ("Mine"); the server refuses it only where no own registry exists.
       if (!p.admin && state.activeTab === "runtimes") setActiveTab("users");
       // Models tab: reads render for EVERY authenticated user (unlike the
       // all-admin runtimes tab) — only the mutation surfaces are gated: the
