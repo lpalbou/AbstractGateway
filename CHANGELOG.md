@@ -108,6 +108,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Web console: saving or clearing an entity's voice, and giving or ending a work order, did nothing
   (the page read an entity name that was never set).
 
+- Agents can use the tools of registered MCP servers. An admin turns **Enabled for agents** on for a
+  server whose connection test succeeded (`POST /api/gateway/admin/mcp/servers/{name}/agents`); its
+  tools are then offered to agent runs as `mcp::<server>::<tool>`, listed in `/discovery/tools`
+  (grouped per server, so the Code web and Assistant tool pickers show them) and added to a run
+  started without a tool list. Each call asks for approval unless the run allows all tools. An
+  archived or disabled server offers nothing, and every call checks the registry again. Header
+  values stay in the gateway's secret store and are read only when a call runs; they never reach the
+  run, the ledger or the prompt. A server that fails `initialize` when a run starts is skipped and
+  the run records why (`_runtime.mcp_notes`). A run started by an email from someone else is never
+  offered an MCP tool. Needs the AbstractRuntime MCP facade (`mcp_facade`) and AbstractCore's MCP
+  clients with `initialize()`.
+
+### Changed
+
+- The MCP server registry lives in the gateway's root data folder, also when several users sign in
+  (one registry for every account, the one agent runs read).
+
 ## [0.10.0] - 2026-10-01
 
 Email settings follow one model across the consoles: your **email address** (where sign-in codes and

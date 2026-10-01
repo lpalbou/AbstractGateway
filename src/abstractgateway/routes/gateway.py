@@ -14848,6 +14848,15 @@ async def discovery_tools() -> Dict[str, Any]:
         items = clamp_disabled_approval(_annotate_tier_approval(join_registry_facts(items)))
     except Exception:  # noqa: BLE001 - annotation is additive
         pass
+    # Tools of MCP servers an admin enabled for agents (mcp_run_tools.py): enabled rows grouped per
+    # server (`toolset: "mcp:<server>"`), asking before each call by default.
+    try:
+        from ..mcp_run_tools import offered_tool_specs
+
+        for spec in await _off_the_event_loop(offered_tool_specs, _mcp_data_dir()):
+            items.append({**spec, "enabled": True, "approval_default": "ask"})
+    except Exception as e:  # noqa: BLE001 - a broken registry must not hide the other tools
+        catalog_warnings.append(f"MCP tools unavailable: {type(e).__name__}: {e}")
     tool_mode = str(os.getenv("ABSTRACTGATEWAY_TOOL_MODE") or "approval").strip().lower() or "approval"
     out: Dict[str, Any] = {
         "items": items,
@@ -15117,9 +15126,11 @@ async def gateway_admin_skills_reseed(request: Request) -> Dict[str, Any]:
 
 @router.get("/mcp/servers")
 async def gateway_mcp_servers_inventory(request: Request) -> Dict[str, Any]:
-    """The MCP server registry (`<data_dir>/config/mcp_servers.json`, v1 or v2): rows with
-    header fingerprints only, `last_test`, `agents_can_call` and `agents_note`. ADMIN ONLY
-    (round 3, C3F): commands and URLs are admin configuration; a non-admin gets 403."""
+    """The MCP server registry (`<gateway root data dir>/config/mcp_servers.json`): v2 rows with
+    header fingerprints only, `probed: false` (this read never connects; `last_test` is the latest
+    admin test), the agents fields (`enabled_for_agents`, `offered_to_agents`, `agents_status`) and
+    `agents_note`. ADMIN ONLY (round 3): commands and URLs are admin configuration; a non-admin
+    gets 403."""
     principal = _principal_from_request(request)
     if not principal.is_admin():
         raise HTTPException(
@@ -15128,8 +15139,7 @@ async def gateway_mcp_servers_inventory(request: Request) -> Dict[str, Any]:
         )
     from ..capability_inventories import mcp_servers_inventory
 
-    svc = get_gateway_service()
-    return mcp_servers_inventory(data_dir=Path(svc.stores.base_dir))
+    return mcp_servers_inventory(data_dir=_mcp_data_dir())
 
 
 def _mcp_refusal(exc: Exception) -> HTTPException:
@@ -15150,15 +15160,18 @@ async def _mcp_body(request: Request) -> Dict[str, Any]:
 
 
 def _mcp_data_dir() -> Path:
-    return Path(get_gateway_service().stores.base_dir)
+    # The gateway ROOT data dir (the tool-grants precedent): one registry for every account, the
+    # one agent runs read (hosts/bundle_host.py catalog_root), also under multi-user auth.
+    svc = get_gateway_service()
+    return Path(getattr(svc.config, "root_data_dir", None) or svc.stores.base_dir)
 
 
 @router.post("/admin/mcp/servers")
 async def gateway_admin_mcp_create(request: Request) -> Dict[str, Any]:
     """Register an MCP server: {name, transport: stdio|http, command, args[], cwd?, url,
     headers{name: value}, description}. Header values are sealed in the gateway's secret store
-    (<data dir>/config/mcp_secrets); the registry keeps names + fingerprints. Runs do not use
-    registered servers yet."""
+    (<data dir>/config/mcp_secrets); the registry keeps names + fingerprints. Agent runs are offered
+    a server's tools only once an admin enables it for agents (POST .../agents)."""
     _require_admin_principal(request)
     from ..mcp_registry import McpRegistryError, create_server
 
@@ -15207,6 +15220,25 @@ async def gateway_admin_mcp_unarchive(name: str, request: Request) -> Dict[str, 
         return await asyncio.to_thread(set_archived, _mcp_data_dir(), name, False)
     except McpRegistryError as exc:
         raise _mcp_refusal(exc) from None
+
+
+@router.post("/admin/mcp/servers/{name}/agents")
+async def gateway_admin_mcp_agents(name: str, request: Request) -> Dict[str, Any]:
+    """**Enabled for agents**: {enabled: bool}. On = the tools the last successful test listed are
+    offered to agent runs (each call asks unless the run allows all tools); refused (409, a sentence)
+    for an archived or untested server. Returns the updated row."""
+    _require_admin_principal(request)
+    from ..mcp_registry import McpRegistryError, agents_status, offered_to_agents, set_enabled_for_agents
+
+    body = await _mcp_body(request)
+    if not isinstance(body.get("enabled"), bool):
+        raise HTTPException(status_code=400, detail={"reason_code": "mcp_refused", "message": "Send {\"enabled\": true} or {\"enabled\": false}."})
+    try:
+        row = await asyncio.to_thread(set_enabled_for_agents, _mcp_data_dir(), name, body["enabled"])
+    except McpRegistryError as exc:
+        raise _mcp_refusal(exc) from None
+    request.state.audit_detail = {"mcp_server_agents": {"name": name, "enabled": body["enabled"]}}
+    return {**row, "offered_to_agents": offered_to_agents(row), "agents_status": agents_status(row)}
 
 
 @router.post("/admin/mcp/servers/{name}/test")

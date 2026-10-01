@@ -13,10 +13,12 @@
                                            0600 key file when there is none) — never in the JSON
                                            file, never returned by the API (fingerprints only).
 
-Nothing here makes MCP tools callable by agents: runs do not read this registry yet. A test
-connects with AbstractCore's MCP clients (initialize, notifications/initialized, tools/list with
-pagination), within 10 seconds; a stdio server is started in a scratch folder with a minimal
-environment and terminated afterwards.
+A server's tools are offered to agent runs only when an admin turned **Enabled for agents** on
+(`enabled_for_agents`), the server is not archived and its last connection test succeeded (the test
+stores each tool's name, description and input schema); `mcp_run_tools.py` does the rest. A test
+connects with AbstractCore's MCP clients through AbstractRuntime's facade (initialize,
+notifications/initialized, tools/list with pagination), within 10 seconds; a stdio server is started
+in a scratch folder with a minimal environment and terminated afterwards.
 """
 from __future__ import annotations
 
@@ -39,6 +41,10 @@ TRANSPORTS = ("stdio", "http")
 AGENTS_NOTE = (
     "Agents can't call MCP tools yet: registering a server records it and checks the connection; "
     "using its tools in runs comes in a later version."
+)
+# Served instead of AGENTS_NOTE once at least one server is offered to agents.
+AGENTS_OFFERED_NOTE = (
+    "Tools from enabled servers are offered to your agents. Each call asks for approval unless you allow all tools."
 )
 _NAME_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
 _lock = threading.Lock()
@@ -107,6 +113,7 @@ def _normalize_row(raw: Dict[str, Any]) -> Dict[str, Any]:
         "headers": headers,
         "description": str(raw.get("description") or "").strip(),
         "archived": bool(raw.get("archived")),
+        "enabled_for_agents": bool(raw.get("enabled_for_agents")),
         "last_test": raw.get("last_test") if isinstance(raw.get("last_test"), dict) else None,
     }
     if "auth_required" in raw:
@@ -244,7 +251,7 @@ def create_server(data_dir: Path, body: Dict[str, Any]) -> Dict[str, Any]:
         if any(s["name"] == name for s in reg["servers"]):
             raise McpRegistryError(f"A server named {name!r} is already registered (archived ones count too).", status=409)
         row, values = _config_from_body(body, existing=None, stored_headers={})
-        full = {"name": name, **row, "archived": False, "last_test": None}
+        full = {"name": name, **row, "archived": False, "enabled_for_agents": False, "last_test": None}
         secrets = _secrets(data_dir)
         secrets[name] = values
         _store_secrets(data_dir, secrets)
@@ -284,6 +291,40 @@ def set_archived(data_dir: Path, name: str, archived: bool) -> Dict[str, Any]:
         reg = read_registry(data_dir)
         current = _find(reg, name)
         current["archived"] = bool(archived)
+        _write_registry(data_dir, reg["servers"])
+    return _normalize_row(current)
+
+
+def offered_to_agents(row: Dict[str, Any]) -> bool:
+    """A server whose tools agent runs are offered: enabled for agents, not archived, last test OK."""
+    last = row.get("last_test") if isinstance(row.get("last_test"), dict) else {}
+    return bool(row.get("enabled_for_agents")) and not row.get("archived") and bool(last.get("ok"))
+
+
+def agents_status(row: Dict[str, Any]) -> str:
+    """The row's one-line agents status for the page."""
+    if row.get("archived"):
+        return "Not offered: archived"
+    if not row.get("enabled_for_agents"):
+        return "Not offered to agents"
+    last = row.get("last_test") if isinstance(row.get("last_test"), dict) else {}
+    if not last.get("ok"):
+        return "Not offered: test the connection first"
+    n = len(last.get("tools") or [])
+    return f"Offered to agents · {n} tool{'s' if n != 1 else ''}"
+
+
+def set_enabled_for_agents(data_dir: Path, name: str, enabled: bool) -> Dict[str, Any]:
+    """Turn **Enabled for agents** on or off. Turning it on needs a live, tested server."""
+    with _lock:
+        reg = read_registry(data_dir)
+        current = _find(reg, name)
+        if enabled and current.get("archived"):
+            raise McpRegistryError(f"{name} is archived: unarchive it first, then enable it for agents.", status=409)
+        last = current.get("last_test") if isinstance(current.get("last_test"), dict) else {}
+        if enabled and not last.get("ok"):
+            raise McpRegistryError(f"Test the connection to {name} first: agents are offered the tools a successful test listed.", status=409)
+        current["enabled_for_agents"] = bool(enabled)
         _write_registry(data_dir, reg["servers"])
     return _normalize_row(current)
 
@@ -418,7 +459,10 @@ def run_connection_test(config: Dict[str, Any], header_values: Dict[str, str], *
     for t in holder.get("tools") or []:
         name = str(t.get("name") or "").strip()
         if name:
-            tools.append({"name": name, "description": str(t.get("description") or t.get("title") or "").strip()})
+            row = {"name": name, "description": str(t.get("description") or t.get("title") or "").strip()}
+            if isinstance(t.get("inputSchema"), dict):
+                row["input_schema"] = t["inputSchema"]  # the parameters agents are offered
+            tools.append(row)
     result["tools"] = tools
     result["ok"] = True
     si = result["server_info"] or {}
@@ -457,13 +501,17 @@ def check_unsaved(data_dir: Path, body: Dict[str, Any]) -> Dict[str, Any]:
 def public_inventory(data_dir: Path) -> Dict[str, Any]:
     """GET /mcp/servers: v2 rows (headers as fingerprints only) + the honest agents note."""
     reg = read_registry(data_dir)
+    for row in reg["servers"]:
+        row["offered_to_agents"] = offered_to_agents(row)
+        row["agents_status"] = agents_status(row)
+    offered = any(row["offered_to_agents"] for row in reg["servers"])
     out: Dict[str, Any] = {
         "servers": reg["servers"],
         "source": reg["source"],
         "version": reg["version"],
         "probed": False,
-        "agents_can_call": False,
-        "agents_note": AGENTS_NOTE,
+        "agents_can_call": offered,
+        "agents_note": AGENTS_OFFERED_NOTE if offered else AGENTS_NOTE,
         "warnings": list(reg["warnings"]),
     }
     if reg["source"] is None:
