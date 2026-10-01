@@ -17,6 +17,21 @@ from pathlib import Path
 
 AGENT_INTERFACE = "abstractcode.agent.v1"
 FACTORIES = frozenset({"react", "codeact", "memact"})
+# Entrypoint names and descriptions: abstractflow scripts/workflow_labels.py (one source).
+LABELS = {
+    "react": (
+        "ReAct agent",
+        "Chat agent (ReAct): reasons step by step and calls tools until it can answer the prompt, then returns the reply.",
+    ),
+    "codeact": (
+        "CodeAct agent",
+        "Chat agent (CodeAct): works on the prompt mainly by writing and running Python code, then returns the reply.",
+    ),
+    "memact": (
+        "MemAct agent",
+        "Chat agent (MemAct): keeps a long-term memory that it reads and updates on each turn, can call tools, and returns the reply.",
+    ),
+}
 
 
 def build_manifest(*, bundle_id: str, factory: str, version: str) -> dict:
@@ -30,8 +45,8 @@ def build_manifest(*, bundle_id: str, factory: str, version: str) -> dict:
         "entrypoints": [
             {
                 "flow_id": entrypoint,
-                "name": entrypoint,
-                "description": f"Native {factory} agent loop (abstractagent)",
+                "name": LABELS[factory][0],
+                "description": LABELS[factory][1],
                 "interfaces": [AGENT_INTERFACE],
             }
         ],

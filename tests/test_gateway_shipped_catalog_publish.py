@@ -603,13 +603,14 @@ def test_shipped_list_is_explicit_and_small() -> None:
 
 
 def test_a_fresh_catalog_defaults_to_the_newest_shipped_docs_qa_and_keeps_the_older(tmp_path: Path) -> None:
-    """0.7.0 ships docs-qa 0.1.1 AND 0.1.0 (clients of 0.6.0 pin 0.1.0): both are
-    published, and a fresh catalog's default pointer names the newest."""
+    """docs-qa 0.1.2 (the plain name and description), 0.1.1 AND 0.1.0 ship (clients of 0.6.0
+    pin 0.1.0, of 0.7.x 0.1.1): all are published, and a fresh catalog's default pointer
+    names the newest."""
     root = tmp_path / "runtime"
     versions = sorted(_version(p) for p in _find_shipped_bundle_files("docs-qa"))
-    assert versions == ["0.1.0", "0.1.1"]
+    assert versions == ["0.1.0", "0.1.1", "0.1.2"]
     ensure_shipped_catalog_bundles(root_data_dir=root, tenant_id="default")
     for v in versions:
         assert _docs_qa_record(root, v)["status"] == "published"
     default = _store(root).get_default_record(scope=CATALOG_SCOPE_TENANT, tenant_id="default", bundle_id="docs-qa")
-    assert default is not None and default["bundle_version"] == "0.1.1"
+    assert default is not None and default["bundle_version"] == "0.1.2"
