@@ -169,7 +169,9 @@ def test_console_skills_shelf_block() -> None:
 
     assert 'id="skills-settings-root"' in gateway_console_html()
     source = _console_script()
-    assert 'mountSkillsShelf("tab", $("skills-settings-root"))' in source
+    # The shelf setting moved from Apps to the Skills tab (DESIGN-v3 §6.1).
+    assert 'mountSkillsShelf("skills", $("skills-settings-root"))' in source
+    assert 'mountSkillsShelf("tab"' not in source
     harness = f"""
 const HTML_ESCAPES = {{"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}};
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] || ch);
@@ -190,8 +192,13 @@ out.push({{ k: "rep", text: seedReportText({{ bundled_version: "v", added: ["a"]
 console.log(JSON.stringify(out));
 """
     rows = {r["k"]: r for r in _node(harness)}
-    assert "The gateway&#39;s own copy" in rows["seeded"]["html"] and "/d/skills/registry" in rows["seeded"]["html"]
-    assert "data-skills-shelf-reseed" in rows["seeded"]["html"]
+    # The "Shelf folder" disclosure (DESIGN-v3 §6.1 + C3F review): one field that auto-saves on
+    # blur, one helper line, "Refresh curated shelf" the only button; no Save button anywhere.
+    seeded = rows["seeded"]["html"]
+    assert "Empty: the gateway's own copy of the curated shelf (version 2026.09.25)" in seeded and "/d/skills/registry" in seeded
+    assert ">Refresh curated shelf<" in seeded and "data-skills-shelf-save" not in seeded
+    assert seeded.count("<button") == 1
     assert "Not available: the saved skills.shelf is not usable" in rows["bad"]["html"]
-    assert "data-skills-shelf-save" not in rows["bad"]["html"] and "Only an admin" in rows["bad"]["html"]
+    # A non-admin gets a read-only field and no button (unavailable actions are not rendered).
+    assert "<button" not in rows["bad"]["html"] and " readonly" in rows["bad"]["html"]
     assert rows["rep"]["text"].startswith("Curated shelf v: 1 added, 0 updated, 2 unchanged, 1 kept")

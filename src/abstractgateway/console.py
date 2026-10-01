@@ -152,14 +152,15 @@ def _strip_html_comments(page: str) -> str:
 def _console_owned_sources() -> Tuple[str, str, str, str]:
     """(template, theme CSS, UI CSS, UI JS) without their source comments."""
     from .console_catalog import CATALOG_CSS, CATALOG_JS
+    from .console_skills_mcp import SKILLS_MCP_CSS, SKILLS_MCP_JS
     from .console_themes import KIT_THEME_CSS
     from .console_ui import CONSOLE_UI_CSS, CONSOLE_UI_JS
 
     return (
         _strip_html_comments(_CONSOLE_HTML_TEMPLATE),
         _strip_css_comments(KIT_THEME_CSS),
-        _strip_css_comments(CONSOLE_UI_CSS + CATALOG_CSS),
-        _strip_js_line_comments(CONSOLE_UI_JS + CATALOG_JS),
+        _strip_css_comments(CONSOLE_UI_CSS + CATALOG_CSS + SKILLS_MCP_CSS),
+        _strip_js_line_comments(CONSOLE_UI_JS + CATALOG_JS + SKILLS_MCP_JS),
     )
 
 
@@ -2182,6 +2183,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <div class="shell_nav_group af-nav-group" role="group" aria-labelledby="nav-group-work">
 	        <div id="nav-group-work" class="shell_nav_caption af-nav-group__caption">Work</div>
 	        <button id="tab-button-workflows" class="tab-button shell_nav_item" type="button" title="Bundles, versions, import and export"><span class="shell_nav_icon" aria-hidden="true">⑂</span><span class="shell_nav_label">Workflows</span></button>
+	        <button id="tab-button-skills" class="tab-button shell_nav_item" type="button" title="Skills agents can load, and the MCP tool servers this gateway knows"><span class="shell_nav_icon" aria-hidden="true">✦</span><span class="shell_nav_label">Skills &amp; MCP</span></button>
 	        <button id="tab-button-runtimes" class="tab-button shell_nav_item" type="button" title="Each user's data plane: runs, flows, sessions and memory"><span class="shell_nav_icon" aria-hidden="true">◎</span><span class="shell_nav_label">Runtimes</span></button>
 	        <button id="tab-button-apps" class="tab-button shell_nav_item" type="button" title="Browser apps (Flow, Code, Observer...): install, start, open"><span class="shell_nav_icon" aria-hidden="true">▣</span><span class="shell_nav_label">Apps</span></button>
 	      </div>
@@ -2357,6 +2359,57 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        </div>
 	      </div>
 
+      <div id="tab-skills" class="tab-panel">
+        <!-- SKILLS & MCP (DESIGN-v3 §6, console_skills_mcp.py): kit tabs Skills | MCP servers. -->
+        <section id="skills-mcp-section" class="session-only skmcp-page">
+          <div class="af-tabs">
+            <div class="af-tabs__list" role="tablist" aria-label="Skills and MCP servers">
+              <button id="skmcp-tab-skills" class="af-tabs__tab" role="tab" type="button" data-skmcp-tab="skills" aria-controls="skmcp-pane-skills" aria-selected="true">Skills</button>
+              <button id="skmcp-tab-mcp" class="af-tabs__tab" role="tab" type="button" data-skmcp-tab="mcp" aria-controls="skmcp-pane-mcp" aria-selected="false" tabindex="-1">MCP servers</button>
+            </div>
+            <div id="skmcp-pane-skills" class="af-tabs__panel" role="tabpanel" aria-labelledby="skmcp-tab-skills">
+              <p class="section-note skmcp-purpose">Instructions agents load when a task needs them: curated ones ship with the gateway, imported ones are yours to edit.</p>
+              <div class="skmcp-toolbar">
+                <input id="skills-search" type="search" placeholder="Search by name or description" aria-label="Search skills">
+                <span id="skills-archived-slot" class="workflows-switch"></span>
+                <span class="skmcp-spacer"></span>
+                <button id="skills-import-zip" class="secondary" type="button" title="Import a skill from a .zip of its folder" hidden>Import .zip</button>
+                <button id="skills-import-folder" class="secondary" type="button" title="Import a skill folder (it holds SKILL.md)" hidden>Import folder</button>
+                <input id="skills-import-zip-file" type="file" accept=".zip,application/zip" class="hidden">
+                <input id="skills-import-folder-file" type="file" class="hidden" webkitdirectory multiple>
+              </div>
+              <div id="skills-message" class="message skmcp-message" role="status" aria-live="polite"></div>
+              <p id="skills-warnings" class="skmcp-help"></p>
+              <div class="table-scroll workflows-scroll">
+                <table class="skmcp-table skills-table" data-ui-no-stack>
+                  <thead><tr><th class="sk-col-name">Name</th><th class="sk-col-what sk-th-what">What it does</th><th class="sk-col-version">Version</th><th class="sk-col-trust">Trust</th><th class="sk-col-source sk-th-source">Source</th><th class="sk-col-actions"><span class="sr-only">Actions</span></th></tr></thead>
+                  <tbody id="skills-table"></tbody>
+                </table>
+              </div>
+              <details class="skmcp-shelf">
+                <summary>Shelf folder</summary>
+                <div id="skills-settings-root" class="core-console-root"></div>
+              </details>
+            </div>
+            <div id="skmcp-pane-mcp" class="af-tabs__panel" role="tabpanel" aria-labelledby="skmcp-tab-mcp" hidden>
+              <p id="mcp-truth" class="skmcp-truth"></p>
+              <p class="section-note skmcp-purpose">Tool servers over the Model Context Protocol: Test runs the real handshake and lists their tools.</p>
+              <div class="skmcp-toolbar">
+                <span id="mcp-archived-slot" class="workflows-switch"></span>
+                <span class="skmcp-spacer"></span>
+                <button id="mcp-add" type="button" hidden>Add server</button>
+              </div>
+              <div id="mcp-message" class="message skmcp-message" role="status" aria-live="polite"></div>
+              <div class="table-scroll workflows-scroll">
+                <table class="skmcp-table mcp-table" data-ui-no-stack>
+                  <thead><tr><th class="mcp-col-name">Name</th><th class="mcp-col-transport mcp-th-transport">Transport</th><th class="mcp-col-status">Status</th><th class="mcp-col-tools">Tools</th><th class="mcp-col-actions"><span class="sr-only">Actions</span></th></tr></thead>
+                  <tbody id="mcp-table"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
 	      <div id="tab-runtimes" class="tab-panel">
 	        <div class="tab-grid tab-grid-wide">
 	          <div class="tab-stack">
@@ -2744,7 +2797,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        <div id="apps-root" class="core-console-root"></div>
 	        <div id="apps-settings-root" class="core-console-root"></div>
 	        <div id="backlog-settings-root" class="core-console-root"></div>
-	        <div id="skills-settings-root" class="core-console-root"></div>
 	      </div>
 	      <div id="tab-network" class="tab-panel">
 	        <div id="network-root" class="core-console-root"></div>
@@ -3483,6 +3535,36 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      </div>
 	    </div>
 	  </div>
+  <!-- Skills & MCP modals (console_skills_mcp.py): kit af-modal af-modal--wide, bound by bindModal. -->
+  <div id="skill-modal-backdrop" class="af-modal-backdrop" hidden>
+    <div class="af-modal af-modal--wide" role="dialog" aria-modal="true" aria-labelledby="skill-modal-title">
+      <div class="af-modal__header">
+        <h2 id="skill-modal-title" class="af-modal__title">Skill</h2>
+        <button id="skill-modal-close" class="af-modal__close" type="button" aria-label="Close">×</button>
+      </div>
+      <div id="skill-modal-body" class="af-modal__body"></div>
+      <div class="af-modal__footer">
+        <p id="skill-modal-note" class="af-modal__footer-note" role="status" aria-live="polite"></p>
+        <div id="skill-modal-actions" class="skmcp-footer-actions"></div>
+      </div>
+    </div>
+  </div>
+  <div id="mcp-modal-backdrop" class="af-modal-backdrop" hidden>
+    <div class="af-modal af-modal--wide" role="dialog" aria-modal="true" aria-labelledby="mcp-modal-title">
+      <div class="af-modal__header">
+        <h2 id="mcp-modal-title" class="af-modal__title">Add MCP server</h2>
+        <button id="mcp-modal-close" class="af-modal__close" type="button" aria-label="Close">×</button>
+      </div>
+      <div id="mcp-modal-body" class="af-modal__body"></div>
+      <div class="af-modal__footer">
+        <p id="mcp-modal-note" class="af-modal__footer-note" role="status" aria-live="polite"></p>
+        <div class="skmcp-footer-actions">
+          <button id="mcp-modal-test" class="secondary" type="button">Test connection</button>
+          <button id="mcp-modal-save" type="button">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
   <!-- Account modals (DESIGN-v2 §2.3/§2.4): the kit's af-modal markup (docs/modal.md),
        bound through the islands' bindModal (focus trap, Esc, backdrop click). -->
   <div id="account-email-backdrop" class="af-modal-backdrop" hidden>
@@ -3960,7 +4042,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // door (users & entities), where they run, then setup (providers,
 	    // capability defaults), then validation (sandbox). A stale persisted
 	    // "entities" value folds into "users" below.
-	    const TABS = ["users", "runtimes", "workflows", "providers", "defaults", "sandbox", "models", "catalog", "apps", "network"];
+	    const TABS = ["users", "runtimes", "workflows", "skills", "providers", "defaults", "sandbox", "models", "catalog", "apps", "network"];
 	    // Retired tab ids and their new homes: a persisted value or a `#<id>` link
 	    // still lands there (entities merged into users; DESIGN-v3 §7: the Engines
 	    // tab merged into Providers).
@@ -4250,6 +4332,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      users: ["Accounts", "People who use this gateway and the entities that act on it"],
 	      runtimes: ["Runtimes", "Each user's own data plane: runs, flows, sessions and memory"],
       workflows: ["Workflows", "Bundles, versions, import and export"],
+      skills: ["Skills & MCP", "Skills agents can load, and MCP tool servers"],
 	      providers: ["Providers", "Local engines and remote provider connections"],
 	      defaults: ["Multimodal Capabilities", "Which provider/model serves each capability route"],
 	      sandbox: ["Sandbox", "Try any provider/model directly — text, image, audio, video"],
@@ -4281,6 +4364,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        $("page-subtitle").textContent = t[1];
 	      }
 	      writeStringSetting(ACTIVE_TAB_KEY, next);
+	      if (next === "skills") openSkillsMcpPage();  // console_skills_mcp.py
 	      mcOnTabChange(next);  // the catalog's `#catalog?...` link follows the tab (console_catalog.py)
 	    }
 	    // ---- Workflows: the registered workflow registry ----
@@ -13914,8 +13998,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         mountAppsSettings("tab", $("apps-settings-root"));
         // The backlog folder + exec runner + process manager.
         mountBacklogSettings($("backlog-settings-root"));
-        // The skills shelf (skills.shelf, console_ui.py).
-        mountSkillsShelf("tab", $("skills-settings-root"));
+        // The skills shelf setting lives on the Skills & MCP page now (console_skills_mcp.py).
         return;
       }
       if (tab === "network") {
@@ -15172,6 +15255,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // Runs tab loader fires from there. Cache sizes load when the Cache
 	    // tab opens (shared ensureDataHomes cache).
 	    $("tab-button-runtimes").onclick = () => { setActiveTab("runtimes"); loadRuntimes(); };
+	    bindSkillsMcpPage();
 	    $("tab-button-workflows").onclick = () => { setActiveTab("workflows"); mountWorkflowSwitches(); loadWorkflows(); mountAgentDefaults("workflows", $("agent-defaults-root")); };
 	    $("workflows-refresh").onclick = () => loadWorkflows();
 	    $("workflows-search").oninput = () => renderWorkflows();
