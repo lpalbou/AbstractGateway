@@ -26,7 +26,7 @@ def test_account_page_carries_the_fields_and_words() -> None:
         "my-email-registered", "my-email-registered-save", "my-email-address", "my-email-password",
         "my-email-imap-host", "my-email-imap-port", "my-email-imap-security", "my-email-imap-folder",
         "my-email-smtp-host", "my-email-smtp-port", "my-email-smtp-security", "my-email-oauth-client-id",
-        "my-email-oauth-client-secret", "my-email-oauth-flow", "my-email-policy-mode", "my-email-policy-list",
+        "my-email-oauth-client-secret", "my-email-oauth-flow", "my-email-policy-mode", "my-email-allow-list", "my-email-deny-list",
         "my-email-per-hour", "my-email-per-day", "my-email-notify-job-failed", "my-email-notify-approval",
         "my-email-notify-test", "my-email-agent-tools", "my-email-enabled", "my-email-connect-go",
     ):
@@ -53,13 +53,17 @@ def test_console_calls_only_the_callers_own_routes() -> None:
     assert "mountEmailUi(MY_EMAIL_BASE);" in html and "myEmailUseBase(MY_EMAIL_BASE);" in html
     assert 'api(myEmailApi()' in html
     for sub in (
-        "/test", "/policy", "/limits", "/enabled", "/agent-tools", "/address", "/discover", "/notifications",
+        "/test", "/limits", "/enabled", "/agent-tools", "/address", "/discover", "/notifications",
         "/folder", "/oauth/start", "/oauth/finish", "/oauth/cancel",
     ):
         assert f'api(myEmailApi("{sub}")' in html, sub
     # No email call bypasses the base (it would hit the signed-in user's mailbox from an entity's modal).
     assert 'api("/api/gateway/me/email' not in html
     assert 'api(myEmailUi.notifyTest || "/api/gateway/me/notifications/test"' in html
+    # Recipient rules save through the API base they were rendered with (own or an entity's).
+    assert 'const RECIPIENT_RULES_BASE = "/api/gateway/me/email";' in html
+    assert "await api(`${base}/policy`, { method: \"PUT\"" in html
+    assert "renderEmailRecipientRules(d.policy, myEmailApi());" in html
     # The only per-user admin call left is Reset (clears an old override).
     assert "/api/gateway/admin/users/${encodeURIComponent(u.user_id)}/email" in html
     assert 'JSON.stringify({ inherit: ["email", "email_agent_tools"] })' in html

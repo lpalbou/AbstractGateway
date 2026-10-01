@@ -5,6 +5,31 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Recipient rules in the Email settings (Advanced): "Your agents may send to [Only the Allowed list |
+  Anyone not on the Denied list]", an **Always allowed** and an **Always denied** list (addresses
+  such as `name@example.com` or domains such as `example.com`, which also cover their subdomains),
+  and one sentence: "Denied always wins. Your own address is always allowed. A domain also covers
+  its subdomains." Every chip added or removed saves at once ("Saved", or the gateway's reason).
+  One renderer, `renderEmailRecipientRules(policy, apiBase)`, draws it for any Email modal.
+- `PUT /me/email/policy` takes `always_allow` and `always_deny` (a list given replaces that list;
+  an omitted list is kept); `GET /me/email` returns both. `POST /me/email/policy/check` takes
+  `to`, `cc` and `bcc` (and the older `addresses`, read as To) and each verdict says which rule
+  decided (`source`: `self`, `always_deny`, `always_allow`, `mode`).
+- The terminal console shows and edits both lists under Advanced.
+
+### Changed
+- Sends to To, Cc and Bcc, from agent tools and notifications alike, follow the precedence: your own
+  address is allowed, Always denied refuses ("Not sent: x@xxx.gov is on your Always denied list
+  (xxx.gov)."), Always allowed allows, then the mode decides. A notification to your own address is
+  therefore always delivered, also when your lists do not name it.
+- A policy stored by an earlier version keeps its meaning: an allowlist's entries become the Always
+  allowed list, a denylist's entries the Always denied list. The older `{mode, entries}` body is
+  still accepted (`entries` replaces the list the mode uses). Needs the AbstractCore version that
+  adds the two lists.
+
 ## [0.10.0] - 2026-10-01
 
 Email settings follow one model across the consoles: your **email address** (where sign-in codes and

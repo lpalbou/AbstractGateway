@@ -1678,9 +1678,8 @@ fn email_write(
                     EmailAction::Test => got.last_error.is_none(),
                     EmailAction::Disconnect => !got.configured,
                     EmailAction::Policy(body) => {
-                        body.get("mode").and_then(Value::as_str) == Some(got.policy_mode.as_str())
-                            && body
-                                .get("entries")
+                        let list = |k: &str| {
+                            body.get(k)
                                 .and_then(Value::as_array)
                                 .map(|a| {
                                     a.iter()
@@ -1689,7 +1688,14 @@ fn email_write(
                                         .collect::<Vec<_>>()
                                 })
                                 .unwrap_or_default()
-                                == got.policy_entries
+                        };
+                        // The gateway normalises entries (lower case, IDNA): compare that way.
+                        let norm = |l: Vec<String>| {
+                            l.into_iter().map(|e| e.to_lowercase()).collect::<Vec<_>>()
+                        };
+                        body.get("mode").and_then(Value::as_str) == Some(got.policy_mode.as_str())
+                            && norm(list("always_allow")) == norm(got.always_allow.clone())
+                            && norm(list("always_deny")) == norm(got.always_deny.clone())
                     }
                     EmailAction::Limits(body) => {
                         let want = |k: &str, have: Option<i64>| {
