@@ -9033,36 +9033,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- **An entity without its own mind thinks with the gateway's text model.** Opening a visit, a
-  summon or its own time no longer refuses with "no mind substrate chosen". The mind is the entity's
-  own choice when it has one (`substrate.yaml`, set in the console's Manage → Mind & voice or the
-  Entity app), else the gateway's text route (the console's text default, including its endpoint and
-  reasoning). The only refusal left is a gateway with no text model at all: "This gateway has no
-  text model yet: open Setup in the console, choose Use recommended defaults, then try again."
-- **`ABSTRACTGATEWAY_ENTITY_CHAT_*` are removed** (`_PROVIDER`, `_MODEL`, `_BASE_URL`,
-  `_CONTEXT_WINDOW`, `_SHELF_SIZE`). Setting them has no effect. Entity geometry uses its code
-  defaults (context 65536, shelf 50) unless a request asks otherwise.
-- **`GET /api/gateway/entities/{name}/substrate`** returns the entity's own choice (`provider`,
-  `model`, `thinking`, `speculation`; null when it has none), `gateway_default` (the text route),
-  `effective` (what the next visit uses) and `source` (`entity`, `gateway`, or `unset` with a
-  `note`). **`PUT`** accepts `{"clear": true}` (back to the gateway default, recorded in the entity's
-  history) and `speculation` (MTP: `false` or `{"mode": "native_mtp", "num_draft_tokens": N}`),
-  applied to visits and summons.
-- **Console, entity Manage → Mind & voice** uses the kit's shared pickers, the same as the apps:
-  **Gateway default** or **Custom** provider and model (reasoning and MTP for a custom model), and
-  the voice picker with **Gateway default voice**. Changes save themselves.
-
-### Fixed
-- **`/api/health` answers at once while the gateway warms up.** While a service was being built (the
-  eager warm-up after start, or a user's first request), each health probe held the whole server for
-  half a second. With the stack supervisor and five apps polling at the same time, probes waited past
-  their 3-second timeout and the apps stopped with "the gateway is not reachable" until the build
-  finished (minutes on a fresh checkout). Health now never waits for a build; it answers
-  `"warming_up": true` (with `runner.building: true`) until the build is done, and `status` stays
-  `healthy`.
 
 ### Added
+
 - **Rotate your own token.** `POST /api/gateway/me/token/rotate` (any signed-in user) answers your new
   token once; the old one stops working as soon as it answers, a browser session moves to the new
   token, and your Logs show "Token rotated". Your own Accounts row offers Rotate token (the web
@@ -9094,6 +9067,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stops. No route reads an entity's mail. The Accounts row shows the entity's real mailbox state.
 
 ### Changed
+
+- **An entity without its own mind thinks with the gateway's text model.** Opening a visit, a
+  summon or its own time no longer refuses with "no mind substrate chosen". The mind is the entity's
+  own choice when it has one (`substrate.yaml`, set in the console's Manage → Mind & voice or the
+  Entity app), else the gateway's text route (the console's text default, including its endpoint and
+  reasoning). The only refusal left is a gateway with no text model at all: "This gateway has no
+  text model yet: open Setup in the console, choose Use recommended defaults, then try again."
+- **`ABSTRACTGATEWAY_ENTITY_CHAT_*` are removed** (`_PROVIDER`, `_MODEL`, `_BASE_URL`,
+  `_CONTEXT_WINDOW`, `_SHELF_SIZE`). Setting them has no effect. Entity geometry uses its code
+  defaults (context 65536, shelf 50) unless a request asks otherwise.
+- **`GET /api/gateway/entities/{name}/substrate`** returns the entity's own choice (`provider`,
+  `model`, `thinking`, `speculation`; null when it has none), `gateway_default` (the text route),
+  `effective` (what the next visit uses) and `source` (`entity`, `gateway`, or `unset` with a
+  `note`). **`PUT`** accepts `{"clear": true}` (back to the gateway default, recorded in the entity's
+  history) and `speculation` (MTP: `false` or `{"mode": "native_mtp", "num_draft_tokens": N}`),
+  applied to visits and summons.
+- **Console, entity Manage → Mind & voice** uses the kit's shared pickers, the same as the apps:
+  **Gateway default** or **Custom** provider and model (reasoning and MTP for a custom model), and
+  the voice picker with **Gateway default voice**. Changes save themselves.
 - Web console: **Providers** and **Engines** are one page. The **Providers** tab lists **Local
   providers** first (one card per local engine: status, Install, Start, Stop, Cancel, Continue,
   **Browse models**, **Learn more**, and the provider's server connection for Ollama, LM Studio and
@@ -9132,9 +9124,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   address)", never removable) because they are always allowed.
 - Advanced reads "Send at most [100] per hour and [1000] per day." on one line with two small number
   fields (wrapping on phones), and "Watch folder" is a sentence-case label like the others.
-
-### Changed
-
 - Web console, Sandbox: the chat is the AbstractUIC kit's chat (the thread and composer AbstractCode
   uses), with the standard Attach button, drop and paste to attach, attachment chips that say when an
   upload failed and why, hold to dictate (when a transcription route is configured) and a speaker on
@@ -9142,29 +9131,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   thread with a link to the raw file. The output modes, system prompt, reasoning and MTP settings sit
   above the chat; every mode stays choosable, and one that is not configured says so instead of being
   greyed out. Each mode still uses its existing gateway endpoint.
-- Web console: **Providers** and **Engines** are one page. The **Providers** tab lists **Local
-  providers** first (one card per local engine: status, Install, Start, Stop, Cancel, Continue,
-  **Browse models**, **Learn more**, and the provider's server connection for Ollama, LM Studio and
-  vLLM), then **Remote providers** (OpenAI, Anthropic, OpenRouter, Portkey, custom
-  OpenAI-compatible, each with its connection state; keys appear as fingerprints only), then the
-  **Available Providers** table as before. **Engines** is no longer in the sidebar; a `#engines`
-  link opens Providers. The terminal console and the API are unchanged.
-- Sends to To, Cc and Bcc, from agent tools and notifications alike, follow the precedence: your own
-  address is allowed, Always denied refuses ("Not sent: x@xxx.gov is on your Always denied list
-  (xxx.gov)."), Always allowed allows, then the mode decides. A notification to your own address is
-  therefore always delivered, also when your lists do not name it.
-- A policy stored by an earlier version keeps its meaning: an allowlist's entries become the Always
-  allowed list, a denylist's entries the Always denied list. The older `{mode, entries}` body is
-  still accepted (`entries` replaces the list the mode uses). Needs the AbstractCore version that
-  adds the two lists.
 - Web console: an entity's **Manage** opens as a dialog over the Accounts page instead of replacing
   it (Esc or a click outside closes it and focus goes back to the entity's row; full screen on
   phones). Awake and Personal time are switches; the mind, voice, tools and prompt settings save
   by themselves and say "Saved", or why they were not saved; sleep, emergency freeze and the memory
   index rebuild ask for confirmation inline. Stop and Restore are no longer in Manage: the Accounts
   row's Active switch suspends and resumes an entity.
+- The MCP server registry lives in the gateway's root data folder, also when several users sign in
+  (one registry for every account, the one agent runs read).
+- **Workflow ownership.** The Workflows page groups bundles into **Shared with everyone** and
+  **Mine** (what you imported or published), with a Shipped / Imported / From AbstractFlow badge.
+  `GET /bundles` items carry `owner` (`gateway` or `user`), `shipped`, `available` and `archived`; imports and
+  publishes stamp `metadata.owner` (user, tenant, time). Users can import: the bundle lands in **Mine**.
+- **Available to users** (administrators): a switch per shared workflow, also
+  `PUT /api/gateway/admin/workflows/{bundle_id}/availability`. Off hides it from users' lists and app pickers,
+  refuses their new runs, schedules and automations ("This workflow isn't available to users on this gateway.
+  Ask an admin."), and pauses their existing automations on it with that reason; turning it back on does not
+  resume them. Admins always see every workflow; an app's default workflow keeps running for everyone.
+- **Open** (in AbstractFlow) on every workflow: opens it in the visual editor (AbstractFlow's
+  `?bundle=<id>&version=<v>` link). `GET /bundles/{bundle_id}` also returns `source`, `shipped` and `owner`.
+- Paused automations show why the gateway paused them (`paused_reason` in `GET /automations`).
+- **Workflows are archived, never deleted.** **Archive** / **Unarchive** (and **Show archived**) replace Delete
+  on the Workflows page, the terminal console (`d` / `D`) and broken bundle files; `POST /bundles/{bundle_id}/archive`
+  and `/unarchive`. An archived workflow leaves the lists and cannot start new runs; the file and every past run stay,
+  and existing runs and automations keep resuming. Bundles that ship with the gateway can be neither archived nor
+  deleted. `DELETE /bundles/{bundle_id}` now answers `410`.
 
 ### Fixed
+
+- **`/api/health` answers at once while the gateway warms up.** While a service was being built (the
+  eager warm-up after start, or a user's first request), each health probe held the whole server for
+  half a second. With the stack supervisor and five apps polling at the same time, probes waited past
+  their 3-second timeout and the apps stopped with "the gateway is not reachable" until the build
+  finished (minutes on a fresh checkout). Health now never waits for a build; it answers
+  `"warming_up": true` (with `runner.building: true`) until the build is done, and `status` stays
+  `healthy`.
+- **The console says when the gateway is warming up.** While `/api/health` reports `warming_up`, the
+  top bar shows a quiet "Warming up…" pill (tooltip: building the default model client; some pages wait
+  until it is ready). It disappears when the warm-up ends.
 - Runs now use the base URL set on the text-generation default (`output.text`, stored as `input.text`). Released 0.10.0 saved and showed it, but runs, run summaries, Ask and the sandbox called the provider's built-in address instead (for example LM Studio on `localhost:1234`). The base URL applies to the route's own provider only; an endpoint profile (`endpoint:<id>`) keeps its own address, and nothing changes when the field is empty. Affects 0.10.0; ships in the next release.
 - **An attachment never crosses conversations.** A reference to another session's upload — even one
   naming its owner `run_id`, which the start door used to accept — is refused with a typed 400
@@ -9193,7 +9197,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   user, or after a restart, and that nothing of the other session reaches its run vars.
 - Web console: saving or clearing an entity's voice, and giving or ending a work order, did nothing
   (the page read an entity name that was never set).
-
 - Agents can use the tools of registered MCP servers. An admin turns **Enabled for agents** on for a
   server whose connection test succeeded (`POST /api/gateway/admin/mcp/servers/{name}/agents`); its
   tools are then offered to agent runs as `mcp::<server>::<tool>`, listed in `/discovery/tools`
@@ -9205,32 +9208,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the run records why (`_runtime.mcp_notes`). A run started by an email from someone else is never
   offered an MCP tool. Needs the AbstractRuntime MCP facade (`mcp_facade`) and AbstractCore's MCP
   clients with `initialize()`.
-
-### Changed
-
-- The MCP server registry lives in the gateway's root data folder, also when several users sign in
-  (one registry for every account, the one agent runs read).
-- **Workflow ownership.** The Workflows page groups bundles into **Shared with everyone** and
-  **Mine** (what you imported or published), with a Shipped / Imported / From AbstractFlow badge.
-  `GET /bundles` items carry `owner` (`gateway` or `user`), `shipped`, `available` and `archived`; imports and
-  publishes stamp `metadata.owner` (user, tenant, time). Users can import: the bundle lands in **Mine**.
-- **Available to users** (administrators): a switch per shared workflow, also
-  `PUT /api/gateway/admin/workflows/{bundle_id}/availability`. Off hides it from users' lists and app pickers,
-  refuses their new runs, schedules and automations ("This workflow isn't available to users on this gateway.
-  Ask an admin."), and pauses their existing automations on it with that reason; turning it back on does not
-  resume them. Admins always see every workflow; an app's default workflow keeps running for everyone.
-- **Open** (in AbstractFlow) on every workflow: opens it in the visual editor (AbstractFlow's
-  `?bundle=<id>&version=<v>` link). `GET /bundles/{bundle_id}` also returns `source`, `shipped` and `owner`.
-- Paused automations show why the gateway paused them (`paused_reason` in `GET /automations`).
-
-### Changed
-- **Workflows are archived, never deleted.** **Archive** / **Unarchive** (and **Show archived**) replace Delete
-  on the Workflows page, the terminal console (`d` / `D`) and broken bundle files; `POST /bundles/{bundle_id}/archive`
-  and `/unarchive`. An archived workflow leaves the lists and cannot start new runs; the file and every past run stay,
-  and existing runs and automations keep resuming. Bundles that ship with the gateway can be neither archived nor
-  deleted. `DELETE /bundles/{bundle_id}` now answers `410`.
-
-### Fixed
 - **Import .flow** in the web console works again: the upload was sent as JSON instead of a multipart form, so the
   gateway refused every file. The Workflows page also keeps the import and archive result sentence on screen
   after the list reloads.
