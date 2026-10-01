@@ -1803,10 +1803,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      .mail-server-row__fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 	      .mail-server-row__host { grid-column: 1 / -1; }
 	    }
-	    /* ---- Accounts (DESIGN-v2 §2.1): header row, ONE full-width table (kit row
-	       tints + kind chips), actions that wrap, the reasons of unavailable actions
-	       visible in the row. 834: Role / Email address / Runtime fold under the name.
-	       390: one flat block per row (no card in a card), 44 px targets. */
+	    /* ---- Accounts (DESIGN-v3 §1): header row, ONE full-width table that never scrolls
+	       sideways: table-layout fixed + colgroup, cells that wrap (never truncate), Actions = Email · Logs · Workspace|Manage · the kit "⋯" menu (af-menu).
+	       Columns: Name 22 %, Runtime 16 %, Active 84 px, Actions 280 px (fits Email · Logs ·
+	       Workspace · ⋯), Email address and Mailbox share the rest. Card list when the table would
+	       not fit: a CONTAINER query on the table's own width, computed from the column minimums
+	       (Email address and Mailbox >= 120 px each: (364 + 240) / 0.62 = 974 px), so the sidebar
+	       width never matters. Proven at 1024-2560 px by tests/browser/accounts.mjs. */
 	    #tab-users #account { display: none; }
 	    /* One subheading size on every round-2 page (= the card heading, h2 15 px / 600). */
 	    .section-subtitle { font-size: calc(15px * var(--font-scale)); font-weight: 600; color: var(--text); margin: 0 0 4px; }
@@ -1814,70 +1817,82 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    /* The top bar carries the page title and its line: the card header is the buttons row only. */
 	    .accounts-head { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 	    .accounts-head:not(:has(button:not(.hidden))) { display: none; }
-	    .accounts-head__actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-	    .accounts-table { width: 100%; border-collapse: collapse; }
-	    .accounts-table th { text-align: left; white-space: nowrap; }
-	    .accounts-table td { vertical-align: top; padding-top: 12px; padding-bottom: 12px; }
-	    .accounts-name__line { display: inline-flex; align-items: center; gap: 8px; flex-wrap: nowrap; white-space: nowrap; }
-	    .accounts-fold, .accounts-phone-line { display: none; }
-	    .accounts-mailbox { overflow-wrap: normal; }
+	    .accounts-head__actions { display: flex; gap: 8px 12px; flex-wrap: wrap; align-items: center; justify-content: flex-end; }
+	    .accounts-head__archived { display: inline-flex; align-items: center; margin-right: 4px; }
+	    .accounts-head__archived[hidden] { display: none; }
+	    .accounts-head__archived .af-switch__reason { display: none; }
+	    .accounts-page .users-table-wrap { overflow: visible; container: accounts / inline-size; }
+	    .accounts-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+	    .accounts-table col.accounts-c-name { width: 22%; }
+	    .accounts-table col.accounts-c-runtime { width: 16%; }
+	    .accounts-table col.accounts-c-active { width: 84px; }
+	    .accounts-table col.accounts-c-actions { width: 280px; }
+	    .accounts-table th { text-align: left; white-space: normal; overflow-wrap: anywhere; }
 	    .accounts-table th, .accounts-table td { padding-left: 10px; padding-right: 10px; }
+	    .accounts-table td { vertical-align: middle; padding-top: 10px; padding-bottom: 10px; overflow: hidden; }
+	    /* Wrap, never truncate (operator rule): a long id or address breaks anywhere and the row grows. */
+	    .accounts-cell-text { display: block; min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; word-break: normal; }
+	    /* Runtime ids: plain mono text (no chip box) that wraps at its hyphens first. */
+	    code.accounts-cell-text { display: block; padding: 0; border: 0; background: transparent; box-shadow: none; color: inherit; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; word-break: normal; font-size: var(--font-size-md); }
+	    .accounts-mailbox__reason { margin-top: 2px; font-size: var(--af-helper-size, var(--font-size-md)); }
+	    /* The id keeps its line; the chips wrap under it when the column is narrow. */
+	    .accounts-name__line { display: flex; align-items: center; gap: 4px 8px; min-width: 0; flex-wrap: wrap; }
+	    .accounts-name__line > strong { flex: 0 1 auto; min-width: 0; max-width: 100%; font-weight: 600; }
+	    .accounts-name__line > .af-kind-chip, .accounts-archived-chip { flex: 0 0 auto; }
+	    .accounts-archived-chip { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: var(--font-size-sm, 12px); font-weight: 600; line-height: 1.5; white-space: nowrap; }
+	    .accounts-row--archived .accounts-name__line > strong { color: var(--muted); }
+	    .accounts-phone-line { display: none; }
 	    #users-section > .message:empty, #users-section > .issued.hidden { display: none; }
 	    #email-caps-message:empty { display: none; }
-	    .accounts-none { font-style: normal; }
-	    /* Active: the switch only. Its unavailable reason (aria-describedby) is written in the row's
-	       ONE reasons line under the actions, so the column stays narrow. */
-	    .accounts-table td.accounts-active { width: 1%; }
+	    /* Active: the switch only (its unavailable reason is the switch's title + aria-describedby). */
 	    .accounts-active .af-switch__reason { display: none; }
-	    /* Actions: compact, icon + label, one height; one row where the width allows. */
-	    .accounts-table td.accounts-actions { width: 1%; min-width: 0; }
-	    .users-table td.accounts-actions { white-space: normal; }
-	    .accounts-actions__buttons { display: flex; flex-wrap: wrap; gap: 6px; }
-	    .accounts-actions__buttons > button { display: inline-flex; align-items: center; gap: 5px; height: 32px; min-height: 32px; padding: 0 9px; font-size: var(--font-size-md); white-space: nowrap; }
-	    .accounts-actions__buttons > button .button-icon svg { width: 14px; height: 14px; }
-	    .accounts-reasons { margin: 6px 0 0; font-size: var(--af-helper-size, var(--font-size-md)); line-height: 1.4; }
+	    .accounts-active__archived { font-size: var(--font-size-md); }
+	    /* Actions: one line that never leaves its cell; the "⋯" list is position: fixed (kit). */
+	    .accounts-table td.accounts-actions { overflow: visible; white-space: nowrap; }
+	    .accounts-actions__buttons { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; }
+	    .accounts-actions__buttons > button { display: inline-flex; align-items: center; justify-content: center; height: 32px; min-height: 32px; padding: 0 10px; font-size: var(--font-size-md); white-space: nowrap; }
+	    .accounts-actions__buttons .af-menu__button { height: 32px; min-width: 36px; }
 	    .accounts-legend { margin: 0; }
 	    /* Email for everyone: a full-width settings row (label + description left, switch at the card edge). */
 	    #users-section .accounts-email { margin: 8px 0 0; padding: 16px 0 0; border: 0; border-top: 1px solid var(--line-soft); background: transparent; box-shadow: none; max-width: none; width: 100%; }
 	    #users-section .accounts-email .switch-list, #users-section .accounts-email .af-switch--row { width: 100%; max-width: none; }
 	    #users-section .accounts-email .plain-disclosure { margin-top: 8px; }
-	    @media (min-width: 1440px) {
-	      .accounts-actions__buttons { flex-wrap: nowrap; }
+	    @media (pointer: coarse) {
+	      .accounts-actions__buttons > button, .accounts-actions__buttons .af-menu__button { height: 44px; min-height: 44px; }
 	    }
-	    @media (max-width: 1439.98px) {
-	      .accounts-table td.accounts-actions { width: 42%; }
-	      .accounts-table .accounts-col-email, .accounts-table .accounts-col-runtime,
-	      .accounts-table th:nth-child(2), .accounts-table th:nth-child(4) { display: none; }
-	      .accounts-fold { display: block; margin-top: 4px; font-size: var(--af-helper-size, var(--font-size-md)); overflow-wrap: break-word; }
-	      .accounts-fold > span { display: block; }
-	    }
-	    @media (max-width: 767.98px) {
-	      .accounts-head { justify-content: stretch; }
-	      .accounts-head__actions { flex: 1 1 100%; }
-	      .accounts-head__actions > button { flex: 1 1 100%; min-height: 44px; }
+	    /* Card list (DESIGN-v3 §1.2): one flat block per account (no card in a card). Line 1 name +
+	       chip + Active (right); line 2 "Email address · Mailbox"; line 3 runtime (muted); line 4 actions. */
+	    @container accounts (max-width: 973.98px) {
 	      .accounts-table, .accounts-table tbody, .accounts-table tr { display: block; width: 100%; }
-	      .accounts-table thead { display: none; }
+	      .accounts-table thead, .accounts-table colgroup { display: none; }
 	      .accounts-table tr.accounts-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 12px 12px 12px 14px; border-top: 1px solid var(--line-soft); }
-	      .accounts-table tr.accounts-row > td { display: block; padding: 0; border: 0; min-width: 0; width: auto; }
+	      .accounts-table tr.accounts-row > td { display: block; padding: 0; border: 0; min-width: 0; width: auto; overflow: visible; }
 	      .accounts-table tr.accounts-row > td::before { content: none; }
-	      .accounts-table td.accounts-name { grid-column: 1; grid-row: 1; box-shadow: none; align-self: center; }
-	      .accounts-table td.accounts-active { grid-column: 2; grid-row: 1; justify-self: end; }
+	      .accounts-table td.accounts-name { grid-column: 1; grid-row: 1; align-self: center; }
+	      .accounts-table td.accounts-active { grid-column: 2; grid-row: 1; justify-self: end; align-self: center; }
 	      .accounts-table td.accounts-mailbox { grid-column: 1 / -1; grid-row: 2; }
-	      .accounts-table td.accounts-actions { grid-column: 1 / -1; grid-row: 4; margin-top: 8px; width: auto; min-width: 0; }
 	      .accounts-table tr.accounts-row > td.accounts-col-email { display: none; }
+	      .accounts-table td.accounts-col-runtime { grid-column: 1 / -1; grid-row: 3; color: var(--af-row-text-muted, var(--muted)); }
+	      .accounts-table td.accounts-actions { grid-column: 1 / -1; grid-row: 4; margin-top: 6px; }
+	      .accounts-table .accounts-mailbox__text { display: none; }
+	      .accounts-phone-line { display: block; overflow-wrap: anywhere; }
+	      /* Line 3: a plain muted line, never a box that reads as an input. */
+	      .accounts-table td.accounts-col-runtime .accounts-cell-text { display: block; background: transparent; border: 0; box-shadow: none; padding: 0; color: inherit; font-size: var(--font-size-md); }
+	      .accounts-table td.accounts-col-runtime .accounts-cell-text::before { content: "Runtime "; font-family: var(--font-sans, inherit); }
+	      .accounts-actions__buttons { flex-wrap: wrap; gap: 8px; }
 	      /* One flat block per row: the tint and the kind bar paint the row, not each cell. */
 	      .accounts-table tr.accounts-row > td { background: transparent !important; box-shadow: none !important; }
 	      .accounts-table tr.af-row--admin { background-color: var(--af-row-tint-admin); box-shadow: inset 3px 0 0 var(--af-row-mark-admin); }
 	      .accounts-table tr.af-row--user { box-shadow: inset 3px 0 0 var(--af-row-mark-user); }
 	      .accounts-table tr.af-row--entity { background-color: var(--af-row-tint-entity); box-shadow: inset 3px 0 0 var(--af-row-mark-entity); }
-	      .accounts-fold { display: none; }
-	      .accounts-table .accounts-col-runtime { display: block !important; grid-column: 1 / -1; grid-row: 3; color: var(--af-row-text-muted, var(--muted)); }
-	      .accounts-table .accounts-col-runtime::before { content: "Runtime " !important; }
-	      .accounts-phone-line { display: block; }
-	      .accounts-mailbox__text { display: none; }
-	      .accounts-actions__buttons { gap: 8px; }
-	      .accounts-actions__buttons > button { height: 44px; min-height: 44px; padding: 0 12px; font-size: var(--font-size-base); }
 	      .accounts-table .row-confirm, .accounts-table .row-confirm > td { display: block; padding: 0 0 10px; border: 0; }
+	    }
+	    @media (max-width: 767.98px) {
+	      .accounts-head { justify-content: stretch; }
+	      .accounts-head__actions { flex: 1 1 100%; }
+	      .accounts-head__actions > button { flex: 1 1 100%; min-height: 44px; }
+	      .accounts-head__archived { flex: 1 1 100%; }
+	      .accounts-actions__buttons > button, .accounts-actions__buttons .af-menu__button { height: 44px; min-height: 44px; padding: 0 14px; font-size: var(--font-size-base); }
 	    }
 	    /* Account modals (kit af-modal): content rules only; the shell is the kit's. */
 	    .account-modal-body .account-page { max-width: none; }
@@ -2625,12 +2640,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        <div id="account" class="session-summary">No active session.</div>
 	        <div class="tab-grid tab-grid-wide">
 	          <div class="tab-stack">
-	            <!-- ACCOUNTS (DESIGN-v2 §2): ONE table for users AND entities (GET /admin/accounts),
-	                 rows tinted by kind (kit .af-row--*), an Active switch on every row, per-row
-	                 actions that say why when they cannot apply, and the Email / Logs modals. -->
+	            <!-- ACCOUNTS (DESIGN-v3 §1): ONE table for users AND entities (GET /admin/accounts),
+	                 rows tinted by kind (kit .af-row--*), an Active switch on every live row, only the
+	                 actions that apply (Email · Logs · Workspace|Manage · the kit "⋯" menu), Show archived
+	                 (admins), a flat card list when the table would not fit, and the Email / Logs modals. -->
 	            <section id="users-section" class="session-only hidden accounts-page">
 	              <div class="accounts-head">
 	                <div class="accounts-head__actions">
+	                  <span id="accounts-archived-slot" class="accounts-head__archived" hidden></span>
 	                  <button id="open-create-user" type="button" title="Create a gateway user and issue their token (shown once)">Create user</button>
 	                  <button id="accounts-create-entity" class="secondary" type="button" title="Summon a new entity from a spark template (the name is permanent)">Create entity</button>
 	                </div>
@@ -2639,6 +2656,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <div id="users-message" class="message" role="status" aria-live="polite"></div>
 	              <div class="users-table-wrap">
 	                <table class="users-table accounts-table" data-ui-no-stack>
+	                  <colgroup><col class="accounts-c-name"><col class="accounts-c-email"><col class="accounts-c-mailbox"><col class="accounts-c-runtime"><col class="accounts-c-active"><col class="accounts-c-actions"></colgroup>
 	                  <thead><tr><th>Name</th><th>Email address</th><th>Mailbox</th><th>Runtime</th><th>Active</th><th>Actions</th></tr></thead>
 	                  <tbody id="users-table"></tbody>
 	                </table>
@@ -2720,7 +2738,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
               <section class="af-card account-card" aria-labelledby="my-email-mailbox-title">
                 <div class="af-card__header">
                   <h3 id="my-email-mailbox-title" class="af-card__title">Mailbox</h3>
-                  <p class="af-card__desc">Lets your agents and automations read and send mail as you. Your admin never sees your mail.</p>
+                  <p id="my-email-mailbox-desc" class="af-card__desc">Lets your agents and automations read and send mail as you. Your admin never sees your mail.</p>
                 </div>
                 <p id="my-email-unavailable" class="af-form__error" hidden></p>
                 <div id="my-email-connected" hidden>
@@ -7164,7 +7182,45 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     // Mailbox tabs (DESIGN-v2 §3): IMAP first and the default, then Google, Microsoft.
     const MY_EMAIL_TABS = ["imap", "google", "microsoft"];
     const MY_EMAIL_SERVER_FIELDS = ["my-email-imap-host", "my-email-imap-port", "my-email-imap-security", "my-email-smtp-host", "my-email-smtp-port", "my-email-smtp-security", "my-email-username"];
-    const myEmailUi = { tab: "", discovered: null, discoveredFor: "", oauth: null, edited: new Set(), timer: null, prefilledFor: "", editReg: false, editMailbox: false };
+    const myEmailUi = { tab: "", discovered: null, discoveredFor: "", oauth: null, edited: new Set(), timer: null, prefilledFor: "", editReg: false, editMailbox: false, base: "", notifyTest: "" };
+    // ONE account email UI for the signed-in user AND an entity (DESIGN-v3 §3.2): every call goes
+    // through the current API base, /me/email (own) or /accounts/<id>/email (an entity's own
+    // mailbox, admin or its creator); the payloads and responses are identical (accounts-api §3.1).
+    const MY_EMAIL_BASE = "/api/gateway/me/email";
+    // A response that breaks a cross-lane contract: logged, then re-thrown outside the handler so
+    // browser tests (pageerror) and the console go red, while the screen keeps plain words.
+    function consoleSeamFailure(err) {
+      console.error("AbstractGateway console seam:", err);
+      if (typeof setTimeout === "function") setTimeout(() => { throw err; }, 0);
+    }
+    const MY_EMAIL_TEXT_FIELDS = ["my-email-registered", "my-email-address", "my-email-oauth-address", "my-email-password", "my-email-username", "my-email-imap-host", "my-email-imap-port", "my-email-smtp-host", "my-email-smtp-port", "my-email-oauth-client-id", "my-email-oauth-client-secret", "my-email-oauth-tenant", "my-email-policy-add", "my-email-per-hour", "my-email-per-day", "my-email-imap-folder"];
+    function myEmailApi(sub = "") { return `${myEmailUi.base || MY_EMAIL_BASE}${sub}`; }
+    // The few sentences that address "you": an explicit table, swapped when the UI serves an entity.
+    const MY_EMAIL_ENTITY_TEXT = {
+      "my-email-registered-title": "Email address",
+      "my-email-registered-help": "Where notifications about its runs go.",
+      "my-email-mailbox-desc": "Lets its agents and automations read and send mail as this entity. Nobody reads its mail through the console.",
+    };
+    function myEmailApplyVoice(entity) {
+      for (const [id, text] of Object.entries(MY_EMAIL_ENTITY_TEXT)) {
+        const el = $(id);
+        if (!el) throw new Error(`The account email UI has no #${id} (DESIGN-v3 §3.2).`);
+        if (el.__ownText === undefined) el.__ownText = el.textContent;
+        el.textContent = entity ? text : el.__ownText;
+      }
+    }
+    function myEmailUseBase(base, notifyTest = "") {
+      const next = base || MY_EMAIL_BASE;
+      myEmailUi.notifyTest = next === MY_EMAIL_BASE ? "" : notifyTest;
+      if ((myEmailUi.base || MY_EMAIL_BASE) === next) return;
+      myEmailUi.base = next === MY_EMAIL_BASE ? "" : next;
+      myEmailApplyVoice(Boolean(myEmailUi.base));
+      // Another principal's mailbox: nothing typed or discovered for the previous one carries over.
+      Object.assign(myEmailUi, { tab: "", discovered: null, discoveredFor: "", oauth: null, edited: new Set(), prefilledFor: "", editReg: false, editMailbox: false });
+      for (const id of MY_EMAIL_TEXT_FIELDS) { const el = $(id); if (el) el.value = ""; }
+      for (const id of ["my-email-imap-security", "my-email-smtp-security"]) { const el = $(id); if (el) el.value = "ssl"; }
+      state.myEmail = null;
+    }
     // ONE address question (DESIGN-v2 §11): at most one editable address field on screen.
     // Card 1 shows the address as text + "Change" (or "Not set yet" + "Set it now"); the
     // mailbox panes show "Mailbox account: x — Use a different account" whenever an address
@@ -7267,9 +7323,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         const how = d.auth_kind === "oauth2" || d.oauth ? ((d.oauth && d.oauth.provider) === "microsoft" ? "Microsoft" : ((d.oauth && d.oauth.provider) === "google" ? "Google" : "sign-in")) : "password";
         const checked = st.last_ok ? `checked ${emailAgo(st.last_ok)}` : (st.last_test ? `last check ${emailAgo(st.last_test)}` : "not checked yet");
         const paused = d.enabled === false ? " · paused" : "";
-        $("my-email-status").textContent = `Connected as ${d.address} · ${how === "password" ? "IMAP" : how} · ${checked}${paused}`;
+        // A mailbox stored without an outgoing server reads "Receive only" + the API's sentence, never "Connected" alone.
+        const receiveOnly = Boolean(d.mailbox && d.mailbox.state === "receive_only");
+        if (receiveOnly && !(d.mailbox.reason)) consoleSeamFailure(new Error("GET …/email: mailbox.state receive_only without a reason (gateway seam)."));
+        $("my-email-status").textContent = `${receiveOnly ? "Receive only" : "Connected"} as ${d.address} · ${how === "password" ? "IMAP" : how} · ${checked}${paused}`;
         const err = st.last_error;
-        myEmailShow("my-email-status-error", err ? `${err.cause || err.code}${err.fix ? ` ${err.fix}` : ""}` : "");
+        const errText = err ? `${err.cause || err.code}${err.fix ? ` ${err.fix}` : ""}` : "";
+        myEmailShow("my-email-status-error", [receiveOnly ? (d.mailbox.reason || "") : "", errText].filter(Boolean).join(" "));
       } else {
         const want = d.email_address || "";
         if (!myEmailVal("my-email-address")) myEmailSet("my-email-address", want);
@@ -7289,7 +7349,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       afSwitchSet($("my-email-agent-tools"), { checked: Boolean(at.on), reason: at.available === false ? (at.unavailable_reason || "Connect a mailbox first.") : "" });
       // 5. Advanced.
       afSwitchSet($("my-email-enabled"), { checked: d.enabled !== false, reason: "" });
-      renderEmailRecipientRules(d.policy);
+      // The recipients lane's ONE renderer, on the API base this UI serves (own or an entity's).
+      // A missing field is a seam failure: loud for tests, not developer copy on screen.
+      try { renderEmailRecipientRules(d.policy, myEmailApi()); } catch (e) { consoleSeamFailure(e); }
       const lim = d.limits || {};
       if (document.activeElement !== $("my-email-per-hour")) myEmailSet("my-email-per-hour", lim.per_hour);
       if (document.activeElement !== $("my-email-per-day")) myEmailSet("my-email-per-day", lim.per_day);
@@ -7394,7 +7456,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     }
     async function loadMyEmail() {
       try {
-        renderMyEmail(await api("/api/gateway/me/email"));
+        renderMyEmail(await api(myEmailApi()));
         myEmailMessage("");
       } catch (e) {
         myEmailMessage(emailErrorText(e), "error");
@@ -7407,7 +7469,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       btn.setAttribute("aria-busy", "true");
       myEmailShow("my-email-registered-error", "");
       try {
-        const out = await api("/api/gateway/me/email/address", { method: "PUT", body: JSON.stringify({ address }) });
+        const out = await api(myEmailApi("/address"), { method: "PUT", body: JSON.stringify({ address }) });
         if (out && out.schema) renderMyEmail({ ...out, notices: (state.myEmail && state.myEmail.notices) || [] });
         btn.textContent = "Saved";
         if (typeof setTimeout === "function") setTimeout(() => { btn.textContent = "Save"; }, 2000);
@@ -7459,7 +7521,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       myEmailUi.discoveredFor = address;
       let out = null;
       try {
-        out = await api("/api/gateway/me/email/discover", { method: "POST", body: JSON.stringify({ address }), slow: true });
+        out = await api(myEmailApi("/discover"), { method: "POST", body: JSON.stringify({ address }), slow: true });
       } catch (e) {
         if (myEmailUi.discoveredFor === address) myEmailShow("my-email-servers-source", `${emailErrorText(e)} The standard settings stay filled in.`);
         return null;
@@ -7468,8 +7530,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       myEmailUi.discovered = out;
       const def = out && out.defaults;
       if (!def || !def.imap || !def.smtp || typeof def.message !== "string") {
-        console.error("AbstractGateway console: POST /me/email/discover answered without `defaults` (gateway-api seam, DESIGN-v2 §6).");
-        myEmailShow("my-email-servers-source", "The gateway's discovery answered without server defaults (gateway-api seam). The standard settings stay filled in.");
+        // A seam fails loudly for tests (an uncaught error), never as UI copy.
+        consoleSeamFailure(new Error("POST …/email/discover answered without `defaults` (gateway seam, DESIGN-v2 §6)."));
+        myEmailShow("my-email-servers-source", "Standard settings for this domain — change them if your provider differs.");
         return out;
       }
       myEmailApplyServers(def);
@@ -7496,7 +7559,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       btn.setAttribute("aria-busy", "true");
       btn.textContent = "Connecting…";
       try {
-        const out = await api("/api/gateway/me/email", { method: "PUT", body: JSON.stringify(body), slow: true });
+        const out = await api(myEmailApi(), { method: "PUT", body: JSON.stringify(body), slow: true });
         $("my-email-password").value = "";
         await loadMyEmail();
         myEmailMessage(`Mailbox connected as ${(out && out.address) || address}.`, "ok");
@@ -7518,7 +7581,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       btn.setAttribute("aria-busy", "true");
       btn.textContent = "Testing…";
       try {
-        const out = await api("/api/gateway/me/email/test", { method: "POST", slow: true });
+        const out = await api(myEmailApi("/test"), { method: "POST", slow: true });
         const failed = ["imap", "smtp"].map((k) => out && out[k]).filter((l) => l && l.ok === false);
         await loadMyEmail();
         if (failed.length) myEmailShow("my-email-status-error", `${failed[0].cause}${failed[0].fix ? ` ${failed[0].fix}` : ""}`);
@@ -7535,7 +7598,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const btn = $("my-email-disconnect-now");
       btn.disabled = true;
       try {
-        await api("/api/gateway/me/email", { method: "DELETE" });
+        await api(myEmailApi(), { method: "DELETE" });
         myEmailUi.tab = ""; myEmailUi.discovered = null; myEmailUi.discoveredFor = "";
         await loadMyEmail();
         myEmailMessage("Mailbox disconnected. Your policy and limits are kept.", "ok");
@@ -7547,7 +7610,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     }
     async function saveMyEmailLimits() {
       try {
-        const out = await api("/api/gateway/me/email/limits", { method: "PUT", body: JSON.stringify({ per_hour: myEmailNum("my-email-per-hour"), per_day: myEmailNum("my-email-per-day") }) });
+        const out = await api(myEmailApi("/limits"), { method: "PUT", body: JSON.stringify({ per_hour: myEmailNum("my-email-per-hour"), per_day: myEmailNum("my-email-per-day") }) });
         if (out && out.limits) {
           const lim = out.limits;
           $("my-email-usage").textContent = `${lim.used_last_hour || 0} sent this hour, ${lim.used_last_day || 0} today.`;
@@ -7560,7 +7623,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     async function saveMyEmailFolder() {
       const folder = myEmailVal("my-email-imap-folder");
       try {
-        await api("/api/gateway/me/email/folder", { method: "PUT", body: JSON.stringify({ folder }) });
+        await api(myEmailApi("/folder"), { method: "PUT", body: JSON.stringify({ folder }) });
         inlineState("my-email-folder-state", "Saved", "ok");
       } catch (e) {
         inlineState("my-email-folder-state", emailErrorText(e), "error");
@@ -7593,7 +7656,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       btn.setAttribute("aria-busy", "true");
       inlineState("my-email-notify-test-state", "Sending…", "");
       try {
-        const out = await api("/api/gateway/me/notifications/test", { method: "POST", slow: true });
+        // Own: POST /me/notifications/test; an entity: POST /accounts/<id>/notifications/test (accounts-api mirror).
+        const out = await api(myEmailUi.notifyTest || "/api/gateway/me/notifications/test", { method: "POST", slow: true });
         if (!out || typeof out.message !== "string" || !out.message) {
           throw new Error("The test answer carries no message (gateway-api seam, DESIGN-v2 §6).");
         }
@@ -7608,19 +7672,19 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function bindMyEmailSwitches() {
       const onErr = (e) => myEmailMessage(emailErrorText(e), "error");
       const notify = (key, label) => async (next) => {
-        const out = await api("/api/gateway/me/email/notifications", { method: "PUT", body: JSON.stringify({ [key]: next }) });
+        const out = await api(myEmailApi("/notifications"), { method: "PUT", body: JSON.stringify({ [key]: next }) });
         if (out && out.schema) renderMyEmail({ ...out, notices: (state.myEmail && state.myEmail.notices) || [] });
         myEmailMessage(`${label} emails are ${next ? "on" : "off"}.`, "ok");
       };
       afSwitchBind($("my-email-notify-job-failed"), notify("job_failed", "“Job failed”"), onErr);
       afSwitchBind($("my-email-notify-approval"), notify("approval_needed", "“Approval needed”"), onErr);
       afSwitchBind($("my-email-agent-tools"), async (next) => {
-        await api("/api/gateway/me/email/agent-tools", { method: "PUT", body: JSON.stringify({ enabled: next }) });
+        await api(myEmailApi("/agent-tools"), { method: "PUT", body: JSON.stringify({ enabled: next }) });
         await loadMyEmail();
         myEmailMessage(next ? "Agent email tools are on." : "Agent email tools are off.", "ok");
       }, onErr);
       afSwitchBind($("my-email-enabled"), async (next) => {
-        await api("/api/gateway/me/email/enabled", { method: "PUT", body: JSON.stringify({ enabled: next }) });
+        await api(myEmailApi("/enabled"), { method: "PUT", body: JSON.stringify({ enabled: next }) });
         await loadMyEmail();
         myEmailMessage(next ? "Your mailbox is active." : "Your mailbox is paused: no watching, sending or notifications. Your settings are kept.", "ok");
       }, onErr);
@@ -7641,7 +7705,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       start.setAttribute("aria-busy", "true");
       let out;
       try {
-        out = await api("/api/gateway/me/email/oauth/start", { method: "POST", body: JSON.stringify(body), slow: true });
+        out = await api(myEmailApi("/oauth/start"), { method: "POST", body: JSON.stringify(body), slow: true });
       } catch (e) {
         start.removeAttribute("aria-busy");
         myEmailRenderOAuthButton();
@@ -7659,7 +7723,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       while (!flow.cancelled) {
         let res;
         try {
-          res = await api("/api/gateway/me/email/oauth/finish", { method: "POST", body: JSON.stringify({ flow_id: flow.id, wait_s: 20 }), timeoutMs: 70000 });
+          res = await api(myEmailApi("/oauth/finish"), { method: "POST", body: JSON.stringify({ flow_id: flow.id, wait_s: 20 }), timeoutMs: 70000 });
         } catch (e) {
           if (!flow.cancelled) { prompt.textContent = emailErrorText(e); prompt.className = "inline-state error"; }
           break;
@@ -7679,7 +7743,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const flow = myEmailUi.oauth;
       if (!flow) return;
       flow.cancelled = true;
-      try { await api("/api/gateway/me/email/oauth/cancel", { method: "POST", body: JSON.stringify({ flow_id: flow.id }) }); } catch {}
+      try { await api(myEmailApi("/oauth/cancel"), { method: "POST", body: JSON.stringify({ flow_id: flow.id }) }); } catch {}
       $("my-email-oauth-prompt").textContent = "Sign-in cancelled.";
       $("my-email-oauth-cancel").hidden = true;
       myEmailUi.oauth = null;
@@ -12438,15 +12502,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       try { no.focus(); } catch {}
       return row;
     }
-    // ---- Accounts (DESIGN-v2 §2): ONE table for users AND entities, read from
-    // GET /admin/accounts (gateway-api, §6) -- the same resolver the account page
-    // uses, so a row and the Email modal never disagree (§2.5). Row tint by kind
-    // (kit .af-row--admin|user|entity), an Active switch on every row, and every
-    // action that cannot apply is disabled WITH its reason visible in the row.
-    const accountsUi = { rows: [], emailRelease: null, logsRelease: null, emailHome: null, logsFor: null, logsKind: "" };
+    // ---- Accounts (DESIGN-v3 §1): ONE table for users AND entities, read from
+    // GET /admin/accounts (admins; ?include_archived=true when "Show archived" is on) or
+    // GET /me/accounts. Row tint by kind (kit .af-row--admin|user|entity), an Active switch on
+    // every live row, and ONLY the actions that apply: Email · Logs · Workspace (users) /
+    // Manage (entities) visible, the rest in the kit "⋯" menu (af-menu). Nothing unavailable is
+    // rendered; a title on "⋯" says why when an absence would surprise. Archive, never delete.
+    const accountsUi = { rows: [], emailRelease: null, logsRelease: null, emailHome: null, logsFor: null, logsKind: "", showArchived: false, menuReleases: [], archivedSwitch: null };
     const ACCOUNT_KIND_LABEL = { admin: "Admin", user: "User", entity: "Entity" };
-    const ACCOUNT_ROLE_TITLE = { admin: "Admin — manages this gateway", user: "User — signs in and runs their own agents", entity: "Entity — a persistent identity that acts on this gateway" };
-    const ACCOUNT_ACTIONS = ["email", "logs", "workspace", "rotate", "manage", "delete", "suspend"];
+    const ACCOUNT_ROLE_TITLE = { admin: "Admin — manages this gateway", user: "User — signs in and runs their own agents", entity: "Entity — an AI user with its own memory and mailbox" };
+    // The row contract of accounts-api (DESIGN-v3 §2.2): every key present, `delete` gone.
+    const ACCOUNT_ACTIONS = ["email", "logs", "workspace", "rotate", "manage", "archive", "unarchive", "suspend"];
+    const ACCOUNTS_SHOW_ARCHIVED_KEY = "abstractgateway.console.accounts.show_archived";
     function accountKindClass(a) {
       if (a.kind === "entity") return "entity";
       return a.role === "admin" ? "admin" : "user";
@@ -12454,50 +12521,28 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function accountAction(a, key) {
       const act = a && a.actions && a.actions[key];
       if (!act || typeof act.available !== "boolean") {
-        throw new Error(`GET /admin/accounts row ${a && a.id} has no actions.${key} (gateway-api seam, DESIGN-v2 §6).`);
+        throw new Error(`GET /admin/accounts row ${a && a.id} has no actions.${key} (accounts-api seam, DESIGN-v3 §2.2).`);
       }
       return act;
     }
-    // Words, never placeholder dashes (round-2 polish): an entity's mailbox is "Not available"
-    // (the reason is in its Email modal), a missing address is "No address".
+    function accountCan(a, key) { return accountAction(a, key).available === true; }
+    function accountArchived(a) {
+      if (typeof a.archived !== "boolean") throw new Error(`GET /admin/accounts row ${a && a.id} has no boolean "archived" (accounts-api seam, DESIGN-v3 §2.2).`);
+      return a.archived;
+    }
+    // Words, never placeholder dashes: "Connected as x@y" / "Not connected" / "Paused".
     function accountMailboxText(a) {
       const m = a.mailbox || {};
       if (m.state === "connected") return m.address ? `Connected as ${m.address}` : "Connected";
+      if (m.state === "receive_only") return "Receive only — no outgoing server";
       if (m.state === "paused") return "Paused";
       if (m.state === "not_connected") return "Not connected";
       if (m.state === "unavailable") return "Not available";
-      throw new Error(`GET /admin/accounts row ${a.id} has mailbox.state ${JSON.stringify(m.state)} (gateway-api seam, DESIGN-v2 §6).`);
+      throw new Error(`GET /admin/accounts row ${a.id} has mailbox.state ${JSON.stringify(m.state)} (accounts-api seam, DESIGN-v3 §3.1).`);
     }
-    // The phone line "address · mailbox" says the address once: a mailbox on the same
-    // account reads "Mailbox connected" instead of repeating it.
+    // The card line "Email address · Mailbox": the same words as the table's two cells.
     function accountPhoneLine(a) {
-      const m = a.mailbox || {};
-      const address = a.email_address || "No address";
-      const mailbox = (m.state === "connected" && m.address && m.address === a.email_address) ? "Mailbox connected" : accountMailboxText(a);
-      return `${address} · ${mailbox}`;
-    }
-    // Reasons of the unavailable actions as ONE short muted line, without "Delete:" prefixes
-    // (the disabled button sits right beside it). An entity whose Rotate AND Delete are both
-    // unavailable gets one combined sentence (explicit rule on the two action keys).
-    const ACCOUNT_ENTITY_ROTATE_DELETE = "Rotate and Delete don't apply to entities: no credential is kept, and an entity's name is kept for life — suspend it instead.";
-    const ACCOUNT_OWN_SUSPEND_DELETE = "You can't deactivate or delete your own account.";
-    function accountReasonsLine(a, keys) {
-      const off = ["suspend", ...keys].filter((k) => !accountAction(a, k).available);
-      const out = [];
-      let rest = off;
-      if (a.kind === "entity" && off.includes("rotate") && off.includes("delete")) {
-        out.push(ACCOUNT_ENTITY_ROTATE_DELETE);
-        rest = rest.filter((k) => k !== "rotate" && k !== "delete");
-      }
-      if (a.own === true && off.includes("suspend") && off.includes("delete")) {
-        out.push(ACCOUNT_OWN_SUSPEND_DELETE);
-        rest = rest.filter((k) => k !== "suspend" && k !== "delete");
-      }
-      for (const k of rest) {
-        const why = accountAction(a, k).reason || "Not available for this account.";
-        if (!out.includes(why)) out.push(why);
-      }
-      return out.join(" ");
+      return `${a.email_address || "No address"} · ${accountMailboxText(a)}`;
     }
     function accountIsOwn(a) {
       const p = state.principal || {};
@@ -12509,10 +12554,39 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     // RBAC (operator ruling 2026-10-01, rbac lane): an admin reads every account from
     // /admin/accounts; anyone else reads /me/accounts (their own row + the entities they created).
     function accountsAdmin() { return Boolean(state.principal && state.principal.admin); }
+    function accountsReadShowArchived() {
+      try { return readStringSetting(ACCOUNTS_SHOW_ARCHIVED_KEY, "0") === "1"; } catch { return false; }
+    }
+    // "Show archived" (admins): a kit switch in the header row, off by default, remembered
+    // per viewer (localStorage, try/catch inside the setting helpers).
+    function renderAccountsArchivedSwitch() {
+      const slot = $("accounts-archived-slot");
+      if (!slot) throw new Error("Accounts markup has no #accounts-archived-slot (DESIGN-v3 §1.1).");
+      const admin = accountsAdmin();
+      if (!accountsUi.archivedSwitch) {
+        const sw = afSwitchCreate({ id: "accounts-show-archived", label: "Show archived", ariaLabel: "Show archived accounts", checked: false, small: true });
+        sw.button.title = "Archived accounts can't sign in or act; their runs and history are kept.";
+        sw.button.classList.add("accounts-show-archived");
+        slot.append(...sw.nodes);
+        accountsUi.archivedSwitch = sw.button;
+        afSwitchBind(sw.button, async (next) => {
+          accountsUi.showArchived = next;
+          writeStringSetting(ACCOUNTS_SHOW_ARCHIVED_KEY, next ? "1" : "0");
+          await loadAccounts();
+          return true;
+        }, (e) => usersMessage(emailErrorText(e), "error"));
+      }
+      accountsUi.showArchived = admin && accountsReadShowArchived();
+      afSwitchSet(accountsUi.archivedSwitch, { checked: accountsUi.showArchived });
+      slot.hidden = !admin;
+      accountsUi.archivedSwitch.classList.toggle("hidden", !admin);
+    }
     async function loadAccounts() {
-      const path = accountsAdmin() ? "/api/gateway/admin/accounts" : "/api/gateway/me/accounts";
+      const admin = accountsAdmin();
+      renderAccountsArchivedSwitch();
+      const path = admin ? `/api/gateway/admin/accounts${accountsUi.showArchived ? "?include_archived=true" : ""}` : "/api/gateway/me/accounts";
       const out = await api(path);
-      if (!out || !Array.isArray(out.accounts)) throw new Error(`GET ${path.replace("/api/gateway", "")} answered without an accounts list (gateway seam, DESIGN-v2 §6).`);
+      if (!out || !Array.isArray(out.accounts)) throw new Error(`GET ${path.replace("/api/gateway", "")} answered without an accounts list (accounts-api seam, DESIGN-v3 §2.2).`);
       accountsUi.rows = out.accounts;
       renderAccounts(out.accounts);
       return out.accounts;
@@ -12521,14 +12595,103 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const b = document.createElement("button");
       b.type = "button";
       b.className = opts.cls || "secondary";
-      b.innerHTML = (opts.icon ? `<span class="button-icon" aria-hidden="true">${opts.icon}</span>` : "") + `<span>${esc(label)}</span>`;
+      b.textContent = label;
       b.setAttribute("aria-label", opts.aria || label);
       b.setAttribute("data-label", label);
       if (opts.title) b.title = opts.title;
       return b;
     }
+    // The kit menu (af-menu, bound by the islands' bindMenu). The node-VM tests load no
+    // islands bundle: there the list toggles on click so its items stay testable. The served
+    // console always carries the bundle, so a bundle WITHOUT bindMenu is a broken re-sync and throws.
+    function bindAccountMenu(button, list) {
+      const lib = islandsLib();
+      if (lib) {
+        if (typeof lib.bindMenu !== "function") throw new Error(`The abstractuic islands bundle (kit ${lib.kitVersion || "?"}) has no bindMenu: re-sync console_islands (DESIGN-v3 §1.4).`);
+        return lib.bindMenu(button, list);
+      }
+      if (typeof window !== "undefined" && window.document && window.document.getElementById && window.document.getElementById("af-console-islands")) {
+        throw new Error("The abstractuic islands bundle did not load: the Accounts row menu needs its bindMenu (DESIGN-v3 §1.4).");
+      }
+      list.hidden = true;
+      button.setAttribute("aria-haspopup", "menu");
+      button.setAttribute("aria-expanded", "false");
+      button.onclick = () => { list.hidden = !list.hidden; button.setAttribute("aria-expanded", list.hidden ? "false" : "true"); };
+      list.onclick = () => { list.hidden = true; button.setAttribute("aria-expanded", "false"); };
+      return () => {};
+    }
+    // items: [{ key, label, onSelect, danger }] — only actions that apply; none = no "⋯" at all.
+    function accountMenu(a, items, whyAbsent) {
+      if (!items.length) return null;
+      const wrap = document.createElement("div");
+      wrap.className = "af-menu accounts-menu";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "af-menu__button";
+      button.setAttribute("aria-label", `More actions for ${a.id}`);
+      button.setAttribute("data-action", "more");
+      button.textContent = "⋯";
+      if (whyAbsent) button.title = whyAbsent;
+      const list = document.createElement("div");
+      list.className = "af-menu__list";
+      list.hidden = true;
+      for (const it of items) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = `af-menu__item${it.danger ? " af-menu__item--danger" : ""}`;
+        b.setAttribute("role", "menuitem");
+        b.setAttribute("data-action", it.key);
+        b.textContent = it.label;
+        b.onclick = it.onSelect;
+        list.append(b);
+      }
+      wrap.append(button, list);
+      accountsUi.menuReleases.push(bindAccountMenu(button, list));
+      return wrap;
+    }
+    const ACCOUNT_ARCHIVE_QUESTION = {
+      user: (id) => `Archive ${id}? They can't sign in any more. Their runtime, runs and history are kept; you can unarchive later.`,
+      entity: (id) => `Archive ${id}? It stops acting and never wakes. Its memory, runs and history are kept; you can unarchive later.`,
+    };
+    // Admins: POST /admin/accounts/{id}/archive|unarchive (any account). Anyone else archives an
+    // entity they created through POST /me/accounts/{id}/archive (accounts-api §2.2); only an admin unarchives.
+    async function accountArchiveCall(a, verb) {
+      const scope = accountsAdmin() ? "admin" : "me";
+      const out = await api(`/api/gateway/${scope}/accounts/${encodeURIComponent(a.id)}/${verb}`, { method: "POST" });
+      if (!out || out.id !== a.id || typeof out.archived !== "boolean") throw new Error(`POST /admin/accounts/{id}/${verb} answered without the updated account (accounts-api seam, DESIGN-v3 §2.2).`);
+      return out;
+    }
+    function askArchiveAccount(tr, a) {
+      const question = (a.kind === "entity" ? ACCOUNT_ARCHIVE_QUESTION.entity : ACCOUNT_ARCHIVE_QUESTION.user)(a.id);
+      userConfirmRow(tr, question, "Archive", async () => {
+        await accountArchiveCall(a, "archive");
+        usersMessage(accountsUi.showArchived ? `${a.id} is archived.` : `${a.id} is archived. Turn on Show archived to see it.`, "ok");
+        await loadAccounts();
+      });
+    }
+    async function unarchiveAccount(a) {
+      try {
+        await accountArchiveCall(a, "unarchive");
+        usersMessage(a.kind === "entity" ? `${a.id} is back, inactive: turn Active on to let it act.` : `${a.id} is back, inactive: turn Active on to let it sign in.`, "ok");
+        await loadAccounts();
+      } catch (e) {
+        usersMessage(emailErrorText(e), "error");
+      }
+    }
+    function accountTextCell(cls, label, text, opts = {}) {
+      const td = document.createElement("td");
+      td.className = cls;
+      td.setAttribute("data-label", label);
+      const span = document.createElement(opts.code ? "code" : "span");
+      span.className = `accounts-cell-text${opts.muted ? " af-row__muted" : ""}`;
+      span.textContent = text;
+      span.title = opts.title || text;
+      td.append(span);
+      return td;
+    }
     function renderAccounts(rows) {
       const tbody = $("users-table");
+      for (const release of accountsUi.menuReleases.splice(0)) { try { release(); } catch {} }
       tbody.textContent = "";
       if (!rows.length) {
         const tr = document.createElement("tr");
@@ -12538,133 +12701,135 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       }
       for (const a of rows) {
         for (const key of ACCOUNT_ACTIONS) accountAction(a, key);
+        const archived = accountArchived(a);
         const kind = accountKindClass(a);
         const tr = document.createElement("tr");
-        tr.className = `af-row--${kind} accounts-row`;
+        tr.className = `af-row--${kind} accounts-row${archived ? " accounts-row--archived" : ""}`;
         tr.setAttribute("data-user", a.id);
         tr.setAttribute("data-kind", a.kind);
+        if (archived) tr.setAttribute("data-archived", "true");
         const shown = (a.tenant_id && a.tenant_id !== "default") ? `${a.tenant_id}/${a.id}` : a.id;
-        const email = a.email_address || "No address";
-        const emailCell = a.email_address ? esc(a.email_address) : `<span class="accounts-none af-row__muted">No address</span>`;
         const mailbox = accountMailboxText(a);
-        const mailboxNone = a.mailbox && a.mailbox.state === "unavailable";
-        tr.innerHTML = `<td data-label="Name" class="accounts-name"><span class="accounts-name__line"><strong>${esc(shown)}</strong> <span class="af-kind-chip af-kind-chip--${kind}" title="${esc(ACCOUNT_ROLE_TITLE[kind])}">${ACCOUNT_KIND_LABEL[kind]}</span></span>`
-          + `<span class="accounts-fold af-row__muted"><span>${esc(email)}</span><span>${a.runtime_id ? `Runtime ${esc(a.runtime_id)}` : "No runtime"}</span></span></td>`
-          + `<td data-label="Email address" class="accounts-col-email">${emailCell}</td>`
-          + `<td data-label="Mailbox" class="accounts-mailbox${mailboxNone ? " accounts-mailbox--none" : ""}"><span class="accounts-phone-line af-row__muted">${esc(accountPhoneLine(a))}</span><span class="accounts-mailbox__text${mailboxNone ? " af-row__muted" : ""}">${esc(mailbox)}</span></td>`
-          + `<td data-label="Runtime" class="accounts-col-runtime">${a.runtime_id ? `<code>${esc(a.runtime_id)}</code>` : `<span class="af-row__muted">None</span>`}</td>`
-          + `<td data-label="Active" class="users-active accounts-active"></td>`;
-        // Active (§2.2): users = registry `enabled`; entities = suspend / resume.
-        const activeCell = tr.querySelector(".accounts-active");
-        const suspend = accountAction(a, "suspend");
-        const sw = afSwitchCreate({
-          id: `account-active-${a.tenant_id || "default"}-${a.id}`.replace(/[^A-Za-z0-9_-]/g, "-"),
-          label: "Active",
-          ariaLabel: `Active: ${a.id}`,
-          checked: Boolean(a.active),
-          small: true,
-          unavailableReason: suspend.available ? "" : (suspend.reason || "This account can't be switched here."),
-        });
-        activeCell.append(...sw.nodes);
-        const setActive = async (next) => {
-          const out = await api(`/api/gateway/admin/accounts/${encodeURIComponent(a.id)}/active`, { method: "PUT", body: JSON.stringify({ active: next }) });
-          if (!out || out.id !== a.id) throw new Error("PUT /admin/accounts/{id}/active answered without the updated account (gateway-api seam, DESIGN-v2 §6).");
-          Object.assign(a, out);
-          return out;
-        };
-        afSwitchBind(sw.button, async (next) => {
-          if (!next) {
-            const question = a.kind === "entity"
-              ? `Suspend ${a.id}? It stops acting until you turn Active back on.`
-              : `Deactivate ${a.id}? They are signed out until you turn Active back on.`;
-            userConfirmRow(tr, question, a.kind === "entity" ? "Suspend" : "Deactivate", async () => {
-              afSwitchSet(sw.button, { checked: true, busy: true });
-              try {
-                await setActive(false);
-                afSwitchSet(sw.button, { checked: false });
-                usersMessage(a.kind === "entity" ? `${a.id} is suspended.` : `${a.id} is deactivated.`, "ok");
-                refreshUsersOnly();
-              } catch (e) {
-                afSwitchSet(sw.button, { checked: true });
-                throw e;
-              }
-            });
-            return false;
-          }
-          await setActive(true);
-          usersMessage(a.kind === "entity" ? `${a.id} is active again (${a.entity_state || "awake"}).` : `${a.id} is active again.`, "ok");
-          refreshUsersOnly();
-          return true;
-        }, (e) => usersMessage(emailErrorText(e), "error"));
-        // Actions (§2.1): Email · Logs · Workspace · Rotate · Manage (entities) · Delete.
+        // Name: id (600) + kind chip (+ "Archived").
+        const nameTd = document.createElement("td");
+        nameTd.className = "accounts-name";
+        nameTd.setAttribute("data-label", "Name");
+        nameTd.innerHTML = `<span class="accounts-name__line"><strong class="accounts-cell-text" title="${esc(shown)}">${esc(shown)}</strong>`
+          + `<span class="af-kind-chip af-kind-chip--${kind}" title="${esc(ACCOUNT_ROLE_TITLE[kind])}">${ACCOUNT_KIND_LABEL[kind]}</span>`
+          + (archived ? `<span class="accounts-archived-chip" title="Archived: can't sign in or act; runs and history are kept.">Archived</span>` : "")
+          + `</span>`;
+        tr.append(nameTd);
+        tr.append(accountTextCell("accounts-col-email", "Email address", a.email_address || "No address", { muted: !a.email_address }));
+        const mailboxTd = accountTextCell("accounts-mailbox", "Mailbox", mailbox, { muted: a.mailbox && a.mailbox.state !== "connected" });
+        mailboxTd.firstChild.classList.add("accounts-mailbox__text");
+        if (a.mailbox && a.mailbox.state === "receive_only") {
+          // The API's sentence, visible (never a tooltip only): why it can't send and what to do.
+          if (!a.mailbox.reason) throw new Error(`GET /admin/accounts row ${a.id}: mailbox.state receive_only without a reason (gateway seam).`);
+          const why = document.createElement("span");
+          why.className = "accounts-cell-text accounts-mailbox__reason af-row__muted";
+          why.textContent = a.mailbox.reason;
+          mailboxTd.append(why);
+        }
+        const phone = document.createElement("span");
+        phone.className = "accounts-phone-line af-row__muted";
+        phone.textContent = accountPhoneLine(a);
+        mailboxTd.prepend(phone);
+        tr.append(mailboxTd);
+        tr.append(accountTextCell("accounts-col-runtime", "Runtime", a.runtime_id ? a.runtime_id : "No runtime", { code: Boolean(a.runtime_id), muted: !a.runtime_id, title: a.runtime_id ? `Runtime ${a.runtime_id}` : "No runtime" }));
+        const activeCell = document.createElement("td");
+        activeCell.className = "users-active accounts-active";
+        activeCell.setAttribute("data-label", "Active");
+        tr.append(activeCell);
+        if (archived) {
+          // Archived rows: plain text, never a switch (Unarchive is in the menu; the account comes back inactive).
+          activeCell.innerHTML = `<span class="accounts-active__archived af-row__muted">Archived</span>`;
+        } else {
+          // Active (§2.2 v2): users = registry `enabled`; entities = suspend / resume.
+          const suspend = accountAction(a, "suspend");
+          const sw = afSwitchCreate({
+            id: `account-active-${a.tenant_id || "default"}-${a.id}`.replace(/[^A-Za-z0-9_-]/g, "-"),
+            label: "Active",
+            ariaLabel: `Active: ${a.id}`,
+            checked: Boolean(a.active),
+            small: true,
+            unavailableReason: suspend.available ? "" : (suspend.reason || "This account can't be switched here."),
+          });
+          activeCell.append(...sw.nodes);
+          const setActive = async (next) => {
+            const out = await api(`/api/gateway/admin/accounts/${encodeURIComponent(a.id)}/active`, { method: "PUT", body: JSON.stringify({ active: next }) });
+            if (!out || out.id !== a.id) throw new Error("PUT /admin/accounts/{id}/active answered without the updated account (accounts-api seam, DESIGN-v3 §2.2).");
+            Object.assign(a, out);
+            return out;
+          };
+          afSwitchBind(sw.button, async (next) => {
+            if (!next) {
+              const question = a.kind === "entity"
+                ? `Suspend ${a.id}? It stops acting until you turn Active back on.`
+                : `Deactivate ${a.id}? They are signed out until you turn Active back on.`;
+              userConfirmRow(tr, question, a.kind === "entity" ? "Suspend" : "Deactivate", async () => {
+                afSwitchSet(sw.button, { checked: true, busy: true });
+                try {
+                  await setActive(false);
+                  afSwitchSet(sw.button, { checked: false });
+                  usersMessage(a.kind === "entity" ? `${a.id} is suspended.` : `${a.id} is deactivated.`, "ok");
+                  refreshUsersOnly();
+                } catch (e) {
+                  afSwitchSet(sw.button, { checked: true });
+                  throw e;
+                }
+              });
+              return false;
+            }
+            await setActive(true);
+            usersMessage(a.kind === "entity" ? `${a.id} is active again (${a.entity_state || "awake"}).` : `${a.id} is active again.`, "ok");
+            refreshUsersOnly();
+            return true;
+          }, (e) => usersMessage(emailErrorText(e), "error"));
+        }
+        // Actions (DESIGN-v3 §1.1 + §13.2): users Email · Logs · Workspace · ⋯ (Rotate token, Archive);
+        // entities Email · Logs · Manage · ⋯ (Archive); archived Logs · ⋯ (Unarchive).
         const actions = document.createElement("td");
         actions.className = "actions accounts-actions";
         actions.setAttribute("data-label", "Actions");
         const buttons = document.createElement("div");
         buttons.className = "accounts-actions__buttons";
-        const shownKeys = [];
-        const add = (key, btn, onClick) => {
-          const act = accountAction(a, key);
-          btn.setAttribute("data-action", key);
-          shownKeys.push(key);
-          if (!act.available) {
-            btn.disabled = true;
-            btn.title = act.reason || "Not available for this account.";
-          } else {
-            btn.onclick = onClick;
-          }
-          buttons.append(btn);
-        };
-        if (a.kind === "entity") {
-          // DESIGN-v2 §2.3: an entity's Email opens the modal that says why it has no mailbox
-          // (actions.email.reason), rather than a dead button.
-          const b = accountButton("Email", { icon: ICONS.mail, aria: `Email for ${a.id}` });
-          b.setAttribute("data-action", "email");
-          b.onclick = () => openAccountEmail(a);
+        const visible = (key, label, opts, onClick) => {
+          if (!accountCan(a, key)) return;
+          const b = accountButton(label, opts);
+          b.setAttribute("data-action", key);
+          b.onclick = onClick;
           buttons.append(b);
+        };
+        const menu = [];
+        const absent = [];
+        const offer = (key, label, onSelect, danger) => {
+          if (accountCan(a, key)) menu.push({ key, label, onSelect, danger: Boolean(danger) });
+          else if (accountAction(a, key).reason) absent.push(accountAction(a, key).reason);
+        };
+        const userWorkspace = () => openWorkspacePolicyModal({ tenant_id: a.tenant_id || "default", user_id: a.id });
+        if (archived) {
+          visible("logs", "Logs", { aria: `Activity of ${a.id}` }, () => openAccountLogs(a));
+          if (accountCan(a, "unarchive")) menu.push({ key: "unarchive", label: "Unarchive", onSelect: () => unarchiveAccount(a), danger: false });
         } else {
-          add("email", accountButton("Email", { icon: ICONS.mail, aria: `Email for ${a.id}` }), () => openAccountEmail(a));
+          visible("email", "Email", { aria: `Email for ${a.id}` }, () => openAccountEmail(a));
+          visible("logs", "Logs", { aria: `Activity of ${a.id}` }, () => openAccountLogs(a));
+          if (a.kind === "entity") {
+            visible("manage", "Manage", { aria: `Manage ${a.id}`, title: "Lifecycle, substrate, capabilities, prompt; Talk lives here too" }, () => openEntityManage(a.id));
+            // No Workspace for entities: their file access is not the per-user workspace policy, and
+            // Manage has no workspace view (C3F / manage-modal) — not offered rather than mis-routed.
+            // Entities have no token: Rotate is never offered; the "⋯" title says why.
+            absent.unshift(accountAction(a, "rotate").reason || "Entities have no token to rotate.");
+          } else {
+            visible("workspace", "Workspace", { aria: `Workspace policy for ${a.id}`, title: "Where this account's agents may read and write" }, userWorkspace);
+            offer("rotate", "Rotate token", () => rotateUser({ user_id: a.id, tenant_id: a.tenant_id || "default" }));
+          }
+          offer("archive", "Archive", () => askArchiveAccount(tr, a), true);
         }
-        add("logs", accountButton("Logs", { icon: ICONS.logs, aria: `Activity of ${a.id}` }), () => openAccountLogs(a));
-        add("workspace", accountButton("Workspace", { icon: ICONS.folder, aria: `Workspace policy for ${a.id}`, title: "Where this account's agents may read and write" }), () => (a.kind === "entity"
-          ? openEntityManage(a.id)
-          : openWorkspacePolicyModal({ tenant_id: a.tenant_id || "default", user_id: a.id })));
-        add("rotate", accountButton("Rotate", { icon: ICONS.refresh, aria: `Rotate token for ${a.id}`, title: "Issue a new token — the old one stops working immediately; the new one is shown once" }), () => (a.kind === "entity"
-          ? rotateAccount(a)
-          : rotateUser({ user_id: a.id, tenant_id: a.tenant_id || "default" })));
-        if (a.kind === "entity") {
-          add("manage", accountButton("Manage", { icon: ICONS.gear, aria: `Manage ${a.id}`, title: "Lifecycle, substrate, capabilities, prompt; Talk lives here too" }), () => openEntityManage(a.id));
-        }
-        add("delete", accountButton("Delete", { icon: ICONS.trash, cls: "danger", aria: `Delete ${a.id}` }), () => userConfirmRow(tr, `Delete ${a.id}? The account and its token are removed; the runtime ${a.runtime_id || a.id} and its data are kept and stay reserved for this user.`, "Delete", async () => {
-          await api(`/api/gateway/admin/users/${encodeURIComponent(a.id)}?tenant_id=${encodeURIComponent(a.tenant_id || "default")}`, { method: "DELETE" });
-          usersMessage(`${a.id} is deleted. Their runtime data is kept.`, "ok");
-          await refresh();
-        }));
+        const more = accountMenu(a, menu, absent.filter((x, i) => x && absent.indexOf(x) === i).join(" "));
+        if (more) buttons.append(more);
         actions.append(buttons);
-        const reasonLine = accountReasonsLine(a, shownKeys);
-        if (reasonLine) {
-          const why = document.createElement("p");
-          why.className = "accounts-reasons af-row__muted";
-          why.textContent = reasonLine;
-          actions.append(why);
-        }
         tr.append(actions);
         tbody.append(tr);
-      }
-    }
-    async function rotateAccount(a) {
-      const ok = await confirmAction({
-        title: `Rotate the key of ${a.id}?`,
-        message: "The current credential stops working immediately. The new one is shown once.",
-        confirmLabel: "Rotate",
-      });
-      if (!ok) return;
-      try {
-        const res = await api(`/api/gateway/admin/accounts/${encodeURIComponent(a.id)}/rotate`, { method: "POST" });
-        if (!res || !res.token) throw new Error("POST /admin/accounts/{id}/rotate answered without a token (gateway-api seam, DESIGN-v2 §6).");
-        renderIssuedToken($("issued-token"), a.id, res.token);
-      } catch (e) {
-        usersMessage(emailErrorText(e), "error");
       }
     }
     // ---- Account modals: the kit's af-modal markup, bound by the islands' bindModal
@@ -12694,6 +12859,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         section.classList.remove("in-modal");
         section.classList.add("hidden");
       }
+      // Back to the signed-in user's own mailbox (an entity's values never stay in the form).
+      myEmailUseBase(MY_EMAIL_BASE);
       $("account-email-body").textContent = "";
       backdrop.hidden = true;
       const release = accountsUi.emailRelease;
@@ -12705,13 +12872,27 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const body = $("account-email-body");
       body.textContent = "";
       $("account-email-title").textContent = `Email — ${a.id}`;
+      // The signed-in user's own email UI, moved into the modal and pointed at `base`.
+      const mountEmailUi = (base, notifyTest = "") => {
+        const section = $("my-email-section");
+        if (!accountsUi.emailHome) {
+          accountsUi.emailHome = document.createComment("my-email-section home");
+          section.parentNode.insertBefore(accountsUi.emailHome, section);
+        }
+        myEmailUseBase(base, notifyTest);
+        section.classList.remove("hidden");
+        section.classList.add("in-modal");
+        body.append(section);
+        loadMyEmail();
+      };
       if (a.kind === "entity") {
-        // plane_for_principal refuses entity principals: mail belongs to a user's runtime plane.
+        // Entities are AI users (DESIGN-v3 §3.2): the SAME email UI as the signed-in user's own,
+        // on the entity's own mailbox (GET/PUT /accounts/<id>/email…, admin or its creator).
         const p = document.createElement("p");
         p.className = "account-modal-lead";
-        const why = accountAction(a, "email");
-        p.textContent = why.reason || (a.mailbox && a.mailbox.reason) || "Entities can't have their own mailbox yet: mailboxes belong to a user's runtime.";
+        p.textContent = `${a.id} is an AI user: this mailbox is its own. Its agents read and send from it; notifications about its runs go to its address.`;
         body.append(p);
+        mountEmailUi(`/api/gateway/accounts/${encodeURIComponent(a.id)}/email`, `/api/gateway/accounts/${encodeURIComponent(a.id)}/notifications/test`);
       } else if (accountIsOwn(a)) {
         if (a.role === "admin") {
           const p = document.createElement("p");
@@ -12719,15 +12900,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           p.textContent = "You are also a user of this gateway: this address receives your sign-in codes and notifications, and your mailbox serves your own agents.";
           body.append(p);
         }
-        const section = $("my-email-section");
-        if (!accountsUi.emailHome) {
-          accountsUi.emailHome = document.createComment("my-email-section home");
-          section.parentNode.insertBefore(accountsUi.emailHome, section);
-        }
-        section.classList.remove("hidden");
-        section.classList.add("in-modal");
-        body.append(section);
-        loadMyEmail();
+        mountEmailUi(MY_EMAIL_BASE);
       } else {
         body.append(accountOtherEmailCard(a));
       }

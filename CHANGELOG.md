@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `to`, `cc` and `bcc` (and the older `addresses`, read as To) and each verdict says which rule
   decided (`source`: `self`, `always_deny`, `always_allow`, `mode`).
 - The terminal console shows and edits both lists under Advanced.
+- Accounts: **Show archived** (admins) lists archived accounts with an "Archived" chip; their row
+  offers Logs and, in the "⋯" menu, **Unarchive** ("<id> is back, inactive: turn Active on to let it
+  sign in."). **Archive** sits in the same menu and asks inline first; nothing is deleted.
+- Accounts: an entity's **Email** opens the same Email settings as your own (address, mailbox,
+  notifications, agent email tools, Advanced), on the entity's own mailbox.
 - **Entities have their own mailbox.** An entity's mailbox lives in its home
   (`<runtime>/entities/<name>/email/...`). An admin or the entity's creator sets it up through
   `/api/gateway/accounts/{id}/email...` and `/api/gateway/accounts/{id}/notifications...`, which mirror every
@@ -30,6 +35,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stops. No route reads an entity's mail. The Accounts row shows the entity's real mailbox state.
 
 ### Changed
+- Web console: **Providers** and **Engines** are one page. The **Providers** tab lists **Local
+  providers** first (one card per local engine: status, Install, Start, Stop, Cancel, Continue,
+  **Browse models**, **Learn more**, and the provider's server connection for Ollama, LM Studio and
+  vLLM), then **Remote providers** (OpenAI, Anthropic, OpenRouter, Portkey, custom
+  OpenAI-compatible, each with its connection state; keys appear as fingerprints only), then the
+  **Available Providers** table as before. **Engines** is no longer in the sidebar; a `#engines`
+  link opens Providers. The terminal console and the API are unchanged.
+- Accounts: the table never scrolls sideways. Each row shows Email, Logs and Workspace (users) or
+  Manage (entities), plus a "⋯" menu with only the actions that apply (Rotate token or Workspace,
+  Archive). Actions that do not apply are no longer shown greyed out with an explanation under the
+  row. Long names and addresses wrap instead of widening the table; when the table does not fit,
+  each account becomes a block (name and Active, address and mailbox, runtime, actions).
 - **Accounts are archived, never deleted.** `POST /api/gateway/admin/accounts/{id}/archive` and `/unarchive`
   (admin) answer the updated row; a signed-in user archives an entity they created with
   `POST /api/gateway/me/accounts/{id}/archive`. An archived user can't sign in (their token answers 401 and
@@ -81,6 +98,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   allowed list, a denylist's entries the Always denied list. The older `{mode, entries}` body is
   still accepted (`entries` replaces the list the mode uses). Needs the AbstractCore version that
   adds the two lists.
+- Web console: an entity's **Manage** opens as a dialog over the Accounts page instead of replacing
+  it (Esc or a click outside closes it and focus goes back to the entity's row; full screen on
+  phones). Awake and Personal time are switches; the mind, voice, tools and prompt settings save
+  by themselves and say "Saved", or why they were not saved; sleep, emergency freeze and the memory
+  index rebuild ask for confirmation inline. Stop and Restore are no longer in Manage: the Accounts
+  row's Active switch suspends and resumes an entity.
 
 ### Fixed
 - Runs now use the base URL set on the text-generation default (`output.text`, stored as `input.text`). Released 0.10.0 saved and showed it, but runs, run summaries, Ask and the sandbox called the provider's built-in address instead (for example LM Studio on `localhost:1234`). The base URL applies to the route's own provider only; an endpoint profile (`endpoint:<id>`) keeps its own address, and nothing changes when the field is empty. Affects 0.10.0; ships in the next release.
@@ -101,17 +124,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Session history never crosses sessions — pinned.** `tests/test_gateway_session_history_isolation.py`
   proves a new session starts with no messages from another session of the same user, of another
   user, or after a restart, and that nothing of the other session reaches its run vars.
-### Changed
-
-- Web console: an entity's **Manage** opens as a dialog over the Accounts page instead of replacing
-  it (Esc or a click outside closes it and focus goes back to the entity's row; full screen on
-  phones). Awake and Personal time are switches; the mind, voice, tools and prompt settings save
-  by themselves and say "Saved", or why they were not saved; sleep, emergency freeze and the memory
-  index rebuild ask for confirmation inline. Stop and Restore are no longer in Manage: the Accounts
-  row's Active switch suspends and resumes an entity.
-
-### Fixed
-
 - Web console: saving or clearing an entity's voice, and giving or ending a work order, did nothing
   (the page read an entity name that was never set).
 

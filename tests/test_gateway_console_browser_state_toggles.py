@@ -46,14 +46,16 @@ def _playwright_modules() -> Path:
 
 
 def _free_port() -> int:
-    for port in range(18120, 18200):
+    # A parallel worker may pin its own range: ABSTRACTGATEWAY_BROWSER_TEST_PORTS=18330-18339 (test-only).
+    lo, _, hi = (os.getenv("ABSTRACTGATEWAY_BROWSER_TEST_PORTS", "").strip() or "18120-18199").partition("-")
+    for port in range(int(lo), int(hi or lo) + 1):
         with socket.socket() as s:
             try:
                 s.bind(("127.0.0.1", port))
                 return port
             except OSError:
                 continue
-    pytest.fail("no free port in 18120-18199", pytrace=False)
+    pytest.fail(f"no free port in {lo}-{hi}", pytrace=False)
 
 
 def _call(base: str, method: str, path: str, token: str, body: dict | None = None) -> tuple[int, dict]:

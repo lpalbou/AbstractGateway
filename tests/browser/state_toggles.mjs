@@ -148,7 +148,7 @@ try {
     await signIn(page, "admin", ADMIN);
     // Sidebar (DESIGN-v2 §1): four groups in order, Setup at the bottom opens the guide.
     const nav = await page.evaluate(() => Array.from(document.querySelectorAll("#console-nav .af-nav-group")).map((g) => [g.querySelector(".af-nav-group__caption").textContent.trim(), Array.from(g.querySelectorAll(".tab-button")).map((b) => b.id.replace("tab-button-", ""))]));
-    check(JSON.stringify(nav) === JSON.stringify([["Accounts", ["users"]], ["Work", ["workflows", "runtimes", "apps"]], ["Models", ["providers", "catalog", "defaults"]], ["System", ["models", "sandbox", "network"]]]), "sidebar groups in order", nav);
+    check(JSON.stringify(nav) === JSON.stringify([["Accounts", ["users"]], ["Work", ["workflows", "skills", "runtimes", "apps"]], ["Models", ["providers", "catalog", "defaults"]], ["System", ["models", "sandbox", "network"]]]), "sidebar groups in order", nav);
     check((await page.locator("#topbar-static #open-setup, #af-topbar-root [id*=setup]").count()) === 0, "no Setup button in the top bar");
     await page.click("#open-setup");
     await page.waitForSelector("#first-run-backdrop:not(.hidden)", { timeout: 10000 });
@@ -174,11 +174,18 @@ try {
     const alice = await page.textContent("tr[data-user='alice'] .accounts-mailbox__text");
     check(alice.trim() === "Connected as alice@fastmail.com", "alice mailbox cell", alice);
     check((await page.textContent("tr[data-user='bob'] .accounts-col-email")).trim() === "No address", "bob has no email address (words, not a dash)");
-    check((await page.textContent("tr[data-user='castor'] .accounts-mailbox__text")).trim() === "Not available", "entity mailbox reads Not available");
-    const entityWhy = (await page.textContent("tr[data-user='castor'] .accounts-reasons")).trim();
-    check(entityWhy === "Rotate and Delete don't apply to entities: no credential is kept, and an entity's name is kept for life — suspend it instead." && (await page.isDisabled("tr[data-user='castor'] button[data-action='delete']")), "entity Rotate/Delete disabled with ONE combined reason line (no 'Delete:' prefix)", entityWhy);
-    const ownWhy = (await page.textContent("tr[data-user='admin'] .accounts-reasons")).trim();
-    check(ownWhy === "You can't deactivate or delete your own account.", "own row: one reason line for Active and Delete", ownWhy);
+    // Entities are AI users with their own mailbox (DESIGN-v3 §3): the real state of its own plane.
+    check((await page.textContent("tr[data-user='castor'] .accounts-mailbox__text")).trim() === "Not connected", "entity mailbox reads its own plane's state");
+    // DESIGN-v3 §1.1: only the actions that apply, no disabled buttons, no reasons paragraph.
+    const acts = await page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll("#users-table tr.accounts-row")).map((tr) => [tr.dataset.user, {
+      vis: Array.from(tr.querySelectorAll(".accounts-actions__buttons > button")).map((b) => b.dataset.action),
+      menu: Array.from(tr.querySelectorAll(".af-menu__item")).map((b) => b.dataset.action),
+      disabled: tr.querySelectorAll("button[disabled]").length,
+    }])));
+    check(JSON.stringify(acts.castor) === JSON.stringify({ vis: ["email", "logs", "manage"], menu: ["archive"], disabled: 0 }), "entity row: Email · Logs · Manage + menu Archive", acts.castor);
+    check(JSON.stringify(acts.alice) === JSON.stringify({ vis: ["email", "logs", "workspace"], menu: ["rotate", "archive"], disabled: 0 }), "user row: Email · Logs · Workspace + menu Rotate token, Archive", acts.alice);
+    check(JSON.stringify(acts.admin) === JSON.stringify({ vis: ["email", "logs", "workspace"], menu: ["rotate"], disabled: 0 }), "own row: no Archive offered", acts.admin);
+    check((await page.locator("#users-section .accounts-reasons").count()) === 0 && !(await page.textContent("#users-section")).includes("don't apply to entities"), "no per-row reasons paragraph");
     // Round-2 polish: no placeholder dashes, actions on ONE row per account at 1440, one card title.
     const polish = await page.evaluate(() => {
       const cells = Array.from(document.querySelectorAll("#users-table tr.accounts-row td")).filter((td) => td.getClientRects().length).map((td) => td.innerText.trim());
@@ -220,11 +227,12 @@ try {
     await page.keyboard.press("Escape");
     await page.waitForSelector("#account-email-backdrop[hidden]", { state: "attached", timeout: 5000 });
     check(await page.evaluate(() => document.activeElement && document.activeElement.matches("tr[data-user='alice'] button[data-action='email']")), "Esc closes and focus returns to the row's Email button");
-    // Entity row: the reason, no form.
+    // Entity row (DESIGN-v3 §3.2): the SAME account email UI, on the entity's own mailbox.
+    const entReq = page.waitForRequest((r) => r.url().includes("/api/gateway/accounts/castor/email"), { timeout: 10000 }).then(() => true, () => false);
     await page.click("tr[data-user='castor'] button[data-action='email']");
-    await page.waitForSelector("#account-email-backdrop:not([hidden])");
-    const ent = (await page.textContent("#account-email-body")).trim();
-    check(ent.startsWith("Entities can't have their own mailbox") && !ent.includes("agent email tools"), "entity Email modal says why, nothing false", ent);
+    await page.waitForSelector("#account-email-backdrop:not([hidden]) #my-email-section");
+    const ent = (await page.textContent("#account-email-body .account-modal-lead")).trim();
+    check(ent === "castor is an AI user: this mailbox is its own. Its agents read and send from it; notifications about its runs go to its address." && (await entReq), "entity Email modal: the account email UI on /accounts/castor/email", ent);
     await page.click("#account-email-close");
     // Own row: the full email UI + the admin sentence; the page itself does not repeat it.
     check(await page.locator("#my-email-section").isHidden(), "admin's account page lives in the modal, not on the page");
@@ -371,7 +379,7 @@ try {
     await signIn(page, "admin", ADMIN);
     await openAccount(page);
     await page.waitForSelector("tr[data-user='castor'].accounts-row");
-    const row = await page.evaluate(() => { const tr = document.querySelector("tr[data-user='alice']"); const r = tr.getBoundingClientRect(); return { display: getComputedStyle(tr).display, w: Math.round(r.width), btnH: Math.min(...Array.from(tr.querySelectorAll(".accounts-actions button")).map((b) => b.getBoundingClientRect().height)) }; });
+    const row = await page.evaluate(() => { const tr = document.querySelector("tr[data-user='alice']"); const r = tr.getBoundingClientRect(); return { display: getComputedStyle(tr).display, w: Math.round(r.width), btnH: Math.min(...Array.from(tr.querySelectorAll(".accounts-actions button")).filter((b) => b.getClientRects().length).map((b) => b.getBoundingClientRect().height)) }; });
     check(row.display === "grid" && row.w >= 340 && row.btnH >= 44, "phone account rows are flat blocks with 44 px actions", row);
     await labelScale(page, "#users-section", "accounts (phone)");
     await page.click("tr[data-user='admin'] button[data-action='email']");
