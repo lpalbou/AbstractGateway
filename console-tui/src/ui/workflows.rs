@@ -21,7 +21,7 @@ use crate::store::{WorkflowRow, WorkflowsData};
 use crate::worker::operator::OpCmd;
 use crate::worker::Cmd;
 
-/// The footer verbs of this screen that only an admin may use: delete
+/// The footer verbs of this screen that only an admin may use: archive
 /// (one version / every version), import and reload. Listing and export
 /// stay open to every principal — the web keeps the tab for everyone.
 pub const ADMIN_KEYS: &[&str] = &["d", "D", "i", "L"];
@@ -114,11 +114,11 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         })
         .shortcut(KeyChord::plain(Key::Char('d')), {
             let c = ctx_del_ver.clone();
-            move |_| delete_selected(cx, &c, false)
+            move |_| archive_selected(cx, &c, false)
         })
         .shortcut(KeyChord::plain(Key::Char('D')), {
             let c = ctx_del_all.clone();
-            move |_| delete_selected(cx, &c, true)
+            move |_| archive_selected(cx, &c, true)
         })
         // Web parity: "Import…" (a .flow bundle) and a registry reload.
         .shortcut(KeyChord::plain(Key::Char('i')), move |_| {
@@ -207,9 +207,9 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 span("e", tt.accent),
                 span(" export  ", tt.text_muted),
                 span("d", tt.accent),
-                span(" delete version  ", tt.text_muted),
+                span(" archive version  ", tt.text_muted),
                 span("D", tt.accent),
-                span(" delete bundle  ", tt.text_muted),
+                span(" archive bundle  ", tt.text_muted),
                 span("i", tt.accent),
                 span(" import .flow  ", tt.text_muted),
                 span("L", tt.accent),
@@ -634,18 +634,17 @@ fn export_selected(cx: Scope, ctx: &Ctx) {
     });
 }
 
-/// Delete confirms first (web parity: "This removes … from disk. There is
-/// no undo."), defaulting to keep.
-fn delete_selected(cx: Scope, ctx: &Ctx, whole_bundle: bool) {
-    // `DELETE /bundles/{id}` is admin-only (the handler's admin check);
-    // the web renders Delete for admins only.
-    if !super::util::admin_gate(&ctx.store, "deleting a workflow") {
+/// Archive confirms first (web parity, DESIGN-v3 §5.3: workflows are
+/// archived, never deleted), defaulting to keep. Shipped workflows refuse
+/// (the gateway answers 409 with the reason, shown as the write's error).
+fn archive_selected(cx: Scope, ctx: &Ctx, whole_bundle: bool) {
+    if !super::util::admin_gate(&ctx.store, "archiving a workflow") {
         return;
     }
     let Some(row) = selected_row(ctx) else {
         ctx.store
             .notice
-            .set(Some("no workflow selected — nothing to delete".into()));
+            .set(Some("no workflow selected — nothing to archive".into()));
         return;
     };
     let version = if whole_bundle {
@@ -656,10 +655,10 @@ fn delete_selected(cx: Scope, ctx: &Ctx, whole_bundle: bool) {
             .map(|(v, _, _, _)| v.clone())
             .unwrap_or_default()
     };
-    let (label, scope) = if version.is_empty() {
-        (row.bundle_id.clone(), "EVERY version of this workflow")
+    let label = if version.is_empty() {
+        row.bundle_id.clone()
     } else {
-        (format!("{}@{}", row.bundle_id, version), "this version")
+        format!("{}@{}", row.bundle_id, version)
     };
     let c = ctx.clone();
     let bundle_id = row.bundle_id;
@@ -667,13 +666,13 @@ fn delete_selected(cx: Scope, ctx: &Ctx, whole_bundle: bool) {
         cx,
         ctx.ui,
         format!(
-            "Delete {label}? This removes {scope} from disk. There is no undo. \
-             If you may need it again, export it first (e)."
+            "Archive {label}? It disappears from lists and can't start new runs; \
+             the file and every past run stay on the gateway."
         ),
-        "Delete",
+        "Archive",
         "Keep it",
         move || {
-            c.send(Cmd::DeleteWorkflow { bundle_id, version });
+            c.send(Cmd::ArchiveWorkflow { bundle_id, version });
         },
     );
 }
@@ -968,7 +967,7 @@ fn skipped_block(cx: Scope, t: &TokenSet, d: &WorkflowsData) -> View {
         ]))
         .child(if abstracttui::app::use_viewport(cx).get().h >= 36 {
             line(vec![span(
-                "the files are still on disk and nothing was deleted — fix the cause and reload, or remove them deliberately",
+                "the files are still on disk and nothing was deleted — fix the cause and reload, or archive them",
                 t.text_faint,
             )])
         } else {

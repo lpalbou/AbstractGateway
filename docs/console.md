@@ -34,7 +34,7 @@ The sidebar groups the tabs in four sections, in this order:
 | Group | Tab | What it covers |
 |---|---|---|
 | Accounts | **Accounts** | every user and entity in one table: the **Active** switch, email, activity (Logs), workspace policy, token rotation, entity management, and the administrator's **Email for everyone** switches ([below](#accounts)) |
-| Work | **Workflows** | the workflow bundles on this gateway (name, what each does, version, source, the apps that use it), import, export, delete, the default workflow for each app and the **Streamed replies** setting ([below](#workflows)) |
+| Work | **Workflows** | the workflow bundles on this gateway, shared by the gateway or your own (name, what each does, version, source, the apps that use it, availability to users), import, export, open in AbstractFlow, archive, the default workflow for each app and the **Streamed replies** setting ([below](#workflows)) |
 | Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches |
 | Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), plus *Advanced: apps settings* and *Advanced: backlog settings (Continuum)* |
 | Models | **Providers** | **Local providers**: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, **Browse models** and its server connection; **Remote providers**: OpenAI, Anthropic, OpenRouter, Portkey and custom OpenAI-compatible connections with write-only keys (shown as fingerprints); then the **Available Providers** table ([below](#models-and-local-providers)) |
@@ -62,7 +62,7 @@ the apps keep answering. A banner on every tab says so while it is on.
 Every persistent on/off setting in the console is a switch labelled by the
 feature (highlighted when on). It applies at once, shows the new state, and an
 unavailable switch stays visible with its reason ("Connect a mailbox first.").
-One-shot actions (Rotate, Delete, Test, Disconnect) stay buttons.
+One-shot actions (Rotate token, Archive, Test, Disconnect) stay buttons.
 
 The **sign-in page** asks for the gateway user and the token, with one status
 ("Not signed in", "Signed in as admin", "Token refused") and errors under the
@@ -119,17 +119,21 @@ from a spark template (its name is permanent, [entities.md](./entities.md)).
 |---|---|
 | **Name** | the account id and a kind chip: **Admin**, **User** or **Entity** (hover it for the role) |
 | **Email address** | where the account's sign-in codes and notifications go: the registered email address, else the account's own connected mailbox address; "No address" when it has neither |
-| **Mailbox** | "Connected as x@y", "Not connected", "Paused", or "Not available" for an entity |
-| **Runtime** | the account's runtime, or "None" |
-| **Active** | the switch described below |
-| **Actions** | **Email**, **Logs**, **Workspace**, **Rotate**, **Manage** (entities) and **Delete** |
+| **Mailbox** | "Connected as x@y", "Receive only — no outgoing server" (with the reason under it), "Not connected" or "Paused" (users and entities alike: an entity has its own mailbox) |
+| **Runtime** | the account's runtime id (plain text that wraps), or "No runtime" |
+| **Active** | the switch described below; "Archived" on an archived row |
+| **Actions** | users: **Email**, **Logs**, **Workspace** and a "⋯" menu (**Rotate token**, **Archive**); entities: **Email**, **Logs**, **Manage** and a "⋯" menu (**Archive**); archived rows: **Logs** and a "⋯" menu (**Unarchive**) |
 
 Rows are tinted by kind (a legend under the table reads "Tint: admin · user ·
-entity"). An action that cannot apply to a row is shown disabled, and one line
-under the buttons says why: for an entity, "Rotate and Delete don't apply to
-entities: no credential is kept, and an entity's name is kept for life —
-suspend it instead."; for your own row, "You can't deactivate or delete your
-own account."
+entity"). Only the actions that apply to a row are shown: your own row has no
+**Archive**, and an entity has no **Rotate token** (hover the "⋯" button for
+why). The table never scrolls sideways: long names and addresses wrap, and when
+the table does not fit (narrow windows, tablets, phones) each account becomes
+one flat block: name, kind chip and Active, then the address and mailbox, then
+the runtime, then the actions.
+
+**Show archived** (administrators, above the table) lists archived accounts too;
+it is off by default and your browser remembers it.
 
 - **Active** for a user: off signs them out and refuses their sign-in until you
   turn it back on. Turning it off asks first ("Deactivate alice? They are
@@ -146,8 +150,10 @@ own account."
   administrator's own agents. On another user's row it holds only that user's
   **Email address** (with Save) and a read-only mailbox line ("Mailbox: not
   connected — only alice can connect a mailbox. You never see anyone's mail.").
-  On an entity's row it says "Entities can't have their own mailbox yet:
-  mailboxes belong to a user's runtime."
+  On an entity's row it holds the same email settings as your own, for the
+  entity's own mailbox (an entity is an AI user: its agents read and send from
+  it, and notifications about its runs go to its address); the administrator
+  and the entity's creator can open it.
 - **Logs** opens "Activity — <id>": the account's sign-ins, token rotations,
   runs started, automation commands, account changes and email events from the
   gateway's audit log, newest first, in your local time. The chips **All**,
@@ -159,15 +165,17 @@ own account."
   "Test notification"). The footer says what the audit log does not
   record (page views and reads, mail received, what agents send with their
   email tools).
-- **Workspace** opens the account's workspace policy (which folders its agents
-  may read and write); for an entity it opens the entity's management page.
-- **Rotate** issues a new token for a user (the old one stops working at once;
-  the new one is shown once). Entities have no token to rotate.
+- **Workspace** (users) opens the account's workspace policy (which folders its
+  agents may read and write).
+- **Rotate token** issues a new token for a user (the old one stops working at
+  once; the new one is shown once). Entities have no token to rotate.
 - **Manage** (entities) opens the entity's lifecycle, substrate, capabilities
   and prompt; **Talk** is there too.
-- **Delete** asks in a row under the account. The account and its token are
-  removed; its runtime and data are kept. Entities cannot be deleted: suspend
-  them instead.
+- **Archive** asks in a row under the account ("Archive alice? They can't sign
+  in any more. Their runtime, runs and history are kept; you can unarchive
+  later." / for an entity: "It stops acting and never wakes. Its memory, runs
+  and history are kept"). Nothing is deleted. **Unarchive** brings the account
+  back inactive: turn **Active** on to let it sign in (or act).
 
 Under the table, **Email for everyone** (administrators) holds the switch
 **Mailboxes for users**, with **Agent email tools for users** and **Sign-in by
@@ -177,12 +185,11 @@ email** under Advanced ([email.md](./email.md#administrators)). Below the page,
 Someone who is not an administrator sees the page as **Your account** ("Your
 account and the entities you created."): the same table with their own row and
 one row per entity they created (`GET /api/gateway/me/accounts`). There is no
-Create user and no Email for everyone; their own Rotate says "Only an admin can
-rotate your token." and an entity's Active switch "Only an admin can suspend an
-entity." See [security.md](./security.md#who-sees-which-account).
+Create user and no Email for everyone; their own row has no **Rotate token**
+(only an admin rotates tokens), they can archive an entity they created but not
+unarchive it, and an entity's Active switch says "Only an admin can suspend an
+entity." Archived accounts are not listed for them. See [security.md](./security.md#who-sees-which-account).
 
-On phones each account is one flat block: name, kind chip and Active, then the
-address and mailbox, then the runtime and the actions.
 
 ### Workflows
 
@@ -190,26 +197,51 @@ The **Workflows** tab starts with what workflows are: the programs your apps
 and automations run, packaged as bundles (`.flow` files) that ship with the
 gateway, that you import, or that you publish from AbstractFlow.
 
-The table has one row per bundle:
+The table has one row per bundle, in two groups: **Shared with everyone** (bundles that ship with the gateway and those an admin imported or
+published) and **Mine** (bundles you imported or published yourself; shown only
+when you have some). An admin's own imports are shared, so admins see one group.
+A user sees the shared bundles an admin left available, and their own.
 
 | Column | Shows |
 |---|---|
-| **Name** | the default entrypoint's name, with the bundle id under it, and a **Deprecated** pill when it applies |
+| **Name** | the default entrypoint's name, with the bundle id under it, and **Deprecated** / **Archived** pills when they apply |
 | **What it does** | the default entrypoint's description (the whole text when the row is expanded) |
 | **Version** | the latest version ("+2 older" when there are more; a manifest version 0.0.0 reads "unversioned") |
-| **Source** | "Shipped with the gateway", "Imported" or "Published from AbstractFlow" |
+| **Source** | a badge: "Shipped", "Imported" or "From AbstractFlow" |
 | **Used by** | the plain names of the apps that ask for its interfaces, each with a (?) that explains it, or "No app" |
-| **Actions** | **Export** and **Delete** (administrators) |
+| **Available to users** | (administrators only, shared bundles) a switch; off hides the workflow from users' lists and app pickers |
+| **Actions** | **Export**, **Open** (in AbstractFlow, a new tab) and **Archive** for imported and published bundles |
 
-Click a row to expand it: each version with its channel, date, **Export** and
-**Delete**, and its entrypoints with their names, descriptions and the apps
-that use them. The toolbar has a search field, the switches **Drafts** and
-**Older versions**, and **Import .flow** (administrators). **Delete** asks in
-the row and says how many runs reference the version; for a bundle that ships
-with the gateway it adds that nothing puts it back at the next restart, only
-reinstalling the gateway does. The default framework agent (`basic-agent`)
-cannot be deleted. **Broken workflows** appears only when the gateway refused a
-bundle file: the workflow, the versions affected and why it cannot run.
+Click a row to expand it: each version with its channel, date and the same
+actions, and its entrypoints with their names, descriptions and the apps that
+use them. The toolbar has a search field, the switches **Drafts**, **Older
+versions** and **Show archived**, and **Import .flow**. Everyone can import: a
+user's import lands in **Mine**, an admin's in the shared group.
+
+Workflows are never deleted. **Archive** asks in the row ("Archive … ? It
+disappears from lists and can't start new runs; the file and every past run
+stay on the gateway.") and hides the bundle (or one version); runs and
+automations that already use it keep resuming and replaying. **Show archived**
+lists archived bundles with **Unarchive**. Bundles that ship with the gateway
+have no Archive at all; an admin hides them with **Available to users** instead.
+Admins archive shared bundles; each user archives their own.
+
+**Available to users** (administrators): off hides the workflow from every
+user's lists and app pickers (AbstractCode, the Assistant, AbstractFlow), refuses
+their new runs and automations with "This workflow isn't available to users on
+this gateway. Ask an admin.", and pauses their existing automations on it with
+the reason "Paused: this workflow is no longer available to users — ask an
+admin." Turning it back on does not resume those automations; each user resumes
+their own. Admins always see every workflow, and an app's default workflow
+(**Default workflow per app**) keeps running for everyone even when it is hidden.
+
+**Open** opens the workflow in the visual editor in a new tab
+(AbstractFlow must be running: **Apps > Flow Editor**). A bundle published from
+one of your flows opens that flow; any other bundle opens as an unsaved copy
+titled `<name> · <bundle id>@<version>`, so Save creates your own flow and never
+changes the bundle. **Broken workflows** appears only when the gateway refused a
+bundle file: the workflow, the versions affected and why it cannot run, with
+**Archive** to hide them.
 
 **Default workflow per app** comes next: "When an app asks for "an agent"
 without naming a workflow, the gateway runs this one." One row per interface,
@@ -571,8 +603,8 @@ lives inside Review & Test.
   the two): the plain name of each app's interface, what runs ("Clients
   choose", "Built in: …", a workflow, or "Broken"), and the selected row's
   help; `Enter` picks a default and saves it at once, `o` shows **Other
-  workflow types**. Also `t` drafts on/off, `e` export, `d` delete a version,
-  `D` delete every version, `i` import a `.flow` bundle, `L` reload from disk.
+  workflow types**. Also `t` drafts on/off, `e` export, `d` archive a version,
+  `D` archive every version (nothing is deleted), `i` import a `.flow` bundle, `L` reload from disk.
   The per-app defaults are also on Runtimes (*Runtime knobs*).
 - **5 Apps** is the web console's Apps tab: open browser apps signed in,
   install or update them, start and stop them, the desktop Assistant and

@@ -112,18 +112,19 @@ removing, deprecating and reloading workflows there require an admin principal.
 Listing and running remain available to every user.
 
 Under hosted user auth each principal also gets its own workflow registry, and
-you can install and remove workflows there without admin rights — the shared
+you can install and archive workflows there without admin rights — the shared
 directory stays visible and read-only alongside it. The rule is ownership: you
 may change the registry you own.
 
 The same check covers every route that writes the registry, including
-`POST /bundles/upload`, `DELETE /bundles/{bundle_id}`, `POST /bundles/reload`
+`POST /bundles/upload`, `POST /bundles/{bundle_id}/archive`, `POST /bundles/reload`
 and `POST /visualflows/{flow_id}/publish`. A non-admin request against the
 shared registry returns `403`.
 
-`basic-agent.flow` is the default framework agent and the gateway verifies it at
-startup, so `DELETE` refuses to remove it and answers `409`. To replace the
-default agent, install the replacement bundle first, then remove the old file.
+Workflows are archived, never deleted (`DELETE /bundles/{bundle_id}` answers
+`410`). Bundles that ship with the gateway, `basic-agent.flow` included, cannot
+be archived either (`409`); an admin hides one from users with the **Available
+to users** switch on the console's Workflows page.
 
 ## Customizing the registry
 

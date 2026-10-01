@@ -8858,7 +8858,7 @@ fn workflow_export_confirms_the_destination_first() {
 }
 
 #[test]
-fn workflows_import_reload_and_delete_confirm() {
+fn workflows_import_reload_and_archive_confirm() {
     use abstractgateway_console::store::workflows_from_payload;
     use abstractgateway_console::worker::operator::OpCmd;
     let mut h = harness_sized(Size::new(140, 40));
@@ -8870,19 +8870,20 @@ fn workflows_import_reload_and_delete_confirm() {
     let s = h.turns(2);
     assert!(s.contains("i import .flow"), "panel hint:\n{s}");
     let _ = h.drain_cmds();
-    // Delete asks first; keep (default) sends nothing.
+    // Archive (never delete, DESIGN-v3 §5.3) asks first; keep (default) sends nothing.
     h.type_text("d");
     let s = h.turns(2);
     assert!(
-        s.contains("Delete demo@1.0.0? This removes this version from"),
+        s.contains("Archive demo@1.0.0? It disappears from lists"),
         "confirm:\n{s}"
     );
+    assert!(!s.contains("Delete demo"), "no delete wording:\n{s}");
     h.type_text("\r");
     h.turns(2);
     assert!(
-        h.find_cmd(|c| matches!(c, Cmd::DeleteWorkflow { .. }))
+        h.find_cmd(|c| matches!(c, Cmd::ArchiveWorkflow { .. }))
             .is_none(),
-        "keep does not delete"
+        "keep does not archive"
     );
     // Reload.
     h.type_text("L");
@@ -10763,7 +10764,7 @@ fn my_email_active_in_the_mailbox_card_and_test_says_the_api_sentence() {
     let s = h.turns(3);
     assert!(s.contains("Denied always wins."), "{s}");
     assert!(
-        s.contains("At most") && s.contains("per hour and") && s.contains("per day."),
+        s.contains("Send at most") && s.contains("per hour and") && s.contains("per day."),
         "{s}"
     );
     assert!(s.contains("0 sent this hour, 2 today."), "{s}");
@@ -11225,6 +11226,11 @@ fn my_email_recipient_rules_add_to_always_denied_sends_both_lists() {
         .map(|(i, l)| (i, l.to_string()))
         .collect();
     assert_eq!(adds.len(), 2, "one add field per list:\n{s}");
+    // An older gateway sends no self_addresses: the entry stays an ordinary chip.
+    assert!(
+        s.contains("me@example.test") && !s.contains("(your address)"),
+        "{s}"
+    );
     let (row, line_txt) = &adds[1];
     let field_col = line_txt[..line_txt.find('▐').unwrap()].chars().count();
     let _ = h.drain_cmds();

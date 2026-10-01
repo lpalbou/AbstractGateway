@@ -1294,55 +1294,54 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      gap: 18px;
 	      align-items: stretch;
 	    }
+	    /* Output modes: one labelled radio pill per configured route (icon +
+	       name); an unconfigured mode stays choosable and the chat says why it
+	       cannot send. */
 	    .sandbox-mode-grid {
 	      display: flex;
 	      flex-wrap: wrap;
-	      justify-content: flex-end;
-	      gap: 7px;
+	      gap: 6px;
 	      margin: 0;
 	    }
 	    .sandbox-mode {
-	      display: inline-grid;
-	      place-items: center;
-	      position: relative;
-	      width: 38px;
-	      min-width: 38px;
-	      height: 38px;
-	      min-height: 38px;
-	      padding: 0;
+	      display: inline-flex;
+	      align-items: center;
+	      gap: 6px;
+	      min-height: 36px;
+	      padding: 3px 12px 3px 4px;
 	      border: 1px solid var(--line-soft);
-	      border-radius: var(--radius-lg);
-	      background: rgba(255, 255, 255, .03);
+	      border-radius: 999px;
+	      background: transparent;
 	      color: var(--text-secondary);
-	      text-align: center;
+	      font-size: var(--font-size-sm);
+	      font-weight: 600;
 	    }
-	    .sandbox-mode:hover:not(:disabled) {
+	    .sandbox-mode:hover {
 	      border-color: color-mix(in srgb, var(--info) 45%, transparent);
 	      background: color-mix(in srgb, var(--info) 8%, transparent);
 	      color: var(--text-primary);
 	    }
 	    .sandbox-mode.active {
 	      border-color: color-mix(in srgb, var(--info) 75%, transparent);
-	      background: color-mix(in srgb, var(--info) 10%, transparent);
+	      background: color-mix(in srgb, var(--info) 12%, transparent);
 	      color: var(--text-primary);
 	    }
-	    .sandbox-mode:disabled {
-	      opacity: .46;
-	      cursor: not-allowed;
+	    .sandbox-mode.is-unconfigured .sandbox-mode-icon {
+	      background: transparent;
+	      color: var(--text-muted);
 	    }
 	    .sandbox-mode-icon {
 	      display: inline-grid;
 	      place-items: center;
-	      width: 30px;
-	      height: 30px;
-	      border-radius: var(--radius-lg);
+	      width: 28px;
+	      height: 28px;
+	      border-radius: 999px;
 	      background: var(--accent-subtle);
 	      color: var(--accent);
-	      font-weight: 700;
 	    }
 	    .sandbox-mode-icon svg {
-	      width: 18px;
-	      height: 18px;
+	      width: 16px;
+	      height: 16px;
 	      stroke: currentColor;
 	      stroke-width: 2;
 	      stroke-linecap: round;
@@ -1353,218 +1352,97 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      fill: currentColor;
 	      stroke: none;
 	    }
-	    .sandbox-mode-copy {
-	      position: absolute;
-	      width: 1px;
-	      height: 1px;
-	      overflow: hidden;
-	      clip: rect(0 0 0 0);
-	      white-space: nowrap;
+	    .sandbox-mode-copy { display: inline-flex; min-width: 0; }
+	    .sandbox-mode-main { white-space: nowrap; }
+	    .sandbox-mode-sub { display: none; }
+	    @media (pointer: coarse) {
+	      .sandbox-mode { min-height: 44px; }
 	    }
-	    .sandbox-mode-main {
-	      display: none;
-	      overflow: hidden;
-	      text-overflow: ellipsis;
-	      white-space: nowrap;
-	      font-weight: 700;
-	    }
-	    .sandbox-mode-sub {
-	      display: none;
-	      overflow: hidden;
-	      text-overflow: ellipsis;
-	      white-space: nowrap;
-	      color: var(--text-muted);
-	      font-size: var(--font-size-xs);
-	      font-weight: 700;
-	      margin-top: 2px;
-	    }
+	    /* The card: head, settings, then the kit chat filling the rest. The
+	       card scrolls (never clips) when the viewport is too short for the
+	       settings + a usable chat. */
 	    .sandbox-chat {
-	      min-height: min(560px, calc(var(--vh-full, 100vh) - 160px));
-	      max-height: calc(var(--vh-full, 100vh) - 205px);
+	      height: calc(var(--vh-full, 100vh) - 150px);
+	      min-height: 560px;
 	      display: grid;
-	      /* The transcript gives way first (down to 140 px) and, when the
-	         composer still does not fit (1280x800, 1366x768: system prompt +
-	         reasoning + MTP + input), the card scrolls instead of clipping the
-	         composer out of reach (it was overflow:hidden). */
-	      grid-template-rows: auto minmax(140px, 1fr) auto;
+	      grid-template-rows: auto minmax(360px, 1fr) auto;
+	      gap: 12px;
 	      overflow-x: hidden;
 	      overflow-y: auto;
 	      overscroll-behavior: contain;
 	    }
-	    .sandbox-chat .section-head {
-	      margin-bottom: 0;
-	      padding-bottom: 12px;
-	      border-bottom: 1px solid var(--line-soft);
+	    .sandbox-settings {
+	      display: grid;
+	      gap: 12px;
 	    }
-	    .sandbox-transcript {
-	      min-height: 0;
-	      max-height: none;
-	      overflow-y: auto;
-	      padding: 18px;
-	      background:
-	        linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,0)),
-	        rgba(0, 0, 0, .10);
+	    .sandbox-modes-field { display: grid; gap: 6px; }
+	    .sandbox-field-label {
+	      color: var(--text-secondary);
+	      font-size: var(--font-size-sm);
+	      font-weight: 600;
 	    }
-	    .sandbox-message {
+	    .sandbox-field-help {
+	      display: block;
+	      margin: 0;
+	      color: var(--text-muted);
+	      font-size: var(--af-helper-size, 13px);
+	      font-weight: 400;
+	      text-transform: none;
+	      letter-spacing: 0;
+	    }
+	    .sandbox-composer-toolbar {
+	      display: grid;
+	      grid-template-columns: minmax(0, 1fr) minmax(150px, auto) minmax(150px, auto);
+	      gap: 12px;
+	      align-items: start;
+	    }
+	    .sandbox-system-compact { margin: 0; display: grid; gap: 6px; }
+	    .sandbox-system-compact input,
+	    .sandbox-system-compact select { min-height: 36px; }
+	    /* The kit chat island (islands mountSandboxChat) fills this box. */
+	    .sandbox-chat-root {
 	      display: flex;
-	      margin: 0 0 12px;
+	      flex-direction: column;
+	      min-height: 0;
+	      border: 1px solid var(--line-soft);
+	      border-radius: var(--radius-lg);
+	      overflow: hidden;
+	      background: var(--panel-2);
 	    }
-	    .sandbox-message.user {
-	      justify-content: flex-end;
-	    }
-	    .sandbox-message.assistant,
-	    .sandbox-message.system,
-	    .sandbox-message.error {
-	      justify-content: flex-start;
-	    }
+	    /* The island's root is a <section>: the console's generic section card
+	       (border, padding, shadow) must not draw a card inside this box. */
+	    .sandbox-chat-root > .pc-workflow-chat { flex: 1 1 auto; min-height: 0; border: 0; padding: 0; box-shadow: none; border-radius: inherit; }
+	    .sandbox-chat-root .pc-workflow-chat__transcript { overflow: hidden; }
+	    .sandbox-chat-root .pc-chat-thread { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 	    /* Dialogue bubbles: the abstractuic panel-chat component's .pc-chat-item
 	       recipe (operator 12:24: "reuse the shared component for dialogue of
-	       abstractuic"). panel_chat.css is the source of truth; tokens map onto
-	       the console's own variables. sandbox-bubble keeps only the layout. */
-	    .sandbox-bubble { width: min(760px, 88%); box-shadow: 0 10px 28px rgba(0, 0, 0, .12); }
-	    .pc-chat-item {
+	       abstractuic"), for the console's own renderers (entity chat, docs
+	       assistant). The Sandbox renders the kit's real ChatMessageCard with
+	       the kit's panel_chat.css (af-kit-css), so these hand-mapped rules
+	       stay out of it (:where keeps their specificity unchanged). */
+	    .pc-chat-item:where(:not(.af-sandbox-chat *)) {
 	      position: relative;
 	      border: 1px solid var(--line);
 	      border-radius: 12px;
 	      padding: 10px 12px;
 	      background: var(--panel-2);
 	    }
-	    .pc-chat-item--user {
+	    .pc-chat-item--user:where(:not(.af-sandbox-chat *)) {
 	      background: var(--info-subtle);
 	      border-color: color-mix(in srgb, var(--info) 36%, transparent);
 	      border-bottom-right-radius: var(--radius-sm);
 	    }
-	    .pc-chat-item--assistant {
+	    .pc-chat-item--assistant:where(:not(.af-sandbox-chat *)) {
 	      background: color-mix(in srgb, var(--accent) 8%, var(--panel));
 	      border-color: color-mix(in srgb, var(--accent) 26%, transparent);
 	      border-bottom-left-radius: var(--radius-sm);
 	    }
-	    .pc-chat-item--status { background: var(--panel-2); }
-	    .pc-chat-item--error {
+	    .pc-chat-item--status:where(:not(.af-sandbox-chat *)) { background: var(--panel-2); }
+	    .pc-chat-item--error:where(:not(.af-sandbox-chat *)) {
 	      background: color-mix(in srgb, var(--danger) 12%, var(--panel));
 	      border-color: color-mix(in srgb, var(--danger) 32%, transparent);
 	    }
-	    .sandbox-message-meta {
-	      display: flex;
-	      align-items: center;
-	      gap: 8px;
-	      margin-bottom: 6px;
-	      color: var(--text-muted);
-	      font-size: var(--font-size-xs);
-	      font-weight: 800;
-	    }
-	    .sandbox-message-role {
-	      color: var(--accent);
-	      font-size: var(--font-size-sm);
-	      font-weight: 700;
-	    }
-	    .sandbox-message-spacer {
-	      flex: 1;
-	    }
-	    .sandbox-message-body {
-	      white-space: pre-wrap;
-	      color: var(--text-primary);
-	      line-height: 1.45;
-	    }
-	    .sandbox-message-body.markdown {
-	      white-space: normal;
-	    }
-	    .sandbox-message-body.markdown > :first-child {
-	      margin-top: 0;
-	    }
-	    .sandbox-message-body.markdown > :last-child {
-	      margin-bottom: 0;
-	    }
-	    .sandbox-message-body.markdown p {
-	      margin: 0 0 10px;
-	    }
-	    .sandbox-message-body.markdown h1,
-	    .sandbox-message-body.markdown h2,
-	    .sandbox-message-body.markdown h3 {
-	      margin: 12px 0 8px;
-	      color: var(--text-primary);
-	      font-weight: 700;
-	      letter-spacing: 0;
-	      line-height: 1.2;
-	    }
-	    .sandbox-message-body.markdown h1 { font-size: 1.18em; }
-	    .sandbox-message-body.markdown h2 { font-size: 1.10em; }
-	    .sandbox-message-body.markdown h3 { font-size: 1.03em; }
-	    .sandbox-message-body.markdown ul,
-	    .sandbox-message-body.markdown ol {
-	      margin: 8px 0 10px 22px;
-	      padding: 0;
-	    }
-	    .sandbox-message-body.markdown li {
-	      margin: 4px 0;
-	    }
-	    .sandbox-message-body.markdown blockquote {
-	      margin: 10px 0;
-	      border-left: 3px solid color-mix(in srgb, var(--info) 45%, transparent);
-	      padding: 4px 0 4px 12px;
-	      color: var(--text-secondary);
-	    }
-	    .sandbox-message-body.markdown code {
-	      border: 1px solid rgba(255, 255, 255, .10);
-	      border-radius: var(--radius-sm);
-	      padding: 1px 5px;
-	      background: rgba(0, 0, 0, .26);
-	      color: var(--text-primary);
-	      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-	      font-size: .93em;
-	    }
-	    .sandbox-message-body.markdown pre {
-	      overflow: auto;
-	      margin: 10px 0;
-	      border: 1px solid var(--line-soft);
-	      border-radius: var(--radius-lg);
-	      padding: 10px 12px;
-	      background: rgba(0, 0, 0, .28);
-	    }
-	    .sandbox-message-body.markdown pre code {
-	      border: 0;
-	      padding: 0;
-	      background: transparent;
-	    }
-	    .sandbox-message-body.markdown a {
-	      color: var(--accent-2);
-	      font-weight: 800;
-	    }
-	    .sandbox-speak {
-	      width: 30px;
-	      min-width: 30px;
-	      height: 28px;
-	      padding: 0;
-	    }
-	    .sandbox-speak.speaking {
-	      border-color: color-mix(in srgb, var(--info) 70%, transparent);
-	      color: var(--accent);
-	    }
-	    .sandbox-progress {
-	      display: grid;
-	      gap: 8px;
-	      margin-top: 8px;
-	    }
-	    .sandbox-progress-bar {
-	      position: relative;
-	      height: 6px;
-	      overflow: hidden;
-	      border-radius: 999px;
-	      background: rgba(255, 255, 255, .08);
-	    }
-	    .sandbox-progress-bar::before {
-	      content: "";
-	      position: absolute;
-	      inset: 0;
-	      width: 38%;
-	      border-radius: inherit;
-	      background: linear-gradient(90deg, var(--accent), var(--accent-2));
-	      animation: sandbox-progress 1.25s ease-in-out infinite;
-	    }
-	    @keyframes sandbox-progress {
-	      0% { transform: translateX(-110%); }
-	      100% { transform: translateX(280%); }
-	    }
+	    /* Generated-audio audition (Multimodal Test, entity voice audition). */
 	    .sandbox-artifact {
 	      display: grid;
 	      gap: 8px;
@@ -1608,134 +1486,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      color: var(--accent-2);
 	      font-weight: 700;
 	    }
-	    .sandbox-composer {
-	      border-top: 1px solid var(--line-soft);
-	      padding: 14px 16px 16px;
-	      background: color-mix(in srgb, var(--panel-2) 55%, transparent);
-	    }
-	    .sandbox-composer-toolbar {
-	      display: grid;
-	      grid-template-columns: minmax(0, 1fr);
-	      gap: 10px;
-	      align-items: end;
-	      margin-bottom: 10px;
-	    }
-	    .sandbox-system-compact {
-	      margin: 0;
-	    }
-	    .sandbox-system-compact input {
-	      min-height: 34px;
-	      padding-top: 6px;
-	      padding-bottom: 6px;
-	    }
-	    .sandbox-composer-toolbar { grid-template-columns: minmax(0, 1fr) auto; }
-	    #sandbox-reasoning { min-height: 34px; }
-	    .sandbox-reasoning-block {
-	      margin: 0 0 8px 0;
-	      font-size: var(--font-size-sm);
-	      color: var(--muted, #8a93a6);
-	    }
-	    .sandbox-reasoning-block summary { cursor: pointer; user-select: none; }
-	    .sandbox-reasoning-block pre {
-	      white-space: pre-wrap;
-	      margin: 6px 0 0 0;
-	      max-height: 240px;
-	      overflow: auto;
-	    }
-	    .sandbox-dropzone {
-	      display: grid;
-	      grid-template-columns: auto minmax(0, 1fr) auto;
-	      gap: 12px;
-	      align-items: end;
-	      border: 1px solid var(--line-soft);
-	      border-radius: var(--radius-lg);
-	      padding: 10px 12px;
-	      /* Theme-safe composer pill (was a near-black literal — a dark slab
-	         inside the light theme's white page). */
-	      background: var(--panel-2);
-	    }
-	    .sandbox-dropzone:focus-within {
-	      border-color: color-mix(in srgb, var(--info) 62%, transparent);
-	      box-shadow: 0 0 0 3px color-mix(in srgb, var(--info) 10%, transparent), inset 0 1px 0 rgba(255, 255, 255, .05);
-	    }
-	    .sandbox-dropzone.dragover {
-	      border-color: color-mix(in srgb, var(--info) 75%, transparent);
-	      box-shadow: 0 0 0 3px var(--info-subtle);
-	    }
-	    .sandbox-input-area {
-	      display: grid;
-	      min-width: 0;
-	    }
-	    .sandbox-dropzone textarea {
-	      min-height: 56px;
-	      max-height: 170px;
-	      resize: vertical;
-	      border: 0;
-	      padding: 8px 2px;
-	      background: transparent;
-	      color: var(--text-primary);
-	      font-size: var(--font-size-md);
-	      line-height: 1.45;
-	      box-shadow: none;
-	    }
-	    .sandbox-dropzone textarea:focus {
-	      box-shadow: none;
-	    }
-	    .sandbox-composer-side {
-	      display: grid;
-	      gap: 8px;
-	      align-items: end;
-	      justify-items: end;
-	      align-self: stretch;
-	      align-content: end;
-	    }
-	    .sandbox-composer-actions {
-	      display: flex;
-	      align-items: center;
-	      justify-content: flex-end;
-	      gap: 8px;
-	    }
-	    .sandbox-composer-icon,
-	    .sandbox-send {
-	      width: 40px;
-	      min-width: 40px;
-	      height: 40px;
-	      min-height: 40px;
-	      border-radius: var(--radius-lg);
-	      padding: 0;
-	    }
-	    .sandbox-send {
-	      background: var(--accent);
-	      border-color: rgba(96, 165, 250, .36);
-	    }
-	    .sandbox-send .button-icon,
-	    .sandbox-composer-icon .button-icon {
-	      margin: 0;
-	    }
-	    .sandbox-attachments {
-	      display: flex;
-	      flex-wrap: wrap;
-	      gap: 6px;
-	      margin: 8px 0 0;
-	    }
-	    .sandbox-attachment {
-	      display: inline-flex;
-	      align-items: center;
-	      gap: 6px;
-	      max-width: 260px;
-	      border: 1px solid var(--line-soft);
-	      border-radius: 999px;
-	      padding: 4px 8px;
-	      color: var(--text-secondary);
-	      background: rgba(255, 255, 255, .04);
-	      font-size: var(--font-size-xs);
-	      font-weight: 800;
-	    }
-	    .sandbox-attachment span {
-	      overflow: hidden;
-	      text-overflow: ellipsis;
-	      white-space: nowrap;
-	    }
 	    .appearance-form {
 	      display: grid;
 	      grid-template-columns: 140px minmax(0, 1fr);
@@ -1769,8 +1519,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    @media (max-width: 1023.98px) {
 	      .tab-grid { grid-template-columns: minmax(0, 1fr); }
 	      .sandbox-workspace { grid-template-columns: minmax(0, 1fr); }
-	      .sandbox-composer-toolbar { grid-template-columns: minmax(0, 1fr); }
-	      .sandbox-mode-grid { justify-content: flex-start; }
 	      main { padding: 16px; }
 	    }
 	    @media (max-width: 479.98px) {
@@ -1784,22 +1532,21 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	       card's overflow:hidden cut it off unreachably. The card grows with
 	       its content; the transcript alone scrolls. */
 	    @media (max-width: 1023.98px), (pointer: coarse) {
-	      .sandbox-chat { min-height: 0; max-height: none; overflow: visible; grid-template-rows: auto minmax(220px, auto) auto; }
-	      .sandbox-transcript { max-height: calc(var(--vh-full, 100vh) * .55); }
+	      .sandbox-chat { height: auto; min-height: 0; overflow: visible; grid-template-rows: auto auto auto; }
+	      .sandbox-chat-root { height: calc(var(--vh-full, 100vh) * .72); min-height: 420px; }
+	      .sandbox-composer-toolbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+	      #sandbox-system-label { grid-column: 1 / -1; }
 	    }
 	    @media (max-width: 767.98px) {
 	      body:not(.signed-in) .console-shell { align-content: start; padding-block: 18px; }
 	      .appearance-form { grid-template-columns: 1fr; }
 	      .provider-modal .provider-config-form { grid-template-columns: 1fr; }
 	      .provider-modal .field-span-2 { grid-column: auto; }
-	      .sandbox-dropzone { grid-template-columns: auto minmax(0, 1fr); }
-	      .sandbox-composer-side {
-	        grid-column: 1 / -1;
-	        grid-template-columns: minmax(0, 1fr) auto;
-	        align-items: center;
-	        justify-items: stretch;
-	      }
-	      .sandbox-composer-actions { justify-content: flex-end; }
+	      .sandbox-composer-toolbar { grid-template-columns: minmax(0, 1fr); }
+	      /* Phones: one flat surface — the chat is not a second card inside the section. */
+	      .sandbox-chat-root { border: 0; background: transparent; }
+	      .sandbox-chat-root .pc-workflow-chat__transcript { padding-inline: 0; }
+	      .sandbox-chat-root .pc-workflow-chat__composer { padding-inline: 0; }
 	    }
     /* Models / Engines tabs: AbstractCore's embedded screens (scoped under
        .acc-root, they read the kit variables above), then the host chrome. */
@@ -1927,27 +1674,37 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .workflows-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
 	    .workflows-table th { white-space: nowrap; }
 	    .workflows-table td { vertical-align: top; padding-top: 10px; padding-bottom: 10px; overflow-wrap: anywhere; }
-	    .workflows-table th.workflows-col-name { width: 18%; }
-	    .workflows-table th.workflows-col-what { width: auto; }
+	    /* Fixed columns at their minimum; Name and What it does share the rest. Below the width
+	       these minimums need (computed in workflowsLayout, never a guessed breakpoint) the table
+	       becomes one flat card per bundle (.workflows-cards), so it never scrolls sideways. */
+	    .workflows-table th.workflows-col-name, .workflows-table th.workflows-col-what { width: auto; }
 	    .workflows-table th.workflows-col-version { width: 6.5rem; }
-	    .workflows-table th.workflows-col-source { width: 11rem; }
-	    .workflows-table th.workflows-col-usedby { width: 15rem; }
-	    .workflows-table th.workflows-col-actions { width: 9.5rem; }
+	    .workflows-table th.workflows-col-source { width: 7.5rem; }
+	    .workflows-table th.workflows-col-usedby { width: 9.5rem; }
+	    .workflows-table th.workflows-col-available { width: 8.5rem; white-space: normal; }
+	    .workflows-table th.workflows-col-actions { width: 11rem; }
 	    .workflows-name__wrap { display: flex; gap: 6px; align-items: flex-start; }
 	    .workflows-name__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 	    .workflows-name__text small { font-size: var(--af-helper-size, var(--font-size-md)); font-family: var(--font-mono); overflow-wrap: anywhere; }
 	    .workflows-chevron { color: var(--muted); width: 1em; flex: 0 0 auto; }
 	    .workflows-what { color: var(--text); }
-	    .workflows-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
-	    .workflows-row[aria-expanded="true"] .workflows-clamp { display: block; -webkit-line-clamp: unset; line-clamp: none; overflow: visible; }
 	    .workflows-fold-what, .workflows-fold-meta { display: none; }
 	    .workflows-fold-what, .workflows-fold-meta { font-size: var(--af-helper-size, var(--font-size-md)); color: var(--muted); font-weight: 400; }
 	    .workflows-fold-what { color: var(--text); font-size: var(--font-size-base); }
 	    .workflows-usedby__item { display: block; }
 	    .workflows-usedby__item > .help-q { margin-left: 6px; }
 	    .workflows-usedby__item + .workflows-usedby__item { margin-top: 4px; }
-	    .workflows-actions .actions { flex-wrap: nowrap; justify-content: flex-end; gap: 6px; }
+	    .workflows-actions .actions { flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 	    .workflows-actions .actions > button { white-space: nowrap; }
+	    /* Ownership groups (DESIGN-v3 §5.1): a plain heading row per group, no nested card. */
+	    .workflows-table tr.workflows-group > th { text-align: left; padding: 18px 0 6px; border-bottom: 1px solid var(--line); font-size: var(--font-size-base); font-weight: 600; color: var(--text); white-space: normal; }
+	    .workflows-table tr.workflows-group:first-child > th { padding-top: 6px; }
+	    .workflows-badge { margin: 0; white-space: normal; }
+	    .workflows-name__text .pill { align-self: flex-start; margin: 2px 0 0; }
+	    .workflows-row--archived .workflows-name strong, .workflows-row--archived .workflows-what { color: var(--muted); }
+	    .workflows-open-flow { display: inline-flex; align-items: center; gap: 6px; }
+	    .workflows-open-flow .button-icon svg { width: 14px; height: 14px; }
+	    .workflows-available .af-switch__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 	    .workflows-confirm > td { padding-top: 0; }
 	    .workflows-confirm-box { margin-top: 8px; }
 	    .workflows-detail > td { background: var(--panel-2, transparent); padding: 10px 14px 14px 36px; }
@@ -1985,39 +1742,32 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .workflows-settings { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
 	    .workflows-settings .af-switch--row { width: 100%; max-width: none; }
 	    .workflows-settings .ui-advanced { display: block; margin-top: 6px; }
-	    /* 768-1023 px: the table keeps Name | Version | Used by | Actions; what it does and the
-	       source fold under the name. */
 	    @media (max-width: 1023.98px) {
-	      .workflows-table .workflows-th-what, .workflows-table .workflows-th-source, .workflows-table td.workflows-what, .workflows-table td.workflows-source { display: none; }
-	      .workflows-table th.workflows-col-name { width: auto; }
-	      .workflows-table th.workflows-col-version { width: 6.5rem; }
-	      .workflows-table th.workflows-col-usedby { width: 12rem; }
-	      .workflows-table th.workflows-col-actions { width: 11rem; }
-	      .workflows-fold-what { display: -webkit-box; margin-top: 2px; }
-	      .workflows-fold-meta { display: block; }
-	      .workflows-fold-version { display: none; }
 	      .agent-defaults { grid-template-columns: minmax(0, 1fr); }
 	    }
-	    /* < 768 px: one flat block per bundle — name + actions, what it does, ONE meta line
-	       "Version x · source", then "Used by · …" (DESIGN §12: label · value on one line). */
-	    @media (max-width: 767.98px) {
-	      .workflows-table, .workflows-table tbody, .workflows-table tr, .workflows-table td { display: block; width: 100%; }
-	      .workflows-table thead { display: none; }
-	      .workflows-table tr.workflows-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
-	      .workflows-table tr.workflows-row > td { padding: 0; border: 0; width: auto; }
-	      .workflows-table td.workflows-name { grid-column: 1 / -1; grid-row: 1; }
-	      .workflows-table td.workflows-actions { grid-column: 1 / -1; grid-row: 3; margin-top: 4px; }
-	      .workflows-actions .actions { justify-content: flex-start; }
-	      .workflows-table td.workflows-version-cell { display: none; }
-	      .workflows-fold-version { display: inline; }
-	      .workflows-usedby { grid-column: 1 / -1; grid-row: 2; display: flex !important; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
-	      .workflows-usedby__item + .workflows-usedby__item::before { content: "·"; margin-right: 6px; color: var(--muted); }
-	      .workflows-table td.workflows-usedby::before { content: "Used by · "; color: var(--muted); }
-	      .workflows-usedby__item + .workflows-usedby__item { margin-top: 0; }
+	    /* Cards (.workflows-cards, set by workflowsLayout when the table's minimum width does not
+	       fit): one flat block per bundle — name, what it does, ONE meta line "Version x · badge",
+	       "Used by · …", the availability switch, then the actions (DESIGN §12). */
+	    .workflows-cards .workflows-table, 	    .workflows-cards .workflows-table tbody, 	    .workflows-cards .workflows-table tr, 	    .workflows-cards .workflows-table td { display: block; width: 100%; }
+	    .workflows-cards .workflows-table thead { display: none; }
+	    .workflows-cards .workflows-table tr.workflows-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px 10px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
+	    .workflows-cards .workflows-table tr.workflows-row > td { padding: 0; border: 0; width: auto; }
+	    .workflows-cards .workflows-table td.workflows-what, 	    .workflows-cards .workflows-table td.workflows-source, 	    .workflows-cards .workflows-table td.workflows-version-cell { display: none; }
+	    .workflows-cards .workflows-fold-what { display: block; margin-top: 2px; }
+	    .workflows-cards .workflows-fold-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+	    .workflows-cards .workflows-table td.workflows-available:empty { display: none; }
+	    .workflows-cards .workflows-available .af-switch__label { position: static; width: auto; height: auto; overflow: visible; clip: auto; }
+	    .workflows-cards .workflows-table tr.workflows-group > th { display: block; width: 100%; padding: 18px 0 6px; }
+	    .workflows-cards .workflows-actions .actions { justify-content: flex-start; }
+	    .workflows-cards .workflows-usedby { display: flex !important; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+	    .workflows-cards .workflows-usedby__item + .workflows-usedby__item::before { content: "·"; margin-right: 6px; color: var(--muted); }
+	    .workflows-cards .workflows-table td.workflows-usedby::before { content: "Used by · "; color: var(--muted); }
+	    .workflows-cards .workflows-usedby__item + .workflows-usedby__item { margin-top: 0; }
+	    .workflows-cards .workflows-confirm, 	    .workflows-cards .workflows-confirm > td { display: block; padding: 0 0 10px; border: 0; }
+	    .workflows-cards .workflows-detail > td { padding: 8px 0 12px; }
+	    .workflows-cards .workflows-entry { grid-template-columns: minmax(0, 1fr); }
+	    @media (pointer: coarse), (max-width: 767.98px) {
 	      .workflows-actions .actions > button { min-height: 44px; }
-	      .workflows-confirm, .workflows-confirm > td { display: block; padding: 0 0 10px; border: 0; }
-	      .workflows-detail > td { padding: 8px 0 12px; }
-	      .workflows-entry { grid-template-columns: minmax(0, 1fr); }
 	    }
 	    /* ---- Account email UI (DESIGN-v2 §3): IMAP servers always visible, one row per
 	       server (Server · Port · Security) from 768 px; Advanced as plain sentences. */
@@ -2036,8 +1786,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .advanced-sentences { gap: 10px; }
 	    .advanced-sentence { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: var(--font-size-base); color: var(--text); }
 	    .advanced-sentence select { width: auto; }
-	    .advanced-sentence input.advanced-num { width: 5.5em; text-align: right; }
-	    .advanced-sentence input.advanced-folder { width: 12em; max-width: 100%; }
+	    /* #my-email-section: outranks the kit's `.af-form input { width: 100% }` so the limits read as one
+	       sentence with two small number fields (wrapping on phones) and the folder label is a sentence label. */
+	    #my-email-section .advanced-sentence input.advanced-num { width: 6em; flex: 0 0 auto; text-align: right; }
+	    #my-email-section .advanced-sentence input.advanced-folder { width: 14em; max-width: 100%; flex: 0 1 auto; }
+	    #my-email-section .advanced-sentence label { display: inline; margin: 0; text-transform: none; letter-spacing: normal; font-size: inherit; font-weight: inherit; color: inherit; }
+	    .chip.chip--fixed { padding-right: 10px; }
 	    .advanced-sentences .af-form__help { margin: -4px 0 4px; }
 	    .advanced-add { max-width: 520px; }
 	    .recipient-rules { display: grid; gap: 12px; }
@@ -2049,10 +1803,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      .mail-server-row__fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 	      .mail-server-row__host { grid-column: 1 / -1; }
 	    }
-	    /* ---- Accounts (DESIGN-v2 §2.1): header row, ONE full-width table (kit row
-	       tints + kind chips), actions that wrap, the reasons of unavailable actions
-	       visible in the row. 834: Role / Email address / Runtime fold under the name.
-	       390: one flat block per row (no card in a card), 44 px targets. */
+	    /* ---- Accounts (DESIGN-v3 §1): header row, ONE full-width table that never scrolls
+	       sideways: table-layout fixed + colgroup, cells that wrap (never truncate), Actions = Email · Logs · Workspace|Manage · the kit "⋯" menu (af-menu).
+	       Columns: Name 22 %, Runtime 16 %, Active 84 px, Actions 280 px (fits Email · Logs ·
+	       Workspace · ⋯), Email address and Mailbox share the rest. Card list when the table would
+	       not fit: a CONTAINER query on the table's own width, computed from the column minimums
+	       (Email address and Mailbox >= 120 px each: (364 + 240) / 0.62 = 974 px), so the sidebar
+	       width never matters. Proven at 1024-2560 px by tests/browser/accounts.mjs. */
 	    #tab-users #account { display: none; }
 	    /* One subheading size on every round-2 page (= the card heading, h2 15 px / 600). */
 	    .section-subtitle { font-size: calc(15px * var(--font-scale)); font-weight: 600; color: var(--text); margin: 0 0 4px; }
@@ -2060,70 +1817,82 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    /* The top bar carries the page title and its line: the card header is the buttons row only. */
 	    .accounts-head { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 	    .accounts-head:not(:has(button:not(.hidden))) { display: none; }
-	    .accounts-head__actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-	    .accounts-table { width: 100%; border-collapse: collapse; }
-	    .accounts-table th { text-align: left; white-space: nowrap; }
-	    .accounts-table td { vertical-align: top; padding-top: 12px; padding-bottom: 12px; }
-	    .accounts-name__line { display: inline-flex; align-items: center; gap: 8px; flex-wrap: nowrap; white-space: nowrap; }
-	    .accounts-fold, .accounts-phone-line { display: none; }
-	    .accounts-mailbox { overflow-wrap: normal; }
+	    .accounts-head__actions { display: flex; gap: 8px 12px; flex-wrap: wrap; align-items: center; justify-content: flex-end; }
+	    .accounts-head__archived { display: inline-flex; align-items: center; margin-right: 4px; }
+	    .accounts-head__archived[hidden] { display: none; }
+	    .accounts-head__archived .af-switch__reason { display: none; }
+	    .accounts-page .users-table-wrap { overflow: visible; container: accounts / inline-size; }
+	    .accounts-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+	    .accounts-table col.accounts-c-name { width: 22%; }
+	    .accounts-table col.accounts-c-runtime { width: 16%; }
+	    .accounts-table col.accounts-c-active { width: 84px; }
+	    .accounts-table col.accounts-c-actions { width: 280px; }
+	    .accounts-table th { text-align: left; white-space: normal; overflow-wrap: anywhere; }
 	    .accounts-table th, .accounts-table td { padding-left: 10px; padding-right: 10px; }
+	    .accounts-table td { vertical-align: middle; padding-top: 10px; padding-bottom: 10px; overflow: hidden; }
+	    /* Wrap, never truncate (operator rule): a long id or address breaks anywhere and the row grows. */
+	    .accounts-cell-text { display: block; min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; word-break: normal; }
+	    /* Runtime ids: plain mono text (no chip box) that wraps at its hyphens first. */
+	    code.accounts-cell-text { display: block; padding: 0; border: 0; background: transparent; box-shadow: none; color: inherit; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; word-break: normal; font-size: var(--font-size-md); }
+	    .accounts-mailbox__reason { margin-top: 2px; font-size: var(--af-helper-size, var(--font-size-md)); }
+	    /* The id keeps its line; the chips wrap under it when the column is narrow. */
+	    .accounts-name__line { display: flex; align-items: center; gap: 4px 8px; min-width: 0; flex-wrap: wrap; }
+	    .accounts-name__line > strong { flex: 0 1 auto; min-width: 0; max-width: 100%; font-weight: 600; }
+	    .accounts-name__line > .af-kind-chip, .accounts-archived-chip { flex: 0 0 auto; }
+	    .accounts-archived-chip { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: var(--font-size-sm, 12px); font-weight: 600; line-height: 1.5; white-space: nowrap; }
+	    .accounts-row--archived .accounts-name__line > strong { color: var(--muted); }
+	    .accounts-phone-line { display: none; }
 	    #users-section > .message:empty, #users-section > .issued.hidden { display: none; }
 	    #email-caps-message:empty { display: none; }
-	    .accounts-none { font-style: normal; }
-	    /* Active: the switch only. Its unavailable reason (aria-describedby) is written in the row's
-	       ONE reasons line under the actions, so the column stays narrow. */
-	    .accounts-table td.accounts-active { width: 1%; }
+	    /* Active: the switch only (its unavailable reason is the switch's title + aria-describedby). */
 	    .accounts-active .af-switch__reason { display: none; }
-	    /* Actions: compact, icon + label, one height; one row where the width allows. */
-	    .accounts-table td.accounts-actions { width: 1%; min-width: 0; }
-	    .users-table td.accounts-actions { white-space: normal; }
-	    .accounts-actions__buttons { display: flex; flex-wrap: wrap; gap: 6px; }
-	    .accounts-actions__buttons > button { display: inline-flex; align-items: center; gap: 5px; height: 32px; min-height: 32px; padding: 0 9px; font-size: var(--font-size-md); white-space: nowrap; }
-	    .accounts-actions__buttons > button .button-icon svg { width: 14px; height: 14px; }
-	    .accounts-reasons { margin: 6px 0 0; font-size: var(--af-helper-size, var(--font-size-md)); line-height: 1.4; }
+	    .accounts-active__archived { font-size: var(--font-size-md); }
+	    /* Actions: one line that never leaves its cell; the "⋯" list is position: fixed (kit). */
+	    .accounts-table td.accounts-actions { overflow: visible; white-space: nowrap; }
+	    .accounts-actions__buttons { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; }
+	    .accounts-actions__buttons > button { display: inline-flex; align-items: center; justify-content: center; height: 32px; min-height: 32px; padding: 0 10px; font-size: var(--font-size-md); white-space: nowrap; }
+	    .accounts-actions__buttons .af-menu__button { height: 32px; min-width: 36px; }
 	    .accounts-legend { margin: 0; }
 	    /* Email for everyone: a full-width settings row (label + description left, switch at the card edge). */
 	    #users-section .accounts-email { margin: 8px 0 0; padding: 16px 0 0; border: 0; border-top: 1px solid var(--line-soft); background: transparent; box-shadow: none; max-width: none; width: 100%; }
 	    #users-section .accounts-email .switch-list, #users-section .accounts-email .af-switch--row { width: 100%; max-width: none; }
 	    #users-section .accounts-email .plain-disclosure { margin-top: 8px; }
-	    @media (min-width: 1440px) {
-	      .accounts-actions__buttons { flex-wrap: nowrap; }
+	    @media (pointer: coarse) {
+	      .accounts-actions__buttons > button, .accounts-actions__buttons .af-menu__button { height: 44px; min-height: 44px; }
 	    }
-	    @media (max-width: 1439.98px) {
-	      .accounts-table td.accounts-actions { width: 42%; }
-	      .accounts-table .accounts-col-email, .accounts-table .accounts-col-runtime,
-	      .accounts-table th:nth-child(2), .accounts-table th:nth-child(4) { display: none; }
-	      .accounts-fold { display: block; margin-top: 4px; font-size: var(--af-helper-size, var(--font-size-md)); overflow-wrap: break-word; }
-	      .accounts-fold > span { display: block; }
-	    }
-	    @media (max-width: 767.98px) {
-	      .accounts-head { justify-content: stretch; }
-	      .accounts-head__actions { flex: 1 1 100%; }
-	      .accounts-head__actions > button { flex: 1 1 100%; min-height: 44px; }
+	    /* Card list (DESIGN-v3 §1.2): one flat block per account (no card in a card). Line 1 name +
+	       chip + Active (right); line 2 "Email address · Mailbox"; line 3 runtime (muted); line 4 actions. */
+	    @container accounts (max-width: 973.98px) {
 	      .accounts-table, .accounts-table tbody, .accounts-table tr { display: block; width: 100%; }
-	      .accounts-table thead { display: none; }
+	      .accounts-table thead, .accounts-table colgroup { display: none; }
 	      .accounts-table tr.accounts-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 12px 12px 12px 14px; border-top: 1px solid var(--line-soft); }
-	      .accounts-table tr.accounts-row > td { display: block; padding: 0; border: 0; min-width: 0; width: auto; }
+	      .accounts-table tr.accounts-row > td { display: block; padding: 0; border: 0; min-width: 0; width: auto; overflow: visible; }
 	      .accounts-table tr.accounts-row > td::before { content: none; }
-	      .accounts-table td.accounts-name { grid-column: 1; grid-row: 1; box-shadow: none; align-self: center; }
-	      .accounts-table td.accounts-active { grid-column: 2; grid-row: 1; justify-self: end; }
+	      .accounts-table td.accounts-name { grid-column: 1; grid-row: 1; align-self: center; }
+	      .accounts-table td.accounts-active { grid-column: 2; grid-row: 1; justify-self: end; align-self: center; }
 	      .accounts-table td.accounts-mailbox { grid-column: 1 / -1; grid-row: 2; }
-	      .accounts-table td.accounts-actions { grid-column: 1 / -1; grid-row: 4; margin-top: 8px; width: auto; min-width: 0; }
 	      .accounts-table tr.accounts-row > td.accounts-col-email { display: none; }
+	      .accounts-table td.accounts-col-runtime { grid-column: 1 / -1; grid-row: 3; color: var(--af-row-text-muted, var(--muted)); }
+	      .accounts-table td.accounts-actions { grid-column: 1 / -1; grid-row: 4; margin-top: 6px; }
+	      .accounts-table .accounts-mailbox__text { display: none; }
+	      .accounts-phone-line { display: block; overflow-wrap: anywhere; }
+	      /* Line 3: a plain muted line, never a box that reads as an input. */
+	      .accounts-table td.accounts-col-runtime .accounts-cell-text { display: block; background: transparent; border: 0; box-shadow: none; padding: 0; color: inherit; font-size: var(--font-size-md); }
+	      .accounts-table td.accounts-col-runtime .accounts-cell-text::before { content: "Runtime "; font-family: var(--font-sans, inherit); }
+	      .accounts-actions__buttons { flex-wrap: wrap; gap: 8px; }
 	      /* One flat block per row: the tint and the kind bar paint the row, not each cell. */
 	      .accounts-table tr.accounts-row > td { background: transparent !important; box-shadow: none !important; }
 	      .accounts-table tr.af-row--admin { background-color: var(--af-row-tint-admin); box-shadow: inset 3px 0 0 var(--af-row-mark-admin); }
 	      .accounts-table tr.af-row--user { box-shadow: inset 3px 0 0 var(--af-row-mark-user); }
 	      .accounts-table tr.af-row--entity { background-color: var(--af-row-tint-entity); box-shadow: inset 3px 0 0 var(--af-row-mark-entity); }
-	      .accounts-fold { display: none; }
-	      .accounts-table .accounts-col-runtime { display: block !important; grid-column: 1 / -1; grid-row: 3; color: var(--af-row-text-muted, var(--muted)); }
-	      .accounts-table .accounts-col-runtime::before { content: "Runtime " !important; }
-	      .accounts-phone-line { display: block; }
-	      .accounts-mailbox__text { display: none; }
-	      .accounts-actions__buttons { gap: 8px; }
-	      .accounts-actions__buttons > button { height: 44px; min-height: 44px; padding: 0 12px; font-size: var(--font-size-base); }
 	      .accounts-table .row-confirm, .accounts-table .row-confirm > td { display: block; padding: 0 0 10px; border: 0; }
+	    }
+	    @media (max-width: 767.98px) {
+	      .accounts-head { justify-content: stretch; }
+	      .accounts-head__actions { flex: 1 1 100%; }
+	      .accounts-head__actions > button { flex: 1 1 100%; min-height: 44px; }
+	      .accounts-head__archived { flex: 1 1 100%; }
+	      .accounts-actions__buttons > button, .accounts-actions__buttons .af-menu__button { height: 44px; min-height: 44px; padding: 0 14px; font-size: var(--font-size-base); }
 	    }
 	    /* Account modals (kit af-modal): content rules only; the shell is the kit's. */
 	    .account-modal-body .account-page { max-width: none; }
@@ -2397,13 +2166,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <input id="workflows-search" type="search" placeholder="Search by name, description or id" aria-label="Search workflows">
 	                <span id="workflows-drafts-slot" class="workflows-switch"></span>
 	                <span id="workflows-older-slot" class="workflows-switch"></span>
+	                <span id="workflows-archived-slot" class="workflows-switch"></span>
 	                <button id="workflows-import" class="secondary" type="button" title="Install a .flow bundle">Import .flow</button>
 	                <input id="workflows-import-file" type="file" accept=".flow" class="hidden" multiple>
 	              </div>
 	              <div id="workflows-message" class="message" role="status" aria-live="polite"></div>
 	              <div class="table-scroll workflows-scroll" id="workflows-scroll">
 	                <table class="workflows-table" data-ui-no-stack>
-	                  <thead><tr><th class="workflows-col-name">Name</th><th class="workflows-col-what workflows-th-what">What it does</th><th class="workflows-col-version">Version</th><th class="workflows-col-source workflows-th-source">Source</th><th class="workflows-col-usedby">Used by</th><th class="workflows-col-actions"><span class="sr-only">Actions</span></th></tr></thead>
+	                  <thead><tr><th class="workflows-col-name">Name</th><th class="workflows-col-what workflows-th-what">What it does</th><th class="workflows-col-version">Version</th><th class="workflows-col-source workflows-th-source">Source</th><th class="workflows-col-usedby">Used by</th><th id="workflows-th-available" class="workflows-col-available" hidden><span class="workflows-th-available__label">Available to users</span></th><th class="workflows-col-actions"><span class="sr-only">Actions</span></th></tr></thead>
 	                  <tbody id="workflows-table"></tbody>
 	                </table>
 	              </div>
@@ -2710,21 +2480,24 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 
 	      <div id="tab-sandbox" class="tab-panel">
 	        <div class="sandbox-workspace">
-	          <section class="session-only sandbox-chat">
-	            <div class="section-head">
-	              <div>
-	                <h2 class="section-title"><span class="section-icon" aria-hidden="true">◌</span><span>Sandbox Chat</span></h2>
-	                <p id="sandbox-context" class="section-note">Select a provider/model and run a smoke test.</p>
-	              </div>
-	            </div>
-	            <div id="sandbox-transcript" class="sandbox-transcript pc-chat-thread"><div class="empty" id="sandbox-empty-hint">No messages yet — pick an output mode below and ask anything.</div></div>
-	            <div class="sandbox-composer">
+	          <!-- The chat is the abstractuic kit's (islands mountSandboxChat: panel-chat's
+	               thread + composer, Attach / drop / paste, dictation and a speaker on replies,
+	               as in AbstractCode). The console keeps the output modes, system prompt,
+	               reasoning and MTP around it and sends every mode through its gateway
+	               endpoint (runSandbox). -->
+	          <section class="session-only sandbox-chat" aria-label="Sandbox chat">
+	            <div class="sandbox-settings">
 	              <label class="hidden">Capability<select id="sandbox-capability"></select></label>
 	              <label id="sandbox-provider-label" class="hidden">Provider<select id="sandbox-provider"></select></label>
 	              <label id="sandbox-model-label" class="hidden">Model<select id="sandbox-model"></select></label>
+	              <div class="sandbox-modes-field">
+	                <span id="sandbox-modes-label" class="sandbox-field-label">Output</span>
+	                <div id="sandbox-output-modes" class="sandbox-mode-grid" role="radiogroup" aria-labelledby="sandbox-modes-label"></div>
+	                <p id="sandbox-context" class="sandbox-field-help">What the next message generates, with its route from Multimodal.</p>
+	              </div>
 	              <div class="sandbox-composer-toolbar">
-	                <label id="sandbox-system-label" class="sandbox-system-compact" title="Instructions sent before your message. Leave empty for none.">System prompt<input id="sandbox-system"></label>
-	                <label id="sandbox-reasoning-label" class="sandbox-system-compact" title="Reasoning effort for reasoning models. Default sends nothing; the model behaves as before.">Reasoning<select id="sandbox-reasoning">
+	                <label id="sandbox-system-label" class="sandbox-system-compact">System prompt<input id="sandbox-system" placeholder="None"><span class="sandbox-field-help">Instructions sent before your message.</span></label>
+	                <label id="sandbox-reasoning-label" class="sandbox-system-compact">Reasoning<select id="sandbox-reasoning">
 	                  <option value="">default</option>
 	                  <option value="none">none</option>
 	                  <option value="minimal">minimal</option>
@@ -2732,29 +2505,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                  <option value="medium">medium</option>
 	                  <option value="high">high</option>
 	                  <option value="xhigh">xhigh</option>
-	                </select></label>
-	                <label id="sandbox-speculation-label" class="sandbox-system-compact" title="Per-request MTP override. Inherit uses the Core default; explicit depths require a compatible loaded backend.">MTP<select id="sandbox-speculation">
+	                </select><span class="sandbox-field-help">Effort for reasoning models; default sends none.</span></label>
+	                <label id="sandbox-speculation-label" class="sandbox-system-compact">MTP<select id="sandbox-speculation">
 	                  <option value="">inherit</option><option value="off">off</option>
 	                  <option value="2">depth 2</option><option value="3">depth 3</option><option value="4">depth 4</option><option value="5">depth 5</option>
-	                </select></label>
+	                </select><span class="sandbox-field-help">Per-request speculative decoding; inherit uses the Core default.</span></label>
 	              </div>
-	              <div id="sandbox-dropzone" class="sandbox-dropzone">
-	                <button id="sandbox-attach" class="secondary icon-only sandbox-composer-icon" title="Attach files" aria-label="Attach files"><span class="button-icon" aria-hidden="true">＋</span></button>
-	                <div class="sandbox-input-area">
-	                  <textarea id="sandbox-prompt" placeholder="Ask a question, describe an image/video/music request, or drop files here."></textarea>
-	                  <div id="sandbox-attachments" class="sandbox-attachments"></div>
-	                </div>
-	                <div class="sandbox-composer-side">
-	                  <div id="sandbox-output-modes" class="sandbox-mode-grid" role="radiogroup" aria-label="Sandbox output mode"></div>
-	                  <div class="sandbox-composer-actions">
-	                    <button id="sandbox-clear" class="secondary icon-only sandbox-composer-icon" title="Clear chat" aria-label="Clear chat"><span class="button-icon" aria-hidden="true">×</span></button>
-	                    <button id="sandbox-run" class="sandbox-send icon-only" title="Send" aria-label="Send"><span class="button-icon" aria-hidden="true">▶</span></button>
-	                  </div>
-	                </div>
-	              </div>
-	              <input id="sandbox-file-input" class="hidden" type="file" multiple>
-	              <div id="sandbox-message" class="message"></div>
 	            </div>
+	            <div id="sandbox-chat-root" class="sandbox-chat-root"></div>
+	            <input id="sandbox-file-input" class="hidden" type="file" multiple>
+	            <div id="sandbox-message" class="message"></div>
 	          </section>
 	        </div>
 	      </div>
@@ -2884,12 +2644,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        <div id="account" class="session-summary">No active session.</div>
 	        <div class="tab-grid tab-grid-wide">
 	          <div class="tab-stack">
-	            <!-- ACCOUNTS (DESIGN-v2 §2): ONE table for users AND entities (GET /admin/accounts),
-	                 rows tinted by kind (kit .af-row--*), an Active switch on every row, per-row
-	                 actions that say why when they cannot apply, and the Email / Logs modals. -->
+	            <!-- ACCOUNTS (DESIGN-v3 §1): ONE table for users AND entities (GET /admin/accounts),
+	                 rows tinted by kind (kit .af-row--*), an Active switch on every live row, only the
+	                 actions that apply (Email · Logs · Workspace|Manage · the kit "⋯" menu), Show archived
+	                 (admins), a flat card list when the table would not fit, and the Email / Logs modals. -->
 	            <section id="users-section" class="session-only hidden accounts-page">
 	              <div class="accounts-head">
 	                <div class="accounts-head__actions">
+	                  <span id="accounts-archived-slot" class="accounts-head__archived" hidden></span>
 	                  <button id="open-create-user" type="button" title="Create a gateway user and issue their token (shown once)">Create user</button>
 	                  <button id="accounts-create-entity" class="secondary" type="button" title="Summon a new entity from a spark template (the name is permanent)">Create entity</button>
 	                </div>
@@ -2898,6 +2660,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <div id="users-message" class="message" role="status" aria-live="polite"></div>
 	              <div class="users-table-wrap">
 	                <table class="users-table accounts-table" data-ui-no-stack>
+	                  <colgroup><col class="accounts-c-name"><col class="accounts-c-email"><col class="accounts-c-mailbox"><col class="accounts-c-runtime"><col class="accounts-c-active"><col class="accounts-c-actions"></colgroup>
 	                  <thead><tr><th>Name</th><th>Email address</th><th>Mailbox</th><th>Runtime</th><th>Active</th><th>Actions</th></tr></thead>
 	                  <tbody id="users-table"></tbody>
 	                </table>
@@ -2979,7 +2742,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
               <section class="af-card account-card" aria-labelledby="my-email-mailbox-title">
                 <div class="af-card__header">
                   <h3 id="my-email-mailbox-title" class="af-card__title">Mailbox</h3>
-                  <p class="af-card__desc">Lets your agents and automations read and send mail as you. Your admin never sees your mail.</p>
+                  <p id="my-email-mailbox-desc" class="af-card__desc">Lets your agents and automations read and send mail as you. Your admin never sees your mail.</p>
                 </div>
                 <p id="my-email-unavailable" class="af-form__error" hidden></p>
                 <div id="my-email-connected" hidden>
@@ -3123,7 +2886,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                     <p id="my-email-policy-help" class="af-form__help">Denied always wins. Your own address is always allowed. A domain also covers its subdomains. To, Cc and Bcc are all checked: a message with any refused recipient is not sent.</p>
                   </div>
                   <div class="advanced-sentence">
-                    <span>At most</span>
+                    <span>Send at most</span>
                     <input id="my-email-per-hour" class="advanced-num" type="number" min="0" inputmode="numeric" aria-label="Most emails per hour">
                     <span>per hour and</span>
                     <input id="my-email-per-day" class="advanced-num" type="number" min="0" inputmode="numeric" aria-label="Most emails per day">
@@ -3909,7 +3672,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
   <script id="af-console-islands">/*__AF_CONSOLE_ISLANDS_JS__*/</script>
   <!--__ABSTRACTCORE_FRAGMENT_SCRIPT__-->
   <script>
-		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), voiceReasons: new Map(), providerStateLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
+		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), voiceReasons: new Map(), providerStateLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], sandboxChat: [], sandboxDraft: "", sandboxBusy: false, activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
 		    const $ = (id) => document.getElementById(id);
 		    const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 		    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] || ch);
@@ -3928,6 +3691,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      mail: svgIcon('<rect x="3" y="5.5" width="18" height="13" rx="2"></rect><path d="m3.5 7 8.5 6 8.5-6"></path>'),
 	      logs: svgIcon('<path d="M8 6.5h12M8 12h12M8 17.5h12"></path><circle cx="4" cy="6.5" r=".9"></circle><circle cx="4" cy="12" r=".9"></circle><circle cx="4" cy="17.5" r=".9"></circle>'),
 	      folder: svgIcon('<path d="M3 7.5a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>'),
+	      openNew: svgIcon('<path d="M14 4h6v6"></path><path d="M20 4l-9 9"></path><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"></path>'),
 	      trash: svgIcon('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4.5h6V7"></path>'),
 	    };
 	    // Card 015 wave 3 (usability P2-1/2): a header-only table reads as
@@ -4171,16 +3935,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      closeParagraph();
 	      closeList();
 	      return out.join("") || "";
-	    }
-	    function setSandboxMessageBody(body, content, { markdown = false } = {}) {
-	      if (!body) return;
-	      if (markdown) {
-	        body.classList.add("markdown");
-	        body.innerHTML = renderMarkdown(content);
-	      } else {
-	        body.classList.remove("markdown");
-	        body.textContent = String(content || "");
-	      }
 	    }
 	    const UI_SETTINGS_KEY = "abstractgateway_ui_settings_v1";
 	    const ACTIVE_TAB_KEY = "abstractgateway_active_tab_v1";
@@ -4521,14 +4275,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    state.workflowsSkipped = [];
 	    state.selectedWorkflow = "";
 
-	    // DESIGN-v2 §4.1: one row per bundle -- Name (the default entrypoint's name, the
-	    // bundle id small below) · What it does · Version (latest, "+N older") · Source ·
-	    // Used by (plain app names from the interface table, each with a (?)) · Export /
-	    // Delete. A click expands the row: versions, channel, created, entrypoints.
+	    // DESIGN-v3 §5 (on DESIGN-v2 §4.1): one row per bundle, grouped by owner -- "Shared by the
+	    // gateway — all users" and "Mine". Name (the default entrypoint's name, the bundle id small
+	    // below) · What it does · Version (latest, "+N older") · Source badge · Used by ·
+	    // (admin) Available to users · Export / Open in AbstractFlow / Archive. Nothing is ever
+	    // deleted: shipped bundles have no Archive at all. A click expands the row.
 	    state.workflowsExpanded = new Set();
 	    state.workflowsShowDrafts = false;
 	    state.workflowsShowOlder = false;
-	    const WORKFLOW_SOURCE_TEXT = { shipped: "Shipped with the gateway", imported: "Imported", published: "Published from AbstractFlow" };
+	    state.workflowsShowArchived = false;
+	    const WORKFLOW_SOURCE_TEXT = { shipped: "Shipped", imported: "Imported", published: "From AbstractFlow" };
 	    // F4: a manifest whose bundle_version is the placeholder "0.0.0" (the Assistant orchestrator
 	    // ships so) has no version; say "unversioned" instead of a number that looks like one.
 	    const WORKFLOW_UNVERSIONED = new Set(["0.0.0"]);
@@ -4558,10 +4314,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      for (const it of state.workflows) {
 	        const id = String(it.bundle_id || "");
 	        if (!id) continue;
-	        let row = byId.get(id);
+	        if (!it.owner || !["gateway", "user"].includes(it.owner.kind)) {
+	          console.error(`AbstractGateway console: GET /bundles item ${id} has no owner (workflows seam, DESIGN-v3 §5.1).`);
+	        }
+	        // One row per (owner, bundle): a user's own bundle may share an id with a gateway one.
+	        const ownerKind = (it.owner && it.owner.kind) || "gateway";
+	        const key = `${ownerKind}:${id}`;
+	        let row = byId.get(key);
 	        if (!row) {
-	          row = { bundle_id: id, versions: [], deprecated: false };
-	          byId.set(id, row);
+	          row = { key, bundle_id: id, ownerKind, versions: [], deprecated: false };
+	          byId.set(key, row);
 	        }
 	        row.versions.push(it);
 	      }
@@ -4577,6 +4339,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        }
 	        row.description = typeof latestId.description === "string" ? latestId.description : "";
 	        row.source = latestId.source;
+	        row.shipped = latestId.shipped === true;
+	        row.available = latestId.available !== false;
+	        row.archived = row.versions.every((v) => v.archived === true);
 	        row.deprecated = eps.length > 0 && eps.every((e) => e && e.deprecated);
 	        const ifaces = [];
 	        for (const e of eps) for (const i of (e && e.interfaces) || []) if (!ifaces.includes(i)) ifaces.push(i);
@@ -4631,7 +4396,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const tr = document.createElement("tr");
 	      tr.className = "workflows-detail";
 	      const td = document.createElement("td");
-	      td.colSpan = 6;
+	      td.colSpan = workflowColCount();
 	      const versions = state.workflowsShowOlder ? row.versions : [row.latest];
 	      const list = document.createElement("div");
 	      list.className = "workflows-versions";
@@ -4646,20 +4411,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        meta.className = "muted";
 	        meta.textContent = `${v.version_channel || (v.is_draft ? "draft" : "published")} · ${String(v.created_at || "").slice(0, 10)}`;
 	        head.append(title, meta);
+	        if (v.archived) { const pill = document.createElement("span"); pill.className = "pill workflows-archived-pill"; pill.textContent = "Archived"; head.append(pill); }
 	        const acts = document.createElement("span");
 	        acts.className = "actions";
-	        const ex = document.createElement("button");
-	        ex.type = "button"; ex.className = "secondary small"; ex.textContent = "Export";
-	        ex.setAttribute("aria-label", `Export ${row.name} ${v.bundle_version}`);
-	        ex.onclick = () => exportWorkflow(row.bundle_id, v.bundle_version);
-	        acts.append(ex);
-	        if (state.principal && state.principal.admin) {
-	          const del = document.createElement("button");
-	          del.type = "button"; del.className = "secondary danger small"; del.textContent = "Delete";
-	          del.setAttribute("aria-label", `Delete ${row.name} ${v.bundle_version}`);
-	          del.onclick = (ev) => { if (ev && ev.stopPropagation) ev.stopPropagation(); deleteWorkflow(row.bundle_id, String(v.bundle_version || ""), { ...row, versions: [v] }, box); };
-	          acts.append(del);
-	        }
+	        acts.append(...workflowActionButtons(row, v, () => box));
 	        head.append(acts);
 	        box.append(head);
 	        for (const ep of v.entrypoints || []) {
@@ -4692,101 +4447,206 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      tr.append(td);
 	      return tr;
 	    }
+	    function workflowColCount() {
+	      return state.principal && state.principal.admin ? 7 : 6;
+	    }
+	    // Ownership groups (DESIGN-v3 §5.1): what the gateway shares with every user, then the
+	    // signed-in user's own imports and publishes ("Mine", hidden when empty).
+	    const WORKFLOW_GROUPS = [
+	      { kind: "gateway", title: "Shared with everyone" },
+	      { kind: "user", title: "Mine" },
+	    ];
+	    const WORKFLOW_AVAILABLE_HELP = "Off hides this workflow from users' lists and app pickers and pauses their automations on it; turning it back on doesn't resume them. Admins always see it, and an app's default workflow keeps running for everyone.";
+	    function workflowGroupRow(title) {
+	      const tr = document.createElement("tr");
+	      tr.className = "workflows-group";
+	      const th = document.createElement("th");
+	      th.colSpan = workflowColCount();
+	      th.scope = "colgroup";
+	      th.innerHTML = `<span class="workflows-group__title"></span>`;
+	      th.querySelector(".workflows-group__title").textContent = title;
+	      tr.append(th);
+	      return tr;
+	    }
+	    function workflowSourceBadge(row) {
+	      if (!WORKFLOW_SOURCE_TEXT[row.source]) console.error(`AbstractGateway console: GET /bundles item ${row.bundle_id} has no known source (gateway-api seam, DESIGN-v2 §6): ${row.source}`);
+	      const pill = document.createElement("span");
+	      pill.className = `pill workflows-badge workflows-badge--${row.source || "unknown"}`;
+	      pill.textContent = WORKFLOW_SOURCE_TEXT[row.source] || "Unknown source";
+	      return pill;
+	    }
+	    function workflowAvailabilityCell(row) {
+	      // Admin only (the column is not rendered for anyone else); gateway-owned rows only.
+	      const td = document.createElement("td");
+	      td.className = "workflows-available";
+	      if (!(row.latest.actions && row.latest.actions.can_set_availability)) return td;
+	      const sw = afSwitchCreate({ id: `workflow-available-${row.bundle_id}`, label: "Available to users", ariaLabel: `Available to users: ${row.name}`, checked: row.available !== false, small: true });
+	      sw.button.title = WORKFLOW_AVAILABLE_HELP;
+	      td.append(...sw.nodes);
+	      td.onclick = (ev) => ev.stopPropagation();
+	      afSwitchBind(sw.button, async (next) => {
+	        const res = await api(`/api/gateway/admin/workflows/${encodeURIComponent(row.bundle_id)}/availability`, { method: "PUT", body: JSON.stringify({ available: next }) });
+	        const paused = (res.paused_automations || []).length;
+	        $("workflows-message").textContent = next
+	          ? `${row.name} is available to users again. Automations paused earlier stay paused until their owners resume them.`
+	          : `${row.name} is hidden from users${paused ? `; ${paused} of their automation${paused === 1 ? " was" : "s were"} paused` : ""}.`;
+	        $("workflows-message").className = "message ok";
+	        for (const v of row.versions) v.available = next;
+	        row.available = next;
+	        return next;
+	      }, (e) => { $("workflows-message").textContent = `Not changed: ${emailErrorText(e)}`; $("workflows-message").className = "message error"; });
+	      return td;
+	    }
+	    function workflowActionButtons(row, version, anchorFor) {
+	      // Export · Open in AbstractFlow · Archive (imported/published, when allowed) or
+	      // Unarchive (archived rows). Shipped bundles: never Archive, never Delete (§5.3).
+	      const v = version || row.latest;
+	      const label = version ? `${row.name} ${v.bundle_version}` : row.name;
+	      const out = [];
+	      const exportBtn = document.createElement("button");
+	      exportBtn.type = "button"; exportBtn.className = "secondary small"; exportBtn.textContent = "Export";
+	      exportBtn.setAttribute("aria-label", `Export ${label}`);
+	      exportBtn.title = "Download this version as a .flow file";
+	      exportBtn.onclick = (ev) => { ev.stopPropagation(); exportWorkflow(row.bundle_id, v.bundle_version); };
+	      out.push(exportBtn);
+	      const open = document.createElement("button");
+	      open.type = "button"; open.className = "secondary small workflows-open-flow";
+	      open.innerHTML = `<span class="button-icon" aria-hidden="true">${ICONS.openNew}</span><span>Open</span>`;
+	      open.setAttribute("aria-label", `Open ${label} in AbstractFlow`);
+	      open.title = "Open in AbstractFlow";
+	      open.onclick = (ev) => { ev.stopPropagation(); openWorkflowInFlow(row, v); };
+	      out.push(open);
+	      const acts = v.actions || {};
+	      if (v.archived && acts.can_archive) {
+	        const un = document.createElement("button");
+	        un.type = "button"; un.className = "secondary small"; un.textContent = "Unarchive";
+	        un.setAttribute("aria-label", `Unarchive ${label}`);
+	        un.onclick = (ev) => { ev.stopPropagation(); unarchiveWorkflow(row, version ? v.bundle_version : null); };
+	        out.push(un);
+	      } else if (!v.archived && acts.can_archive) {
+	        const ar = document.createElement("button");
+	        ar.type = "button"; ar.className = "secondary small workflows-archive"; ar.textContent = "Archive";
+	        ar.setAttribute("aria-label", `Archive ${label}`);
+	        ar.title = "Hide it from lists and stop new runs; the file and past runs stay";
+	        ar.onclick = (ev) => { ev.stopPropagation(); archiveWorkflow(row, version ? v.bundle_version : null, anchorFor()); };
+	        out.push(ar);
+	      }
+	      return out;
+	    }
 	    function renderWorkflows() {
 	      const tbody = $("workflows-table");
 	      tbody.textContent = "";
+	      const admin = Boolean(state.principal && state.principal.admin);
+	      // The "Available to users" column exists for admins only (not rendered otherwise).
+	      const head = $("workflows-th-available");
+	      if (head) {
+	        head.hidden = !admin;
+	        head.title = WORKFLOW_AVAILABLE_HELP;  // the helper is a tooltip only
+	      }
 	      const rows = workflowRows();
 	      if (!rows.length) {
 	        const tr = document.createElement("tr");
 	        const td = document.createElement("td");
-	        td.colSpan = 6; td.className = "message";
+	        td.colSpan = workflowColCount(); td.className = "message";
 	        td.textContent = state.workflows.length ? "No workflow matches this search." : "No workflows registered.";
 	        tr.appendChild(td); tbody.appendChild(tr);
 	      }
-	      for (const row of rows) {
-	        const open = state.workflowsExpanded.has(row.bundle_id);
-	        const tr = document.createElement("tr");
-	        tr.className = "row-selectable workflows-row";
-	        tr.setAttribute("data-bundle", row.bundle_id);
-	        tr.setAttribute("aria-expanded", open ? "true" : "false");
-	        tr.tabIndex = 0;
-	        const toggle = () => selectWorkflow(row.bundle_id);
-	        tr.onclick = toggle;
-	        tr.onkeydown = (ev) => { if (ev && (ev.key === "Enter" || ev.key === " ") && ev.target === tr) { ev.preventDefault(); toggle(); } };
-
-	        const name = document.createElement("td");
-	        name.className = "workflows-name";
-	        name.innerHTML = `<div class="workflows-name__wrap"><span class="workflows-chevron" aria-hidden="true">${open ? "▾" : "▸"}</span><span class="workflows-name__text"><strong></strong><small class="muted"></small></span></div>`;
-	        name.querySelector("strong").textContent = row.name;
-	        name.querySelector("small").textContent = row.bundle_id;
-	        if (row.deprecated) { const pill = document.createElement("span"); pill.className = "pill"; pill.textContent = "Deprecated"; name.querySelector(".workflows-name__text").append(pill); }
-	        const olderCount = row.versions.length - 1;
-	        const versionText = `${workflowVersionLabel(row.latest.bundle_version) || "No version"}${olderCount > 0 ? ` +${olderCount} older` : ""}`;
-	        if (!WORKFLOW_SOURCE_TEXT[row.source]) console.error(`AbstractGateway console: GET /bundles item ${row.bundle_id} has no known source (gateway-api seam, DESIGN-v2 §6): ${row.source}`);
-	        const sourceText = WORKFLOW_SOURCE_TEXT[row.source] || "Unknown source";
-	        // Narrow screens (DESIGN §12): the description and "Version · source" fold under the
-	        // name as label·value lines instead of one captioned block per field.
-	        const foldWhat = document.createElement("span");
-	        foldWhat.className = "workflows-fold-what workflows-clamp";
-	        foldWhat.textContent = row.description || "No description.";
-	        const foldMeta = document.createElement("span");
-	        foldMeta.className = "workflows-fold-meta";
-	        foldMeta.innerHTML = `<span class="workflows-fold-version"></span><span class="workflows-fold-source"></span>`;
-	        foldMeta.querySelector(".workflows-fold-version").textContent = `Version ${versionText} · `;
-	        foldMeta.querySelector(".workflows-fold-source").textContent = sourceText;
-	        name.querySelector(".workflows-name__text").append(foldWhat, foldMeta);
-	        tr.appendChild(name);
-
-	        const what = document.createElement("td");
-	        what.className = "workflows-what";
-	        what.setAttribute("data-label", "What it does");
-	        const whatText = document.createElement("span");
-	        whatText.className = "workflows-clamp";
-	        whatText.textContent = row.description || "No description.";
-	        what.append(whatText);
-	        if (row.description) what.title = row.description;
-	        tr.appendChild(what);
-
-	        const version = document.createElement("td");
-	        version.className = "workflows-version-cell";
-	        version.setAttribute("data-label", "Version");
-	        version.textContent = versionText;
-	        tr.appendChild(version);
-
-	        const source = document.createElement("td");
-	        source.className = "workflows-source";
-	        source.setAttribute("data-label", "Source");
-	        source.textContent = sourceText;
-	        tr.appendChild(source);
-
-	        tr.appendChild(workflowUsedByCell(row));
-
-	        const actions = document.createElement("td");
-	        actions.className = "workflows-actions";
-	        const wrap = document.createElement("div");
-	        wrap.className = "actions";
-	        const exportBtn = document.createElement("button");
-	        exportBtn.className = "secondary small";
-	        exportBtn.textContent = "Export";
-	        exportBtn.setAttribute("aria-label", `Export ${row.name}`);
-	        exportBtn.title = "Download the latest version as a .flow file";
-	        exportBtn.onclick = (ev) => { ev.stopPropagation(); exportWorkflow(row.bundle_id, row.latest.bundle_version); };
-	        wrap.appendChild(exportBtn);
-	        if (state.principal && state.principal.admin) {
-	          const del = document.createElement("button");
-	          del.className = "secondary danger small";
-	          del.textContent = "Delete";
-	          del.setAttribute("aria-label", `Delete ${row.name}`);
-	          del.title = "Remove every version of this workflow";
-	          del.onclick = (ev) => { ev.stopPropagation(); deleteWorkflow(row.bundle_id, null, row, tr); };
-	          wrap.appendChild(del);
-	        }
-	        actions.appendChild(wrap);
-	        tr.appendChild(actions);
-	        tbody.appendChild(tr);
-	        if (open) tbody.appendChild(workflowDetailRow(row));
+	      for (const group of WORKFLOW_GROUPS) {
+	        const members = rows.filter((r) => r.ownerKind === group.kind);
+	        if (!members.length) continue;
+	        tbody.appendChild(workflowGroupRow(group.title));
+	        for (const row of members) renderWorkflowRow(tbody, row, admin);
 	      }
 	      renderWorkflowsSkipped();
+	      workflowsLayout();
+	    }
+	    // Table or cards, from what the columns need (their minimum widths), not a guessed
+	    // viewport breakpoint: the table never scrolls sideways at any width.
+	    const WORKFLOW_TABLE_MIN_REM = { base: 60.5, available: 9.5 };
+	    function workflowsLayout() {
+	      const section = $("workflows-section");
+	      const scroll = $("workflows-scroll");
+	      if (!section || !scroll) return;
+	      const width = scroll.clientWidth;
+	      if (!width) return;  // hidden tab: decided when it is shown
+	      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+	      const admin = Boolean(state.principal && state.principal.admin);
+	      const need = (WORKFLOW_TABLE_MIN_REM.base + (admin ? WORKFLOW_TABLE_MIN_REM.available : 0)) * rem;
+	      section.classList.toggle("workflows-cards", width < need);
+	      if (!state.workflowsResizeBound && typeof ResizeObserver === "function") {
+	        state.workflowsResizeBound = true;
+	        new ResizeObserver(() => workflowsLayout()).observe(scroll);
+	      }
+	    }
+	    function renderWorkflowRow(tbody, row, admin) {
+	      const key = row.key;
+	      const open = state.workflowsExpanded.has(key);
+	      const tr = document.createElement("tr");
+	      tr.className = `row-selectable workflows-row${row.archived ? " workflows-row--archived" : ""}`;
+	      tr.setAttribute("data-bundle", row.bundle_id);
+	      tr.setAttribute("data-owner", row.ownerKind);
+	      tr.setAttribute("aria-expanded", open ? "true" : "false");
+	      tr.tabIndex = 0;
+	      const toggle = () => selectWorkflow(key);
+	      tr.onclick = toggle;
+	      tr.onkeydown = (ev) => { if (ev && (ev.key === "Enter" || ev.key === " ") && ev.target === tr) { ev.preventDefault(); toggle(); } };
+
+	      const name = document.createElement("td");
+	      name.className = "workflows-name";
+	      name.innerHTML = `<div class="workflows-name__wrap"><span class="workflows-chevron" aria-hidden="true">${open ? "▾" : "▸"}</span><span class="workflows-name__text"><strong></strong><small class="muted"></small></span></div>`;
+	      name.querySelector("strong").textContent = row.name;
+	      name.querySelector("small").textContent = row.bundle_id;
+	      const textBox = name.querySelector(".workflows-name__text");
+	      if (row.deprecated) { const pill = document.createElement("span"); pill.className = "pill"; pill.textContent = "Deprecated"; textBox.append(pill); }
+	      if (row.archived) { const pill = document.createElement("span"); pill.className = "pill workflows-archived-pill"; pill.textContent = "Archived"; textBox.append(pill); }
+	      const olderCount = row.versions.length - 1;
+	      const versionText = `${workflowVersionLabel(row.latest.bundle_version) || "No version"}${olderCount > 0 ? ` +${olderCount} older` : ""}`;
+	      // Narrow screens (DESIGN §12): the description and "Version · source" fold under the name.
+	      const foldWhat = document.createElement("span");
+	      foldWhat.className = "workflows-fold-what workflows-clamp";
+	      foldWhat.textContent = row.description || "No description.";
+	      const foldMeta = document.createElement("span");
+	      foldMeta.className = "workflows-fold-meta";
+	      foldMeta.innerHTML = `<span class="workflows-fold-version"></span>`;
+	      foldMeta.querySelector(".workflows-fold-version").textContent = `Version ${versionText} · `;
+	      foldMeta.append(workflowSourceBadge(row));
+	      textBox.append(foldWhat, foldMeta);
+	      tr.appendChild(name);
+
+	      const what = document.createElement("td");
+	      what.className = "workflows-what";
+	      what.setAttribute("data-label", "What it does");
+	      const whatText = document.createElement("span");
+	      whatText.className = "workflows-clamp";
+	      whatText.textContent = row.description || "No description.";
+	      what.append(whatText);
+	      if (row.description) what.title = row.description;
+	      tr.appendChild(what);
+
+	      const version = document.createElement("td");
+	      version.className = "workflows-version-cell";
+	      version.setAttribute("data-label", "Version");
+	      version.textContent = versionText;
+	      tr.appendChild(version);
+
+	      const source = document.createElement("td");
+	      source.className = "workflows-source";
+	      source.setAttribute("data-label", "Source");
+	      source.append(workflowSourceBadge(row));
+	      tr.appendChild(source);
+
+	      tr.appendChild(workflowUsedByCell(row));
+	      if (admin) tr.appendChild(workflowAvailabilityCell(row));
+
+	      const actions = document.createElement("td");
+	      actions.className = "workflows-actions";
+	      const wrap = document.createElement("div");
+	      wrap.className = "actions";
+	      wrap.append(...workflowActionButtons(row, null, () => tr));
+	      actions.appendChild(wrap);
+	      tr.appendChild(actions);
+	      tbody.appendChild(tr);
+	      if (open) tbody.appendChild(workflowDetailRow(row));
 	    }
 
 	    function renderWorkflowsSkipped() {
@@ -4797,10 +4657,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("workflows-skipped-section").classList.toggle("hidden", !rows.length);
 	      const groups = new Map();
 	      for (const rec of rows) {
-	        const key = `${rec.bundle_id}\\u0000${rec.reason}`;
+	        const key = `${rec.bundle_id}|${rec.reason}`;
 	        const g = groups.get(key);
-	        if (g) { g.count += 1; g.paths.push(rec.path); }
-	        else groups.set(key, { bundle_id: rec.bundle_id, reason: rec.reason, count: 1, paths: [rec.path] });
+	        if (g) { g.count += 1; g.paths.push(rec.path); g.versions.push(rec.bundle_version); }
+	        else groups.set(key, { bundle_id: rec.bundle_id, reason: rec.reason, count: 1, paths: [rec.path], versions: [rec.bundle_version], archived: Boolean(rec.archived), can_archive: Boolean(rec.can_archive) });
 	      }
 	      const workflows = new Set(rows.map((r) => r.bundle_id)).size;
 	      $("workflows-skipped-count").textContent = rows.length
@@ -4816,7 +4676,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 
 	        const affected = document.createElement("td");
 	        affected.textContent = g.count === 1 ? "1 version" : `${g.count} versions`;
-	        affected.title = g.paths.join("\\n");
+	        affected.title = g.paths.join(", ");
 	        tr.appendChild(affected);
 
 	        const why = document.createElement("td");
@@ -4824,15 +4684,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        tr.appendChild(why);
 
 	        const actions = document.createElement("td");
-	        if (state.principal && state.principal.admin) {
+	        if (g.can_archive && !g.archived) {
 	          const wrap = document.createElement("div");
 	          wrap.className = "actions";
-	          const del = document.createElement("button");
-	          del.className = "secondary danger";
-	          del.textContent = g.count === 1 ? "Delete" : `Delete ${g.count}`;
-	          del.title = "Remove these unusable bundle files";
-	          del.onclick = () => deleteBrokenGroup(g);
-	          wrap.appendChild(del);
+	          const ar = document.createElement("button");
+	          ar.className = "secondary";
+	          ar.textContent = g.count === 1 ? "Archive" : `Archive ${g.count}`;
+	          ar.title = "Hide these unusable versions; the files stay on disk";
+	          ar.onclick = () => archiveBrokenGroup(g);
+	          wrap.appendChild(ar);
 	          actions.appendChild(wrap);
 	        }
 	        tr.appendChild(actions);
@@ -4840,45 +4700,36 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	    }
 
-	    async function deleteBrokenGroup(group) {
-	      const versions = (state.workflowsSkipped || [])
-	        .filter((r) => r.bundle_id === group.bundle_id && r.reason === group.reason)
-	        .map((r) => r.bundle_version);
-	      const ok = await confirmAction({
-	        title: `Delete ${versions.length} broken version(s) of ${group.bundle_id}?`,
-	        message: `${group.reason}\\n\\nThese versions cannot run, so nothing that works stops working. The files are removed from disk and there is no undo.`,
-	        confirmLabel: `Delete ${versions.length}`,
-	        danger: true,
-	      });
-	      if (!ok) return;
-	      let removed = 0;
+	    async function archiveBrokenGroup(group) {
+	      let done = 0;
 	      const failed = [];
-	      for (const version of versions) {
+	      for (const version of group.versions) {
 	        try {
-	          const res = await api(`/api/gateway/bundles/${encodeURIComponent(group.bundle_id)}?bundle_version=${encodeURIComponent(version)}&reload=false`, { method: "DELETE" });
-	          removed += Number(res.removed || 0);
-	        } catch (err) { failed.push(`${version}: ${String(err.message || err)}`); }
+	          await api(`/api/gateway/bundles/${encodeURIComponent(group.bundle_id)}/archive`, { method: "POST", body: JSON.stringify({ bundle_version: version }) });
+	          done += 1;
+	        } catch (err) { failed.push(`${version}: ${emailErrorText(err)}`); }
 	      }
-	      // ONE reload after the batch, not one per file: reloading a 231-file
-	      // registry per delete is the freeze, not the deletes.
-	      try { await api("/api/gateway/bundles/reload", { method: "POST" }); } catch (err) { /* listed below */ }
 	      $("workflows-message").textContent = failed.length
-	        ? `Removed ${removed}; failed — ${failed.join("; ")}.`
-	        : `Removed ${removed} broken file(s) for ${group.bundle_id}.`;
+	        ? `Archived ${done}; not archived — ${failed.join("; ")}.`
+	        : `Archived ${done} broken version${done === 1 ? "" : "s"} of ${group.bundle_id}. The files stay on the gateway.`;
 	      $("workflows-message").className = failed.length ? "message error" : "message ok";
-	      await loadWorkflows();
+	      await loadWorkflows({ keepMessage: true });
 	    }
 
-	    async function loadWorkflows() {
-	      $("workflows-message").textContent = "Loading…";
-	      $("workflows-message").className = "message";
+	    async function loadWorkflows({ keepMessage = false } = {}) {
+	      // keepMessage: a write just said what happened (import, archive); the reload must not wipe it.
+	      if (!keepMessage) {
+	        $("workflows-message").textContent = "Loading…";
+	        $("workflows-message").className = "message";
+	      }
 	      try {
 	        const drafts = state.workflowsShowDrafts ? "1" : "0";
-	        const data = await api(`/api/gateway/bundles?all_versions=true&include_drafts=${drafts}&include_deprecated=true`);
+	        const archived = state.workflowsShowArchived ? "1" : "0";
+	        const data = await api(`/api/gateway/bundles?all_versions=true&include_drafts=${drafts}&include_deprecated=true&include_archived=${archived}`);
 	        state.workflows = data.items || [];
 	        state.workflowsSkipped = data.skipped || [];
 	        state.workflowsDefaultId = data.default_bundle_id || "";
-	        $("workflows-message").textContent = "";
+	        if (!keepMessage) $("workflows-message").textContent = "";
 	        renderWorkflows();
 	      } catch (err) {
 	        $("workflows-message").textContent = String(err.message || err);
@@ -4886,14 +4737,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	    }
 
-	    function selectWorkflow(bundleId) {
-	      const id = String(bundleId || "");
+	    function selectWorkflow(key) {
+	      const id = String(key || "");
 	      if (state.workflowsExpanded.has(id)) state.workflowsExpanded.delete(id);
 	      else state.workflowsExpanded.add(id);
 	      renderWorkflows();
 	    }
 	    function mountWorkflowSwitches() {
-	      // Drafts / Older versions: kit switches labelled by the feature (never a verb), applied at once.
+	      // Drafts / Older versions / Show archived: kit switches labelled by the feature (never a verb), applied at once.
 	      if ($("workflows-drafts-slot").childNodes.length) return;
 	      const drafts = afSwitchCreate({ id: "workflows-show-drafts", label: "Drafts", checked: state.workflowsShowDrafts, small: true });
 	      $("workflows-drafts-slot").append(...drafts.nodes);
@@ -4901,6 +4752,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const older = afSwitchCreate({ id: "workflows-show-older", label: "Older versions", checked: state.workflowsShowOlder, small: true });
 	      $("workflows-older-slot").append(...older.nodes);
 	      afSwitchBind(older.button, async (next) => { state.workflowsShowOlder = next; renderWorkflows(); return next; }, () => {});
+	      const archived = afSwitchCreate({ id: "workflows-show-archived", label: "Show archived", checked: state.workflowsShowArchived, small: true });
+	      $("workflows-archived-slot").append(...archived.nodes);
+	      afSwitchBind(archived.button, async (next) => { state.workflowsShowArchived = next; await loadWorkflows(); return next; }, (e) => { $("workflows-message").textContent = emailErrorText(e); $("workflows-message").className = "message error"; });
 	    }
 
 	    function exportWorkflow(bundleId, bundleVersion) {
@@ -4910,50 +4764,29 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      window.location.href = `/api/gateway/bundles/${encodeURIComponent(bundleId)}/download${qs}`;
 	    }
 
-	    async function workflowUsage(bundleId, bundleVersion, row) {
-	      // Honest impact: the run store has no COUNT operation, so this reports
-	      // what a bounded page can PROVE and says so. It never presents a page
-	      // size as a total — a confident wrong number is what turns a refusal
-	      // into a confirmation.
-	      const ids = [];
-	      const versions = bundleVersion
-	        ? (row ? row.versions.filter((v) => String(v.bundle_version) === String(bundleVersion)) : [])
-	        : (row ? row.versions : []);
-	      for (const v of versions) for (const ep of v.entrypoints || []) if (ep.workflow_id) ids.push(ep.workflow_id);
-	      if (!ids.length && bundleVersion) return null;
-	      let seen = 0; let capped = false;
-	      const limit = 200;
-	      for (const wid of ids.slice(0, 12)) {
-	        try {
-	          const res = await api(`/api/gateway/runs?workflow_id=${encodeURIComponent(wid)}&limit=${limit}`);
-	          const items = res.items || res.runs || [];
-	          seen += items.length;
-	          if (res.has_more || items.length >= limit) capped = true;
-	        } catch (err) { capped = true; }
+	    // AbstractFlow's documented deep link (DESIGN-v3 §5.4, abstractflow docs):
+	    // /apps/flow/?bundle=<bundle_id>&version=<bundle_version>. Opened through the gateway's
+	    // app door (POST /apps/flow/open mints the signed-in handover), in a new tab.
+	    function workflowFlowPath(bundleId, bundleVersion) {
+	      const q = new URLSearchParams({ bundle: String(bundleId), version: String(bundleVersion || "") });
+	      return `/?${q.toString()}`;
+	    }
+	    async function openWorkflowInFlow(row, version) {
+	      const tab = typeof window !== "undefined" && window.open ? window.open("about:blank", "_blank") : null;
+	      try {
+	        const res = await api("/api/gateway/apps/flow/open", { method: "POST", body: JSON.stringify({ origin: appBrowserOrigin(), path: workflowFlowPath(row.bundle_id, version.bundle_version) }) });
+	        if (tab) tab.location = res.open_url; else location.assign(res.open_url);
+	      } catch (e) {
+	        if (tab) tab.close();
+	        const hint = e && e.data && e.data.hint ? ` ${e.data.hint}` : "";
+	        $("workflows-message").textContent = `Could not open AbstractFlow: ${emailErrorText(e)}${hint}`;
+	        $("workflows-message").className = "message error";
 	      }
-	      return { seen, capped };
 	    }
 
-	    // Delete asks INLINE, in the row (round-2 polish): the sentence names what goes, the run
-	    // count (or its floor), and the way back (export first); Delete / Cancel sit beside it.
+	    // Archive asks INLINE, in the row: the sentence says what happens and what stays.
 	    // anchor = the bundle's <tr> (whole bundle) or the version box in the expanded row.
-	    // A shipped bundle lives in the gateway's own flows folder (the default registry, config.py
-	    // _default_flows_dir); nothing copies it back at start, so the confirm says the file stays
-	    // gone until the gateway is reinstalled (routes/gateway.py remove_bundle unlinks it).
-	    const WORKFLOW_SHIPPED_DELETE = " It ships with the gateway: nothing puts it back at the next restart, only reinstalling the gateway does.";
-	    function workflowDeleteSentence(label, bundleVersion, usage, shipped = false) {
-	      const scope = bundleVersion ? "This version is removed from disk" : "Every version of this workflow is removed from disk";
-	      let runs = "";
-	      if (usage && usage.seen) {
-	        runs = usage.capped
-	          ? ` At least ${usage.seen} run${usage.seen === 1 ? "" : "s"} reference it (the run store cannot count exactly); they keep their records but can no longer be replayed or resumed.`
-	          : ` ${usage.seen} run${usage.seen === 1 ? "" : "s"} reference it; they keep their records but can no longer be replayed or resumed.`;
-	      } else if (usage) {
-	        runs = " No runs reference it in the pages checked.";
-	      }
-	      return `Delete ${label}? ${scope}; there is no undo.${shipped ? WORKFLOW_SHIPPED_DELETE : ""}${runs} Export it first if you may need it again.`;
-	    }
-	    function workflowConfirmInline(anchor, text, onConfirm) {
+	    function workflowConfirmInline(anchor, text, confirmLabel, onConfirm) {
 	      for (const old of Array.from(document.querySelectorAll("#tab-workflows .workflows-confirm"))) old.remove();
 	      const box = document.createElement("div");
 	      box.className = "inline-confirm workflows-confirm-box";
@@ -4961,7 +4794,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const span = document.createElement("span");
 	      span.textContent = text;
 	      const yes = document.createElement("button");
-	      yes.type = "button"; yes.className = "danger"; yes.textContent = "Delete";
+	      yes.type = "button"; yes.className = "danger"; yes.textContent = confirmLabel;
 	      const no = document.createElement("button");
 	      no.type = "button"; no.className = "secondary"; no.textContent = "Cancel";
 	      box.append(span, yes, no);
@@ -4970,7 +4803,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        holder = document.createElement("tr");
 	        holder.className = "workflows-confirm";
 	        const td = document.createElement("td");
-	        td.colSpan = 6;
+	        td.colSpan = workflowColCount();
 	        td.append(box);
 	        holder.append(td);
 	        const next = anchor.nextElementSibling;
@@ -4992,29 +4825,34 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      try { no.focus(); } catch {}
 	      return holder;
 	    }
-	    async function deleteWorkflow(bundleId, bundleVersion, row, anchor) {
-	      if (!anchor) throw new Error("deleteWorkflow needs the row (or version box) that asks inline.");
-	      const label = bundleVersion ? `${bundleId}@${bundleVersion}` : bundleId;
-	      let usage = null;
-	      try { usage = await workflowUsage(bundleId, bundleVersion, row); } catch (err) { usage = null; }
-	      const shipped = Boolean(row && (row.versions || []).some((v) => v && v.source === "shipped"));
-	      workflowConfirmInline(anchor, workflowDeleteSentence(label, bundleVersion, usage, shipped), async () => {
-	        $("workflows-message").textContent = `Deleting ${label}…`;
-	        $("workflows-message").className = "message";
+	    function archiveWorkflow(row, bundleVersion, anchor) {
+	      if (!anchor) throw new Error("archiveWorkflow needs the row (or version box) that asks inline.");
+	      const label = bundleVersion ? `${row.name} ${bundleVersion}` : row.name;
+	      const text = `Archive ${label}? It disappears from lists and can't start new runs; the file and every past run stay on the gateway.`;
+	      workflowConfirmInline(anchor, text, "Archive", async () => {
 	        try {
-	          const qs = bundleVersion ? `?bundle_version=${encodeURIComponent(bundleVersion)}&reload=true` : "?reload=true";
-	          const res = await api(`/api/gateway/bundles/${encodeURIComponent(bundleId)}${qs}`, { method: "DELETE" });
-	          $("workflows-message").textContent = `Removed ${res.removed} file(s) for ${label}.`;
+	          await api(`/api/gateway/bundles/${encodeURIComponent(row.bundle_id)}/archive`, { method: "POST", body: JSON.stringify(bundleVersion ? { bundle_version: bundleVersion } : {}) });
+	          $("workflows-message").textContent = `Archived ${label}. Turn on “Show archived” to see it or unarchive it.`;
 	          $("workflows-message").className = "message ok";
-	          if (!bundleVersion) state.workflowsExpanded.delete(bundleId);
-	          await loadWorkflows();
+	          await loadWorkflows({ keepMessage: true });
 	        } catch (err) {
-	          $("workflows-message").textContent = `Not deleted: ${String(err.message || err)}`;
+	          $("workflows-message").textContent = `Not archived: ${emailErrorText(err)}`;
 	          $("workflows-message").className = "message error";
 	        }
 	      });
 	    }
-
+	    async function unarchiveWorkflow(row, bundleVersion) {
+	      const label = bundleVersion ? `${row.name} ${bundleVersion}` : row.name;
+	      try {
+	        await api(`/api/gateway/bundles/${encodeURIComponent(row.bundle_id)}/unarchive`, { method: "POST", body: JSON.stringify(bundleVersion ? { bundle_version: bundleVersion } : {}) });
+	        $("workflows-message").textContent = `${label} is back in the lists and can start runs again.`;
+	        $("workflows-message").className = "message ok";
+	        await loadWorkflows({ keepMessage: true });
+	      } catch (err) {
+	        $("workflows-message").textContent = `Not unarchived: ${emailErrorText(err)}`;
+	        $("workflows-message").className = "message error";
+	      }
+	    }
 	    async function importWorkflows(files) {
 	      const list = [...(files || [])];
 	      if (!list.length) return;
@@ -5046,7 +4884,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (failed.length) parts.push(`Failed — ${failed.join("; ")}.`);
 	      $("workflows-message").textContent = parts.join(" ") || "Nothing to import.";
 	      $("workflows-message").className = failed.length ? "message error" : (notLoaded.length ? "message" : "message ok");
-	      await loadWorkflows();
+	      await loadWorkflows({ keepMessage: true });
 	    }
 
 	    // ---- Summoned Entities: full create + lifecycle management ----
@@ -7372,7 +7210,45 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     // Mailbox tabs (DESIGN-v2 §3): IMAP first and the default, then Google, Microsoft.
     const MY_EMAIL_TABS = ["imap", "google", "microsoft"];
     const MY_EMAIL_SERVER_FIELDS = ["my-email-imap-host", "my-email-imap-port", "my-email-imap-security", "my-email-smtp-host", "my-email-smtp-port", "my-email-smtp-security", "my-email-username"];
-    const myEmailUi = { tab: "", discovered: null, discoveredFor: "", oauth: null, edited: new Set(), timer: null, prefilledFor: "", editReg: false, editMailbox: false };
+    const myEmailUi = { tab: "", discovered: null, discoveredFor: "", oauth: null, edited: new Set(), timer: null, prefilledFor: "", editReg: false, editMailbox: false, base: "", notifyTest: "" };
+    // ONE account email UI for the signed-in user AND an entity (DESIGN-v3 §3.2): every call goes
+    // through the current API base, /me/email (own) or /accounts/<id>/email (an entity's own
+    // mailbox, admin or its creator); the payloads and responses are identical (accounts-api §3.1).
+    const MY_EMAIL_BASE = "/api/gateway/me/email";
+    // A response that breaks a cross-lane contract: logged, then re-thrown outside the handler so
+    // browser tests (pageerror) and the console go red, while the screen keeps plain words.
+    function consoleSeamFailure(err) {
+      console.error("AbstractGateway console seam:", err);
+      if (typeof setTimeout === "function") setTimeout(() => { throw err; }, 0);
+    }
+    const MY_EMAIL_TEXT_FIELDS = ["my-email-registered", "my-email-address", "my-email-oauth-address", "my-email-password", "my-email-username", "my-email-imap-host", "my-email-imap-port", "my-email-smtp-host", "my-email-smtp-port", "my-email-oauth-client-id", "my-email-oauth-client-secret", "my-email-oauth-tenant", "my-email-policy-add", "my-email-per-hour", "my-email-per-day", "my-email-imap-folder"];
+    function myEmailApi(sub = "") { return `${myEmailUi.base || MY_EMAIL_BASE}${sub}`; }
+    // The few sentences that address "you": an explicit table, swapped when the UI serves an entity.
+    const MY_EMAIL_ENTITY_TEXT = {
+      "my-email-registered-title": "Email address",
+      "my-email-registered-help": "Where notifications about its runs go.",
+      "my-email-mailbox-desc": "Lets its agents and automations read and send mail as this entity. Nobody reads its mail through the console.",
+    };
+    function myEmailApplyVoice(entity) {
+      for (const [id, text] of Object.entries(MY_EMAIL_ENTITY_TEXT)) {
+        const el = $(id);
+        if (!el) throw new Error(`The account email UI has no #${id} (DESIGN-v3 §3.2).`);
+        if (el.__ownText === undefined) el.__ownText = el.textContent;
+        el.textContent = entity ? text : el.__ownText;
+      }
+    }
+    function myEmailUseBase(base, notifyTest = "") {
+      const next = base || MY_EMAIL_BASE;
+      myEmailUi.notifyTest = next === MY_EMAIL_BASE ? "" : notifyTest;
+      if ((myEmailUi.base || MY_EMAIL_BASE) === next) return;
+      myEmailUi.base = next === MY_EMAIL_BASE ? "" : next;
+      myEmailApplyVoice(Boolean(myEmailUi.base));
+      // Another principal's mailbox: nothing typed or discovered for the previous one carries over.
+      Object.assign(myEmailUi, { tab: "", discovered: null, discoveredFor: "", oauth: null, edited: new Set(), prefilledFor: "", editReg: false, editMailbox: false });
+      for (const id of MY_EMAIL_TEXT_FIELDS) { const el = $(id); if (el) el.value = ""; }
+      for (const id of ["my-email-imap-security", "my-email-smtp-security"]) { const el = $(id); if (el) el.value = "ssl"; }
+      state.myEmail = null;
+    }
     // ONE address question (DESIGN-v2 §11): at most one editable address field on screen.
     // Card 1 shows the address as text + "Change" (or "Not set yet" + "Set it now"); the
     // mailbox panes show "Mailbox account: x — Use a different account" whenever an address
@@ -7475,9 +7351,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         const how = d.auth_kind === "oauth2" || d.oauth ? ((d.oauth && d.oauth.provider) === "microsoft" ? "Microsoft" : ((d.oauth && d.oauth.provider) === "google" ? "Google" : "sign-in")) : "password";
         const checked = st.last_ok ? `checked ${emailAgo(st.last_ok)}` : (st.last_test ? `last check ${emailAgo(st.last_test)}` : "not checked yet");
         const paused = d.enabled === false ? " · paused" : "";
-        $("my-email-status").textContent = `Connected as ${d.address} · ${how === "password" ? "IMAP" : how} · ${checked}${paused}`;
+        // A mailbox stored without an outgoing server reads "Receive only" + the API's sentence, never "Connected" alone.
+        const receiveOnly = Boolean(d.mailbox && d.mailbox.state === "receive_only");
+        if (receiveOnly && !(d.mailbox.reason)) consoleSeamFailure(new Error("GET …/email: mailbox.state receive_only without a reason (gateway seam)."));
+        $("my-email-status").textContent = `${receiveOnly ? "Receive only" : "Connected"} as ${d.address} · ${how === "password" ? "IMAP" : how} · ${checked}${paused}`;
         const err = st.last_error;
-        myEmailShow("my-email-status-error", err ? `${err.cause || err.code}${err.fix ? ` ${err.fix}` : ""}` : "");
+        const errText = err ? `${err.cause || err.code}${err.fix ? ` ${err.fix}` : ""}` : "";
+        myEmailShow("my-email-status-error", [receiveOnly ? (d.mailbox.reason || "") : "", errText].filter(Boolean).join(" "));
       } else {
         const want = d.email_address || "";
         if (!myEmailVal("my-email-address")) myEmailSet("my-email-address", want);
@@ -7497,7 +7377,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       afSwitchSet($("my-email-agent-tools"), { checked: Boolean(at.on), reason: at.available === false ? (at.unavailable_reason || "Connect a mailbox first.") : "" });
       // 5. Advanced.
       afSwitchSet($("my-email-enabled"), { checked: d.enabled !== false, reason: "" });
-      renderEmailRecipientRules(d.policy);
+      // The recipients lane's ONE renderer, on the API base this UI serves (own or an entity's).
+      // A missing field is a seam failure: loud for tests, not developer copy on screen.
+      try { renderEmailRecipientRules(d.policy, myEmailApi()); } catch (e) { consoleSeamFailure(e); }
       const lim = d.limits || {};
       if (document.activeElement !== $("my-email-per-hour")) myEmailSet("my-email-per-hour", lim.per_hour);
       if (document.activeElement !== $("my-email-per-day")) myEmailSet("my-email-per-day", lim.per_day);
@@ -7530,11 +7412,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         inlineState("my-email-policy-state", "", "");
       }
       recipientRulesUi.base = base;
-      const pol = policy || { mode: "allowlist", always_allow: [], always_deny: [] };
-      if (!Array.isArray(pol.always_allow) || !Array.isArray(pol.always_deny)) {
-        throw new Error("The email policy has no always_allow / always_deny lists (gateway older than this console?)");
+      const pol = policy || { mode: "allowlist", always_allow: [], always_deny: [], self_addresses: [] };
+      if (!Array.isArray(pol.always_allow) || !Array.isArray(pol.always_deny) || !Array.isArray(pol.self_addresses)) {
+        throw new Error("The email policy has no always_allow / always_deny / self_addresses (gateway older than this console?)");
       }
-      recipientRulesUi.policy = { mode: pol.mode === "denylist" ? "denylist" : "allowlist", always_allow: pol.always_allow.slice(), always_deny: pol.always_deny.slice() };
+      recipientRulesUi.policy = { mode: pol.mode === "denylist" ? "denylist" : "allowlist", always_allow: pol.always_allow.slice(), always_deny: pol.always_deny.slice(), self_addresses: pol.self_addresses.slice() };
       $("my-email-policy-mode").value = recipientRulesUi.policy.mode;
       for (const which of Object.keys(RECIPIENT_RULE_LISTS)) renderRecipientRuleList(which);
     }
@@ -7548,6 +7430,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         li.className = "chip";
         const t = document.createElement("span");
         t.textContent = entry;
+        if (recipientRulesUi.policy.self_addresses.includes(entry)) {
+          // The own address is always allowed: a fixed chip, never removable.
+          li.className = "chip chip--fixed";
+          t.textContent = `${entry} (your address)`;
+          li.append(t);
+          ul.append(li);
+          continue;
+        }
         const x = document.createElement("button");
         x.type = "button";
         x.className = "chip__remove";
@@ -7594,7 +7484,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     }
     async function loadMyEmail() {
       try {
-        renderMyEmail(await api("/api/gateway/me/email"));
+        renderMyEmail(await api(myEmailApi()));
         myEmailMessage("");
       } catch (e) {
         myEmailMessage(emailErrorText(e), "error");
@@ -7607,7 +7497,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       btn.setAttribute("aria-busy", "true");
       myEmailShow("my-email-registered-error", "");
       try {
-        const out = await api("/api/gateway/me/email/address", { method: "PUT", body: JSON.stringify({ address }) });
+        const out = await api(myEmailApi("/address"), { method: "PUT", body: JSON.stringify({ address }) });
         if (out && out.schema) renderMyEmail({ ...out, notices: (state.myEmail && state.myEmail.notices) || [] });
         btn.textContent = "Saved";
         if (typeof setTimeout === "function") setTimeout(() => { btn.textContent = "Save"; }, 2000);
@@ -7659,7 +7549,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       myEmailUi.discoveredFor = address;
       let out = null;
       try {
-        out = await api("/api/gateway/me/email/discover", { method: "POST", body: JSON.stringify({ address }), slow: true });
+        out = await api(myEmailApi("/discover"), { method: "POST", body: JSON.stringify({ address }), slow: true });
       } catch (e) {
         if (myEmailUi.discoveredFor === address) myEmailShow("my-email-servers-source", `${emailErrorText(e)} The standard settings stay filled in.`);
         return null;
@@ -7668,8 +7558,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       myEmailUi.discovered = out;
       const def = out && out.defaults;
       if (!def || !def.imap || !def.smtp || typeof def.message !== "string") {
-        console.error("AbstractGateway console: POST /me/email/discover answered without `defaults` (gateway-api seam, DESIGN-v2 §6).");
-        myEmailShow("my-email-servers-source", "The gateway's discovery answered without server defaults (gateway-api seam). The standard settings stay filled in.");
+        // A seam fails loudly for tests (an uncaught error), never as UI copy.
+        consoleSeamFailure(new Error("POST …/email/discover answered without `defaults` (gateway seam, DESIGN-v2 §6)."));
+        myEmailShow("my-email-servers-source", "Standard settings for this domain — change them if your provider differs.");
         return out;
       }
       myEmailApplyServers(def);
@@ -7696,7 +7587,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       btn.setAttribute("aria-busy", "true");
       btn.textContent = "Connecting…";
       try {
-        const out = await api("/api/gateway/me/email", { method: "PUT", body: JSON.stringify(body), slow: true });
+        const out = await api(myEmailApi(), { method: "PUT", body: JSON.stringify(body), slow: true });
         $("my-email-password").value = "";
         await loadMyEmail();
         myEmailMessage(`Mailbox connected as ${(out && out.address) || address}.`, "ok");
@@ -7718,7 +7609,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       btn.setAttribute("aria-busy", "true");
       btn.textContent = "Testing…";
       try {
-        const out = await api("/api/gateway/me/email/test", { method: "POST", slow: true });
+        const out = await api(myEmailApi("/test"), { method: "POST", slow: true });
         const failed = ["imap", "smtp"].map((k) => out && out[k]).filter((l) => l && l.ok === false);
         await loadMyEmail();
         if (failed.length) myEmailShow("my-email-status-error", `${failed[0].cause}${failed[0].fix ? ` ${failed[0].fix}` : ""}`);
@@ -7735,7 +7626,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const btn = $("my-email-disconnect-now");
       btn.disabled = true;
       try {
-        await api("/api/gateway/me/email", { method: "DELETE" });
+        await api(myEmailApi(), { method: "DELETE" });
         myEmailUi.tab = ""; myEmailUi.discovered = null; myEmailUi.discoveredFor = "";
         await loadMyEmail();
         myEmailMessage("Mailbox disconnected. Your policy and limits are kept.", "ok");
@@ -7747,7 +7638,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     }
     async function saveMyEmailLimits() {
       try {
-        const out = await api("/api/gateway/me/email/limits", { method: "PUT", body: JSON.stringify({ per_hour: myEmailNum("my-email-per-hour"), per_day: myEmailNum("my-email-per-day") }) });
+        const out = await api(myEmailApi("/limits"), { method: "PUT", body: JSON.stringify({ per_hour: myEmailNum("my-email-per-hour"), per_day: myEmailNum("my-email-per-day") }) });
         if (out && out.limits) {
           const lim = out.limits;
           $("my-email-usage").textContent = `${lim.used_last_hour || 0} sent this hour, ${lim.used_last_day || 0} today.`;
@@ -7760,7 +7651,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     async function saveMyEmailFolder() {
       const folder = myEmailVal("my-email-imap-folder");
       try {
-        await api("/api/gateway/me/email/folder", { method: "PUT", body: JSON.stringify({ folder }) });
+        await api(myEmailApi("/folder"), { method: "PUT", body: JSON.stringify({ folder }) });
         inlineState("my-email-folder-state", "Saved", "ok");
       } catch (e) {
         inlineState("my-email-folder-state", emailErrorText(e), "error");
@@ -7793,7 +7684,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       btn.setAttribute("aria-busy", "true");
       inlineState("my-email-notify-test-state", "Sending…", "");
       try {
-        const out = await api("/api/gateway/me/notifications/test", { method: "POST", slow: true });
+        // Own: POST /me/notifications/test; an entity: POST /accounts/<id>/notifications/test (accounts-api mirror).
+        const out = await api(myEmailUi.notifyTest || "/api/gateway/me/notifications/test", { method: "POST", slow: true });
         if (!out || typeof out.message !== "string" || !out.message) {
           throw new Error("The test answer carries no message (gateway-api seam, DESIGN-v2 §6).");
         }
@@ -7808,19 +7700,19 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function bindMyEmailSwitches() {
       const onErr = (e) => myEmailMessage(emailErrorText(e), "error");
       const notify = (key, label) => async (next) => {
-        const out = await api("/api/gateway/me/email/notifications", { method: "PUT", body: JSON.stringify({ [key]: next }) });
+        const out = await api(myEmailApi("/notifications"), { method: "PUT", body: JSON.stringify({ [key]: next }) });
         if (out && out.schema) renderMyEmail({ ...out, notices: (state.myEmail && state.myEmail.notices) || [] });
         myEmailMessage(`${label} emails are ${next ? "on" : "off"}.`, "ok");
       };
       afSwitchBind($("my-email-notify-job-failed"), notify("job_failed", "“Job failed”"), onErr);
       afSwitchBind($("my-email-notify-approval"), notify("approval_needed", "“Approval needed”"), onErr);
       afSwitchBind($("my-email-agent-tools"), async (next) => {
-        await api("/api/gateway/me/email/agent-tools", { method: "PUT", body: JSON.stringify({ enabled: next }) });
+        await api(myEmailApi("/agent-tools"), { method: "PUT", body: JSON.stringify({ enabled: next }) });
         await loadMyEmail();
         myEmailMessage(next ? "Agent email tools are on." : "Agent email tools are off.", "ok");
       }, onErr);
       afSwitchBind($("my-email-enabled"), async (next) => {
-        await api("/api/gateway/me/email/enabled", { method: "PUT", body: JSON.stringify({ enabled: next }) });
+        await api(myEmailApi("/enabled"), { method: "PUT", body: JSON.stringify({ enabled: next }) });
         await loadMyEmail();
         myEmailMessage(next ? "Your mailbox is active." : "Your mailbox is paused: no watching, sending or notifications. Your settings are kept.", "ok");
       }, onErr);
@@ -7841,7 +7733,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       start.setAttribute("aria-busy", "true");
       let out;
       try {
-        out = await api("/api/gateway/me/email/oauth/start", { method: "POST", body: JSON.stringify(body), slow: true });
+        out = await api(myEmailApi("/oauth/start"), { method: "POST", body: JSON.stringify(body), slow: true });
       } catch (e) {
         start.removeAttribute("aria-busy");
         myEmailRenderOAuthButton();
@@ -7859,7 +7751,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       while (!flow.cancelled) {
         let res;
         try {
-          res = await api("/api/gateway/me/email/oauth/finish", { method: "POST", body: JSON.stringify({ flow_id: flow.id, wait_s: 20 }), timeoutMs: 70000 });
+          res = await api(myEmailApi("/oauth/finish"), { method: "POST", body: JSON.stringify({ flow_id: flow.id, wait_s: 20 }), timeoutMs: 70000 });
         } catch (e) {
           if (!flow.cancelled) { prompt.textContent = emailErrorText(e); prompt.className = "inline-state error"; }
           break;
@@ -7879,7 +7771,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const flow = myEmailUi.oauth;
       if (!flow) return;
       flow.cancelled = true;
-      try { await api("/api/gateway/me/email/oauth/cancel", { method: "POST", body: JSON.stringify({ flow_id: flow.id }) }); } catch {}
+      try { await api(myEmailApi("/oauth/cancel"), { method: "POST", body: JSON.stringify({ flow_id: flow.id }) }); } catch {}
       $("my-email-oauth-prompt").textContent = "Sign-in cancelled.";
       $("my-email-oauth-cancel").hidden = true;
       myEmailUi.oauth = null;
@@ -9038,7 +8930,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const { slow = false, timeoutMs, ...init } = options;
       const headers = new Headers(init.headers || {});
       headers.set("Accept", "application/json");
-      if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+      // A FormData body (Import .flow) needs the browser's own multipart Content-Type with its
+      // boundary; forcing JSON here made every upload a 422 ("file" missing).
+      const multipart = typeof FormData !== "undefined" && init.body instanceof FormData;
+      if (init.body && !multipart && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
       const token = csrf();
       if (token && ["POST", "PUT", "PATCH", "DELETE"].includes(String(init.method || "GET").toUpperCase())) {
         headers.set("X-AbstractGateway-CSRF", decodeURIComponent(token));
@@ -12498,10 +12393,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // would render EMPTY — hide the tab itself and fold a
       // restored runtimes selection back to the first tab.
       $("tab-button-runtimes").classList.toggle("hidden", !p.admin);
-      // Workflows stays visible to everyone — listing and exporting are
-      // user-level. Only the WRITE affordance is admin-gated, matching the
-      // server rule; hiding the tab would hide the workflows a user runs.
-      $("workflows-import").classList.toggle("hidden", !p.admin);
+      // Workflows stays visible to everyone — listing, exporting, opening in
+      // AbstractFlow and importing into "Mine" are user-level.
+      // Import is offered to everyone (DESIGN-v3 §5.1): a user's import lands in their own
+      // registry ("Mine"); the server refuses it only where no own registry exists.
       if (!p.admin && state.activeTab === "runtimes") setActiveTab("users");
       // Models tab: reads render for EVERY authenticated user (unlike the
       // all-admin runtimes tab) — only the mutation surfaces are gated: the
@@ -12635,15 +12530,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       try { no.focus(); } catch {}
       return row;
     }
-    // ---- Accounts (DESIGN-v2 §2): ONE table for users AND entities, read from
-    // GET /admin/accounts (gateway-api, §6) -- the same resolver the account page
-    // uses, so a row and the Email modal never disagree (§2.5). Row tint by kind
-    // (kit .af-row--admin|user|entity), an Active switch on every row, and every
-    // action that cannot apply is disabled WITH its reason visible in the row.
-    const accountsUi = { rows: [], emailRelease: null, logsRelease: null, emailHome: null, logsFor: null, logsKind: "" };
+    // ---- Accounts (DESIGN-v3 §1): ONE table for users AND entities, read from
+    // GET /admin/accounts (admins; ?include_archived=true when "Show archived" is on) or
+    // GET /me/accounts. Row tint by kind (kit .af-row--admin|user|entity), an Active switch on
+    // every live row, and ONLY the actions that apply: Email · Logs · Workspace (users) /
+    // Manage (entities) visible, the rest in the kit "⋯" menu (af-menu). Nothing unavailable is
+    // rendered; a title on "⋯" says why when an absence would surprise. Archive, never delete.
+    const accountsUi = { rows: [], emailRelease: null, logsRelease: null, emailHome: null, logsFor: null, logsKind: "", showArchived: false, menuReleases: [], archivedSwitch: null };
     const ACCOUNT_KIND_LABEL = { admin: "Admin", user: "User", entity: "Entity" };
-    const ACCOUNT_ROLE_TITLE = { admin: "Admin — manages this gateway", user: "User — signs in and runs their own agents", entity: "Entity — a persistent identity that acts on this gateway" };
-    const ACCOUNT_ACTIONS = ["email", "logs", "workspace", "rotate", "manage", "delete", "suspend"];
+    const ACCOUNT_ROLE_TITLE = { admin: "Admin — manages this gateway", user: "User — signs in and runs their own agents", entity: "Entity — an AI user with its own memory and mailbox" };
+    // The row contract of accounts-api (DESIGN-v3 §2.2): every key present, `delete` gone.
+    const ACCOUNT_ACTIONS = ["email", "logs", "workspace", "rotate", "manage", "archive", "unarchive", "suspend"];
+    const ACCOUNTS_SHOW_ARCHIVED_KEY = "abstractgateway.console.accounts.show_archived";
     function accountKindClass(a) {
       if (a.kind === "entity") return "entity";
       return a.role === "admin" ? "admin" : "user";
@@ -12651,50 +12549,28 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function accountAction(a, key) {
       const act = a && a.actions && a.actions[key];
       if (!act || typeof act.available !== "boolean") {
-        throw new Error(`GET /admin/accounts row ${a && a.id} has no actions.${key} (gateway-api seam, DESIGN-v2 §6).`);
+        throw new Error(`GET /admin/accounts row ${a && a.id} has no actions.${key} (accounts-api seam, DESIGN-v3 §2.2).`);
       }
       return act;
     }
-    // Words, never placeholder dashes (round-2 polish): an entity's mailbox is "Not available"
-    // (the reason is in its Email modal), a missing address is "No address".
+    function accountCan(a, key) { return accountAction(a, key).available === true; }
+    function accountArchived(a) {
+      if (typeof a.archived !== "boolean") throw new Error(`GET /admin/accounts row ${a && a.id} has no boolean "archived" (accounts-api seam, DESIGN-v3 §2.2).`);
+      return a.archived;
+    }
+    // Words, never placeholder dashes: "Connected as x@y" / "Not connected" / "Paused".
     function accountMailboxText(a) {
       const m = a.mailbox || {};
       if (m.state === "connected") return m.address ? `Connected as ${m.address}` : "Connected";
+      if (m.state === "receive_only") return "Receive only — no outgoing server";
       if (m.state === "paused") return "Paused";
       if (m.state === "not_connected") return "Not connected";
       if (m.state === "unavailable") return "Not available";
-      throw new Error(`GET /admin/accounts row ${a.id} has mailbox.state ${JSON.stringify(m.state)} (gateway-api seam, DESIGN-v2 §6).`);
+      throw new Error(`GET /admin/accounts row ${a.id} has mailbox.state ${JSON.stringify(m.state)} (accounts-api seam, DESIGN-v3 §3.1).`);
     }
-    // The phone line "address · mailbox" says the address once: a mailbox on the same
-    // account reads "Mailbox connected" instead of repeating it.
+    // The card line "Email address · Mailbox": the same words as the table's two cells.
     function accountPhoneLine(a) {
-      const m = a.mailbox || {};
-      const address = a.email_address || "No address";
-      const mailbox = (m.state === "connected" && m.address && m.address === a.email_address) ? "Mailbox connected" : accountMailboxText(a);
-      return `${address} · ${mailbox}`;
-    }
-    // Reasons of the unavailable actions as ONE short muted line, without "Delete:" prefixes
-    // (the disabled button sits right beside it). An entity whose Rotate AND Delete are both
-    // unavailable gets one combined sentence (explicit rule on the two action keys).
-    const ACCOUNT_ENTITY_ROTATE_DELETE = "Rotate and Delete don't apply to entities: no credential is kept, and an entity's name is kept for life — suspend it instead.";
-    const ACCOUNT_OWN_SUSPEND_DELETE = "You can't deactivate or delete your own account.";
-    function accountReasonsLine(a, keys) {
-      const off = ["suspend", ...keys].filter((k) => !accountAction(a, k).available);
-      const out = [];
-      let rest = off;
-      if (a.kind === "entity" && off.includes("rotate") && off.includes("delete")) {
-        out.push(ACCOUNT_ENTITY_ROTATE_DELETE);
-        rest = rest.filter((k) => k !== "rotate" && k !== "delete");
-      }
-      if (a.own === true && off.includes("suspend") && off.includes("delete")) {
-        out.push(ACCOUNT_OWN_SUSPEND_DELETE);
-        rest = rest.filter((k) => k !== "suspend" && k !== "delete");
-      }
-      for (const k of rest) {
-        const why = accountAction(a, k).reason || "Not available for this account.";
-        if (!out.includes(why)) out.push(why);
-      }
-      return out.join(" ");
+      return `${a.email_address || "No address"} · ${accountMailboxText(a)}`;
     }
     function accountIsOwn(a) {
       const p = state.principal || {};
@@ -12706,10 +12582,39 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     // RBAC (operator ruling 2026-10-01, rbac lane): an admin reads every account from
     // /admin/accounts; anyone else reads /me/accounts (their own row + the entities they created).
     function accountsAdmin() { return Boolean(state.principal && state.principal.admin); }
+    function accountsReadShowArchived() {
+      try { return readStringSetting(ACCOUNTS_SHOW_ARCHIVED_KEY, "0") === "1"; } catch { return false; }
+    }
+    // "Show archived" (admins): a kit switch in the header row, off by default, remembered
+    // per viewer (localStorage, try/catch inside the setting helpers).
+    function renderAccountsArchivedSwitch() {
+      const slot = $("accounts-archived-slot");
+      if (!slot) throw new Error("Accounts markup has no #accounts-archived-slot (DESIGN-v3 §1.1).");
+      const admin = accountsAdmin();
+      if (!accountsUi.archivedSwitch) {
+        const sw = afSwitchCreate({ id: "accounts-show-archived", label: "Show archived", ariaLabel: "Show archived accounts", checked: false, small: true });
+        sw.button.title = "Archived accounts can't sign in or act; their runs and history are kept.";
+        sw.button.classList.add("accounts-show-archived");
+        slot.append(...sw.nodes);
+        accountsUi.archivedSwitch = sw.button;
+        afSwitchBind(sw.button, async (next) => {
+          accountsUi.showArchived = next;
+          writeStringSetting(ACCOUNTS_SHOW_ARCHIVED_KEY, next ? "1" : "0");
+          await loadAccounts();
+          return true;
+        }, (e) => usersMessage(emailErrorText(e), "error"));
+      }
+      accountsUi.showArchived = admin && accountsReadShowArchived();
+      afSwitchSet(accountsUi.archivedSwitch, { checked: accountsUi.showArchived });
+      slot.hidden = !admin;
+      accountsUi.archivedSwitch.classList.toggle("hidden", !admin);
+    }
     async function loadAccounts() {
-      const path = accountsAdmin() ? "/api/gateway/admin/accounts" : "/api/gateway/me/accounts";
+      const admin = accountsAdmin();
+      renderAccountsArchivedSwitch();
+      const path = admin ? `/api/gateway/admin/accounts${accountsUi.showArchived ? "?include_archived=true" : ""}` : "/api/gateway/me/accounts";
       const out = await api(path);
-      if (!out || !Array.isArray(out.accounts)) throw new Error(`GET ${path.replace("/api/gateway", "")} answered without an accounts list (gateway seam, DESIGN-v2 §6).`);
+      if (!out || !Array.isArray(out.accounts)) throw new Error(`GET ${path.replace("/api/gateway", "")} answered without an accounts list (accounts-api seam, DESIGN-v3 §2.2).`);
       accountsUi.rows = out.accounts;
       renderAccounts(out.accounts);
       return out.accounts;
@@ -12718,14 +12623,103 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const b = document.createElement("button");
       b.type = "button";
       b.className = opts.cls || "secondary";
-      b.innerHTML = (opts.icon ? `<span class="button-icon" aria-hidden="true">${opts.icon}</span>` : "") + `<span>${esc(label)}</span>`;
+      b.textContent = label;
       b.setAttribute("aria-label", opts.aria || label);
       b.setAttribute("data-label", label);
       if (opts.title) b.title = opts.title;
       return b;
     }
+    // The kit menu (af-menu, bound by the islands' bindMenu). The node-VM tests load no
+    // islands bundle: there the list toggles on click so its items stay testable. The served
+    // console always carries the bundle, so a bundle WITHOUT bindMenu is a broken re-sync and throws.
+    function bindAccountMenu(button, list) {
+      const lib = islandsLib();
+      if (lib) {
+        if (typeof lib.bindMenu !== "function") throw new Error(`The abstractuic islands bundle (kit ${lib.kitVersion || "?"}) has no bindMenu: re-sync console_islands (DESIGN-v3 §1.4).`);
+        return lib.bindMenu(button, list);
+      }
+      if (typeof window !== "undefined" && window.document && window.document.getElementById && window.document.getElementById("af-console-islands")) {
+        throw new Error("The abstractuic islands bundle did not load: the Accounts row menu needs its bindMenu (DESIGN-v3 §1.4).");
+      }
+      list.hidden = true;
+      button.setAttribute("aria-haspopup", "menu");
+      button.setAttribute("aria-expanded", "false");
+      button.onclick = () => { list.hidden = !list.hidden; button.setAttribute("aria-expanded", list.hidden ? "false" : "true"); };
+      list.onclick = () => { list.hidden = true; button.setAttribute("aria-expanded", "false"); };
+      return () => {};
+    }
+    // items: [{ key, label, onSelect, danger }] — only actions that apply; none = no "⋯" at all.
+    function accountMenu(a, items, whyAbsent) {
+      if (!items.length) return null;
+      const wrap = document.createElement("div");
+      wrap.className = "af-menu accounts-menu";
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "af-menu__button";
+      button.setAttribute("aria-label", `More actions for ${a.id}`);
+      button.setAttribute("data-action", "more");
+      button.textContent = "⋯";
+      if (whyAbsent) button.title = whyAbsent;
+      const list = document.createElement("div");
+      list.className = "af-menu__list";
+      list.hidden = true;
+      for (const it of items) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = `af-menu__item${it.danger ? " af-menu__item--danger" : ""}`;
+        b.setAttribute("role", "menuitem");
+        b.setAttribute("data-action", it.key);
+        b.textContent = it.label;
+        b.onclick = it.onSelect;
+        list.append(b);
+      }
+      wrap.append(button, list);
+      accountsUi.menuReleases.push(bindAccountMenu(button, list));
+      return wrap;
+    }
+    const ACCOUNT_ARCHIVE_QUESTION = {
+      user: (id) => `Archive ${id}? They can't sign in any more. Their runtime, runs and history are kept; you can unarchive later.`,
+      entity: (id) => `Archive ${id}? It stops acting and never wakes. Its memory, runs and history are kept; you can unarchive later.`,
+    };
+    // Admins: POST /admin/accounts/{id}/archive|unarchive (any account). Anyone else archives an
+    // entity they created through POST /me/accounts/{id}/archive (accounts-api §2.2); only an admin unarchives.
+    async function accountArchiveCall(a, verb) {
+      const scope = accountsAdmin() ? "admin" : "me";
+      const out = await api(`/api/gateway/${scope}/accounts/${encodeURIComponent(a.id)}/${verb}`, { method: "POST" });
+      if (!out || out.id !== a.id || typeof out.archived !== "boolean") throw new Error(`POST /admin/accounts/{id}/${verb} answered without the updated account (accounts-api seam, DESIGN-v3 §2.2).`);
+      return out;
+    }
+    function askArchiveAccount(tr, a) {
+      const question = (a.kind === "entity" ? ACCOUNT_ARCHIVE_QUESTION.entity : ACCOUNT_ARCHIVE_QUESTION.user)(a.id);
+      userConfirmRow(tr, question, "Archive", async () => {
+        await accountArchiveCall(a, "archive");
+        usersMessage(accountsUi.showArchived ? `${a.id} is archived.` : `${a.id} is archived. Turn on Show archived to see it.`, "ok");
+        await loadAccounts();
+      });
+    }
+    async function unarchiveAccount(a) {
+      try {
+        await accountArchiveCall(a, "unarchive");
+        usersMessage(a.kind === "entity" ? `${a.id} is back, inactive: turn Active on to let it act.` : `${a.id} is back, inactive: turn Active on to let it sign in.`, "ok");
+        await loadAccounts();
+      } catch (e) {
+        usersMessage(emailErrorText(e), "error");
+      }
+    }
+    function accountTextCell(cls, label, text, opts = {}) {
+      const td = document.createElement("td");
+      td.className = cls;
+      td.setAttribute("data-label", label);
+      const span = document.createElement(opts.code ? "code" : "span");
+      span.className = `accounts-cell-text${opts.muted ? " af-row__muted" : ""}`;
+      span.textContent = text;
+      span.title = opts.title || text;
+      td.append(span);
+      return td;
+    }
     function renderAccounts(rows) {
       const tbody = $("users-table");
+      for (const release of accountsUi.menuReleases.splice(0)) { try { release(); } catch {} }
       tbody.textContent = "";
       if (!rows.length) {
         const tr = document.createElement("tr");
@@ -12735,133 +12729,135 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       }
       for (const a of rows) {
         for (const key of ACCOUNT_ACTIONS) accountAction(a, key);
+        const archived = accountArchived(a);
         const kind = accountKindClass(a);
         const tr = document.createElement("tr");
-        tr.className = `af-row--${kind} accounts-row`;
+        tr.className = `af-row--${kind} accounts-row${archived ? " accounts-row--archived" : ""}`;
         tr.setAttribute("data-user", a.id);
         tr.setAttribute("data-kind", a.kind);
+        if (archived) tr.setAttribute("data-archived", "true");
         const shown = (a.tenant_id && a.tenant_id !== "default") ? `${a.tenant_id}/${a.id}` : a.id;
-        const email = a.email_address || "No address";
-        const emailCell = a.email_address ? esc(a.email_address) : `<span class="accounts-none af-row__muted">No address</span>`;
         const mailbox = accountMailboxText(a);
-        const mailboxNone = a.mailbox && a.mailbox.state === "unavailable";
-        tr.innerHTML = `<td data-label="Name" class="accounts-name"><span class="accounts-name__line"><strong>${esc(shown)}</strong> <span class="af-kind-chip af-kind-chip--${kind}" title="${esc(ACCOUNT_ROLE_TITLE[kind])}">${ACCOUNT_KIND_LABEL[kind]}</span></span>`
-          + `<span class="accounts-fold af-row__muted"><span>${esc(email)}</span><span>${a.runtime_id ? `Runtime ${esc(a.runtime_id)}` : "No runtime"}</span></span></td>`
-          + `<td data-label="Email address" class="accounts-col-email">${emailCell}</td>`
-          + `<td data-label="Mailbox" class="accounts-mailbox${mailboxNone ? " accounts-mailbox--none" : ""}"><span class="accounts-phone-line af-row__muted">${esc(accountPhoneLine(a))}</span><span class="accounts-mailbox__text${mailboxNone ? " af-row__muted" : ""}">${esc(mailbox)}</span></td>`
-          + `<td data-label="Runtime" class="accounts-col-runtime">${a.runtime_id ? `<code>${esc(a.runtime_id)}</code>` : `<span class="af-row__muted">None</span>`}</td>`
-          + `<td data-label="Active" class="users-active accounts-active"></td>`;
-        // Active (§2.2): users = registry `enabled`; entities = suspend / resume.
-        const activeCell = tr.querySelector(".accounts-active");
-        const suspend = accountAction(a, "suspend");
-        const sw = afSwitchCreate({
-          id: `account-active-${a.tenant_id || "default"}-${a.id}`.replace(/[^A-Za-z0-9_-]/g, "-"),
-          label: "Active",
-          ariaLabel: `Active: ${a.id}`,
-          checked: Boolean(a.active),
-          small: true,
-          unavailableReason: suspend.available ? "" : (suspend.reason || "This account can't be switched here."),
-        });
-        activeCell.append(...sw.nodes);
-        const setActive = async (next) => {
-          const out = await api(`/api/gateway/admin/accounts/${encodeURIComponent(a.id)}/active`, { method: "PUT", body: JSON.stringify({ active: next }) });
-          if (!out || out.id !== a.id) throw new Error("PUT /admin/accounts/{id}/active answered without the updated account (gateway-api seam, DESIGN-v2 §6).");
-          Object.assign(a, out);
-          return out;
-        };
-        afSwitchBind(sw.button, async (next) => {
-          if (!next) {
-            const question = a.kind === "entity"
-              ? `Suspend ${a.id}? It stops acting until you turn Active back on.`
-              : `Deactivate ${a.id}? They are signed out until you turn Active back on.`;
-            userConfirmRow(tr, question, a.kind === "entity" ? "Suspend" : "Deactivate", async () => {
-              afSwitchSet(sw.button, { checked: true, busy: true });
-              try {
-                await setActive(false);
-                afSwitchSet(sw.button, { checked: false });
-                usersMessage(a.kind === "entity" ? `${a.id} is suspended.` : `${a.id} is deactivated.`, "ok");
-                refreshUsersOnly();
-              } catch (e) {
-                afSwitchSet(sw.button, { checked: true });
-                throw e;
-              }
-            });
-            return false;
-          }
-          await setActive(true);
-          usersMessage(a.kind === "entity" ? `${a.id} is active again (${a.entity_state || "awake"}).` : `${a.id} is active again.`, "ok");
-          refreshUsersOnly();
-          return true;
-        }, (e) => usersMessage(emailErrorText(e), "error"));
-        // Actions (§2.1): Email · Logs · Workspace · Rotate · Manage (entities) · Delete.
+        // Name: id (600) + kind chip (+ "Archived").
+        const nameTd = document.createElement("td");
+        nameTd.className = "accounts-name";
+        nameTd.setAttribute("data-label", "Name");
+        nameTd.innerHTML = `<span class="accounts-name__line"><strong class="accounts-cell-text" title="${esc(shown)}">${esc(shown)}</strong>`
+          + `<span class="af-kind-chip af-kind-chip--${kind}" title="${esc(ACCOUNT_ROLE_TITLE[kind])}">${ACCOUNT_KIND_LABEL[kind]}</span>`
+          + (archived ? `<span class="accounts-archived-chip" title="Archived: can't sign in or act; runs and history are kept.">Archived</span>` : "")
+          + `</span>`;
+        tr.append(nameTd);
+        tr.append(accountTextCell("accounts-col-email", "Email address", a.email_address || "No address", { muted: !a.email_address }));
+        const mailboxTd = accountTextCell("accounts-mailbox", "Mailbox", mailbox, { muted: a.mailbox && a.mailbox.state !== "connected" });
+        mailboxTd.firstChild.classList.add("accounts-mailbox__text");
+        if (a.mailbox && a.mailbox.state === "receive_only") {
+          // The API's sentence, visible (never a tooltip only): why it can't send and what to do.
+          if (!a.mailbox.reason) throw new Error(`GET /admin/accounts row ${a.id}: mailbox.state receive_only without a reason (gateway seam).`);
+          const why = document.createElement("span");
+          why.className = "accounts-cell-text accounts-mailbox__reason af-row__muted";
+          why.textContent = a.mailbox.reason;
+          mailboxTd.append(why);
+        }
+        const phone = document.createElement("span");
+        phone.className = "accounts-phone-line af-row__muted";
+        phone.textContent = accountPhoneLine(a);
+        mailboxTd.prepend(phone);
+        tr.append(mailboxTd);
+        tr.append(accountTextCell("accounts-col-runtime", "Runtime", a.runtime_id ? a.runtime_id : "No runtime", { code: Boolean(a.runtime_id), muted: !a.runtime_id, title: a.runtime_id ? `Runtime ${a.runtime_id}` : "No runtime" }));
+        const activeCell = document.createElement("td");
+        activeCell.className = "users-active accounts-active";
+        activeCell.setAttribute("data-label", "Active");
+        tr.append(activeCell);
+        if (archived) {
+          // Archived rows: plain text, never a switch (Unarchive is in the menu; the account comes back inactive).
+          activeCell.innerHTML = `<span class="accounts-active__archived af-row__muted">Archived</span>`;
+        } else {
+          // Active (§2.2 v2): users = registry `enabled`; entities = suspend / resume.
+          const suspend = accountAction(a, "suspend");
+          const sw = afSwitchCreate({
+            id: `account-active-${a.tenant_id || "default"}-${a.id}`.replace(/[^A-Za-z0-9_-]/g, "-"),
+            label: "Active",
+            ariaLabel: `Active: ${a.id}`,
+            checked: Boolean(a.active),
+            small: true,
+            unavailableReason: suspend.available ? "" : (suspend.reason || "This account can't be switched here."),
+          });
+          activeCell.append(...sw.nodes);
+          const setActive = async (next) => {
+            const out = await api(`/api/gateway/admin/accounts/${encodeURIComponent(a.id)}/active`, { method: "PUT", body: JSON.stringify({ active: next }) });
+            if (!out || out.id !== a.id) throw new Error("PUT /admin/accounts/{id}/active answered without the updated account (accounts-api seam, DESIGN-v3 §2.2).");
+            Object.assign(a, out);
+            return out;
+          };
+          afSwitchBind(sw.button, async (next) => {
+            if (!next) {
+              const question = a.kind === "entity"
+                ? `Suspend ${a.id}? It stops acting until you turn Active back on.`
+                : `Deactivate ${a.id}? They are signed out until you turn Active back on.`;
+              userConfirmRow(tr, question, a.kind === "entity" ? "Suspend" : "Deactivate", async () => {
+                afSwitchSet(sw.button, { checked: true, busy: true });
+                try {
+                  await setActive(false);
+                  afSwitchSet(sw.button, { checked: false });
+                  usersMessage(a.kind === "entity" ? `${a.id} is suspended.` : `${a.id} is deactivated.`, "ok");
+                  refreshUsersOnly();
+                } catch (e) {
+                  afSwitchSet(sw.button, { checked: true });
+                  throw e;
+                }
+              });
+              return false;
+            }
+            await setActive(true);
+            usersMessage(a.kind === "entity" ? `${a.id} is active again (${a.entity_state || "awake"}).` : `${a.id} is active again.`, "ok");
+            refreshUsersOnly();
+            return true;
+          }, (e) => usersMessage(emailErrorText(e), "error"));
+        }
+        // Actions (DESIGN-v3 §1.1 + §13.2): users Email · Logs · Workspace · ⋯ (Rotate token, Archive);
+        // entities Email · Logs · Manage · ⋯ (Archive); archived Logs · ⋯ (Unarchive).
         const actions = document.createElement("td");
         actions.className = "actions accounts-actions";
         actions.setAttribute("data-label", "Actions");
         const buttons = document.createElement("div");
         buttons.className = "accounts-actions__buttons";
-        const shownKeys = [];
-        const add = (key, btn, onClick) => {
-          const act = accountAction(a, key);
-          btn.setAttribute("data-action", key);
-          shownKeys.push(key);
-          if (!act.available) {
-            btn.disabled = true;
-            btn.title = act.reason || "Not available for this account.";
-          } else {
-            btn.onclick = onClick;
-          }
-          buttons.append(btn);
-        };
-        if (a.kind === "entity") {
-          // DESIGN-v2 §2.3: an entity's Email opens the modal that says why it has no mailbox
-          // (actions.email.reason), rather than a dead button.
-          const b = accountButton("Email", { icon: ICONS.mail, aria: `Email for ${a.id}` });
-          b.setAttribute("data-action", "email");
-          b.onclick = () => openAccountEmail(a);
+        const visible = (key, label, opts, onClick) => {
+          if (!accountCan(a, key)) return;
+          const b = accountButton(label, opts);
+          b.setAttribute("data-action", key);
+          b.onclick = onClick;
           buttons.append(b);
+        };
+        const menu = [];
+        const absent = [];
+        const offer = (key, label, onSelect, danger) => {
+          if (accountCan(a, key)) menu.push({ key, label, onSelect, danger: Boolean(danger) });
+          else if (accountAction(a, key).reason) absent.push(accountAction(a, key).reason);
+        };
+        const userWorkspace = () => openWorkspacePolicyModal({ tenant_id: a.tenant_id || "default", user_id: a.id });
+        if (archived) {
+          visible("logs", "Logs", { aria: `Activity of ${a.id}` }, () => openAccountLogs(a));
+          if (accountCan(a, "unarchive")) menu.push({ key: "unarchive", label: "Unarchive", onSelect: () => unarchiveAccount(a), danger: false });
         } else {
-          add("email", accountButton("Email", { icon: ICONS.mail, aria: `Email for ${a.id}` }), () => openAccountEmail(a));
+          visible("email", "Email", { aria: `Email for ${a.id}` }, () => openAccountEmail(a));
+          visible("logs", "Logs", { aria: `Activity of ${a.id}` }, () => openAccountLogs(a));
+          if (a.kind === "entity") {
+            visible("manage", "Manage", { aria: `Manage ${a.id}`, title: "Lifecycle, substrate, capabilities, prompt; Talk lives here too" }, () => openEntityManage(a.id));
+            // No Workspace for entities: their file access is not the per-user workspace policy, and
+            // Manage has no workspace view (C3F / manage-modal) — not offered rather than mis-routed.
+            // Entities have no token: Rotate is never offered; the "⋯" title says why.
+            absent.unshift(accountAction(a, "rotate").reason || "Entities have no token to rotate.");
+          } else {
+            visible("workspace", "Workspace", { aria: `Workspace policy for ${a.id}`, title: "Where this account's agents may read and write" }, userWorkspace);
+            offer("rotate", "Rotate token", () => rotateUser({ user_id: a.id, tenant_id: a.tenant_id || "default" }));
+          }
+          offer("archive", "Archive", () => askArchiveAccount(tr, a), true);
         }
-        add("logs", accountButton("Logs", { icon: ICONS.logs, aria: `Activity of ${a.id}` }), () => openAccountLogs(a));
-        add("workspace", accountButton("Workspace", { icon: ICONS.folder, aria: `Workspace policy for ${a.id}`, title: "Where this account's agents may read and write" }), () => (a.kind === "entity"
-          ? openEntityManage(a.id)
-          : openWorkspacePolicyModal({ tenant_id: a.tenant_id || "default", user_id: a.id })));
-        add("rotate", accountButton("Rotate", { icon: ICONS.refresh, aria: `Rotate token for ${a.id}`, title: "Issue a new token — the old one stops working immediately; the new one is shown once" }), () => (a.kind === "entity"
-          ? rotateAccount(a)
-          : rotateUser({ user_id: a.id, tenant_id: a.tenant_id || "default" })));
-        if (a.kind === "entity") {
-          add("manage", accountButton("Manage", { icon: ICONS.gear, aria: `Manage ${a.id}`, title: "Lifecycle, substrate, capabilities, prompt; Talk lives here too" }), () => openEntityManage(a.id));
-        }
-        add("delete", accountButton("Delete", { icon: ICONS.trash, cls: "danger", aria: `Delete ${a.id}` }), () => userConfirmRow(tr, `Delete ${a.id}? The account and its token are removed; the runtime ${a.runtime_id || a.id} and its data are kept and stay reserved for this user.`, "Delete", async () => {
-          await api(`/api/gateway/admin/users/${encodeURIComponent(a.id)}?tenant_id=${encodeURIComponent(a.tenant_id || "default")}`, { method: "DELETE" });
-          usersMessage(`${a.id} is deleted. Their runtime data is kept.`, "ok");
-          await refresh();
-        }));
+        const more = accountMenu(a, menu, absent.filter((x, i) => x && absent.indexOf(x) === i).join(" "));
+        if (more) buttons.append(more);
         actions.append(buttons);
-        const reasonLine = accountReasonsLine(a, shownKeys);
-        if (reasonLine) {
-          const why = document.createElement("p");
-          why.className = "accounts-reasons af-row__muted";
-          why.textContent = reasonLine;
-          actions.append(why);
-        }
         tr.append(actions);
         tbody.append(tr);
-      }
-    }
-    async function rotateAccount(a) {
-      const ok = await confirmAction({
-        title: `Rotate the key of ${a.id}?`,
-        message: "The current credential stops working immediately. The new one is shown once.",
-        confirmLabel: "Rotate",
-      });
-      if (!ok) return;
-      try {
-        const res = await api(`/api/gateway/admin/accounts/${encodeURIComponent(a.id)}/rotate`, { method: "POST" });
-        if (!res || !res.token) throw new Error("POST /admin/accounts/{id}/rotate answered without a token (gateway-api seam, DESIGN-v2 §6).");
-        renderIssuedToken($("issued-token"), a.id, res.token);
-      } catch (e) {
-        usersMessage(emailErrorText(e), "error");
       }
     }
     // ---- Account modals: the kit's af-modal markup, bound by the islands' bindModal
@@ -12891,6 +12887,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         section.classList.remove("in-modal");
         section.classList.add("hidden");
       }
+      // Back to the signed-in user's own mailbox (an entity's values never stay in the form).
+      myEmailUseBase(MY_EMAIL_BASE);
       $("account-email-body").textContent = "";
       backdrop.hidden = true;
       const release = accountsUi.emailRelease;
@@ -12902,13 +12900,27 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const body = $("account-email-body");
       body.textContent = "";
       $("account-email-title").textContent = `Email — ${a.id}`;
+      // The signed-in user's own email UI, moved into the modal and pointed at `base`.
+      const mountEmailUi = (base, notifyTest = "") => {
+        const section = $("my-email-section");
+        if (!accountsUi.emailHome) {
+          accountsUi.emailHome = document.createComment("my-email-section home");
+          section.parentNode.insertBefore(accountsUi.emailHome, section);
+        }
+        myEmailUseBase(base, notifyTest);
+        section.classList.remove("hidden");
+        section.classList.add("in-modal");
+        body.append(section);
+        loadMyEmail();
+      };
       if (a.kind === "entity") {
-        // plane_for_principal refuses entity principals: mail belongs to a user's runtime plane.
+        // Entities are AI users (DESIGN-v3 §3.2): the SAME email UI as the signed-in user's own,
+        // on the entity's own mailbox (GET/PUT /accounts/<id>/email…, admin or its creator).
         const p = document.createElement("p");
         p.className = "account-modal-lead";
-        const why = accountAction(a, "email");
-        p.textContent = why.reason || (a.mailbox && a.mailbox.reason) || "Entities can't have their own mailbox yet: mailboxes belong to a user's runtime.";
+        p.textContent = `${a.id} is an AI user: this mailbox is its own. Its agents read and send from it; notifications about its runs go to its address.`;
         body.append(p);
+        mountEmailUi(`/api/gateway/accounts/${encodeURIComponent(a.id)}/email`, `/api/gateway/accounts/${encodeURIComponent(a.id)}/notifications/test`);
       } else if (accountIsOwn(a)) {
         if (a.role === "admin") {
           const p = document.createElement("p");
@@ -12916,15 +12928,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           p.textContent = "You are also a user of this gateway: this address receives your sign-in codes and notifications, and your mailbox serves your own agents.";
           body.append(p);
         }
-        const section = $("my-email-section");
-        if (!accountsUi.emailHome) {
-          accountsUi.emailHome = document.createComment("my-email-section home");
-          section.parentNode.insertBefore(accountsUi.emailHome, section);
-        }
-        section.classList.remove("hidden");
-        section.classList.add("in-modal");
-        body.append(section);
-        loadMyEmail();
+        mountEmailUi(MY_EMAIL_BASE);
       } else {
         body.append(accountOtherEmailCard(a));
       }
@@ -13434,15 +13438,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          const configured = defaultRowConfigured(row);
 	          const btn = document.createElement("button");
 	          btn.type = "button";
-	          btn.className = "sandbox-mode";
-	          btn.disabled = !configured;
+	          // Every mode stays choosable: an unconfigured one says so in the
+	          // chat (blocked notice) instead of being greyed out here.
+	          btn.className = `sandbox-mode${configured ? "" : " is-unconfigured"}`;
 	          btn.setAttribute?.("role", "radio");
+	          if (btn.dataset) btn.dataset.mode = mode;
 	          const label = sandboxRouteShortLabel(row);
 	          btn.title = `${label}: ${configured ? `${state.providerLabels.get(row.provider) || row.provider || ""} / ${row.model || ""}` : "not configured"}`;
 	          btn.setAttribute?.("aria-label", btn.title);
 	          btn.innerHTML = `<span class="sandbox-mode-icon" aria-hidden="true">${sandboxRouteIconMarkup(mode)}</span><span class="sandbox-mode-copy"><span class="sandbox-mode-main">${esc(label)}</span><span class="sandbox-mode-sub">${configured ? esc(row.model || "configured") : "not configured"}</span></span>`;
 	          btn.onclick = () => {
-	            if (btn.disabled) return;
 	            select.value = defaultRowKey(row);
 	            updateSandboxControls();
 	          };
@@ -13500,32 +13505,21 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("sandbox-provider-label").classList.add("hidden");
 	      $("sandbox-model-label").classList.add("hidden");
 	      $("sandbox-system-label").classList.toggle("hidden", mode !== "text");
+	      $("sandbox-reasoning-label").classList.toggle("hidden", mode !== "text");
 	      $("sandbox-speculation-label").classList.toggle("hidden", mode !== "text");
 	      if (mode === "text") refreshSandboxSpeculationSupport(row);
 	      const configured = defaultRowConfigured(row);
 	      const prov = row.provider ? (state.providerLabels.get(row.provider) || row.provider) : "";
 	      $("sandbox-context").textContent = configured
-	        ? `${sandboxRouteLabel(row)} will use ${prov} / ${row.model}${row.inherited_from ? ` (inherited from ${row.inherited_from})` : ""}.`
-	        : `${sandboxRouteLabel(row)} is not configured yet. Configure it in Multimodal Capabilities first.`;
-	      const prompt = $("sandbox-prompt");
-	      if (prompt) {
-	        prompt.placeholder = {
-	          text: "Ask a question. Drop files here to include images, audio, video, PDFs, markdown, or text documents.",
-	          image: "Describe the image you want to generate.",
-	          voice: "Type the sentence to synthesize.",
-	          sound: "Describe the sound effect you want to generate.",
-	          music: "Describe the music you want to generate.",
-	          video: "Describe the video you want to generate.",
-	        }[mode] || "Type your request.";
-	      }
-	      const run = $("sandbox-run");
-	      if (run) run.disabled = !configured;
+	        ? `${mode === "text" ? sandboxRouteLabel(row) : sandboxRouteShortLabel(row)} will use ${prov} / ${row.model}${row.inherited_from ? ` (inherited from ${row.inherited_from})` : ""}.`
+	        : `${mode === "text" ? sandboxRouteLabel(row) : sandboxRouteShortLabel(row)} is not configured yet. Configure it in Multimodal Capabilities first.`;
 	      const buttons = $("sandbox-output-modes")?.children || [];
 	      for (const btn of buttons) {
 	        const label = btn.children?.[1]?.children?.[0]?.textContent || "";
 	        btn.classList.toggle("active", label === sandboxRouteShortLabel(row));
 	        btn.setAttribute?.("aria-checked", label === sandboxRouteShortLabel(row) ? "true" : "false");
 	      }
+	      renderSandboxChat();
 	    }
 	    function sandboxNow() {
 	      const d = new Date();
@@ -13682,160 +13676,121 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      wrap.append(link);
 	      target.append(wrap);
 	    }
-	    function appendSandboxMessage(role, content, options = {}) {
-	      const target = $("sandbox-transcript");
-	      const hint = $("sandbox-empty-hint");
-	      if (hint) { try { hint.remove(); } catch { hint.className = "hidden"; } }
-	      const div = document.createElement("div");
-	      const kind = String(options.kind || role || "").toLowerCase();
-	      const kindClass = kind.includes("you") || kind === "user" ? "user" : kind.includes("error") ? "error" : kind.includes("system") ? "system" : "assistant";
-	      div.className = `sandbox-message ${kindClass}`;
-	      const bubble = document.createElement("div");
-	      // Dual-class: sandbox-bubble = layout; pc-chat-item = the shared
-	      // abstractuic dialogue look (system renders as the kit's status item).
-	      bubble.className = `sandbox-bubble pc-chat-item pc-chat-item--${kindClass === "system" ? "status" : kindClass}`;
-	      const meta = document.createElement("div");
-	      meta.className = "sandbox-message-meta";
-	      const roleEl = document.createElement("span");
-	      roleEl.className = "sandbox-message-role";
-	      roleEl.textContent = role;
-	      const timeEl = document.createElement("span");
-	      timeEl.textContent = options.meta || sandboxNow();
-	      const spacer = document.createElement("span");
-	      spacer.className = "sandbox-message-spacer";
-	      meta.append(roleEl, timeEl, spacer);
-	      const body = document.createElement("div");
-	      body.className = "sandbox-message-body";
-	      const messageIsAssistant = String(div.className || "").includes("assistant");
-	      setSandboxMessageBody(body, content, { markdown: options.markdown === true || (options.markdown !== false && messageIsAssistant) });
-	      if (options.speakable && content && sandboxVoiceDefaultRow()) {
-	        const speak = document.createElement("button");
-	        speak.type = "button";
-	        speak.className = "secondary sandbox-speak";
-	        speak.title = "Speak this message";
-	        speak.setAttribute?.("aria-label", "Speak this message");
-	        speak.innerHTML = `<span aria-hidden="true">&#128266;</span>`;
-	        speak.onclick = () => speakSandboxText(String(content || ""), bubble, speak);
-	        meta.append(speak);
-	      }
-	      bubble.append(meta, body);
-	      if (Array.isArray(options.attachments) && options.attachments.length) {
-	        const chips = document.createElement("div");
-	        chips.className = "sandbox-attachments";
-	        for (const item of options.attachments) {
-	          const chip = document.createElement("span");
-	          chip.className = "sandbox-attachment";
-	          chip.innerHTML = `<span>${esc(item.name || item.filename || "attachment")}</span>`;
-	          chips.append(chip);
-	        }
-	        bubble.append(chips);
-	      }
-	      if (options.pending) {
-	        const progress = document.createElement("div");
-	        progress.className = "sandbox-progress";
-	        progress.innerHTML = `<span>${esc(options.pendingLabel || "Working...")}</span><div class="sandbox-progress-bar"></div>`;
-	        bubble.append(progress);
-	      }
-	      if (options.artifactRef) {
-	        renderSandboxArtifact(bubble, { runId: options.runId, ref: options.artifactRef, mode: options.mode, label: options.artifactLabel });
-	      }
-	      div.append(bubble);
-	      target.append(div);
-	      target.scrollTop = target.scrollHeight;
-	      return { el: div, bubble, body, meta };
+	    // ---- The Sandbox chat: the kit island (islands mountSandboxChat) ----
+	    // The console owns the transcript (`state.sandboxChat`, panel-chat
+	    // ChatMessage objects), the draft and the attachments; the island is a
+	    // view re-rendered with `update(props)`. Each output mode still sends
+	    // through its gateway endpoint (runSandbox); results land in the thread
+	    // as messages (generated media in `media`, reasoning in `reasoning`).
+	    let sandboxChatIsland = null;
+	    let sandboxSeq = 0;
+	    function sandboxMessageId() {
+	      sandboxSeq += 1;
+	      return `sbx_${Date.now().toString(36)}_${sandboxSeq}`;
 	    }
-	    function finalizeSandboxMessage(message, { content = "", meta = "", artifactRef = null, runId = "", mode = "", artifactLabel = "", usage = null, elapsedMs = 0, speakable = false, reasoning = "" } = {}) {
-	      if (!message || !message.bubble) return;
-	      const progress = Array.from(message.bubble.children || []).find((child) => String(child.className || "").includes("sandbox-progress"));
-	      if (progress) progress.className = "hidden";
-	      if (message.body) {
-	        const messageIsAssistant = String(message.el?.className || "").includes("assistant");
-	        setSandboxMessageBody(message.body, content, { markdown: messageIsAssistant });
-	      }
-	      // Show the model's reasoning, collapsed, above the answer — so a
-	      // test with a reasoning effort has a visible result.
-	      if (reasoning && message.body) {
-	        const details = document.createElement("details");
-	        details.className = "sandbox-reasoning-block";
-	        const summary = document.createElement("summary");
-	        summary.textContent = "Reasoning";
-	        const pre = document.createElement("pre");
-	        pre.textContent = String(reasoning);
-	        details.append(summary, pre);
-	        message.body.parentNode?.insertBefore(details, message.body);
-	      }
-	      const metaLine = [sandboxUsageLabel(usage, elapsedMs), meta].filter(Boolean).join(" · ");
-	      if (metaLine && message.meta?.children?.[1]) message.meta.children[1].textContent = metaLine;
-	      if (speakable && content && sandboxVoiceDefaultRow()) {
-	        const speak = document.createElement("button");
-	        speak.type = "button";
-	        speak.className = "secondary sandbox-speak";
-	        speak.title = "Speak this message";
-	        speak.setAttribute?.("aria-label", "Speak this message");
-	        speak.innerHTML = `<span aria-hidden="true">&#128266;</span>`;
-	        speak.onclick = () => speakSandboxText(String(content || ""), message.bubble, speak);
-	        message.meta.append(speak);
-	      }
-	      if (artifactRef) renderSandboxArtifact(message.bubble, { runId, ref: artifactRef, mode, label: artifactLabel });
-	      const target = $("sandbox-transcript");
-	      target.scrollTop = target.scrollHeight;
+	    function sandboxPush(message) {
+	      const entry = { id: sandboxMessageId(), ts: new Date().toISOString(), ...message };
+	      state.sandboxChat = [...state.sandboxChat, entry];
+	      renderSandboxChat();
+	      return entry.id;
 	    }
-	    function findSandboxChild(root, className) {
-	      if (!root) return null;
-	      if (String(root.className || "").split(/\\s+/).includes(className)) return root;
-	      for (const child of Array.from(root.children || [])) {
-	        const found = findSandboxChild(child, className);
-	        if (found) return found;
-	      }
-	      return null;
+	    function sandboxPatch(id, patch) {
+	      state.sandboxChat = state.sandboxChat.map((m) => {
+	        if (m.id !== id) return m;
+	        const next = { ...m, ...patch };
+	        for (const key of Object.keys(patch)) if (patch[key] === undefined) delete next[key];
+	        return next;
+	      });
+	      renderSandboxChat();
 	    }
-	    function sandboxMessageFromElement(el) {
-	      if (!el) return null;
-	      const bubble = findSandboxChild(el, "sandbox-bubble");
-	      if (!bubble) return null;
+	    function sandboxSttDefaultRow() {
+	      return (state.defaults || []).find((row) => defaultRowKey(row) === "input.voice" && defaultRowConfigured(row));
+	    }
+	    // Voice out (the speaker on replies): synthesize with the configured
+	    // output.voice route, hand the bytes to the kit's useGatewayVoice.
+	    async function sandboxTts(text) {
+	      const row = sandboxVoiceDefaultRow();
+	      if (!row) throw new Error("Voice output is not configured (Multimodal → output.voice).");
+	      const runId = sandboxRunId();
+	      const body = { text, provider: row.provider, model: row.model, request_id: sandboxRequestId() };
+	      const voice = textValue(objectValue(row.options)?.voice || objectValue(row.options)?.profile);
+	      if (voice) body.voice = voice;
+	      const res = await api(`/api/gateway/runs/${encodeURIComponent(runId)}/voice/tts`, { slow: true, method: "POST", body: JSON.stringify(body) });
+	      const url = sandboxArtifactUrl(runId, res.audio_artifact);
+	      if (!url) throw new Error("The gateway did not return an audio artifact.");
+	      const audio = await fetch(url, { method: "GET", credentials: "same-origin" });
+	      if (!audio.ok) throw new Error(`Speech download failed (${audio.status}).`);
+	      return audio.arrayBuffer();
+	    }
+	    // Voice in (hold to dictate): upload the recording to the sandbox
+	    // session, transcribe it with the configured input.voice route.
+	    async function sandboxTranscribe(blob, mime) {
+	      const row = sandboxSttDefaultRow();
+	      if (!row) throw new Error("Transcription is not configured (Multimodal → input.voice).");
+	      const type = String(mime || blob?.type || "audio/webm");
+	      const extension = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : type.includes("wav") ? "wav" : "webm";
+	      const uploaded = await uploadSandboxFile(new File([blob], `recording.${extension}`, { type }));
+	      if (!uploaded.artifact) throw new Error("The gateway did not return the uploaded recording.");
+	      const body = { audio_artifact: uploaded.artifact, provider: row.provider, model: row.model, request_id: sandboxRequestId() };
+	      const res = await api(`/api/gateway/runs/${encodeURIComponent(sandboxRunId())}/audio/transcribe`, { slow: true, method: "POST", body: JSON.stringify(body) });
+	      return String(res.text || "");
+	    }
+	    function sandboxBlockedNotice() {
+	      const row = selectedSandboxRoute();
+	      if (defaultRowConfigured(row)) return null;
+	      return `${sandboxRouteShortLabel(row)} is not configured yet: set its route in Multimodal, then send from here.`;
+	    }
+	    function sandboxPlaceholder() {
+	      const mode = sandboxRouteMode(defaultRowKey(selectedSandboxRoute()));
 	      return {
-	        el,
-	        bubble,
-	        body: findSandboxChild(bubble, "sandbox-message-body"),
-	        meta: findSandboxChild(bubble, "sandbox-message-meta"),
+	        text: "Ask anything; attach or drop files to include them.",
+	        image: "Describe the image you want to generate.",
+	        voice: "Type the sentence to synthesize.",
+	        sound: "Describe the sound effect you want to generate.",
+	        music: "Describe the music you want to generate.",
+	        video: "Describe the video you want to generate.",
+	      }[mode] || "Type your request.";
+	    }
+	    function sandboxChatProps() {
+	      return {
+	        messages: state.sandboxChat,
+	        draft: state.sandboxDraft,
+	        onDraftChange: (next) => { state.sandboxDraft = String(next || ""); renderSandboxChat(); },
+	        onSend: (draft) => runSandbox(draft),
+	        busy: state.sandboxBusy,
+	        busyLabel: "Generating…",
+	        sendLabel: "Send",
+	        placeholder: sandboxPlaceholder(),
+	        blockedNotice: sandboxBlockedNotice(),
+	        attachments: state.sandboxAttachments.map((item) => ({ id: item.id, name: item.name, status: item.status, message: item.message })),
+	        onAttach: () => $("sandbox-file-input").click(),
+	        onFiles: (files) => handleSandboxFiles(files),
+	        onRemoveAttachment: (id) => { state.sandboxAttachments = state.sandboxAttachments.filter((item) => item.id !== id); renderSandboxChat(); },
+	        onClear: clearSandbox,
+	        emptyText: "No messages yet. Pick an output above and send a message.",
+	        voice: {
+	          tts: sandboxVoiceDefaultRow() ? sandboxTts : undefined,
+	          transcribe: sandboxSttDefaultRow() ? sandboxTranscribe : undefined,
+	        },
 	      };
 	    }
-	    function latestPendingSandboxMessage() {
-	      const target = $("sandbox-transcript");
-	      const messages = Array.from(target?.children || []);
-	      for (let index = messages.length - 1; index >= 0; index -= 1) {
-	        const message = sandboxMessageFromElement(messages[index]);
-	        const progress = findSandboxChild(message?.bubble, "sandbox-progress");
-	        if (progress && !String(progress.className || "").includes("hidden")) return message;
-	      }
-	      return null;
+	    function renderSandboxChat() {
+	      if (sandboxChatIsland) sandboxChatIsland.update(sandboxChatProps());
 	    }
-	    function hideAllSandboxProgress() {
-	      const visit = (node) => {
-	        if (!node) return;
-	        if (String(node.className || "").includes("sandbox-progress")) node.className = "hidden";
-	        for (const child of Array.from(node.children || [])) visit(child);
-	      };
-	      visit($("sandbox-transcript"));
-	    }
-	    function failSandboxMessage(message, errorText) {
-	      const targetMessage = message?.bubble ? message : latestPendingSandboxMessage();
-	      if (!targetMessage || !targetMessage.bubble) {
-	        hideAllSandboxProgress();
-	        return false;
+	    // The chat IS the island: a bundle without mountSandboxChat is a
+	    // vendoring defect, said on the tab (and logged), never a silent blank.
+	    function mountSandboxChat() {
+	      const lib = islandsLib();
+	      if (!lib || typeof lib.mountSandboxChat !== "function") {
+	        const why = lib ? "the abstractuic islands bundle has no mountSandboxChat (kit 0.4.0 round 3+ required)" : "the abstractuic islands bundle did not load";
+	        if (typeof window !== "undefined" && window.document && window.document.getElementById("af-console-islands")) {
+	          console.error(`AbstractGateway console: ${why}; the Sandbox chat is unavailable.`);
+	          $("sandbox-message").textContent = `The Sandbox chat is unavailable: ${why}.`;
+	          $("sandbox-message").className = "message error";
+	        }
+	        return;
 	      }
-	      const text = String(errorText || "Generation failed.");
-	      const progress = findSandboxChild(targetMessage.bubble, "sandbox-progress");
-	      if (progress) progress.className = "hidden";
-	      hideAllSandboxProgress();
-	      if (targetMessage.el) targetMessage.el.className = "sandbox-message error";
-	      if (targetMessage.bubble) targetMessage.bubble.className = "sandbox-bubble pc-chat-item pc-chat-item--error";
-	      if (targetMessage.body) setSandboxMessageBody(targetMessage.body, text, { markdown: false });
-	      if (targetMessage.meta?.children?.[0]) targetMessage.meta.children[0].textContent = "Error";
-	      if (targetMessage.meta?.children?.[1]) targetMessage.meta.children[1].textContent = sandboxNow();
-	      const target = $("sandbox-transcript");
-	      target.scrollTop = target.scrollHeight;
-	      return true;
+	      sandboxChatIsland = lib.mountSandboxChat($("sandbox-chat-root"), sandboxChatProps());
 	    }
 	    // ONE SANDBOX SESSION, ONE OWNER RUN. POST /attachments/upload takes a
 	    // SESSION id and stores under its owner run `session_memory_<session_id>`
@@ -13877,130 +13832,68 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const text = await res.text();
 	      let data = {};
 	      try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text }; }
-	      if (!res.ok) throw new Error(data.detail || `Upload failed (${res.status})`);
+	      if (!res.ok) throw new Error(data.message || data.detail || `Upload failed (${res.status})`);
 	      const artifact = data.attachment || data.artifact;
 	      return { name: file?.name || "upload.bin", size: file?.size || 0, content_type: file?.type || artifact?.content_type || "", artifact };
 	    }
-	    function renderSandboxAttachments() {
-	      const target = $("sandbox-attachments");
-	      if (!target) return;
-	      target.textContent = "";
-	      for (const item of state.sandboxAttachments || []) {
-	        const chip = document.createElement("span");
-	        chip.className = "sandbox-attachment";
-	        chip.innerHTML = `<span>${esc(item.name || "attachment")}</span>`;
-	        target.append(chip);
-	      }
-	    }
+	    // Each file is a chip at once (Uploading…), then attached or failed
+	    // with the gateway's reason; a failed chip is never sent.
 	    async function handleSandboxFiles(files) {
 	      const list = Array.from(files || []).filter(Boolean);
-	      if (!list.length) return;
-	      $("sandbox-message").textContent = "Uploading attachments...";
-	      $("sandbox-message").className = "message";
-	      try {
-	        for (const file of list) state.sandboxAttachments.push(await uploadSandboxFile(file));
-	        renderSandboxAttachments();
-	        $("sandbox-message").textContent = "";
-	      } catch (err) {
-	        $("sandbox-message").textContent = String(err.message || err);
-	        $("sandbox-message").className = "message error";
-	      }
-	    }
-	    function setSandboxSpeakButton(button, mode) {
-	      if (!button) return;
-	      if (mode === "pause") {
-	        button.disabled = false;
-	        button.classList.add("speaking");
-	        button.title = "Pause speech";
-	        button.setAttribute?.("aria-label", "Pause speech");
-	        button.innerHTML = `<span aria-hidden="true">II</span>`;
-	      } else if (mode === "loading") {
-	        button.disabled = true;
-	        button.title = "Generating speech";
-	        button.setAttribute?.("aria-label", "Generating speech");
-	        button.innerHTML = `<span aria-hidden="true">...</span>`;
-	      } else {
-	        button.disabled = false;
-	        button.classList.remove("speaking");
-	        button.title = "Speak this message";
-	        button.setAttribute?.("aria-label", "Speak this message");
-	        button.innerHTML = `<span aria-hidden="true">&#128266;</span>`;
-	      }
-	    }
-	    async function playSandboxAudio(audio, button) {
-	      if (!audio) return;
-	      try {
-	        if (typeof audio.play === "function") {
-	          await audio.play();
-	          setSandboxSpeakButton(button, "pause");
+	      for (const file of list) {
+	        const id = sandboxMessageId();
+	        state.sandboxAttachments = [...state.sandboxAttachments, { id, name: file?.name || "upload.bin", status: "uploading" }];
+	        renderSandboxChat();
+	        let patch;
+	        try {
+	          patch = { ...(await uploadSandboxFile(file)), status: "attached" };
+	        } catch (err) {
+	          patch = { status: "failed", message: String(err.message || err) };
 	        }
-	      } catch (err) {
-	        setSandboxSpeakButton(button, "speak");
-	        throw err;
+	        state.sandboxAttachments = state.sandboxAttachments.map((item) => (item.id === id ? { ...item, ...patch } : item));
+	        renderSandboxChat();
 	      }
 	    }
-	    async function speakSandboxText(text, host, button = null) {
-	      const row = sandboxVoiceDefaultRow();
-	      if (!row) return;
-	      if (host?._sandboxSpeechAudio) {
-	        const audio = host._sandboxSpeechAudio;
-	        if (!audio.paused) {
-	          if (typeof audio.pause === "function") audio.pause();
-	          setSandboxSpeakButton(button, "speak");
-	        } else {
-	          await playSandboxAudio(audio, button);
-	        }
+	    // A generated artifact: the raw link at once, the inline player once
+	    // the bytes arrived (blob: URL, so the session cookie authorizes it).
+	    async function sandboxAttachMedia(messageId, { runId, ref, kind, label }) {
+	      const href = sandboxArtifactUrl(runId, ref);
+	      if (!href) {
+	        sandboxPatch(messageId, { content: "The gateway answered without an artifact." });
 	        return;
 	      }
-	      if (host?._sandboxSpeechBusy) return;
-	      if (host) host._sandboxSpeechBusy = true;
-	      setSandboxSpeakButton(button, "loading");
-	      const runId = sandboxRunId();
+	      sandboxPatch(messageId, { media: [{ kind, src: "", href, label }] });
 	      try {
-	        const body = { text, provider: row.provider, model: row.model, request_id: sandboxRequestId() };
-	        const voice = textValue(objectValue(row.options)?.voice || objectValue(row.options)?.profile);
-	        if (voice) body.voice = voice;
-	        const res = await api(`/api/gateway/runs/${encodeURIComponent(runId)}/voice/tts`, { slow: true, method: "POST", body: JSON.stringify(body) });
-	        const audio = document.createElement("audio");
-	        audio.preload = "auto";
-	        audio.className = "hidden";
-	        audio.onended = () => setSandboxSpeakButton(button, "speak");
-	        audio.onpause = () => setSandboxSpeakButton(button, "speak");
-	        audio.onplay = () => setSandboxSpeakButton(button, "pause");
-	        if (host) host.append(audio);
-	        await setSandboxMediaSource(audio, host, runId, res.audio_artifact, "Speech");
-	        if (host) host._sandboxSpeechAudio = audio;
-	        await playSandboxAudio(audio, button);
+	        const res = await fetch(href, { method: "GET", credentials: "same-origin" });
+	        if (!res.ok) throw new Error(`artifact download failed (${res.status})`);
+	        const blob = await res.blob();
+	        const type = String(ref?.content_type || "").trim();
+	        const typed = type && (!blob.type || blob.type === "application/octet-stream") ? new Blob([blob], { type }) : blob;
+	        sandboxPatch(messageId, { media: [{ kind, src: sandboxRememberObjectUrl(URL.createObjectURL(typed)), href, label }] });
 	      } catch (err) {
-	        addSandboxMediaError(host, String(err.message || err));
-	        setSandboxSpeakButton(button, "speak");
-	      } finally {
-	        if (host) host._sandboxSpeechBusy = false;
+	        sandboxPatch(messageId, { media: [{ kind, src: href, href, label }], content: `${label}: ${String(err.message || err)}. Open the raw file with the link.` });
 	      }
 	    }
-	    async function runSandbox() {
+	    async function runSandbox(draftText) {
 	      $("sandbox-message").textContent = "";
 	      $("sandbox-message").className = "message";
-	      const prompt = $("sandbox-prompt").value.trim();
-	      const attachments = (state.sandboxAttachments || []).slice();
-	      if (!prompt && !attachments.length) {
-	        $("sandbox-message").textContent = "Prompt is required.";
-	        $("sandbox-message").className = "message error";
-	        return;
-	      }
+	      const prompt = String(draftText ?? state.sandboxDraft ?? "").trim();
+	      const attachments = state.sandboxAttachments.filter((item) => item.status === "attached");
+	      if (!prompt && !attachments.length) return;
 	      const row = selectedSandboxRoute();
 	      const key = defaultRowKey(row);
 	      const mode = sandboxRouteMode(key);
-	      $("sandbox-run").disabled = true;
-	      let pendingMessage = null;
+	      if (!defaultRowConfigured(row)) throw new Error(`${sandboxRouteLabel(row)} is not configured.`);
+	      const promptText = prompt || "Please analyze the attached file(s).";
+	      // The draft and the chips clear BEFORE the request leaves: the
+	      // message is in the thread, the composer is ready for the next one.
+	      state.sandboxDraft = "";
+	      state.sandboxAttachments = state.sandboxAttachments.filter((item) => item.status === "uploading");
+	      sandboxPush({ role: "user", title: "You", content: promptText, stats: attachments.map((item) => ({ label: item.name, title: "Attached file" })) });
+	      state.sandboxBusy = true;
+	      const started = Date.now();
+	      let pendingId = "";
 	      try {
-	        const promptText = prompt || "Please analyze the attached file(s).";
-	        appendSandboxMessage("You", promptText, { kind: "user", attachments });
-	        $("sandbox-prompt").value = "";
-	        state.sandboxAttachments = [];
-	        renderSandboxAttachments();
-	        if (!defaultRowConfigured(row)) throw new Error(`${sandboxRouteLabel(row)} is not configured.`);
-	        const started = Date.now();
 	        if (mode === "text") {
 	          const provider = row.provider;
 	          const model = row.model;
@@ -14018,11 +13911,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          if (reasoningChoice) payload.reasoning = reasoningChoice;
 	          const mtpChoice = $("sandbox-speculation").value;
 	          if (mtpChoice) payload.speculation = speculationFromChoice(mtpChoice, undefined, true);
-	          pendingMessage = appendSandboxMessage(`${state.providerLabels.get(provider) || provider} / ${model}`, "Thinking...", { pending: true, pendingLabel: "Generating answer", kind: "assistant" });
+	          // The speaker is the model (the provider is in the context line above).
+	          pendingId = sandboxPush({ role: "assistant", title: model, content: "", live: { callId: "sandbox", reasoning: "", label: "generating answer" } });
 	          const res = await api("/api/gateway/sandbox/generate", { slow: true, method: "POST", body: JSON.stringify(payload) });
 	          const text = res.response || "(empty response)";
 	          state.sandboxMessages.push({ role: "user", content: promptText }, { role: "assistant", content: text });
-	          finalizeSandboxMessage(pendingMessage, { content: text, usage: res.usage, elapsedMs: Date.now() - started, speakable: true, reasoning: res.reasoning || "", meta: speculationSummary(res) });
+	          const usage = sandboxUsageLabel(res.usage, Date.now() - started);
+	          sandboxPatch(pendingId, {
+	            content: text,
+	            reasoning: res.reasoning || undefined,
+	            live: undefined,
+	            stats: [usage, speculationSummary(res)].filter(Boolean).map((label) => ({ label })),
+	          });
 	        } else {
 	          const runId = sandboxRunId();
 	          let endpoint = "";
@@ -14043,7 +13943,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            endpoint = `/api/gateway/runs/${encodeURIComponent(runId)}/videos/generate`;
 	            body = { prompt: promptText, video_provider: row.provider, video_model: row.model, request_id: sandboxRequestId() };
 	          }
-	          pendingMessage = appendSandboxMessage(sandboxRouteShortLabel(row), "Starting generation...", { pending: true, pendingLabel: mode === "image" || mode === "video" ? "Generating media" : "Generating artifact", kind: "assistant" });
+	          const label = sandboxRouteShortLabel(row);
+	          pendingId = sandboxPush({ role: "assistant", title: label, content: "", live: { callId: "sandbox", reasoning: "", label: `generating ${label.toLowerCase()}` } });
 	          // The slow lane, like every other media route: local diffusion on
 	          // Apple silicon runs for MINUTES (the seeded flux/wan defaults), so
 	          // the 60s budget would abort the socket while the gateway kept
@@ -14053,33 +13954,31 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          const res = await api(endpoint, { slow: true, method: "POST", body: JSON.stringify(body) });
 	          if (res.ok === false) throw new Error(res.error || res.code || "Generation failed.");
 	          const ref = res.image_artifact || res.audio_artifact || res.music_artifact || res.video_artifact || null;
-	          finalizeSandboxMessage(pendingMessage, {
-	            content: "Generation completed.",
-	            elapsedMs: Date.now() - started,
-	            artifactRef: ref,
-	            runId,
-	            mode,
-	            artifactLabel: mode === "image" ? "Open image" : mode === "video" ? "Open video" : "Open audio",
-	          });
+	          const kind = mode === "image" ? "image" : mode === "video" ? "video" : "audio";
+	          sandboxPatch(pendingId, { live: undefined, stats: [{ label: formatSandboxDuration(Date.now() - started) || "done" }] });
+	          await sandboxAttachMedia(pendingId, { runId, ref, kind, label: kind === "image" ? "Open image" : kind === "video" ? "Open video" : "Open audio" });
 	        }
 	      } catch (err) {
+	        // The failure replaces the pending reply in the thread, with the
+	        // gateway's reason (never a silent stop).
 	        const message = String(err.message || err);
-	        $("sandbox-message").textContent = message;
-	        $("sandbox-message").className = "message error";
-	        if (!failSandboxMessage(pendingMessage, message)) appendSandboxMessage("Error", message, { kind: "error" });
+	        const failed = { role: "system", level: "error", title: "Error", content: message, live: undefined };
+	        if (pendingId) sandboxPatch(pendingId, failed);
+	        else sandboxPush(failed);
 	      } finally {
-	        updateSandboxControls();
+	        state.sandboxBusy = false;
+	        renderSandboxChat();
 	      }
 	    }
 	    function clearSandbox() {
 	      sandboxRevokeObjectUrls();
 	      state.sandboxMessages = [];
 	      state.sandboxAttachments = [];
-	      $("sandbox-transcript").textContent = "";
+	      state.sandboxChat = [];
+	      state.sandboxDraft = "";
 	      $("sandbox-message").textContent = "";
 	      $("sandbox-message").className = "message";
-	      $("sandbox-prompt").value = "";
-	      renderSandboxAttachments();
+	      renderSandboxChat();
 	    }
 	    function defaultRowTestable(row) {
 	      // Test renders only where a REAL generation is cheap and the goal is
@@ -15810,22 +15709,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("clear-default").onclick = () => clearDefault();
 	    $("sandbox-capability").onchange = updateSandboxControls;
 	    $("sandbox-provider").onchange = () => loadSandboxModels();
-	    $("sandbox-run").onclick = runSandbox;
-	    $("sandbox-prompt").onkeydown = (event) => {
-	      if (event.key === "Enter" && !event.shiftKey) {
-	        event.preventDefault();
-	        if (!$("sandbox-run").disabled) runSandbox();
-	      }
-	    };
-	    $("sandbox-clear").onclick = clearSandbox;
-	    $("sandbox-attach").onclick = () => $("sandbox-file-input").click();
-	    $("sandbox-file-input").onchange = (event) => handleSandboxFiles(event?.target?.files || []);
-	    $("sandbox-dropzone").ondragover = (event) => { event.preventDefault(); $("sandbox-dropzone").classList.add("dragover"); };
-	    $("sandbox-dropzone").ondragleave = () => $("sandbox-dropzone").classList.remove("dragover");
-	    $("sandbox-dropzone").ondrop = (event) => {
-	      event.preventDefault();
-	      $("sandbox-dropzone").classList.remove("dragover");
-	      handleSandboxFiles(event?.dataTransfer?.files || []);
+	    $("sandbox-file-input").onchange = (event) => {
+	      const input = event?.target;
+	      const files = Array.from(input?.files || []);
+	      if (input) input.value = "";
+	      handleSandboxFiles(files);
 	    };
     $("save-endpoint-profile").onclick = saveEndpointProfile;
     $("cancel-endpoint-profile").onclick = closeEndpointModal;
@@ -15838,6 +15726,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    initAppearanceControls();
 	    applyAppearanceSettings();
 	    mountConsoleIslands();
+	    mountSandboxChat();
 	    uiInitAdvanced();
 	    uiInitLayout();
 	    state.activeTab = readStringSetting(ACTIVE_TAB_KEY, "users");

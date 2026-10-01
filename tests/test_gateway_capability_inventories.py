@@ -135,9 +135,13 @@ def test_mcp_inventory_serves_declared_rows_unprobed(tmp_path: Path) -> None:
         "headers": {},
         "description": "Docs server",
         "archived": False,
+        "enabled_for_agents": False,
         "last_test": None,
         "auth_required": True,
         "tags": ["docs"],
+        # v1 rows are never offered to agents (no Enabled for agents, never tested).
+        "offered_to_agents": False,
+        "agents_status": "Not offered to agents",
     }
     assert out["agents_can_call"] is False
     # Malformed/duplicate rows are labeled, never silently dropped.

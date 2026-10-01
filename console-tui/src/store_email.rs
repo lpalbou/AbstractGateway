@@ -108,6 +108,8 @@ pub struct MyEmail {
     /// Recipient rules (round 3): "Always allowed" / "Always denied", addresses or domains.
     pub always_allow: Vec<String>,
     pub always_deny: Vec<String>,
+    /// The own addresses (always allowed; shown fixed, never removable).
+    pub self_addresses: Vec<String>,
     pub per_hour: Option<i64>,
     pub per_day: Option<i64>,
     pub used_last_hour: i64,
@@ -225,6 +227,16 @@ impl MyEmail {
                 .unwrap_or_default(),
             always_allow: policy_list(&policy, "always_allow"),
             always_deny: policy_list(&policy, "always_deny"),
+            self_addresses: policy
+                .get("self_addresses")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
             per_hour: n(&limits, "per_hour"),
             per_day: n(&limits, "per_day"),
             used_last_hour: n(&limits, "used_last_hour").unwrap_or(0),
@@ -1245,6 +1257,12 @@ mod tests {
         );
         assert_eq!(rules.always_allow, vec!["abstractframework.ai".to_string()]);
         assert_eq!(rules.always_deny, vec!["xxx.gov".to_string()]);
+        assert!(rules.self_addresses.is_empty());
+        let own = MyEmail::from_value(
+            &json!({"policy": {"mode": "allowlist", "always_allow": ["me@example.test"],
+            "always_deny": [], "self_addresses": ["me@example.test"]}}),
+        );
+        assert_eq!(own.self_addresses, vec!["me@example.test".to_string()]);
         assert_eq!(e.usage_text(), "1 sent this hour, 3 today");
         assert_eq!(e.credentials_text(), "encrypted, key in the OS keychain");
         let off = MyEmail::from_value(

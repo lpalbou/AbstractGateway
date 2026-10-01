@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `to`, `cc` and `bcc` (and the older `addresses`, read as To) and each verdict says which rule
   decided (`source`: `self`, `always_deny`, `always_allow`, `mode`).
 - The terminal console shows and edits both lists under Advanced.
+- Accounts: **Show archived** (admins) lists archived accounts with an "Archived" chip; their row
+  offers Logs and, in the "⋯" menu, **Unarchive** ("<id> is back, inactive: turn Active on to let it
+  sign in."). **Archive** sits in the same menu and asks inline first; nothing is deleted.
+- Accounts: an entity's **Email** opens the same Email settings as your own (address, mailbox,
+  notifications, agent email tools, Advanced), on the entity's own mailbox.
 - **Entities have their own mailbox.** An entity's mailbox lives in its home
   (`<runtime>/entities/<name>/email/...`). An admin or the entity's creator sets it up through
   `/api/gateway/accounts/{id}/email...` and `/api/gateway/accounts/{id}/notifications...`, which mirror every
@@ -30,6 +35,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stops. No route reads an entity's mail. The Accounts row shows the entity's real mailbox state.
 
 ### Changed
+- Web console: **Providers** and **Engines** are one page. The **Providers** tab lists **Local
+  providers** first (one card per local engine: status, Install, Start, Stop, Cancel, Continue,
+  **Browse models**, **Learn more**, and the provider's server connection for Ollama, LM Studio and
+  vLLM), then **Remote providers** (OpenAI, Anthropic, OpenRouter, Portkey, custom
+  OpenAI-compatible, each with its connection state; keys appear as fingerprints only), then the
+  **Available Providers** table as before. **Engines** is no longer in the sidebar; a `#engines`
+  link opens Providers. The terminal console and the API are unchanged.
+- Accounts: the table never scrolls sideways. Each row shows Email, Logs and Workspace (users) or
+  Manage (entities), plus a "⋯" menu with only the actions that apply (Rotate token or Workspace,
+  Archive). Actions that do not apply are no longer shown greyed out with an explanation under the
+  row. Long names and addresses wrap instead of widening the table; when the table does not fit,
+  each account becomes a block (name and Active, address and mailbox, runtime, actions).
 - **Accounts are archived, never deleted.** `POST /api/gateway/admin/accounts/{id}/archive` and `/unarchive`
   (admin) answer the updated row; a signed-in user archives an entity they created with
   `POST /api/gateway/me/accounts/{id}/archive`. An archived user can't sign in (their token answers 401 and
@@ -52,6 +69,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   allowed list, a denylist's entries the Always denied list. The older `{mode, entries}` body is
   still accepted (`entries` replaces the list the mode uses). Needs the AbstractCore version that
   adds the two lists.
+- `GET /me/email` policy carries `self_addresses`: the own addresses, shown as a fixed chip ("(your
+  address)", never removable) because they are always allowed.
+- Advanced reads "Send at most [100] per hour and [1000] per day." on one line with two small number
+  fields (wrapping on phones), and "Watch folder" is a sentence-case label like the others.
+
+### Changed
+
+- Web console, Sandbox: the chat is the AbstractUIC kit's chat (the thread and composer AbstractCode
+  uses), with the standard Attach button, drop and paste to attach, attachment chips that say when an
+  upload failed and why, hold to dictate (when a transcription route is configured) and a speaker on
+  replies (when a voice route is configured). Generated images, audio and video play inline in the
+  thread with a link to the raw file. The output modes, system prompt, reasoning and MTP settings sit
+  above the chat; every mode stays choosable, and one that is not configured says so instead of being
+  greyed out. Each mode still uses its existing gateway endpoint.
 - Web console: **Providers** and **Engines** are one page. The **Providers** tab lists **Local
   providers** first (one card per local engine: status, Install, Start, Stop, Cancel, Continue,
   **Browse models**, **Learn more**, and the provider's server connection for Ollama, LM Studio and
@@ -59,6 +90,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   OpenAI-compatible, each with its connection state; keys appear as fingerprints only), then the
   **Available Providers** table as before. **Engines** is no longer in the sidebar; a `#engines`
   link opens Providers. The terminal console and the API are unchanged.
+- Sends to To, Cc and Bcc, from agent tools and notifications alike, follow the precedence: your own
+  address is allowed, Always denied refuses ("Not sent: x@xxx.gov is on your Always denied list
+  (xxx.gov)."), Always allowed allows, then the mode decides. A notification to your own address is
+  therefore always delivered, also when your lists do not name it.
+- A policy stored by an earlier version keeps its meaning: an allowlist's entries become the Always
+  allowed list, a denylist's entries the Always denied list. The older `{mode, entries}` body is
+  still accepted (`entries` replaces the list the mode uses). Needs the AbstractCore version that
+  adds the two lists.
+- Web console: an entity's **Manage** opens as a dialog over the Accounts page instead of replacing
+  it (Esc or a click outside closes it and focus goes back to the entity's row; full screen on
+  phones). Awake and Personal time are switches; the mind, voice, tools and prompt settings save
+  by themselves and say "Saved", or why they were not saved; sleep, emergency freeze and the memory
+  index rebuild ask for confirmation inline. Stop and Restore are no longer in Manage: the Accounts
+  row's Active switch suspends and resumes an entity.
 
 ### Fixed
 - Runs now use the base URL set on the text-generation default (`output.text`, stored as `input.text`). Released 0.10.0 saved and showed it, but runs, run summaries, Ask and the sandbox called the provider's built-in address instead (for example LM Studio on `localhost:1234`). The base URL applies to the route's own provider only; an endpoint profile (`endpoint:<id>`) keeps its own address, and nothing changes when the field is empty. Affects 0.10.0; ships in the next release.
@@ -79,19 +124,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Session history never crosses sessions — pinned.** `tests/test_gateway_session_history_isolation.py`
   proves a new session starts with no messages from another session of the same user, of another
   user, or after a restart, and that nothing of the other session reaches its run vars.
-### Changed
-
-- Web console: an entity's **Manage** opens as a dialog over the Accounts page instead of replacing
-  it (Esc or a click outside closes it and focus goes back to the entity's row; full screen on
-  phones). Awake and Personal time are switches; the mind, voice, tools and prompt settings save
-  by themselves and say "Saved", or why they were not saved; sleep, emergency freeze and the memory
-  index rebuild ask for confirmation inline. Stop and Restore are no longer in Manage: the Accounts
-  row's Active switch suspends and resumes an entity.
-
-### Fixed
-
 - Web console: saving or clearing an entity's voice, and giving or ending a work order, did nothing
   (the page read an entity name that was never set).
+
+- Agents can use the tools of registered MCP servers. An admin turns **Enabled for agents** on for a
+  server whose connection test succeeded (`POST /api/gateway/admin/mcp/servers/{name}/agents`); its
+  tools are then offered to agent runs as `mcp::<server>::<tool>`, listed in `/discovery/tools`
+  (grouped per server, so the Code web and Assistant tool pickers show them) and added to a run
+  started without a tool list. Each call asks for approval unless the run allows all tools. An
+  archived or disabled server offers nothing, and every call checks the registry again. Header
+  values stay in the gateway's secret store and are read only when a call runs; they never reach the
+  run, the ledger or the prompt. A server that fails `initialize` when a run starts is skipped and
+  the run records why (`_runtime.mcp_notes`). A run started by an email from someone else is never
+  offered an MCP tool. Needs the AbstractRuntime MCP facade (`mcp_facade`) and AbstractCore's MCP
+  clients with `initialize()`.
+
+### Changed
+
+- The MCP server registry lives in the gateway's root data folder, also when several users sign in
+  (one registry for every account, the one agent runs read).
+- **Workflow ownership.** The Workflows page groups bundles into **Shared with everyone** and
+  **Mine** (what you imported or published), with a Shipped / Imported / From AbstractFlow badge.
+  `GET /bundles` items carry `owner` (`gateway` or `user`), `shipped`, `available` and `archived`; imports and
+  publishes stamp `metadata.owner` (user, tenant, time). Users can import: the bundle lands in **Mine**.
+- **Available to users** (administrators): a switch per shared workflow, also
+  `PUT /api/gateway/admin/workflows/{bundle_id}/availability`. Off hides it from users' lists and app pickers,
+  refuses their new runs, schedules and automations ("This workflow isn't available to users on this gateway.
+  Ask an admin."), and pauses their existing automations on it with that reason; turning it back on does not
+  resume them. Admins always see every workflow; an app's default workflow keeps running for everyone.
+- **Open** (in AbstractFlow) on every workflow: opens it in the visual editor (AbstractFlow's
+  `?bundle=<id>&version=<v>` link). `GET /bundles/{bundle_id}` also returns `source`, `shipped` and `owner`.
+- Paused automations show why the gateway paused them (`paused_reason` in `GET /automations`).
+
+### Changed
+- **Workflows are archived, never deleted.** **Archive** / **Unarchive** (and **Show archived**) replace Delete
+  on the Workflows page, the terminal console (`d` / `D`) and broken bundle files; `POST /bundles/{bundle_id}/archive`
+  and `/unarchive`. An archived workflow leaves the lists and cannot start new runs; the file and every past run stay,
+  and existing runs and automations keep resuming. Bundles that ship with the gateway can be neither archived nor
+  deleted. `DELETE /bundles/{bundle_id}` now answers `410`.
+
+### Fixed
+- **Import .flow** in the web console works again: the upload was sent as JSON instead of a multipart form, so the
+  gateway refused every file. The Workflows page also keeps the import and archive result sentence on screen
+  after the list reloads.
 
 ## [0.10.0] - 2026-10-01
 

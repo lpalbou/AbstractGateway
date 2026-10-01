@@ -93,14 +93,17 @@ def test_gateway_bundle_upload_and_remove(tmp_path: Path, monkeypatch: pytest.Mo
         items = r1.json().get("items") or []
         assert any(it.get("bundle_ref") == "demo@0.0.1" for it in items)
 
+        # DESIGN-v3 §5.3: workflows are archived, never deleted.
         rm = client.delete("/api/gateway/bundles/demo?bundle_version=0.0.1&reload=true", headers=headers)
-        assert rm.status_code == 200, rm.text
-        assert rm.json().get("removed") == 1
+        assert rm.status_code == 410, rm.text
+        assert rm.json()["detail"]["message"] == "Workflows are archived, never deleted: use Archive."
+        assert (bundles_dir / "demo@0.0.1.flow").is_file()
+
+        ar = client.post("/api/gateway/bundles/demo/archive", headers=headers, json={"bundle_version": "0.0.1"})
+        assert ar.status_code == 200, ar.text
 
         r2 = client.get("/api/gateway/bundles?all_versions=true", headers=headers)
         assert r2.status_code == 200
         items2 = r2.json().get("items") or []
         assert not any(it.get("bundle_ref") == "demo@0.0.1" for it in items2)
-
-        rm2 = client.delete("/api/gateway/bundles/demo?bundle_version=0.0.1&reload=true", headers=headers)
-        assert rm2.status_code == 404
+        assert (bundles_dir / "demo@0.0.1.flow").is_file(), "archive must keep the file"

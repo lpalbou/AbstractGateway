@@ -62,6 +62,7 @@ from ..automation_defaults import (
     validate_flow_automation_defaults,
 )
 from ..automation_errors import AutomationError
+from ..automation_pause_reasons import clear_pause_reason, pause_reason
 from ..run_retention import resolve_gateway_run_workspace, write_gateway_workspace_marker
 from ..run_workspace_guard import guard_run_vars
 from ..service import get_gateway_service
@@ -75,6 +76,7 @@ from .gateway import (
     _sanitize_run_workspace_policy,
     _split_bundle_ref,
     _strip_client_workflow_policy,
+    _workflow_gate,
 )
 
 router = APIRouter(prefix="/gateway", tags=["automations"])
@@ -325,6 +327,11 @@ def automation_summary_row(svc: Any, principal: Any, controller: Any) -> Dict[st
     }
     if out["next_fire_at"] is None:
         del out["next_fire_at"]
+    if status == "paused":
+        # Why the GATEWAY paused it (e.g. its workflow was made unavailable, DESIGN-v3 §13.4).
+        reason = pause_reason(svc.config.data_dir, str(controller.run_id))
+        if reason:
+            out["paused_reason"] = reason
     latest = list_occurrences(runtime, str(controller.run_id), limit=1)["items"]
     if latest:
         occ = latest[0]
@@ -436,6 +443,13 @@ def _resolve_target(svc: Any, principal: Any, target: Any, *, field: str = "targ
         raise
     except HTTPException as e:
         raise AutomationError(422, "invalid_definition", str(e.detail if not isinstance(e.detail, dict) else e.detail.get("message") or e.detail), field=field)
+    # Governance (DESIGN-v3 §5): an automation on an unavailable or archived workflow would
+    # be a run start by other means (the per-app default stays exempt).
+    try:
+        _workflow_gate(svc, host, principal, bundle_id, selected_version, start=True, agent_default=str(target.get("flow_id") or "").strip() == DEFAULT_AGENT_SENTINEL)
+    except HTTPException as e:
+        detail = e.detail if isinstance(e.detail, dict) else {"reason_code": "workflow_refused", "message": str(e.detail)}
+        raise AutomationError(int(e.status_code), str(detail.get("reason_code")), str(detail.get("message")), field=field)
     entry_ids = {str(getattr(ep, "flow_id", "") or "") for ep in list(bundle.manifest.entrypoints or [])}
     if flow_id not in entry_ids:
         raise AutomationError(422, "invalid_definition", f"'{bundle_id}@{selected_version}' has no entrypoint '{flow_id}'", field=f"{field}.flow_id")
@@ -799,7 +813,7 @@ def _command(svc: Any, principal: Any, automation_id: str, command_id: str, type
                 409, "identity_conflict", f"command_id {command_id!r} was already used for a different command.",
                 field="command_id", command_id=command_id,
             )
-    return _append_command(
+    receipt = _append_command(
         svc,
         automation_id=str(controller.run_id),
         command_id=command_id,
@@ -807,6 +821,9 @@ def _command(svc: Any, principal: Any, automation_id: str, command_id: str, type
         payload=payload,
         client_id=str(getattr(principal, "user_id", "") or "") or None,
     )
+    if type_ == "automation.resume":
+        clear_pause_reason(svc.config.data_dir, str(controller.run_id))
+    return receipt
 
 
 @router.patch("/automations/{automation_id}")

@@ -23,7 +23,7 @@
 //!    and "Send a test", whose result is the gateway's sentence.
 //! 4. **Agent email tools** — one switch, with the reason when unavailable.
 //! 5. **Advanced** (folded) — compact sentences: who your agents may send
-//!    to, "At most N per hour and M per day.", the watched folder.
+//!    to, "Send at most N per hour and N per day.", the watched folder.
 //!
 //! Switches apply at once (worker write law: write → verify by GET →
 //! journal); the status line under the page names the new state. The
@@ -1492,6 +1492,7 @@ fn advanced_body(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> Vi
     let t0 = *t;
     let allow = e.always_allow.clone();
     let deny = e.always_deny.clone();
+    let selves = e.self_addresses.clone();
     let mode_sig = cx.signal(e.policy_mode.clone());
     let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
     // "Your agents may send to [only the Allowed list]" + "Always allowed" + "Always denied";
@@ -1546,6 +1547,14 @@ fn advanced_body(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> Vi
             }
         };
         for (i, entry) in entries.iter().enumerate() {
+            if selves.contains(entry) {
+                // The own address is always allowed: shown fixed, never removable.
+                col = col.child(line(vec![span(
+                    format!("    {} (your address)", ellipsize(entry, 40)),
+                    t0.text,
+                )]));
+                continue;
+            }
             let entries = entries.clone();
             let with_list = with_list.clone();
             let entry_txt = entry.clone();
@@ -1604,7 +1613,7 @@ fn advanced_body(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> Vi
         &format!("    {RECIPIENT_RULES_HELP}"),
         p.wrap_w,
     ));
-    // "At most [20] per hour and [100] per day." — Enter in either saves.
+    // "Send at most [100] per hour and [1000] per day." — Enter in either saves.
     let save_limits = {
         let ctx = ctx.clone();
         move || match limits_body(&p.per_hour.get_untracked(), &p.per_day.get_untracked()) {
@@ -1622,7 +1631,7 @@ fn advanced_body(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> Vi
     col = col.child(gap()).child(
         Element::new()
             .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
-            .child(line_w(&t0, "At most", 7))
+            .child(line_w(&t0, "Send at most", 12))
             .child(
                 input(p.per_hour, 5, false)
                     .on_submit(move |_| sl1())

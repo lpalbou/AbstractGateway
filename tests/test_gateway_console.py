@@ -280,7 +280,13 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert 'id="models-loaded-title"' in console.text
     assert 'id="sandbox-capability"' in console.text
     assert 'id="sandbox-provider"' in console.text
-    assert 'id="sandbox-run"' in console.text
+    # The Sandbox chat is the kit island (islands mountSandboxChat): the
+    # console's own textarea/Send/attach controls are gone, the mount point is
+    # there, and the console mounts it.
+    assert 'id="sandbox-chat-root"' in console.text
+    assert "lib.mountSandboxChat(" in console.text
+    for gone in ('id="sandbox-run"', 'id="sandbox-prompt"', 'id="sandbox-transcript"', 'id="sandbox-dropzone"'):
+        assert gone not in console.text, gone
     assert "sandbox-composer-toolbar" in console.text
     assert "sandbox-controls" not in console.text
     assert "position: sticky;" in console.text
@@ -404,6 +410,7 @@ function blobResponse(contentType, body = "ok") {{
     status: 200,
     text: async () => body,
     blob: async () => new Blob([body], {{ type: contentType }}),
+    arrayBuffer: async () => new TextEncoder().encode(body).buffer,
   }};
 }}
 async function fetch(path, options = {{}}) {{
@@ -494,8 +501,8 @@ async function fetch(path, options = {{}}) {{
   if (path === "/api/gateway/admin/runtime-reservations") return response(200, {{ runtime_reservations: [] }});
   if (path === "/api/gateway/sandbox/generate" && options.method === "POST") {{
     const body = JSON.parse(String(options.body || "{{}}"));
-    if (el("sandbox-prompt").value !== "") {{
-      return response(400, {{ detail: "sandbox prompt should clear before the request is sent" }});
+    if (context.sandboxChatProps().draft !== "") {{
+      return response(400, {{ detail: "sandbox draft should clear before the request is sent" }});
     }}
     if (body.prompt === "force sandbox failure") {{
       return response(502, {{ detail: "Audio input is not supported by model, and input.voice is not configured." }});
@@ -1003,70 +1010,77 @@ if (!el("defaults-table").children.some((child) => String(child.innerHTML || "")
 if (!el("defaults-table").children.some((child) => String(child.innerHTML || "").includes("covered"))) {{
   throw new Error("input.image should render as covered by a vision-capable input.text model");
 }}
+// THE SANDBOX CHAT IS THE KIT ISLAND (islands mountSandboxChat). The node VM
+// carries no islands bundle, so these checks drive the exact props the console
+// hands the island: the controlled draft, onSend (runSandbox), onFiles, the
+// voice callbacks, and the transcript as panel-chat ChatMessage objects.
+const sandboxProps = () => context.sandboxChatProps();
+const lastChat = () => {{ const list = sandboxProps().messages; return list[list.length - 1]; }};
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 el("sandbox-capability").value = "output.text";
-el("sandbox-prompt").value = "hello";
-await context.runSandbox();
-await new Promise((resolve) => setTimeout(resolve, 0));
+context.updateSandboxControls();
+if (sandboxProps().blockedNotice !== null) {{
+  throw new Error("a configured text route must not block the composer: " + sandboxProps().blockedNotice);
+}}
+sandboxProps().onDraftChange("hello");
+if (sandboxProps().draft !== "hello") {{
+  throw new Error("the island's draft is controlled by the console (onDraftChange -> draft)");
+}}
+await sandboxProps().onSend(sandboxProps().draft);
+await tick();
 if (!calls.some((call) => call.path === "/api/gateway/sandbox/generate" && call.method === "POST")) {{
-  throw new Error("sandbox text test did not call the configured-default smoke route");
+  throw new Error("sandbox text send did not call the configured-default smoke route");
 }}
-function treeHas(node, predicate) {{
-  if (predicate(node)) return true;
-  for (const child of node.children || []) {{
-    if (treeHas(child, predicate)) return true;
-  }}
-  return false;
+if (!sandboxProps().messages.some((m) => m.role === "user" && m.content === "hello")) {{
+  throw new Error("the user's message should be in the thread");
 }}
-function treeFind(node, predicate) {{
-  if (predicate(node)) return node;
-  for (const child of node.children || []) {{
-    const found = treeFind(child, predicate);
-    if (found) return found;
-  }}
-  return null;
+let reply = lastChat();
+if (reply.role !== "assistant" || reply.content !== "**sandbox** ok\\n- markdown" || reply.live) {{
+  throw new Error("the text reply should land in the thread as the assistant's markdown (the kit card renders it): " + JSON.stringify(reply));
 }}
-if (!treeHas(el("sandbox-transcript"), (node) => String(node.className || "").includes("sandbox-speak"))) {{
-  throw new Error("sandbox assistant text should expose a speaker action when voice is configured");
+if (!Array.isArray(reply.stats) || !reply.stats.some((s) => String(s.label).includes("4 tok"))) {{
+  throw new Error("the reply should carry its usage as stat chips: " + JSON.stringify(reply.stats));
 }}
-if (!treeHas(el("sandbox-transcript"), (node) => String(node.innerHTML || "").includes("<strong>sandbox</strong>") && String(node.innerHTML || "").includes("<li>markdown</li>"))) {{
-  throw new Error("sandbox assistant text should render markdown");
+if (sandboxProps().draft !== "" || sandboxProps().busy) {{
+  throw new Error("sandbox draft should be empty and the composer idle after the reply");
 }}
-const speaker = treeFind(el("sandbox-transcript"), (node) => String(node.className || "").includes("sandbox-speak"));
-const beforeSpeakMessages = el("sandbox-transcript").children.length;
-speaker.onclick();
-await new Promise((resolve) => setTimeout(resolve, 0));
-await new Promise((resolve) => setTimeout(resolve, 0));
-if (el("sandbox-transcript").children.length !== beforeSpeakMessages) {{
-  throw new Error("speaker action should play speech in-place instead of appending a new chat message");
+// Voice out: the island's speaker calls voice.tts (kit useGatewayVoice) and
+// plays the bytes; it never appends a message.
+const tts = sandboxProps().voice && sandboxProps().voice.tts;
+if (typeof tts !== "function") {{
+  throw new Error("voice out should be offered when output.voice is configured");
 }}
-if (!treeHas(el("sandbox-transcript"), (node) => node.id === "audio" && String(node.src || "").startsWith("blob:audio/wav"))) {{
-  throw new Error("speaker action should attach a blob-backed audio element in-place");
+const beforeSpeak = sandboxProps().messages.length;
+const spoken = await tts("**sandbox** ok");
+if (!spoken || typeof spoken.byteLength !== "number" || spoken.byteLength === 0) {{
+  throw new Error("voice.tts should resolve the synthesized audio bytes");
 }}
-if (el("sandbox-prompt").value !== "") {{
-  throw new Error("sandbox prompt should be empty after submit");
+if (!calls.some((call) => call.path === "/api/gateway/runs/session_memory_gateway_console_sandbox_default_admin/voice/tts" && call.method === "POST")) {{
+  throw new Error("voice.tts should synthesize through the sandbox session's voice route");
+}}
+if (sandboxProps().messages.length !== beforeSpeak) {{
+  throw new Error("speaking a reply should not append a chat message");
 }}
 calls.length = 0;
-el("sandbox-capability").value = "output.text";
-el("sandbox-prompt").value = "force sandbox failure";
-await context.runSandbox();
-await new Promise((resolve) => setTimeout(resolve, 0));
-const failedBubble = treeFind(el("sandbox-transcript"), (node) => String(node.className || "").includes("sandbox-message error"));
-if (!failedBubble || !treeHas(failedBubble, (node) => String(node.textContent || node.innerHTML || "").includes("input.voice is not configured"))) {{
-  throw new Error("failed sandbox request should turn the pending response into an error bubble");
+await sandboxProps().onSend("force sandbox failure");
+await tick();
+reply = lastChat();
+if (reply.level !== "error" || !String(reply.content).includes("input.voice is not configured") || reply.live) {{
+  throw new Error("a failed sandbox request should turn the pending reply into an error message with the gateway's reason: " + JSON.stringify(reply));
 }}
-if (treeHas(el("sandbox-transcript"), (node) => String(node.className || "").includes("sandbox-progress") && !String(node.className || "").includes("hidden"))) {{
-  throw new Error("failed sandbox request should not leave an active progress bar visible");
+if (sandboxProps().messages.some((m) => m.live)) {{
+  throw new Error("a failed sandbox request should not leave a pending reply");
 }}
 if (typeof File !== "undefined" && typeof FormData !== "undefined") {{
   calls.length = 0;
-  await context.handleSandboxFiles([new File(["png"], "content.png", {{ type: "image/png" }})]);
-  if (!el("sandbox-attachments").children.length) {{
-    throw new Error("uploaded sandbox attachment was not rendered as a chip");
+  await sandboxProps().onFiles([new File(["png"], "content.png", {{ type: "image/png" }})]);
+  const chips = sandboxProps().attachments;
+  if (chips.length !== 1 || chips[0].name !== "content.png" || chips[0].status !== "attached") {{
+    throw new Error("an uploaded sandbox attachment should be an attached chip: " + JSON.stringify(chips));
   }}
   el("sandbox-capability").value = "output.text";
-  el("sandbox-prompt").value = "describe this picture";
-  await context.runSandbox();
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await sandboxProps().onSend("describe this picture");
+  await tick();
   const mediaSandboxCall = calls.find((call) => call.path === "/api/gateway/sandbox/generate" && call.method === "POST");
   if (!mediaSandboxCall) throw new Error("sandbox text media test did not call the smoke route");
   const mediaSandboxBody = JSON.parse(mediaSandboxCall.body);
@@ -1079,59 +1093,39 @@ if (typeof File !== "undefined" && typeof FormData !== "undefined") {{
   if (!mediaSandboxBody.client_context || mediaSandboxBody.client_context.timezone !== "Europe/Paris" || mediaSandboxBody.client_context.locale !== "fr-FR" || mediaSandboxBody.client_context.locale_country !== "FR") {{
     throw new Error("sandbox text media payload did not include browser grounding context");
   }}
-  if (el("sandbox-prompt").value !== "" || el("sandbox-attachments").children.length !== 0) {{
-    throw new Error("sandbox composer and attachment chips should clear immediately after media submit");
+  if (sandboxProps().draft !== "" || sandboxProps().attachments.length !== 0) {{
+    throw new Error("sandbox draft and attachment chips should clear after a send");
+  }}
+  const sent = sandboxProps().messages.find((m) => m.role === "user" && m.content === "describe this picture");
+  if (!sent || !sent.stats || sent.stats[0].label !== "content.png") {{
+    throw new Error("the sent message should name its attached file");
   }}
 }}
-calls.length = 0;
-el("sandbox-capability").value = "output.text";
-el("sandbox-prompt").value = "enter send";
-let preventedEnter = false;
-el("sandbox-prompt").onkeydown({{ key: "Enter", shiftKey: false, preventDefault() {{ preventedEnter = true; }} }});
-await new Promise((resolve) => setTimeout(resolve, 0));
-await new Promise((resolve) => setTimeout(resolve, 0));
-if (!preventedEnter || !calls.some((call) => call.path === "/api/gateway/sandbox/generate" && call.method === "POST")) {{
-  throw new Error("Enter should send the sandbox message");
+async function sendMode(key, text) {{
+  el("sandbox-capability").value = key;
+  context.updateSandboxControls();
+  if (sandboxProps().blockedNotice) throw new Error(key + " should be configured in this harness: " + sandboxProps().blockedNotice);
+  await sandboxProps().onSend(text);
+  await tick();
+  await tick();
+  return lastChat();
 }}
-calls.length = 0;
-el("sandbox-prompt").value = "line one";
-el("sandbox-prompt").onkeydown({{ key: "Enter", shiftKey: true, preventDefault() {{ throw new Error("Shift+Enter should not be prevented"); }} }});
-await new Promise((resolve) => setTimeout(resolve, 0));
-if (calls.some((call) => call.path === "/api/gateway/sandbox/generate")) {{
-  throw new Error("Shift+Enter should leave message editing in place");
-}}
-el("sandbox-capability").value = "output.image.text_to_image";
-el("sandbox-prompt").value = "a tiny joyful monkey";
-await context.runSandbox();
-await new Promise((resolve) => setTimeout(resolve, 0));
-await new Promise((resolve) => setTimeout(resolve, 0));
+reply = await sendMode("output.image.text_to_image", "a tiny joyful monkey");
 if (!calls.some((call) => call.path === "/api/gateway/runs/session_memory_gateway_console_sandbox_default_admin/images/generate" && call.method === "POST")) {{
   throw new Error("sandbox image test did not use a session-memory run id");
 }}
-if (!treeHas(el("sandbox-transcript"), (node) => node.id === "img" && String(node.src || "").startsWith("blob:image/png"))) {{
-  throw new Error("sandbox image artifact should render inline from a blob URL");
+if (!reply.media || reply.media[0].kind !== "image" || !String(reply.media[0].src).startsWith("blob:image/png") || !String(reply.media[0].href).endsWith("/artifacts/img-1/content")) {{
+  throw new Error("sandbox image artifact should render inline from a blob URL, with its raw link: " + JSON.stringify(reply));
 }}
-el("sandbox-capability").value = "output.voice";
-el("sandbox-prompt").value = "hello voice";
-await context.runSandbox();
-await new Promise((resolve) => setTimeout(resolve, 0));
-await new Promise((resolve) => setTimeout(resolve, 0));
-if (!treeHas(el("sandbox-transcript"), (node) => node.id === "audio" && String(node.src || "").startsWith("blob:audio/wav"))) {{
+reply = await sendMode("output.voice", "hello voice");
+if (!reply.media || reply.media[0].kind !== "audio" || !String(reply.media[0].src).startsWith("blob:audio/wav")) {{
   throw new Error("sandbox voice artifact should render as a blob-backed inline audio player");
 }}
-el("sandbox-capability").value = "output.music";
-el("sandbox-prompt").value = "calm jazz";
-await context.runSandbox();
-await new Promise((resolve) => setTimeout(resolve, 0));
-await new Promise((resolve) => setTimeout(resolve, 0));
-if (!treeHas(el("sandbox-transcript"), (node) => node.id === "audio" && String(node.src || "").startsWith("blob:audio/wav"))) {{
+reply = await sendMode("output.music", "calm jazz");
+if (!reply.media || reply.media[0].kind !== "audio" || !String(reply.media[0].src).startsWith("blob:audio/wav")) {{
   throw new Error("sandbox music artifact should render as a blob-backed inline audio player");
 }}
-el("sandbox-capability").value = "output.sound";
-el("sandbox-prompt").value = "scifi laser";
-await context.runSandbox();
-await new Promise((resolve) => setTimeout(resolve, 0));
-await new Promise((resolve) => setTimeout(resolve, 0));
+reply = await sendMode("output.sound", "scifi laser");
 const soundCall = calls.find((call) => call.path === "/api/gateway/runs/session_memory_gateway_console_sandbox_default_admin/music/generate" && String(call.body || "").includes("scifi laser"));
 if (!soundCall) {{
   throw new Error("sandbox SFX test did not call the generated-audio route");
@@ -1140,8 +1134,13 @@ const soundBody = JSON.parse(soundCall.body);
 if (soundBody.task !== "text_to_audio") {{
   throw new Error("sandbox SFX test must request text_to_audio, got " + soundBody.task);
 }}
-if (!treeHas(el("sandbox-transcript"), (node) => node.id === "audio" && String(node.src || "").startsWith("blob:audio/wav"))) {{
+if (!reply.media || reply.media[0].kind !== "audio" || !String(reply.media[0].src).startsWith("blob:audio/wav")) {{
   throw new Error("sandbox SFX artifact should render as a blob-backed inline audio player");
+}}
+// Clear empties the thread, the draft and the chips.
+sandboxProps().onClear();
+if (sandboxProps().messages.length || sandboxProps().draft || sandboxProps().attachments.length) {{
+  throw new Error("Clear should empty the sandbox thread");
 }}
 """
     with tempfile.TemporaryDirectory() as tmpdir:

@@ -47,6 +47,8 @@ def test_put_carries_both_lists_and_replaces_only_the_lists_given(gateway, imap,
     # GET returns the same shape.
     got = c.get("/api/gateway/me/email", headers=h).json()["policy"]
     assert got["always_allow"] == ["abstractframework.ai"] and got["always_deny"] == ["xxx.gov", "spam.example"]
+    # The own address the consoles show fixed (always allowed, never a removable chip).
+    assert got["self_addresses"] == [ALICE]
     # Structural validation: a pattern or a dotless word is refused with the reason.
     r = c.put("/api/gateway/me/email/policy", headers=h, json={"mode": "denylist", "always_deny": ["*.gov"]})
     assert r.status_code == 400 and r.json()["detail"]["reason_code"] == "email_invalid_settings"
@@ -147,6 +149,11 @@ def test_advanced_markup_has_mode_two_lists_and_the_precedence_sentence() -> Non
         assert f'id="{fid}"' in page, fid
     # Auto-save: no Save button in the rules.
     assert ">Save<" not in page
+    html = _html()
+    assert "<span>Send at most</span>" in html
+    # The kit's `.af-form input {width:100%}` and the global uppercase label are outranked by id.
+    assert "#my-email-section .advanced-sentence input.advanced-num { width: 6em;" in html
+    assert "#my-email-section .advanced-sentence label { display: inline; margin: 0; text-transform: none;" in html
 
 
 DOM = r"""
@@ -171,25 +178,27 @@ async function api(path, opts = {}) {
   const body = opts.body ? JSON.parse(opts.body) : null;
   calls.push([opts.method || "GET", path, body]);
   if (fail) { const e = new Error(fail); throw e; }
-  return { ok: true, policy: { mode: body.mode, entries: [], always_allow: body.always_allow.map((x) => x.toLowerCase()), always_deny: body.always_deny.map((x) => x.toLowerCase()) } };
+  return { ok: true, policy: { mode: body.mode, entries: [], always_allow: body.always_allow.map((x) => x.toLowerCase()), always_deny: body.always_deny.map((x) => x.toLowerCase()), self_addresses: ["me@example.test"] } };
 }
 function inlineState(id, text, tone) { states[id] = [text, tone]; }
 function emailErrorText(e) { return e.message; }
 const state = {};
 const ctx = vm.createContext({ $, api, inlineState, emailErrorText, state, document, console });
 vm.runInContext(FNS + "\n;this.render = renderEmailRecipientRules; this.add = addEmailRecipientRule; this.save = saveEmailRecipientRules;", ctx);
-const chips = (id) => $(id).children.map((li) => li.className === "chip" ? li.children[0].textContent : `(${li.textContent})`);
+const chips = (id) => $(id).children.map((li) => li.className.split(" ")[0] === "chip" ? li.children[0].textContent : `(${li.textContent})`);
 (async () => {
-  ctx.render({ mode: "allowlist", entries: ["abstractframework.ai"], always_allow: ["abstractframework.ai"], always_deny: [] });
+  ctx.render({ mode: "allowlist", entries: ["me@example.test", "abstractframework.ai"], always_allow: ["me@example.test", "abstractframework.ai"], always_deny: [], self_addresses: ["me@example.test"] });
+  const own = $("my-email-allow-list").children[0];
+  const fixed = { cls: own.className, text: own.children[0].textContent, buttons: own.children.length - 1 };
   const first = { mode: $("my-email-policy-mode").value, allow: chips("my-email-allow-list"), deny: chips("my-email-deny-list") };
   $("my-email-deny-add").value = "xxx.gov";
   await ctx.add("always_deny");
   const added = { deny: chips("my-email-deny-list"), input: $("my-email-deny-add").value, state: states["my-email-deny-state"], call: calls[calls.length - 1] };
   // Remove a chip with its x button.
-  await $("my-email-allow-list").children[0].children[1].onclick();
+  await $("my-email-allow-list").children[1].children[1].onclick();
   const removed = { allow: chips("my-email-allow-list"), state: states["my-email-allow-state"], call: calls[calls.length - 1] };
   // The entity modal reuses the renderer with its own API base.
-  ctx.render({ mode: "denylist", entries: ["spam.example"], always_allow: [], always_deny: ["spam.example"] }, "/api/gateway/accounts/ember/email");
+  ctx.render({ mode: "denylist", entries: ["spam.example"], always_allow: [], always_deny: ["spam.example"], self_addresses: ["ember@example.test"] }, "/api/gateway/accounts/ember/email");
   $("my-email-allow-add").value = "partner.example";
   await ctx.add("always_allow");
   const entity = { mode: $("my-email-policy-mode").value, call: calls[calls.length - 1] };
@@ -199,8 +208,8 @@ const chips = (id) => $(id).children.map((li) => li.className === "chip" ? li.ch
   await ctx.add("always_deny");
   const failed = { deny: chips("my-email-deny-list"), input: $("my-email-deny-add").value, state: states["my-email-deny-state"] };
   let missing = null;
-  try { ctx.render({ mode: "allowlist", entries: [] }); } catch (e) { missing = e.message; }
-  console.log(JSON.stringify({ first, added, removed, entity, failed, missing }));
+  try { ctx.render({ mode: "allowlist", entries: [], always_allow: [], always_deny: [] }); } catch (e) { missing = e.message; }
+  console.log(JSON.stringify({ fixed, first, added, removed, entity, failed, missing }));
 })().catch((e) => { console.error(e); process.exit(1); });
 """
 
@@ -219,15 +228,17 @@ def test_one_renderer_draws_both_lists_and_auto_saves_through_the_api_base() -> 
         proc = subprocess.run([node, str(path)], capture_output=True, text=True, timeout=60, check=False)
     assert proc.returncode == 0, proc.stderr[-3000:]
     out = json.loads(proc.stdout.strip().splitlines()[-1])
-    assert out["first"] == {"mode": "allowlist", "allow": ["abstractframework.ai"], "deny": ["(Nobody yet.)"]}
+    # The own address is a fixed chip: no remove button.
+    assert out["fixed"] == {"cls": "chip chip--fixed", "text": "me@example.test (your address)", "buttons": 0}
+    assert out["first"] == {"mode": "allowlist", "allow": ["me@example.test (your address)", "abstractframework.ai"], "deny": ["(Nobody yet.)"]}
     assert out["added"]["deny"] == ["xxx.gov"] and out["added"]["input"] == ""
     assert out["added"]["state"] == ["xxx.gov added.", "ok"]
-    assert out["added"]["call"] == ["PUT", "/api/gateway/me/email/policy", {"mode": "allowlist", "always_allow": ["abstractframework.ai"], "always_deny": ["xxx.gov"]}]
-    assert out["removed"]["allow"] == ["(Nobody yet: your agents may send only to your own address.)"]
-    assert out["removed"]["call"][2] == {"mode": "allowlist", "always_allow": [], "always_deny": ["xxx.gov"]}
+    assert out["added"]["call"] == ["PUT", "/api/gateway/me/email/policy", {"mode": "allowlist", "always_allow": ["me@example.test", "abstractframework.ai"], "always_deny": ["xxx.gov"]}]
+    assert out["removed"]["allow"] == ["me@example.test (your address)"]
+    assert out["removed"]["call"][2] == {"mode": "allowlist", "always_allow": ["me@example.test"], "always_deny": ["xxx.gov"]}
     assert out["entity"]["mode"] == "denylist"
     assert out["entity"]["call"] == ["PUT", "/api/gateway/accounts/ember/email/policy", {"mode": "denylist", "always_allow": ["partner.example"], "always_deny": ["spam.example"]}]
     assert out["failed"]["deny"] == ["spam.example"] and out["failed"]["input"] == "*.gov"
     assert out["failed"]["state"][1] == "error" and "patterns are not supported" in out["failed"]["state"][0]
     # A policy without the two lists fails loudly (never silently drawn empty).
-    assert out["missing"] and "always_allow" in out["missing"]
+    assert out["missing"] and "self_addresses" in out["missing"]

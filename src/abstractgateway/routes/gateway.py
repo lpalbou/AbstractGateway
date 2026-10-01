@@ -143,6 +143,20 @@ from ..workflow_catalog import (
     verify_workflow_policy_signature,
 )
 from ..workflow_deprecations import WorkflowDeprecatedError
+from ..workflow_governance import (
+    ARCHIVED_MESSAGE,
+    DELETE_GONE_MESSAGE,
+    OWNER_GATEWAY,
+    OWNER_USER,
+    SHIPPED_NOT_ARCHIVABLE_MESSAGE,
+    UNAVAILABLE_MESSAGE,
+    WorkflowArchiveStore,
+    archive_store_for,
+    availability_store,
+    owner_of,
+    stamp_owner_into_bundle_bytes,
+    workflow_visible,
+)
 from ..automation_command_types import AUTOMATION_COMMAND_TYPES, COMMAND_TYPES
 from ..automation_defaults import manifest_automation_defaults
 # The ONE history window (runtime 0.7.0): `window_transcript` keeps the newest
@@ -7319,7 +7333,7 @@ async def publish_visualflow(request: Request, flow_id: str, req: PublishVisualF
     """Compile a VisualFlow into a WorkflowBundle and install it into the gateway."""
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
-    _require_workflow_registry_write(request, host)
+    publisher_principal = _require_workflow_registry_write(request, host)
     path = _visualflow_path(svc=svc, flow_id=flow_id)
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Flow '{flow_id}' not found")
@@ -7369,6 +7383,12 @@ async def publish_visualflow(request: Request, flow_id: str, req: PublishVisualF
             "source": "abstractflow.editor",
         },
         "publisher": {"host": "abstractgateway", "published_at": published_at},
+        # Ownership stamp (DESIGN-v3 §5.1, additive).
+        "owner": {
+            "user_id": str(publisher_principal.user_id),
+            "tenant_id": str(publisher_principal.tenant_id or "default"),
+            "at": published_at,
+        },
         "source": {"root_flow_id": str(flow.get("id") or flow_id), "root_flow_name": str(flow.get("name") or ""), "root_flow_updated_at": str(flow.get("updated_at") or "")},
         "lineage": {
             "bundle_id": bundle_id,
@@ -7466,6 +7486,90 @@ def _is_shared_workflow_registry(host: Any) -> bool:
         # Unresolvable configuration is treated as SHARED: the fail-safe
         # direction is to require admin, never to hand out write access.
         return True
+
+
+# ---- Workflow governance (DESIGN-v3 §5): ownership, availability, archive ----
+# workflow_governance.py holds the stores and THE ONE visibility predicate; these
+# helpers bind them to a host + principal. Every listing, read and run start calls
+# `_workflow_gate` or `_bundle_governance` — no route re-derives the rule.
+
+
+def _bundle_source_meta(host: Any, bundle_id: str, bundle_version: Optional[str]) -> Dict[str, Any]:
+    """Where the host loaded `bundle_id@bundle_version` from (latest version when None)."""
+    sources = getattr(host, "bundle_sources", {}) or {}
+    per = sources.get(str(bundle_id)) if isinstance(sources, dict) else None
+    if not isinstance(per, dict) or not per:
+        return {}
+    ver = str(bundle_version or "").strip()
+    if not ver:
+        latest = getattr(host, "latest_bundle_versions", None)
+        ver = str((latest or {}).get(str(bundle_id)) or "") if isinstance(latest, dict) else ""
+    meta = per.get(ver) if ver else None
+    if not isinstance(meta, dict):
+        meta = next((m for m in per.values() if isinstance(m, dict)), {})
+    return dict(meta or {})
+
+
+def _bundle_owner(host: Any, principal: Optional[GatewayPrincipal], source_meta: Dict[str, Any]) -> Dict[str, Any]:
+    return owner_of(source_meta, host_is_shared_registry=_is_shared_workflow_registry(host), principal=principal)
+
+
+def _bundle_archive_store(host: Any, owner: Dict[str, Any]) -> WorkflowArchiveStore:
+    return archive_store_for(str(owner.get("kind")), data_dir=gateway_data_dir_from_env(), bundles_dir=getattr(host, "bundles_dir", None))
+
+
+def _agent_default_bundle_ids(svc: Any, principal: Optional[GatewayPrincipal]) -> set[str]:
+    """Bundles an admin chose as an app's default workflow (Default workflow per app):
+    they keep running for everyone even when hidden from users' lists (§5.2)."""
+    try:
+        defaults, _missing = _agent_default_envelope(svc, principal)
+    except Exception:  # noqa: BLE001 - no resolvable default = no exemption
+        return set()
+    return {str((row or {}).get("bundle_id") or "") for row in (defaults or {}).values() if isinstance(row, dict)}
+
+
+def _workflow_gate(
+    svc: Any,
+    host: Any,
+    principal: Optional[GatewayPrincipal],
+    bundle_id: str,
+    bundle_version: Optional[str],
+    *,
+    start: bool,
+    agent_default: bool = False,
+) -> None:
+    """Refuse what the governance rules forbid: a gateway workflow an admin made
+    unavailable (403, for non-admins; the per-app default is exempt), and —
+    at run start only — an archived workflow (409, for everyone)."""
+    bid = str(bundle_id or "").strip()
+    if not bid:
+        return
+    meta = _bundle_source_meta(host, bid, bundle_version)
+    if not meta:
+        return  # not a bundle of this host's registry (catalog, dynamic): its own route answers
+    owner = _bundle_owner(host, principal, meta)
+    if not workflow_visible(principal, owner, bid, data_dir=gateway_data_dir_from_env()):
+        # The per-app default keeps running for everyone (apps also READ its flow and
+        # input schema to run it); it is only hidden from lists.
+        exempt = agent_default or bid in _agent_default_bundle_ids(svc, principal)
+        if not exempt:
+            raise HTTPException(status_code=403, detail={"reason_code": "workflow_unavailable", "message": UNAVAILABLE_MESSAGE})
+    if start:
+        ver = str(bundle_version or "").strip() or str(meta.get("bundle_version") or "")
+        if _bundle_archive_store(host, owner).is_archived(bid, ver):
+            raise HTTPException(status_code=409, detail={"reason_code": "workflow_archived", "message": ARCHIVED_MESSAGE})
+
+
+def _workflow_ref_for_gate(host: Any, bundle_id: Optional[str], bundle_version: Optional[str], flow_id: str) -> tuple[str, Optional[str]]:
+    """(bundle id, version) a run start names: bundle_id, else the `bundle[@ver]:flow` prefix, else the host default."""
+    bid, ver = _split_bundle_ref(str(bundle_id or "").strip()) if bundle_id else ("", None)
+    if not bid and ":" in str(flow_id or ""):
+        parsed = _parse_namespaced_workflow_id(str(flow_id))
+        if parsed:
+            bid, ver = _split_bundle_ref(parsed[0])
+    if not bid:
+        bid = str(getattr(host, "_default_bundle_id", "") or "")
+    return bid, (str(bundle_version).strip() if bundle_version and str(bundle_version).strip() else ver)
 
 
 def _require_workflow_registry_write(request: Request, host: Any) -> GatewayPrincipal:
@@ -7638,11 +7742,39 @@ async def list_bundles(
     all_versions: bool = Query(default=False, description="If true, return one item per bundle version."),
     include_drafts: bool = Query(default=False, description="If true, include draft bundle versions."),
     include_deprecated: bool = Query(default=False, description="If true, include deprecated entrypoints in discovery."),
+    include_archived: bool = Query(default=False, description="If true, include archived bundles (marked `archived: true`)."),
+    executable_for: Optional[str] = Query(
+        default=None,
+        description="An interface id (e.g. abstractcode.agent.v1): only bundles with an entrypoint declaring it that the "
+        "signed-in principal may run (admin: all; others: available shared + their own; archived never). "
+        "`entrypoints` then lists only the entrypoints that declare it. The app workflow pickers read this.",
+    ),
 ) -> Dict[str, Any]:
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
+    principal = _principal_from_request(request)
     dep_store = getattr(host, "deprecation_store", None)
-    agent_defaults, agent_defaults_unavailable = _agent_default_envelope(svc, _principal_from_request(request))
+    agent_defaults, agent_defaults_unavailable = _agent_default_envelope(svc, principal)
+    # Governance (DESIGN-v3 §5): read each store ONCE per request.
+    is_admin = bool(principal.is_admin())
+    shared_host = _is_shared_workflow_registry(host)
+    data_dir = gateway_data_dir_from_env()
+    availability = availability_store(data_dir).records()
+    archives = {
+        OWNER_GATEWAY: _bundle_archive_store(host, {"kind": OWNER_GATEWAY}).records(),
+        OWNER_USER: (_bundle_archive_store(host, {"kind": OWNER_USER}).records() if not shared_host else {}),
+    }
+
+    want_iface = str(executable_for or "").strip()
+    if want_iface:
+        include_archived = False  # a picker never offers an archived workflow
+
+    def _archived(owner_kind: str, bid0: str, ver0: str) -> bool:
+        rec = archives.get(owner_kind, {}).get(bid0)
+        if not isinstance(rec, dict):
+            return False
+        versions0 = rec.get("versions")
+        return versions0 == "all" or (isinstance(versions0, list) and ver0 in {str(v) for v in versions0})
     agent_marks = _agent_default_marks(agent_defaults, registry_scope="private")
 
     items: list[Dict[str, Any]] = []
@@ -7701,6 +7833,15 @@ async def list_bundles(
             if not include_drafts and _is_draft_bundle_version(ver):
                 continue
             exact_version = str(getattr(man, "bundle_version", ver) or ver)
+            owner = owner_of(source_meta if isinstance(source_meta, dict) else {}, host_is_shared_registry=shared_host, principal=principal)
+            avail_rec = availability.get(str(bid)) if owner["kind"] == OWNER_GATEWAY else None
+            available = True if not isinstance(avail_rec, dict) else bool(avail_rec.get("available", True))
+            # THE predicate (workflow_visible), evaluated on the records read above.
+            if not is_admin and owner["kind"] == OWNER_GATEWAY and not available:
+                continue
+            archived = _archived(owner["kind"], str(bid), exact_version)
+            if archived and not include_archived:
+                continue
             version_channel = _bundle_version_channel(exact_version)
             metadata = getattr(man, "metadata", None)
             metadata_obj = metadata if isinstance(metadata, dict) else {}
@@ -7731,6 +7872,9 @@ async def list_bundles(
                         "deprecated_reason": (str(rec.get("reason") or "").strip() if isinstance(rec, dict) else "") or None,
                     }
                 )
+            if want_iface:
+                # Executable for one interface (picker query): only the entrypoints declaring it.
+                eps = [ep for ep in eps if want_iface in (ep.get("interfaces") or [])]
             if not eps:
                 continue
             default_ep = str(getattr(man, "default_entrypoint", "") or "") or (
@@ -7740,6 +7884,9 @@ async def list_bundles(
                 (str(getattr(ep, "description", "") or "") for ep in entrypoints if str(getattr(ep, "flow_id", "") or "") == default_ep),
                 "",
             )
+            source_kind = bundle_source(source_meta.get("path") if isinstance(source_meta, dict) else None, metadata_obj)
+            shipped = source_kind == "shipped"
+            may_govern = is_admin if owner["kind"] == OWNER_GATEWAY else True
             items.append(
                 {
                     "bundle_id": str(bid),
@@ -7747,7 +7894,13 @@ async def list_bundles(
                     "bundle_ref": f"{bid}@{exact_version}",
                     "registry_scope": "private",
                     # Where the bundle came from (workflow_sources.py): shipped | published | imported.
-                    "source": bundle_source(source_meta.get("path") if isinstance(source_meta, dict) else None, metadata_obj),
+                    "source": source_kind,
+                    # Who owns it (DESIGN-v3 §5.1): the gateway (shared with every user) or the caller.
+                    "owner": owner,
+                    "shipped": shipped,
+                    # Admin availability (gateway-owned only; users' own bundles are always theirs).
+                    "available": available,
+                    "archived": archived,
                     # What it does: the default entrypoint's description ("" when it has none).
                     "description": default_desc,
                     "version_channel": version_channel,
@@ -7761,9 +7914,12 @@ async def list_bundles(
                     "default_entrypoint": str(getattr(man, "default_entrypoint", "") or "") or None,
                     "entrypoints": eps,
                     "actions": {
-                        "can_run": True,
+                        "can_run": not archived,
                         "can_upload": True,
-                        "can_remove": True,
+                        # Workflows are archived, never deleted (DELETE answers 410).
+                        "can_remove": False,
+                        "can_archive": (not shipped) and may_govern,
+                        "can_set_availability": is_admin and owner["kind"] == OWNER_GATEWAY,
                         "can_deprecate": True,
                         "catalog_promote_endpoint": _api_gateway_path("/admin/workflow-catalog/promote"),
                     },
@@ -7788,8 +7944,24 @@ async def list_bundles(
             skipped_rows = [r for r in (reader() or []) if str(r.get("registry_scope") or "private") == "private"]
         except Exception:
             skipped_rows = []
+    # Broken versions follow the same governance: a user sees their own and the
+    # available gateway ones; archived versions only with include_archived.
+    governed_skipped: list[Dict[str, Any]] = []
+    for row in skipped_rows:
+        owner = owner_of(row, host_is_shared_registry=shared_host, principal=principal)
+        sbid = str(row.get("bundle_id") or "")
+        if not is_admin and owner["kind"] == OWNER_GATEWAY and isinstance(availability.get(sbid), dict) and not availability[sbid].get("available", True):
+            continue
+        archived = _archived(owner["kind"], sbid, str(row.get("bundle_version") or ""))
+        if archived and not include_archived:
+            continue
+        governed_skipped.append({**row, "owner": owner, "archived": archived, "can_archive": is_admin if owner["kind"] == OWNER_GATEWAY else True})
+    skipped_rows = governed_skipped
+    if want_iface:
+        skipped_rows = []  # a picker lists runnable workflows only
     return {
         "items": items,
+        "executable_for": want_iface or None,
         "default_bundle_id": default_bundle_id,
         "default_agent_workflows": agent_defaults,
         "default_agent_workflows_unavailable": agent_defaults_unavailable,
@@ -7813,12 +7985,13 @@ async def download_bundle(
     """
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
-    _principal_from_request(request)
+    principal = _principal_from_request(request)
 
     bid_base, bid_ver = _split_bundle_ref(str(bundle_id or "").strip())
     if not bid_base:
         raise HTTPException(status_code=400, detail="bundle_id is required")
     want = str(bundle_version or "").strip() or bid_ver
+    _workflow_gate(svc, host, principal, bid_base, want or None, start=False)
 
     try:
         from abstractruntime.workflow_bundle import WorkflowBundleRegistry
@@ -7892,7 +8065,7 @@ async def upload_bundle(
     """
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
-    _require_workflow_registry_write(request, host)
+    uploader = _require_workflow_registry_write(request, host)
 
     try:
         max_bytes_raw = str(os.getenv("ABSTRACTGATEWAY_MAX_BUNDLE_BYTES", "") or "").strip()
@@ -7910,6 +8083,11 @@ async def upload_bundle(
     size = len(content or b"")
     if size > max_bytes:
         raise HTTPException(status_code=413, detail=f"Bundle too large ({size} bytes > {max_bytes} bytes)")
+    # Ownership stamp (DESIGN-v3 §5.1): additive `metadata.owner`, so a later listing can
+    # attribute the import; every other member is copied byte for byte.
+    content = stamp_owner_into_bundle_bytes(
+        bytes(content or b""), user_id=str(uploader.user_id), tenant_id=str(uploader.tenant_id or "default")
+    )
 
     try:
         from abstractruntime.workflow_bundle import WorkflowBundleRegistry, WorkflowBundleRegistryError
@@ -7977,63 +8155,137 @@ async def upload_bundle(
     }
 
 
-@router.delete("/bundles/{bundle_id}")
-async def remove_bundle(
-    request: Request,
-    bundle_id: str,
-    bundle_version: Optional[str] = Query(default=None, description="Optional bundle version (defaults to removing all versions)."),
-    reload: bool = Query(default=True, description="If true, reload bundles after removal (best-effort; dev-friendly)."),
-) -> Dict[str, Any]:
+@router.delete("/bundles/{bundle_id}", status_code=410)
+async def remove_bundle(request: Request, bundle_id: str) -> JSONResponse:
+    """Gone (DESIGN-v3 §5.3): workflows are archived, never deleted.
+
+    Nothing is unlinked any more — not even for an admin. Archive
+    (`POST /bundles/{bundle_id}/archive`) hides a bundle from lists and
+    refuses new runs while the file and every past run stay on the gateway;
+    shipped bundles can be neither archived nor deleted."""
+    _principal_from_request(request)
+    return JSONResponse(
+        status_code=410,
+        content={"detail": {"reason_code": "workflow_delete_gone", "message": DELETE_GONE_MESSAGE}},
+    )
+
+
+class WorkflowAvailabilityRequest(BaseModel):
+    available: bool = Field(..., description="False hides this gateway workflow from users' lists and app pickers and refuses their new runs.")
+
+
+class WorkflowArchiveRequest(BaseModel):
+    bundle_version: Optional[str] = Field(default=None, description="One version; omitted = every version of the bundle.")
+
+
+def _governed_bundle(host: Any, principal: GatewayPrincipal, bundle_id: str, bundle_version: Optional[str]) -> tuple[Dict[str, Any], list[Dict[str, Any]]]:
+    """(owner, the targeted version rows [{bundle_version, path, metadata}]) of a bundle this
+    host loads — served OR skipped (a broken file can be archived too). 404 when absent."""
+    bid = str(bundle_id or "").strip()
+    want = str(bundle_version or "").strip()
+    rows: list[Dict[str, Any]] = []
+    owner: Optional[Dict[str, Any]] = None
+    sources = (getattr(host, "bundle_sources", {}) or {}).get(bid) or {}
+    versions = (getattr(host, "bundles", {}) or {}).get(bid) or {}
+    for ver, meta in (sources.items() if isinstance(sources, dict) else []):
+        if not isinstance(meta, dict) or str(meta.get("registry_scope") or "private") != "private":
+            continue
+        if ver not in versions:
+            continue
+        if want and str(ver) != want:
+            continue
+        man = getattr(versions.get(ver), "manifest", None)
+        rows.append({"bundle_version": str(ver), "path": meta.get("path"), "metadata": getattr(man, "metadata", None) or {}})
+        owner = owner or _bundle_owner(host, principal, meta)
+    reader = getattr(host, "skipped_bundle_rows", None)
+    if callable(reader):
+        try:
+            for row in reader() or []:
+                if str(row.get("bundle_id") or "") != bid or str(row.get("registry_scope") or "private") != "private":
+                    continue
+                if want and str(row.get("bundle_version") or "") != want:
+                    continue
+                rows.append({"bundle_version": str(row.get("bundle_version") or ""), "path": row.get("path"), "metadata": {}})
+                owner = owner or _bundle_owner(host, principal, row)
+        except Exception:  # noqa: BLE001 - skipped rows are a bonus, never a failure
+            pass
+    if not rows or owner is None:
+        label = f"{bid}@{want}" if want else bid
+        raise HTTPException(status_code=404, detail={"reason_code": "workflow_not_found", "message": f"This workflow ({label}) isn't on this gateway."})
+    return owner, rows
+
+
+def _require_archive_rights(principal: GatewayPrincipal, owner: Dict[str, Any], rows: list[Dict[str, Any]]) -> None:
+    if any(bundle_source(r.get("path"), r.get("metadata")) == "shipped" for r in rows):
+        raise HTTPException(status_code=409, detail={"reason_code": "workflow_shipped", "message": SHIPPED_NOT_ARCHIVABLE_MESSAGE})
+    if owner.get("kind") == OWNER_GATEWAY and not principal.is_admin():
+        raise HTTPException(
+            status_code=403,
+            detail={"reason_code": "admin_required", "message": "Only an admin can archive a workflow shared by the gateway."},
+        )
+
+
+@router.put("/admin/workflows/{bundle_id}/availability")
+async def set_workflow_availability(request: Request, bundle_id: str, req: WorkflowAvailabilityRequest) -> Dict[str, Any]:
+    """Admin: is this gateway workflow available to users (DESIGN-v3 §5.2)?
+
+    Off hides it from every non-admin list and app picker and refuses their new
+    runs (the per-app default workflow keeps running). Turning it off also PAUSES
+    users' existing automations on it, with a reason; turning it back on does not
+    resume them (each user resumes their own)."""
+    principal = _principal_from_request(request)
+    if not principal.is_admin():
+        raise HTTPException(
+            status_code=403,
+            detail={"reason_code": "admin_required", "message": "Only an admin can change which workflows users see."},
+        )
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
-    _require_workflow_registry_write(request, host)
+    owner, _rows = _governed_bundle(host, principal, bundle_id, None)
+    if owner.get("kind") != OWNER_GATEWAY:
+        raise HTTPException(status_code=409, detail={"reason_code": "not_shared", "message": "Only workflows shared by the gateway have an availability switch."})
+    rec = availability_store(gateway_data_dir_from_env()).set_available(str(bundle_id).strip(), bool(req.available), updated_by=str(principal.user_id))
+    paused: list[Dict[str, Any]] = []
+    if not req.available:
+        from ..automation_pause_reasons import pause_users_automations_on_bundle
 
-    bid_raw = str(bundle_id or "").strip()
-    if not bid_raw:
-        raise HTTPException(status_code=400, detail="bundle_id is required")
-    bid_base, bid_ver = _split_bundle_ref(bid_raw)
-    if bid_ver and bundle_version and bid_ver != bundle_version:
-        raise HTTPException(status_code=400, detail="bundle_id version does not match bundle_version")
+        paused = await _off_the_event_loop(pause_users_automations_on_bundle, str(bundle_id).strip(), WORKFLOW_UNAVAILABLE_PAUSE_REASON)
+    return {"ok": True, "bundle_id": str(bundle_id).strip(), **rec, "paused_automations": paused}
 
-    target_ver = str(bundle_version or "").strip() if isinstance(bundle_version, str) and str(bundle_version).strip() else bid_ver
-    bundle_ref = f"{bid_base}@{target_ver}" if target_ver else bid_base
 
-    # Checked BEFORE the unlink, because there is nothing to undo afterwards.
-    _guard_boot_critical_removal(host, bundle_id=bid_base, bundle_version=target_ver or None)
+WORKFLOW_UNAVAILABLE_PAUSE_REASON = "Paused: this workflow is no longer available to users — ask an admin."
 
-    try:
-        from abstractruntime.workflow_bundle import WorkflowBundleRegistry, WorkflowBundleRegistryError
 
-        reg = WorkflowBundleRegistry(getattr(host, "bundles_dir", None))
-        removed = int(reg.remove(bundle_ref))
-    except WorkflowBundleRegistryError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed removing bundle: {e}")
+@router.post("/bundles/{bundle_id}/archive")
+async def archive_workflow(request: Request, bundle_id: str, req: Optional[WorkflowArchiveRequest] = None) -> Dict[str, Any]:
+    """Archive a workflow (or one version): hidden from lists, refuses new runs; the file
+    and every past run stay and keep loading. Admin for gateway workflows, the owner for
+    their own; shipped workflows refuse (409)."""
+    principal = _principal_from_request(request)
+    svc = get_gateway_service()
+    host = _require_bundle_host(svc)
+    ver = (req.bundle_version if req is not None else None) or None
+    owner, rows = _governed_bundle(host, principal, bundle_id, ver)
+    _require_archive_rights(principal, owner, rows)
+    rec = _bundle_archive_store(host, owner).archive(str(bundle_id).strip(), ver, archived_by=str(principal.user_id))
+    return {"ok": True, "bundle_id": str(bundle_id).strip(), "owner": owner, **rec}
 
-    if removed <= 0:
-        raise HTTPException(status_code=404, detail=f"Bundle '{bundle_ref}' not found")
 
-    gateway_reloaded = False
-    gateway_reload_error: Optional[str] = None
-    if bool(reload):
-        reload_fn = getattr(host, "reload_bundles_from_disk", None)
-        if not callable(reload_fn):
-            gateway_reload_error = "Bundle reload is not supported on this gateway host"
-        else:
-            try:
-                await _off_the_event_loop(reload_fn)
-                gateway_reloaded = True
-            except Exception as e:
-                gateway_reload_error = str(e)
-
-    return {
-        "ok": True,
-        "bundle_ref": str(bundle_ref),
-        "removed": int(removed),
-        "gateway_reloaded": bool(gateway_reloaded),
-        "gateway_reload_error": gateway_reload_error,
-    }
+@router.post("/bundles/{bundle_id}/unarchive")
+async def unarchive_workflow(request: Request, bundle_id: str, req: Optional[WorkflowArchiveRequest] = None) -> Dict[str, Any]:
+    principal = _principal_from_request(request)
+    svc = get_gateway_service()
+    host = _require_bundle_host(svc)
+    ver = (req.bundle_version if req is not None else None) or None
+    owner, _rows = _governed_bundle(host, principal, bundle_id, ver)
+    _all_owner, all_rows = _governed_bundle(host, principal, bundle_id, None)
+    _require_archive_rights(principal, owner, all_rows)
+    changed = _bundle_archive_store(host, owner).unarchive(
+        str(bundle_id).strip(), ver, all_versions=[r["bundle_version"] for r in all_rows]
+    )
+    if not changed:
+        raise HTTPException(status_code=409, detail={"reason_code": "not_archived", "message": "This workflow isn't archived."})
+    return {"ok": True, "bundle_id": str(bundle_id).strip(), "bundle_version": ver, "archived": False}
 
 
 @router.post("/bundles/{bundle_id}/deprecate")
@@ -8090,7 +8342,7 @@ async def undeprecate_bundle(request: Request, bundle_id: str, req: DeprecateWor
 
 
 @router.get("/bundles/{bundle_id}")
-async def get_bundle(bundle_id: str, bundle_version: Optional[str] = Query(default=None, description="Optional bundle version (defaults to latest).")) -> Dict[str, Any]:
+async def get_bundle(request: Request, bundle_id: str, bundle_version: Optional[str] = Query(default=None, description="Optional bundle version (defaults to latest).")) -> Dict[str, Any]:
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
     dep_store = getattr(host, "deprecation_store", None)
@@ -8098,6 +8350,8 @@ async def get_bundle(bundle_id: str, bundle_version: Optional[str] = Query(defau
     bid = str(bundle_id or "").strip()
     if not bid:
         raise HTTPException(status_code=400, detail="bundle_id is required")
+    _gate_bid, _gate_ver = _split_bundle_ref(bid)
+    _workflow_gate(svc, host, _principal_from_request(request), _gate_bid, bundle_version or _gate_ver, start=False)
 
     selected_ver, bundle = _resolve_bundle_from_host(host=host, bundle_id=bid, bundle_version=bundle_version)
     bid_base, _bid_ver = _split_bundle_ref(bid)
@@ -8126,10 +8380,17 @@ async def get_bundle(bundle_id: str, bundle_version: Optional[str] = Query(defau
         )
 
     flow_ids = sorted([str(k) for k in (man.flows or {}).keys() if isinstance(k, str) and k.strip()])
+    source_meta = _bundle_source_meta(host, bid_base, str(selected_ver))
+    source_kind = bundle_source(source_meta.get("path"), dict(getattr(man, "metadata", None) or {}))
     return {
         "bundle_id": str(bid_base),
         "bundle_version": str(selected_ver),
         "bundle_ref": f"{bid_base}@{selected_ver}",
+        # The same governance facts as the /bundles row (DESIGN-v3 §5): AbstractFlow's deep
+        # link reads `shipped` to say a shipped workflow opens as a read-only copy.
+        "source": source_kind,
+        "shipped": source_kind == "shipped",
+        "owner": _bundle_owner(host, _principal_from_request(request), source_meta) if source_meta else None,
         "created_at": str(man.created_at or ""),
         "default_entrypoint": str(getattr(man, "default_entrypoint", "") or "") or None,
         "entrypoints": entrypoints_out,
@@ -8141,6 +8402,7 @@ async def get_bundle(bundle_id: str, bundle_version: Optional[str] = Query(defau
 
 @router.get("/bundles/{bundle_id}/flows/{flow_id}")
 async def get_bundle_flow(
+    request: Request,
     bundle_id: str,
     flow_id: str,
     bundle_version: Optional[str] = Query(default=None, description="Optional bundle version (defaults to latest)."),
@@ -8148,6 +8410,8 @@ async def get_bundle_flow(
     """Return a VisualFlow JSON from a bundle (best-effort; intended for thin clients)."""
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
+    _gate_bid, _gate_ver = _split_bundle_ref(str(bundle_id or "").strip())
+    _workflow_gate(svc, host, _principal_from_request(request), _gate_bid, bundle_version or _gate_ver, start=False)
     bid_base, selected_ver, fid, raw = _resolve_bundle_flow_json(
         host=host,
         bundle_id=bundle_id,
@@ -8660,6 +8924,12 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
             store = _artifact_store_or_500(svc)
             _validate_run_start_artifact_refs(store=store, input_data=input_data, session_id=session_id)
 
+        if catalog_selection is None:
+            # Governance (DESIGN-v3 §5.2/§5.3): an unavailable gateway workflow (non-admins;
+            # the per-app default is exempt) and an archived one never start a new run.
+            gate_bid, gate_ver = _workflow_ref_for_gate(svc.host, bundle_id, bundle_version, flow_id)
+            _workflow_gate(svc, svc.host, principal, gate_bid, gate_ver, start=True, agent_default=agent_default is not None)
+
         workflow_selection = _workflow_selection_before_start(
             svc, agent_default=agent_default, catalog_selection=catalog_selection
         )
@@ -8822,6 +9092,10 @@ async def start_scheduled_run(req: ScheduleRunRequest, request: Request) -> Star
         if not selected_ver:
             raise HTTPException(status_code=404, detail=f"Bundle '{bundle_id_base}' has no versions loaded")
         target_workflow_id = f"{bundle_id_base}@{selected_ver}:{target_flow_id}"
+
+    if catalog_selection is None:
+        # Governance (DESIGN-v3 §5): scheduling is a run start like any other.
+        _workflow_gate(svc, host, principal, bundle_id_base, selected_ver, start=True)
 
     # Prevent scheduling deprecated target workflows (host-side enforcement also blocks child launches).
     try:
@@ -14848,6 +15122,15 @@ async def discovery_tools() -> Dict[str, Any]:
         items = clamp_disabled_approval(_annotate_tier_approval(join_registry_facts(items)))
     except Exception:  # noqa: BLE001 - annotation is additive
         pass
+    # Tools of MCP servers an admin enabled for agents (mcp_run_tools.py): enabled rows grouped per
+    # server (`toolset: "mcp:<server>"`), asking before each call by default.
+    try:
+        from ..mcp_run_tools import offered_tool_specs
+
+        for spec in await _off_the_event_loop(offered_tool_specs, _mcp_data_dir()):
+            items.append({**spec, "enabled": True, "approval_default": "ask"})
+    except Exception as e:  # noqa: BLE001 - a broken registry must not hide the other tools
+        catalog_warnings.append(f"MCP tools unavailable: {type(e).__name__}: {e}")
     tool_mode = str(os.getenv("ABSTRACTGATEWAY_TOOL_MODE") or "approval").strip().lower() or "approval"
     out: Dict[str, Any] = {
         "items": items,
@@ -15117,9 +15400,11 @@ async def gateway_admin_skills_reseed(request: Request) -> Dict[str, Any]:
 
 @router.get("/mcp/servers")
 async def gateway_mcp_servers_inventory(request: Request) -> Dict[str, Any]:
-    """The MCP server registry (`<data_dir>/config/mcp_servers.json`, v1 or v2): rows with
-    header fingerprints only, `last_test`, `agents_can_call` and `agents_note`. ADMIN ONLY
-    (round 3, C3F): commands and URLs are admin configuration; a non-admin gets 403."""
+    """The MCP server registry (`<gateway root data dir>/config/mcp_servers.json`): v2 rows with
+    header fingerprints only, `probed: false` (this read never connects; `last_test` is the latest
+    admin test), the agents fields (`enabled_for_agents`, `offered_to_agents`, `agents_status`) and
+    `agents_note`. ADMIN ONLY (round 3): commands and URLs are admin configuration; a non-admin
+    gets 403."""
     principal = _principal_from_request(request)
     if not principal.is_admin():
         raise HTTPException(
@@ -15128,8 +15413,7 @@ async def gateway_mcp_servers_inventory(request: Request) -> Dict[str, Any]:
         )
     from ..capability_inventories import mcp_servers_inventory
 
-    svc = get_gateway_service()
-    return mcp_servers_inventory(data_dir=Path(svc.stores.base_dir))
+    return mcp_servers_inventory(data_dir=_mcp_data_dir())
 
 
 def _mcp_refusal(exc: Exception) -> HTTPException:
@@ -15150,15 +15434,18 @@ async def _mcp_body(request: Request) -> Dict[str, Any]:
 
 
 def _mcp_data_dir() -> Path:
-    return Path(get_gateway_service().stores.base_dir)
+    # The gateway ROOT data dir (the tool-grants precedent): one registry for every account, the
+    # one agent runs read (hosts/bundle_host.py catalog_root), also under multi-user auth.
+    svc = get_gateway_service()
+    return Path(getattr(svc.config, "root_data_dir", None) or svc.stores.base_dir)
 
 
 @router.post("/admin/mcp/servers")
 async def gateway_admin_mcp_create(request: Request) -> Dict[str, Any]:
     """Register an MCP server: {name, transport: stdio|http, command, args[], cwd?, url,
     headers{name: value}, description}. Header values are sealed in the gateway's secret store
-    (<data dir>/config/mcp_secrets); the registry keeps names + fingerprints. Runs do not use
-    registered servers yet."""
+    (<data dir>/config/mcp_secrets); the registry keeps names + fingerprints. Agent runs are offered
+    a server's tools only once an admin enables it for agents (POST .../agents)."""
     _require_admin_principal(request)
     from ..mcp_registry import McpRegistryError, create_server
 
@@ -15207,6 +15494,25 @@ async def gateway_admin_mcp_unarchive(name: str, request: Request) -> Dict[str, 
         return await asyncio.to_thread(set_archived, _mcp_data_dir(), name, False)
     except McpRegistryError as exc:
         raise _mcp_refusal(exc) from None
+
+
+@router.post("/admin/mcp/servers/{name}/agents")
+async def gateway_admin_mcp_agents(name: str, request: Request) -> Dict[str, Any]:
+    """**Enabled for agents**: {enabled: bool}. On = the tools the last successful test listed are
+    offered to agent runs (each call asks unless the run allows all tools); refused (409, a sentence)
+    for an archived or untested server. Returns the updated row."""
+    _require_admin_principal(request)
+    from ..mcp_registry import McpRegistryError, agents_status, offered_to_agents, set_enabled_for_agents
+
+    body = await _mcp_body(request)
+    if not isinstance(body.get("enabled"), bool):
+        raise HTTPException(status_code=400, detail={"reason_code": "mcp_refused", "message": "Send {\"enabled\": true} or {\"enabled\": false}."})
+    try:
+        row = await asyncio.to_thread(set_enabled_for_agents, _mcp_data_dir(), name, body["enabled"])
+    except McpRegistryError as exc:
+        raise _mcp_refusal(exc) from None
+    request.state.audit_detail = {"mcp_server_agents": {"name": name, "enabled": body["enabled"]}}
+    return {**row, "offered_to_agents": offered_to_agents(row), "agents_status": agents_status(row)}
 
 
 @router.post("/admin/mcp/servers/{name}/test")

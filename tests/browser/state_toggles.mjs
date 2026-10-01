@@ -148,7 +148,7 @@ try {
     await signIn(page, "admin", ADMIN);
     // Sidebar (DESIGN-v2 §1): four groups in order, Setup at the bottom opens the guide.
     const nav = await page.evaluate(() => Array.from(document.querySelectorAll("#console-nav .af-nav-group")).map((g) => [g.querySelector(".af-nav-group__caption").textContent.trim(), Array.from(g.querySelectorAll(".tab-button")).map((b) => b.id.replace("tab-button-", ""))]));
-    check(JSON.stringify(nav) === JSON.stringify([["Accounts", ["users"]], ["Work", ["workflows", "runtimes", "apps"]], ["Models", ["providers", "catalog", "defaults"]], ["System", ["models", "sandbox", "network"]]]), "sidebar groups in order", nav);
+    check(JSON.stringify(nav) === JSON.stringify([["Accounts", ["users"]], ["Work", ["workflows", "skills", "runtimes", "apps"]], ["Models", ["providers", "catalog", "defaults"]], ["System", ["models", "sandbox", "network"]]]), "sidebar groups in order", nav);
     check((await page.locator("#topbar-static #open-setup, #af-topbar-root [id*=setup]").count()) === 0, "no Setup button in the top bar");
     await page.click("#open-setup");
     await page.waitForSelector("#first-run-backdrop:not(.hidden)", { timeout: 10000 });
@@ -174,11 +174,18 @@ try {
     const alice = await page.textContent("tr[data-user='alice'] .accounts-mailbox__text");
     check(alice.trim() === "Connected as alice@fastmail.com", "alice mailbox cell", alice);
     check((await page.textContent("tr[data-user='bob'] .accounts-col-email")).trim() === "No address", "bob has no email address (words, not a dash)");
-    check((await page.textContent("tr[data-user='castor'] .accounts-mailbox__text")).trim() === "Not available", "entity mailbox reads Not available");
-    const entityWhy = (await page.textContent("tr[data-user='castor'] .accounts-reasons")).trim();
-    check(entityWhy === "Rotate and Delete don't apply to entities: no credential is kept, and an entity's name is kept for life — suspend it instead." && (await page.isDisabled("tr[data-user='castor'] button[data-action='delete']")), "entity Rotate/Delete disabled with ONE combined reason line (no 'Delete:' prefix)", entityWhy);
-    const ownWhy = (await page.textContent("tr[data-user='admin'] .accounts-reasons")).trim();
-    check(ownWhy === "You can't deactivate or delete your own account.", "own row: one reason line for Active and Delete", ownWhy);
+    // Entities are AI users with their own mailbox (DESIGN-v3 §3): the real state of its own plane.
+    check((await page.textContent("tr[data-user='castor'] .accounts-mailbox__text")).trim() === "Not connected", "entity mailbox reads its own plane's state");
+    // DESIGN-v3 §1.1: only the actions that apply, no disabled buttons, no reasons paragraph.
+    const acts = await page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll("#users-table tr.accounts-row")).map((tr) => [tr.dataset.user, {
+      vis: Array.from(tr.querySelectorAll(".accounts-actions__buttons > button")).map((b) => b.dataset.action),
+      menu: Array.from(tr.querySelectorAll(".af-menu__item")).map((b) => b.dataset.action),
+      disabled: tr.querySelectorAll("button[disabled]").length,
+    }])));
+    check(JSON.stringify(acts.castor) === JSON.stringify({ vis: ["email", "logs", "manage"], menu: ["archive"], disabled: 0 }), "entity row: Email · Logs · Manage + menu Archive", acts.castor);
+    check(JSON.stringify(acts.alice) === JSON.stringify({ vis: ["email", "logs", "workspace"], menu: ["rotate", "archive"], disabled: 0 }), "user row: Email · Logs · Workspace + menu Rotate token, Archive", acts.alice);
+    check(JSON.stringify(acts.admin) === JSON.stringify({ vis: ["email", "logs", "workspace"], menu: ["rotate"], disabled: 0 }), "own row: no Archive offered", acts.admin);
+    check((await page.locator("#users-section .accounts-reasons").count()) === 0 && !(await page.textContent("#users-section")).includes("don't apply to entities"), "no per-row reasons paragraph");
     // Round-2 polish: no placeholder dashes, actions on ONE row per account at 1440, one card title.
     const polish = await page.evaluate(() => {
       const cells = Array.from(document.querySelectorAll("#users-table tr.accounts-row td")).filter((td) => td.getClientRects().length).map((td) => td.innerText.trim());
@@ -220,11 +227,12 @@ try {
     await page.keyboard.press("Escape");
     await page.waitForSelector("#account-email-backdrop[hidden]", { state: "attached", timeout: 5000 });
     check(await page.evaluate(() => document.activeElement && document.activeElement.matches("tr[data-user='alice'] button[data-action='email']")), "Esc closes and focus returns to the row's Email button");
-    // Entity row: the reason, no form.
+    // Entity row (DESIGN-v3 §3.2): the SAME account email UI, on the entity's own mailbox.
+    const entReq = page.waitForRequest((r) => r.url().includes("/api/gateway/accounts/castor/email"), { timeout: 10000 }).then(() => true, () => false);
     await page.click("tr[data-user='castor'] button[data-action='email']");
-    await page.waitForSelector("#account-email-backdrop:not([hidden])");
-    const ent = (await page.textContent("#account-email-body")).trim();
-    check(ent.startsWith("Entities can't have their own mailbox") && !ent.includes("agent email tools"), "entity Email modal says why, nothing false", ent);
+    await page.waitForSelector("#account-email-backdrop:not([hidden]) #my-email-section");
+    const ent = (await page.textContent("#account-email-body .account-modal-lead")).trim();
+    check(ent === "castor is an AI user: this mailbox is its own. Its agents read and send from it; notifications about its runs go to its address." && (await entReq), "entity Email modal: the account email UI on /accounts/castor/email", ent);
     await page.click("#account-email-close");
     // Own row: the full email UI + the admin sentence; the page itself does not repeat it.
     check(await page.locator("#my-email-section").isHidden(), "admin's account page lives in the modal, not on the page");
@@ -320,7 +328,7 @@ try {
       labels: Array.from(document.querySelectorAll("#agent-defaults-root .agent-default__name")).map((l) => l.textContent),
       purpose: document.querySelector("#tab-workflows .workflows-purpose")?.textContent || "",
     }));
-    check(wf.basic === "Basic agent" && wf.what && wf.what !== "—" && wf.source === "Shipped with the gateway", "workflow rows: plain name, what it does, source", wf);
+    check(wf.basic === "Basic agent" && wf.what && wf.what !== "—" && wf.source === "Shipped", "workflow rows: plain name, what it does, source badge", wf);
     // Adversary pass 2 (F4): "No app" (not "None"); the gateway's own flows folder = shipped;
     // a 0.0.0 manifest version reads "unversioned".
     const wf2 = await page.evaluate(() => ({
@@ -330,7 +338,7 @@ try {
       orch: document.querySelector("#workflows-table tr[data-bundle='abstractassistant-orchestrator'] .workflows-version-cell")?.textContent,
     }));
     check(wf2.docs === "No app" && !wf2.usedBy.includes("None"), "Used by says 'No app', never 'None'", wf2);
-    check(Object.values(wf2.sources).every((t) => t === "Shipped with the gateway"), "bundles in the gateway's flows folder are 'Shipped with the gateway'", wf2.sources);
+    check(Object.values(wf2.sources).every((t) => t === "Shipped"), "bundles in the gateway's flows folder carry the 'Shipped' badge", wf2.sources);
     check(wf2.orch === "unversioned", "a 0.0.0 manifest version reads 'unversioned'", wf2.orch);
     check(wf.warn === 0 && !wf.notAvailable, "no warnings and no 'Not available' on a fresh install", wf);
     check(wf.labels.includes("AbstractCode — chat agent") && wf.labels.includes("Assistant"), "default workflow per app: plain names", wf.labels);
@@ -342,23 +350,24 @@ try {
       const rows = Array.from(t.querySelectorAll("tr.workflows-row"));
       const tall = rows.map((r) => [r.dataset.bundle, Math.round(r.getBoundingClientRect().height)]).filter(([, h]) => h >= 120);
       const what = rows[0].querySelector(".workflows-what");
-      return { stacked: t.classList.contains("ui-stacked"), display: getComputedStyle(rows[0]).display, heads: Array.from(t.querySelectorAll("thead th")).filter((th) => th.getClientRects().length).length, tall, n: rows.length,
+      return { overflow: t.scrollWidth - t.parentElement.clientWidth, stacked: t.classList.contains("ui-stacked"), display: getComputedStyle(rows[0]).display, heads: Array.from(t.querySelectorAll("thead th")).filter((th) => th.getClientRects().length).length, tall, n: rows.length,
         captions: getComputedStyle(what, "::before").content, titles: Array.from(document.querySelectorAll("#workflows-section h2")).map((h) => h.textContent.trim()),
         help: Math.round(document.querySelector("#workflows-table .help-q > summary").getBoundingClientRect().height),
         switches: Array.from(document.querySelectorAll(".workflows-toolbar .af-switch__label")).map((l) => l.textContent) };
     });
-    check(!table.stacked && table.display === "table-row" && table.heads === 6 && table.tall.length === 0 && table.n > 5, "1440: workflows is a table, one row per bundle, every row < 120 px", table);
+    check(!table.stacked && table.display === "table-row" && table.heads === 7 && table.n > 5 && table.overflow <= 0, "1440: workflows is a table, one row per bundle, no sideways scroll", table);
     check(table.captions === "none" || table.captions === "normal", "no repeated per-cell captions at 1440", table.captions);
     check(!table.titles.includes("Workflows") && table.help <= 20, "no second 'Workflows' title; (?) is a small glyph", table);
-    check(JSON.stringify(table.switches) === JSON.stringify(["Drafts", "Older versions"]), "toolbar switches labelled by the feature, not a verb", table.switches);
-    // Delete asks INLINE in the row (with the run count sentence), never the console's dialog.
-    await page.click("#workflows-table tr[data-bundle='basic-agent'] .workflows-actions button.danger");
-    await page.waitForSelector("#workflows-table tr.workflows-confirm", { timeout: 10000 });
-    const ask = await page.evaluate(() => { const c = document.querySelector("#workflows-table tr.workflows-confirm"); const prev = c.previousElementSibling; const dlg = document.getElementById("confirm-title"); return { text: c.textContent, after: prev && prev.dataset.bundle, dialog: !!(dlg && dlg.checkVisibility && dlg.checkVisibility()) }; });
-    check(ask.text.includes("It ships with the gateway: nothing puts it back at the next restart, only reinstalling the gateway does."), "Delete on a shipped bundle says what happens", ask.text);
-    check(ask.after === "basic-agent" && /^Delete basic-agent\? Every version of this workflow is removed from disk; there is no undo\./.test(ask.text) && /(No runs reference it|runs? reference it)/.test(ask.text) && !ask.dialog, "workflow Delete: inline confirmation in the row with the run sentence, no dialog", ask);
-    await page.click("#workflows-table tr.workflows-confirm button.secondary");
-    check((await page.locator("#workflows-table tr.workflows-confirm").count()) === 0 && (await page.locator("#workflows-table tr[data-bundle='basic-agent']").count()) === 1, "Cancel closes the inline confirmation; nothing deleted");
+    check(JSON.stringify(table.switches) === JSON.stringify(["Drafts", "Older versions", "Show archived"]), "toolbar switches labelled by the feature, not a verb", table.switches);
+    // DESIGN-v3 §5: nothing is deletable; a shipped bundle has Export + Open in AbstractFlow and
+    // (admin) the "Available to users" switch, never Delete or Archive; rows sit under the
+    // "Shared with everyone" group.
+    const shippedRow = await page.evaluate(() => {
+      const r = document.querySelector("#workflows-table tr[data-bundle='basic-agent']");
+      const labels = Array.from(r.querySelectorAll(".workflows-actions button")).map((b) => b.textContent.trim());
+      return { labels, sw: r.querySelector(".workflows-available [role=switch]")?.getAttribute("aria-checked"), groups: Array.from(document.querySelectorAll("#workflows-table tr.workflows-group .workflows-group__title")).map((t) => t.textContent), anyDelete: Array.from(document.querySelectorAll("#tab-workflows button")).some((b) => /^Delete/.test(b.textContent.trim())) };
+    });
+    check(JSON.stringify(shippedRow.labels) === JSON.stringify(["Export", "Open"]) && shippedRow.sw === "true" && !shippedRow.anyDelete && shippedRow.groups[0] === "Shared with everyone", "shipped workflow: Export + Open + availability switch (on); no Delete anywhere", shippedRow);
     // Streamed replies: a gateway-wide setting under "Settings", a kit switch labelled by the feature.
     const stream = await page.evaluate(() => { const b = document.querySelector("#agent-defaults-root [data-streaming-default]"); const box = b && b.closest(".workflows-settings"); return b && { role: b.getAttribute("role"), label: b.querySelector(".af-switch__label").textContent, heading: box && box.querySelector(".section-subtitle").textContent, checkbox: !!document.querySelector("#agent-defaults-root input[type=checkbox]") }; });
     check(stream && stream.role === "switch" && stream.label === "Streamed replies" && stream.heading === "Settings" && !stream.checkbox, "Streamed replies is a kit switch row under Settings", stream);
@@ -370,7 +379,7 @@ try {
     await signIn(page, "admin", ADMIN);
     await openAccount(page);
     await page.waitForSelector("tr[data-user='castor'].accounts-row");
-    const row = await page.evaluate(() => { const tr = document.querySelector("tr[data-user='alice']"); const r = tr.getBoundingClientRect(); return { display: getComputedStyle(tr).display, w: Math.round(r.width), btnH: Math.min(...Array.from(tr.querySelectorAll(".accounts-actions button")).map((b) => b.getBoundingClientRect().height)) }; });
+    const row = await page.evaluate(() => { const tr = document.querySelector("tr[data-user='alice']"); const r = tr.getBoundingClientRect(); return { display: getComputedStyle(tr).display, w: Math.round(r.width), btnH: Math.min(...Array.from(tr.querySelectorAll(".accounts-actions button")).filter((b) => b.getClientRects().length).map((b) => b.getBoundingClientRect().height)) }; });
     check(row.display === "grid" && row.w >= 340 && row.btnH >= 44, "phone account rows are flat blocks with 44 px actions", row);
     await labelScale(page, "#users-section", "accounts (phone)");
     await page.click("tr[data-user='admin'] button[data-action='email']");
