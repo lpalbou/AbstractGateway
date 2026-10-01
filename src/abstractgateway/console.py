@@ -1009,6 +1009,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    .provider-preset strong { display: block; color: var(--text); line-height: 1.25; }
 	    .provider-preset span { display: block; color: var(--muted); font-size: var(--font-size-sm); font-weight: 500; line-height: 1.3; margin-top: 3px; }
+	    .provider-preset span.provider-preset__state { margin-top: 6px; font-weight: 600; }
+	    .provider-preset span.provider-preset__state.is-on { color: var(--success); }
+	    /* Local provider cards: the server connection (DESIGN-v3 §7). Flat: a
+	       top rule, no nested card. */
+	    .provider-connection { display: grid; gap: 6px; margin-top: 4px; padding-top: 10px; border-top: 1px solid var(--line-soft); min-width: 0; }
+	    .provider-connection__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+	    .provider-connection__title { font-size: var(--font-size-sm); font-weight: 600; color: var(--text); }
+	    .provider-connection__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; min-width: 0; }
+	    .provider-connection__row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+	    .provider-connection__text { display: grid; gap: 2px; min-width: 0; flex: 1 1 auto; overflow-wrap: anywhere; }
+	    .provider-connection__text .ui-sub { font-size: var(--font-size-sm); color: var(--muted); }
+	    .provider-connection__text code { max-width: 100%; justify-self: start; font-size: var(--font-size-sm); padding: 1px 6px; background: transparent; border: 0; color: var(--muted); }
 	    .setup-summary {
 	      border: 1px solid color-mix(in srgb, var(--info) 22%, transparent);
 	      border-radius: var(--radius-md);
@@ -2173,9 +2185,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      </div>
 	      <div class="shell_nav_group af-nav-group" role="group" aria-labelledby="nav-group-models">
 	        <div id="nav-group-models" class="shell_nav_caption af-nav-group__caption">Models</div>
-	        <button id="tab-button-providers" class="tab-button shell_nav_item" type="button" title="LLM provider connections and endpoint profiles"><span class="shell_nav_icon" aria-hidden="true">◇</span><span class="shell_nav_label">Providers</span></button>
+	        <button id="tab-button-providers" class="tab-button shell_nav_item" type="button" title="Local engines (Ollama, LM Studio, MLX...) and remote provider connections"><span class="shell_nav_icon" aria-hidden="true">◇</span><span class="shell_nav_label">Providers</span></button>
 	        <button id="tab-button-catalog" class="tab-button shell_nav_item" type="button" title="Browse, download and delete models that fit this machine"><span class="shell_nav_icon" aria-hidden="true">▤</span><span class="shell_nav_label">Models</span></button>
-	        <button id="tab-button-engines" class="tab-button shell_nav_item" type="button" title="Local engines (Ollama, LM Studio, MLX...): status and install"><span class="shell_nav_icon icon-gear" aria-hidden="true">⚙</span><span class="shell_nav_label">Engines</span></button>
 	        <button id="tab-button-defaults" class="tab-button shell_nav_item" type="button" title="Which provider/model serves each capability (vision, audio, image...)"><span class="shell_nav_icon" aria-hidden="true">◆</span><span class="shell_nav_label">Multimodal</span></button>
 	      </div>
 	      <div class="shell_nav_group af-nav-group" role="group" aria-labelledby="nav-group-system">
@@ -2487,11 +2498,27 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 
 	      <div id="tab-providers" class="tab-panel">
 	        <div class="providers-workspace">
+	          <!-- DESIGN-v3 §7: ONE page per provider family. Local providers are
+	               the engine cards (console_ui.py, the same code the setup guide
+	               uses) plus each provider's server connection; remote providers
+	               are the connection presets; the Available Providers table is
+	               the full list, unchanged. The engines placeholder below is
+	               replaced by the cards when the tab opens. -->
+	          <section id="local-providers-section" class="session-only">
+	            <div class="section-head">
+	              <div>
+	                <h2 class="section-title"><span class="section-icon" aria-hidden="true">⚙</span><span>Local providers</span></h2>
+	                <p class="section-note">Engines that run models on this computer: install, start and stop them, browse their models, and set the address the gateway uses to reach their server.</p>
+	              </div>
+	            </div>
+	            <div id="engines-core-root" class="core-console-root"><!--__ABSTRACTCORE_ENGINES_HTML__--></div>
+	          </section>
+
 	          <section id="provider-setup-section" class="session-only">
 	            <div class="section-head">
 	              <div>
-	                <h2 class="section-title"><span class="section-icon" aria-hidden="true">◇</span><span>Provider Connections</span></h2>
-	                <p class="section-note">Pick a provider type to configure. Gateway stores API keys and endpoint URLs server-side, then exposes the connection as an available provider for Flow nodes and Core capability defaults.</p>
+	                <h2 class="section-title"><span class="section-icon" aria-hidden="true">◇</span><span>Remote providers</span></h2>
+	                <p class="section-note">Cloud accounts and any OpenAI-compatible server. The gateway keeps the API key server-side and shows only its fingerprint; the connection then appears under Available Providers for Flow nodes and capability defaults.</p>
 	              </div>
 	            </div>
 	            <div id="provider-preset-grid" class="provider-preset-grid"></div>
@@ -2710,9 +2737,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <div class="ui-section-title"><h3 id="catalog-installed-title">On this computer</h3><span class="ui-sub">Everything the local engines hold, including models that are not in the catalog. Delete a model here.</span></div>
 	          <div id="catalog-core-root" class="core-console-root"><!--__ABSTRACTCORE_CATALOG_HTML__--></div>
 	        </section>
-	      </div>
-	      <div id="tab-engines" class="tab-panel">
-	        <div id="engines-core-root" class="core-console-root"><!--__ABSTRACTCORE_ENGINES_HTML__--></div>
 	      </div>
 	      <div id="tab-apps" class="tab-panel">
 	        <div id="apps-root" class="core-console-root"></div>
@@ -3934,7 +3958,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // door (users & entities), where they run, then setup (providers,
 	    // capability defaults), then validation (sandbox). A stale persisted
 	    // "entities" value folds into "users" below.
-	    const TABS = ["users", "runtimes", "workflows", "providers", "defaults", "sandbox", "models", "catalog", "engines", "apps", "network"];
+	    const TABS = ["users", "runtimes", "workflows", "providers", "defaults", "sandbox", "models", "catalog", "apps", "network"];
+	    // Retired tab ids and their new homes: a persisted value or a `#<id>` link
+	    // still lands there (entities merged into users; DESIGN-v3 §7: the Engines
+	    // tab merged into Providers).
+	    const TAB_FOLDS = { entities: "users", engines: "providers" };
 	    // The kit's THEME_SPECS (abstractuic theme.ts), generated by
 	    // console_theme_sync — the console offers exactly the framework's
 	    // themes, never a hand-copied subset.
@@ -4220,12 +4248,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      users: ["Accounts", "People who use this gateway and the entities that act on it"],
 	      runtimes: ["Runtimes", "Each user's own data plane: runs, flows, sessions and memory"],
       workflows: ["Workflows", "Bundles, versions, import and export"],
-	      providers: ["Providers", "LLM provider connections and endpoint profiles"],
+	      providers: ["Providers", "Local engines and remote provider connections"],
 	      defaults: ["Multimodal Capabilities", "Which provider/model serves each capability route"],
 	      sandbox: ["Sandbox", "Try any provider/model directly — text, image, audio, video"],
 	      models: ["Resources", "Host resources: loaded models, memory and GPU, session caches"],
 	      catalog: ["Models", "Browse, download and delete models that fit this machine"],
-	      engines: ["Engines", "Local engines on the gateway host: status and install"],
 	      apps: ["Apps", "Install and open the apps that work with this gateway"],
 	      network: ["Network", "Who can reach this gateway, and at which addresses"],
 	    };
@@ -4234,7 +4261,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // Legacy persisted tab ids fold into their new homes (entities
 	      // merged into users); unknown ids land on the FIRST tab — the
 	      // landing must agree with the nav order, not point mid-bar.
-	      const fold = tab === "entities" ? "users" : tab;
+	      const fold = TAB_FOLDS[tab] || tab;
 	      const next = TABS.includes(fold) ? fold : TABS[0];
 	      state.activeTab = next;
 	      for (const id of TABS) {
@@ -9638,15 +9665,89 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (info.id === "openai-compatible") return "custom-endpoint";
       return info.id;
     }
+    // DESIGN-v3 §7 / §13.8: ONE entry per provider. A provider that runs on
+    // this computer is its engine card under Local providers, carrying its
+    // server connection (this table: engine id -> connection family; vLLM's
+    // server is a custom OpenAI-compatible connection with the fixed id
+    // "vllm"). Remote providers are the presets below. The modal's family
+    // select keeps every family.
+    const LOCAL_PROVIDER_CONNECTIONS = {
+      ollama: { family: "ollama" },
+      lmstudio: { family: "lmstudio" },
+      vllm: { family: "openai-compatible", profileId: "vllm", name: "vLLM server", description: "vLLM OpenAI-compatible server." },
+    };
+    const REMOTE_PROVIDER_FAMILIES = ["openai", "anthropic", "openrouter", "portkey", "openai-compatible"];
+    const LOCAL_CONNECTION_PROFILE_IDS = new Set(Object.values(LOCAL_PROVIDER_CONNECTIONS).map((c) => c.profileId).filter(Boolean));
+    function localConnectionProfiles(engineId) {
+      const conn = LOCAL_PROVIDER_CONNECTIONS[engineId];
+      if (!conn) return [];
+      return (state.endpointProfiles || []).filter((p) => p && (conn.profileId ? p.id === conn.profileId : (p.provider_family || "") === conn.family));
+    }
+    function endpointKeyText(p) {
+      return p.api_key_set ? `key ${String(p.api_key_fingerprint || "").slice(0, 8)}` : "no key";
+    }
+    // The Providers tab's additions to each engine card (console_ui.py
+    // mountEngineCards `extra`): "Browse models" whenever the engine runs on
+    // this computer and has catalog builds, and the server connection.
+    function localProviderExtras(e) {
+      const out = { browse: e.supported !== false && !!MC_ENGINE_PROVIDER[e.provider || e.id] };
+      const conn = LOCAL_PROVIDER_CONNECTIONS[e.id];
+      if (!conn) return out;
+      const rows = localConnectionProfiles(e.id);
+      const items = rows.map((p) => {
+        const configured = p.managed === false || p.synthetic === true;
+        const where = p.base_url_configured || p.base_url ? `<code class="ui-ellip" title="${esc(p.base_url || "")}">${esc(p.base_url || "")}</code>` : "provider default address";
+        return `<li class="provider-connection__row"><span class="provider-connection__text"><b>${esc(p.display_name || p.id)}</b> ${where}`
+          + `<span class="ui-sub">${esc(p.enabled === false ? "disabled" : "enabled")} · ${esc(endpointKeyText(p))}</span></span>`
+          + `<button type="button" class="ui-btn is-quiet" data-provider-connection-edit="${esc(p.id)}">${configured ? "Override" : "Edit"}</button></li>`;
+      }).join("");
+      // A fixed-id connection (vLLM) is edited, never added twice.
+      const add = conn.profileId && items ? "" : `<button type="button" class="ui-btn is-quiet" data-provider-connect="${esc(e.id)}">${items ? "Add connection" : "Set up connection"}</button>`;
+      out.body = `<div class="provider-connection" data-provider-connection="${esc(e.id)}"><div class="provider-connection__head"><span class="provider-connection__title">Connection</span>${add}</div>`
+        + `<p class="ui-card__note">The address workflows use to reach this server; add one for a server on another computer.</p>`
+        + (items ? `<ul class="provider-connection__list">${items}</ul>` : "")
+        + `</div>`;
+      return out;
+    }
+    function openLocalProviderConnection(engineId) {
+      const conn = LOCAL_PROVIDER_CONNECTIONS[engineId];
+      if (!conn) throw new Error(`no connection family for local provider ${engineId}`);
+      openEndpointModalForFamily(conn.family);
+      if (conn.profileId) {
+        $("endpoint-profile-id").value = conn.profileId;
+        $("endpoint-name").value = conn.name || conn.profileId;
+        $("endpoint-description").value = conn.description || "";
+      }
+    }
+    function editEndpointProfileById(profileId) {
+      const p = (state.endpointProfiles || []).find((row) => row && row.id === profileId);
+      if (!p) throw new Error(`no provider connection ${profileId}`);
+      if (p.managed === false || p.synthetic === true) openEndpointModalFromConfiguredProvider(p);
+      else fillEndpointProfileForm(p);
+    }
+    function onLocalProviderClick(event) {
+      const t = event && event.target && event.target.closest ? event.target : null;
+      if (!t) return;
+      const add = t.closest("[data-provider-connect]");
+      if (add) { openLocalProviderConnection(add.dataset.providerConnect); return; }
+      const edit = t.closest("[data-provider-connection-edit]");
+      if (edit) editEndpointProfileById(edit.dataset.providerConnectionEdit);
+    }
     function renderProviderPresets() {
       const grid = $("provider-preset-grid");
       if (!grid) return;
       grid.textContent = "";
-      for (const item of ENDPOINT_FAMILIES) {
+      for (const item of ENDPOINT_FAMILIES.filter((f) => REMOTE_PROVIDER_FAMILIES.includes(f.id))) {
         const button = document.createElement("button");
         button.type = "button";
         button.className = `provider-preset ${state.activeProviderPreset === item.id ? "active" : ""}`;
-        button.innerHTML = `<strong>${esc(item.label)}</strong><span>${esc(item.summary || "")}</span>`;
+        button.dataset.providerPreset = item.id;
+        // Its connections, keys as fingerprints only (the table's rule).
+        const mine = (state.endpointProfiles || []).filter((p) => p && (p.provider_family || "") === item.id && !LOCAL_CONNECTION_PROFILE_IDS.has(p.id));
+        const status = !mine.length ? "Not connected"
+          : mine.length === 1 ? `Connected · ${endpointKeyText(mine[0])}`
+          : `${mine.length} connections`;
+        button.innerHTML = `<strong>${esc(item.label)}</strong><span>${esc(item.summary || "")}</span><span class="provider-preset__state${mine.length ? " is-on" : ""}">${esc(status)}</span>`;
 	        button.onclick = () => openEndpointModalForFamily(item.id);
         grid.append(button);
       }
@@ -9804,6 +9905,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const tr = document.createElement("tr");
 	        tr.innerHTML = `<td colspan="6" class="empty">No available providers configured yet.</td>`;
 	        tbody.append(tr);
+	        renderProviderPresets();
+	        engineRender();
 	        return;
 	      }
       for (const p of state.endpointProfiles) {
@@ -9843,6 +9946,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         tr.append(actions);
         tbody.append(tr);
       }
+      // The Remote presets and the Local provider cards show these connections.
+      renderProviderPresets();
+      engineRender();
     }
     async function loadEndpointProfiles() {
       const payload = await api("/api/gateway/config/provider-endpoint-profiles");
@@ -10202,7 +10308,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    function engineMissingMarkup(rec, cls = "ui-field-msg tone-warn") {
 	      const info = engineMissingInfo(rec);
 	      if (!info) return "";
-	      const engines = info.engineRow ? " (Engines tab: Install)" : "";
+	      const engines = info.engineRow ? " (Providers tab, Local providers: Install)" : "";
 	      return `<div class="${cls} capability-engine-missing" role="note">Engine missing: ${esc(info.reason)}${info.install ? ` — install: <code>${esc(info.install)}</code>` : ""}${esc(engines)}</div>`;
 	    }
 	    // AbstractCore's fit verdict `needs_gpu_limit`: the model fits once macOS
@@ -12031,14 +12137,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // `setActiveTab` already folds an unknown id onto the first tab.
 	      // `#catalog?quant=8bit&provider=mlx`: the tab is before the `?`, the
 	      // catalog's filters after it (console_catalog.py reads them).
-	      const wantedTab = String(location.hash || "").replace(/^#/, "").split("?")[0].trim();
+	      const hashTab = String(location.hash || "").replace(/^#/, "").split("?")[0].trim();
+	      const wantedTab = TAB_FOLDS[hashTab] || hashTab;
 	      if (!state.hashApplied && TABS.includes(wantedTab)) {
 	        state.hashApplied = true;
 	        state.activeTab = wantedTab;
 	        setActiveTab(wantedTab);
 	        if (wantedTab === "models") { loadHostState(); startHostStatePoll(); }
 	        if (wantedTab === "users") loadMyEmail();
-	        if (wantedTab === "catalog" || wantedTab === "engines" || wantedTab === "apps" || wantedTab === "network") openCoreTab(wantedTab);
+	        if (wantedTab === "catalog" || wantedTab === "providers" || wantedTab === "apps" || wantedTab === "network") openCoreTab(wantedTab);
 	        // `#apps?open=<id>&path=<p>` (app_proxy.py sends a signed-out page
 	        // load of /apps/<id>/... here): open that app, signed in.
 	        if (wantedTab === "apps") {
@@ -13815,10 +13922,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         mountNetworkPanel("tab", $("network-root"));
         return;
       }
-      if (tab === "engines") {
-        // Local engines are CARDS (console_ui.py), not AbstractCore's table:
-        // one card per engine, one primary action per state.
-        mountEngineCards("tab", $("engines-core-root"));
+      if (tab === "providers") {
+        // Local providers are the engine CARDS (console_ui.py), not
+        // AbstractCore's table: one card per engine, one primary action per
+        // state, plus the provider's connection (localProviderExtras).
+        mountEngineCards("providers", $("engines-core-root"), { extra: localProviderExtras });
         return;
       }
       if (tab === "catalog") {
@@ -13833,7 +13941,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         });
       }
       if (!CORE_CONSOLE.available) return;  // the panel carries the server-rendered card
-      const kind = tab === "catalog" ? "models" : "engines";
+      const kind = "models";
       const root = $(`${tab}-core-root`);
       if (!mountCoreScreen(kind, root, `tab-${tab}`) && root) {
         root.innerHTML = `<p class="message warn">${esc(coreConsoleUnavailableText())}</p>`;
@@ -14495,7 +14603,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (state.activeTab === "users") loadEntities();
       if (state.activeTab === "runtimes") loadRuntimes();  // data homes ride along inside loadRuntimes (cached)
       if (state.activeTab === "models") { loadHostState(); startHostStatePoll(); }
-      if (state.activeTab === "catalog" || state.activeTab === "engines" || state.activeTab === "apps" || state.activeTab === "network") openCoreTab(state.activeTab);
+      if (state.activeTab === "catalog" || state.activeTab === "providers" || state.activeTab === "apps" || state.activeTab === "network") openCoreTab(state.activeTab);
       try {
         await loadEndpointProfiles();
       } catch (err) {
@@ -15072,7 +15180,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      await importWorkflows(files);
 	      ev.target.value = "";
 	    };
-	    $("tab-button-providers").onclick = () => setActiveTab("providers");
+	    $("tab-button-providers").onclick = () => { setActiveTab("providers"); openCoreTab("providers"); };
+	    $("engines-core-root").addEventListener("click", onLocalProviderClick);
 	    $("tab-button-defaults").onclick = () => setActiveTab("defaults");
 	    $("tab-button-sandbox").onclick = () => setActiveTab("sandbox");
 	    // Models: load now, then start the tab-scoped 5s poll (token-guarded —
@@ -15080,7 +15189,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // out; re-entering the tab starts a fresh chain).
 	    $("tab-button-models").onclick = () => { setActiveTab("models"); loadHostState(); startHostStatePoll(); };
 	    $("tab-button-catalog").onclick = () => { setActiveTab("catalog"); openCoreTab("catalog"); };
-	    $("tab-button-engines").onclick = () => { setActiveTab("engines"); openCoreTab("engines"); };
 	    $("tab-button-apps").onclick = () => { setActiveTab("apps"); openCoreTab("apps"); };
 	    $("tab-button-network").onclick = () => { setActiveTab("network"); openCoreTab("network"); };
 	    $("models-refresh").onclick = () => { loadHostState(); startHostStatePoll(); };
