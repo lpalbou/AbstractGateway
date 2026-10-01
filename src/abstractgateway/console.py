@@ -2119,6 +2119,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    /* Account modals (kit af-modal): content rules only; the shell is the kit's. */
 	    .account-modal-body .account-page { max-width: none; }
+	    /* An empty status line takes no room at the top of the Email modal (it showed as a blank band). */
+	    .account-modal-body #my-email-message:empty { display: none; }
 	    .account-modal-body .account-page__head { display: none; }
 	    .account-modal-lead { margin: 0 0 14px; padding: 10px 12px; border-left: 3px solid var(--info, var(--accent)); background: color-mix(in srgb, var(--info, var(--accent)) 8%, transparent); border-radius: var(--radius-sm); font-size: var(--font-size-base); line-height: 1.45; }
 	    .account-other-mailbox { margin-top: 12px; }
