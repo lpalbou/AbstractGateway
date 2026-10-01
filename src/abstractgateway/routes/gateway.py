@@ -15091,10 +15091,9 @@ async def gateway_admin_skills_reseed(request: Request) -> Dict[str, Any]:
 
 @router.get("/mcp/servers")
 async def gateway_mcp_servers_inventory(request: Request) -> Dict[str, Any]:
-    """The declared MCP server registry (v1: config-file-managed at
-    `<data_dir>/config/mcp_servers.json`). Served fields are DECLARED-only
-    with `probed: false` — connect state and tool counts require a probe
-    lane this endpoint deliberately does not fake."""
+    """The MCP server registry (`<gateway root data dir>/config/mcp_servers.json`): v2 rows,
+    `probed: false` (this read never connects; `last_test` is the latest admin test), the agents
+    fields (`enabled_for_agents`, `offered_to_agents`, `agents_status`) and `agents_note`."""
     principal = _principal_from_request(request)
     del principal  # any authenticated read
     from ..capability_inventories import mcp_servers_inventory
@@ -15130,8 +15129,8 @@ def _mcp_data_dir() -> Path:
 async def gateway_admin_mcp_create(request: Request) -> Dict[str, Any]:
     """Register an MCP server: {name, transport: stdio|http, command, args[], cwd?, url,
     headers{name: value}, description}. Header values are sealed in the gateway's secret store
-    (<data dir>/config/mcp_secrets); the registry keeps names + fingerprints. Runs do not use
-    registered servers yet."""
+    (<data dir>/config/mcp_secrets); the registry keeps names + fingerprints. Agent runs are offered
+    a server's tools only once an admin enables it for agents (POST .../agents)."""
     _require_admin_principal(request)
     from ..mcp_registry import McpRegistryError, create_server
 

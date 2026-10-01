@@ -454,8 +454,9 @@ def read_skill_body(name: str, *, data_dir: Path, max_chars: int = 16000) -> Dic
 def mcp_servers_inventory(*, data_dir: Path) -> Dict[str, Any]:
     """The MCP server registry (`<data_dir>/config/mcp_servers.json`, v1 or v2) as served by
     GET /mcp/servers: v2-shaped rows, header values never (fingerprints only), `probed: false`
-    (this read never connects; a row's `last_test` is the latest admin test) and the honest
-    `agents_can_call: false` — runs do not use these servers yet (mcp_registry.py)."""
+    (this read never connects; a row's `last_test` is the latest admin test), each row's
+    `enabled_for_agents` / `offered_to_agents` / `agents_status`, and `agents_can_call` + `agents_note`
+    (true once a server is offered to agent runs: mcp_registry.py, mcp_run_tools.py)."""
     from .mcp_registry import public_inventory
 
     return public_inventory(Path(data_dir))
