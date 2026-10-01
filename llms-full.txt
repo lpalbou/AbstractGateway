@@ -6920,7 +6920,13 @@ code — goes through the same checks, in this order:
    written as its own entry. The policy applies to To, Cc and Bcc, and a message with any refused
    recipient is refused whole, naming the refused addresses. A new account starts with an allowlist
    holding your registered address;
-3. the **send limits**: 20 messages per rolling hour and 100 per day by default, editable by you.
+3. the **send limits**: 100 messages per rolling hour and 1000 per day by default, editable by you.
+   Limits you set are kept across upgrades; a mailbox where nobody set them follows the defaults.
+   Until AbstractCore 2.21 the defaults were 20 and 100 and connecting a mailbox stored them
+   unmarked; an upgrade treats exactly that pair as the old defaults, so the mailbox follows the new
+   ones. Any other unmarked value is kept (the limits document's `source` is `legacy`; `default`
+   and `user` are the other values). Set new
+   values in **Settings → My email** to move on.
 
 On top of the policy, the approval gate still decides whether an agent's send runs unattended: a
 send to anyone but you (or an automation's pre-authorised recipients) waits for your approval, and
@@ -6930,7 +6936,7 @@ address for the operator), else the connected mailbox's own address.
 ```bash
 curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/policy" \
   -d '{"mode": "allowlist", "entries": ["me@example.com", "mycompany.com"]}'
-curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/limits" -d '{"per_hour": 20, "per_day": 100}'
+curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/limits" -d '{"per_hour": 100, "per_day": 1000}'
 ```
 
 ## Automations on new mail
@@ -8705,6 +8711,12 @@ and AbstractRuntime 0.8.2; the floors are raised in the base install and in the 
   https same-origin rule in security.md.
 
 ### Changed
+- Email send limits default to 100 per hour and 1000 per day (were 20 and 100; AbstractCore's
+  defaults). A new mailbox no longer stores the defaults, so it follows them; limits a user sets
+  (`PUT /me/email/limits`, Settings → My email) are kept across upgrades. An unmarked 20 / 100 stored
+  before is the old default and follows the new defaults; any other unmarked value is kept
+  (`limits.source` is `legacy`). The one-time
+  import of AbstractCore's local account copies its limits only when someone set them.
 - The administrator's one switch is **Mailboxes for users** (capability `email`, on by default).
   **Agent email tools for users** (`email_agent_tools`) is now on by default, next to **Sign-in by
   email** under Advanced; each user still switches their own agent email tools on. On the first
