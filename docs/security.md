@@ -295,7 +295,7 @@ the shared set every user can see and run, so changing it requires an admin
 principal.
 
 One check covers every route that writes a registry — `POST /bundles/upload`,
-`DELETE /bundles/{bundle_id}`, `POST /bundles/reload`,
+`POST /bundles/reload`,
 `POST /bundles/{bundle_id}/deprecate`, `POST /bundles/{bundle_id}/undeprecate`
 and `POST /visualflows/{flow_id}/publish` — so a shared workflow cannot be
 replaced through one route while another is restricted. The check runs before
@@ -306,9 +306,25 @@ does not exist as well. Since a non-admin account cannot be signed in while user
 registry as `upload`; it is gated on the same rule. Non-admin requests against
 the shared registry return `403`. Read routes are unchanged.
 
-`DELETE /bundles/{bundle_id}` returns `409` for the `basic-agent.flow` the
-gateway verifies at startup: removal has no undo and would prevent the next
-start. Install a replacement bundle first, then remove the old file.
+Workflows are archived, never deleted: `DELETE /bundles/{bundle_id}` answers
+`410` for everyone. `POST /bundles/{bundle_id}/archive` and `/unarchive`
+(optional body `{"bundle_version": "..."}`) hide a bundle from lists and refuse
+its new runs while the file and every past run stay; an admin archives shared
+bundles, a user their own, and bundles that ship with the gateway (including
+`basic-agent`) answer `409`.
+
+### Workflow availability
+
+`PUT /api/gateway/admin/workflows/{bundle_id}/availability` with
+`{"available": false}` (admin only; `403` otherwise) hides a shared workflow
+from non-admins. One rule applies everywhere: `GET /bundles` (the list every
+app picker reads), `GET /bundles/{bundle_id}`, its flows and download, run start,
+scheduling and automation creation (`403` with "This workflow isn't available to
+users on this gateway. Ask an admin."). An app's default workflow keeps running
+for everyone. The setting is stored in
+`<data_dir>/config/workflow_availability.json`; archives in
+`<data_dir>/config/workflow_archive.json` (shared bundles) and
+`<data_dir>/users/<tenant>/<user>/config/workflow_archive.json` (a user's own).
 
 ### Shared workflow catalog
 
