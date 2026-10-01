@@ -60,7 +60,7 @@ def test_mcp_truth_sentence_is_the_gateways_and_matches_the_design() -> None:
 
 def test_skill_rows_render_only_available_actions() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "skillTrustCell", "skillsRowsMarkup") + """
+    harness = HELPERS + _fns(source, "skmcpMore", "skillTrustCell", "skillsRowsMarkup") + """
 const rows = [
   { name: "coredoc", description: "Docs", origin: "curated", source_label: "Curated registry", version: "2026.09.25", trust_level: "first_party", reasons: ["validated"] },
   { name: "field-notes", description: "Notes <b>", origin: "imported", source_label: "Imported", version: "1.4.0", trust_level: "unverified", requires_review: true, reasons: ["no validation record", "has scripts"] },
@@ -90,7 +90,7 @@ console.log(JSON.stringify(out));
 
 def test_mcp_rows_status_and_test_result() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "skmcpAgo", "mcpTransportText", "mcpStatusText", "mcpToolsCell", "mcpRowsMarkup", "mcpTestResultMarkup") + """
+    harness = HELPERS + _fns(source, "skmcpMore", "skmcpAgo", "mcpTransportText", "mcpStatusText", "mcpToolsCell", "mcpRowsMarkup", "mcpTestResultMarkup") + """
 const now = Date.parse("2026-10-01T12:00:00Z");
 const ok = { ok: true, at: "2026-10-01T11:58:00Z", message: "Connected", tools: [{ name: "a", description: "A" }, { name: "b" }, { name: "c" }] };
 const rows = [
@@ -136,13 +136,19 @@ console.log(JSON.stringify([{ html: mcpModalMarkup(m) }]));
     assert 'aria-selected="true"' in html and ">URL</button>" in html and ">Command</button>" in html
 
 
-def test_descriptions_and_transports_wrap_never_truncate() -> None:
+def test_long_cells_clamp_to_two_lines_and_expand_in_place() -> None:
     from abstractgateway.console_skills_mcp import SKILLS_MCP_CSS
 
     source = _console_script()
     for fn in ("skillsRowsMarkup", "mcpRowsMarkup"):
-        body = _slice_function(source, fn)
-        assert "skmcp-clamp" not in body and "title=" not in body.split("skillTrustCell")[0], fn
+        assert "skmcpMore(" in _slice_function(source, fn), fn
+    more = _slice_function(source, "skmcpMore")
+    assert 'role="button"' in more and 'tabindex="0"' in more and 'aria-expanded="false"' in more
+    toggle = _slice_function(source, "skmcpToggleMore")
+    assert '"Enter"' in toggle and "aria-expanded" in toggle
+    rule = re.search(r'\.skmcp-more\[aria-expanded="false"\] \{([^}]*)\}', SKILLS_MCP_CSS).group(1)
+    assert "-webkit-line-clamp: 2" in rule
+    # Never truncated horizontally: no ellipsis / nowrap on the mono text.
     mono = re.search(r"\.skmcp-mono \{([^}]*)\}", SKILLS_MCP_CSS).group(1)
     assert "ellipsis" not in mono and "nowrap" not in mono
 
@@ -152,3 +158,9 @@ def test_shelf_folder_is_a_folded_disclosure_at_the_bottom_of_the_skills_tab() -
     pane = html[html.index('id="skmcp-pane-skills"') : html.index('id="skmcp-pane-mcp"')]
     assert pane.index('id="skills-table"') < pane.index("<summary>Shelf folder</summary>") < pane.index('id="skills-settings-root"')
     assert '<details class="skmcp-shelf">' in pane  # folded (no `open`)
+
+
+def test_skills_mcp_entry_and_page_are_admin_only() -> None:
+    source = _console_script()
+    assert '$("tab-button-skills").classList.toggle("hidden", !p.admin);' in source
+    assert "if (!state.principal || !skmcpAdmin()) return;" in _slice_function(source, "openSkillsMcpPage")
