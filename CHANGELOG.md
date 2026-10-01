@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and existing runs and automations keep resuming. Bundles that ship with the gateway can be neither archived nor
   deleted. `DELETE /bundles/{bundle_id}` now answers `410`.
 
+### Fixed
+- **Import .flow** in the web console works again: the upload was sent as JSON instead of a multipart form, so the
+  gateway refused every file. The Workflows page also keeps the import and archive result sentence on screen
+  after the list reloads.
+
 ## [0.10.0] - 2026-10-01
 
 Email settings follow one model across the consoles: your **email address** (where sign-in codes and

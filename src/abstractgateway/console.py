@@ -4705,12 +4705,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        ? `Archived ${done}; not archived — ${failed.join("; ")}.`
 	        : `Archived ${done} broken version${done === 1 ? "" : "s"} of ${group.bundle_id}. The files stay on the gateway.`;
 	      $("workflows-message").className = failed.length ? "message error" : "message ok";
-	      await loadWorkflows();
+	      await loadWorkflows({ keepMessage: true });
 	    }
 
-	    async function loadWorkflows() {
-	      $("workflows-message").textContent = "Loading…";
-	      $("workflows-message").className = "message";
+	    async function loadWorkflows({ keepMessage = false } = {}) {
+	      // keepMessage: a write just said what happened (import, archive); the reload must not wipe it.
+	      if (!keepMessage) {
+	        $("workflows-message").textContent = "Loading…";
+	        $("workflows-message").className = "message";
+	      }
 	      try {
 	        const drafts = state.workflowsShowDrafts ? "1" : "0";
 	        const archived = state.workflowsShowArchived ? "1" : "0";
@@ -4718,7 +4721,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        state.workflows = data.items || [];
 	        state.workflowsSkipped = data.skipped || [];
 	        state.workflowsDefaultId = data.default_bundle_id || "";
-	        $("workflows-message").textContent = "";
+	        if (!keepMessage) $("workflows-message").textContent = "";
 	        renderWorkflows();
 	      } catch (err) {
 	        $("workflows-message").textContent = String(err.message || err);
@@ -4823,7 +4826,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          await api(`/api/gateway/bundles/${encodeURIComponent(row.bundle_id)}/archive`, { method: "POST", body: JSON.stringify(bundleVersion ? { bundle_version: bundleVersion } : {}) });
 	          $("workflows-message").textContent = `Archived ${label}. Turn on “Show archived” to see it or unarchive it.`;
 	          $("workflows-message").className = "message ok";
-	          await loadWorkflows();
+	          await loadWorkflows({ keepMessage: true });
 	        } catch (err) {
 	          $("workflows-message").textContent = `Not archived: ${emailErrorText(err)}`;
 	          $("workflows-message").className = "message error";
@@ -4836,7 +4839,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        await api(`/api/gateway/bundles/${encodeURIComponent(row.bundle_id)}/unarchive`, { method: "POST", body: JSON.stringify(bundleVersion ? { bundle_version: bundleVersion } : {}) });
 	        $("workflows-message").textContent = `${label} is back in the lists and can start runs again.`;
 	        $("workflows-message").className = "message ok";
-	        await loadWorkflows();
+	        await loadWorkflows({ keepMessage: true });
 	      } catch (err) {
 	        $("workflows-message").textContent = `Not unarchived: ${emailErrorText(err)}`;
 	        $("workflows-message").className = "message error";
@@ -4873,7 +4876,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (failed.length) parts.push(`Failed — ${failed.join("; ")}.`);
 	      $("workflows-message").textContent = parts.join(" ") || "Nothing to import.";
 	      $("workflows-message").className = failed.length ? "message error" : (notLoaded.length ? "message" : "message ok");
-	      await loadWorkflows();
+	      await loadWorkflows({ keepMessage: true });
 	    }
 
 	    // ---- Summoned Entities: full create + lifecycle management ----
@@ -8707,7 +8710,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const { slow = false, timeoutMs, ...init } = options;
       const headers = new Headers(init.headers || {});
       headers.set("Accept", "application/json");
-      if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+      // A FormData body (Import .flow) needs the browser's own multipart Content-Type with its
+      // boundary; forcing JSON here made every upload a 422 ("file" missing).
+      const multipart = typeof FormData !== "undefined" && init.body instanceof FormData;
+      if (init.body && !multipart && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
       const token = csrf();
       if (token && ["POST", "PUT", "PATCH", "DELETE"].includes(String(init.method || "GET").toUpperCase())) {
         headers.set("X-AbstractGateway-CSRF", decodeURIComponent(token));
