@@ -16,7 +16,13 @@ runtime -- the single-user gateway and the admin -- else `<data_dir>/users/<tena
     <data_dir>/email/oauth_clients/secret.enc   bring-your-own OAuth clients (admin setting)
 
 Everything is resolved from the authenticated principal, never from a path or body id, so a
-user reaches only their own plane. Entities have no mailbox.
+user reaches only their own plane.
+
+Entities are AI users with their own mailbox (round 3 §3.1): an entity principal's plane is
+rooted at the entity's home, `<creator runtime data_dir>/entities/<slug>/`
+(`entity_access.entity_home_dir`), with the same `email/...` layout under it; plane key
+`<tenant>:<slug>`. Its admin and its creator configure it through
+`/api/gateway/accounts/{id}/email...` (routes/email.py); nobody reads its mail.
 """
 
 from __future__ import annotations
@@ -113,7 +119,7 @@ def _read_json(path: Path) -> Dict[str, Any]:
 
 
 class EmailPrincipalRefused(PermissionError):
-    """Entities (and unidentified principals) have no mailbox."""
+    """Unidentified principals (and an entity whose home is not on this gateway) have no mailbox."""
 
 
 @dataclass(frozen=True)
@@ -123,6 +129,7 @@ class EmailPlane:
     runtime_id: str
     root: Path
     is_default: bool
+    is_entity: bool = False
 
     @property
     def key(self) -> str:
@@ -144,7 +151,8 @@ class EmailPlane:
 
     @property
     def runtime_data_dir(self) -> Path:
-        return self.root if self.is_default else self.root / "runtime"
+        # An entity's home IS its runtime's directory (runtime_<slug>.sqlite3 lives in it).
+        return self.root if (self.is_default or self.is_entity) else self.root / "runtime"
 
 
 def _is_entity(principal: GatewayPrincipal) -> bool:
@@ -158,7 +166,7 @@ def plane_for_principal(principal: Optional[GatewayPrincipal]) -> EmailPlane:
     if principal is None or not str(principal.user_id or "").strip():
         raise EmailPrincipalRefused("Email settings need an identified user.")
     if _is_entity(principal):
-        raise EmailPrincipalRefused("Entities have no email account; email is configured per human user.")
+        return entity_plane(str(principal.user_id), tenant_id=str(principal.tenant_id or "default"))
     from ..service import _config_for_principal, gateway_multi_user_enabled
 
     if not gateway_multi_user_enabled():
@@ -166,6 +174,20 @@ def plane_for_principal(principal: Optional[GatewayPrincipal]) -> EmailPlane:
         return default_plane(gateway_data_dir_from_env())
     cfg = _config_for_principal(principal)
     return plane_for_service_config(cfg)
+
+
+def entity_plane(slug: str, *, tenant_id: str = "default") -> EmailPlane:
+    """The mailbox plane of entity `slug`: rooted at its home (the ONE resolver,
+    `entity_access.entity_home_dir`)."""
+
+    from ..entity_access import entity_home_dir
+
+    home = entity_home_dir(slug)
+    if home is None:
+        raise EmailPrincipalRefused(f"The entity {slug!r} has no home on this gateway, so it has no mailbox here.")
+    user = safe_principal_component(slug, default=slug)
+    tenant = safe_principal_component(tenant_id or "default", default="default")
+    return EmailPlane(tenant, user, user, home, False, True)
 
 
 def default_plane(data_dir: Path) -> EmailPlane:
@@ -368,7 +390,9 @@ def _capability_doc() -> Dict[str, Any]:
 
 
 def _all_planes() -> List[EmailPlane]:
-    """Every human plane of this gateway (the default runtime's plus each registry user's)."""
+    """Every mailbox plane of this gateway: the default runtime's, each registry user's, and each
+    entity's that is neither archived nor suspended (an archived or suspended entity's watcher
+    does not run)."""
 
     planes: Dict[str, EmailPlane] = {}
     try:
@@ -380,7 +404,7 @@ def _all_planes() -> List[EmailPlane]:
         from ..users import GatewayUserRegistry
 
         for rec in GatewayUserRegistry().list_users():
-            if rec.principal_kind == "entity":
+            if rec.principal_kind == "entity" and not entity_mail_active(rec):
                 continue
             try:
                 p = plane_for_principal(rec.to_principal())
@@ -390,6 +414,17 @@ def _all_planes() -> List[EmailPlane]:
     except Exception:  # noqa: BLE001
         pass
     return list(planes.values())
+
+
+def entity_mail_active(rec: Any) -> bool:
+    """An entity's mailbox works (watcher, notifications, agent tools) only while the entity may
+    act: not archived, not suspended (registry `enabled`) and its home on this gateway."""
+
+    if rec is None or rec.archived or not rec.enabled:
+        return False
+    from ..entity_access import entity_home_dir
+
+    return entity_home_dir(rec.user_id) is not None
 
 
 def _migrate_capabilities(path: Path, doc: Dict[str, Any]) -> Dict[str, Any]:
@@ -820,7 +855,6 @@ def admin_status(plane: EmailPlane) -> Dict[str, Any]:
 # One resolver for "what is this account's email address and mailbox" (DESIGN-v2 §2.5)
 # ---------------------------------------------------------------------------------------
 
-REASON_ENTITY_NO_MAILBOX = "Entities can't have their own mailbox yet: mailboxes belong to a user's runtime."
 REASON_SHARED_RUNTIME_NO_MAILBOX = (
     "User accounts are off on this gateway, so only the operator's mailbox exists; this account can't sign in."
 )
@@ -860,14 +894,16 @@ def account_email_view(principal: GatewayPrincipal) -> Dict[str, Any]:
     the admin's own card can never disagree (item 4)."""
 
     if _is_entity(principal):
-        from ..users import GatewayUserRegistry
+        # An AI user with its own mailbox (round 3 §3.1): the same view over its own plane.
+        try:
+            plane = entity_plane(str(principal.user_id), tenant_id=str(principal.tenant_id or "default"))
+        except EmailPrincipalRefused as exc:
+            from ..users import GatewayUserRegistry
 
-        rec = GatewayUserRegistry().get_user(str(principal.user_id), tenant_id=str(principal.tenant_id or "default"))
-        address = str(getattr(rec, "email", "") or "").strip().lower() or None
-        return {
-            "email_address": address,
-            "mailbox": {"state": "unavailable", "address": None, "provider": None, "reason": REASON_ENTITY_NO_MAILBOX},
-        }
+            rec = GatewayUserRegistry().get_user(str(principal.user_id), tenant_id=str(principal.tenant_id or "default"))
+            address = str(getattr(rec, "email", "") or "").strip().lower() or None
+            return {"email_address": address, "mailbox": {"state": "unavailable", "address": None, "provider": None, "reason": str(exc)}}
+        return {"email_address": self_address(plane) or None, "mailbox": mailbox_view(plane)}
     from ..service import gateway_multi_user_enabled
 
     if not gateway_multi_user_enabled() and not principal.is_admin():
@@ -1680,7 +1716,7 @@ def import_core_account_once() -> List[str]:
         ctx = core.context(require_enabled=False)
         gw.connect(st.account, ctx.secret, test=False, registered_address=registered_address(plane) or None)
         if not st.policy_is_default:
-            gw.set_policy(mode=st.policy.mode, add=list(st.policy.entries), clear=True)
+            gw.set_policy(mode=st.policy.mode, always_allow=list(st.policy.always_allow), always_deny=list(st.policy.always_deny))
         # Only limits someone set are copied; core limits that follow the defaults (nothing
         # stored, limits_source "default") stay unstored here too, so they keep following them.
         if st.limits_source != "default":

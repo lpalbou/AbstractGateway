@@ -90,8 +90,8 @@ A typical path from a fresh install to a working local model:
 3. When the download finishes, the row reads *Downloaded*. Click **Use as
    default**: the gateway's text route uses it from then on.
 
-The same steps are available later in the **Engines** and **Models** tabs (see
-[console.md](docs/console.md#models-and-engines-tabs)) and from the command line
+The same steps are available later in the **Providers** (Local providers) and **Models** tabs (see
+[console.md](docs/console.md#models-and-local-providers)) and from the command line
 (`abstractgateway engines install ollama`, `abstractgateway models download
 ollama qwen3:8b`). Installing an engine needs an admin and the
 [`allow_engine_install`](docs/configuration.md#allow_engine_install) setting, which
@@ -5455,8 +5455,8 @@ Your email address and mailbox (`/api/gateway/me/...`, every signed-in human):
 | `PUT /me/email/notifications` | `{job_failed?, approval_needed?}` — the two notification switches (both on by default); the earlier `{email: {...}}` body is accepted and mapped; answers like `GET /me/email` |
 | `POST /me/email/test` | per-leg result `{imap, smtp, ok, message}`; `message`: "Test passed: signed in to imap.x and smtp.x." or the failing step and its cause ("Sign-in refused by imap.x — check the password. (…)") |
 | `DELETE /me/email` | disconnect: credentials and cursor deleted (policy and limits kept); `tools_reloaded` |
-| `PUT /me/email/policy` | `{mode: "allowlist" \| "denylist", entries: [address \| domain]}` |
-| `POST /me/email/policy/check` | `{addresses}` → per-recipient verdicts |
+| `PUT /me/email/policy` | `{mode: "allowlist" \| "denylist", always_allow?: [address \| domain], always_deny?: [address \| domain]}`; a list given replaces that list. Precedence: own address → allowed; Always denied → refused; Always allowed → allowed; else the mode (`allowlist` = Only the Allowed list → refused, `denylist` = Anyone not on the Denied list → allowed). A domain covers its subdomains. The older `{mode, entries}` is accepted (`entries` = the mode's list) |
+| `POST /me/email/policy/check` | `{to?, cc?, bcc?, addresses?}` (`addresses` = To) → per-recipient verdicts with `source` (`self`, `always_deny`, `always_allow`, `mode`) |
 | `PUT /me/email/limits` | `{per_hour, per_day}` |
 | `PUT /me/email/folder` | `{folder}` — the folder your mailbox is read from (empty = INBOX); the connection is kept and nothing is tested; 404 `email_not_configured` without a mailbox |
 | `PUT /me/email/enabled` | `{enabled}` — "Use this mailbox" (off keeps the settings; stops watching, sending and notifications); `tools_reloaded` |
@@ -5556,9 +5556,8 @@ The sidebar groups the tabs in four sections, in this order:
 | Work | **Workflows** | the workflow bundles on this gateway (name, what each does, version, source, the apps that use it), import, export, delete, the default workflow for each app and the **Streamed replies** setting ([below](#workflows)) |
 | Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches |
 | Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), plus *Advanced: apps settings* and *Advanced: backlog settings (Continuum)* |
-| Models | **Providers** | provider connections (OpenAI, Anthropic, OpenRouter, Portkey, LM Studio, Ollama, custom OpenAI-compatible endpoints) with write-only keys |
+| Models | **Providers** | **Local providers**: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, **Browse models** and its server connection; **Remote providers**: OpenAI, Anthropic, OpenRouter, Portkey and custom OpenAI-compatible connections with write-only keys (shown as fingerprints); then the **Available Providers** table ([below](#models-and-local-providers)) |
 | Models | **Models** | browse models that fit this machine, download them, delete installed ones (below) |
-| Models | **Engines** | the local engines on the gateway host: installed or not, running or not, install, start, stop (below) |
 | Models | **Multimodal** | capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
 | System | **Resources** | memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the **Gateway** card (pause, update, restart, desktop icon, start at login) |
 | System | **Sandbox** | quick chat and media generation against the configured defaults |
@@ -5782,9 +5781,9 @@ call ends" (the old model is still answering a call), "X: eject failed:
 reason", "X kept in memory: reason" (something else still uses it) and "X
 ejected".
 
-### Models and Engines tabs
+### Models and local providers
 
-Everything these two tabs show and do happens **on the gateway host**: the
+Everything the Models tab and the Providers tab's Local providers show and do happens **on the gateway host**: the
 machine that runs `abstractgateway serve`, not the computer your browser runs
 on. The catalog data, the presence checks and the fit verdicts come from
 AbstractCore (`GET /api/gateway/models/catalog`, contract `model_catalog_v1`);
@@ -5858,12 +5857,13 @@ The setup guide's **Default model** step shows the same catalog cards with
 filters over. An engine card's **Browse models** opens the tab filtered to that
 engine's builds.
 
-**Engines** (tab id `engines`):
+**Local providers** (the Providers tab, id `providers`; the Engines tab of
+0.10.0 and older merged into it, and a `#engines` link opens Providers):
 
 - One card per engine with a status pill (Ready, Running, Installing, Needs
   your approval, Needs Apple tools, Not installed, Not for this computer),
-  its version, base URL and model count, and one primary action for its
-  state: **Install**, **Start**, **Stop**, **Continue with administrator
+  its version, base URL and model count, **Browse models**, **Learn more**,
+  and one primary action for its state: **Install**, **Start**, **Stop**, **Continue with administrator
   password**, **Install tools** or **Try again**.
 - **Install** opens a confirmation that shows what will run and the host it
   runs on, with a **Preview (dry run)** button. Ollama and LM Studio offer
@@ -7207,11 +7207,16 @@ Every send — an agent's `send_email`, an automation's send action, a notificat
 code — goes through the same checks, in this order:
 
 1. email is on (your switch **and** the administrator's);
-2. the **recipient policy**: `allowlist` (only the listed addresses and domains) or `denylist`
-   (everyone except them). Entries are exact addresses or domains; a subdomain matches only when
-   written as its own entry. The policy applies to To, Cc and Bcc, and a message with any refused
-   recipient is refused whole, naming the refused addresses. A new account starts with an allowlist
-   holding your registered address;
+2. the **recipient rules**: two lists, **Always allowed** and **Always denied**, each holding
+   exact addresses (`name@example.com`) or domains (`example.com`, which also covers its
+   subdomains), and one mode for recipients on neither list: **Only the Allowed list**
+   (`allowlist`: refused) or **Anyone not on the Denied list** (`denylist`: allowed). Your own
+   address is always allowed, and denied always wins over allowed. The rules apply to To, Cc and
+   Bcc; a message with any refused recipient is refused whole, and the refusal names the
+   recipient and the rule ("Not sent: x@xxx.gov is on your Always denied list (xxx.gov)."). A new
+   account starts with Only the Allowed list, holding your registered address. A policy stored by
+   an older version keeps its meaning: an allowlist's entries are the Always allowed list, a
+   denylist's entries the Always denied list;
 3. the **send limits**: 100 messages per rolling hour and 1000 per day by default, editable by you.
    Limits you set are kept across upgrades; a mailbox where nobody set them follows the defaults.
    Until AbstractCore 2.21 the defaults were 20 and 100 and connecting a mailbox stored them
@@ -7227,7 +7232,7 @@ address for the operator), else the connected mailbox's own address.
 
 ```bash
 curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/policy" \
-  -d '{"mode": "allowlist", "entries": ["me@example.com", "mycompany.com"]}'
+  -d '{"mode": "allowlist", "always_allow": ["mycompany.com"], "always_deny": ["xxx.gov"]}'
 curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/limits" -d '{"per_hour": 100, "per_day": 1000}'
 ```
 
@@ -8970,7 +8975,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Recipient rules in the Email settings (Advanced): "Your agents may send to [Only the Allowed list |
+  Anyone not on the Denied list]", an **Always allowed** and an **Always denied** list (addresses
+  such as `name@example.com` or domains such as `example.com`, which also cover their subdomains),
+  and one sentence: "Denied always wins. Your own address is always allowed. A domain also covers
+  its subdomains." Every chip added or removed saves at once ("Saved", or the gateway's reason).
+  One renderer, `renderEmailRecipientRules(policy, apiBase)`, draws it for any Email modal.
+- `PUT /me/email/policy` takes `always_allow` and `always_deny` (a list given replaces that list;
+  an omitted list is kept); `GET /me/email` returns both. `POST /me/email/policy/check` takes
+  `to`, `cc` and `bcc` (and the older `addresses`, read as To) and each verdict says which rule
+  decided (`source`: `self`, `always_deny`, `always_allow`, `mode`).
+- The terminal console shows and edits both lists under Advanced.
+- **Entities have their own mailbox.** An entity's mailbox lives in its home
+  (`<runtime>/entities/<name>/email/...`). An admin or the entity's creator sets it up through
+  `/api/gateway/accounts/{id}/email...` and `/api/gateway/accounts/{id}/notifications...`, which mirror every
+  `/me/email...` and `/me/notifications...` route with the same bodies and answers; a user target, an entity
+  you can't manage or an archived entity answers 403 with the reason. The entity's watcher reads its mailbox
+  into its own event inbox, its notifications go to its own address through its own account, and its send
+  limits and recipient rules are its own. With its Agent email tools switch on, the entity's agents get the
+  email tools during visits and send through the entity's account. An archived or suspended entity's watcher
+  stops. No route reads an entity's mail. The Accounts row shows the entity's real mailbox state.
+
+### Changed
+- **Accounts are archived, never deleted.** `POST /api/gateway/admin/accounts/{id}/archive` and `/unarchive`
+  (admin) answer the updated row; a signed-in user archives an entity they created with
+  `POST /api/gateway/me/accounts/{id}/archive`. An archived user can't sign in (their token answers 401 and
+  their sessions end); an archived entity is suspended and never wakes: the state verb, summon, talk, visits,
+  meets, its own-time loop and the self-repair and need-check sweeps all refuse it. Records, runtimes, runs,
+  memory and history are kept. Unarchive brings the account back inactive; turn Active on to let it sign in or
+  act. Archived accounts are left out of `GET /admin/accounts` unless `include_archived=true` and are never
+  listed on `GET /me/accounts`. Rows carry `archived` and `archived_at`; row actions are `email, logs,
+  workspace, rotate, manage, archive, unarchive, suspend` (`delete` is gone). Logs show "Archived" and
+  "Unarchived" with who did it.
+- **`DELETE /api/gateway/admin/users/{id}` and `POST /api/gateway/admin/runtime-reservations/{id}/purge`
+  answer 410** with "Accounts are archived, never deleted: use Archive (POST
+  /api/gateway/admin/accounts/{id}/archive). Runs and history are kept." Nothing is changed. Listing and
+  transferring retained runtimes stay.
+- Sends to To, Cc and Bcc, from agent tools and notifications alike, follow the precedence: your own
+  address is allowed, Always denied refuses ("Not sent: x@xxx.gov is on your Always denied list
+  (xxx.gov)."), Always allowed allows, then the mode decides. A notification to your own address is
+  therefore always delivered, also when your lists do not name it.
+- A policy stored by an earlier version keeps its meaning: an allowlist's entries become the Always
+  allowed list, a denylist's entries the Always denied list. The older `{mode, entries}` body is
+  still accepted (`entries` replaces the list the mode uses). Needs the AbstractCore version that
+  adds the two lists.
+- Web console: **Providers** and **Engines** are one page. The **Providers** tab lists **Local
+  providers** first (one card per local engine: status, Install, Start, Stop, Cancel, Continue,
+  **Browse models**, **Learn more**, and the provider's server connection for Ollama, LM Studio and
+  vLLM), then **Remote providers** (OpenAI, Anthropic, OpenRouter, Portkey, custom
+  OpenAI-compatible, each with its connection state; keys appear as fingerprints only), then the
+  **Available Providers** table as before. **Engines** is no longer in the sidebar; a `#engines`
+  link opens Providers. The terminal console and the API are unchanged.
+
 ### Fixed
+- Runs now use the base URL set on the text-generation default (`output.text`, stored as `input.text`). Released 0.10.0 saved and showed it, but runs, run summaries, Ask and the sandbox called the provider's built-in address instead (for example LM Studio on `localhost:1234`). The base URL applies to the route's own provider only; an endpoint profile (`endpoint:<id>`) keeps its own address, and nothing changes when the field is empty. Affects 0.10.0; ships in the next release.
+
 - **Agents get the email tools the client lists.** The agents' tool lists are built with a user's
   host; only the "Agent email tools" switch rebuilt it, so a mailbox connected, paused or
   disconnected afterwards — or an administrator's capability change — left a run without
@@ -8987,6 +9047,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Session history never crosses sessions — pinned.** `tests/test_gateway_session_history_isolation.py`
   proves a new session starts with no messages from another session of the same user, of another
   user, or after a restart, and that nothing of the other session reaches its run vars.
+
 
 ## [0.10.0] - 2026-10-01
 

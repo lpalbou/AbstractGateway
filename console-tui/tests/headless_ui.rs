@@ -10749,9 +10749,19 @@ fn my_email_active_in_the_mailbox_card_and_test_says_the_api_sentence() {
     click_text(&mut h, &s, "│ Advanced ▸  who");
     let s = h.turns(3);
     assert!(
-        s.contains("Your agents may send to: only these recipients"),
+        s.contains("Your agents may send to: only the Allowed list"),
         "{s}"
     );
+    // Recipient rules (round 3): the two lists and the precedence sentence.
+    assert!(
+        s.contains("Always allowed") && s.contains("Always denied"),
+        "{s}"
+    );
+    for _ in 0..30 {
+        h.key(b"\x1b[<65;70;30M");
+    }
+    let s = h.turns(3);
+    assert!(s.contains("Denied always wins."), "{s}");
     assert!(
         s.contains("At most") && s.contains("per hour and") && s.contains("per day."),
         "{s}"
@@ -11159,6 +11169,10 @@ fn my_email_advanced_folder_saves_on_enter_and_is_unavailable_without_a_mailbox(
     let mut h = harness_sized(Size::new(140, 90));
     let s = open_my_email(&mut h, &my_email_fixture());
     click_text(&mut h, &s, "│ Advanced ▸  who");
+    h.turns(2);
+    for _ in 0..30 {
+        h.key(b"\x1b[<65;70;30M");
+    }
     let s = h.turns(3);
     let (row, line_txt) = s
         .lines()
@@ -11193,4 +11207,45 @@ fn my_email_advanced_folder_saves_on_enter_and_is_unavailable_without_a_mailbox(
     }
     let s = h.turns(3);
     assert!(s.contains("Watch folder — Connect a mailbox first."), "{s}");
+}
+
+#[test]
+fn my_email_recipient_rules_add_to_always_denied_sends_both_lists() {
+    // Round 3 (DESIGN-v3 §13.3): the mode, "Always allowed" and "Always denied"; adding to one
+    // list sends the mode with BOTH lists (an older {mode, entries} policy reads as Allowed).
+    use abstractgateway_console::worker::operator::EmailAction;
+    let mut h = harness_sized(Size::new(140, 90));
+    let s = open_my_email(&mut h, &my_email_fixture());
+    click_text(&mut h, &s, "│ Advanced ▸  who");
+    let s = h.turns(3);
+    let adds: Vec<(usize, String)> = s
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| l.contains("    add  ▐"))
+        .map(|(i, l)| (i, l.to_string()))
+        .collect();
+    assert_eq!(adds.len(), 2, "one add field per list:\n{s}");
+    let (row, line_txt) = &adds[1];
+    let field_col = line_txt[..line_txt.find('▐').unwrap()].chars().count();
+    let _ = h.drain_cmds();
+    h.key(
+        format!(
+            "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+            field_col + 3,
+            row + 1,
+            field_col + 3,
+            row + 1
+        )
+        .as_bytes(),
+    );
+    h.turns(1);
+    h.type_text("xxx.gov\r");
+    h.turns(2);
+    match email_action(&mut h) {
+        Some(EmailAction::Policy(body)) => assert_eq!(
+            serde_json::to_value(&*body).unwrap(),
+            json!({"mode": "allowlist", "always_allow": ["me@example.test"], "always_deny": ["xxx.gov"]})
+        ),
+        other => panic!("PUT /me/email/policy, got {other:?}"),
+    }
 }

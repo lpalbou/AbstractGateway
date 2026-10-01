@@ -202,16 +202,24 @@ def test_send_limits_coalesce_into_one_digest(gateway, imap, smtp) -> None:
 
 
 def test_recipient_policy_applies_to_notifications(gateway, imap, smtp) -> None:
+    """Notifications go through the same recipient rules as agent sends. They go to the user's
+    own address, which the rules always allow (DESIGN-v3 §13.3: self -> allowed first), so a
+    notification is delivered even when the Allowed list does not name the user and the Denied
+    list names their domain; before round 3 the own address was refused here."""
     from abstractgateway.mail.notifications import NotificationOutbox, idempotency_key, queue_notice
 
     _connect(gateway, imap, smtp)
-    gateway["client"].put("/api/gateway/me/email/policy", headers=gateway["alice"], json={"mode": "allowlist", "entries": ["example.org"]})
+    own_domain = ALICE.split("@", 1)[1]
+    r = gateway["client"].put(
+        "/api/gateway/me/email/policy",
+        headers=gateway["alice"],
+        json={"mode": "allowlist", "always_allow": ["example.org"], "always_deny": [own_domain]},
+    )
+    assert r.status_code == 200, r.text
     plane = plane_of("alice")
     queue_notice(plane, "job_failed", idempotency_key("job_failed", "run-3"), {"title": "A"})
-    assert NotificationOutbox(plane).deliver()["failed"] == 1
-    row = NotificationOutbox(plane).rows()[0]
-    assert row["state"] == "failed" and row["error_code"] == "email_policy_refused"
-    assert smtp.messages == []
+    assert NotificationOutbox(plane).deliver()["sent"] == 1
+    assert len(smtp.messages) == 1
 
 
 def _fake_svc(*, automations=(), records=None, waits=None, runs=None):

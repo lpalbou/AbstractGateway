@@ -368,7 +368,7 @@ class GatewaySessionStore:
         credential_fp = ""
         if principal.source == "user-registry":
             rec = GatewayUserRegistry().get_user(principal.user_id, tenant_id=principal.tenant_id)
-            if rec is None or not rec.enabled:
+            if rec is None or not rec.enabled or rec.archived:
                 raise ValueError("Gateway user is disabled or unavailable")
             credential_fp = registry_credential_fingerprint(rec)
             if principal_barred_from_shared_runtime(rec.to_principal()):
@@ -419,7 +419,7 @@ class GatewaySessionStore:
             principal = rec.to_principal()
             if principal.source == "user-registry":
                 user = GatewayUserRegistry().get_user(principal.user_id, tenant_id=principal.tenant_id)
-                if user is None or not user.enabled:
+                if user is None or not user.enabled or user.archived:
                     records.pop(sid, None)
                     self._save_unlocked(records)
                     return None

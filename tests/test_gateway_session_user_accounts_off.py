@@ -397,13 +397,12 @@ def test_demoting_an_admin_with_user_accounts_off_is_refused(tmp_path: Path, mon
         assert res.json()["detail"]["reason_code"] == "user_accounts_off_admin_only"
 
 
-def test_the_last_admin_cannot_be_deleted_disabled_or_demoted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_last_admin_cannot_be_archived_disabled_or_demoted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     app = _app(tmp_path, monkeypatch, user_accounts=True)
     _registry_user("root", ["admin", "user"])
     _registry_user("bob", ["user"])
     with TestClient(app) as client:
         for method, path, body, action in [
-            ("DELETE", "/api/gateway/admin/users/root", None, "deleting"),
             ("PATCH", "/api/gateway/admin/users/root", {"enabled": False}, "disabling"),
             ("PATCH", "/api/gateway/admin/users/root", {"roles": ["user"]}, "demoting"),
         ]:
@@ -413,10 +412,14 @@ def test_the_last_admin_cannot_be_deleted_disabled_or_demoted(tmp_path: Path, mo
             assert detail["reason_code"] == "last_admin"
             assert "'root' is the last enabled admin account" in detail["message"]
             assert action in detail["message"]
+        # Archive (round 3: accounts are archived, never deleted) refuses the last admin too.
+        res = client.post("/api/gateway/admin/accounts/root/archive", headers=ADMIN)
+        assert res.status_code == 409, res.text
+        assert res.json()["detail"]["reason_code"] == "last_admin"
         root = client.get("/api/gateway/admin/users/root", headers=ADMIN).json()["user"]
-        assert root["enabled"] is True and "admin" in root["roles"]
+        assert root["enabled"] is True and "admin" in root["roles"] and root["archived"] is False
         # Non-admin accounts are never protected by this guard.
-        assert client.delete("/api/gateway/admin/users/bob", headers=ADMIN).status_code == 200
+        assert client.post("/api/gateway/admin/accounts/bob/archive", headers=ADMIN).status_code == 200
 
 
 def test_with_a_second_admin_the_first_can_go(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -426,7 +429,7 @@ def test_with_a_second_admin_the_first_can_go(tmp_path: Path, monkeypatch: pytes
     with TestClient(app) as client:
         assert client.patch("/api/gateway/admin/users/root", headers=ADMIN, json={"roles": ["user"]}).status_code == 200
         # ops is now the last one.
-        assert client.delete("/api/gateway/admin/users/ops", headers=ADMIN).status_code == 409
+        assert client.post("/api/gateway/admin/accounts/ops/archive", headers=ADMIN).status_code == 409
 
 
 def test_a_disabled_admin_does_not_count_as_the_remaining_admin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -436,4 +439,4 @@ def test_a_disabled_admin_does_not_count_as_the_remaining_admin(tmp_path: Path, 
 
     GatewayUserRegistry().create_user(user_id="ghost", roles=["admin"], enabled=False)
     with TestClient(app) as client:
-        assert client.delete("/api/gateway/admin/users/root", headers=ADMIN).status_code == 409
+        assert client.post("/api/gateway/admin/accounts/root/archive", headers=ADMIN).status_code == 409

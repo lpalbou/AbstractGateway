@@ -77,7 +77,10 @@ fn every_console_gated_verb_is_admin_only_on_the_gateway() {
         "edit user (e)",
         u.patch_user("ana", "default", &json!({"enabled": true})),
     );
-    forbidden("delete user (d)", u.delete_user("nobody", "default"));
+    forbidden(
+        "archive account (d)",
+        u.archive_account("nobody", "default", true),
+    );
     forbidden("retained runtimes (v)", u.runtime_reservations());
     // Runtimes: the whole screen.
     forbidden("runtimes inventory", u.runtimes());

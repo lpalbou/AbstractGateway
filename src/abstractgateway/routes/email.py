@@ -14,8 +14,9 @@ user makes so their agents and automations can read and send mail as them.
     PUT    /me/email/notifications       {job_failed?, approval_needed?}  my two notification switches
     POST   /me/email/test                sign in to IMAP and SMTP with the stored mailbox
     DELETE /me/email                     disconnect the mailbox: credentials and cursor deleted
-    PUT    /me/email/policy              {mode: allowlist|denylist, entries: [address | domain]}
-    POST   /me/email/policy/check        {addresses} -> would they be allowed?
+    PUT    /me/email/policy              {mode: allowlist|denylist, always_allow?, always_deny?}
+                                         (older {mode, entries} accepted: entries = the mode's list)
+    POST   /me/email/policy/check        {to?, cc?, bcc?, addresses?} -> would they be allowed?
     PUT    /me/email/limits              {per_hour, per_day}
     PUT    /me/email/folder              {folder}    the IMAP folder read (empty = INBOX; connection kept)
     PUT    /me/email/enabled             {enabled}   "Use this mailbox" (the user's own switch)
@@ -28,6 +29,13 @@ user makes so their agents and automations can read and send mail as them.
     GET    /me/notifications             events, channel availability, outbox summary
     PUT    /me/notifications             {email: {event: bool}}  (v1 five-kind body accepted and mapped)
     POST   /me/notifications/test        send one test notification now
+
+Entity mailboxes (round 3 §3.1: entities are AI users with their own mailbox) — every `/me/email...`
+and `/me/notifications...` route above is mirrored at `/accounts/{account_id}/email...` and
+`/accounts/{account_id}/notifications...` with identical payloads and answers, acting on the
+ENTITY's plane (rooted at its home). Allowed for an admin and for the entity's creator; 403
+`{message}` when the target is a user (users manage their own mailbox through `/me`), is not an
+entity the caller may manage, or is archived. There is no route that reads an entity's mail.
 
 Admin routes — status and the per-user switch only (D3: administrators never read mail):
 
@@ -108,11 +116,65 @@ async def _call(fn, *args: Any, **kwargs: Any) -> Any:
 
 
 def _self_plane(request: Request) -> tuple[GatewayPrincipal, EmailPlane]:
+    """(the CALLER, the plane acted on). `/me/...`: the caller's own plane. The
+    `/accounts/{account_id}/...` mirror: the entity's plane, after `_entity_target` checked that
+    the caller may manage it (the caller stays the actor in audit lines)."""
     principal = _principal_from_request(request)
+    account_id = request.path_params.get("account_id")
     try:
+        if account_id is not None:
+            plane = mail_accounts.plane_for_principal(_entity_target(principal, str(account_id)))
+            # The entity's mailbox worker runs from the first time its mailbox is touched.
+            from ..mail.worker import sync_entity_workers
+
+            sync_entity_workers()
+            return principal, plane
         return principal, mail_accounts.plane_for_principal(principal)
     except EmailPrincipalRefused as exc:
         raise HTTPException(status_code=403, detail={"reason_code": "email_principal_refused", "message": str(exc)}) from None
+
+
+def _target_principal(request: Request, caller: GatewayPrincipal) -> GatewayPrincipal:
+    """The account whose address/record a route reads or writes: the caller on `/me/...`, the
+    entity on the `/accounts/{account_id}/...` mirror."""
+    account_id = request.path_params.get("account_id")
+    return caller if account_id is None else _entity_target(caller, str(account_id))
+
+
+ENTITY_MAILBOX_NOT_YOURS = "There is no entity named {id!r} whose mailbox you can manage."
+ENTITY_MAILBOX_USER_TARGET = (
+    "{id} is a user: users manage their own mailbox from their own account page; this is for entities."
+)
+
+
+def _entity_target(caller: GatewayPrincipal, account_id: str) -> GatewayPrincipal:
+    """The entity principal `account_id`, when `caller` may configure its mailbox: an admin, or
+    the entity's creator (`entity_access.entity_visible_to` on the home's manifest). 403
+    `{message}` otherwise: a user target (named only to an admin), an entity the caller may not
+    see or that does not exist (the same sentence), an archived entity."""
+    from ..entity_access import entity_archived, entity_home_dir, entity_visible_to, manifest_creator
+    from ..users import GatewayUserRegistry
+
+    def refuse(message: str, code: str = "email_target_refused") -> HTTPException:
+        return HTTPException(status_code=403, detail={"reason_code": code, "message": message})
+
+    rec = GatewayUserRegistry().get_user(account_id)
+    if rec is not None and rec.principal_kind != "entity":
+        if caller.is_admin():
+            raise refuse(ENTITY_MAILBOX_USER_TARGET.format(id=rec.user_id), "email_target_is_user")
+        raise refuse(ENTITY_MAILBOX_NOT_YOURS.format(id=account_id))
+    home = entity_home_dir(account_id)
+    if rec is None or home is None:
+        raise refuse(ENTITY_MAILBOX_NOT_YOURS.format(id=account_id))
+    if not caller.is_admin():
+        _exists, created_by = manifest_creator(home.parent, home.name)
+        if not entity_visible_to(caller, home.name, created_by):
+            raise refuse(ENTITY_MAILBOX_NOT_YOURS.format(id=account_id))
+    if entity_archived(rec.user_id):
+        from ..entity_access import ENTITY_ARCHIVED
+
+        raise refuse(ENTITY_ARCHIVED.format(slug=rec.user_id), "entity_archived")
+    return rec.to_principal()
 
 
 def _actor(principal: GatewayPrincipal) -> str:
@@ -181,16 +243,65 @@ class MyNotificationsBody(BaseModel):
 
 
 class PolicyBody(BaseModel):
-    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"mode": "allowlist", "entries": ["me@example.test", "example.org"]}]})
+    """Recipient rules. `mode` decides recipients on neither list: "allowlist" = Only the Allowed
+    list, "denylist" = Anyone not on the Denied list. `always_allow` / `always_deny`, when given,
+    REPLACE that list. The older `{mode, entries}` body is still accepted: `entries` replaces the
+    list the mode uses (allowlist -> Always allowed, denylist -> Always denied)."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [
+                {"mode": "allowlist", "always_allow": ["abstractframework.ai"], "always_deny": ["xxx.gov"]},
+                {"mode": "allowlist", "entries": ["me@example.test", "example.org"]},
+            ]
+        },
+    )
 
     mode: str = "allowlist"
-    entries: List[str] = Field(default_factory=list)
+    entries: Optional[List[str]] = Field(None, description="Older shape: the list the mode uses (replaced)")
+    always_allow: Optional[List[str]] = Field(None, description="Always allowed: addresses or domains (replaces the list)")
+    always_deny: Optional[List[str]] = Field(None, description="Always denied: addresses or domains (replaces the list); denied always wins")
 
 
 class CheckBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    addresses: List[str] = Field(default_factory=list)
+    addresses: List[str] = Field(default_factory=list, description="Checked as To (older shape)")
+    to: List[str] = Field(default_factory=list)
+    cc: List[str] = Field(default_factory=list)
+    bcc: List[str] = Field(default_factory=list)
+
+
+def apply_policy_body(store: Any, body: PolicyBody) -> None:
+    """PUT .../email/policy for ONE plane's store (own `/me/email` and the entity mirror share it).
+
+    `entries` given (older body) replaces the mode's list; `always_allow` / `always_deny` given
+    replace their list and win over `entries`; an omitted list is kept."""
+
+    entries_given = body.entries is not None
+    store.set_policy(
+        mode=body.mode,
+        add=list(body.entries or ()),
+        clear=entries_given,
+        always_allow=body.always_allow,
+        always_deny=body.always_deny,
+    )
+
+
+def check_policy_body(plane: Any, body: CheckBody) -> Dict[str, Any]:
+    """POST .../email/policy/check for ONE plane: To (+ the older `addresses`), Cc and Bcc, with
+    the account's own addresses allowed exactly as a real send allows them."""
+
+    try:
+        to = parse_recipients(list(body.addresses) + list(body.to))
+        cc = parse_recipients(list(body.cc))
+        bcc = parse_recipients(list(body.bcc))
+    except ValueError as exc:
+        raise EmailInvalidMessage(f"A recipient is not valid: {exc}.", "Give recipients as name@example.test.") from None
+    st = mail_accounts.account_store(plane).settings()
+    selves = tuple(st.self_addresses) + tuple(a for a in (mail_accounts.self_address(plane),) if a)
+    return evaluate(st.policy, to=to, cc=cc, bcc=bcc, self_addresses=selves).to_dict()
 
 
 class LimitsBody(BaseModel):
@@ -277,7 +388,7 @@ async def me_email_get(request: Request) -> Any:
         out = mail_accounts.public_status(plane)
         # The shared resolver (DESIGN-v2 §2.5): the admin's row in /admin/users and
         # /admin/accounts reads exactly this.
-        view = mail_accounts.account_email_view(principal)
+        view = mail_accounts.account_email_view(_target_principal(request, principal))
         out["email_address"] = view["email_address"] or ""
         out["mailbox"] = view["mailbox"]
         if principal.is_admin() and plane.is_default:
@@ -287,13 +398,17 @@ async def me_email_get(request: Request) -> Any:
     return await _call(run)
 
 
-def _reload_my_toolsets(principal: GatewayPrincipal) -> bool:
+def _reload_my_toolsets(principal: GatewayPrincipal, plane: EmailPlane) -> bool:
     """Rebuild THIS principal's host toolsets after a change that decides whether agents get
     the email tools (connect, disconnect, Active, Agent email tools): the lists are built with
     the host, and a run started from a stale host never receives a tool the client lists as
     enabled (operator report 2026-10-01). Only an already-built host is reloaded — never a
-    first build from here; the host also re-checks the rule at every run start."""
+    first build from here; the host also re-checks the rule at every run start. An entity's
+    plane (the `/accounts/{id}/...` mirror) has no host: its runtime reads the switch at each
+    tool call (entities.py), so nothing is reloaded."""
 
+    if plane.is_entity:
+        return False
     try:
         from .. import service as service_mod
 
@@ -374,7 +489,7 @@ async def me_email_put(request: Request, body: ConnectBody) -> Any:
             allow_ca_file=principal.is_admin(),
             actor=_actor(principal),
         )
-        out["tools_reloaded"] = _reload_my_toolsets(principal)
+        out["tools_reloaded"] = _reload_my_toolsets(principal, plane)
         return {"ok": True, **out}
 
     return await _call(run)
@@ -391,7 +506,8 @@ async def me_email_address(request: Request, body: AddressBody) -> Any:
     principal, _plane = _self_plane(request)
 
     def run() -> Dict[str, Any]:
-        return {"ok": True, **mail_accounts.set_email_address(principal, body.address, actor=_actor(principal))}
+        target = _target_principal(request, principal)
+        return {"ok": True, **mail_accounts.set_email_address(target, body.address, actor=_actor(principal))}
 
     return await _call(run)
 
@@ -441,7 +557,7 @@ async def me_email_delete(request: Request) -> Any:
 
     def run() -> Dict[str, Any]:
         out = mail_accounts.disconnect(plane, actor=_actor(principal))
-        out["tools_reloaded"] = _reload_my_toolsets(principal)
+        out["tools_reloaded"] = _reload_my_toolsets(principal, plane)
         return {"ok": True, **out}
 
     return await _call(run)
@@ -452,7 +568,7 @@ async def me_email_policy(request: Request, body: PolicyBody) -> Any:
     _principal, plane = _self_plane(request)
 
     def run() -> Dict[str, Any]:
-        mail_accounts.account_store(plane).set_policy(mode=body.mode, add=body.entries, clear=True)
+        apply_policy_body(mail_accounts.account_store(plane), body)
         return {"ok": True, **mail_accounts.public_status(plane)}
 
     return await _call(run)
@@ -463,11 +579,7 @@ async def me_email_policy_check(request: Request, body: CheckBody) -> Any:
     _principal, plane = _self_plane(request)
 
     def run() -> Dict[str, Any]:
-        try:
-            addrs = parse_recipients(list(body.addresses))
-        except ValueError as exc:
-            raise EmailInvalidMessage(f"A recipient is not valid: {exc}.", "Give recipients as name@example.test.") from None
-        return evaluate(mail_accounts.account_store(plane).settings().policy, to=addrs).to_dict()
+        return check_policy_body(plane, body)
 
     return await _call(run)
 
@@ -509,7 +621,7 @@ async def me_email_enabled(request: Request, body: EnabledBody) -> Any:
         from ..mail.audit import audit_email_event
 
         audit_email_event("email.user_switch", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=_actor(principal), enabled=bool(body.enabled))
-        reloaded = _reload_my_toolsets(principal)
+        reloaded = _reload_my_toolsets(principal, plane)
         return {"ok": True, "tools_reloaded": reloaded, **mail_accounts.public_status(plane)}
 
     return await _call(run)
@@ -524,7 +636,7 @@ async def me_email_agent_tools(request: Request, body: EnabledBody) -> Any:
         # The toolsets are built with the host: reload THIS user's host so agents see the
         # change now (connect / disconnect / Active do the same; the host also re-checks
         # the rule at every run start).
-        reloaded = _reload_my_toolsets(principal)
+        reloaded = _reload_my_toolsets(principal, plane)
         return {"ok": True, "tools_reloaded": reloaded, **mail_accounts.public_status(plane)}
 
     return await _call(run)
@@ -576,7 +688,7 @@ async def me_email_oauth_finish(request: Request, body: FlowBody) -> Any:
     def run() -> Dict[str, Any]:
         out = mail_accounts.oauth_finish(plane, body.flow_id, wait_s=body.wait_s, actor=_actor(principal))
         if isinstance(out, dict) and out.get("configured"):
-            out["tools_reloaded"] = _reload_my_toolsets(principal)
+            out["tools_reloaded"] = _reload_my_toolsets(principal, plane)
         return out
 
     return await _call(run)
@@ -968,3 +1080,41 @@ async def legacy_email_send(request: Request, body: LegacySendBody) -> Any:
         }
 
     return await _call(run)
+
+
+# ---------------------------------------------------------------------------
+# Entity mailboxes: the /accounts/{account_id}/... mirror of every /me/email and
+# /me/notifications route (round 3 §3.1). Registered from the routes above so a /me route
+# added later is mirrored too; `_self_plane` resolves the entity's plane from the path.
+# ---------------------------------------------------------------------------
+
+_MIRRORED_PREFIXES = ("/me/email", "/me/notifications")
+
+
+def _mirror_entity_routes() -> List[str]:
+    from fastapi.routing import APIRoute
+
+    added: List[str] = []
+    prefix = router.prefix
+    for route in list(router.routes):
+        if not isinstance(route, APIRoute) or not route.path.startswith(prefix):
+            continue
+        rel = route.path[len(prefix):]
+        if not rel.startswith(_MIRRORED_PREFIXES):
+            continue
+        target = "/accounts/{account_id}" + rel[len("/me"):]
+        router.add_api_route(
+            target,
+            route.endpoint,
+            methods=sorted(route.methods or ()),
+            summary=f"Entity mailbox: {route.summary or route.name}",
+            description=(route.description or "")
+            + "\n\nEntity mirror (round 3): acts on the mailbox of entity `account_id` (admin or the entity's creator; "
+            "403 `{message}` for a user, an entity you can't manage, or an archived entity).",
+            tags=["email"],
+        )
+        added.append(target)
+    return added
+
+
+ENTITY_MAILBOX_ROUTES = _mirror_entity_routes()

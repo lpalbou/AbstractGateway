@@ -141,3 +141,107 @@ def email_tools_for_data_dir(data_dir: Any) -> bool:
     except Exception:  # noqa: BLE001
         return False
     return False
+
+
+# ---------------------------------------------------------------------------------------
+# Entities: AI users with their own mailbox (round 3 §3.1)
+# ---------------------------------------------------------------------------------------
+#
+# An entity's runs execute in its OWN runtime (`EntityRegistry.get_entity_runtime`), whose
+# TOOL_CALLS handler is the door's (entities.py `_entity_tool_handler`). These helpers bind that
+# runtime to the ENTITY's plane (rooted at its home) and run an agent email tool through the
+# entity's account: recipient policy, send limits and the entity's "Agent email tools" switch
+# apply exactly as for a user. Never another principal's account.
+
+
+def entity_mail_plane(slug: str) -> Optional[EmailPlane]:
+    """The entity's plane while its mailbox may work (not archived, not suspended, home on
+    this gateway), else None."""
+
+    from ..users import GatewayUserRegistry
+    from .accounts import entity_mail_active, entity_plane
+
+    rec = GatewayUserRegistry().get_user(str(slug))
+    if rec is None or rec.principal_kind != "entity" or not entity_mail_active(rec):
+        return None
+    return entity_plane(rec.user_id, tenant_id=rec.tenant_id)
+
+
+def wire_entity_runtime_email(runtime: Any, slug: str) -> Optional[EmailPlane]:
+    """Bind an entity's runtime to its own plane (event inbox, resolver, binding); None (and
+    nothing bound) when its mailbox can't work."""
+
+    plane = entity_mail_plane(slug)
+    if plane is None:
+        return None
+    wire_runtime_email(runtime, plane)
+    return plane
+
+
+def entity_email_tool_names() -> tuple:
+    """The agent email tools (AbstractRuntime's `email` comms kind)."""
+
+    from ..run_default_tools import email_tool_names
+
+    return tuple(email_tool_names())
+
+
+def entity_email_tools_offered(slug: str) -> tuple:
+    """The email tool names an entity's agent is offered now: all of them when its plane's
+    "Agent email tools" are active (available from the admin, switched on, mailbox usable),
+    else none."""
+
+    from .accounts import agent_tools_active
+
+    plane = entity_mail_plane(slug)
+    if plane is None or not agent_tools_active(plane):
+        return ()
+    return entity_email_tool_names()
+
+
+def entity_email_tool_specs(slug: str) -> list:
+    """`[{name, description, parameters}]` of the offered email tools (AbstractCore's own
+    definitions through AbstractRuntime's tool catalog), for the entity's tool declarations."""
+
+    names = entity_email_tools_offered(slug)
+    if not names:
+        return []
+    from abstractruntime.integrations.abstractcore.default_tools import list_default_tool_specs
+
+    specs = {str(sp.get("name")): sp for sp in list_default_tool_specs(email_enabled=True)}
+    return [
+        {"name": n, "description": str(specs[n].get("description") or ""), "parameters": dict(specs[n].get("parameters") or {})}
+        for n in names
+    ]
+
+
+def _tool_refusal(code: str, cause: str, fix: str) -> dict:
+    # The shape of AbstractCore's own failed email tool result (`success: false`, typed code).
+    return {"success": False, "error": cause, "error_code": code, "cause": cause, "fix": fix, "retryable": False}
+
+
+def run_entity_email_tool(slug: str, name: str, arguments: dict) -> dict:
+    """Run one agent email tool for entity `slug` through ITS account. The answer is the
+    AbstractCore tool's own result dict (`success: false` with a typed `error_code` when
+    refused: not connected, paused, agent tools off, recipient refused, limit reached)."""
+
+    from abstractruntime.email import bind_email_account, email_run_scope, install_core_resolver
+    from abstractruntime.integrations.abstractcore.default_tools import build_default_tool_map
+
+    plane = entity_mail_plane(slug)
+    if plane is None:
+        return _tool_refusal(
+            "email_not_configured",
+            f"{slug} has no working mailbox (archived, suspended or not on this gateway).",
+            "An admin or its creator connects its mailbox from Accounts.",
+        )
+    binding = current_binding(plane)
+    if binding is None:
+        return _tool_refusal("email_not_configured", f"{slug}'s mailbox is not connected or is paused.", "Connect its mailbox from Accounts → Email.")
+    tool = build_default_tool_map(email_enabled=True)[name]
+    # The runtime's own run scope: the tool resolves THIS binding through the entity's plane
+    # resolver ("agent_tool": the entity's Agent email tools switch applies).
+    run = SimpleNamespace(run_id=f"entity:{slug}", vars=bind_email_account({}, binding=binding))
+    install_core_resolver()
+    with email_run_scope(run, resolver=make_email_resolver(plane), use="agent_tool"):
+        return tool(**dict(arguments or {}))

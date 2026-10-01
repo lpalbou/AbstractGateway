@@ -110,6 +110,7 @@ struct Page {
     confirm_disconnect: Signal<bool>,
     advanced: Signal<bool>,
     new_entry: Signal<String>,
+    new_deny_entry: Signal<String>,
     per_hour: Signal<String>,
     per_day: Signal<String>,
     folder: Signal<String>,
@@ -336,6 +337,7 @@ pub fn open(cx: Scope, ctx: &Ctx) {
             confirm_disconnect: mcx.signal(false),
             advanced: mcx.signal(false),
             new_entry: mcx.signal(String::new()),
+            new_deny_entry: mcx.signal(String::new()),
             per_hour: mcx.signal(String::new()),
             per_day: mcx.signal(String::new()),
             folder: mcx.signal(String::new()),
@@ -533,7 +535,7 @@ fn shape_key(l: &Loadable<MyEmail>) -> String {
             e.enabled,
             e.agent_tools_unavailable(),
             e.notifications_unavailable(),
-            e.policy_entries,
+            (&e.always_allow, &e.always_deny),
             e.policy_mode,
             e.connected_text(),
             e.email_address(),
@@ -1478,26 +1480,31 @@ fn advanced_card(_cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> V
 }
 
 const MODES: &[(&str, &str)] = &[
-    ("allowlist", "only these recipients"),
-    ("denylist", "everyone except these"),
+    ("allowlist", "only the Allowed list"),
+    ("denylist", "anyone not on the Denied list"),
 ];
+
+/// The one precedence sentence (DESIGN-v3 §13.3), same words as the web console.
+pub const RECIPIENT_RULES_HELP: &str =
+    "Denied always wins. Your own address is always allowed. A domain also covers its subdomains.";
 
 fn advanced_body(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> View {
     let t0 = *t;
-    let entries = e.policy_entries.clone();
+    let allow = e.always_allow.clone();
+    let deny = e.always_deny.clone();
     let mode_sig = cx.signal(e.policy_mode.clone());
     let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
-    // "Your agents may send to [only these recipients]" + the entries;
-    // every add/remove applies at once.
+    // "Your agents may send to [only the Allowed list]" + "Always allowed" + "Always denied";
+    // every change applies at once and sends the mode with both lists.
     let policy_send = {
         let ctx = ctx.clone();
-        move |mode: String, list: Vec<String>, ok: String| {
-            let body = policy_body(&mode, &list.join("\n"));
+        move |mode: String, allow: Vec<String>, deny: Vec<String>, ok: String| {
+            let body = policy_body(&mode, &allow, &deny);
             send(&ctx, p, "policy", EmailAction::Policy(body.into()), ok);
         }
     };
     {
-        let entries = entries.clone();
+        let (allow, deny) = (allow.clone(), deny.clone());
         let policy_send = policy_send.clone();
         col = col.child(cycle_w(
             cx,
@@ -1508,57 +1515,74 @@ fn advanced_body(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> Vi
             (p.wrap_w as i32 - 10).clamp(20, 50),
             move |m| {
                 let words = if m == "denylist" {
-                    "Your agents may send to everyone except the listed addresses."
+                    "Your agents may send to anyone not on the Denied list."
                 } else {
-                    "Your agents may send only to the listed addresses."
+                    "Your agents may send only to the Allowed list."
                 };
-                policy_send(m, entries.clone(), words.into())
+                policy_send(m, allow.clone(), deny.clone(), words.into())
             },
         ));
     }
-    if entries.is_empty() {
-        col = col.child(line(vec![span("    no addresses yet", t0.text_faint)]));
-    }
-    for (i, entry) in entries.iter().enumerate() {
-        let entries = entries.clone();
-        let policy_send = policy_send.clone();
-        let entry_txt = entry.clone();
-        col = col.child(
-            Element::new()
-                .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                .child(line(vec![span(
-                    format!("    {}", ellipsize(entry, 40)),
-                    t0.text,
-                )]))
-                .child(
-                    Button::new("Remove")
-                        .on_click(move || {
-                            let mut list = entries.clone();
-                            list.remove(i);
-                            policy_send(
-                                mode_sig.get_untracked(),
-                                list,
-                                format!("{entry_txt} removed."),
-                            )
-                        })
-                        .element(cx, &t0)
-                        .build(),
-                )
-                .build(),
-        );
-    }
-    {
-        let entries = entries.clone();
-        let policy_send = policy_send.clone();
-        let add = move || {
-            let v = p.new_entry.get_untracked().trim().to_string();
-            if v.is_empty() {
-                return;
+    for deny_list in [false, true] {
+        let (label, entries, field) = if deny_list {
+            ("Always denied", deny.clone(), p.new_deny_entry)
+        } else {
+            ("Always allowed", allow.clone(), p.new_entry)
+        };
+        col = col.child(line(vec![span(format!("  {label}"), t0.text_muted)]));
+        if entries.is_empty() {
+            col = col.child(line(vec![span("    nobody yet", t0.text_faint)]));
+        }
+        // Sends the mode with this list changed and the other list as loaded.
+        let with_list = {
+            let (allow, deny) = (allow.clone(), deny.clone());
+            let policy_send = policy_send.clone();
+            move |list: Vec<String>, ok: String| {
+                if deny_list {
+                    policy_send(mode_sig.get_untracked(), allow.clone(), list, ok)
+                } else {
+                    policy_send(mode_sig.get_untracked(), list, deny.clone(), ok)
+                }
             }
-            let mut list = entries.clone();
-            list.push(v.clone());
-            p.new_entry.set(String::new());
-            policy_send(mode_sig.get_untracked(), list, format!("{v} added."))
+        };
+        for (i, entry) in entries.iter().enumerate() {
+            let entries = entries.clone();
+            let with_list = with_list.clone();
+            let entry_txt = entry.clone();
+            col = col.child(
+                Element::new()
+                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                    // A fixed width: a full-width line would push "Remove" off the row.
+                    .child(super::util::line_styled(
+                        LayoutStyle::line(1).w(44).shrink(0.0),
+                        vec![span(format!("    {}", ellipsize(entry, 40)), t0.text)],
+                    ))
+                    .child(
+                        Button::new("Remove")
+                            .on_click(move || {
+                                let mut list = entries.clone();
+                                list.remove(i);
+                                with_list(list, format!("{entry_txt} removed."))
+                            })
+                            .element(cx, &t0)
+                            .build(),
+                    )
+                    .build(),
+            );
+        }
+        let add = {
+            let entries = entries.clone();
+            let with_list = with_list.clone();
+            move || {
+                let v = field.get_untracked().trim().to_string();
+                if v.is_empty() {
+                    return;
+                }
+                let mut list = entries.clone();
+                list.push(v.clone());
+                field.set(String::new());
+                with_list(list, format!("{v} added."))
+            }
         };
         let add2 = add.clone();
         col = col.child(
@@ -1566,7 +1590,7 @@ fn advanced_body(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> Vi
                 .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
                 .child(line_w(&t0, "    add", 8))
                 .child(
-                    input(p.new_entry, 28, false)
+                    input(field, 28, false)
                         .on_submit(move |_| add())
                         .element(cx, &t0)
                         .build(),
@@ -1575,6 +1599,11 @@ fn advanced_body(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> Vi
                 .build(),
         );
     }
+    col = col.child(helper(
+        &t0,
+        &format!("    {RECIPIENT_RULES_HELP}"),
+        p.wrap_w,
+    ));
     // "At most [20] per hour and [100] per day." — Enter in either saves.
     let save_limits = {
         let ctx = ctx.clone();

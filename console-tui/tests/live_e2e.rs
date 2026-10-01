@@ -43,6 +43,8 @@ struct Cleanup {
     c: GatewayClient,
     profile: bool,
     user: bool,
+    /// The run's user id (archived at cleanup when `user`).
+    user_id: String,
     route: bool,
     /// The pre-run configured body when the route was NOT unconfigured —
     /// restore means put-it-back, not clear (a clear would itself be
@@ -69,10 +71,11 @@ impl Drop for Cleanup {
             }
         }
         if self.user {
-            if let Err(e) = self.c.delete_user(USER_ID, "default") {
-                eprintln!("[cleanup] deleting user failed: {e}");
+            // Accounts are archived, never deleted (round 3).
+            if let Err(e) = self.c.archive_account(&self.user_id, "default", true) {
+                eprintln!("[cleanup] archiving user failed: {e}");
             } else {
-                eprintln!("[cleanup] user {USER_ID} deleted");
+                eprintln!("[cleanup] user {} archived", self.user_id);
             }
         }
         if self.profile {
@@ -95,6 +98,7 @@ fn wizard_writes_verify_and_clean_up() {
         c: c.clone(),
         profile: false,
         user: false,
+        user_id: String::new(),
         route: false,
         route_restore: None,
     };
@@ -258,11 +262,13 @@ fn wizard_writes_verify_and_clean_up() {
     cleanup.route = false; // restored in-band
     println!("route {} restored + verified via GET", row_before.key);
 
-    // ---- user: create (token once) → rotate → delete → verify -----------
-    let _ = c.delete_user(USER_ID, "default");
+    // ---- user: create (token once) → rotate → archive → verify ----------
+    // A fresh id per run: an archived account keeps its name (never deleted).
+    let user_id = format!("{USER_ID}-{}", std::process::id());
+    cleanup.user_id = user_id.clone();
     let created = c
         .create_user(&json!({
-            "user_id": USER_ID,
+            "user_id": user_id,
             "roles": ["user"],
             "enabled": true,
         }))
@@ -275,26 +281,32 @@ fn wizard_writes_verify_and_clean_up() {
     assert!(!token1.is_empty());
     let users = users_from_payload(&c.users().expect("GET users"));
     assert!(
-        users.humans.iter().any(|u| u.user_id == USER_ID),
+        users.humans.iter().any(|u| u.user_id == user_id),
         "GET lists the created user"
     );
     let rotated = c
-        .patch_user(USER_ID, "default", &json!({ "rotate_token": true }))
+        .patch_user(&user_id, "default", &json!({ "rotate_token": true }))
         .expect("rotate token");
     let token2 = rotated["token"]
         .as_str()
         .expect("new token once")
         .to_string();
     assert_ne!(token1, token2, "rotation mints a new token");
-    let deleted = c.delete_user(USER_ID, "default").expect("delete user");
-    cleanup.user = false; // deleted in-band
-    println!("user delete response: {deleted}");
+    let archived = c
+        .archive_account(&user_id, "default", true)
+        .expect("archive user");
+    cleanup.user = false; // archived in-band
+    assert_eq!(
+        archived["archived"],
+        json!(true),
+        "the gateway answers the archived row"
+    );
     let users = users_from_payload(&c.users().expect("GET users"));
     assert!(
-        !users.humans.iter().any(|u| u.user_id == USER_ID),
-        "GET no longer lists the deleted user"
+        users.humans.iter().any(|u| u.user_id == user_id),
+        "an archived user is kept (never deleted)"
     );
-    println!("user '{USER_ID}' created (token once), rotated, deleted, verified via GET");
+    println!("user '{user_id}' created (token once), rotated, archived, verified");
 
     // ---- profile cleanup -------------------------------------------------
     let del = c.delete_profile(PROFILE_ID).expect("delete profile");
