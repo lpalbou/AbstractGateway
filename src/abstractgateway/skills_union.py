@@ -102,7 +102,12 @@ def resolve_backlog_skills(
             advisories_path=registry_dir / "advisories.yaml",
             guidance_path=registry_dir / "guidance.yaml",
         )
-        selection = select_skills_for_context(registry, skills_root, requested)
+        from .skills_library import shelf_roots
+
+        roots = shelf_roots(skills_root)
+        if len(roots) > 1:
+            out["imported_shelf"] = str(roots[-1])
+        selection = select_skills_for_context(registry, roots, requested)
     except Exception as e:  # noqa: BLE001 - resolution failure is a labeled verdict
         out["verdicts"].append(f"#FALLBACK skill resolution failed: {e}")
         return out
@@ -168,7 +173,11 @@ def spawn_env_for_skills(skills_field: Optional[Dict[str, Any]]) -> Dict[str, st
     if not shelf or not active:
         return {}
     existing = str(os.getenv(_CODE_ROOTS_ENV, "") or "").strip()
-    out = {_CODE_ROOTS_ENV: f"{existing}:{shelf}" if existing else shelf}
+    roots = shelf
+    imported = str(skills_field.get("imported_shelf") or "").strip()
+    if imported:
+        roots = f"{shelf}:{imported}"
+    out = {_CODE_ROOTS_ENV: f"{existing}:{roots}" if existing else roots}
     registry_dir = Path(shelf).parent
     validations = registry_dir / "validations.yaml"
     advisories = registry_dir / "advisories.yaml"

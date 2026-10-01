@@ -14915,7 +14915,151 @@ async def gateway_skills_inventory(request: Request) -> Dict[str, Any]:
     from ..capability_inventories import skills_inventory
 
     svc = get_gateway_service()
-    return await asyncio.to_thread(skills_inventory, data_dir=Path(svc.stores.base_dir))
+    include_archived = str(request.query_params.get("include_archived") or "").strip().lower() in ("1", "true", "yes")
+    return await asyncio.to_thread(
+        skills_inventory, data_dir=Path(svc.stores.base_dir), include_archived=include_archived
+    )
+
+
+def _skills_refusal(exc: Exception) -> HTTPException:
+    status = int(getattr(exc, "status", 400) or 400)
+    return HTTPException(
+        status_code=status,
+        detail={"reason_code": "skill_refused", "message": str(getattr(exc, "message", exc))},
+    )
+
+
+@router.get("/skills/{name}")
+async def gateway_skill_detail(name: str, request: Request) -> Dict[str, Any]:
+    """One skill: SKILL.md text, parsed frontmatter, file list, origin (curated / imported /
+    archived) and whether it is editable (imported only). Any signed-in reader, like GET /skills."""
+    _principal_from_request(request)
+    from ..skills_library import SkillLibraryError, skill_detail
+
+    try:
+        return await asyncio.to_thread(skill_detail, name)
+    except SkillLibraryError as exc:
+        raise _skills_refusal(exc) from None
+
+
+@router.get("/skills/{name}/export")
+async def gateway_skill_export(name: str, request: Request) -> Response:
+    """The skill's folder as a zip (`<name>/SKILL.md`, `<name>/...`)."""
+    _principal_from_request(request)
+    from ..skills_library import SkillLibraryError, export_zip
+
+    try:
+        filename, blob = await asyncio.to_thread(export_zip, name)
+    except SkillLibraryError as exc:
+        raise _skills_refusal(exc) from None
+    return Response(
+        content=blob,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/admin/skills/import")
+async def gateway_admin_skill_import(request: Request) -> Dict[str, Any]:
+    """Import a skill into the gateway's imported shelf (<data dir>/skills/imported). Multipart:
+    one `file` (a .zip of the skill folder), or several `files` (a folder upload) with a parallel
+    `paths` list of their relative paths. Refused: more than 500 files or 10 MB, absolute paths,
+    `..`, symlinks, no SKILL.md, an invalid SKILL.md, a name already taken. Imported skills are
+    Unverified unless byte-identical to a curated one (abstractskill's trust rules)."""
+    principal = _require_admin_principal(request)
+    from ..skills_library import MAX_IMPORT_BYTES, SkillLibraryError, files_from_zip, import_skill
+
+    form = await request.form()
+    entries: list = []
+    try:
+        single = form.get("file")
+        if single is not None and hasattr(single, "read"):
+            blob = await single.read(MAX_IMPORT_BYTES * 2 + 1)
+            if len(blob) > MAX_IMPORT_BYTES * 2:
+                raise SkillLibraryError(f"The upload is larger than {MAX_IMPORT_BYTES * 2} bytes.")
+            entries = await asyncio.to_thread(files_from_zip, blob)
+        else:
+            uploads = [f for f in form.getlist("files") if hasattr(f, "read")]
+            paths = [str(p) for p in form.getlist("paths")]
+            if not uploads:
+                raise SkillLibraryError("Choose a .zip file or a skill folder to import.")
+            if paths and len(paths) != len(uploads):
+                raise SkillLibraryError("The folder upload's paths do not match its files.")
+            total = 0
+            for i, up in enumerate(uploads):
+                blob = await up.read(MAX_IMPORT_BYTES + 1)
+                total += len(blob)
+                if total > MAX_IMPORT_BYTES:
+                    raise SkillLibraryError(f"The folder holds more than {MAX_IMPORT_BYTES} bytes; a skill may hold at most that.")
+                entries.append((paths[i] if paths else str(up.filename or ""), blob))
+        detail = await asyncio.to_thread(import_skill, entries)
+    except SkillLibraryError as exc:
+        raise _skills_refusal(exc) from None
+    request.state.audit_detail = {"skill_import": {"name": detail["name"], "by": principal.user_id}}
+    return detail
+
+
+@router.put("/admin/skills/{name}")
+async def gateway_admin_skill_update(name: str, request: Request) -> Dict[str, Any]:
+    """Save an imported skill: body {skill_md?, description?, version?, license?}. The fields
+    are written into the SKILL.md frontmatter (version as metadata.version); the name never
+    changes. Curated skills answer 403 ("Curated skills are read-only; duplicate to edit.")."""
+    _require_admin_principal(request)
+    from ..skills_library import SkillLibraryError, update_skill
+
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail={"reason_code": "skill_refused", "message": "The body must be a JSON object."})
+    skill_md = body.get("skill_md")
+    fields = {k: (None if body.get(k) is None else str(body.get(k))) for k in ("name", "description", "version", "license") if k in body}
+    try:
+        detail = await asyncio.to_thread(update_skill, name, skill_md=None if skill_md is None else str(skill_md), fields=fields)
+    except SkillLibraryError as exc:
+        raise _skills_refusal(exc) from None
+    request.state.audit_detail = {"skill_update": {"name": name}}
+    return detail
+
+
+@router.post("/admin/skills/{name}/duplicate")
+async def gateway_admin_skill_duplicate(name: str, request: Request) -> Dict[str, Any]:
+    """Copy a skill (curated or imported) into the imported shelf as an editable skill: body
+    {name?} (default `<name>-copy`)."""
+    _require_admin_principal(request)
+    from ..skills_library import SkillLibraryError, duplicate_skill
+
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 - an empty body is fine
+        body = {}
+    new_name = (body or {}).get("name") if isinstance(body, dict) else None
+    try:
+        return await asyncio.to_thread(duplicate_skill, name, new_name)
+    except SkillLibraryError as exc:
+        raise _skills_refusal(exc) from None
+
+
+@router.post("/admin/skills/{name}/archive")
+async def gateway_admin_skill_archive(name: str, request: Request) -> Dict[str, Any]:
+    """Archive an imported skill: it leaves the shelf (runs no longer see it) and is kept under
+    <data dir>/skills/archived; never deleted."""
+    _require_admin_principal(request)
+    from ..skills_library import SkillLibraryError, archive_skill
+
+    try:
+        return await asyncio.to_thread(archive_skill, name)
+    except SkillLibraryError as exc:
+        raise _skills_refusal(exc) from None
+
+
+@router.post("/admin/skills/{name}/unarchive")
+async def gateway_admin_skill_unarchive(name: str, request: Request) -> Dict[str, Any]:
+    _require_admin_principal(request)
+    from ..skills_library import SkillLibraryError, unarchive_skill
+
+    try:
+        return await asyncio.to_thread(unarchive_skill, name)
+    except SkillLibraryError as exc:
+        raise _skills_refusal(exc) from None
 
 
 @router.post("/admin/skills/reseed")
@@ -14948,6 +15092,111 @@ async def gateway_mcp_servers_inventory(request: Request) -> Dict[str, Any]:
 
     svc = get_gateway_service()
     return mcp_servers_inventory(data_dir=Path(svc.stores.base_dir))
+
+
+def _mcp_refusal(exc: Exception) -> HTTPException:
+    return HTTPException(
+        status_code=int(getattr(exc, "status", 400) or 400),
+        detail={"reason_code": "mcp_refused", "message": str(getattr(exc, "message", exc))},
+    )
+
+
+async def _mcp_body(request: Request) -> Dict[str, Any]:
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = None
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail={"reason_code": "mcp_refused", "message": "The body must be a JSON object."})
+    return body
+
+
+def _mcp_data_dir() -> Path:
+    return Path(get_gateway_service().stores.base_dir)
+
+
+@router.post("/admin/mcp/servers")
+async def gateway_admin_mcp_create(request: Request) -> Dict[str, Any]:
+    """Register an MCP server: {name, transport: stdio|http, command, args[], cwd?, url,
+    headers{name: value}, description}. Header values are sealed in the gateway's secret store
+    (<data dir>/config/mcp_secrets); the registry keeps names + fingerprints. Runs do not use
+    registered servers yet."""
+    _require_admin_principal(request)
+    from ..mcp_registry import McpRegistryError, create_server
+
+    body = await _mcp_body(request)
+    try:
+        row = await asyncio.to_thread(create_server, _mcp_data_dir(), body)
+    except McpRegistryError as exc:
+        raise _mcp_refusal(exc) from None
+    request.state.audit_detail = {"mcp_server_create": {"name": row["name"]}}
+    return row
+
+
+@router.put("/admin/mcp/servers/{name}")
+async def gateway_admin_mcp_update(name: str, request: Request) -> Dict[str, Any]:
+    """Edit a server (same body as create; the name never changes). A header sent as null keeps
+    its stored value; a header left out is removed."""
+    _require_admin_principal(request)
+    from ..mcp_registry import McpRegistryError, update_server
+
+    body = await _mcp_body(request)
+    try:
+        row = await asyncio.to_thread(update_server, _mcp_data_dir(), name, body)
+    except McpRegistryError as exc:
+        raise _mcp_refusal(exc) from None
+    request.state.audit_detail = {"mcp_server_update": {"name": name}}
+    return row
+
+
+@router.post("/admin/mcp/servers/{name}/archive")
+async def gateway_admin_mcp_archive(name: str, request: Request) -> Dict[str, Any]:
+    _require_admin_principal(request)
+    from ..mcp_registry import McpRegistryError, set_archived
+
+    try:
+        return await asyncio.to_thread(set_archived, _mcp_data_dir(), name, True)
+    except McpRegistryError as exc:
+        raise _mcp_refusal(exc) from None
+
+
+@router.post("/admin/mcp/servers/{name}/unarchive")
+async def gateway_admin_mcp_unarchive(name: str, request: Request) -> Dict[str, Any]:
+    _require_admin_principal(request)
+    from ..mcp_registry import McpRegistryError, set_archived
+
+    try:
+        return await asyncio.to_thread(set_archived, _mcp_data_dir(), name, False)
+    except McpRegistryError as exc:
+        raise _mcp_refusal(exc) from None
+
+
+@router.post("/admin/mcp/servers/{name}/test")
+async def gateway_admin_mcp_test_saved(name: str, request: Request) -> Dict[str, Any]:
+    """Connect to a registered server (initialize, notifications/initialized, tools/list) within
+    10 seconds; records the result as the row's last_test. Returns {ok, message, server_info,
+    tools[], at, duration_ms}; a failed connection is a 200 with ok=false and a sentence."""
+    _require_admin_principal(request)
+    from ..mcp_registry import McpRegistryError, check_saved
+
+    try:
+        return await asyncio.to_thread(check_saved, _mcp_data_dir(), name)
+    except McpRegistryError as exc:
+        raise _mcp_refusal(exc) from None
+
+
+@router.post("/admin/mcp/test")
+async def gateway_admin_mcp_test_unsaved(request: Request) -> Dict[str, Any]:
+    """Test the Add/Edit form before saving (same body as create; nothing is stored). When the
+    body names a registered server, headers sent as null use its stored values."""
+    _require_admin_principal(request)
+    from ..mcp_registry import McpRegistryError, check_unsaved
+
+    body = await _mcp_body(request)
+    try:
+        return await asyncio.to_thread(check_unsaved, _mcp_data_dir(), body)
+    except McpRegistryError as exc:
+        raise _mcp_refusal(exc) from None
 
 
 @router.get("/semantics")

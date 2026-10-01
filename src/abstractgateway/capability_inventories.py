@@ -14,14 +14,12 @@ skills-union rule (ABSTRACTGATEWAY_SKILLS_SHELF > the triage repo's
 abstractskill/registry) so the picker lists the same shelf the workforce
 lane resolves against — one truth, not a second copy.
 
-MCP: v1 is a DECLARED registry — `<data_dir>/config/mcp_servers.json`
-(admin-managed file; rows {name, url?, description?, auth_required?,
-tags?}). Served fields are declared-only and the response says
-`probed: false` honestly: tool counts/connect state require connecting,
-which is a later lane (code c2234's tool_count suggestion lands when a
-probe lane exists — declared-only must not fake it). MCP GRANTS stay in
-the phases config family per the ruled decision; this endpoint is the
-inventory half that ruling was waiting on.
+MCP: the registry `<data_dir>/config/mcp_servers.json` (v1 hand-written
+rows, v2 written by the console's MCP servers tab — mcp_registry.py). The
+read never connects (`probed: false`); a row's `last_test` is the latest
+admin connection test. Runs do not use these servers yet
+(`agents_can_call: false`). MCP GRANTS stay in the phases config family
+per the ruled decision.
 
 Degradations are labeled warnings in the response body — an absent shelf
 or registry file lists honestly as empty, never fabricates, never 500s.
@@ -56,7 +54,34 @@ def _repo_root_for_shelf(data_dir: Path) -> Optional[Path]:
     return Path(str(raw)).expanduser().resolve() if raw else None
 
 
-def skills_inventory(*, data_dir: Path) -> Dict[str, Any]:
+_SHELF_SOURCE_LABELS = {
+    "seeded": "Curated registry",
+    "checkout": "Curated registry (framework checkout)",
+    "stored": "Shelf folder",
+    "env": "Shelf folder",
+}
+
+
+def registry_version(registry_dir: Path) -> Optional[str]:
+    """The curated registry's version: catalog.yaml `version`, else the seed record's."""
+    try:
+        import yaml
+
+        doc = yaml.safe_load((registry_dir / "catalog.yaml").read_text(encoding="utf-8"))
+        if isinstance(doc, dict) and doc.get("version") is not None:
+            return str(doc["version"])
+    except Exception:  # noqa: BLE001 - an absent catalog is a plain None
+        pass
+    try:
+        seeded = json.loads((registry_dir / ".seeded.json").read_text(encoding="utf-8"))
+        if isinstance(seeded, dict) and seeded.get("bundled_version"):
+            return str(seeded["bundled_version"])
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def skills_inventory(*, data_dir: Path, include_archived: bool = False) -> Dict[str, Any]:
     """The gateway's skills inventory, sourced from the abstractskill shelf.
 
     Returns {"skills": [roster rows], "shelf": path|None, "shelf_source":
@@ -102,6 +127,12 @@ def skills_inventory(*, data_dir: Path) -> Dict[str, Any]:
 
     skills_root = registry_dir / "skills"
     out["shelf"] = str(skills_root)
+    from .skills_library import imported_root, shelf_roots
+
+    imp_root = imported_root()
+    out["imported_shelf"] = str(imp_root)
+    out["registry_version"] = registry_version(registry_dir)
+    curated_label = _SHELF_SOURCE_LABELS.get(shelf["source"], "Curated registry")
 
     try:
         registry = TrustRegistry.load(
@@ -121,11 +152,21 @@ def skills_inventory(*, data_dir: Path) -> Dict[str, Any]:
             f"Check validations.yaml, advisories.yaml and guidance.yaml in {registry_dir}."
         )
 
-    loader = FilesystemSkillLoader(skills_root)
+    loader = FilesystemSkillLoader(shelf_roots(skills_root))
     for meta in loader.discover(on_warning=out["warnings"].append):
+        imported = meta.source_path is not None and meta.source_path.parent.parent == imp_root
+        own_version = (dict(meta.metadata or {})).get("version")
         row: Dict[str, Any] = {
             "name": meta.name,
             "description": meta.description,
+            "origin": "imported" if imported else "curated",
+            "source_label": "Imported" if imported else curated_label,
+            "version": (
+                str(own_version) if own_version is not None
+                else (None if imported else out["registry_version"])
+            ),
+            "editable": bool(imported),
+            "archived": False,
         }
         if meta.license:
             row["license"] = meta.license
@@ -181,6 +222,10 @@ def skills_inventory(*, data_dir: Path) -> Dict[str, Any]:
         row["has_scripts"] = has_scripts
         row["source"] = source
         out["skills"].append(row)
+    if include_archived:
+        from .skills_library import archived_rows
+
+        out["skills"].extend(archived_rows())
     if not out["skills"]:
         out["warnings"].append(f"The skill shelf at {skills_root} holds no skills (no skills/<name>/SKILL.md). {fix}")
     return out
@@ -236,6 +281,8 @@ def resolve_run_skills(names: List[str], *, data_dir: Path) -> Dict[str, Any]:
         )
         return out
 
+    from .skills_library import shelf_roots
+
     skills_root = registry_dir / "skills"
     try:
         registry = TrustRegistry.load(
@@ -243,7 +290,7 @@ def resolve_run_skills(names: List[str], *, data_dir: Path) -> Dict[str, Any]:
             advisories_path=registry_dir / "advisories.yaml",
             guidance_path=registry_dir / "guidance.yaml",
         )
-        selection = select_skills_for_context(registry, skills_root, requested)
+        selection = select_skills_for_context(registry, shelf_roots(skills_root), requested)
     except Exception as e:  # noqa: BLE001 - resolution failure is a labeled verdict
         out["verdicts"].append(f"#FALLBACK skill resolution failed: {e}")
         return out
@@ -312,7 +359,9 @@ def _apply_requires_check(
     declared_mcp: Optional[set] = None
     try:
         inv = mcp_servers_inventory(data_dir=data_dir)
-        declared_mcp = {str(r.get("name") or "").strip() for r in inv.get("servers") or []}
+        declared_mcp = {
+            str(r.get("name") or "").strip() for r in inv.get("servers") or [] if not r.get("archived")
+        }
     except Exception as e:  # noqa: BLE001
         verdicts.append(f"#FALLBACK requires_mcp check skipped (MCP registry unreadable: {e})")
 
@@ -383,10 +432,11 @@ def read_skill_body(name: str, *, data_dir: Path, max_chars: int = 16000) -> Dic
     try:
         from abstractskill import FilesystemSkillLoader
 
+        from .skills_library import shelf_roots
         from .skills_union import _shelf_registry_dir
 
         registry_dir, _note = _shelf_registry_dir(_repo_root_for_shelf(data_dir))
-        loaded = FilesystemSkillLoader(registry_dir / "skills").load(clean)
+        loaded = FilesystemSkillLoader(shelf_roots(registry_dir / "skills")).load(clean)
         body = str(loaded.document.body or "")
     except Exception as e:
         return {"success": False, "error": f"failed to load skill {clean!r}: {e}"}
@@ -400,54 +450,10 @@ def read_skill_body(name: str, *, data_dir: Path, max_chars: int = 16000) -> Dic
 
 
 def mcp_servers_inventory(*, data_dir: Path) -> Dict[str, Any]:
-    """The declared MCP server registry (v1: config-file-managed).
+    """The MCP server registry (`<data_dir>/config/mcp_servers.json`, v1 or v2) as served by
+    GET /mcp/servers: v2-shaped rows, header values never (fingerprints only), `probed: false`
+    (this read never connects; a row's `last_test` is the latest admin test) and the honest
+    `agents_can_call: false` — runs do not use these servers yet (mcp_registry.py)."""
+    from .mcp_registry import public_inventory
 
-    Reads `<data_dir>/config/mcp_servers.json`; rows are served with their
-    DECLARED fields only and `probed: false` — connect state / tool counts
-    require a probe lane this deliberately does not fake. Malformed rows
-    become labeled warnings, never a 500 and never a silent drop."""
-    out: Dict[str, Any] = {"servers": [], "source": None, "probed": False, "warnings": []}
-    path = Path(data_dir) / "config" / MCP_SERVERS_CONFIG_FILENAME
-    if not path.is_file():
-        out["warnings"].append(
-            f"no MCP server registry declared (create {path} with "
-            '{"version": 1, "servers": [{"name": ..., "url": ..., "description": ..., "auth_required": ...}]})'
-        )
-        return out
-    out["source"] = str(path)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as e:
-        out["warnings"].append(f"#FALLBACK MCP server registry unreadable: {e}")
-        return out
-    rows = data.get("servers") if isinstance(data, dict) else None
-    if not isinstance(rows, list):
-        out["warnings"].append('#FALLBACK MCP server registry must be {"version": 1, "servers": [...]}')
-        return out
-    seen: set[str] = set()
-    for i, raw in enumerate(rows):
-        if not isinstance(raw, dict):
-            out["warnings"].append(f"#FALLBACK servers[{i}] is not an object — skipped")
-            continue
-        name = str(raw.get("name") or "").strip()
-        if not name:
-            out["warnings"].append(f"#FALLBACK servers[{i}] has no name — skipped")
-            continue
-        if name in seen:
-            out["warnings"].append(f"#FALLBACK duplicate MCP server name {name!r} — later row skipped")
-            continue
-        seen.add(name)
-        row: Dict[str, Any] = {"name": name}
-        for key in ("url", "description"):
-            value = str(raw.get(key) or "").strip()
-            if value:
-                row[key] = value
-        if "auth_required" in raw:
-            row["auth_required"] = bool(raw.get("auth_required"))
-        tags = raw.get("tags")
-        if isinstance(tags, list):
-            clean_tags = [str(t).strip() for t in tags if str(t or "").strip()]
-            if clean_tags:
-                row["tags"] = clean_tags
-        out["servers"].append(row)
-    return out
+    return public_inventory(Path(data_dir))
