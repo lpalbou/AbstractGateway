@@ -147,6 +147,7 @@ def test_me_accounts_is_self_plus_own_entities(world) -> None:
     me, ent = rows["accounts"]
     assert me["own"] is True and me["actions"]["suspend"]["available"] is False
     assert me["actions"]["rotate"] == {"available": False, "reason": "Only an admin can rotate your token."}
+    assert me["actions"]["workspace"]["available"] is True  # your own workspace policy
     assert ent["created_by"] == {"tenant_id": "default", "user_id": "alice"}
     assert ent["actions"]["suspend"] == {"available": False, "reason": "Only an admin can suspend an entity."}
     bob = c.get("/api/gateway/me/accounts", headers=world["bob"]).json()["accounts"]

@@ -42,7 +42,6 @@ REASON_LAST_ADMIN = "This is the last active admin account; make another account
 REASON_ENTITY_EMAIL = "Entities can't have their own mailbox yet: mailboxes belong to a user's runtime."
 # Non-admin rows (GET /me/accounts): what only an admin can do, said once per action.
 REASON_ADMIN_ROTATE = "Only an admin can rotate your token."
-REASON_ADMIN_WORKSPACE = "Only an admin opens workspaces from Accounts."
 REASON_ADMIN_SUSPEND_ENTITY = "Only an admin can suspend an entity."
 
 _ROLE_ORDER = {"admin": 0, "user": 1, "entity": 2}
@@ -284,7 +283,6 @@ def list_my_accounts(caller: GatewayPrincipal) -> Dict[str, Any]:
         row = _user_row(me, caller, records)
         if not caller.is_admin():
             row["actions"]["rotate"] = _act(False, REASON_ADMIN_ROTATE)
-            row["actions"]["workspace"] = _act(False, REASON_ADMIN_WORKSPACE)
         rows.append(row)
     homes, warning = _entity_homes()  # the caller's own runtime: where its entities live
     by_id = {r.user_id: r for r in records if r.principal_kind == "entity"}
