@@ -122,7 +122,10 @@ def test_a_non_admin_cannot_delete_a_shared_workflow(shared_gateway, tmp_path, m
         assert "admin" not in (me.json().get("roles") or []), "precondition: a NON-admin principal"
 
         res = client.delete("/api/gateway/bundles/shared-wf?bundle_version=1.0.0", headers=csrf)
-        assert res.status_code == 403, res.text
+        # DELETE is gone for everyone (410, DESIGN-v3 §5.3); archiving a shared one is admin-only.
+        assert res.status_code == 410, res.text
+        archive = client.post("/api/gateway/bundles/shared-wf/archive", headers=csrf, json={"bundle_version": "1.0.0"})
+        assert archive.status_code == 403, archive.text
 
     assert target.is_file(), "a non-admin deleted a workflow shared by every user"
 
@@ -279,9 +282,9 @@ def test_the_admin_keeps_full_control_of_the_shared_registry(shared_gateway, tmp
 
         assert client.post("/api/gateway/bundles/reload", headers=admin).status_code == 200
 
-        rm = client.delete("/api/gateway/bundles/admin-wf?bundle_version=1.0.0", headers=admin)
+        rm = client.post("/api/gateway/bundles/admin-wf/archive", headers=admin, json={"bundle_version": "1.0.0"})
         assert rm.status_code == 200, rm.text
-        assert rm.json()["removed"] == 1
+        assert rm.json()["versions"] == ["1.0.0"]
 
 
 def test_reads_stay_open_to_non_admins(shared_gateway, tmp_path, monkeypatch):
