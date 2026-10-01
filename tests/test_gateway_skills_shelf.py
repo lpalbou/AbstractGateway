@@ -169,7 +169,9 @@ def test_console_skills_shelf_block() -> None:
 
     assert 'id="skills-settings-root"' in gateway_console_html()
     source = _console_script()
-    assert 'mountSkillsShelf("tab", $("skills-settings-root"))' in source
+    # The shelf setting moved from Apps to the Skills tab (DESIGN-v3 §6.1).
+    assert 'mountSkillsShelf("skills", $("skills-settings-root"))' in source
+    assert 'mountSkillsShelf("tab"' not in source
     harness = f"""
 const HTML_ESCAPES = {{"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}};
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] || ch);
