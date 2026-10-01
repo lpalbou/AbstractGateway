@@ -204,6 +204,9 @@ terminal console is `abstractgateway-console` 0.13.0; its matching changes are i
   no longer scroll inside the page.
 
 ### Fixed
+- Python 3.10: telling shipped workflows from imported ones read the checkout's pyproject.toml with
+  `tomllib` (3.11+), so `GET /api/gateway/bundles` failed there; it uses the `tomli` backport below 3.11
+  (new dependency `tomli>=1.1; python_version < '3.11'`).
 - Sign-in by email answers with the real outcome: `no_mailbox` when the account has an email
   address but no mailbox to send the code from (it used to read like "no email address"), and
   `send_failed` when the mail server refused the code or could not be reached (the request waits up

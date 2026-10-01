@@ -23,6 +23,7 @@ so the folder alone cannot tell them apart. The rule, in order:
 
 from __future__ import annotations
 
+import sys
 import functools
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, Optional, Set
@@ -46,7 +47,10 @@ def checkout_shipped_names(repo_root: Path) -> FrozenSet[str]:
     pyproject = repo_root / "pyproject.toml"
     if not pyproject.is_file():
         return frozenset()
-    import tomllib
+    if sys.version_info >= (3, 11):
+        import tomllib
+    else:  # Python 3.10: the  backport (a dependency below 3.11, pyproject.toml)
+        import tomli as tomllib
 
     doc = tomllib.loads(pyproject.read_text(encoding="utf-8"))
     include = (((doc.get("tool") or {}).get("hatch") or {}).get("build") or {}).get("targets", {}).get("wheel", {}).get("force-include") or {}

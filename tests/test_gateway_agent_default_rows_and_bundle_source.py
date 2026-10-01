@@ -135,3 +135,29 @@ def test_checkout_list_is_the_gitignore_negations_plus_the_wheel_list(tmp_path: 
     (tmp_path / ".gitignore").write_text("flows/bundles/*\n!flows/bundles/b@0.1.0.flow\n!docs/keep.md\n# !flows/bundles/c@1.flow\n")
     # An import written into the folder (c, d) is git-ignored: on neither list.
     assert checkout_shipped_names(tmp_path) == frozenset({"a@1.0.0.flow", "b@0.1.0.flow"})
+
+
+def test_checkout_list_reads_pyproject_with_tomli_on_python_3_10(tmp_path: Path, monkeypatch) -> None:
+    """requires-python is >=3.10 and tomllib is stdlib only from 3.11: on 3.10 the `tomli` backport
+    (a dependency below 3.11) must be used — a bare `import tomllib` broke GET /bundles there (CI py3.10)."""
+    import sys
+    import tomllib
+    import types
+
+    from abstractgateway.workflow_sources import checkout_shipped_names
+
+    used = []
+    fake = types.ModuleType("tomli")
+
+    def loads(text):
+        used.append(True)
+        return tomllib.loads(text)
+
+    fake.loads = loads
+    monkeypatch.setitem(sys.modules, "tomli", fake)
+    monkeypatch.setattr(sys, "version_info", (3, 10, 14, "final", 0))
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.hatch.build.targets.wheel.force-include]\n"flows/bundles/a@1.0.0.flow" = "abstractgateway/flows/bundles/a@1.0.0.flow"\n'
+    )
+    assert checkout_shipped_names(tmp_path) == frozenset({"a@1.0.0.flow"})
+    assert used, "on Python 3.10 the pyproject must be read with tomli"
