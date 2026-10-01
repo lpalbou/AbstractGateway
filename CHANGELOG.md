@@ -7,7 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Nothing yet.
+## [0.11.1] - 2026-10-02
+
+### Removed
+
+- The entity output-token cap: the gateway never sends `max_output_tokens` for an entity (visits,
+  summons, chat, its own time), so the model works at its full capacity. The
+  `ABSTRACTGATEWAY_ENTITY_MAX_OUTPUT_TOKENS` environment variable is gone, and the chat-open
+  request's `max_output_tokens` field is ignored: a request that still sends it opens normally and
+  the response carries a one-line `deprecation`.
+
+### Added
+
+- Boot applies the installer's `<data dir>/apps-upgrade.pending` (written when the installer
+  upgrades with no gateway running): every installed browser app named there is brought to the
+  release's version before the apps start; the file is removed, and a failed update is logged as an
+  error and reported in the boot outcome.
 
 ## [0.11.0] - 2026-10-01
 
