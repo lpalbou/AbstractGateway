@@ -313,3 +313,24 @@ def test_executable_for_lists_only_runnable_bundles_declaring_the_interface(gw):
 
     assert c.post("/api/gateway/bundles/alice-iface/archive", headers=alice, json={}).status_code == 200
     assert "alice-iface" not in picker(alice, include_archived="true"), "archived never appears in a picker"
+
+
+def test_an_owner_stamped_native_loop_import_still_loads(gw):
+    """The owner stamp must not break native-loop bundles (react/codeact/memact), whose
+    manifest auditor refuses unknown metadata keys."""
+    import abstractgateway.config as cfg
+
+    src = Path(cfg._default_flows_dir()) / "react-agent@0.1.0.flow"
+    if not src.is_file():
+        pytest.skip("this checkout carries no react-agent bundle")
+    with zipfile.ZipFile(src) as z:
+        assert json.loads(z.read("manifest.json"))["metadata"].get("native_loop_factory"), "precondition: a native-loop bundle"
+    up = gw["c"].post(
+        "/api/gateway/bundles/upload",
+        headers=gw["alice"],
+        files={"file": (src.name, src.read_bytes(), "application/octet-stream")},
+        data={"overwrite": "false", "reload": "true"},
+    )
+    assert up.status_code == 200, up.text
+    assert up.json()["loaded"] is True, up.json()
+    assert _items(gw["c"], gw["alice"])["react-agent"]["owner"] == {"kind": "user", "user_id": "alice"}
