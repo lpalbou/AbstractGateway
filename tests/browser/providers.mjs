@@ -175,12 +175,12 @@ try {
   await page.evaluate(() => document.getElementById("provider-modal-backdrop").classList.add("hidden"));
 
   // 5. Remote providers: the five remote families, connection state with a fingerprint only.
-  const presets = await page.$$eval("#provider-preset-grid [data-provider-preset]", (els) => els.map((e) => e.dataset.providerPreset));
+  const presets = await page.$$eval("#provider-preset-grid .provider-preset", (els) => els.map((e) => e.id.replace(/^provider-preset-/, "")));
   check(JSON.stringify(presets) === JSON.stringify(["openai", "anthropic", "openrouter", "portkey", "openai-compatible"]), "remote presets (no local family twice)", presets);
-  const openaiState = await page.textContent('#provider-preset-grid [data-provider-preset="openai"] .provider-preset__state');
+  const openaiState = await page.textContent('#provider-preset-openai .provider-preset__state');
   check(/^Connected · key [0-9a-f]{8}$/.test(openaiState.trim()), "OpenAI preset: Connected + 8-char fingerprint", openaiState);
-  check((await page.textContent('#provider-preset-grid [data-provider-preset="anthropic"] .provider-preset__state')).trim() === "Not connected", "Anthropic preset: Not connected");
-  await page.click('#provider-preset-grid [data-provider-preset="anthropic"]');
+  check((await page.textContent('#provider-preset-anthropic .provider-preset__state')).trim() === "Not connected", "Anthropic preset: Not connected");
+  await page.click('#provider-preset-anthropic');
   await page.waitForTimeout(300);
   check((await page.inputValue("#endpoint-provider-family")) === "anthropic", "a preset opens its connection modal");
   await page.evaluate(() => document.getElementById("provider-modal-backdrop").classList.add("hidden"));

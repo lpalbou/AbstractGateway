@@ -9741,7 +9741,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         const button = document.createElement("button");
         button.type = "button";
         button.className = `provider-preset ${state.activeProviderPreset === item.id ? "active" : ""}`;
-        button.setAttribute("data-provider-preset", item.id);
+        button.id = `provider-preset-${item.id}`;
         // Its connections, keys as fingerprints only (the table's rule).
         const mine = (state.endpointProfiles || []).filter((p) => p && (p.provider_family || "") === item.id && !LOCAL_CONNECTION_PROFILE_IDS.has(p.id));
         const status = !mine.length ? "Not connected"
