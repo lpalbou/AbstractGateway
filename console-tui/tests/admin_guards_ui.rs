@@ -469,7 +469,7 @@ fn my_accounts() -> Value {
          "email_address": null, "mailbox": {"state": "not_connected", "address": null, "provider": null, "reason": null},
          "runtime_id": "ana", "active": true, "entity_state": null,
          "actions": {"email": act(true, ""), "logs": act(true, ""),
-                     "workspace": act(false, "Only an admin opens workspaces from Accounts."),
+                     "workspace": act(true, ""),
                      "rotate": act(false, "Only an admin can rotate your token."),
                      "manage": act(false, "Only entities have a management page."),
                      "delete": act(false, "You can't delete your own account."),
