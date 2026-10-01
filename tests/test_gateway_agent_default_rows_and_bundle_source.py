@@ -141,8 +141,14 @@ def test_checkout_list_reads_pyproject_with_tomli_on_python_3_10(tmp_path: Path,
     """requires-python is >=3.10 and tomllib is stdlib only from 3.11: on 3.10 the `tomli` backport
     (a dependency below 3.11) must be used — a bare `import tomllib` broke GET /bundles there (CI py3.10)."""
     import sys
-    import tomllib
     import types
+
+    # The real parser behind the fake: stdlib tomllib on 3.11+, the tomli backport on 3.10 (this
+    # test runs on the 3.10 CI job too, where `import tomllib` itself fails).
+    if sys.version_info >= (3, 11):
+        import tomllib
+    else:
+        import tomli as tomllib
 
     from abstractgateway.workflow_sources import checkout_shipped_names
 

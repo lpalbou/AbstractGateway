@@ -94,6 +94,8 @@ terminal console is `abstractgateway-console` 0.13.0; its matching changes are i
   https same-origin rule in security.md.
 
 ### Changed
+- New dependency on Python 3.10: `tomli>=1.1` (`python_version < '3.11'`), used to read a checkout's
+  `pyproject.toml` when `GET /api/gateway/bundles` tells shipped workflows from imported ones.
 - Email send limits default to 100 per hour and 1000 per day (were 20 and 100; AbstractCore's
   defaults). A new mailbox no longer stores the defaults, so it follows them; limits a user sets
   (`PUT /me/email/limits`, Advanced in the consoles' email settings) are kept across upgrades. An
@@ -204,9 +206,6 @@ terminal console is `abstractgateway-console` 0.13.0; its matching changes are i
   no longer scroll inside the page.
 
 ### Fixed
-- Python 3.10: telling shipped workflows from imported ones read the checkout's pyproject.toml with
-  `tomllib` (3.11+), so `GET /api/gateway/bundles` failed there; it uses the `tomli` backport below 3.11
-  (new dependency `tomli>=1.1; python_version < '3.11'`).
 - Sign-in by email answers with the real outcome: `no_mailbox` when the account has an email
   address but no mailbox to send the code from (it used to read like "no email address"), and
   `send_failed` when the mail server refused the code or could not be reached (the request waits up
