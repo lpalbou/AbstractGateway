@@ -3375,7 +3375,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        <div class="first-run-brand"><span class="shell_brand_mark" aria-hidden="true">↔</span><span>AbstractGateway</span></div>
 	        <div class="first-run-intro">
 	          <h2 id="first-run-title">Set up AbstractGateway</h2>
-	          <p>Five short, optional steps. Skip anything you do not need: this guide stays one click away (Setup guide, top right).</p>
+	          <p>Five short, optional steps. Skip anything you do not need: this guide stays one click away (Setup, at the bottom of the sidebar).</p>
 	        </div>
 	        <ol id="first-run-steps" class="first-run-steps" aria-label="Setup steps"></ol>
 	        <div class="first-run-rail-foot">
@@ -14002,7 +14002,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       engines: { title: "Local engines", hint: "Run models on this computer", lede: "Engines run AI models on this computer. Install one if you want local models; cloud providers only need an API key (Providers tab)." },
       model: { title: "Choose your default model", hint: "What your apps use", lede: "The recommended set is sized for this computer: set it up in one click, or pick any model that fits." },
       apps: { title: "Apps", hint: "Flow, Code, Observer...", lede: "Apps that work with this gateway: build workflows, code with an agent, watch runs, talk to your entities." },
-      done: { title: "You are all set", hint: "Review and finish", lede: "Everything in this guide stays available in the console tabs, and the Setup guide button (top right) reopens it." },
+      done: { title: "You are all set", hint: "Review and finish", lede: "Everything in this guide stays available in the console tabs, and Setup, at the bottom of the sidebar, reopens it." },
     };
     const FIRST_RUN_APPS = [
       { pkg: "@abstractframework/flow", name: "Flow", mark: "Fl", what: "Design workflows visually and run them on this gateway." },
@@ -14459,7 +14459,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         ["Console", `<code class="ui-ellip is-block" title="${esc(url)}/console">${esc(url)}/console</code>`, "Bookmark it: this is your gateway's home"],
         ["Default text model", `<span class="ui-ellip is-block" title="${esc(model)}">${esc(model)}</span>`, "Change it any time in Multimodal"],
         ["Starts at login", `<span id="first-run-login-text" class="ui-ellip is-block">…</span>`, `<button id="first-run-login-toggle" type="button" role="switch" class="af-switch af-switch--sm kv-switch hidden" aria-checked="false" aria-label="Start at login"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Start at login</span></span></button>`],
-        ["This guide", "Setup guide", "The button at the top right reopens it"],
+        ["This guide", "Setup", "The button at the bottom of the sidebar reopens it"],
       ])
         + `<div class="ui-advanced"><div class="ui-section-title"><h3>From the command line</h3></div>`
         + firstRunKv([
