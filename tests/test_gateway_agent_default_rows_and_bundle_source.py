@@ -108,3 +108,30 @@ def test_bundles_carry_source_and_description(tmp_path: Path, monkeypatch: pytes
     assert items["upload"]["source"] == "imported" and items["upload"]["description"] == "An uploaded one."
     assert items["deep-research"]["source"] == "shipped"
     assert items["coder"]["source"] == "imported" and items["coder"]["description"] == ""
+
+
+def test_every_bundle_the_checkout_keeps_in_its_flows_folder_is_shipped() -> None:
+    """Adversary pass 2 (F4): map-reduce, structured-extract, adversarial-review and the meta-*
+    agents live in the gateway's own flows/bundles but not in the wheel force-include list; on a
+    repository-checkout deploy they are still files this gateway ships, never "Imported"."""
+    from abstractgateway.workflow_sources import bundle_source, shipped_bundle_names
+
+    repo = Path(__file__).resolve().parent.parent
+    tracked = {p.name for p in (repo / "flows" / "bundles").glob("*.flow")}
+    for name in ("map-reduce@0.1.0.flow", "structured-extract@0.1.0.flow", "adversarial-review@0.1.0.flow",
+                 "meta-debate@0.1.1.flow", "meta-baseline@0.1.1.flow", "co-scientist@0.1.0.flow"):
+        assert name in tracked, name
+        assert bundle_source(str(repo / "flows" / "bundles" / name), {}) == "shipped", name
+    assert tracked <= shipped_bundle_names(), sorted(tracked - shipped_bundle_names())
+
+
+def test_checkout_list_is_the_gitignore_negations_plus_the_wheel_list(tmp_path: Path) -> None:
+    from abstractgateway.workflow_sources import checkout_shipped_names
+
+    assert checkout_shipped_names(tmp_path) == frozenset()  # not a checkout
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.hatch.build.targets.wheel.force-include]\n"flows/bundles/a@1.0.0.flow" = "abstractgateway/flows/bundles/a@1.0.0.flow"\n'
+    )
+    (tmp_path / ".gitignore").write_text("flows/bundles/*\n!flows/bundles/b@0.1.0.flow\n!docs/keep.md\n# !flows/bundles/c@1.flow\n")
+    # An import written into the folder (c, d) is git-ignored: on neither list.
+    assert checkout_shipped_names(tmp_path) == frozenset({"a@1.0.0.flow", "b@0.1.0.flow"})

@@ -174,7 +174,7 @@ def test_console_state_toggles_in_a_browser(scratch_gateway) -> None:
     kit = console_islands_sync.locate_kit()
     base, admin = scratch_gateway
     proc = subprocess.run(
-        [node, str(SCRIPT), base, admin, ALICE, str(modules), str(kit or ""), RUN_ID],
+        [node, str(SCRIPT), base, admin, ALICE, str(modules), str(kit or ""), RUN_ID, BOB],
         capture_output=True, text=True, timeout=600, check=False,
     )
     assert proc.returncode == 0, proc.stderr[-4000:]

@@ -112,6 +112,18 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
   turned agent email tools off.").
 
 ### Web console
+- Accounts: your email address and mailbox settings open only from your own row's **Email**
+  button (the copy under the table is gone); the address card says "Not set yet — connecting a
+  mailbox below sets it." with **Set it now** until an address is set. A user's page is titled
+  "Your account". The workspace policy disclosure reads **Workspace policy** with one helper line.
+- Logs: the footer says what is recorded in plain words; a mailbox connection reads
+  "IMAP · password sign-in", "Google sign-in" or "Microsoft sign-in".
+- Workflows: a bundle no app uses says "No app"; a manifest version 0.0.0 reads "unversioned";
+  deleting a bundle that ships with the gateway says it does not come back at restart (only a
+  reinstall restores it); every bundle the repository keeps in `flows/bundles/` (map-reduce,
+  structured-extract, adversarial-review, the meta-* agents) counts as shipped on a checkout deploy.
+- Setup guide and Multimodal: a model AbstractCore could not look for (no Hugging Face cache yet on
+  a fresh install) shows "Download needed" with the reason and a Download button, not "Unknown".
 - The sidebar is grouped: Accounts; Work (Workflows, Runtimes, Apps); Models (Providers, Models,
   Engines, Multimodal); System (Resources, Sandbox, Network). A Setup button at the bottom of the
   sidebar (administrators) opens the setup guide; the flag button in the top bar is gone.

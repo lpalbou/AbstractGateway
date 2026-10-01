@@ -38,10 +38,17 @@ CHUNK = 256 * 1024
 API = "/api/gateway"
 
 NOTE = (
-    "From the gateway's audit log: sign-ins, changes (every POST, PUT, PATCH and DELETE), runs started "
-    "and email events. Read-only requests (page views, token use on reads), mail received and what agents "
-    "send with their email tools are not recorded."
+    "The gateway records sign-ins, changes, runs started and email events. Page views and reads are not "
+    "recorded, nor mail received or what agents send with their email tools."
 )
+
+# How a mailbox was connected (`email.connected` audit fields auth_kind / provider, mail/accounts.py),
+# in plain words. Explicit table; a pair not in it shows its raw value (never hidden).
+CONNECTED_DETAIL: Dict[Tuple[str, str], str] = {
+    ("password", ""): "IMAP · password sign-in",
+    ("oauth2", "google"): "Google sign-in",
+    ("oauth2", "microsoft"): "Microsoft sign-in",
+}
 
 # Observer links: the Observer's hash routes (abstractobserver src/ui/automations.ts
 # `parse_app_hash`, wired in src/ui/app.tsx on load and hashchange): `#automations` (the
@@ -327,7 +334,9 @@ def _email_event(doc: Dict[str, Any], event: str, spec: Tuple[str, str]) -> Dict
     elif event == "email.notification_sent":
         detail = str(doc.get("kind") or "") or None
     elif event == "email.connected":
-        detail = str(doc.get("auth_kind") or doc.get("provider") or "") or None
+        auth = str(doc.get("auth_kind") or "")
+        provider = str(doc.get("provider") or "") if auth == "oauth2" else ""
+        detail = CONNECTED_DETAIL.get((auth, provider)) or " · ".join(x for x in (auth, provider) if x) or None
     elif event == "email.folder_changed":
         detail = str(doc.get("folder") or "") or None
     elif event == "email.message_unprocessable":

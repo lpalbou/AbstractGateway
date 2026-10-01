@@ -1832,6 +1832,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .plain-disclosure > summary::before { content: "›"; display: inline-block; width: 1em; text-align: center; transition: transform .15s; }
 	    .plain-disclosure[open] > summary::before { transform: rotate(90deg); }
 	    .plain-disclosure[open] > summary { color: var(--text); margin-bottom: 8px; }
+	    /* F5: the workspace policy disclosure = the kit chevron (as Advanced), a short title + one helper line. */
+	    .workspace-policy-disclosure { margin-top: 16px; }
+	    .weights-reason { display: block; margin-top: 4px; font-size: var(--af-helper-size, 13px); color: var(--text-secondary); }
+	    .workspace-policy-disclosure > summary { display: grid; grid-template-columns: 1em 1fr; column-gap: 4px; align-items: baseline; }
+	    .workspace-policy-disclosure__title { font-size: var(--font-size-md); font-weight: 600; color: var(--text); }
+	    .workspace-policy-disclosure__help { grid-column: 2; font-size: var(--af-helper-size, 13px); color: var(--text-secondary); font-weight: 400; }
 	    .link-button {
 	      min-height: 0; padding: 2px 0; border: 0; background: transparent; color: var(--muted);
 	      font-size: var(--font-size-base); font-weight: 400; text-decoration: underline;
@@ -2760,8 +2766,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <p id="email-caps-message" class="inline-state" role="status" aria-live="polite"></p>
 	              </section>
 	            </section>
-	            <details id="my-workspace-policy-section" class="entity-advanced session-only">
-	              <summary>My workspace policy <span id="my-workspace-policy-summary" class="entity-config-hint">where your agents may write — mode, launch-folder trust, allow/deny lists</span></summary>
+	            <details id="my-workspace-policy-section" class="plain-disclosure workspace-policy-disclosure session-only">
+	              <summary><span class="workspace-policy-disclosure__title">Workspace policy</span><span id="my-workspace-policy-summary" class="workspace-policy-disclosure__help">Which folders your agents may read and write.</span></summary>
 	              <div class="entity-config-block">
 	                <div class="section-head">
 	                  <div>
@@ -2787,7 +2793,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                  (the one inline Save) → Mailbox (tabs Google / Microsoft / Other, or the
                  connected status) → Notifications (two switches) → Agent email tools →
                  Advanced. Switches apply at once; no other Save button. -->
-            <div id="my-email-section" class="session-only account-page">
+            <div id="my-email-section" class="session-only account-page hidden">
               <div class="account-page__head">
                 <h2 class="section-title"><span class="section-icon" aria-hidden="true">✉</span><span>My email address and mailbox</span></h2>
                 <button id="my-email-refresh" class="secondary icon-only" type="button" title="Reload" aria-label="Reload my email address and mailbox"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
@@ -2800,7 +2806,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                   <div class="af-form__field">
                     <label class="af-form__label sr-only" for="my-email-registered">Your email address</label>
                     <!-- DESIGN-v2 §11: ONE editable address field on screen at a time. -->
-                    <p id="my-email-registered-view" class="address-view"><span id="my-email-registered-text"></span> <button id="my-email-registered-change" class="link-button" type="button"></button></p>
+                    <p id="my-email-registered-view" class="address-view"><span id="my-email-registered-text" class="muted">Not set yet — connecting a mailbox below sets it.</span> <button id="my-email-registered-change" class="link-button" type="button">Set it now</button></p>
                     <div id="my-email-registered-edit" class="af-form__inline" hidden>
                       <input id="my-email-registered" type="email" autocomplete="email" spellcheck="false" aria-describedby="my-email-registered-help my-email-registered-error">
                       <button id="my-email-registered-save" class="secondary" type="button">Save</button>
@@ -4221,6 +4227,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      apps: ["Apps", "Install and open the apps that work with this gateway"],
 	      network: ["Network", "Who can reach this gateway, and at which addresses"],
 	    };
+	    const USERS_TITLE_NON_ADMIN = ["Your account", "Your account and the entities you created."];
 	    function setActiveTab(tab) {
 	      // Legacy persisted tab ids fold into their new homes (entities
 	      // merged into users); unknown ids land on the FIRST tab — the
@@ -4237,8 +4244,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // The slim header names the page (family shell: sidebar navigates,
 	      // header titles) — signed out it stays the app name.
 	      if (state.principal && TAB_TITLES[next]) {
-	        $("page-title").textContent = TAB_TITLES[next][0];
-	        $("page-subtitle").textContent = TAB_TITLES[next][1];
+	        // F6 (DESIGN G2): a non-admin's Accounts page is their own account.
+	        const t = next === "users" && !state.principal.admin ? USERS_TITLE_NON_ADMIN : TAB_TITLES[next];
+	        $("page-title").textContent = t[0];
+	        $("page-subtitle").textContent = t[1];
 	      }
 	      writeStringSetting(ACTIVE_TAB_KEY, next);
 	      mcOnTabChange(next);  // the catalog's `#catalog?...` link follows the tab (console_catalog.py)
@@ -4259,6 +4268,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    state.workflowsShowDrafts = false;
 	    state.workflowsShowOlder = false;
 	    const WORKFLOW_SOURCE_TEXT = { shipped: "Shipped with the gateway", imported: "Imported", published: "Published from AbstractFlow" };
+	    // F4: a manifest whose bundle_version is the placeholder "0.0.0" (the Assistant orchestrator
+	    // ships so) has no version; say "unversioned" instead of a number that looks like one.
+	    const WORKFLOW_UNVERSIONED = new Set(["0.0.0"]);
+	    function workflowVersionLabel(v) {
+	      const text = String(v || "");
+	      return WORKFLOW_UNVERSIONED.has(text) ? "unversioned" : text;
+	    }
 	    function workflowVersionCmp(a, b) {
 	      const pa = String(a || "").split(/[.+-]/).map((x) => (/^\\d+$/.test(x) ? Number(x) : x));
 	      const pb = String(b || "").split(/[.+-]/).map((x) => (/^\\d+$/.test(x) ? Number(x) : x));
@@ -4332,7 +4348,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const td = document.createElement("td");
 	      td.className = "workflows-usedby";
 	      td.setAttribute("data-label", "Used by");
-	      if (!row.interfaces.length) { td.innerHTML = `<span class="muted">None</span>`; return td; }
+	      if (!row.interfaces.length) { td.innerHTML = `<span class="muted">No app</span>`; return td; }
 	      for (const iface of row.interfaces) {
 	        const info = workflowInterfaceInfo(iface);
 	        const item = document.createElement("span");
@@ -4364,7 +4380,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const head = document.createElement("div");
 	        head.className = "workflows-version__head";
 	        const title = document.createElement("strong");
-	        title.textContent = String(v.bundle_version || "");
+	        title.textContent = workflowVersionLabel(v.bundle_version);
 	        const meta = document.createElement("span");
 	        meta.className = "muted";
 	        meta.textContent = `${v.version_channel || (v.is_draft ? "draft" : "published")} · ${String(v.created_at || "").slice(0, 10)}`;
@@ -4380,7 +4396,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          const del = document.createElement("button");
 	          del.type = "button"; del.className = "secondary danger small"; del.textContent = "Delete";
 	          del.setAttribute("aria-label", `Delete ${row.name} ${v.bundle_version}`);
-	          del.onclick = (ev) => { if (ev && ev.stopPropagation) ev.stopPropagation(); deleteWorkflow(row.bundle_id, String(v.bundle_version || ""), null, box); };
+	          del.onclick = (ev) => { if (ev && ev.stopPropagation) ev.stopPropagation(); deleteWorkflow(row.bundle_id, String(v.bundle_version || ""), { ...row, versions: [v] }, box); };
 	          acts.append(del);
 	        }
 	        head.append(acts);
@@ -4444,7 +4460,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        name.querySelector("small").textContent = row.bundle_id;
 	        if (row.deprecated) { const pill = document.createElement("span"); pill.className = "pill"; pill.textContent = "Deprecated"; name.querySelector(".workflows-name__text").append(pill); }
 	        const olderCount = row.versions.length - 1;
-	        const versionText = `${row.latest.bundle_version || "—"}${olderCount > 0 ? ` +${olderCount} older` : ""}`;
+	        const versionText = `${workflowVersionLabel(row.latest.bundle_version) || "No version"}${olderCount > 0 ? ` +${olderCount} older` : ""}`;
 	        if (!WORKFLOW_SOURCE_TEXT[row.source]) console.error(`AbstractGateway console: GET /bundles item ${row.bundle_id} has no known source (gateway-api seam, DESIGN-v2 §6): ${row.source}`);
 	        const sourceText = WORKFLOW_SOURCE_TEXT[row.source] || "Unknown source";
 	        // Narrow screens (DESIGN §12): the description and "Version · source" fold under the
@@ -4660,7 +4676,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // Delete asks INLINE, in the row (round-2 polish): the sentence names what goes, the run
 	    // count (or its floor), and the way back (export first); Delete / Cancel sit beside it.
 	    // anchor = the bundle's <tr> (whole bundle) or the version box in the expanded row.
-	    function workflowDeleteSentence(label, bundleVersion, usage) {
+	    // A shipped bundle lives in the gateway's own flows folder (the default registry, config.py
+	    // _default_flows_dir); nothing copies it back at start, so the confirm says the file stays
+	    // gone until the gateway is reinstalled (routes/gateway.py remove_bundle unlinks it).
+	    const WORKFLOW_SHIPPED_DELETE = " It ships with the gateway: nothing puts it back at the next restart, only reinstalling the gateway does.";
+	    function workflowDeleteSentence(label, bundleVersion, usage, shipped = false) {
 	      const scope = bundleVersion ? "This version is removed from disk" : "Every version of this workflow is removed from disk";
 	      let runs = "";
 	      if (usage && usage.seen) {
@@ -4670,7 +4690,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      } else if (usage) {
 	        runs = " No runs reference it in the pages checked.";
 	      }
-	      return `Delete ${label}? ${scope}; there is no undo.${runs} Export it first if you may need it again.`;
+	      return `Delete ${label}? ${scope}; there is no undo.${shipped ? WORKFLOW_SHIPPED_DELETE : ""}${runs} Export it first if you may need it again.`;
 	    }
 	    function workflowConfirmInline(anchor, text, onConfirm) {
 	      for (const old of Array.from(document.querySelectorAll("#tab-workflows .workflows-confirm"))) old.remove();
@@ -4716,7 +4736,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const label = bundleVersion ? `${bundleId}@${bundleVersion}` : bundleId;
 	      let usage = null;
 	      try { usage = await workflowUsage(bundleId, bundleVersion, row); } catch (err) { usage = null; }
-	      workflowConfirmInline(anchor, workflowDeleteSentence(label, bundleVersion, usage), async () => {
+	      const shipped = Boolean(row && (row.versions || []).some((v) => v && v.source === "shipped"));
+	      workflowConfirmInline(anchor, workflowDeleteSentence(label, bundleVersion, usage, shipped), async () => {
 	        $("workflows-message").textContent = `Deleting ${label}…`;
 	        $("workflows-message").className = "message";
 	        try {
@@ -6777,7 +6798,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("my-workspace-blocked").value = (entry.workspace_blocked_paths || []).join("\\n");
 	      const effMode = eff.mode || "whitelist";
 	      const effTrust = eff.trust_client_launch_folder === true;
-	      $("my-workspace-policy-summary").textContent = `${effMode} mode · launch-folder trust ${effTrust ? "on" : "off"}`;
 	      $("my-workspace-policy-current").textContent =
 	        `Effective: ${effMode} mode · launch-folder trust ${effTrust ? "on" : "off"} · ` +
 	        `${(eff.workspace_allowed_paths || []).length} allowed · ${(eff.workspace_blocked_paths || []).length} refused`;
@@ -10219,6 +10239,22 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      unknown: { label: "unknown", cls: "covered" },
 	      not_applicable: { label: "remote", cls: "covered" },
 	    };
+	    // F2 (adversary pass 2): AbstractCore's probe answers `unknown` when it cannot look (on a
+	    // fresh install: "no Hugging Face cache directory exists on this machine yet"). A pill must
+	    // never just say "Unknown": with a download verb (`downloadable`) the state is "Download
+	    // needed" and Download is offered (fetching an already-cached model only re-checks it);
+	    // without one it says "Not checked" and the probe's own reason is shown next to it.
+	    function weightView(availability) {
+	      const a = availability || {};
+	      if (a.status === "unknown") return a.downloadable ? { label: "download needed", cls: "off", canDownload: true } : { label: "not checked", cls: "covered", canDownload: false };
+	      const view = WEIGHT_LABELS[a.status];
+	      if (!view) throw new Error(`AbstractGateway console: unknown model presence status ${JSON.stringify(a.status)} (core seam: installed|absent|unknown|not_applicable).`);
+	      return { ...view, canDownload: a.status === "absent" && Boolean(a.downloadable) };
+	    }
+	    function weightReason(availability) {
+	      const d = String((availability && availability.detail) || "").trim();
+	      return d ? `${d.charAt(0).toUpperCase()}${d.slice(1)}${/[.!?]$/.test(d) ? "" : "."}` : "";
+	    }
 	    function rowAvailability(row) {
 	      return state.availability.get(defaultRowKey(row)) || null;
 	    }
@@ -10457,9 +10493,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (job && job.status === "running") return uiProgressMarkup(job, "Downloading");
 	      if (!info || !info.availability || !info.availability.status) return "-";
 	      const availability = info.availability;
-	      const view = WEIGHT_LABELS[availability.status] || { label: availability.status, cls: "covered" };
+	      const view = weightView(availability);
 	      const title = [availability.detail, availability.location, availability.evidence].filter(Boolean).join(" — ");
-	      return `<span class="state-pill ${esc(view.cls)}" title="${esc(title)}">${esc(view.label)}</span>`;
+	      const why = availability.status === "unknown" && weightReason(availability) ? `<span class="weights-reason">${esc(weightReason(availability))}</span>` : "";
+	      return `<span class="state-pill ${esc(view.cls)}" title="${esc(title)}">${esc(view.label)}</span>${why}`;
 	    }
 	    function defaultSourceLabel(source) {
 	      const value = String(source || "").trim();
@@ -11945,7 +11982,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // DESIGN-v2 §2: the entities are rows of the Accounts table (for everyone, RBAC-scoped);
       // the admin's own email UI opens from their row (Email); a user keeps it on the page too.
       if (!state.manageName) $("entities-list-section").classList.add("hidden");
-      if (!$("my-email-section").classList.contains("in-modal")) $("my-email-section").classList.toggle("hidden", Boolean(p.admin));
+      // DESIGN-v2 §2.3 (adversary pass 2, F1): the account email UI lives ONLY in the own row's
+      // Email modal, for everyone; it is never rendered on the page.
+      if (!$("my-email-section").classList.contains("in-modal")) $("my-email-section").classList.add("hidden");
       $("runtimes-section").classList.toggle("hidden", !p.admin);
       // Retained runtimes: shown only for admins AND only when reservations
       // exist (the Runtimes tab is the table + the
@@ -12350,7 +12389,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (accountsUi.emailHome && section && section.parentNode === $("account-email-body")) {
         accountsUi.emailHome.parentNode.insertBefore(section, accountsUi.emailHome);
         section.classList.remove("in-modal");
-        section.classList.toggle("hidden", Boolean(state.principal && state.principal.admin));
+        section.classList.add("hidden");
       }
       $("account-email-body").textContent = "";
       backdrop.hidden = true;
@@ -12764,9 +12803,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          actions.append(clear);
 	        }
 	        // DOWNLOAD is offered only where it can do something: the weights
-	        // are known to be missing AND this provider has a download verb
-	        // here. `unknown` gets no button — we would be guessing with the
-	        // operator's disk — and a relay provider has nothing to fetch.
+	        // are missing (or the probe could not look, `unknown`) AND this
+	        // provider has a download verb here (`downloadable`, weightView);
+	        // a relay provider has nothing to fetch.
 	        const info = rowAvailability(row);
 	        const availability = (info && info.availability) || {};
 	        const job = rowDownloadJob(row);
@@ -12776,7 +12815,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          busy.textContent = job.message || "downloading…";
 	          busy.title = (job.events || []).slice(-6).join("\\n");
 	          actions.append(busy);
-	        } else if (availability.status === "absent" && availability.downloadable) {
+	        } else if (availability.status && weightView(availability).canDownload) {
 	          const artifact = rowDownloadArtifact(row);
 	          const download = document.createElement("button");
 	          download.className = "secondary";
@@ -14295,11 +14334,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           pill = uiPill("Downloaded", "ok");
           body = `<p class="ui-card__note">${esc(job.message || "Downloaded.")}</p>`;
         } else {
-          const view = WEIGHT_LABELS[r.status] || { label: r.status || "unknown", cls: "covered" };
+          const view = weightView(r);
           const tone = view.cls === "ok" ? "ok" : view.cls === "off" ? "muted" : "info";
-          pill = uiPill(firstRunCap(view.label), tone, r.evidence || r.instruction || "");
+          pill = uiPill(firstRunCap(view.label), tone, r.detail || r.evidence || r.instruction || "");
+          if (r.status === "unknown" && weightReason(r)) body = `<p class="ui-card__note first-run-presence-reason">${esc(weightReason(r))}</p>`;
         }
-        const canDownload = r.status === "absent" && !(job && (dlActive(job) || job.status === "completed"));
+        const canDownload = weightView(r).canDownload && !(job && (dlActive(job) || job.status === "completed"));
         // DESIGN-v2 §5: the card names the ENGINE that runs the route and its model
         // ("faster-whisper · base"), AbstractCore's plan `route_provider`/`route_model`;
         // the download (Hugging Face repo) is a technical detail.

@@ -3,7 +3,7 @@
 // against a hermetic scratch gateway (admin / alice with an email address and a mailbox record
 // that never connects / bob without an email address).
 //
-//   node state_toggles.mjs <base-url> <admin-token> <alice-token> <playwright-node-modules> [<kit ui-kit dir>]
+//   node state_toggles.mjs <base-url> <admin-token> <alice-token> <playwright-node-modules> <kit ui-kit dir> <run id> <bob-token>
 //
 // Prints one JSON line: {"failures": [...], "checks": N}. The type-scale check is the kit's own
 // checkLabelScale (ui-kit src/label_scale.ts, types stripped by node) when the kit checkout is
@@ -13,7 +13,8 @@ import module from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 
-const [BASE, ADMIN, ALICE, PW, KIT, RUN_ID] = process.argv.slice(2);
+const [BASE, ADMIN, ALICE, PW, KIT, RUN_ID, BOB] = process.argv.slice(2);
+if (!BOB) throw new Error("state_toggles.mjs needs bob's token (7th argument)");
 const require = createRequire(path.join(PW, "/"));
 const { chromium } = require("playwright-core");
 
@@ -288,6 +289,10 @@ try {
     await page.waitForSelector("#account-logs-backdrop:not([hidden]) .account-logs-item", { timeout: 10000 });
     const logs = await page.evaluate(() => ({ title: document.getElementById("account-logs-title").textContent, chips: Array.from(document.querySelectorAll("#account-logs-filters button")).map((b) => b.textContent), items: Array.from(document.querySelectorAll(".account-logs-item")).map((li) => li.querySelector(".account-logs-item__title").textContent), note: document.getElementById("account-logs-note").textContent }));
     check(logs.title === "Activity — alice" && JSON.stringify(logs.chips) === JSON.stringify(["All", "Sign-ins", "Runs", "Automations", "Email"]) && logs.items.some((t) => /mailbox/i.test(t)) && /not recorded/.test(logs.note), "Logs modal renders alice's events with the honest footer", logs);
+    // Adversary pass 2 (F3): the footer in plain words (no HTTP verbs); a connection says how.
+    check(logs.note.startsWith("The gateway records sign-ins, changes, runs started and email events. Page views and reads are not recorded") && !/POST|PUT|PATCH|DELETE/.test(logs.note), "Logs footer in plain words, no POST/PUT/PATCH/DELETE", logs.note);
+    const details = await page.evaluate(() => Array.from(document.querySelectorAll(".account-logs-item")).map((li) => li.textContent));
+    check(!details.some((t) => /\bpassword\b/.test(t) && !/password sign-in/.test(t)), "no bare 'password' event detail", details);
     const runLink = await page.evaluate(() => { const li = document.querySelector(".account-logs-item[data-kind='run']"); const a = li && li.querySelector(".account-logs-item__link"); return li && { title: li.querySelector(".account-logs-item__title").textContent, link: a && a.textContent, path: a && a.getAttribute("data-observer-path") }; });
     check(runLink && runLink.title === "Run started" && runLink.link === "Open in Observer" && runLink.path === `/apps/observer/#run/${RUN_ID}`, "a run event links into the Observer's run page (/apps/observer/#run/<run_id>)", runLink);
     await page.click("#account-logs-filters button:nth-child(2)");
@@ -316,6 +321,17 @@ try {
       purpose: document.querySelector("#tab-workflows .workflows-purpose")?.textContent || "",
     }));
     check(wf.basic === "Basic agent" && wf.what && wf.what !== "—" && wf.source === "Shipped with the gateway", "workflow rows: plain name, what it does, source", wf);
+    // Adversary pass 2 (F4): "No app" (not "None"); the gateway's own flows folder = shipped;
+    // a 0.0.0 manifest version reads "unversioned".
+    const wf2 = await page.evaluate(() => ({
+      usedBy: Array.from(document.querySelectorAll("#workflows-table td.workflows-usedby")).map((td) => td.textContent.trim()),
+      docs: document.querySelector("#workflows-table tr[data-bundle='docs-qa'] td.workflows-usedby")?.textContent.trim(),
+      sources: Object.fromEntries(["map-reduce", "structured-extract", "adversarial-review", "meta-debate"].map((b) => [b, document.querySelector(`#workflows-table tr[data-bundle='${b}'] .workflows-source`)?.textContent])),
+      orch: document.querySelector("#workflows-table tr[data-bundle='abstractassistant-orchestrator'] .workflows-version-cell")?.textContent,
+    }));
+    check(wf2.docs === "No app" && !wf2.usedBy.includes("None"), "Used by says 'No app', never 'None'", wf2);
+    check(Object.values(wf2.sources).every((t) => t === "Shipped with the gateway"), "bundles in the gateway's flows folder are 'Shipped with the gateway'", wf2.sources);
+    check(wf2.orch === "unversioned", "a 0.0.0 manifest version reads 'unversioned'", wf2.orch);
     check(wf.warn === 0 && !wf.notAvailable, "no warnings and no 'Not available' on a fresh install", wf);
     check(wf.labels.includes("AbstractCode — chat agent") && wf.labels.includes("Assistant"), "default workflow per app: plain names", wf.labels);
     check(wf.purpose.startsWith("Workflows are the programs your apps and automations run."), "purpose line");
@@ -339,6 +355,7 @@ try {
     await page.click("#workflows-table tr[data-bundle='basic-agent'] .workflows-actions button.danger");
     await page.waitForSelector("#workflows-table tr.workflows-confirm", { timeout: 10000 });
     const ask = await page.evaluate(() => { const c = document.querySelector("#workflows-table tr.workflows-confirm"); const prev = c.previousElementSibling; const dlg = document.getElementById("confirm-title"); return { text: c.textContent, after: prev && prev.dataset.bundle, dialog: !!(dlg && dlg.checkVisibility && dlg.checkVisibility()) }; });
+    check(ask.text.includes("It ships with the gateway: nothing puts it back at the next restart, only reinstalling the gateway does."), "Delete on a shipped bundle says what happens", ask.text);
     check(ask.after === "basic-agent" && /^Delete basic-agent\? Every version of this workflow is removed from disk; there is no undo\./.test(ask.text) && /(No runs reference it|runs? reference it)/.test(ask.text) && !ask.dialog, "workflow Delete: inline confirmation in the row with the run sentence, no dialog", ask);
     await page.click("#workflows-table tr.workflows-confirm button.secondary");
     check((await page.locator("#workflows-table tr.workflows-confirm").count()) === 0 && (await page.locator("#workflows-table tr[data-bundle='basic-agent']").count()) === 1, "Cancel closes the inline confirmation; nothing deleted");
@@ -389,6 +406,9 @@ try {
     const { ctx, page } = await newPage(browser);
     await signIn(page, "alice", ALICE);
     await openAccount(page);
+    await page.waitForSelector("tr[data-user='alice'] button[data-action='email']", { timeout: 10000 });
+    await page.click("tr[data-user='alice'] button[data-action='email']");
+    await page.waitForSelector("#account-email-backdrop:not([hidden]) #my-email-section", { timeout: 10000 });
     await page.waitForSelector("#my-email-connected", { state: "visible", timeout: 10000 });
     const status = (await page.textContent("#my-email-status")).trim();
     check(status.startsWith("Connected as alice@fastmail.com · IMAP"), "connected status line", status);
@@ -410,6 +430,27 @@ try {
     await page.click("#my-email-disconnect");
     check((await page.textContent("#my-email-disconnect-confirm")).includes("Disconnect this mailbox?"), "inline disconnect confirmation");
     await page.click("#my-email-disconnect-cancel");
+    await ctx.close();
+  }
+  // ---------------------------------------------------------------- bob: a user without an address (adversary pass 2, F1/F5/F6)
+  {
+    const { ctx, page } = await newPage(browser);
+    await signIn(page, "bob", BOB);
+    await openAccount(page);
+    await page.waitForSelector("tr[data-user='bob'] button[data-action='email']", { timeout: 10000 });
+    const head = await page.evaluate(() => ({ title: document.getElementById("page-title").textContent, sub: document.getElementById("page-subtitle").textContent }));
+    check(head.title === "Your account" && head.sub === "Your account and the entities you created.", "non-admin page title: Your account", head);
+    check(await page.locator("#my-email-section").isHidden(), "no inline 'My email address and mailbox' section on a user's page");
+    check(await page.evaluate(() => !document.getElementById("tab-users").innerText.includes("My email address and mailbox")), "the old inline section title is gone from the page");
+    const ws = await page.evaluate(() => { const d = document.getElementById("my-workspace-policy-section"); const s = d.querySelector("summary"); return { cls: d.className, title: s.querySelector(".workspace-policy-disclosure__title")?.textContent, help: s.querySelector(".workspace-policy-disclosure__help")?.textContent, marker: getComputedStyle(s, "::before").content }; });
+    check(ws.cls.includes("plain-disclosure") && ws.title === "Workspace policy" && ws.help === "Which folders your agents may read and write." && ws.marker.includes("›"), "Workspace policy: kit chevron disclosure, short title + one helper sentence", ws);
+    await page.click("tr[data-user='bob'] button[data-action='email']");
+    await page.waitForSelector("#account-email-backdrop:not([hidden]) #my-email-section", { timeout: 10000 });
+    const card = await page.evaluate(() => ({ title: document.getElementById("account-email-title").textContent, text: document.getElementById("my-email-registered-text").textContent, link: document.getElementById("my-email-registered-change").textContent, shown: document.getElementById("my-email-registered-view").checkVisibility() }));
+    check(card.title === "Email — bob" && card.shown && card.text === "Not set yet — connecting a mailbox below sets it." && card.link === "Set it now", "bob's Email modal: the address card is never empty", card);
+    await page.keyboard.press("Escape");
+    await page.waitForSelector("#account-email-backdrop[hidden]", { state: "attached", timeout: 5000 });
+    check(await page.locator("#my-email-section").isHidden(), "closing the modal does not put the section back on the page");
     await ctx.close();
   }
 } finally {
