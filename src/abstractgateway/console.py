@@ -1952,15 +1952,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .agent-default__control { display: flex; align-items: center; gap: 8px; min-width: 0; }
 	    .agent-default__control select { flex: 1 1 auto; min-width: 0; max-width: 360px; }
 	    .agent-default__state { margin: 0; color: var(--muted); font-size: var(--font-size-md); }
-	    @media (max-width: 767.98px) {
+	    @media (max-width: 1023.98px) {
 	      .workflows-table, .workflows-table tbody, .workflows-table tr, .workflows-table td { display: block; width: 100%; }
+	      .workflows-table td[data-label]::before { content: none; }
 	      .workflows-table thead { display: none; }
 	      .workflows-table tr.workflows-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
 	      .workflows-table tr.workflows-row > td { padding: 0; border: 0; }
 	      .workflows-name { grid-column: 1; }
 	      .workflows-actions { grid-column: 2; grid-row: 1; }
 	      .workflows-what, .workflows-version-cell, .workflows-source, .workflows-usedby { grid-column: 1 / -1; max-width: none; }
-	      .workflows-version-cell::before, .workflows-source::before, .workflows-usedby::before { content: attr(data-label) " · "; color: var(--muted); }
+	      .workflows-table td.workflows-version-cell::before, .workflows-table td.workflows-source::before, .workflows-table td.workflows-usedby::before { content: attr(data-label) " · "; color: var(--muted); }
 	      .workflows-usedby { display: flex !important; flex-wrap: wrap; gap: 4px 12px; }
 	      .workflows-detail > td { padding: 8px 0 12px; }
 	      .workflows-entry { grid-template-columns: minmax(0, 1fr); }
