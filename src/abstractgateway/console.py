@@ -2185,8 +2185,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    @media (max-width: 767.98px) {
 	      .entity-manage-tabs { position: sticky; top: calc(54px + var(--safe-top, 0px)); z-index: 1; padding: 0 8px; border-bottom: 1px solid var(--ui-border-1); }
 	      .entity-manage-body .entity-subpanel { gap: 0; }
-	      .entity-manage .entity-card { border: 0; background: transparent; padding: 16px 0; border-top: 1px solid var(--line-soft); }
+	      .entity-manage-tabs .af-tabs__list { flex-wrap: wrap; overflow-x: visible; }
+	      .entity-manage .entity-card { box-shadow: none; border: 0; border-radius: 0; background: transparent; padding: 16px 0; border-top: 1px solid var(--line-soft); }
 	      .entity-manage .entity-subpanel > .entity-card:first-child, .entity-manage .entity-subpanel > .entity-stop-banner + .entity-card { border-top: 0; padding-top: 4px; }
+	      .entity-manage .entity-disclosure { box-shadow: none; background: transparent; border-radius: 0; }
 	      .entity-manage .entity-disclosure:not(.entity-card .entity-disclosure) { border: 0; border-top: 1px solid var(--line-soft); padding: 0; }
 	      .entity-manage .entity-kv { flex-direction: column; gap: 0; }
 	      .entity-manage .entity-kv-key { min-width: 0; }
