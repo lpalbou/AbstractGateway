@@ -2684,8 +2684,8 @@ CONSOLE_UI_JS = r"""
       let now;
       if (r.state === "broken") now = `<p class="ui-field-msg tone-warn agent-default__state" data-agent-default-now>${esc(r.reason || "")}</p>`;
       else if (r.state === "set" && r.resolved) now = `<p class="agent-default__state" data-agent-default-now>Runs ${esc(`${r.resolved.name || r.resolved.flow_id} ${r.resolved.bundle_version || ""}`.trim())}</p>`;
-      else if (r.state === "builtin") now = `<p class="agent-default__state" data-agent-default-now>Built in: ${esc(String(r.default || "").split(":")[0])}</p>`;
-      else now = `<p class="agent-default__state" data-agent-default-now>Clients choose</p>`;
+      // "Clients choose" / "Built in: x" already read in the select: no second line, never a warning.
+      else now = "";
       const saved = st.rowSaved && st.rowSaved[iface];
       const savedLine = saved ? `<span class="inline-state${saved.tone === "ok" ? " ok" : " error"}" role="status" data-agent-default-saved="${esc(iface)}">${esc(saved.text)}</span>` : "";
       return `<div class="agent-default" data-agent-default="${esc(iface)}">`

@@ -336,6 +336,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      --font-base: calc(14px * var(--font-scale));
 	      --font-sm: calc(12px * var(--font-scale));
 	      --font-xs: calc(11px * var(--font-scale));
+	      --font-caption: calc(11px * var(--font-scale));
 	      --accent-primary: var(--accent);
 	      --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 	      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
@@ -360,6 +361,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        --font-sm: max(14px, calc(12px * var(--font-scale)));
 	        --font-xs: max(13px, calc(11px * var(--font-scale)));
 	        --font-size-md: max(14px, calc(13px * var(--font-scale)));
+	        --font-caption: max(14px, calc(11px * var(--font-scale)));
 	      }
 	    }
 	    /* Per-theme token blocks: the abstractuic kit's theme.css VERBATIM
@@ -405,7 +407,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .shell_brand_mark { font-size: var(--font-size-xl); line-height: 1; color: var(--accent); font-weight: 700; }
 	    .shell_brand_name { font-weight: 700; letter-spacing: .3px; white-space: nowrap; font-size: var(--font-size-md); }
 	    .shell_nav { display: flex; flex-direction: column; gap: 2px; padding: 6px 8px; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
-	    .shell_nav_icon { display: inline-flex; flex: 0 0 auto; width: 16px; justify-content: center; font-size: 13px; opacity: .8; }
+	    .shell_nav_icon { display: inline-flex; flex: 0 0 auto; width: 16px; justify-content: center; font-size: var(--font-size-md); opacity: .8; }
 	    .shell_nav_label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 	    /* Groups (DESIGN-v2 §1): the kit's .af-nav-group / __caption carry the look
 	       (small uppercase muted eyebrow); the console only spaces them. */
@@ -490,7 +492,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      section { padding: 14px; }
 	    }
 	    #page-title { font-size: var(--font-size-lg); font-weight: 700; }
-    .brand-subtitle { color: var(--subtle); font-size: 12px; margin-top: 1px; }
+    .brand-subtitle { color: var(--subtle); font-size: var(--font-size-sm); margin-top: 1px; }
     .status {
       display: flex;
       align-items: center;
@@ -644,7 +646,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       font-size: 14px;
       flex: 0 0 auto;
     }
-    .section-note { color: var(--muted); font-size: 12px; max-width: 620px; }
+    .section-note { color: var(--muted); font-size: var(--font-size-sm); max-width: 620px; }
     /* AUTHORITY LINE (one store, one owner). A panel that edits a
        store it does not own must say so PERSISTENTLY — not in a toast the
        operator dismissed, and not only after a failure. It sits under the
@@ -652,8 +654,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
        instruction), and names the file so the answer to "what did I just
        change" is on screen. Wider than .section-note because a config
        path is long and must not wrap mid-path. */
-    .authority-note { color: var(--subtle); font-size: 11px; max-width: 900px; margin-top: 4px; }
-    .authority-note code { padding: 1px 5px; font-size: 11px; }
+    .authority-note { color: var(--subtle); font-size: var(--font-size-xs); max-width: 900px; margin-top: 4px; }
+    .authority-note code { padding: 1px 5px; font-size: var(--font-size-xs); }
     .authority-note.authority-readonly { color: var(--warn); }
     label {
       display: grid;
@@ -663,7 +665,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       /* 600, not 800 — labels must not compete (the kit's own reverted lesson). */
       font-weight: 600;
       text-transform: uppercase;
-      font-size: 11px;
+      font-size: var(--font-caption);
       letter-spacing: .04em;
     }
     /* Inputs: the family recipe (continuum styles.css) — surface-3 body,
@@ -705,7 +707,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       box-shadow: 0 0 0 3px var(--info-subtle);
     }
     button:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent); outline-offset: 1px; }
-    .field-help { color: var(--subtle); font-size: 12px; line-height: 1.35; text-transform: none; letter-spacing: 0; font-weight: 600; }
+    .field-help { color: var(--subtle); font-size: var(--font-size-sm); line-height: 1.35; text-transform: none; letter-spacing: 0; font-weight: 600; }
     .inline { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
     .inline > label { flex: 1 1 150px; }
     button {
@@ -716,6 +718,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       background: var(--button);
       color: white;
       font-weight: 600;
+      font-size: var(--font-size-md);
       cursor: pointer;
       white-space: nowrap;
       display: inline-flex;
@@ -751,7 +754,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     th { border-bottom: 1px solid var(--ui-border-2); }
     td { border-bottom: 1px solid var(--line-soft); }
     th, td { padding: 9px 10px; text-align: left; vertical-align: top; }
-    th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+    th { color: var(--muted); font-size: var(--font-size-xs); text-transform: uppercase; letter-spacing: .04em; }
     /* Polarity-safe hover wash (the white literal
        was invisible on the light theme). */
     tbody tr:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
@@ -779,7 +782,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      display: inline-flex; align-items: center; gap: 6px;
 	      border: 1px solid var(--line); border-radius: 999px;
 	      padding: 2px 8px; color: var(--muted);
-	      font-size: 12px; white-space: nowrap;
+	      font-size: var(--font-size-sm); white-space: nowrap;
 	    }
 	    .pill { padding: 3px 8px; margin: 0 6px 6px 0; }
 	    .state-pill.ok { color: var(--ok); border-color: color-mix(in srgb, var(--success) 34%, transparent); background: color-mix(in srgb, var(--success) 8%, transparent); }
@@ -804,7 +807,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .entity-chip { padding: 3px 10px; background: color-mix(in srgb, var(--text) 3%, transparent); }
 	    .entity-chip-locked { color: var(--text-secondary); border-color: color-mix(in srgb, var(--accent) 30%, transparent); background: var(--accent-subtle); }
 	    .entity-advanced { border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 10px 12px; margin: 10px 0; background: color-mix(in srgb, var(--text) 2%, transparent); }
-	    .entity-advanced summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+	    .entity-advanced summary { cursor: pointer; color: var(--muted); font-size: var(--font-size-md); }
 	    .entity-config-block { margin: 12px 0 4px; }
 	    .entity-config-group {
 	      border: 1px solid var(--line-soft);
@@ -815,16 +818,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    .entity-config-group-danger { border-color: color-mix(in srgb, var(--danger) 30%, transparent); }
 	    .entity-config-group .entity-config-title { margin-top: 0; }
-	    .entity-config-title { font-size: 13px; margin: 10px 0 6px; }
-	    .entity-config-hint { color: var(--muted); font-weight: 400; font-size: 12px; }
+	    .entity-config-title { font-size: var(--font-size-md); margin: 10px 0 6px; }
+	    .entity-config-hint { color: var(--muted); font-weight: 400; font-size: var(--font-size-sm); }
 	    .entity-danger-title { color: color-mix(in srgb, var(--danger) 72%, var(--text)); }
 	    .entity-matrix { overflow-x: auto; margin: 8px 0; }
 	    .entity-matrix-table { border-collapse: collapse; min-width: 420px; }
-	    .entity-matrix-table th, .entity-matrix-table td { border: 1px solid var(--line); padding: 5px 10px; font-size: 12px; text-align: center; }
+	    .entity-matrix-table th, .entity-matrix-table td { border: 1px solid var(--line); padding: 5px 10px; font-size: var(--font-size-sm); text-align: center; }
 	    .entity-matrix-table tbody th { text-align: left; font-weight: 500; color: var(--text); }
 	    .entity-matrix-table thead th { color: var(--muted); text-transform: capitalize; }
 	    .entity-subtabs { display: flex; gap: 4px; flex-wrap: wrap; margin: 10px 0; padding-bottom: 6px; border-bottom: 1px solid var(--line-soft); }
-	    .entity-subtab { background: transparent; color: var(--text-secondary); border-radius: var(--radius-md); padding: 6px 12px; font-size: 12px; }
+	    .entity-subtab { background: transparent; color: var(--text-secondary); border-radius: var(--radius-md); padding: 6px 12px; font-size: var(--font-size-sm); }
 	    .entity-subtab:hover { background: rgba(148, 163, 184, 0.1); color: var(--text); filter: none; }
 	    .entity-subtab.active { color: var(--text); background: rgba(148, 163, 184, 0.16); font-weight: 600; outline: none; }
 	    /* Runtimes master-detail:
@@ -841,16 +844,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    tr.row-selected td { background: rgba(148, 163, 184, 0.12); }
 	    .entity-subpanel { padding: 4px 0 8px; }
 	    .entity-overview { display: grid; gap: 4px; margin-bottom: 10px; }
-	    .entity-kv { display: flex; gap: 10px; font-size: 13px; }
+	    .entity-kv { display: flex; gap: 10px; font-size: var(--font-size-md); }
 	    .entity-kv-key { color: var(--muted); min-width: 110px; flex: 0 0 auto; white-space: nowrap; }
 	    .entity-kv-val { color: var(--text); word-break: break-all; }
 	    .entity-btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
-	    .entity-checkbox { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); text-transform: none; letter-spacing: 0; font-weight: 500; margin-bottom: 0; }
+	    .entity-checkbox { display: inline-flex; align-items: center; gap: 6px; font-size: var(--font-size-sm); color: var(--muted); text-transform: none; letter-spacing: 0; font-weight: 500; margin-bottom: 0; }
 	    /* State truth surface ("crystal clear visually,
 	       reflects the REAL state"): pills + a push button whose color, text
 	       AND border all derive from server truth — text always carries the
 	       state word so color is never the sole channel. */
-	    .entity-live-line { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 4px 0 10px; font-size: 13px; }
+	    .entity-live-line { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 4px 0 10px; font-size: var(--font-size-md); }
 	    .entity-live-badge { padding: 3px 12px; font-weight: 600; border-width: 1.5px; }
 	    .entity-live-badge.phase-none { color: var(--ok); border-color: color-mix(in srgb, var(--success) 50%, transparent); background: color-mix(in srgb, var(--success) 8%, transparent); }
 	    .entity-live-badge.phase-visit { color: var(--cyan); border-color: color-mix(in srgb, var(--info) 50%, transparent); background: color-mix(in srgb, var(--info) 10%, transparent); }
@@ -872,16 +875,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      font-weight: 700;
 	    }
 	    .entity-state-btn.pressed:disabled { opacity: 1; cursor: default; }
-	    .owntime-btn { display: inline-flex; align-items: center; gap: 8px; border-radius: var(--radius-lg); padding: 10px 16px; font-size: 13px; font-weight: 600; border: 2px solid var(--line); background: rgba(255, 255, 255, .03); color: var(--muted); margin: 6px 0; }
+	    .owntime-btn { display: inline-flex; align-items: center; gap: 8px; border-radius: var(--radius-lg); padding: 10px 16px; font-size: var(--font-size-md); font-weight: 600; border: 2px solid var(--line); background: rgba(255, 255, 255, .03); color: var(--muted); margin: 6px 0; }
 	    .owntime-btn.on-ticking { color: var(--ok); border-color: rgba(52, 211, 153, .7); background: rgba(52, 211, 153, .14); }
 	    .owntime-btn.on-parked { color: var(--cyan); border-color: color-mix(in srgb, var(--info) 60%, transparent); background: color-mix(in srgb, var(--info) 10%, transparent); }
 	    .owntime-btn.stopping { color: var(--warn); border-color: rgba(245, 158, 11, .6); background: color-mix(in srgb, var(--warning) 10%, transparent); }
-	    .entity-warn-pill { font-size: 11px; color: var(--warn); border-color: color-mix(in srgb, var(--warning) 40%, transparent); background: color-mix(in srgb, var(--warning) 7%, transparent); margin-left: 6px; }
+	    .entity-warn-pill { font-size: var(--font-size-xs); color: var(--warn); border-color: color-mix(in srgb, var(--warning) 40%, transparent); background: color-mix(in srgb, var(--warning) 7%, transparent); margin-left: 6px; }
 	    /* Drive bars (cognition-health directive): RATIO with both counts
 	       visible — never a bare percentage; all-resolved/all-explored gets
 	       the amber never-100% cue (nothing open = no pull forward). */
 	    .entity-drives { display: grid; gap: 6px; margin: 4px 0 12px; max-width: 560px; }
-	    .drive-row { display: grid; grid-template-columns: 88px 1fr auto; gap: 10px; align-items: center; font-size: 12px; }
+	    .drive-row { display: grid; grid-template-columns: 88px 1fr auto; gap: 10px; align-items: center; font-size: var(--font-size-sm); }
 	    .drive-label { color: var(--muted); font-weight: 600; }
 	    /* ONE determinate-bar recipe (the wave-3 chip rule applied to gauges):
 	       drive bars and the Models tab's host meters share shape/track/fill;
@@ -896,7 +899,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .drive-counts .drive-sat { color: var(--warn); font-weight: 600; }
 	    /* Meter layout (Models tab: RAM / device / GPU gauges). */
 	    .meter-stack { display: grid; gap: 6px; margin: 4px 0 12px; max-width: 640px; }
-	    .meter-row { display: grid; grid-template-columns: 130px 1fr auto; gap: 10px; align-items: center; font-size: 12px; }
+	    .meter-row { display: grid; grid-template-columns: 130px 1fr auto; gap: 10px; align-items: center; font-size: var(--font-size-sm); }
 	    .meter-label { color: var(--muted); font-weight: 600; }
 	    .meter-value { color: var(--muted); white-space: nowrap; }
 	    /* Models tab: the itemized memory breakdown UNDER the meters — what the
@@ -907,7 +910,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	       measurements, dimmed so they never read as more items), then the GGUF
 	       note. The rule is load-bearing: it is what stops a reader adding the
 	       reference counters onto the items above them. */
-	    .mem-breakdown { display: grid; gap: 3px; margin: 0 0 12px; max-width: 640px; font-size: 12px; }
+	    .mem-breakdown { display: grid; gap: 3px; margin: 0 0 12px; max-width: 640px; font-size: var(--font-size-sm); }
 	    .mem-breakdown-head { color: var(--muted); font-weight: 600; }
 	    .mem-breakdown-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: baseline; }
 	    .mem-breakdown-name { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -922,19 +925,19 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	       globally — cap them so the row stays one line). */
 	    .models-load-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
 	    .models-load-form select, .models-load-form input[type="text"] { width: auto; flex: 1 1 190px; min-width: 150px; }
-	    .tpl-spark { width: 100%; font-family: Menlo, Monaco, Consolas, monospace; font-size: 12px; line-height: 1.5; }
+	    .tpl-spark { width: 100%; font-family: Menlo, Monaco, Consolas, monospace; font-size: var(--font-size-sm); line-height: 1.5; }
 	    .entity-checkbox input { width: auto; }
 	    .entity-prompt-layers { display: grid; gap: 10px; margin: 8px 0; }
-	    .entity-prompt-layer textarea { width: 100%; font-family: inherit; font-size: 12px; }
-	    .entity-prompt-preview { white-space: pre-wrap; font-size: 11px; color: var(--muted); max-height: 320px; overflow: auto; }
+	    .entity-prompt-layer textarea { width: 100%; font-family: inherit; font-size: var(--font-size-sm); }
+	    .entity-prompt-preview { white-space: pre-wrap; font-size: var(--font-size-xs); color: var(--muted); max-height: 320px; overflow: auto; }
 	    .entity-chat-transcript { border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 10px 12px; margin: 8px 0; min-height: 120px; max-height: 380px; overflow-y: auto; display: grid; gap: 8px; background: rgba(255, 255, 255, .015); }
-	    .entity-chat-line { display: flex; gap: 10px; font-size: 13px; }
+	    .entity-chat-line { display: flex; gap: 10px; font-size: var(--font-size-md); }
 	    .entity-chat-you { justify-content: flex-end; }
 	    .entity-chat-bubble { max-width: min(86%, 72ch); }
 	    .entity-chat-bubble .entity-kv-key { display: block; margin-bottom: 3px; }
 	    .section-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 	    .entity-chat-composer { align-items: flex-end; }
-	    .entity-chat-composer textarea { width: 100%; font-family: inherit; font-size: 13px; }
+	    .entity-chat-composer textarea { width: 100%; font-family: inherit; font-size: var(--font-size-md); }
 	    .model-picker { display: grid; gap: 8px; }
 	    .model-picker__head {
 	      display: flex;
@@ -945,7 +948,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    .model-picker__actions { display: flex; gap: 8px; flex-wrap: wrap; }
 	    select.model-picker__select { min-height: 150px; }
-	    .model-picker__note { color: var(--muted); font-size: 12px; line-height: 1.4; text-transform: none; letter-spacing: 0; }
+	    .model-picker__note { color: var(--muted); font-size: var(--font-size-sm); line-height: 1.4; text-transform: none; letter-spacing: 0; }
 	    .model-summary {
 	      border: 1px solid var(--line);
 	      border-radius: var(--radius-md);
@@ -976,7 +979,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    .step-kicker {
 	      color: var(--accent);
-	      font-size: 11px;
+	      font-size: var(--font-size-xs);
 	      font-weight: 700;
 	      letter-spacing: .08em;
 	      text-transform: uppercase;
@@ -1005,7 +1008,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      background: var(--accent-subtle);
 	    }
 	    .provider-preset strong { display: block; color: var(--text); line-height: 1.25; }
-	    .provider-preset span { display: block; color: var(--muted); font-size: 12px; font-weight: 500; line-height: 1.3; margin-top: 3px; }
+	    .provider-preset span { display: block; color: var(--muted); font-size: var(--font-size-sm); font-weight: 500; line-height: 1.3; margin-top: 3px; }
 	    .setup-summary {
 	      border: 1px solid color-mix(in srgb, var(--info) 22%, transparent);
 	      border-radius: var(--radius-md);
@@ -1145,15 +1148,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      max-height: 58vh; overflow: auto; margin: 0;
 	      white-space: pre-wrap; overflow-wrap: anywhere;
 	      background: var(--ui-surface-3); border: 1px solid var(--ui-border-1);
-	      border-radius: var(--radius-lg); padding: 12px 14px; font-size: 12px; line-height: 1.5;
+	      border-radius: var(--radius-lg); padding: 12px 14px; font-size: var(--font-size-sm); line-height: 1.5;
 	    }
-	    #artifact-modal-content .artifact-md { white-space: normal; font-size: 13px; }
+	    #artifact-modal-content .artifact-md { white-space: normal; font-size: var(--font-size-md); }
 	    .log-modal #log-modal-pre {
 	      height: min(58vh, 640px); overflow: auto; margin: 0;
 	      white-space: pre-wrap; overflow-wrap: anywhere;
 	      background: var(--ui-surface-3); border: 1px solid var(--ui-border-1);
 	      border-radius: var(--radius-lg); padding: 12px 14px;
-	      font-size: 12px; line-height: 1.5;
+	      font-size: var(--font-size-sm); line-height: 1.5;
 	      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 	    }
 	    .wsp-mode-cards { display: grid; gap: 8px; margin: 2px 0 10px; }
@@ -1163,11 +1166,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .wsp-card input[type="radio"] { width: auto; min-height: auto; flex: 0 0 auto; margin-top: 3px; padding: 0; border: none; background: transparent; accent-color: var(--accent); }
 	    .wsp-card > span { flex: 1 1 auto; min-width: 0; }
 	    .wsp-card b { display: block; margin-bottom: 2px; }
-	    .wsp-card .wsp-card-sub { color: var(--text-secondary); font-size: 12px; line-height: 1.4; }
+	    .wsp-card .wsp-card-sub { color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.4; }
 	    .wsp-field { display: block; margin-bottom: 10px; }
-	    .wsp-field .wsp-hint { color: var(--text-secondary); font-size: 12px; display: block; margin: 2px 0 4px; text-transform: none; letter-spacing: normal; font-weight: normal; }
+	    .wsp-field .wsp-hint { color: var(--text-secondary); font-size: var(--font-size-sm); display: block; margin: 2px 0 4px; text-transform: none; letter-spacing: normal; font-weight: normal; }
 	    .wsp-field textarea, .wsp-field select { width: 100%; }
-	    .wsp-badge { font-size: 11px; border: 1px solid var(--ui-border-1); border-radius: 999px; padding: 1px 8px; color: var(--text-secondary); white-space: nowrap; }
+	    .wsp-badge { font-size: var(--font-size-xs); border: 1px solid var(--ui-border-1); border-radius: 999px; padding: 1px 8px; color: var(--text-secondary); white-space: nowrap; }
 	    .spin-inline { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--ui-border-2); border-top-color: var(--accent); border-radius: 50%; animation: afspin .8s linear infinite; vertical-align: -2px; margin-right: 7px; }
 	    @keyframes afspin { to { transform: rotate(360deg); } }
 	    .wsp-badge.custom { border-color: var(--accent); color: var(--accent); }
@@ -1223,7 +1226,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    .provider-modal .field-help {
 	      margin: -2px 0 0;
-	      font-size: 11px;
+	      font-size: var(--font-size-xs);
 	    }
 	    .provider-modal .field-span-2 {
 	      grid-column: 1 / -1;
@@ -1626,7 +1629,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    #sandbox-reasoning { min-height: 34px; }
 	    .sandbox-reasoning-block {
 	      margin: 0 0 8px 0;
-	      font-size: 12px;
+	      font-size: var(--font-size-sm);
 	      color: var(--muted, #8a93a6);
 	    }
 	    .sandbox-reasoning-block summary { cursor: pointer; user-select: none; }
@@ -1911,16 +1914,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .workflows-scroll { max-height: none; }
 	    .workflows-table { width: 100%; }
 	    .workflows-table td { vertical-align: top; }
-	    .workflows-name { min-width: 180px; }
-	    .workflows-name { display: flex; gap: 8px; align-items: flex-start; }
+	    .workflows-name { min-width: 200px; }
+	    .workflows-name__wrap { display: flex; gap: 6px; align-items: flex-start; }
 	    .workflows-name__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 	    .workflows-name__text small { font-size: var(--font-size-md); font-family: var(--font-mono); overflow-wrap: anywhere; }
-	    .workflows-chevron { color: var(--muted); width: 1em; flex: 0 0 auto; }
-	    .workflows-what { max-width: 46ch; color: var(--text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-	    .workflows-row[aria-expanded="true"] .workflows-what { -webkit-line-clamp: unset; display: table-cell; }
+	    .workflows-chevron { color: var(--muted); width: 1em; }
+	    .workflows-what { max-width: 52ch; color: var(--text); }
+	    .workflows-row:not([aria-expanded="true"]) .workflows-what { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40ch; }
 	    .workflows-version-cell, .workflows-source { white-space: nowrap; }
 	    .workflows-usedby { min-width: 140px; }
-	    .workflows-usedby__item { display: flex; align-items: center; gap: 4px; }
+	    .workflows-usedby__item { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 	    .workflows-usedby__item + .workflows-usedby__item { margin-top: 2px; }
 	    .workflows-actions .actions { flex-wrap: nowrap; }
 	    .workflows-detail > td { background: var(--panel-2, transparent); padding: 10px 14px 14px 36px; }
@@ -1931,7 +1934,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .workflows-entry__name { font-weight: 500; }
 	    .workflows-entry__desc, .workflows-entry__ifaces { color: var(--muted); }
 	    .help-q { display: inline-block; position: relative; }
-	    .help-q > summary { list-style: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 600; cursor: pointer; line-height: 1; }
+	    .help-q > summary { list-style: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: var(--font-size-xs); font-weight: 600; cursor: pointer; line-height: 1; }
 	    .help-q > summary::-webkit-details-marker { display: none; }
 	    .help-q[open] > summary { color: var(--text); border-color: var(--accent); }
 	    .help-q__text { position: absolute; z-index: 5; left: 0; top: calc(100% + 6px); width: min(320px, 70vw); margin: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-secondary); box-shadow: var(--shadow); color: var(--text); font-size: var(--font-size-md); font-weight: 400; line-height: 1.45; white-space: normal; }
@@ -1944,7 +1947,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .agent-defaults__other .agent-default { margin-bottom: 10px; max-width: 520px; }
 	    .agent-default { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 10px 0; border-top: 1px solid var(--line-soft); }
 	    .agent-default__head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-	    .agent-default__name { font-weight: 500; font-size: var(--font-size-base); }
+	    .agent-default__name { font-weight: 500; font-size: var(--font-size-base); text-transform: none; letter-spacing: normal; color: var(--text); }
 	    .agent-default__iface { font-size: var(--font-size-sm); color: var(--muted); background: transparent; border: 0; padding: 0; }
 	    .agent-default__control { display: flex; align-items: center; gap: 8px; min-width: 0; }
 	    .agent-default__control select { flex: 1 1 auto; min-width: 0; max-width: 360px; }
@@ -1991,6 +1994,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	       tints + kind chips), actions that wrap, the reasons of unavailable actions
 	       visible in the row. 834: Role / Email address / Runtime fold under the name.
 	       390: one flat block per row (no card in a card), 44 px targets. */
+	    #tab-users #account { display: none; }
 	    .accounts-page { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 	    .accounts-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px 20px; flex-wrap: wrap; }
 	    .accounts-head__text { flex: 1 1 320px; min-width: 0; }
@@ -2004,13 +2008,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .accounts-fold, .accounts-phone-email { display: none; }
 	    .accounts-mailbox { overflow-wrap: anywhere; }
 	    .accounts-actions { min-width: 0; }
+	    .accounts-table td.accounts-actions { width: 34%; min-width: 300px; }
 	    .users-table td.accounts-actions { white-space: normal; }
 	    .accounts-actions__buttons { display: flex; flex-wrap: wrap; gap: 6px; }
 	    .accounts-actions__buttons > button { min-height: 30px; padding: 4px 10px; font-size: var(--font-size-md); }
 	    .accounts-actions__buttons > button .button-icon { font-size: .95em; }
-	    .accounts-reasons { margin: 6px 0 0; font-size: var(--font-size-md); line-height: 1.4; max-width: 46ch; }
+	    .accounts-reasons { margin: 6px 0 0; font-size: var(--font-size-md); line-height: 1.4; }
 	    .accounts-legend { margin-top: 2px; }
-	    .accounts-email { margin: 18px 0 0; padding-top: 16px; border-top: 1px solid var(--line-soft); max-width: 720px; }
+	    #users-section .accounts-email { margin: 18px 0 0; padding: 16px 0 0; border: 0; border-top: 1px solid var(--line-soft); background: transparent; box-shadow: none; max-width: 720px; }
+	    .accounts-name__line { white-space: nowrap; }
 	    .accounts-email .section-subtitle { margin: 0 0 4px; }
 	    @media (max-width: 1439.98px) {
 	      .accounts-table .accounts-col-role, .accounts-table .accounts-col-email, .accounts-table .accounts-col-runtime,
@@ -2040,7 +2046,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    /* Account modals (kit af-modal): content rules only; the shell is the kit's. */
 	    .account-modal-body .account-page { max-width: none; }
 	    .account-modal-body .account-page__head { display: none; }
-	    .account-modal-lead { margin: 0 0 14px; padding: 10px 12px; border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--accent) 6%, transparent); border-radius: var(--radius-sm); font-size: var(--font-size-base); line-height: 1.45; }
+	    .account-modal-lead { margin: 0 0 14px; padding: 10px 12px; border-left: 3px solid var(--info, var(--accent)); background: color-mix(in srgb, var(--info, var(--accent)) 8%, transparent); border-radius: var(--radius-sm); font-size: var(--font-size-base); line-height: 1.45; }
 	    .account-other-mailbox { margin-top: 12px; }
 	    .account-logs-filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
 	    .account-logs-chip { min-height: 30px; padding: 4px 12px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: var(--text); font-size: var(--font-size-md); font-weight: 500; }
@@ -4362,7 +4368,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 
 	        const name = document.createElement("td");
 	        name.className = "workflows-name";
-	        name.innerHTML = `<span class="workflows-chevron" aria-hidden="true">${open ? "▾" : "▸"}</span><span class="workflows-name__text"><strong></strong><small class="muted"></small></span>`;
+	        name.innerHTML = `<div class="workflows-name__wrap"><span class="workflows-chevron" aria-hidden="true">${open ? "▾" : "▸"}</span><span class="workflows-name__text"><strong></strong><small class="muted"></small></span></div>`;
 	        name.querySelector("strong").textContent = row.name;
 	        name.querySelector("small").textContent = row.bundle_id;
 	        if (row.deprecated) { const pill = document.createElement("span"); pill.className = "pill"; pill.textContent = "Deprecated"; name.querySelector(".workflows-name__text").append(pill); }
@@ -11942,6 +11948,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       b.className = opts.cls || "secondary";
       b.innerHTML = (opts.icon ? `<span class="button-icon" aria-hidden="true">${opts.icon}</span>` : "") + `<span>${esc(label)}</span>`;
       b.setAttribute("aria-label", opts.aria || label);
+      b.setAttribute("data-label", label);
       if (opts.title) b.title = opts.title;
       return b;
     }
@@ -12028,7 +12035,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             btn.disabled = true;
             const why = act.reason || "Not available for this account.";
             btn.title = why;
-            reasons.push(`${btn.textContent.trim()}: ${why}`);
+            reasons.push(`${btn.getAttribute("data-label")}: ${why}`);
           } else {
             btn.onclick = onClick;
           }

@@ -66,6 +66,52 @@ def _call(base: str, method: str, path: str, token: str, body: dict | None = Non
         return e.code, json.loads(e.read() or b"{}")
 
 
+_SEED_ENTITY = """
+import copy, sys
+from pathlib import Path
+from abstractmemory import DEFAULT_SPARK_TEMPLATE
+from abstractgateway.entities import EntityRegistry
+
+class _Embedder:  # a fixed-vector embedder: the entity is born vectored without any model
+    model = "browser-test-embedder"
+    def embed_texts(self, texts):
+        return [[0.25] * 8 for _ in texts]
+
+data = Path(sys.argv[1])
+spark = copy.deepcopy(dict(DEFAULT_SPARK_TEMPLATE)); spark["name"] = "Castor"; spark["spark"] = 1
+EntityRegistry(data_dir=data, embedder_factory=lambda: _Embedder(), users_registry_path=data / "auth" / "users.json").create(name="Castor", spark=spark)
+"""
+
+
+def _start(port: int, env: dict, log: Path) -> subprocess.Popen:
+    out = open(log, "ab")
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "abstractgateway", "serve", "--host", "127.0.0.1", "--port", str(port), "--print-token"],
+        env=env, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+    )
+    base = f"http://127.0.0.1:{port}"
+    deadline = time.time() + 120
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            pytest.fail(f"gateway exited: {log.read_text()[-3000:]}", pytrace=False)
+        try:
+            with urllib.request.urlopen(f"{base}/api/health", timeout=2) as r:
+                if r.status == 200:
+                    return proc
+        except Exception:
+            time.sleep(0.5)
+    proc.kill()
+    pytest.fail(f"gateway did not come up: {log.read_text()[-3000:]}", pytrace=False)
+
+
+def _stop(proc: subprocess.Popen) -> None:
+    proc.terminate()
+    try:
+        proc.wait(timeout=20)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
 @pytest.fixture()
 def scratch_gateway(tmp_path: Path):
     if os.getenv("ABSTRACTGATEWAY_BROWSER_TESTS", "").strip() not in {"1", "true", "yes"}:
@@ -76,31 +122,16 @@ def scratch_gateway(tmp_path: Path):
     data.mkdir()
     env = {
         "HOME": str(home), "TMPDIR": str(home / "tmp"), "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-        "PYTHONPATH": str(HERE.parent / "src"), "PYTHONUNBUFFERED": "1", "LANG": "en_US.UTF-8",
+        "PYTHONPATH": os.pathsep.join([str(HERE.parent / "src")] + [p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p]),
+        "PYTHONUNBUFFERED": "1", "LANG": "en_US.UTF-8",
         "ABSTRACTGATEWAY_DATA_DIR": str(data), "ABSTRACTGATEWAY_USER_AUTH": "1",
         "ABSTRACTGATEWAY_ALLOWED_ORIGINS": f"http://127.0.0.1:{port},http://localhost:{port}",
         "PYTHON_KEYRING_BACKEND": "keyring.backends.null.Keyring", "HF_HUB_OFFLINE": "1", "NO_COLOR": "1",
     }
     log = tmp_path / "gateway.log"
-    with open(log, "wb") as out:
-        proc = subprocess.Popen(
-            [sys.executable, "-m", "abstractgateway", "serve", "--host", "127.0.0.1", "--port", str(port), "--print-token"],
-            env=env, stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-        )
     base = f"http://127.0.0.1:{port}"
+    proc = _start(port, env, log)
     try:
-        deadline = time.time() + 120
-        while time.time() < deadline:
-            if proc.poll() is not None:
-                pytest.fail(f"gateway exited: {log.read_text()[-3000:]}", pytrace=False)
-            try:
-                with urllib.request.urlopen(f"{base}/api/health", timeout=2) as r:
-                    if r.status == 200:
-                        break
-            except Exception:
-                time.sleep(0.5)
-        else:
-            pytest.fail(f"gateway did not come up: {log.read_text()[-3000:]}", pytrace=False)
         m = re.findall(r"Gateway admin token: (\S+)$", log.read_text(), flags=re.M)
         assert m, log.read_text()[-2000:]
         admin = m[-1]
@@ -113,16 +144,18 @@ def scratch_gateway(tmp_path: Path):
             "smtp": {"host": "smtp.alice.invalid", "port": 465, "security": "ssl"}, "test": False,
         })
         assert code == 200, out
-        # An old per-user override (what the capabilities v3 migration pins): bob's agent email tools off.
         code, out = _call(base, "PUT", "/admin/users/bob/email", admin, {"agent_tools": False})
         assert code == 200, out
+        # One entity (Accounts rows are users AND entities): born offline with a fixed-vector
+        # embedder while the gateway is stopped, then the gateway comes back on the same data.
+        _stop(proc)
+        seeded = subprocess.run([sys.executable, "-c", _SEED_ENTITY, str(data)], env=env, capture_output=True, text=True, timeout=120)
+        assert seeded.returncode == 0, seeded.stderr[-3000:]
+        proc = _start(port, env, log)
+        admin = re.findall(r"Gateway admin token: (\S+)$", log.read_text(), flags=re.M)[-1]
         yield base, admin
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=20)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        _stop(proc)
 
 
 def test_console_state_toggles_in_a_browser(scratch_gateway) -> None:
@@ -139,4 +172,4 @@ def test_console_state_toggles_in_a_browser(scratch_gateway) -> None:
     assert proc.returncode == 0, proc.stderr[-4000:]
     out = json.loads(proc.stdout.strip().splitlines()[-1])
     assert out["failures"] == [], out["failures"]
-    assert out["checks"] >= 38
+    assert out["checks"] >= 70

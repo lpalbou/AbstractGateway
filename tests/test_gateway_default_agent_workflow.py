@@ -464,7 +464,7 @@ const out = {{
   ids: html.includes('<code class="agent-default__iface">abstractcode.agent.v1</code>'),
   help: (html.match(/class="help-q"/g) || []).length,
   builtin: html.includes("Built in: basic-agent"),
-  clients: html.includes(">Clients choose</p>"),
+  clients: html.includes('<option value="">Clients choose</option>'),
   warns, broken: html.includes("Broken: coding-agent 0.2.8 is no longer installed"),
   notAvailable: html.includes("Not available"),
   save: html.includes("data-agent-defaults-save") || html.includes(">Save"),
