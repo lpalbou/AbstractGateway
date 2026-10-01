@@ -1420,7 +1420,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      overflow: hidden;
 	      background: var(--panel-2);
 	    }
-	    .sandbox-chat-root > .pc-workflow-chat { flex: 1 1 auto; min-height: 0; }
+	    /* The island's root is a <section>: the console's generic section card
+	       (border, padding, shadow) must not draw a card inside this box. */
+	    .sandbox-chat-root > .pc-workflow-chat { flex: 1 1 auto; min-height: 0; border: 0; padding: 0; box-shadow: none; border-radius: inherit; }
 	    .sandbox-chat-root .pc-workflow-chat__transcript { overflow: hidden; }
 	    .sandbox-chat-root .pc-chat-thread { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 	    /* Dialogue bubbles: the abstractuic panel-chat component's .pc-chat-item
@@ -12842,8 +12844,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const configured = defaultRowConfigured(row);
 	      const prov = row.provider ? (state.providerLabels.get(row.provider) || row.provider) : "";
 	      $("sandbox-context").textContent = configured
-	        ? `${sandboxRouteLabel(row)} will use ${prov} / ${row.model}${row.inherited_from ? ` (inherited from ${row.inherited_from})` : ""}.`
-	        : `${sandboxRouteLabel(row)} is not configured yet. Configure it in Multimodal Capabilities first.`;
+	        ? `${mode === "text" ? sandboxRouteLabel(row) : sandboxRouteShortLabel(row)} will use ${prov} / ${row.model}${row.inherited_from ? ` (inherited from ${row.inherited_from})` : ""}.`
+	        : `${mode === "text" ? sandboxRouteLabel(row) : sandboxRouteShortLabel(row)} is not configured yet. Configure it in Multimodal Capabilities first.`;
 	      const buttons = $("sandbox-output-modes")?.children || [];
 	      for (const btn of buttons) {
 	        const label = btn.children?.[1]?.children?.[0]?.textContent || "";
