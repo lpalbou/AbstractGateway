@@ -1928,7 +1928,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	       these minimums need (computed in workflowsLayout, never a guessed breakpoint) the table
 	       becomes one flat card per bundle (.workflows-cards), so it never scrolls sideways. */
 	    .workflows-table th.workflows-col-name, .workflows-table th.workflows-col-what { width: auto; }
-	    .workflows-table th.workflows-col-version { width: 5.5rem; }
+	    .workflows-table th.workflows-col-version { width: 6.5rem; }
 	    .workflows-table th.workflows-col-source { width: 7.5rem; }
 	    .workflows-table th.workflows-col-usedby { width: 9.5rem; }
 	    .workflows-table th.workflows-col-available { width: 8.5rem; white-space: normal; }
@@ -2007,7 +2007,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .workflows-cards .workflows-fold-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 	    .workflows-cards .workflows-table td.workflows-available:empty { display: none; }
 	    .workflows-cards .workflows-available .af-switch__label { position: static; width: auto; height: auto; overflow: visible; clip: auto; }
-	    .workflows-cards .workflows-table tr.workflows-group > th { display: block; padding: 18px 0 6px; }
+	    .workflows-cards .workflows-table tr.workflows-group > th { display: block; width: 100%; padding: 18px 0 6px; }
 	    .workflows-cards .workflows-actions .actions { justify-content: flex-start; }
 	    .workflows-cards .workflows-usedby { display: flex !important; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
 	    .workflows-cards .workflows-usedby__item + .workflows-usedby__item::before { content: "·"; margin-right: 6px; color: var(--muted); }
@@ -4554,7 +4554,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    // Table or cards, from what the columns need (their minimum widths), not a guessed
 	    // viewport breakpoint: the table never scrolls sideways at any width.
-	    const WORKFLOW_TABLE_MIN_REM = { base: 59.5, available: 9.5 };
+	    const WORKFLOW_TABLE_MIN_REM = { base: 60.5, available: 9.5 };
 	    function workflowsLayout() {
 	      const section = $("workflows-section");
 	      const scroll = $("workflows-scroll");
