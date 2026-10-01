@@ -1944,6 +1944,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .entity-disclosure[open] { padding-bottom: 16px; }
 	    .entity-disclosure > :not(summary) + * { margin-top: 12px; }
 	    .entity-disclosure > summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; font-size: var(--font-size-base); font-weight: 500; color: var(--text); }
+	    /* A disclosure shows that it opens (the flex summary drops the native marker). */
+	    .entity-disclosure > summary { list-style: none; gap: 8px; }
+	    .entity-disclosure > summary::-webkit-details-marker { display: none; }
+	    .entity-disclosure > summary::before { content: "▸"; color: var(--muted); }
+	    .entity-disclosure[open] > summary::before { content: "▾"; }
 	    .entity-card .entity-disclosure { border: 0; padding: 0; border-top: 1px solid var(--line-soft); }
 	    .entity-disclosure--danger > summary { color: color-mix(in srgb, var(--danger) 72%, var(--text)); }
 	    .entity-pre { margin: 0; white-space: pre-wrap; font-size: var(--font-size-md); color: var(--muted); max-height: 320px; overflow: auto; }
