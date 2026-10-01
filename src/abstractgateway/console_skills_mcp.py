@@ -25,7 +25,7 @@ SKILLS_MCP_CSS = r"""
 /* ---- Skills & MCP page (console_skills_mcp.py) ---- */
 .skmcp-page { display: flex; flex-direction: column; gap: 14px; }
 .skmcp-page .af-tabs__panel { padding-top: 14px; display: flex; flex-direction: column; gap: 12px; }
-.skmcp-purpose { margin: 0; }
+.skmcp-purpose { margin: 0; max-width: none; }
 .skmcp-truth { margin: 0; padding: 10px 12px; max-width: 90ch; border-left: 3px solid var(--warning, var(--accent)); background: color-mix(in srgb, var(--warning, var(--accent)) 9%, transparent); border-radius: var(--radius-sm); font-size: var(--font-size-base); line-height: 1.45; }
 .skmcp-shelf { border-top: 1px solid var(--line-soft); padding: 12px 0 0; }
 .skmcp-shelf[open] > summary { margin-bottom: 8px; }
@@ -42,7 +42,7 @@ SKILLS_MCP_CSS = r"""
 .skills-table th.sk-col-version { width: 6.5rem; }
 .skills-table th.sk-col-trust { width: 7.5rem; }
 .skills-table th.sk-col-source { width: 8.5rem; }
-.skills-table th.sk-col-actions { width: 13.5rem; }
+.skills-table th.sk-col-actions { width: 16rem; }
 .mcp-table th.mcp-col-name { width: 18%; }
 .mcp-table th.mcp-col-transport { width: auto; }
 .mcp-table th.mcp-col-status { width: 22%; }
@@ -50,6 +50,9 @@ SKILLS_MCP_CSS = r"""
 .mcp-table th.mcp-col-actions { width: 14rem; }
 .skmcp-name { font-weight: 600; }
 .skmcp-sub { display: block; color: var(--muted); font-size: var(--af-helper-size, var(--font-size-md)); font-weight: 400; margin-top: 2px; }
+.skmcp-more { cursor: pointer; border-radius: var(--radius-sm); }
+.skmcp-more[aria-expanded="false"] { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+.skmcp-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .skmcp-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 .skmcp-mono { font-family: var(--font-mono); font-size: var(--font-size-md); display: block; overflow-wrap: anywhere; word-break: break-word; }
 .skmcp-chip { display: inline-flex; align-items: center; min-height: 22px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); font-size: var(--font-size-sm); font-weight: 500; white-space: nowrap; }
@@ -58,6 +61,7 @@ SKILLS_MCP_CSS = r"""
 .skmcp-chip.is-err { border-color: color-mix(in srgb, var(--error, #d6336c) 55%, transparent); color: var(--error, #d6336c); }
 .skmcp-chip.is-muted { color: var(--muted); }
 .skmcp-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+@media (min-width: 1024px) { .skmcp-actions { flex-wrap: nowrap; } }
 .skmcp-actions > button { white-space: nowrap; }
 .skmcp-status.is-failed { color: var(--error, #d6336c); }
 .skmcp-tools > summary { cursor: pointer; min-height: 28px; }
@@ -153,13 +157,17 @@ SKILLS_MCP_JS = r"""
         if (admin && r.origin === "imported" && !r.archived) acts.push(`<button type="button" class="secondary" data-skill-archive="${n}">Archive</button>`);
         if (admin && r.archived) acts.push(`<button type="button" class="secondary" data-skill-unarchive="${n}">Unarchive</button>`);
         return `<tr class="skmcp-row" data-skill-row="${n}">`
-          + `<td class="sk-name"><span class="skmcp-name">${n}</span><span class="skmcp-sub skmcp-fold">${esc(r.description || "")}</span><span class="skmcp-sub skmcp-fold">${source}</span></td>`
-          + `<td class="sk-what">${esc(r.description || "")}</td>`
+          + `<td class="sk-name"><span class="skmcp-name">${n}</span><div class="skmcp-sub skmcp-fold">${skmcpMore(r.description || "")}</div><span class="skmcp-sub skmcp-fold">${source}</span></td>`
+          + `<td class="sk-what">${skmcpMore(r.description || "")}</td>`
           + `<td class="sk-version">${version}</td>`
           + `<td class="sk-trust">${skillTrustCell(r)}</td>`
           + `<td class="sk-source">${source}</td>`
           + `<td class="sk-actions"><div class="skmcp-actions">${acts.join("")}</div></td></tr>`;
       }).join("");
+    }
+    // A long cell: clamped to two lines, expanded in place on click / Enter / Space (aria-expanded).
+    function skmcpMore(text, extraClass) {
+      return `<div class="skmcp-more${extraClass ? ` ${extraClass}` : ""}" role="button" tabindex="0" aria-expanded="false" data-skmcp-more>${esc(text)}</div>`;
     }
     function mcpTransportText(s) {
       if (s.transport === "stdio") return [s.command].concat(s.args || []).join(" ").trim();
@@ -203,8 +211,8 @@ SKILLS_MCP_JS = r"""
         return `<tr class="skmcp-row" data-mcp-row="${n}">`
           + `<td class="mcp-name"><span class="skmcp-name">${n}</span>${s.archived ? ` <span class="skmcp-chip is-muted">Archived</span>` : ""}`
           + `${s.description ? `<span class="skmcp-sub">${esc(s.description)}</span>` : ""}`
-          + `<span class="skmcp-sub skmcp-fold skmcp-mono">${how} · ${reach}</span></td>`
-          + `<td class="mcp-transport"><span class="skmcp-sub">${how}</span><span class="skmcp-mono">${reach}</span></td>`
+          + `<span class="skmcp-sub skmcp-fold">${how}</span><div class="skmcp-fold">${skmcpMore(mcpTransportText(s), "skmcp-mono")}</div></td>`
+          + `<td class="mcp-transport"><span class="skmcp-sub">${how}</span>${skmcpMore(mcpTransportText(s), "skmcp-mono")}</td>`
           + `<td class="mcp-status"><span class="skmcp-status${st.failed ? " is-failed" : ""}">${esc(st.text)}</span></td>`
           + `<td class="mcp-tools">${mcpToolsCell(s.last_test)}</td>`
           + `<td class="mcp-actions"><div class="skmcp-actions">${acts.join("")}</div></td></tr>`;
@@ -233,7 +241,7 @@ SKILLS_MCP_JS = r"""
       }
     }
     function openSkillsMcpPage() {
-      if (!state.principal) return;
+      if (!state.principal || !skmcpAdmin()) return;
       if (!skmcp.opened) {
         skmcp.opened = true;
         // The skills shelf setting lives at the top of the Skills tab (it moved here from Apps).
@@ -575,7 +583,16 @@ SKILLS_MCP_JS = r"""
         skmcpMessage("mcp-message", `${name}: ${skmcpErr(e)}`, "error");
       }
     }
+    function skmcpToggleMore(e) {
+      const t = e.target && e.target.closest ? e.target.closest("[data-skmcp-more]") : null;
+      if (!t) return false;
+      if (e.type === "keydown" && e.key !== "Enter" && e.key !== " ") return false;
+      if (e.type === "keydown") e.preventDefault();
+      t.setAttribute("aria-expanded", t.getAttribute("aria-expanded") === "true" ? "false" : "true");
+      return true;
+    }
     function bindSkillsMcpPage() {
+      for (const id of ["skills-table", "mcp-table"]) $(id).onkeydown = skmcpToggleMore;
       $("tab-button-skills").onclick = () => { setActiveTab("skills"); };
       const tabs = [$("skmcp-tab-skills"), $("skmcp-tab-mcp")];
       for (const t of tabs) {
@@ -606,6 +623,7 @@ SKILLS_MCP_JS = r"""
         ev.target.value = "";
       };
       $("skills-table").onclick = (e) => {
+        if (skmcpToggleMore(e)) return;
         const t = e.target && e.target.closest ? e.target.closest("button") : null;
         if (!t) return;
         if (t.dataset.skillView) openSkillModal(t.dataset.skillView);
@@ -623,6 +641,7 @@ SKILLS_MCP_JS = r"""
       };
       $("mcp-add").onclick = () => openMcpModal(null);
       $("mcp-table").onclick = (e) => {
+        if (skmcpToggleMore(e)) return;
         const t = e.target && e.target.closest ? e.target.closest("button") : null;
         if (!t) return;
         if (t.dataset.mcpEdit) mcpRowAction("edit", t.dataset.mcpEdit);

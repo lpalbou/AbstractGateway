@@ -12243,6 +12243,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      startPausedPoll();
 	      loadGatewayHost();
 	      $("open-setup").classList.toggle("hidden", !p.admin);
+	      // Skills & MCP is admin configuration (round 3, C3F): non-admins do not get the entry.
+	      $("tab-button-skills").classList.toggle("hidden", !p.admin);
 	      // The header shows the gateway's primary address (GET /network).
 	      if (!netStore.data && !netStore.loading) netRefresh({ quiet: true });
 	      maybeOpenFirstRun();
