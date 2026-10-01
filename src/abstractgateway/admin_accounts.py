@@ -34,13 +34,15 @@ CANNOT_DEACTIVATE_SELF = "You can't deactivate your own account."
 REASON_OWN_DELETE = "You can't delete your own account."
 REASON_ENTITY_DELETE = "An entity's name is kept for life; suspend it instead."
 REASON_ENTITY_ROTATE = (
-    "An entity has no token to rotate: its credential is discarded when it is created and a fresh one "
-    "is bound only while it is summoned."
+    "An entity has no token to rotate: its credential is discarded when it is created and no one holds it."
 )
 REASON_USER_MANAGE = "Only entities have a management page."
 REASON_ENTITY_NO_HOME = "This entity's home is not on this gateway's runtime, so it can't be managed here."
 REASON_LAST_ADMIN = "This is the last active admin account; make another account admin first."
 REASON_ENTITY_EMAIL = "Entities can't have their own mailbox yet: mailboxes belong to a user's runtime."
+# Non-admin rows (GET /me/accounts): what only an admin can do, said once per action.
+REASON_ADMIN_ROTATE = "Only an admin can rotate your token."
+REASON_ADMIN_SUSPEND_ENTITY = "Only an admin can suspend an entity."
 
 _ROLE_ORDER = {"admin": 0, "user": 1, "entity": 2}
 
@@ -167,7 +169,12 @@ def _user_row(rec: GatewayUserRecord, caller: GatewayPrincipal, records: List[Ga
     }
 
 
-def _entity_row(slug: str, rec: Optional[GatewayUserRecord], home: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def _entity_row(
+    slug: str,
+    rec: Optional[GatewayUserRecord],
+    home: Optional[Dict[str, Any]],
+    created_by: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     state = None
     if home is not None:
         st = home.get("state")
@@ -185,6 +192,9 @@ def _entity_row(slug: str, rec: Optional[GatewayUserRecord], home: Optional[Dict
         "runtime_id": (rec.runtime_id or rec.user_id) if rec is not None else slug,
         "active": bool(enabled and state != "paused"),
         "entity_state": state,
+        # Who created it ({tenant_id, user_id}); null for an entity created before creators were
+        # recorded (admins only see those).
+        "created_by": created_by,
         "actions": {
             "email": _act(False, REASON_ENTITY_EMAIL),
             "logs": _act(True),
@@ -201,26 +211,104 @@ def _sort_key(row: Dict[str, Any]) -> Tuple[int, str, str]:
     return (_ROLE_ORDER.get(str(row.get("role")), 3), str(row.get("id") or ""), str(row.get("tenant_id") or ""))
 
 
+def _entity_creators() -> Dict[str, Dict[str, Any]]:
+    """slug -> created_by over EVERY runtime on this gateway (the admin's and each user's), from
+    the homes' manifests (read-only). An admin sees all entities, including ones whose home is in
+    another user's runtime."""
+    from .entity_access import manifest_creator
+
+    root = gateway_data_dir_from_env()
+    dirs: List[Path] = [root / "entities"]
+    users = root / "users"
+    if users.is_dir():
+        dirs.extend(sorted(users.glob("*/*/runtime/entities")))
+    out: Dict[str, Dict[str, Any]] = {}
+    for entities_dir in dirs:
+        if not entities_dir.is_dir():
+            continue
+        for child in sorted(entities_dir.iterdir()):
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            _exists, created_by = manifest_creator(entities_dir, child.name)
+            if isinstance(created_by, dict) and created_by.get("user_id") and child.name not in out:
+                out[child.name] = {
+                    "tenant_id": str(created_by.get("tenant_id") or "default"),
+                    "user_id": str(created_by["user_id"]),
+                }
+    return out
+
+
+def _creator(slug: str, home: Optional[Dict[str, Any]], creators: Dict[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if home is not None and isinstance(home.get("created_by"), dict):
+        return dict(home["created_by"])
+    return creators.get(slug)
+
+
 def list_accounts(caller: GatewayPrincipal) -> Dict[str, Any]:
     records = GatewayUserRegistry().list_users()
     homes, warning = _entity_homes()
+    creators = _entity_creators()
     rows: List[Dict[str, Any]] = []
     seen_entities: set = set()
     for rec in records:
         if rec.principal_kind == "entity":
             seen_entities.add(rec.user_id)
-            rows.append(_entity_row(rec.user_id, rec, homes.get(rec.user_id)))
+            home = homes.get(rec.user_id)
+            rows.append(_entity_row(rec.user_id, rec, home, _creator(rec.user_id, home, creators)))
         else:
             rows.append(_user_row(rec, caller, records))
     for slug, home in homes.items():
         if slug not in seen_entities:
             # A home created before entity principals were minted: no registry row, still an entity.
-            rows.append(_entity_row(slug, None, home))
+            rows.append(_entity_row(slug, None, home, _creator(slug, home, creators)))
     rows.sort(key=_sort_key)
     out: Dict[str, Any] = {"accounts": rows}
     if warning:
         out["entities_warning"] = warning
     return out
+
+
+def list_my_accounts(caller: GatewayPrincipal) -> Dict[str, Any]:
+    """`GET /me/accounts`, for ANY signed-in account (operator ruling 2026-10-01): the caller's own
+    row plus the entities the caller created — never another user, never an entity someone else
+    (or no recorded creator) made. Same row shape as `GET /admin/accounts`; actions only an admin
+    can take are unavailable with the reason. An admin sees everything on `GET /admin/accounts`."""
+    from .entity_access import entity_visible_to, same_account
+
+    registry = GatewayUserRegistry()
+    records = registry.list_users()
+    rows: List[Dict[str, Any]] = []
+    me = next((r for r in records if _same(caller, r.user_id, r.tenant_id)), None)
+    if me is not None and me.principal_kind != "entity":
+        row = _user_row(me, caller, records)
+        if not caller.is_admin():
+            row["actions"]["rotate"] = _act(False, REASON_ADMIN_ROTATE)
+        rows.append(row)
+    homes, warning = _entity_homes()  # the caller's own runtime: where its entities live
+    by_id = {r.user_id: r for r in records if r.principal_kind == "entity"}
+    for slug, home in homes.items():
+        created_by = home.get("created_by")
+        if caller.is_admin():
+            # "Entities they created" holds for admins too here; the full list is /admin/accounts.
+            if not (isinstance(created_by, dict) and same_account(caller, created_by)):
+                continue
+        elif not (isinstance(created_by, dict) and entity_visible_to(caller, slug, created_by)):
+            continue
+        row = _entity_row(slug, by_id.get(slug), home, dict(created_by))
+        if not caller.is_admin():
+            row["actions"]["suspend"] = _act(False, REASON_ADMIN_SUSPEND_ENTITY)
+        rows.append(row)
+    rows.sort(key=_sort_key)
+    out: Dict[str, Any] = {"accounts": rows, "scope": "own"}
+    if warning:
+        out["entities_warning"] = warning
+    return out
+
+
+def my_account_ids(caller: GatewayPrincipal) -> List[Tuple[str, str]]:
+    """(id, tenant_id) of every row `GET /me/accounts` answers: the ids whose activity the caller
+    may read."""
+    return [(str(r["id"]), str(r["tenant_id"] or "default")) for r in list_my_accounts(caller)["accounts"]]
 
 
 def account_row(caller: GatewayPrincipal, account_id: str, tenant_id: str = "default") -> Optional[Dict[str, Any]]:

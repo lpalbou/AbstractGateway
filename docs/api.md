@@ -1720,6 +1720,32 @@ The Accounts page (admin): users and entities in one list.
 | `PUT /admin/accounts/{id}/active` | `{active}` → the updated row. Users: `false` = deactivated (signed out, cannot sign in); 409 `{message}` for your own account ("You can't deactivate your own account.") or the last active admin. Entities: `false` = suspended (entity state `paused`, its door credential off, an open visit closed); `true` = resumed (the state it had before is restored, stored in `<data_dir>/auth/entity_suspended.json`) |
 | `GET /admin/accounts/{id}/activity` | `?limit=100&kind=sign_in,run,…` (admin) |
 | `GET /me/activity` | the same for the signed-in account |
+| `GET /me/accounts` | any signed-in account: `{accounts: [rows], scope: "own"}`, the same row shape — your own row plus one row per entity **you** created; actions only an admin can take are unavailable with the reason |
+| `GET /me/accounts/{id}/activity` | the activity of your own account or of an entity you created; any other id answers 404 |
+
+### Who sees which account
+
+An admin sees every user and every entity (`GET /admin/accounts`; non-admins get 403 there). Anyone
+else sees only themself and the entities they created. Entity rows carry `created_by`
+(`{tenant_id, user_id}` of the account whose `POST /entities` created it, or `null`).
+
+This is enforced on every entity route, not only on the Accounts page:
+
+- `POST /entities` writes `created_by` into the new home's `manifest.json`. Entities created before
+  this field existed have none and are visible to admins only: no creator is guessed and no existing
+  manifest is rewritten.
+- `GET /entities` lists only the entities the caller may see.
+- Every `/entities/{name}/…` route (inspect, card, state, chat, visit, summon, workspace,
+  tool policy, replay, …) checks first. An entity you may not see answers exactly like one that does
+  not exist: 404 with the same sentence, so names cannot be probed this way.
+- `POST /entities/meets/open` needs both entities visible; `/entities/meets/{id}` answers 404 for a
+  meet with an entity you may not see.
+- Creating an entity under a name another account already holds answers 409 ("That name is taken
+  …"): entity names are unique per gateway, so this is the one place a name's existence shows.
+- Visibility is not management: entity writes that are admin-only (state, tool policy, prompt,
+  substrate, …) stay admin-only for the entities you created.
+
+Without user accounts (the single-operator gateway) every entity is visible, as before.
 
 The email address and mailbox of a row come from the resolver `GET /me/email` uses. An action that
 cannot apply says why in `reason`: an entity has no mailbox ("Entities can't have their own mailbox
