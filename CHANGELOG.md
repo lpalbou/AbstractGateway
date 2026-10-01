@@ -52,6 +52,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   allowed list, a denylist's entries the Always denied list. The older `{mode, entries}` body is
   still accepted (`entries` replaces the list the mode uses). Needs the AbstractCore version that
   adds the two lists.
+- `GET /me/email` policy carries `self_addresses`: the own addresses, shown as a fixed chip ("(your
+  address)", never removable) because they are always allowed.
+- Advanced reads "Send at most [100] per hour and [1000] per day." on one line with two small number
+  fields (wrapping on phones), and "Watch folder" is a sentence-case label like the others.
+
+### Changed
+
 - Web console: **Providers** and **Engines** are one page. The **Providers** tab lists **Local
   providers** first (one card per local engine: status, Install, Start, Stop, Cancel, Continue,
   **Browse models**, **Learn more**, and the provider's server connection for Ollama, LM Studio and
@@ -59,6 +66,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   OpenAI-compatible, each with its connection state; keys appear as fingerprints only), then the
   **Available Providers** table as before. **Engines** is no longer in the sidebar; a `#engines`
   link opens Providers. The terminal console and the API are unchanged.
+- Sends to To, Cc and Bcc, from agent tools and notifications alike, follow the precedence: your own
+  address is allowed, Always denied refuses ("Not sent: x@xxx.gov is on your Always denied list
+  (xxx.gov)."), Always allowed allows, then the mode decides. A notification to your own address is
+  therefore always delivered, also when your lists do not name it.
+- A policy stored by an earlier version keeps its meaning: an allowlist's entries become the Always
+  allowed list, a denylist's entries the Always denied list. The older `{mode, entries}` body is
+  still accepted (`entries` replaces the list the mode uses). Needs the AbstractCore version that
+  adds the two lists.
 
 ### Fixed
 - Runs now use the base URL set on the text-generation default (`output.text`, stored as `input.text`). Released 0.10.0 saved and showed it, but runs, run summaries, Ask and the sandbox called the provider's built-in address instead (for example LM Studio on `localhost:1234`). The base URL applies to the route's own provider only; an endpoint profile (`endpoint:<id>`) keeps its own address, and nothing changes when the field is empty. Affects 0.10.0; ships in the next release.

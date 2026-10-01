@@ -11225,6 +11225,11 @@ fn my_email_recipient_rules_add_to_always_denied_sends_both_lists() {
         .map(|(i, l)| (i, l.to_string()))
         .collect();
     assert_eq!(adds.len(), 2, "one add field per list:\n{s}");
+    // An older gateway sends no self_addresses: the entry stays an ordinary chip.
+    assert!(
+        s.contains("me@example.test") && !s.contains("(your address)"),
+        "{s}"
+    );
     let (row, line_txt) = &adds[1];
     let field_col = line_txt[..line_txt.find('▐').unwrap()].chars().count();
     let _ = h.drain_cmds();
