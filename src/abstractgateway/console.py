@@ -13277,7 +13277,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            body = { prompt: promptText, video_provider: row.provider, video_model: row.model, request_id: sandboxRequestId() };
 	          }
 	          const label = sandboxRouteShortLabel(row);
-	          pendingId = sandboxPush({ role: "assistant", title: `${label} · ${row.model || ""}`, content: "", live: { callId: "sandbox", reasoning: "", label: `generating ${label.toLowerCase()}` } });
+	          pendingId = sandboxPush({ role: "assistant", title: label, content: "", live: { callId: "sandbox", reasoning: "", label: `generating ${label.toLowerCase()}` } });
 	          // The slow lane, like every other media route: local diffusion on
 	          // Apple silicon runs for MINUTES (the seeded flux/wan defaults), so
 	          // the 60s budget would abort the socket while the gateway kept
