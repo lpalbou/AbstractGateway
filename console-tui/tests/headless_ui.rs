@@ -8858,7 +8858,7 @@ fn workflow_export_confirms_the_destination_first() {
 }
 
 #[test]
-fn workflows_import_reload_and_delete_confirm() {
+fn workflows_import_reload_and_archive_confirm() {
     use abstractgateway_console::store::workflows_from_payload;
     use abstractgateway_console::worker::operator::OpCmd;
     let mut h = harness_sized(Size::new(140, 40));
@@ -8870,19 +8870,20 @@ fn workflows_import_reload_and_delete_confirm() {
     let s = h.turns(2);
     assert!(s.contains("i import .flow"), "panel hint:\n{s}");
     let _ = h.drain_cmds();
-    // Delete asks first; keep (default) sends nothing.
+    // Archive (never delete, DESIGN-v3 §5.3) asks first; keep (default) sends nothing.
     h.type_text("d");
     let s = h.turns(2);
     assert!(
-        s.contains("Delete demo@1.0.0? This removes this version from"),
+        s.contains("Archive demo@1.0.0? It disappears from lists"),
         "confirm:\n{s}"
     );
+    assert!(!s.contains("Delete demo"), "no delete wording:\n{s}");
     h.type_text("\r");
     h.turns(2);
     assert!(
-        h.find_cmd(|c| matches!(c, Cmd::DeleteWorkflow { .. }))
+        h.find_cmd(|c| matches!(c, Cmd::ArchiveWorkflow { .. }))
             .is_none(),
-        "keep does not delete"
+        "keep does not archive"
     );
     // Reload.
     h.type_text("L");

@@ -259,8 +259,11 @@ def test_deleting_the_boot_agent_is_refused(gateway_env, tmp_path):
 
     with TestClient(app) as client:
         res = client.delete("/api/gateway/bundles/basic-agent", headers=HEADERS)
+        assert res.status_code == 410, res.text
+        # basic-agent ships with the gateway: it can't even be archived.
+        res = client.post("/api/gateway/bundles/basic-agent/archive", headers=HEADERS, json={})
         assert res.status_code == 409, res.text
-        assert "boot" in res.json()["detail"].lower()
+        assert res.json()["detail"]["reason_code"] == "workflow_shipped"
 
     assert boot_file.is_file(), "the boot-critical bundle was deleted anyway"
 
@@ -274,11 +277,10 @@ def test_the_boot_guard_does_not_block_ordinary_bundles(gateway_env, tmp_path):
 
     with TestClient(app) as client:
         assert client.post("/api/gateway/bundles/reload", headers=HEADERS).status_code == 200
-        res = client.delete("/api/gateway/bundles/ordinary?bundle_version=1.0.0", headers=HEADERS)
+        res = client.post("/api/gateway/bundles/ordinary/archive", headers=HEADERS, json={"bundle_version": "1.0.0"})
         assert res.status_code == 200, res.text
-        assert res.json()["removed"] == 1
 
-    assert not (flows / "ordinary@1.0.0.flow").exists()
+    assert (flows / "ordinary@1.0.0.flow").exists(), "archive keeps the file"
     assert (flows / "basic-agent.flow").is_file()
 
 

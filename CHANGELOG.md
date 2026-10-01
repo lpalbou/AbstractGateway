@@ -131,6 +131,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The MCP server registry lives in the gateway's root data folder, also when several users sign in
   (one registry for every account, the one agent runs read).
+- **Workflow ownership.** The Workflows page groups bundles into **Shared with everyone** and
+  **Mine** (what you imported or published), with a Shipped / Imported / From AbstractFlow badge.
+  `GET /bundles` items carry `owner` (`gateway` or `user`), `shipped`, `available` and `archived`; imports and
+  publishes stamp `metadata.owner` (user, tenant, time). Users can import: the bundle lands in **Mine**.
+- **Available to users** (administrators): a switch per shared workflow, also
+  `PUT /api/gateway/admin/workflows/{bundle_id}/availability`. Off hides it from users' lists and app pickers,
+  refuses their new runs, schedules and automations ("This workflow isn't available to users on this gateway.
+  Ask an admin."), and pauses their existing automations on it with that reason; turning it back on does not
+  resume them. Admins always see every workflow; an app's default workflow keeps running for everyone.
+- **Open** (in AbstractFlow) on every workflow: opens it in the visual editor (AbstractFlow's
+  `?bundle=<id>&version=<v>` link). `GET /bundles/{bundle_id}` also returns `source`, `shipped` and `owner`.
+- Paused automations show why the gateway paused them (`paused_reason` in `GET /automations`).
+
+### Changed
+- **Workflows are archived, never deleted.** **Archive** / **Unarchive** (and **Show archived**) replace Delete
+  on the Workflows page, the terminal console (`d` / `D`) and broken bundle files; `POST /bundles/{bundle_id}/archive`
+  and `/unarchive`. An archived workflow leaves the lists and cannot start new runs; the file and every past run stay,
+  and existing runs and automations keep resuming. Bundles that ship with the gateway can be neither archived nor
+  deleted. `DELETE /bundles/{bundle_id}` now answers `410`.
+
+### Fixed
+- **Import .flow** in the web console works again: the upload was sent as JSON instead of a multipart form, so the
+  gateway refused every file. The Workflows page also keeps the import and archive result sentence on screen
+  after the list reloads.
 
 ## [0.10.0] - 2026-10-01
 

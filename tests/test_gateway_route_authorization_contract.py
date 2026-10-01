@@ -238,6 +238,10 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("DELETE", "/api/gateway/bundles/{bundle_id}"),
     ("POST", "/api/gateway/bundles/{bundle_id}/deprecate"),
     ("POST", "/api/gateway/bundles/{bundle_id}/undeprecate"),
+    # archive/unarchive gate IN-HANDLER (DESIGN-v3 §5.3): admin for gateway
+    # workflows, the owner for their own; shipped bundles refuse (409).
+    ("POST", "/api/gateway/bundles/{bundle_id}/archive"),
+    ("POST", "/api/gateway/bundles/{bundle_id}/unarchive"),
     ("POST", "/api/gateway/visualflows"),
     ("POST", "/api/gateway/visualflows/code/simulate"),
     ("PUT", "/api/gateway/visualflows/{flow_id}"),

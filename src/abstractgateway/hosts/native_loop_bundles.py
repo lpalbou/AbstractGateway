@@ -168,6 +168,10 @@ def materialize_native_loop_specs(
         return {}, "native_loop_factory bundles must not declare manifest.flows"
 
     meta = dict(manifest.metadata or {})
+    # `metadata.owner` is the GATEWAY's attribution stamp (workflow_governance.py, written on
+    # upload/publish), not loop configuration: the native-loop auditor (abstractagent) refuses
+    # unknown keys, so it never sees this one.
+    meta.pop("owner", None)
     staged: Dict[str, WorkflowSpec] = {}
 
     for ep in manifest.entrypoints:

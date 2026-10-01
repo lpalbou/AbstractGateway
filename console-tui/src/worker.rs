@@ -226,9 +226,9 @@ pub enum Cmd {
     LoadWorkflows {
         include_drafts: bool,
     },
-    /// Remove one version, or every version when `version` is empty.
-    /// There is NO undo — the gateway unlinks the file.
-    DeleteWorkflow {
+    /// Archive one version, or every version when `version` is empty.
+    /// Nothing is deleted: the file and past runs stay on the gateway.
+    ArchiveWorkflow {
         bundle_id: String,
         version: String,
     },
@@ -1820,22 +1820,22 @@ fn handle(
             })
         }
 
-        Cmd::DeleteWorkflow { bundle_id, version } => {
+        Cmd::ArchiveWorkflow { bundle_id, version } => {
             let label = if version.is_empty() {
                 bundle_id.clone()
             } else {
                 format!("{bundle_id}@{version}")
             };
-            let action = format!("DELETE workflow '{label}'");
-            let (write, verify) = with_busy(store, wake, &format!("deleting {label}"), || {
+            let action = format!("archive workflow '{label}'");
+            let (write, verify) = with_busy(store, wake, &format!("archiving {label}"), || {
                 let write =
-                    require_client(client).and_then(|c| c.delete_bundle(&bundle_id, &version));
+                    require_client(client).and_then(|c| c.archive_bundle(&bundle_id, &version));
                 let verify = require_client(client).and_then(|c| c.bundles(true));
                 (write, verify)
             });
-            // VERIFY BY READING BACK: the gateway unlinks a file, and a write
-            // that reports success while the row survives (duplicate files
-            // claiming one bundle id) would otherwise read as done.
+            // VERIFY BY READING BACK: an archived bundle leaves the list (the
+            // default listing excludes archived), so a write that reports
+            // success while the row survives would otherwise read as done.
             let bid = bundle_id.clone();
             let ver = version.clone();
             let verified = verify.as_ref().ok().map(|v| {

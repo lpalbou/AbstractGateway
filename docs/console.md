@@ -34,7 +34,7 @@ The sidebar groups the tabs in four sections, in this order:
 | Group | Tab | What it covers |
 |---|---|---|
 | Accounts | **Accounts** | every user and entity in one table: the **Active** switch, email, activity (Logs), workspace policy, token rotation, entity management, and the administrator's **Email for everyone** switches ([below](#accounts)) |
-| Work | **Workflows** | the workflow bundles on this gateway (name, what each does, version, source, the apps that use it), import, export, delete, the default workflow for each app and the **Streamed replies** setting ([below](#workflows)) |
+| Work | **Workflows** | the workflow bundles on this gateway, shared by the gateway or your own (name, what each does, version, source, the apps that use it, availability to users), import, export, open in AbstractFlow, archive, the default workflow for each app and the **Streamed replies** setting ([below](#workflows)) |
 | Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches |
 | Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), plus *Advanced: apps settings* and *Advanced: backlog settings (Continuum)* |
 | Models | **Providers** | **Local providers**: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, **Browse models** and its server connection; **Remote providers**: OpenAI, Anthropic, OpenRouter, Portkey and custom OpenAI-compatible connections with write-only keys (shown as fingerprints); then the **Available Providers** table ([below](#models-and-local-providers)) |
@@ -190,26 +190,51 @@ The **Workflows** tab starts with what workflows are: the programs your apps
 and automations run, packaged as bundles (`.flow` files) that ship with the
 gateway, that you import, or that you publish from AbstractFlow.
 
-The table has one row per bundle:
+The table has one row per bundle, in two groups: **Shared with everyone** (bundles that ship with the gateway and those an admin imported or
+published) and **Mine** (bundles you imported or published yourself; shown only
+when you have some). An admin's own imports are shared, so admins see one group.
+A user sees the shared bundles an admin left available, and their own.
 
 | Column | Shows |
 |---|---|
-| **Name** | the default entrypoint's name, with the bundle id under it, and a **Deprecated** pill when it applies |
+| **Name** | the default entrypoint's name, with the bundle id under it, and **Deprecated** / **Archived** pills when they apply |
 | **What it does** | the default entrypoint's description (the whole text when the row is expanded) |
 | **Version** | the latest version ("+2 older" when there are more; a manifest version 0.0.0 reads "unversioned") |
-| **Source** | "Shipped with the gateway", "Imported" or "Published from AbstractFlow" |
+| **Source** | a badge: "Shipped", "Imported" or "From AbstractFlow" |
 | **Used by** | the plain names of the apps that ask for its interfaces, each with a (?) that explains it, or "No app" |
-| **Actions** | **Export** and **Delete** (administrators) |
+| **Available to users** | (administrators only, shared bundles) a switch; off hides the workflow from users' lists and app pickers |
+| **Actions** | **Export**, **Open** (in AbstractFlow, a new tab) and **Archive** for imported and published bundles |
 
-Click a row to expand it: each version with its channel, date, **Export** and
-**Delete**, and its entrypoints with their names, descriptions and the apps
-that use them. The toolbar has a search field, the switches **Drafts** and
-**Older versions**, and **Import .flow** (administrators). **Delete** asks in
-the row and says how many runs reference the version; for a bundle that ships
-with the gateway it adds that nothing puts it back at the next restart, only
-reinstalling the gateway does. The default framework agent (`basic-agent`)
-cannot be deleted. **Broken workflows** appears only when the gateway refused a
-bundle file: the workflow, the versions affected and why it cannot run.
+Click a row to expand it: each version with its channel, date and the same
+actions, and its entrypoints with their names, descriptions and the apps that
+use them. The toolbar has a search field, the switches **Drafts**, **Older
+versions** and **Show archived**, and **Import .flow**. Everyone can import: a
+user's import lands in **Mine**, an admin's in the shared group.
+
+Workflows are never deleted. **Archive** asks in the row ("Archive … ? It
+disappears from lists and can't start new runs; the file and every past run
+stay on the gateway.") and hides the bundle (or one version); runs and
+automations that already use it keep resuming and replaying. **Show archived**
+lists archived bundles with **Unarchive**. Bundles that ship with the gateway
+have no Archive at all; an admin hides them with **Available to users** instead.
+Admins archive shared bundles; each user archives their own.
+
+**Available to users** (administrators): off hides the workflow from every
+user's lists and app pickers (AbstractCode, the Assistant, AbstractFlow), refuses
+their new runs and automations with "This workflow isn't available to users on
+this gateway. Ask an admin.", and pauses their existing automations on it with
+the reason "Paused: this workflow is no longer available to users — ask an
+admin." Turning it back on does not resume those automations; each user resumes
+their own. Admins always see every workflow, and an app's default workflow
+(**Default workflow per app**) keeps running for everyone even when it is hidden.
+
+**Open** opens the workflow in the visual editor in a new tab
+(AbstractFlow must be running: **Apps > Flow Editor**). A bundle published from
+one of your flows opens that flow; any other bundle opens as an unsaved copy
+titled `<name> · <bundle id>@<version>`, so Save creates your own flow and never
+changes the bundle. **Broken workflows** appears only when the gateway refused a
+bundle file: the workflow, the versions affected and why it cannot run, with
+**Archive** to hide them.
 
 **Default workflow per app** comes next: "When an app asks for "an agent"
 without naming a workflow, the gateway runs this one." One row per interface,
@@ -571,8 +596,8 @@ lives inside Review & Test.
   the two): the plain name of each app's interface, what runs ("Clients
   choose", "Built in: …", a workflow, or "Broken"), and the selected row's
   help; `Enter` picks a default and saves it at once, `o` shows **Other
-  workflow types**. Also `t` drafts on/off, `e` export, `d` delete a version,
-  `D` delete every version, `i` import a `.flow` bundle, `L` reload from disk.
+  workflow types**. Also `t` drafts on/off, `e` export, `d` archive a version,
+  `D` archive every version (nothing is deleted), `i` import a `.flow` bundle, `L` reload from disk.
   The per-app defaults are also on Runtimes (*Runtime knobs*).
 - **5 Apps** is the web console's Apps tab: open browser apps signed in,
   install or update them, start and stop them, the desktop Assistant and
