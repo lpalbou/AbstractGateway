@@ -1691,6 +1691,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .workflows-more { cursor: pointer; border-radius: var(--radius-sm); }
 	    .workflows-more[aria-expanded="false"] { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 	    .workflows-more:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+	    /* The folded description lives under the name only in card mode (it is also a .workflows-more). */
+	    .workflows-table .workflows-name .workflows-fold-what { display: none; }
 	    .workflows-fold-what, .workflows-fold-meta { display: none; }
 	    .workflows-fold-what, .workflows-fold-meta { font-size: var(--af-helper-size, var(--font-size-md)); color: var(--muted); font-weight: 400; }
 	    .workflows-fold-what { color: var(--text); font-size: var(--font-size-base); }
@@ -1756,8 +1758,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .workflows-cards .workflows-table tr.workflows-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px 10px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
 	    .workflows-cards .workflows-table tr.workflows-row > td { padding: 0; border: 0; width: auto; }
 	    .workflows-cards .workflows-table td.workflows-what, 	    .workflows-cards .workflows-table td.workflows-source, 	    .workflows-cards .workflows-table td.workflows-version-cell { display: none; }
-	    .workflows-cards .workflows-fold-what { display: block; margin-top: 2px; }
-	    .workflows-cards .workflows-fold-what[aria-expanded="false"] { display: -webkit-box; }
+	    .workflows-cards .workflows-table .workflows-name .workflows-fold-what { display: block; margin-top: 2px; }
+	    .workflows-cards .workflows-table .workflows-name .workflows-fold-what[aria-expanded="false"] { display: -webkit-box; }
 	    .workflows-cards .workflows-fold-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 	    .workflows-cards .workflows-table td.workflows-available:empty { display: none; }
 	    .workflows-cards .workflows-available .af-switch__label { position: static; width: auto; height: auto; overflow: visible; clip: auto; }
