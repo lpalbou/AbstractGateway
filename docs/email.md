@@ -31,10 +31,18 @@ the security model in [security.md](security.md#per-user-email), and the console
 
 You can connect from any of these surfaces; they share the same fields and words:
 
-- **Web console** → Users & Entities → **My email address and mailbox** (every signed-in user): the
-  **Mailbox** card, tab **Other** for address + password, **Google** or **Microsoft** to sign in with
-  the provider.
-- **Terminal console** (`abstractgateway-console`) → Users screen → `@`.
+- **Web console** → Accounts → **Email** on your own row (every signed-in user): the **Mailbox**
+  card, tab **IMAP** (the default) for address + password, **Google** or **Microsoft** to sign in
+  with the provider.
+- **Terminal console** (`abstractgateway-console`) → **2 Accounts** → `@` on your own row.
+
+In both consoles the IMAP pane shows the incoming (IMAP) and outgoing (SMTP) server, port and
+security. They are filled in with the standard `imap.<domain>` / `smtp.<domain>` values as soon as
+the address has a domain, then replaced by what discovery finds, except a field you edited. There is
+no user name or display name field: a small link ("My provider uses a different login name", `Ctrl+O`
+in the terminal) shows a Login field for the few providers that need one. When your email address
+is empty, the pane's **Mailbox address** is the only address field and connecting fills your email
+address; when it is set, the pane reads "Mailbox account: x@y" with **Use a different account**.
 - **HTTP**: `PUT /api/gateway/me/email`.
 
 Give the address and the password (or app password). The gateway finds the IMAP and SMTP servers
@@ -53,8 +61,9 @@ plus `defaults`: what the mailbox form pre-fills — the discovered servers, els
 ("Settings found for fastmail.com." / "Standard settings for example.com — change them if your
 provider uses others.").
 When no step finds both servers, the connect answers `400 email_discovery_failed` with the same
-`tried` list and the message "Couldn't find the mail servers for <domain>. Open Server settings and
-enter them."; give the servers yourself then (`imap` and `smtp`: `host`, `port`, `security`).
+`tried` list and the message "Couldn't find the mail servers for <domain>." (the fix: "Standard
+settings are filled in: check them and change any your provider does differently."); give the
+servers yourself then (`imap` and `smtp`: `host`, `port`, `security`).
 `username` defaults to the form the provider's configuration names, else the address;
 `display_name` is optional: an empty one keeps the stored name, else the address's local part (it is
 the name on the From line of mail you send). Connecting a mailbox sets your email address when it is
@@ -113,7 +122,7 @@ Besides the mailbox settings and status (never a secret):
 
 | Field | Meaning |
 |---|---|
-| `email_address` | your email address as stored on your user record (`""` when none) |
+| `email_address` | where your sign-in codes and notifications go: your email address as stored on your user record, else your connected mailbox's own address (`""` when neither) |
 | `mailbox` | `{"state": "connected" \| "not_connected" \| "paused" \| "unavailable", "address", "provider", "reason"}` — the same value the administrator's Accounts table shows for you |
 | `registered_address` | "self" for your runs: your email address, else your connected mailbox's own address |
 | `email_available` | your administrator allows mailboxes ("Mailboxes for users") |
@@ -121,8 +130,9 @@ Besides the mailbox settings and status (never a secret):
 | `agent_tools` | `{"on", "available", "unavailable_reason", "active"}`: your switch, whether it can be switched on now, and why not ("Connect a mailbox first.", "Your admin turned mailboxes off.", "Your admin turned agent email tools off.") |
 | `oauth_providers` | `[{"id": "google" \| "microsoft", "available", "reason"}]` |
 
-**Use this mailbox** (`PUT /api/gateway/me/email/enabled {"enabled": false}`) keeps the settings but
-stops watching, sending and notifications until you switch it back on. **Folder**
+The mailbox's **Active** switch, next to its status once connected (`PUT /api/gateway/me/email/enabled
+{"enabled": false}`), keeps the settings but stops watching, sending and notifications until you
+switch it back on. **Folder**
 (`PUT /api/gateway/me/email/folder {"folder": "Archive"}`, empty = INBOX) changes the folder your
 agents and the mail watcher read without reconnecting; the watcher starts that folder from mail that
 arrives after the change.
@@ -169,8 +179,8 @@ code — goes through the same checks, in this order:
    Until AbstractCore 2.21 the defaults were 20 and 100 and connecting a mailbox stored them
    unmarked; an upgrade treats exactly that pair as the old defaults, so the mailbox follows the new
    ones. Any other unmarked value is kept (the limits document's `source` is `legacy`; `default`
-   and `user` are the other values). Set new
-   values in **Settings → My email** to move on.
+   and `user` are the other values). Set new values under Advanced in your email settings to move
+   on.
 
 On top of the policy, the approval gate still decides whether an agent's send runs unattended: a
 send to anyone but you (or an automation's pre-authorised recipients) waits for your approval, and
@@ -252,9 +262,10 @@ send limits, the waiting notices go out as one digest when the window allows; th
 keep why they wait and when they go (`GET /me/notifications` → `outbox.rate_limited {count, cause,
 resets_at}`). **Send a test** checks the whole path and always answers with a sentence: "Sent to
 x@y.", "Not sent: no mailbox connected.", "Not sent: your mailbox is paused.", "Not sent: hourly
-limit reached (20 of 20 this hour) — resets at 14:05.", "Queued behind 3 earlier notifications; they
+limit reached (100 of 100 this hour) — resets at 14:05.", "Queued behind 3 earlier notifications; they
 go out when the limit resets at 14:05." or "Not sent: smtp.x.com refused the message (<cause>)."
-(`message`, with `reason_code` and `limit` for programs). Notification emails use fixed templates; the only
+(`message`, with `reason_code` and `limit` for programs; the consoles show reset times in your local
+time). **Send a test** sits under Notifications in your email settings. Notification emails use fixed templates; the only
 model-written text is an automation's own `notify` title and body, labelled as such. Replying to a
 notification does nothing.
 
@@ -290,8 +301,8 @@ token rotation.
 
 ## Administrators
 
-Administrators decide what is **available** to users. The Users tab has one switch,
-**Mailboxes for users**; two more sit under its Advanced disclosure
+Administrators decide what is **available** to users. The **Email for everyone** section under the
+Accounts table has one switch, **Mailboxes for users**; two more sit under its Advanced disclosure
 (`GET/PUT /api/gateway/admin/email/capabilities`, which returns each one's label and description):
 
 | Capability | Label | Default | Meaning |
@@ -325,7 +336,9 @@ Sign-in by email means that whoever controls a user's mailbox can sign in as tha
 where mailboxes are not as well protected as gateway tokens. The Accounts table
 (`GET /api/gateway/admin/accounts`) shows each account's email address and mailbox (`connected`,
 `not_connected`, `paused`, `unavailable` with the reason) through the same resolver as the account's
-own email settings, so the administrator's own row always matches their card. Entities have no
+own email settings, so the administrator's own row always matches their card. The address shown
+there and on the card is where sign-in codes and notifications go: the registered email address,
+else the account's own connected mailbox address. Entities have no
 mailbox of their own: mailboxes belong to a user's runtime, and entity runs use their own runtime
 without the host's mailbox. Administrators see the state, the address and the last error — never messages,
 the user's recipient list or credentials. The administrator's server file helpers (`/files/*`,
@@ -359,7 +372,7 @@ Email is configured per user, never through environment variables. On the first 
 that still has the `ABSTRACT_EMAIL_*` variables (or values saved through the process manager's
 environment overrides) imports that account **once** into the administrator's email settings; from
 then on the variables are ignored, and each one still set is named at startup and in the
-administrator's account page (**My email address and mailbox**) with the setting that replaced it. The email bridge
+administrator's own email settings (Accounts → **Email** on their row) with the setting that replaced it. The email bridge
 (`ABSTRACT_EMAIL_BRIDGE`) is replaced by the per-user watcher and the `email.received@1` trigger.
 Maintenance notices go to the administrator's registered address through the administrator's own
 account (`ABSTRACT_BACKLOG_EMAIL_TO` and the related account variables are ignored); the same notice

@@ -77,10 +77,15 @@ pip install matplotlib
 
 ## Managing workflows from the console
 
-Both consoles carry a **Workflows** surface — a tab in the web console, step 6
-in the console-TUI — listing every workflow registered on this gateway with how
-many published and draft versions each has. Select a workflow to see its
-versions and its entrypoints with their declared interfaces.
+Both consoles carry a **Workflows** surface — a tab in the web console, screen
+3 in the console-TUI — listing one row per workflow bundle registered on this
+gateway: its name, what it does, its latest version (and how many older ones),
+its source ("Shipped with the gateway", "Imported" or "Published from
+AbstractFlow") and the apps that use it. Select a workflow to see its versions
+and its entrypoints with their names, descriptions and the apps that use them.
+Below the list, **Default workflow per app** chooses which workflow runs when an
+app asks for "an agent" without naming one (see
+[console.md](./console.md#workflows)).
 
 From there you can:
 
@@ -90,11 +95,14 @@ From there you can:
   installed, so it can be archived or re-installed elsewhere. In the TUI, `e`
   writes the file next to your working directory.
 - **Delete** a single version or every version of a workflow, behind a
-  confirmation that states what is irreversible. In the TUI, `d` removes the
-  selected version and `D` the whole workflow.
+  confirmation that states what is irreversible. Deleting a workflow that ships
+  with the gateway removes its file: nothing puts it back at the next restart,
+  only reinstalling the gateway does. In the TUI, `d` removes the selected
+  version and `D` the whole workflow.
 
-Versions the gateway is not serving are listed separately under **Not loaded**,
-with the reason and the file path. They stay on disk until you remove them.
+Bundle files the gateway cannot run are listed separately under **Broken
+workflows**, with the versions affected and the reason. They stay on disk until
+you remove them.
 
 ## Who can change the registry
 

@@ -29,21 +29,26 @@ one. The console uses the current origin, so it never asks for a gateway URL.
 You can also sign in with a user id and token (the admin's first token is in
 `<data dir>/auth/bootstrap-admin-token`).
 
-The sidebar lists these tabs:
+The sidebar groups the tabs in four sections, in this order:
 
-| Tab | What it covers |
-|---|---|
-| **Users & Entities** | user records, token rotation, retained runtime reservations, **My email address and mailbox** (your email address, your mailbox, the **Job failed** / **Approval needed** notification switches and **Agent email tools** — [email.md](./email.md)); for admins the **Mailboxes for users** switch (Advanced: **Agent email tools for users**, **Sign-in by email**), the users table with an **Active** switch per user, and the summoned-entity roster ([entities.md](./entities.md)) |
-| **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches |
-| **Workflows** | the default agent workflow for each agent interface (what "Gateway default" runs in the apps), the **Stream replies by default** switch, every registered workflow with versions and entrypoints (*Make agent default* on an entrypoint), import, export, delete, and versions that are not served (with the reason) |
-| **Providers** | provider connections (OpenAI, Anthropic, OpenRouter, Portkey, LM Studio, Ollama, custom OpenAI-compatible endpoints) with write-only keys |
-| **Multimodal** | capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
-| **Sandbox** | quick chat and media generation against the configured defaults |
-| **Resources** | memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the **Gateway** card (pause, update, restart, desktop icon, start at login) |
-| **Models** | browse models that fit this machine, download them, delete installed ones (below) |
-| **Engines** | the local engines on the gateway host: installed or not, running or not, install, start, stop (below) |
-| **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), plus *Advanced: apps settings* and *Advanced: backlog settings (Continuum)* |
-| **Network** | who can reach the gateway (localhost only, local network, internet), its addresses, and *Advanced: reverse proxy* ([configuration.md](./configuration.md#network-exposure-localhost--local-network--internet)) |
+| Group | Tab | What it covers |
+|---|---|---|
+| Accounts | **Accounts** | every user and entity in one table: the **Active** switch, email, activity (Logs), workspace policy, token rotation, entity management, and the administrator's **Email for everyone** switches ([below](#accounts)) |
+| Work | **Workflows** | the workflow bundles on this gateway (name, what each does, version, source, the apps that use it), import, export, delete, the default workflow for each app and the **Streamed replies** setting ([below](#workflows)) |
+| Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches |
+| Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), plus *Advanced: apps settings* and *Advanced: backlog settings (Continuum)* |
+| Models | **Providers** | provider connections (OpenAI, Anthropic, OpenRouter, Portkey, LM Studio, Ollama, custom OpenAI-compatible endpoints) with write-only keys |
+| Models | **Models** | browse models that fit this machine, download them, delete installed ones (below) |
+| Models | **Engines** | the local engines on the gateway host: installed or not, running or not, install, start, stop (below) |
+| Models | **Multimodal** | capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
+| System | **Resources** | memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the **Gateway** card (pause, update, restart, desktop icon, start at login) |
+| System | **Sandbox** | quick chat and media generation against the configured defaults |
+| System | **Network** | who can reach the gateway (localhost only, local network, internet), its addresses, and *Advanced: reverse proxy* ([configuration.md](./configuration.md#network-exposure-localhost--local-network--internet)) |
+
+Below the groups, at the bottom of the sidebar, **Setup** (administrators)
+runs the setup guide again: engines, default models, apps, network. It keeps
+your current choices unless you replace them ([first-run.md](./first-run.md)).
+The **Technical details** switch sits under it.
 
 **Start at login** (the Gateway card, and the setup guide's last step) is a
 switch for admins: it names the mechanism (a LaunchAgent, a systemd user
@@ -75,8 +80,8 @@ one under **Providers**.
 The **Technical details** switch at the bottom of the sidebar shows commands,
 route ids and other technical information throughout the console. The top bar
 holds the docs assistant (answers grounded on this gateway's documentation),
-the appearance settings, **About**, the **Setup** button that reopens the
-first-run guide (admins), and the sign-out control.
+the appearance settings, **About**, the gateway's address with a copy button,
+who is signed in, and the sign-out control.
 
 **About** (the *i* button) shows AbstractGateway and the version this gateway
 runs, that it is part of AbstractFramework, the author, the copyright and
@@ -103,15 +108,125 @@ The web console works in any browser window and on phones and tablets:
   does not zoom into a focused field), and reading text is 14 px.
 - The layout respects the notch and home-indicator areas of phones.
 
-### Stream replies by default
+### Accounts
 
-Under the default agent workflows on the Workflows tab, **Stream replies by
-default** turns `agents.streaming_default` on or off. When it is on, an
-interactive run whose app does not choose shows the model's reply as it is
-written. Scheduled runs, bridges and the entity loop never stream. The switch
-saves as soon as you change it (admins); the pill says whether the value is
-saved or the default. A gateway that does not have this setting says "Not
-available on this gateway". The same setting is in the terminal console
+**Accounts** lists the people who use this gateway and the entities that act
+on it, in one table (`GET /api/gateway/admin/accounts`, see
+[api.md](./api.md#accounts-and-activity)). Above it, **Create user** issues a
+user and their token (shown once) and **Create entity** summons a new entity
+from a spark template (its name is permanent, [entities.md](./entities.md)).
+
+| Column | Shows |
+|---|---|
+| **Name** | the account id and a kind chip: **Admin**, **User** or **Entity** (hover it for the role) |
+| **Email address** | where the account's sign-in codes and notifications go: the registered email address, else the account's own connected mailbox address; "No address" when it has neither |
+| **Mailbox** | "Connected as x@y", "Not connected", "Paused", or "Not available" for an entity |
+| **Runtime** | the account's runtime, or "None" |
+| **Active** | the switch described below |
+| **Actions** | **Email**, **Logs**, **Workspace**, **Rotate**, **Manage** (entities) and **Delete** |
+
+Rows are tinted by kind (a legend under the table reads "Tint: admin · user ·
+entity"). An action that cannot apply to a row is shown disabled, and one line
+under the buttons says why: for an entity, "Rotate and Delete don't apply to
+entities: no credential is kept, and an entity's name is kept for life —
+suspend it instead."; for your own row, "You can't deactivate or delete your
+own account."
+
+- **Active** for a user: off signs them out and refuses their sign-in until you
+  turn it back on. Turning it off asks first ("Deactivate alice? They are
+  signed out until you turn Active back on."). Your own account and the last
+  active admin cannot be switched off.
+- **Active** for an entity: off suspends it (it stops acting and its gateway
+  credential is switched off) after "Suspend castor? It stops acting until you
+  turn Active back on."; on resumes it in the state it had before.
+- **Email** opens a dialog. On your own row it holds your email settings: your
+  email address, your mailbox, the **Job failed** and **Approval needed**
+  notifications, **Agent email tools** and Advanced ([email.md](./email.md)).
+  An administrator's own row adds one sentence: the address also receives the
+  administrator's sign-in codes and notifications, and the mailbox serves the
+  administrator's own agents. On another user's row it holds only that user's
+  **Email address** (with Save) and a read-only mailbox line ("Mailbox: not
+  connected — only alice can connect a mailbox. You never see anyone's mail.").
+  On an entity's row it says "Entities can't have their own mailbox yet:
+  mailboxes belong to a user's runtime."
+- **Logs** opens "Activity — <id>": the account's sign-ins, token rotations,
+  runs started, automation commands, account changes and email events from the
+  gateway's audit log, newest first, in your local time. The chips **All**,
+  **Sign-ins**, **Runs**, **Automations** and **Email** filter the list; a run
+  event links to the run in the Observer app (**Open in Observer**,
+  `/apps/observer/#run/<run_id>`). The footer says what the audit log does not
+  record (page views and reads, mail received, what agents send with their
+  email tools).
+- **Workspace** opens the account's workspace policy (which folders its agents
+  may read and write); for an entity it opens the entity's management page.
+- **Rotate** issues a new token for a user (the old one stops working at once;
+  the new one is shown once). Entities have no token to rotate.
+- **Manage** (entities) opens the entity's lifecycle, substrate, capabilities
+  and prompt; **Talk** is there too.
+- **Delete** asks in a row under the account. The account and its token are
+  removed; its runtime and data are kept. Entities cannot be deleted: suspend
+  them instead.
+
+Under the table, **Email for everyone** (administrators) holds the switch
+**Mailboxes for users**, with **Agent email tools for users** and **Sign-in by
+email** under Advanced ([email.md](./email.md#administrators)). Below the page,
+**Workspace policy** is your own workspace policy.
+
+Someone who is not an administrator sees the page as **Your account** ("Your
+account and the entities you created."): the same table with their own row and
+one row per entity they created (`GET /api/gateway/me/accounts`). There is no
+Create user and no Email for everyone; their own Rotate says "Only an admin can
+rotate your token." and an entity's Active switch "Only an admin can suspend an
+entity." See [security.md](./security.md#who-sees-which-account).
+
+On phones each account is one flat block: name, kind chip and Active, then the
+address and mailbox, then the runtime and the actions.
+
+### Workflows
+
+The **Workflows** tab starts with what workflows are: the programs your apps
+and automations run, packaged as bundles (`.flow` files) that ship with the
+gateway, that you import, or that you publish from AbstractFlow.
+
+The table has one row per bundle:
+
+| Column | Shows |
+|---|---|
+| **Name** | the default entrypoint's name, with the bundle id under it, and a **Deprecated** pill when it applies |
+| **What it does** | the default entrypoint's description (the whole text when the row is expanded) |
+| **Version** | the latest version ("+2 older" when there are more; a manifest version 0.0.0 reads "unversioned") |
+| **Source** | "Shipped with the gateway", "Imported" or "Published from AbstractFlow" |
+| **Used by** | the plain names of the apps that ask for its interfaces, each with a (?) that explains it, or "No app" |
+| **Actions** | **Export** and **Delete** (administrators) |
+
+Click a row to expand it: each version with its channel, date, **Export** and
+**Delete**, and its entrypoints with their names, descriptions and the apps
+that use them. The toolbar has a search field, the switches **Drafts** and
+**Older versions**, and **Import .flow** (administrators). **Delete** asks in
+the row and says how many runs reference the version; for a bundle that ships
+with the gateway it adds that nothing puts it back at the next restart, only
+reinstalling the gateway does. The default framework agent (`basic-agent`)
+cannot be deleted. **Broken workflows** appears only when the gateway refused a
+bundle file: the workflow, the versions affected and why it cannot run.
+
+**Default workflow per app** comes next: "When an app asks for "an agent"
+without naming a workflow, the gateway runs this one." One row per interface,
+with its plain name ("AbstractCode — chat agent", "Assistant", "Deep research",
+…), a (?) that says what it is for, and the interface id in small type. The
+list offers the workflows that declare that interface, plus "Clients choose"
+(nothing saved: each app picks its own workflow) or "Built in: basic-agent"
+when a built-in default exists. A choice applies at once ("Saved"). A row warns
+only when its saved workflow is broken (removed, deprecated, or no longer
+declaring the interface). Interfaces that no app asks for sit under **Other
+workflow types**. See
+[configuration.md](./configuration.md#default-agent-workflow).
+
+Under **Settings**, the **Streamed replies** switch sets
+`agents.streaming_default`: when it is on, a new interactive run whose app does
+not choose shows the model's reply as it is written. Scheduled runs, bridges
+and entities always get whole replies. The switch applies at once
+(administrators; others see "Only an admin can change this."). A gateway that
+does not have this setting says so. The same setting is in the terminal console
 (Runtimes → *Runtime knobs* → *Edit stream replies*) and in
 `abstractgateway config set agents.streaming_default true|false`.
 
@@ -373,15 +488,18 @@ requested after 30 seconds.
 
 ### Setup guide and browse mode
 
-The console has thirteen screens: **1** Connection, **2** Providers, **3** Routes,
-**4** Users & Entities, **5** Runtimes, **6** Workflows, **7** Review & Test,
-**8** Resources, **9** Models, **0** Engines, **A** Apps, **N** Network, and
-**Setup**.
+The console has thirteen screens, listed in the web console's sidebar order.
+**1** Connection (the terminal's sign-in) comes first, then the groups:
+ACCOUNTS **2** Accounts; WORK **3** Workflows, **4** Runtimes, **5** Apps;
+MODELS **6** Providers, **7** Models, **8** Engines, **9** Multimodal; SYSTEM
+**0** Resources, **N** Network, **R** Review & Test; and **S** Setup last. A
+line above the tabs names the groups and their keys. The web console's Sandbox
+lives inside Review & Test.
 
 - **Setup guide.** For an admin whose first run is not completed, the console
-  opens the setup guide: Connection → Setup → Engines → Providers → Routes →
+  opens the setup guide: Connection → Setup → Engines → Providers → Multimodal →
   Models → Apps → Review, the same steps as the web console's first-run guide.
-  Routes shows the recommended models for this computer with fit warnings
+  Multimodal shows the recommended models for this computer with fit warnings
   (`a` applies them, `D` downloads all of them as one job, `C` cancels, `p`
   shows the plan). Review ends with **Finish** or **Skip setup**, recorded on
   the gateway, and a **Start at login** switch. No step is gated except
@@ -390,19 +508,20 @@ The console has thirteen screens: **1** Connection, **2** Providers, **3** Route
   the mode at launch.
 - **`Ctrl+G`** reopens the guide from browse mode; inside the guide it opens
   the guide menu: go to any step, leave for now, or skip setup.
-- **Setup** shows this computer at a glance: memory, graphics, data folder,
+- **S Setup** shows this computer at a glance: memory, graphics, data folder,
   sign-in mode, whether the gateway starts at login, and the first-run state.
 
 ### Screens and panels
 
-- **Routes** flags a route this computer cannot run (for example an MLX image
+- **Multimodal** flags a route this computer cannot run (for example an MLX image
   route on Linux) with the reason, and a route whose engine is not installed
   ("engine missing", with the install command), like the web console. A model
   that is not on this computer reads "not downloaded — w: download"; `w` asks
   first, naming the model and its size, and the row updates by itself when the
   download finishes. The voice picker says why a provider lists no voices (for
   example "Supertonic is not installed … Install it with: …", or "OpenAI:
-  needs an API key (add it under Providers)").
+  needs an API key (add it under Providers)"). The transcription row names the
+  route's engine and model, and says "Engine missing" only with the reason.
 - **N Network** shows who can reach the gateway: the **saved** exposure
   (localhost only, local network, internet) next to what is **running now**,
   and every address to copy (`c`). `(•)` marks the saved mode; move the cursor
@@ -414,20 +533,46 @@ The console has thirteen screens: **1** Connection, **2** Providers, **3** Route
 - **Review & Test** holds the session's change journal and the sandbox: every
   output mode (text, image, voice, music, sound effects, video), file
   attachments and speak-this-reply.
-- **Users & Entities** summons entities (`n`), manages spark templates (`s`),
-  talks with an entity (`c`), edits your own workspace policy (`w`) and opens
-  **My email** (`@`): your **Email address**, your **Mailbox** (Google,
-  Microsoft or Other — address and password, the servers are looked up; one
-  **Connect**), the **Job failed** and **Approval needed** notifications, the
-  **Agent email tools** switch and Advanced (recipient rules, send limits,
-  folder, **Use this mailbox**) — see [email.md](./email.md). For
-  administrators the screen starts with the **Mailboxes for users** switch
-  (Advanced: **Agent email tools for users**, **Sign-in by email**), and the
-  users table reads User, Role, Email address, Mailbox, Runtime and **Active**:
-  Space switches the selected user's Active (turning it off asks first; your
-  own row can't be switched), `x` resets an old per-user mailbox override.
-- **Workflows** imports a `.flow` bundle (`i`) and reloads the registry (`L`).
-- **A Apps** is the web console's Apps tab: open browser apps signed in,
+- **2 Accounts** is the web console's Accounts page: one table of users and
+  entities with name, kind (Admin, User or Entity, coloured, with a legend),
+  email address, mailbox, runtime and **Active** (`[x]` on, `[ ]` off,
+  `[-] reason` when it can't be switched). Under the table, the selected row's
+  keys and the reason of every action that can't apply to it, then the
+  administrator's **Mailboxes for users** switch (Advanced: **Agent email tools
+  for users**, **Sign-in by email**). Keys on the selected row: Space switches
+  Active (deactivate a user, suspend an entity; it asks first), `@` email
+  (your own row: your email settings, below; another user: their email address
+  with Save and a read-only mailbox line; an entity: why it has no mailbox),
+  `l` activity ("Activity — <id>", `f` / `F` change the filter: All, Sign-ins,
+  Runs, Automations, Email; times in your local time), `w` workspace policy,
+  `t` rotate, `m` manage (entities), `d` delete. Also `a` create user, `e` edit
+  user, `n` create entity, `c` talk with an entity, `i` inspect, `s` spark
+  templates, `v` kept data of deleted users and `x` reset an old per-user
+  mailbox override. Someone who is not an administrator sees their own row and
+  the entities they created.
+- **Your email settings** (`@` on your own row): your **Email address**, your
+  **Mailbox** (tabs **IMAP**, the default, **Google** and **Microsoft**; the
+  IMAP pane shows the incoming and outgoing servers, filled in as soon as the
+  address has a domain and replaced by what discovery finds unless you edited
+  them; `Ctrl+O` shows a Login field for providers that use a different login
+  name; with an email address already saved the pane reads "Mailbox account:
+  x@y" and `Ctrl+U` uses a different account; one **Connect**), once connected
+  the mailbox's **Active** switch, Test and Disconnect, the **Job failed** and
+  **Approval needed** notifications with **Send a test** (its answer is a
+  sentence, for example "Not sent: hourly limit reached (100 of 100 this hour)
+  — resets at 14:05."), the **Agent email tools** switch and Advanced
+  (recipient rules, send limits, folder) — see [email.md](./email.md).
+- **3 Workflows** lists one row per bundle: name, what it does, version (+N
+  older), source and the apps that use it, with the selected bundle's versions
+  and entrypoints below, and **Broken workflows** when the gateway refused a
+  bundle file. **Default workflow per app** sits under it (`Tab` moves between
+  the two): the plain name of each app's interface, what runs ("Clients
+  choose", "Built in: …", a workflow, or "Broken"), and the selected row's
+  help; `Enter` picks a default and saves it at once, `o` shows **Other
+  workflow types**. Also `t` drafts on/off, `e` export, `d` delete a version,
+  `D` delete every version, `i` import a `.flow` bundle, `L` reload from disk.
+  The per-app defaults are also on Runtimes (*Runtime knobs*).
+- **5 Apps** is the web console's Apps tab: open browser apps signed in,
   install or update them, start and stop them, the desktop Assistant and
   Node.js. Over SSH, or on a machine without a display, **Open** never starts
   a browser: it shows the one-time link to copy (`y`) and the `ssh -L` port
@@ -453,7 +598,7 @@ state.
 
 Keys: `Tab` focus, `Enter` activate, `Ctrl+N` / `Ctrl+P` next and previous
 step, `Esc` back (in a text field, the first `Esc` releases it so screen keys
-work again), `1`-`9`, `0`, `A` and `N` screens, `r` refresh, `q` quit. Each screen
+work again), `1`-`9`, `0`, `N`, `R` and `S` screens, `r` refresh, `q` quit. Each screen
 lists its own actions in the footer.
 
 `←` / `→` switch to the previous and next screen, wrapping from the last screen
@@ -473,7 +618,7 @@ follow-up read and recorded in the journal.
 
 ### Models and Engines in the terminal console
 
-Screens 9 (**Models**) and 0 (**Engines**) are AbstractCore's own screens,
+Screens 7 (**Models**) and 8 (**Engines**) are AbstractCore's own screens,
 taken from the `abstractcore-console` crate (0.4) rather than rebuilt, so they look
 and behave the same in `abstractcore-console` and here. In the gateway console
 they act on the gateway's host, through the gateway's
