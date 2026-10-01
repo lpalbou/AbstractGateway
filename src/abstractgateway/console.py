@@ -5984,7 +5984,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          const help = document.createElement("p");
 	          help.id = `${fid}-help`;
 	          help.className = "af-form__help";
-	          help.textContent = src === "overlay" ? "Rewritten by you; empty it to use the built-in text again." : "The built-in text (shown greyed); write here to replace it.";
+	          help.textContent = src === "overlay" ? "Rewritten by you; empty it to use the built-in text again." : "The built-in text; edit it to rewrite this layer.";
 	          wrap.append(lab, ta, help);
 	          box.append(wrap);
 	        }
