@@ -259,23 +259,22 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     {
                         let ctx_act = ctx.clone();
                         move |gcx| {
-                            // The accounts list is an admin surface
-                            // (`/admin/accounts`; the web hides the table): a
-                            // non-admin gets the reason and the entity roster
-                            // they can see.
-                            if let Some(why) = store
-                                .conn
-                                .with(|c| {
-                                    c.is_known_non_admin()
-                                        .then(|| c.admin_refusal("the accounts list"))
-                                })
-                                .flatten()
-                            {
-                                return non_admin_view(gcx, &ctx_act, &tt, why);
-                            }
+                            // RBAC (operator ruling 2026-10-01): an admin's
+                            // table is every account (`/admin/accounts`); a
+                            // non-admin's is themself + the entities they
+                            // created (`/me/accounts`) — the same table,
+                            // with one line saying whose view it is.
+                            let scope_note = store.conn.with(|c| match c {
+                                ConnPhase::Connected(id) | ConnPhase::Verifying(id)
+                                    if !id.admin =>
+                                {
+                                    Some(non_admin_scope_line(&id.user_id))
+                                }
+                                _ => None,
+                            });
                             let data = store.accounts.get();
                             let ctx_act = ctx_act.clone();
-                            loadable_view(
+                            let table = loadable_view(
                                 &tt,
                                 &store.conn.get(),
                                 || store.tick.get(),
@@ -298,7 +297,21 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                         move || switch_selected_active(cx, &ctx_space),
                                     )
                                 },
-                            )
+                            );
+                            match scope_note {
+                                None => table,
+                                Some(note) => {
+                                    let vw = abstracttui::app::use_viewport(gcx).get_untracked().w;
+                                    let mut col = Element::new()
+                                        .style(LayoutStyle::column().gap(0).grow(1.0));
+                                    for l in
+                                        super::util::wrap_text(&note, (vw - 6).max(20) as usize)
+                                    {
+                                        col = col.child(line(vec![span(l, tt.text_muted)]));
+                                    }
+                                    col.child(table).build()
+                                }
+                            }
                         }
                     },
                 ))
@@ -341,10 +354,19 @@ fn is_own(store: &crate::store::Store, row: &AccountRow) -> bool {
     own_key(store) == Some((row.id.clone(), row.tenant_id.clone()))
 }
 
-/// The accounts table is the selection surface for an admin; a
-/// non-admin selects in the entity roster.
-fn uses_accounts(ctx: &Ctx) -> bool {
-    !ctx.store.conn.with_untracked(ConnPhase::is_known_non_admin)
+/// The accounts table is the selection surface for everyone: an admin's
+/// rows are every account, a non-admin's are themself + the entities they
+/// created (`/me/accounts`).
+fn uses_accounts(_ctx: &Ctx) -> bool {
+    true
+}
+
+/// The line above a non-admin's table: whose view it is and why it is
+/// short (the gateway enforces the same rule on every entity route).
+pub fn non_admin_scope_line(user_id: &str) -> String {
+    format!(
+        "Signed in as {user_id}, not an admin: you see your own account and the entities you created."
+    )
 }
 
 fn selected_entity(ctx: &Ctx) -> Option<EntityRow> {
@@ -717,9 +739,6 @@ fn selected_row_lines(scx: Scope, ctx: &Ctx, tt: &TokenSet) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
     let empty = || Element::new().style(LayoutStyle::default().h(0)).build();
-    if store.conn.with(ConnPhase::is_known_non_admin) {
-        return empty();
-    }
     let idx = ui.account_sel.get();
     let Some(r) = store
         .accounts
@@ -806,37 +825,6 @@ fn kind_legend(t: &TokenSet) -> View {
         .build()
 }
 
-/// A non-admin's Accounts screen: why the list is not theirs, their own
-/// keys, and the entity roster they can see.
-fn non_admin_view(gcx: Scope, ctx: &Ctx, tt: &TokenSet, why: String) -> View {
-    let store = ctx.store;
-    let ui = ctx.ui;
-    let ctx_act = ctx.clone();
-    let data = store.entities.get();
-    let cx = gcx;
-    Element::new()
-        .style(LayoutStyle::column().gap(0).grow(1.0))
-        .child(line(vec![span(
-            format!("{why} — @ your email · l your activity · w your workspace policy"),
-            tt.text_muted,
-        )]))
-        .child(line(vec![span_bold("Entities", tt.text)]))
-        .child(loadable_view(
-            tt,
-            &store.conn.get(),
-            || store.tick.get(),
-            &data,
-            |d: &Vec<EntityRow>| d.is_empty(),
-            "no entities yet — n creates the first one",
-            |d| {
-                entities_table(gcx, tt, d, ui.entity_sel, true, move |_| {
-                    manage_selected_entity(cx, &ctx_act);
-                })
-            },
-        ))
-        .build()
-}
-
 /// `l`: the activity of the selected account (admin) or your own.
 fn open_activity(cx: Scope, ctx: &Ctx) {
     let target = if uses_accounts(ctx) {
@@ -868,8 +856,11 @@ fn open_activity(cx: Scope, ctx: &Ctx) {
         .unwrap_or_else(|| "me".to_string());
     let filter = ctx.ui.activity_filter;
     filter.set(0);
+    // A non-admin reads its own entities' activity through /me/accounts.
+    let mine = ctx.store.conn.with_untracked(ConnPhase::is_known_non_admin);
     ctx.send(Cmd::LoadActivity {
         target: target.clone(),
+        mine,
         key: key.clone(),
         kind: String::new(),
     });
@@ -887,6 +878,7 @@ fn open_activity(cx: Scope, ctx: &Ctx) {
                 filter.set(next);
                 ctx3.send(Cmd::LoadActivity {
                     target: target.clone(),
+                    mine,
                     key: key.clone(),
                     kind: ACTIVITY_FILTERS[next].1.to_string(),
                 });
@@ -1453,79 +1445,6 @@ fn own_key(store: &crate::store::Store) -> Option<(String, String)> {
         }
         _ => None,
     })
-}
-
-fn entities_table(
-    cx: Scope,
-    t: &TokenSet,
-    data: &[EntityRow],
-    sel: Signal<usize>,
-    autofocus: bool,
-    on_activate: impl FnMut(usize) + 'static,
-) -> View {
-    let vw = abstracttui::app::use_viewport(cx).get().w;
-    let wide = vw >= 100;
-    let mut rows: Vec<Vec<String>> = data
-        .iter()
-        .map(|e| {
-            let drives = match (e.open_questions, e.open_problems, e.open_interests) {
-                (None, None, None) => "—".to_string(),
-                (q, p, i) => format!(
-                    "q:{} p:{} i:{}",
-                    q.map(|v| v.to_string()).unwrap_or_else(|| "—".into()),
-                    p.map(|v| v.to_string()).unwrap_or_else(|| "—".into()),
-                    i.map(|v| v.to_string()).unwrap_or_else(|| "—".into()),
-                ),
-            };
-            let mut row = vec![
-                e.name.clone(),
-                e.state.clone(),
-                e.mode.clone().unwrap_or_else(|| "—".into()),
-            ];
-            if wide {
-                row.push(e.handle.clone().unwrap_or_else(|| "—".into()));
-            }
-            row.push(drives);
-            row
-        })
-        .collect();
-    // Entity names and handles discriminate on their TAIL; state, mode
-    // and the drives triple are bounded vocabularies.
-    let mut rules = vec![
-        widths::ColRule::tail("entity", 12),
-        widths::ColRule::head("state", 9),
-        widths::ColRule::head("mode", 9),
-    ];
-    if wide {
-        rules.push(widths::ColRule::tail("handle", 16));
-    }
-    rules.push(widths::ColRule::head("open drives", 14));
-    let cols = widths::columns(&rules, &mut rows, vw - widths::BLOCK_CHROME);
-    let table = Table::new(cols)
-        .rows(rows)
-        .selection(sel)
-        .on_activate(on_activate)
-        .layout(LayoutStyle::default().grow(1.0))
-        .element(cx, t);
-    let table = if autofocus { table.autofocus() } else { table };
-    Element::new()
-        .style(LayoutStyle::column().gap(0))
-        .child(table.build())
-        .child(legend(t))
-        .build()
-}
-
-fn legend(t: &TokenSet) -> View {
-    Element::new()
-        .style(LayoutStyle::row().gap(1).h(1))
-        .child(badge(t, "awake", Tone::Ok))
-        .child(badge(t, "asleep", Tone::Muted))
-        .child(badge(t, "paused", Tone::Warn))
-        .child(line(vec![span(
-            "  drives: open questions / problems / interests",
-            t.text_faint,
-        )]))
-        .build()
 }
 
 fn confirm_rotate(cx: Scope, ctx: &Ctx, u: UserRow) {

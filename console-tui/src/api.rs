@@ -785,6 +785,13 @@ impl GatewayClient {
         self.get("/admin/accounts", false)
     }
 
+    /// `GET /me/accounts`: for a NON-admin, your own row plus the entities
+    /// you created (same row shape; the gateway's RBAC — an admin reads
+    /// everything on `/admin/accounts`, a non-admin gets 403 there).
+    pub fn my_accounts(&self) -> ApiResult<Value> {
+        self.get("/me/accounts", false)
+    }
+
     /// Active switch of one account: users → registry `enabled`;
     /// entities → suspend / resume (the gateway does both halves).
     pub fn set_account_active(&self, id: &str, tenant_id: &str, active: bool) -> ApiResult<Value> {
@@ -808,14 +815,20 @@ impl GatewayClient {
     }
 
     /// One account's activity (admin), or the caller's own (`None`).
-    /// `kind` "" = every kind.
+    /// `mine` = the caller is not an admin: a target must be one of its
+    /// `/me/accounts` rows (`/me/accounts/{id}/activity`; anything else
+    /// answers 404). `kind` "" = every kind.
     pub fn account_activity(
         &self,
         target: Option<(&str, &str)>,
+        mine: bool,
         kind: &str,
         limit: u32,
     ) -> ApiResult<Value> {
         let mut path = match target {
+            Some((id, _)) if mine => {
+                format!("/me/accounts/{}/activity?limit={limit}", urlencode(id))
+            }
             Some((id, tenant)) => format!(
                 "/admin/accounts/{}/activity?tenant_id={}&limit={limit}",
                 urlencode(id),

@@ -641,6 +641,11 @@ impl Ctx {
                     // The one table (DESIGN-v2 §2): users + entities.
                     s.accounts.set(Loadable::Loading);
                     self.send(Cmd::LoadAccounts);
+                } else {
+                    // A non-admin's table: you + the entities you created
+                    // (`/me/accounts`, the gateway's RBAC).
+                    s.accounts.set(Loadable::Loading);
+                    self.send(Cmd::LoadMyAccounts);
                 }
                 s.entities.set(Loadable::Loading);
                 // The inspector's detail must honor `r`'s "refreshing
@@ -1536,9 +1541,11 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
                 }
                 2 => matches!(store.routes.get(), Loadable::NotAsked),
                 3 => {
-                    ((matches!(store.users.get(), Loadable::NotAsked)
-                        || matches!(store.accounts.get(), Loadable::NotAsked))
+                    // The accounts table loads for everyone (a non-admin's
+                    // is `/me/accounts`); the users registry is admin-only.
+                    (matches!(store.users.get(), Loadable::NotAsked)
                         && !store.conn.with(ConnPhase::is_known_non_admin))
+                        || matches!(store.accounts.get(), Loadable::NotAsked)
                         || matches!(store.entities.get(), Loadable::NotAsked)
                 }
                 4 if store.conn.with(ConnPhase::is_known_non_admin) => false,

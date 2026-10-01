@@ -23,6 +23,7 @@ use serde_json::{json, Value};
 use abstractcore_console::screens::{ScreensCtx, ScreensOptions};
 use abstractcore_console::{ConsoleTransport, TransportError};
 
+use abstractgateway_console::store::accounts::accounts_from_payload;
 use abstractgateway_console::store::{
     entities_from_payload, host_state_from_payload, users_from_payload, workflows_from_payload,
     ConnPhase, Identity, Loadable, RoutesData, Store,
@@ -373,15 +374,17 @@ fn runtimes_screen_is_admin_only() {
     assert!(h.drain().iter().any(|c| matches!(c, Cmd::LoadRuntimes)));
 }
 
-/// The users registry is not read for a non-admin (it would 403); the
-/// entity roster is.
+/// A non-admin's Accounts screen (entity RBAC, operator ruling
+/// 2026-10-01): the users registry and `/admin/accounts` are never read
+/// (they would 403); the table is `/me/accounts` — themself + the
+/// entities they created — with one line saying whose view it is.
 #[test]
 fn users_registry_is_not_read_for_a_non_admin() {
     let mut h = harness();
     h.connect(false);
     h.ui.wizard.set(false);
     h.ui.screen.set(ui::SCREEN_USERS);
-    let s = h.turns(3);
+    h.turns(3);
     let cmds = h.drain();
     assert!(
         !cmds
@@ -390,24 +393,32 @@ fn users_registry_is_not_read_for_a_non_admin() {
         "{cmds:?}"
     );
     assert!(
+        cmds.iter().any(|c| matches!(c, Cmd::LoadMyAccounts)),
+        "a non-admin's table is /me/accounts: {cmds:?}"
+    );
+    assert!(
         cmds.iter().any(|c| matches!(c, Cmd::LoadEntities)),
         "{cmds:?}"
     );
-    assert!(
-        s.contains("the accounts list is admin-only on the gateway"),
-        "{s}"
-    );
-    // The roster landing settles the screen: the never-read registry must
-    // not keep the entry effect re-refreshing the screen (a load storm).
+    // The rows land: own account + own entity, the scope line above.
     h.store
         .entities
         .set(Loadable::Ready(entities_from_payload(&entities())));
-    h.turns(4);
+    h.store.accounts.set(Loadable::Ready(
+        accounts_from_payload(&my_accounts()).unwrap(),
+    ));
+    let s = h.turns(4);
+    assert!(
+        s.contains("Signed in as ana, not an admin: you see your own account and the entities you created."),
+        "{s}"
+    );
+    assert!(s.contains("testor"), "own entity row: {s}");
+    assert!(!s.contains("bob"), "never another user: {s}");
     let cmds = h.drain();
     assert!(
         !cmds
             .iter()
-            .any(|c| matches!(c, Cmd::LoadEntities | Cmd::LoadUsers)),
+            .any(|c| matches!(c, Cmd::LoadEntities | Cmd::LoadUsers | Cmd::LoadMyAccounts)),
         "the screen settled, nothing re-sent: {cmds:?}"
     );
     assert!(matches!(
@@ -431,12 +442,71 @@ fn users_registry_is_not_read_for_a_non_admin() {
     h.key(b"r");
     let cmds = h.drain();
     assert!(
-        !cmds.iter().any(|c| matches!(c, Cmd::LoadUsers)),
+        !cmds
+            .iter()
+            .any(|c| matches!(c, Cmd::LoadUsers | Cmd::LoadAccounts)),
         "r: {cmds:?}"
     );
     assert!(
-        cmds.iter().any(|c| matches!(c, Cmd::LoadEntities)),
-        "r reloads the roster: {cmds:?}"
+        cmds.iter().any(|c| matches!(c, Cmd::LoadEntities))
+            && cmds.iter().any(|c| matches!(c, Cmd::LoadMyAccounts)),
+        "r reloads the roster and your accounts: {cmds:?}"
+    );
+}
+
+/// `GET /me/accounts` for `ana` (the gateway's shape: own row + the entity
+/// ana created; non-admin actions unavailable with the reason).
+fn my_accounts() -> Value {
+    let act = |ok: bool, why: &str| {
+        if ok {
+            json!({"available": true, "reason": null})
+        } else {
+            json!({"available": false, "reason": why})
+        }
+    };
+    json!({"scope": "own", "accounts": [
+        {"id": "ana", "tenant_id": "default", "kind": "user", "role": "user", "own": true,
+         "email_address": null, "mailbox": {"state": "not_connected", "address": null, "provider": null, "reason": null},
+         "runtime_id": "ana", "active": true, "entity_state": null,
+         "actions": {"email": act(true, ""), "logs": act(true, ""),
+                     "workspace": act(false, "Only an admin opens workspaces from Accounts."),
+                     "rotate": act(false, "Only an admin can rotate your token."),
+                     "manage": act(false, "Only entities have a management page."),
+                     "delete": act(false, "You can't delete your own account."),
+                     "suspend": act(false, "You can't deactivate your own account.")}},
+        {"id": "testor", "tenant_id": "default", "kind": "entity", "role": "entity", "own": false,
+         "email_address": null, "mailbox": {"state": "unavailable", "address": null, "provider": null,
+                                            "reason": "Entities can't have their own mailbox yet: mailboxes belong to a user's runtime."},
+         "runtime_id": "testor", "active": true, "entity_state": "asleep",
+         "created_by": {"tenant_id": "default", "user_id": "ana"},
+         "actions": {"email": act(false, "Entities can't have their own mailbox yet: mailboxes belong to a user's runtime."),
+                     "logs": act(true, ""), "workspace": act(true, ""),
+                     "rotate": act(false, "An entity has no token to rotate: its credential is discarded when it is created and no one holds it."),
+                     "manage": act(true, ""),
+                     "delete": act(false, "An entity's name is kept for life; suspend it instead."),
+                     "suspend": act(false, "Only an admin can suspend an entity.")}}
+    ]})
+}
+
+/// `l` on a non-admin's own entity row reads `/me/accounts/{id}/activity`
+/// (mine = true), never the admin route.
+#[test]
+fn a_non_admins_entity_logs_go_through_me_accounts() {
+    let mut h = harness();
+    h.on(ui::SCREEN_USERS, false);
+    h.store.accounts.set(Loadable::Ready(
+        accounts_from_payload(&my_accounts()).unwrap(),
+    ));
+    h.turns(2);
+    h.ui.account_sel.set(1);
+    h.turns(2);
+    h.drain();
+    h.key(b"l");
+    let cmds = h.drain();
+    assert!(
+        cmds.iter().any(|c| matches!(c,
+            Cmd::LoadActivity { target: Some((id, _)), mine: true, .. } if id == "testor")),
+        "{cmds:?}"
     );
 }
 
@@ -472,6 +542,14 @@ fn entities() -> Value {
 fn entity_manage_refuses_admin_acts_for_a_non_admin() {
     let mut h = harness();
     h.on(ui::SCREEN_USERS, false);
+    // The table is /me/accounts; the own entity row is selected.
+    h.store.accounts.set(Loadable::Ready(
+        accounts_from_payload(&my_accounts()).unwrap(),
+    ));
+    h.turns(2);
+    h.ui.account_sel.set(1);
+    h.turns(2);
+    h.drain();
     let s = h.key(b"m");
     assert!(s.contains("You are not an admin"), "{s}");
     assert!(s.contains("view only (changes are admin-only)"), "{s}");

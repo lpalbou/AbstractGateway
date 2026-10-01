@@ -76,7 +76,7 @@ fn accounts_active_and_activity_round_trip() {
     assert!(!msg.is_empty(), "{e:?}");
     // Activity: r2alice's (the switches are account events) and mine.
     let a = activity_from_payload(
-        &c.account_activity(Some(("r2alice", "default")), "", 100)
+        &c.account_activity(Some(("r2alice", "default")), false, "", 100)
             .expect("GET activity"),
     )
     .expect("activity parses");
@@ -85,11 +85,14 @@ fn accounts_active_and_activity_round_trip() {
         a.events.iter().map(|e| e.title.clone()).collect::<Vec<_>>(),
         a.note
     );
-    let me = activity_from_payload(&c.account_activity(None, "", 100).expect("GET /me/activity"))
-        .expect("parses");
+    let me = activity_from_payload(
+        &c.account_activity(None, false, "", 100)
+            .expect("GET /me/activity"),
+    )
+    .expect("parses");
     eprintln!("my activity: {} events", me.events.len());
     let filtered =
-        activity_from_payload(&c.account_activity(None, "sign_in", 100).unwrap()).unwrap();
+        activity_from_payload(&c.account_activity(None, false, "sign_in", 100).unwrap()).unwrap();
     assert!(filtered.events.iter().all(|e| e.kind == "sign_in"));
 }
 

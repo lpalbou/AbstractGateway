@@ -191,6 +191,9 @@ pub enum Cmd {
     LoadUsers,
     /// `GET /admin/accounts` (DESIGN-v2 §2): users + entities, one list.
     LoadAccounts,
+    /// `GET /me/accounts` (a non-admin's Accounts table): you + the
+    /// entities you created, into the same `accounts` slot.
+    LoadMyAccounts,
     /// The Active switch of one account (users: enabled; entities:
     /// suspend/resume). `label` is the account id for the status line.
     SetAccountActive {
@@ -209,6 +212,9 @@ pub enum Cmd {
     /// filtered by `kind` ("" = all). `key` names the list in the store.
     LoadActivity {
         target: Option<(String, String)>,
+        /// The caller is not an admin: a target is read through
+        /// `/me/accounts/{id}/activity` (its own entities only).
+        mine: bool,
         key: String,
         kind: String,
     },
@@ -1712,7 +1718,19 @@ fn handle(
             finish_write(store, wake, action, write, None, None, on_done);
         }
 
-        Cmd::LoadActivity { target, key, kind } => {
+        Cmd::LoadMyAccounts => load(store, wake, "loading your accounts", store.accounts, || {
+            require_client(client)?.my_accounts().and_then(|v| {
+                crate::store::accounts::accounts_from_payload(&v)
+                    .map_err(|m| ApiError::new(ApiErrorKind::Protocol, m))
+            })
+        }),
+
+        Cmd::LoadActivity {
+            target,
+            mine,
+            key,
+            kind,
+        } => {
             let s = *store;
             let (k2, kind2) = (key.clone(), kind.clone());
             wake.post(move || s.activity.set(Some((k2, kind2, Loadable::Loading))));
@@ -1721,6 +1739,7 @@ fn handle(
                     .and_then(|c| {
                         c.account_activity(
                             target.as_ref().map(|(i, t)| (i.as_str(), t.as_str())),
+                            mine,
                             &kind,
                             100,
                         )
