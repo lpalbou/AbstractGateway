@@ -10763,7 +10763,7 @@ fn my_email_active_in_the_mailbox_card_and_test_says_the_api_sentence() {
     let s = h.turns(3);
     assert!(s.contains("Denied always wins."), "{s}");
     assert!(
-        s.contains("At most") && s.contains("per hour and") && s.contains("per day."),
+        s.contains("Send at most") && s.contains("per hour and") && s.contains("per day."),
         "{s}"
     );
     assert!(s.contains("0 sent this hour, 2 today."), "{s}");
