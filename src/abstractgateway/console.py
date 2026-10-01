@@ -13076,7 +13076,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    function sandboxPlaceholder() {
 	      const mode = sandboxRouteMode(defaultRowKey(selectedSandboxRoute()));
 	      return {
-	        text: "Ask a question. Attach or drop images, audio, video, PDFs or text files to include them.",
+	        text: "Ask anything; attach or drop files to include them.",
 	        image: "Describe the image you want to generate.",
 	        voice: "Type the sentence to synthesize.",
 	        sound: "Describe the sound effect you want to generate.",
