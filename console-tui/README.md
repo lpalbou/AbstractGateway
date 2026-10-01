@@ -9,22 +9,22 @@ configuring a gateway. Rendered by
 right `Drawer` hosts the entity inspector), talking to the gateway's admin HTTP API
 (`/api/gateway/...`).
 
-Screens 9 and 0 are not implemented here: they are AbstractCore's shared
+Screens 7 and 8 are not implemented here: they are AbstractCore's shared
 **Models** and **Engines** screens, from the
 [`abstractcore-console`](https://crates.io/crates/abstractcore-console)
-crate (0.3), the same screens `abstractcore-console` shows over the
+crate (0.4), the same screens `abstractcore-console` shows over the
 `abstractcore` CLI. This crate mounts them over its own HTTP transport
 (`src/transport_http.rs`) against the gateway's mirrors of the
 AbstractCore routes. Both crates build on one abstracttui (0.3.6).
 
-Twelve screens, shared by a **setup guide** (the wizard: the web
+Thirteen screens, shared by a **setup guide** (the wizard: the web
 console's five first-run steps — welcome, engines, model, apps, done —
 on eight screens, through the same gateway routes) and a **browse mode**
 (free tabs).
 
 The guide walks Connection → **Setup** (welcome: this computer at a
 glance, from `GET /api/gateway/host/state`) → Engines → Providers →
-Routes (the default model: the recommended plan for this computer with
+Multimodal (the default model: the recommended plan for this computer with
 AbstractCore's fit warnings, `a` applies it, `D` downloads all of it in
 one parent job, `C` cancels, `p` shows every word) → Models → Apps →
 Review (**Finish** or **Skip setup**: `POST /api/gateway/host/first-run`,
@@ -44,20 +44,6 @@ leave (not recorded, it opens again next start) or skip (recorded).
    with identity badges
    (admin, auth mode, routing mode), and the network panel (including
    the web console's "Look up my public address").
-- **6 Providers** (MODELS) — provider endpoint profiles (create/edit/delete,
-   write-only API keys with fingerprint display, model allowlists fed
-   by live discovery, scope moves on edit, test-connection via live
-   model discovery of the FORM's values) over the read-only
-   discovered-provider inventory.
-- **9 Multimodal** (MODELS; the former Routes screen) — the multimodal capability table (`input.text`,
-   `output.voice`, …) with explicit default-vs-override editing:
-   placeholder pickers, "Applies now:" resolution lines, model pickers
-   that reset on provider switch — never a fabricated pair. The
-   `output.voice` editor carries a per-pair voice picker (live
-   `/voice/voices` catalog) that writes into the options JSON, and
-   every editor has a **Test** verb — a real generation through the
-   production lane (voice → `/runs/{…}/voice/tts`, everything else →
-   `/sandbox/generate` with the route's own capability key).
 - **2 Accounts** (ACCOUNTS) — one table of users and entities
    (`GET /admin/accounts`): kind, email address, mailbox, runtime and the
    **Active** switch (Space: deactivate a user, suspend an entity; your own
@@ -89,13 +75,6 @@ leave (not recorded, it opens again next start) or skip (recorded).
    from selected — saving is admin-only), and **talk** with an entity
    (`c`: open a hosted visit, send turns, close with the reflection
    pass; one visit at a time).
-- **4 Runtimes** (WORK) — the data-plane inventory (default / per-user /
-   per-entity) with owners, sizes, liveness, the runtime-knobs
-   surface (per-knob value + provenance; API-writable, no UI edits
-   yet) with the Continuum backlog settings editor and the curated
-   skills-shelf reseed (admin), recent root runs with **cancel** (`c`) and **steer** (`s`)
-   via durable gateway commands, and the data-homes browser (`h`)
-   with dry-run-gated purge.
 - **3 Workflows** (WORK) — plain names, what each workflow does, the
    version, where it comes from (shipped with the gateway, imported,
    published from AbstractFlow) and the apps that use it; a second section,
@@ -109,20 +88,23 @@ leave (not recorded, it opens again next start) or skip (recorded).
    visibility, `i` imports a `.flow` bundle from this machine, `L`
    reloads the registry from disk; import and the other writes follow
    the registry ownership rule (admin on the shared registry).
-- **R Review & Test** (SYSTEM) — the session's change journal (every write +
-   its verify-via-GET result) and the web console's sandbox workspace:
-   every output mode (text, image, voice, music, SFX, video), file
-   attachments, speak-this-reply, and the guide's Finish / Skip setup.
-- **0 Resources** (SYSTEM) — live host residency: RAM/device/GPU gauges with
-   degradation notes, the resident-model table (modality, tri-state
-   residency, lock marker, context facts with calibration), and
-   session prompt caches on sub-tabs, polled from
-   `GET /api/gateway/host/state` every 4s while the screen is active.
-   `w` warms up a model (provider + model form, optional
-   lock-after-load), `k` locks/unlocks, `u` unloads (a locked model
-   answers HTTP 409 and the screen offers a force unload), `e` asks
-   for a context estimate, `c` clears the selected session's prompt
-   caches.
+- **4 Runtimes** (WORK) — the data-plane inventory (default / per-user /
+   per-entity) with owners, sizes, liveness, the runtime-knobs
+   surface (per-knob value + provenance; API-writable, no UI edits
+   yet) with the Continuum backlog settings editor and the curated
+   skills-shelf reseed (admin), recent root runs with **cancel** (`c`) and **steer** (`s`)
+   via durable gateway commands, and the data-homes browser (`h`)
+   with dry-run-gated purge.
+- **5 Apps** (WORK) — the web console's Apps tab: browser apps (Flow, Code,
+  Observer…), the desktop Assistant and Node.js. `Enter`/`o` opens an
+  app signed in (a one-time link), `i`/`u` install/update, `s`/`x`
+  start/stop, `l` log, `c` cancel, `t`/`T` terminal apps, `n` Node.js,
+  `y` copy, `r` check again (admin-only writes).
+- **6 Providers** (MODELS) — provider endpoint profiles (create/edit/delete,
+   write-only API keys with fingerprint display, model allowlists fed
+   by live discovery, scope moves on edit, test-connection via live
+   model discovery of the FORM's values) over the read-only
+   discovered-provider inventory.
 - **7 Models** (MODELS; AbstractCore's shared screen, page id `catalog`) — the
    model catalog for the GATEWAY host: each model's artifacts per engine
    (Ollama, LM Studio, MLX, Hugging Face…), size, whether it fits the
@@ -140,16 +122,38 @@ leave (not recorded, it opens again next start) or skip (recorded).
    servers, `c` cancels. With a gateway that serves them, the screen
    also starts/stops engine servers, continues paused installs and
    shows the install location (abstractcore-console 0.4 verbs).
-- **5 Apps** (WORK) — the web console's Apps tab: browser apps (Flow, Code,
-  Observer…), the desktop Assistant and Node.js. `Enter`/`o` opens an
-  app signed in (a one-time link), `i`/`u` install/update, `s`/`x`
-  start/stop, `l` log, `c` cancel, `t`/`T` terminal apps, `n` Node.js,
-  `y` copy, `r` check again (admin-only writes).
+- **9 Multimodal** (MODELS) — the multimodal capability table (`input.text`,
+   `output.voice`, …) with explicit default-vs-override editing:
+   placeholder pickers, "Applies now:" resolution lines, model pickers
+   that reset on provider switch — never a fabricated pair. The
+   `output.voice` editor carries a per-pair voice picker (live
+   `/voice/voices` catalog) that writes into the options JSON, and
+   every editor has a **Test** verb — a real generation through the
+   production lane (voice → `/runs/{…}/voice/tts`, everything else →
+   `/sandbox/generate` with the route's own capability key).
+- **0 Resources** (SYSTEM) — live host residency: RAM/device/GPU gauges with
+   degradation notes, the resident-model table (modality, tri-state
+   residency, lock marker, context facts with calibration), and
+   session prompt caches on sub-tabs, polled from
+   `GET /api/gateway/host/state` every 4s while the screen is active.
+   `w` warms up a model (provider + model form, optional
+   lock-after-load), `k` locks/unlocks, `u` unloads (a locked model
+   answers HTTP 409 and the screen offers a force unload), `e` asks
+   for a context estimate, `c` clears the selected session's prompt
+   caches.
+- **N Network** (SYSTEM) — who can reach the gateway (Localhost only,
+  Local network, Internet): the saved mode and what is running now, every
+  address a client can use (`c` copies one), and the restart a new mode
+  needs (`gateway_network_v1`, the web console's Network tab).
+- **R Review & Test** (SYSTEM) — the session's change journal (every write +
+   its verify-via-GET result) and the web console's sandbox workspace:
+   every output mode (text, image, voice, music, SFX, video), file
+   attachments, speak-this-reply, and the guide's Finish / Skip setup.
 - **S Setup** (also `Ctrl+G`) — the guide's welcome step: computer,
   memory, graphics, data folder (and why), sign-in mode, whether the
   gateway starts at login, the first-run state, and the guide's steps.
 
-Screens 9 and 0 read `GET /api/gateway/host/profile`, `/engines`,
+Screens 7 and 8 read `GET /api/gateway/host/profile`, `/engines`,
 `/models/catalog`, `/models/installed` and `/jobs/{id}`, and write
 through `POST /models/download`, `/models/delete`, `/engines/{id}/install`
 and `/jobs/{id}/cancel` (a download cancels through the web console's
@@ -199,7 +203,7 @@ back (always work — `]`/`[` are alternates that text fields swallow) ·
 radio list, tabs bar or scrolling pane keeps the arrows for itself) ·
 `Esc` back / close modal (in a screen's text field, the first `Esc`
 releases the caret so screen keys work again; page text fields never
-take the caret by themselves once connected) · `1-9`, `0`, `A` (Apps), `N` (Network) screens (browse; the
+take the caret by themselves once connected) · `1-9`, `0`, `N` (Network), `R` (Review & Test), `S` (Setup) screens (browse; the
 screen bar is also clickable in browse) · `Ctrl+G` setup guide (browse:
 reopen; guide: go to any step, leave or Skip setup) · `r` refresh · `F1` / `?` About ·
 `F2` docs assistant (signed in; the web top bar's ✦ drawer) · `F3`

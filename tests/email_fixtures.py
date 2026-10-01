@@ -129,9 +129,23 @@ def imap_bob(ca: TestCA, tokens: TokenRegistry) -> Iterator[FakeImapServer]:
     server.close()
 
 
+def _start_smtp(ca: TestCA, tokens: TokenRegistry) -> FakeSmtpServer:
+    """FakeSmtpServer picks a free port and then binds it; under parallel workers another process
+    can take that port in between (EADDRINUSE). Only that error is retried, a few times."""
+    import errno
+
+    for attempt in range(5):
+        try:
+            return FakeSmtpServer(ca, users=dict(PASSWORDS), security="starttls", tokens=tokens, refuse={"blocked@example.test": 550})
+        except OSError as exc:
+            if exc.errno != errno.EADDRINUSE or attempt == 4:
+                raise
+    raise AssertionError("unreachable")
+
+
 @pytest.fixture
 def smtp(ca: TestCA, tokens: TokenRegistry) -> Iterator[FakeSmtpServer]:
-    server = FakeSmtpServer(ca, users=dict(PASSWORDS), security="starttls", tokens=tokens, refuse={"blocked@example.test": 550})
+    server = _start_smtp(ca, tokens)
     yield server
     server.close()
 
