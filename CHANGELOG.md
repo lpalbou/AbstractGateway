@@ -19,8 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `to`, `cc` and `bcc` (and the older `addresses`, read as To) and each verdict says which rule
   decided (`source`: `self`, `always_deny`, `always_allow`, `mode`).
 - The terminal console shows and edits both lists under Advanced.
+- Accounts: **Show archived** (admins) lists archived accounts with an "Archived" chip; their row
+  offers Logs and, in the "⋯" menu, **Unarchive** ("<id> is back, inactive: turn Active on to let it
+  sign in."). **Archive** sits in the same menu and asks inline first; nothing is deleted.
+- Accounts: an entity's **Email** opens the same Email settings as your own (address, mailbox,
+  notifications, agent email tools, Advanced), on the entity's own mailbox.
 
 ### Changed
+- Accounts: the table never scrolls sideways. Each row shows Email, Logs and Workspace (users) or
+  Manage (entities), plus a "⋯" menu with only the actions that apply (Rotate token or Workspace,
+  Archive). Actions that do not apply are no longer shown greyed out with an explanation under the
+  row. Long names and addresses wrap instead of widening the table; when the table does not fit,
+  each account becomes a block (name and Active, address and mailbox, runtime, actions).
 - Sends to To, Cc and Bcc, from agent tools and notifications alike, follow the precedence: your own
   address is allowed, Always denied refuses ("Not sent: x@xxx.gov is on your Always denied list
   (xxx.gov)."), Always allowed allows, then the mode decides. A notification to your own address is
