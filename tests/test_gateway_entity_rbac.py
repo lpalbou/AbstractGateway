@@ -171,3 +171,60 @@ def test_me_account_activity_only_for_self_and_own_entities(world) -> None:
         r = c.get(f"/api/gateway/me/accounts/{other}/activity", headers=world["alice"])
         assert r.status_code == 404, (other, r.text)
     assert c.get("/api/gateway/admin/accounts/borea/activity", headers=world["alice"]).status_code == 403
+
+
+def test_create_of_a_name_living_in_another_plane_is_refused_not_adopted(gateway, monkeypatch) -> None:
+    """Entity names are door-global principals (one users file) while homes live per runtime
+    plane. Alice creates "Cygnus" in HER plane; bob, whose runtime plane holds no such home,
+    asks for the same name: 409, no home in his plane, no credential, alice's entity unchanged.
+    A human account's name is refused the same way (create would adopt that user record)."""
+    pytest.importorskip("abstractmemory")
+    pytest.importorskip("yaml")
+    from fastapi.testclient import TestClient
+
+    from abstractgateway.entities import EntityRegistry
+    from abstractgateway.routes import entities_router
+    from abstractgateway.security.principal import current_gateway_principal
+    from abstractgateway.users import GatewayUserRegistry, gateway_user_registry_path_from_env
+    import abstractgateway.routes.entities as entities_routes
+
+    app = gateway["app"]
+    app.include_router(entities_router, prefix="/api")
+    users_file = gateway_user_registry_path_from_env()
+    planes = {
+        who: EntityRegistry(data_dir=gateway["data_dir"] / "planes" / who, embedder_factory=lambda: None, users_registry_path=users_file)
+        for who in ("alice", "bob")
+    }
+    monkeypatch.setattr(entities_routes, "_registry", lambda: planes[current_gateway_principal().user_id])
+    c = TestClient(app)
+
+    r = c.post("/api/gateway/entities", headers=gateway["alice"], json={"name": "Cygnus", "spark": _spark("Cygnus"), "skills": []})
+    assert r.status_code == 201, r.text
+    assert r.json()["principal"]["minted"] is True
+    before = GatewayUserRegistry(path=users_file).get_user("cygnus").to_storage_dict()
+    alice_manifest = (planes["alice"].entities_dir / "cygnus" / "manifest.json").read_text()
+
+    # The dry run says the same thing the create will.
+    r = c.post("/api/gateway/entities/Cygnus/validate", headers=gateway["bob"], json={"name": "Cygnus", "spark": _spark("Cygnus")})
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is False and any("taken" in e for e in r.json()["errors"]), r.json()
+
+    r = c.post("/api/gateway/entities", headers=gateway["bob"], json={"name": "Cygnus", "spark": _spark("Cygnus"), "skills": []})
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"] == "That name is taken: another account already has an entity called 'cygnus'. Pick another name."
+    assert "principal" not in r.json()
+    assert not (planes["bob"].entities_dir / "cygnus").exists()
+    assert GatewayUserRegistry(path=users_file).get_user("cygnus").to_storage_dict() == before
+    assert (planes["alice"].entities_dir / "cygnus" / "manifest.json").read_text() == alice_manifest
+
+    # Alice re-summoning her own entity stays the idempotent re-create.
+    r = c.post("/api/gateway/entities", headers=gateway["alice"], json={"name": "Cygnus", "spark": _spark("Cygnus"), "skills": []})
+    assert r.status_code == 201, r.text
+    assert r.json()["created"] is False and r.json()["principal"]["minted"] is False
+
+    # A human account's name: refused, never adopted as an entity principal.
+    r = c.post("/api/gateway/entities", headers=gateway["bob"], json={"name": "Alice", "spark": _spark("Alice"), "skills": []})
+    assert r.status_code == 409, r.text
+    assert r.json()["detail"] == "That name is taken: an account is already called 'alice'. Pick another name."
+    assert not (planes["bob"].entities_dir / "alice").exists()
+    assert GatewayUserRegistry(path=users_file).get_user("alice").principal_kind == "human"

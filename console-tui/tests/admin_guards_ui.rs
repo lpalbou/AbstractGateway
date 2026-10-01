@@ -648,3 +648,52 @@ fn connection_line_describes_the_guards_for_a_non_admin() {
     );
     assert!(!s.contains("will show 403"), "no stale 403 promise:\n{s}");
 }
+
+/// After a network failure the health authority retries the failed
+/// Accounts read ONCE — with the same route the screen chose: a non-admin
+/// is retried on `/me/accounts`, never sent to the admin-only
+/// `/admin/accounts` (which would 403); an admin keeps `/admin/accounts`.
+#[test]
+fn the_accounts_retry_after_a_network_failure_follows_the_role() {
+    for admin in [false, true] {
+        let mut h = harness();
+        // No users/entities seeded: the accounts fixture mirror (which
+        // derives the table from them) stays out of the way.
+        h.connect(admin);
+        h.ui.wizard.set(false);
+        h.ui.screen.set(ui::SCREEN_ROUTES);
+        h.turns(2);
+        h.drain();
+        h.store
+            .accounts
+            .set(Loadable::Failed(abstractgateway_console::api::ApiError {
+                kind: abstractgateway_console::api::ApiErrorKind::Unreachable,
+                message: "GET /accounts: Network Error: Connection reset by peer".into(),
+                body: None,
+                timed_out: false,
+            }));
+        h.turns(3);
+        assert!(
+            matches!(h.store.conn.get_untracked(), ConnPhase::Verifying(_)),
+            "the transport failure is verified first"
+        );
+        let (tx, retry_rx) = mpsc::channel::<Cmd>();
+        let gen = h.store.probe_gen.get_untracked();
+        abstractgateway_console::health::settle(h.store, &tx, gen, Ok(()));
+        h.turns(2);
+        let retried: Vec<Cmd> = retry_rx.try_iter().collect();
+        if admin {
+            assert!(
+                retried.iter().any(|c| matches!(c, Cmd::LoadAccounts))
+                    && !retried.iter().any(|c| matches!(c, Cmd::LoadMyAccounts)),
+                "admin retry: {retried:?}"
+            );
+        } else {
+            assert!(
+                retried.iter().any(|c| matches!(c, Cmd::LoadMyAccounts))
+                    && !retried.iter().any(|c| matches!(c, Cmd::LoadAccounts)),
+                "non-admin retry reads /me/accounts: {retried:?}"
+            );
+        }
+    }
+}

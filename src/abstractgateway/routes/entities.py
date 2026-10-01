@@ -27,11 +27,10 @@ from pydantic import BaseModel, Field
 from ..config import entity_iterations_ceiling
 from ..entities import EntityRegistry, entity_slug
 from ..entity_access import (
-    NAME_TAKEN,
     creator_of,
     entity_name_guard,
     entity_visible_to,
-    manifest_creator,
+    name_taken_detail,
     require_entity_visible,
 )
 from ..entity_seat import (
@@ -173,10 +172,11 @@ def create_entity(req: CreateEntityRequest) -> Dict[str, Any]:
     except Exception:  # noqa: BLE001 - the registry answers an invalid name below
         slug0 = None
     if slug0 is not None:
-        exists, created_by0 = manifest_creator(registry0.entities_dir, slug0)
-        if exists and not entity_visible_to(caller, slug0, created_by0):
-            # Re-creating someone else's entity would hand its manifest back (idempotent create).
-            raise HTTPException(status_code=409, detail=NAME_TAKEN.format(slug=slug0))
+        # Re-creating someone else's entity would hand its manifest back (idempotent create);
+        # creating a name the door already holds in ANOTHER plane would adopt its principal.
+        taken = name_taken_detail(caller, registry0, slug0)
+        if taken is not None:
+            raise HTTPException(status_code=409, detail=taken)
     try:
         result = registry0.create(
             name=req.name,
@@ -306,6 +306,14 @@ def validate_entity(name: str, req: CreateEntityRequest) -> Dict[str, Any]:
         spark_text=req.spark_text,
         framework=bool(req.framework),
     )
+    # "green = create will not refuse": the create route's name-taken 409 is checked here too.
+    from ..security.principal import current_gateway_principal
+
+    taken = name_taken_detail(current_gateway_principal(), _registry(), entity_slug(name))
+    if taken is not None and isinstance(result, dict):
+        result = dict(result)
+        result["ok"] = False
+        result["errors"] = list(result.get("errors") or []) + [taken]
     # EMBEDDING BIRTH-CHOICE mismatch (adversary P0): _birth_embedding_pin
     # REFUSES a birth embedder the door cannot serve — but it fires AFTER
     # the spark + manifest are written, so a bad choice would burn the
