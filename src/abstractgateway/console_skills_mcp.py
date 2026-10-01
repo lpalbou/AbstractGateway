@@ -25,7 +25,7 @@ SKILLS_MCP_CSS = r"""
 /* ---- Skills & MCP page (console_skills_mcp.py) ---- */
 .skmcp-page { display: flex; flex-direction: column; gap: 14px; }
 .skmcp-page .af-tabs__panel { padding-top: 14px; display: flex; flex-direction: column; gap: 12px; }
-.skmcp-purpose { max-width: 80ch; margin: 0; }
+.skmcp-purpose { margin: 0; }
 .skmcp-truth { margin: 0; padding: 10px 12px; max-width: 90ch; border-left: 3px solid var(--warning, var(--accent)); background: color-mix(in srgb, var(--warning, var(--accent)) 9%, transparent); border-radius: var(--radius-sm); font-size: var(--font-size-base); line-height: 1.45; }
 .skmcp-shelf { border-top: 1px solid var(--line-soft); padding: 12px 0 0; }
 .skmcp-shelf[open] > summary { margin-bottom: 8px; }
@@ -37,12 +37,12 @@ SKILLS_MCP_CSS = r"""
 .skmcp-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
 .skmcp-table th { white-space: nowrap; text-align: left; }
 .skmcp-table td { vertical-align: top; padding-top: 10px; padding-bottom: 10px; overflow-wrap: anywhere; }
-.skills-table th.sk-col-name { width: 17%; }
+.skills-table th.sk-col-name { width: 15%; }
 .skills-table th.sk-col-what { width: auto; }
-.skills-table th.sk-col-version { width: 7.5rem; }
-.skills-table th.sk-col-trust { width: 8.5rem; }
-.skills-table th.sk-col-source { width: 10rem; }
-.skills-table th.sk-col-actions { width: 15rem; }
+.skills-table th.sk-col-version { width: 6.5rem; }
+.skills-table th.sk-col-trust { width: 7.5rem; }
+.skills-table th.sk-col-source { width: 8.5rem; }
+.skills-table th.sk-col-actions { width: 13.5rem; }
 .mcp-table th.mcp-col-name { width: 18%; }
 .mcp-table th.mcp-col-transport { width: auto; }
 .mcp-table th.mcp-col-status { width: 22%; }
