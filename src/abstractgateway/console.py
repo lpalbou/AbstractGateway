@@ -5561,8 +5561,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      let target = usable(opener) ? opener : null;
 	      if (!target && id) {
 	        const row = Array.from(document.querySelectorAll("#users-section tr[data-user]")).find((tr) => tr.getAttribute("data-user") === id);
-	        target = row ? row.querySelector('[aria-haspopup="menu"]') : null;
-	        if (!target && row) console.error(`AbstractGateway console: the Accounts row of ${id} has no "More actions" menu button to return focus to (accounts-web seam, DESIGN-v3 §1.1/§12).`);
+	        target = row ? (row.querySelector('[data-action="manage"]') || row.querySelector('[aria-haspopup="menu"]')) : null;
+	        if (!target && row) console.error(`AbstractGateway console: the Accounts row of ${id} has neither a Manage button nor a "More actions" menu button to return focus to (accounts-web seam, DESIGN-v3 §1.1/§12).`);
 	      }
 	      try { if (target) target.focus({ preventScroll: true }); } catch {}
 	    }
