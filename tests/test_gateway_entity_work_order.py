@@ -100,5 +100,8 @@ def test_console_carries_the_work_order_surface() -> None:
     html = gateway_console_html()
     for el in ("entity-workorder-text", "entity-workorder-save", "entity-workorder-clear", "entity-workorder-history"):
         assert f'id="{el}"' in html, f"missing {el}"
-    assert "entityWorkOrderSave" in html and "phase=work" in html
-    assert '"entity-workorder-save", "entity-workorder-clear"' in html  # admin-gated in the UI too
+    assert "entityWorkOrderSave" in html and "/work-order`" in html
+    # Admin-gated in the UI too (round 3: the action row is not rendered for a non-admin).
+    i = html.index('id="entity-workorder-save"')
+    assert '<div class="entity-actions entity-admin-only">' in html[i - 200:i]
+    assert ".entity-manage--readonly .entity-admin-only { display: none !important; }" in html

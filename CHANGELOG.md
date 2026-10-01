@@ -79,7 +79,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Session history never crosses sessions — pinned.** `tests/test_gateway_session_history_isolation.py`
   proves a new session starts with no messages from another session of the same user, of another
   user, or after a restart, and that nothing of the other session reaches its run vars.
+### Changed
 
+- Web console: an entity's **Manage** opens as a dialog over the Accounts page instead of replacing
+  it (Esc or a click outside closes it and focus goes back to the entity's row; full screen on
+  phones). Awake and Personal time are switches; the mind, voice, tools and prompt settings save
+  by themselves and say "Saved", or why they were not saved; sleep, emergency freeze and the memory
+  index rebuild ask for confirmation inline. Stop and Restore are no longer in Manage: the Accounts
+  row's Active switch suspends and resumes an entity.
+
+### Fixed
+
+- Web console: saving or clearing an entity's voice, and giving or ending a work order, did nothing
+  (the page read an entity name that was never set).
 
 ## [0.10.0] - 2026-10-01
 
