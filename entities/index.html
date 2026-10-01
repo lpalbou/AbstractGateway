@@ -1177,6 +1177,13 @@ each summon is a re-adoption of the same self. An entity is not a chatbot config
 directory holding everything the entity is and has lived, plus the lifecycle
 surface to create, inspect, verify, and summon it.</p>
 <p>This page uses human words first, API names in parentheses.</p>
+<p>Who can see an entity: an admin sees every entity; anyone else sees only the
+entities they created (recorded as <code>created_by</code> when the entity is created).
+An entity you may not see answers like a missing one (404). In the consoles,
+entities are rows of the <strong>Accounts</strong> table, with an <strong>Active</strong> switch that
+suspends and resumes them; they have no mailbox, no token to rotate and no
+delete. See <a href="../security/#who-sees-which-account">security.md</a> and
+<a href="../console/#accounts">console.md</a>.</p>
 <h2 id="what-an-entity-is">What an entity is<a class="headerlink" href="#what-an-entity-is" title="Permanent link">&para;</a></h2>
 <p>A summoned entity lives in two files at its <strong>home</strong>:</p>
 <ul>

@@ -1122,12 +1122,12 @@ and the Runtime-owned provider/tool stack together.</p>
 <h2 id="published-image">Published image<a class="headerlink" href="#published-image" title="Permanent link">&para;</a></h2>
 <p>Release images are published to GHCR. The default image is the light,
 portable server image:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.9.0
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.10.0
 </code></pre></div>
 <p>NVIDIA hosts can try the experimental full GPU image when local
 vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:</p>
-<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.9.0-gpu
+<div class="highlight"><pre><span></span><code>docker<span class="w"> </span>pull<span class="w"> </span>ghcr.io/lpalbou/abstractgateway:0.10.0-gpu
 </code></pre></div>
 <p>The image names <code>ghcr.io/lpalbou/abstractgateway-server:*</code> and
 <code>ghcr.io/lpalbou/abstractgateway-server-nvidia:*</code> are published as aliases for
@@ -1319,13 +1319,21 @@ the <code>Host</code> the browser used (the sign-in handover is bound to it):</p
 <span class="p">}</span>
 </code></pre></div>
 <p>Run nginx on the gateway machine, as here, so the gateway believes its
-<code>X-Forwarded-For</code> (it believes it from a loopback peer only). Then set the
-browser origin once:
+<code>X-Forwarded-For</code> and <code>X-Forwarded-Proto</code> (it believes them from a loopback
+peer only). An https page calling its own address through such a proxy
+(Origin <code>https://</code> + the kept <code>Host</code>) is accepted without further setup. A
+proxy on another machine, or one that rewrites <code>Host</code>, needs the browser
+origin set once:
 <code>abstractgateway network set --allowed-origins https://gateway.example.com</code>.
 <code>X-Forwarded-For $remote_addr</code> replaces anything the browser sent. The apps
 themselves always listen on <code>127.0.0.1</code>; nothing else needs to reach them,
 and no other port needs to be exposed. A tunnel (Cloudflare Tunnel,
 Tailscale Funnel, ngrok) to the gateway's port works the same way.</p>
+<p>Reached through Tailscale? On the gateway machine run
+<code>tailscale serve --bg http://127.0.0.1:&lt;port&gt;</code> and open
+<code>https://&lt;host&gt;.&lt;tailnet&gt;.ts.net/</code>; <code>tailscale serve reset</code> undoes it. Voice
+and camera in the browser need this https address. See
+<a href="../configuration/#reached-through-tailscale-https">configuration.md</a>.</p>
 <h2 id="where-local-clients-find-the-gateway-abstractframeworkgatewayjson">Where local clients find the gateway (<code>~/.abstractframework/gateway.json</code>)<a class="headerlink" href="#where-local-clients-find-the-gateway-abstractframeworkgatewayjson" title="Permanent link">&para;</a></h2>
 <p>The gateway does not always listen on 8080 (the installer moves it when 8080
 is busy, and an admin can change the port). Clients that cannot ask
@@ -1366,7 +1374,7 @@ CachedSession persistence system.</p>
 <h2 id="local-source-image">Local-source image<a class="headerlink" href="#local-source-image" title="Permanent link">&para;</a></h2>
 <p>Before a version is published to PyPI, build from the checkout:</p>
 <div class="highlight"><pre><span></span><code><span class="nv">ABSTRACTGATEWAY_INSTALL_MODE</span><span class="o">=</span><span class="nb">local</span><span class="w"> </span><span class="se">\</span>
-<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.9.0-local<span class="w"> </span><span class="se">\</span>
+<span class="nv">ABSTRACTGATEWAY_IMAGE_TAG</span><span class="o">=</span><span class="m">0</span>.10.0-local<span class="w"> </span><span class="se">\</span>
 docker<span class="w"> </span>compose<span class="w"> </span>-f<span class="w"> </span>docker/abstractgateway-server/compose.yml<span class="w"> </span>up<span class="w"> </span>-d<span class="w"> </span>--build
 </code></pre></div>
 <p>Release automation builds the published image from the PyPI package after the

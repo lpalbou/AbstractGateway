@@ -1149,6 +1149,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#accounts-and-activity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accounts and activity
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Accounts and activity">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#who-sees-which-account" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who sees which account
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#email" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1924,6 +1952,34 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#accounts-and-activity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Accounts and activity
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Accounts and activity">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#who-sees-which-account" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who sees which account
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#email" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1986,6 +2042,11 @@ serve:</p>
 <td><code>/api/gateway/admin/users</code>, <code>/admin/runtime-reservations</code></td>
 <td>user accounts and retained runtimes (admin)</td>
 <td><a href="../security/#tenant-and-user-isolation">security.md</a></td>
+</tr>
+<tr>
+<td><code>/api/gateway/admin/accounts</code>, <code>/admin/accounts/{id}/active</code>, <code>/admin/accounts/{id}/activity</code>, <code>/me/accounts</code>, <code>/me/accounts/{id}/activity</code>, <code>/me/activity</code></td>
+<td>the Accounts page: users and entities in one list (admin), your own account and your entities (everyone), the Active switch, activity from the audit log</td>
+<td><a href="#accounts-and-activity">below</a></td>
 </tr>
 <tr>
 <td><code>/api/gateway/admin/runtime-config</code></td>
@@ -2080,6 +2141,13 @@ fixed profile allowlist or the live endpoint model catalog.</p>
 <h3 id="1-list-bundles-bundle-mode">1) List bundles (bundle mode)<a class="headerlink" href="#1-list-bundles-bundle-mode" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/bundles"</span>
 </code></pre></div>
+<p>Each item also says where the bundle came from and what it does:</p>
+<ul>
+<li><code>source</code>: <code>shipped</code> (a file the gateway package ships), <code>published</code> (published from
+  AbstractFlow through this gateway: the publish route's stamp in the manifest metadata) or
+  <code>imported</code> (anything else: an uploaded <code>.flow</code>, or a file copied into the folder);</li>
+<li><code>description</code>: the default entrypoint's description (<code>""</code> when it has none).</li>
+</ul>
 <p>Upload a bundle:</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-F<span class="w"> </span><span class="s2">"file=@./my-bundle@0.1.0.flow"</span><span class="w"> </span><span class="se">\</span>
@@ -2141,7 +2209,39 @@ the gateway choose the workflow for an agent interface:</p>
 (the bundle a bare <code>flow_id</code> falls back to), from a catalog record's
 <code>is_default</code> (its default version) and from a bundle's <code>default_entrypoint</code>.</p>
 <p>The setting itself is <code>agents.default_workflow.&lt;interface&gt;</code> (see
-<a href="../configuration/#default-agent-workflow">Configuration</a>).</p>
+<a href="../configuration/#default-agent-workflow">Configuration</a>). In <code>GET /admin/runtime-config</code>, each
+<code>agents.default_workflow.&lt;interface&gt;</code> row also carries the plain words the consoles show, from one
+table in <code>agent_defaults.py</code> (<code>INTERFACE_TABLE</code>):</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>interface</code>, <code>label</code>, <code>app</code>, <code>help</code></td>
+<td>the interface id, its plain name ("AbstractCode — chat agent"), the app that asks for it (<code>null</code> when none does) and one sentence of help</td>
+</tr>
+<tr>
+<td><code>group</code></td>
+<td><code>apps</code> (an app asks the gateway for it as its default agent) or <code>other</code> (declared by a workflow; no app asks for it by default)</td>
+</tr>
+<tr>
+<td><code>state</code></td>
+<td><code>clients_choose</code> (nothing saved and no built-in: each client picks its own workflow — normal, not a warning), <code>builtin</code> (nothing saved; the built-in default runs), <code>set</code> (a saved value that runs) or <code>broken</code> (a saved value that no longer resolves)</td>
+</tr>
+<tr>
+<td><code>value</code></td>
+<td>the saved value, else the built-in default, else <code>null</code></td>
+</tr>
+<tr>
+<td><code>reason</code></td>
+<td>only for <code>broken</code>: "Broken: workflow bundle 'coding-agent' is not on this gateway — pick another workflow or choose “Clients choose”."</td>
+</tr>
+</tbody>
+</table>
 <p>For VisualFlow bundles, Gateway runs the packed JSON through AbstractRuntime.
 Structured LLM/Agent schemas are Runtime/Core-owned: <code>response</code> remains textual,
 and schema-conformant object values are available through the node <code>data</code> output
@@ -2179,7 +2279,7 @@ deliberately narrower than what history views display):</p>
   <code>input_data.session_history_max_chars</code> are ignored and listed in
   <code>_runtime.session_history.ignored_inputs</code>. The environment variables
   <code>ABSTRACTGATEWAY_SESSION_HISTORY_MAX_MESSAGES</code> and
-  <code>ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS</code> are no longer read.</li>
+  <code>ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS</code> are not read.</li>
 <li>Failures degrade to a labeled <code>_runtime.session_history</code> <code>#FALLBACK</code> note
   and an unseeded start — never a blocked run. Success records the window on
   the run as <code>_runtime.session_history</code>: <code>{seeded, policy, max_tokens,
@@ -2563,7 +2663,10 @@ workspace roots, mounted roots, ignored paths, and size limits are enforced on
 the server. Browser-local files should be uploaded through
 <code>POST /api/gateway/attachments/upload</code>; browser-local file paths are not
 interpreted as Gateway workspace paths. In hosted user-auth mode, server
-workspace import/export and <code>/files/*</code> helpers require an admin principal.
+workspace import/export and <code>/files/*</code> helpers require an admin principal. They
+never list, read or write the gateway data folder or the account's credential
+folders (<code>.ssh</code>, <code>.aws</code>, <code>Library/Keychains</code>, ...), even when the workspace root
+contains them (403).
 Ordinary users can still upload browser-local files and list/search artifacts in
 their own routed runtime.</p>
 <p>Canonical Gateway server paths use <code>rel/path</code> for the main workspace root and
@@ -3709,11 +3812,96 @@ later <code>LLM_CALL.params.prompt_cache_binding</code> used inside real Runtime
 <li>remote and hybrid runtimes return <code>code=prompt_cache_local_only</code></li>
 <li>response payloads follow Runtime's host-local export/import contract, including <code>operation</code>, <code>local_only</code>, <code>artifact_*</code>, <code>capabilities</code>, and <code>provider_response</code></li>
 </ul>
+<h2 id="accounts-and-activity">Accounts and activity<a class="headerlink" href="#accounts-and-activity" title="Permanent link">&para;</a></h2>
+<p>The Accounts page (admin): users and entities in one list.</p>
+<table>
+<thead>
+<tr>
+<th>Route</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /admin/accounts</code></td>
+<td><code>{accounts: [{id, tenant_id, kind: user \| entity, role: admin \| user \| entity, own, email_address, mailbox{state: connected \| not_connected \| paused \| unavailable, address, provider, reason}, runtime_id, active, entity_state, actions{email, logs, workspace, rotate, manage, delete, suspend: {available, reason}}}]}</code>, sorted admins, users, entities, then id; <code>entities_warning</code> when the entity list could not be read</td>
+</tr>
+<tr>
+<td><code>PUT /admin/accounts/{id}/active</code></td>
+<td><code>{active}</code> → the updated row. Users: <code>false</code> = deactivated (signed out, cannot sign in); 409 <code>{message}</code> for your own account ("You can't deactivate your own account.") or the last active admin. Entities: <code>false</code> = suspended (entity state <code>paused</code>, its door credential off, an open visit closed); <code>true</code> = resumed (the state it had before is restored, stored in <code>&lt;data_dir&gt;/auth/entity_suspended.json</code>)</td>
+</tr>
+<tr>
+<td><code>GET /admin/accounts/{id}/activity</code></td>
+<td><code>?limit=100&amp;kind=sign_in,run,…</code> (admin)</td>
+</tr>
+<tr>
+<td><code>GET /me/activity</code></td>
+<td>the same for the signed-in account</td>
+</tr>
+<tr>
+<td><code>GET /me/accounts</code></td>
+<td>any signed-in account: <code>{accounts: [rows], scope: "own"}</code>, the same row shape — your own row plus one row per entity <strong>you</strong> created; actions only an admin can take are unavailable with the reason</td>
+</tr>
+<tr>
+<td><code>GET /me/accounts/{id}/activity</code></td>
+<td>the activity of your own account or of an entity you created; any other id answers 404</td>
+</tr>
+</tbody>
+</table>
+<h3 id="who-sees-which-account">Who sees which account<a class="headerlink" href="#who-sees-which-account" title="Permanent link">&para;</a></h3>
+<p>An admin sees every user and every entity (<code>GET /admin/accounts</code>; non-admins get 403 there). Anyone
+else sees only themself and the entities they created. Entity rows carry <code>created_by</code>
+(<code>{tenant_id, user_id}</code> of the account whose <code>POST /entities</code> created it, or <code>null</code>).</p>
+<p>This is enforced on every entity route, not only on the Accounts page:</p>
+<ul>
+<li><code>POST /entities</code> writes <code>created_by</code> into the new home's <code>manifest.json</code>. Entities created before
+  this field existed have none and are visible to admins only: no creator is guessed and no existing
+  manifest is rewritten.</li>
+<li><code>GET /entities</code> lists only the entities the caller may see.</li>
+<li>Every <code>/entities/{name}/…</code> route (inspect, card, state, chat, visit, summon, workspace,
+  tool policy, replay, …) checks first. An entity you may not see answers exactly like one that does
+  not exist: 404 with the same sentence, so names cannot be probed this way.</li>
+<li><code>POST /entities/meets/open</code> needs both entities visible; <code>/entities/meets/{id}</code> answers 404 for a
+  meet with an entity you may not see.</li>
+<li>Creating an entity under a name another account already holds answers 409 ("That name is taken
+  …"): entity names are unique per gateway, so this is the one place a name's existence shows. This
+  holds across runtimes: an entity living in another user's runtime, or a user account with that
+  name, also answers 409 (<code>POST /entities/{name}/validate</code> reports the same error).</li>
+<li>Visibility is not management: entity writes that are admin-only (state, tool policy, prompt,
+  substrate, …) stay admin-only for the entities you created.</li>
+</ul>
+<p>Without user accounts (the single-operator gateway) every entity is visible, as before.</p>
+<p>The email address and mailbox of a row come from the resolver <code>GET /me/email</code> uses. An action that
+cannot apply says why in <code>reason</code>: an entity has no mailbox ("Entities can't have their own mailbox
+yet: mailboxes belong to a user's runtime." — entity runs use their own runtime, without the host's
+mailbox), no token to rotate (its credential is discarded at creation) and no delete ("An entity's
+name is kept for life; suspend it instead.").</p>
+<p>Activity answers <code>{events: [{ts, kind: sign_in \| token \| run \| automation \| email \| account,
+title, detail, run_id, observer_path, ok, ts_local}], source: "audit_log", oldest_ts, truncated, note}</code>, newest
+first. It reads <code>&lt;data_dir&gt;/audit_log.jsonl</code> and its rotated files backwards within a fixed read
+budget (<code>truncated</code>: older entries were not read). Events come from two explicit tables: the request
+lines (sign-ins, sign-out, runs started with their <code>run_id</code>, automation commands, account changes by
+an admin) and the typed email events (mailbox connected, tested, notification sent or not, …). The
+audit log records writes only: read-only requests (page views, token use on reads), mail received and
+what agents send with their email tools are not in it, and <code>note</code> says so. <code>observer_path</code> opens the event in the Observer app:
+<code>/apps/observer/#run/&lt;run_id&gt;</code> for a run, <code>/apps/observer/#automations</code> for an automation event; <code>ts_local</code>
+is <code>ts</code> in the gateway's local time (ISO 8601 with its offset).</p>
+<p>A run id is created by the run-start route, so it is not in the request path: <code>POST /runs/start</code> and
+<code>POST /runs/schedule</code> write <code>run {run_id, workflow, bundle_id, bundle_version, entrypoint, scheduled}</code> on
+their audit line (<code>workflow</code> is the entrypoint's name, else the bundle id). A run event's <code>detail</code> is that
+workflow name. A run-start line written by a gateway older than 0.10.0 has no run id: its <code>detail</code> is "Run id not
+recorded (before this version)" and it has no <code>run_id</code> and no <code>observer_path</code> (nothing is guessed from
+times). A notification event's <code>detail</code> is its kind in words: "Approval needed", "Job failed", "Job
+finished", "Automation result", "Automation failed", "Test notification"; any other kind is shown as
+written.</p>
 <h2 id="email">Email<a class="headerlink" href="#email" title="Permanent link">&para;</a></h2>
 <p>Per-user email (<a href="../email/">email.md</a>): every route acts on the <strong>caller's own</strong> account, resolved
 from the authenticated principal (never from a path or body id); entities are refused (403). No
 response ever carries a password, token or OAuth client secret.</p>
-<p>Your mailbox (<code>/api/gateway/me/...</code>, every signed-in human):</p>
+<p>The <strong>email address</strong> is the user's own address (sign-in codes, notifications, the default allowed
+recipient; no password); the <strong>mailbox</strong> is the connection the user makes so their agents and
+automations can read and send mail as them.</p>
+<p>Your email address and mailbox (<code>/api/gateway/me/...</code>, every signed-in human):</p>
 <table>
 <thead>
 <tr>
@@ -3724,15 +3912,27 @@ response ever carries a password, token or OAuth client secret.</p>
 <tbody>
 <tr>
 <td><code>GET /me/email</code></td>
-<td>settings and status: <code>configured</code>, <code>address</code>, <code>imap</code>, <code>smtp</code>, <code>auth_kind</code>, <code>secret_set</code>, <code>policy</code>, <code>limits</code> (+ usage), <code>status{last_test, last_ok, last_error{code, cause, fix}}</code>, <code>watcher{state, last_poll, cursor, received}</code>, <code>admin_enabled</code>, <code>effective_enabled</code></td>
+<td>settings and status (<code>mailbox{state, address, provider, reason}</code> as in <code>/admin/accounts</code>): <code>configured</code>, <code>address</code>, <code>imap</code>, <code>smtp</code>, <code>auth_kind</code>, <code>secret_set</code>, <code>policy</code>, <code>limits</code> (+ usage), <code>status{last_test, last_ok, last_error{code, cause, fix}}</code>, <code>watcher{state, last_poll, cursor, received}</code>, <code>admin_enabled</code>, <code>effective_enabled</code>; for the account page: <code>email_address</code> (your email address as stored), <code>registered_address</code> ("self" for runs: that address, else the mailbox's own), <code>email_available</code>, <code>notifications{job_failed, approval_needed}</code> + <code>notifications_unavailable_reason</code>, <code>agent_tools{on, available, unavailable_reason, active}</code>, <code>oauth_providers[{id, available, reason}]</code></td>
+</tr>
+<tr>
+<td><code>POST /me/email/discover</code></td>
+<td><code>{address}</code> → <code>{address, domain, found, source, provider, imap, smtp, username, tried, defaults}</code> (known providers, autoconfig, ISPDB, SRV, MX); <code>defaults</code> is what the form pre-fills: <code>{imap{host, port, security}, smtp{…}, login, source: discovered \| standard, provider, message}</code> (AbstractCore <code>server_defaults</code>: the discovered servers, else <code>imap.&lt;domain&gt;</code> 993 SSL and <code>smtp.&lt;domain&gt;</code> 465 SSL, "Standard settings for <domain> — change them if your provider uses others."); 400 for a non-address</td>
 </tr>
 <tr>
 <td><code>PUT /me/email</code></td>
-<td>connect: <code>{address, password, username?, display_name?, imap{host, port, security, folder}, smtp{host, port, security}, test}</code>; signs in to both legs first (unless <code>test: false</code>) and stores nothing on a failure</td>
+<td>connect (save + test): <code>{address, password, username?, display_name?, imap?{host, port, security, folder}, smtp?{host, port, security}, test}</code>; <code>username</code> defaults to the discovered login, else the address; <code>display_name</code> to the stored name, else the address's local part; connecting sets your email address when it is empty (audited <code>email.address_changed</code>, reason <code>mailbox_connected</code>); without <code>imap</code> and <code>smtp</code> the servers are discovered (<code>discovery{source, provider, tried}</code> in the answer; none found = 400 <code>email_discovery_failed</code> with <code>tried</code>); signs in to both servers first (unless <code>test: false</code>), stores nothing on a failure and names the failing step (<code>detail.step</code>: <code>imap</code> | <code>smtp</code>, <code>detail.message</code>)</td>
+</tr>
+<tr>
+<td><code>PUT /me/email/address</code></td>
+<td><code>{address}</code> — your email address, stored on your user record (<code>""</code> clears it; 400 <code>email_invalid_settings</code> for anything but one plain address)</td>
+</tr>
+<tr>
+<td><code>PUT /me/email/notifications</code></td>
+<td><code>{job_failed?, approval_needed?}</code> — the two notification switches (both on by default); the earlier <code>{email: {...}}</code> body is accepted and mapped; answers like <code>GET /me/email</code></td>
 </tr>
 <tr>
 <td><code>POST /me/email/test</code></td>
-<td>per-leg result <code>{imap, smtp, ok}</code></td>
+<td>per-leg result <code>{imap, smtp, ok, message}</code>; <code>message</code>: "Test passed: signed in to imap.x and smtp.x." or the failing step and its cause ("Sign-in refused by imap.x — check the password. (…)")</td>
 </tr>
 <tr>
 <td><code>DELETE /me/email</code></td>
@@ -3751,12 +3951,16 @@ response ever carries a password, token or OAuth client secret.</p>
 <td><code>{per_hour, per_day}</code></td>
 </tr>
 <tr>
+<td><code>PUT /me/email/folder</code></td>
+<td><code>{folder}</code> — the folder your mailbox is read from (empty = INBOX); the connection is kept and nothing is tested; 404 <code>email_not_configured</code> without a mailbox</td>
+</tr>
+<tr>
 <td><code>PUT /me/email/enabled</code></td>
-<td><code>{enabled}</code> — your own switch</td>
+<td><code>{enabled}</code> — "Use this mailbox" (off keeps the settings; stops watching, sending and notifications)</td>
 </tr>
 <tr>
 <td><code>PUT /me/email/agent-tools</code></td>
-<td><code>{enabled}</code> — your agents' email tools (default off; 409 <code>email_disabled</code> "not available" unless an administrator made them available; active only with a connected, allowed account); reloads your workflows so toolsets follow (<code>tools_reloaded</code>). <code>GET /me/email</code> reports <code>agent_tools: {enabled, available, active, reason}</code> and <code>store.label</code> (which account this is)</td>
+<td><code>{enabled}</code> — your agents' email tools (default off; 409 <code>email_disabled</code> while "Agent email tools for users" is off for you; active only with a connected, allowed mailbox); reloads your workflows so toolsets follow (<code>tools_reloaded</code>)</td>
 </tr>
 <tr>
 <td><code>GET /me/email/oauth/clients</code></td>
@@ -3784,11 +3988,11 @@ response ever carries a password, token or OAuth client secret.</p>
 </tr>
 <tr>
 <td><code>PUT /me/notifications</code></td>
-<td><code>{email: {automation_result, automation_failed, approval_needed, job_finished, job_failed: bool}}</code> (all off by default)</td>
+<td><code>{email: {job_failed, approval_needed: bool}}</code>; the earlier kinds are accepted (<code>automation_failed</code> counts for <code>job_failed</code>; <code>automation_result</code> and <code>job_finished</code> are per-automation / per-run options now)</td>
 </tr>
 <tr>
 <td><code>POST /me/notifications/test</code></td>
-<td>sends one test notification now → <code>{ok, state, error?}</code></td>
+<td>sends one test notification now → <code>{ok, sent, reason_code, message, limit, state, error?}</code>: <code>reason_code</code> is <code>null</code> (sent) or <code>no_mailbox</code>, <code>mailbox_paused</code>, <code>rate_limited</code>, <code>queued_behind</code> (+ <code>queued_behind</code>: how many), <code>send_failed</code>; <code>message</code> is the sentence to show ("Sent to x@y.", "Not sent: hourly limit reached (20 of 20 this hour) — resets at 14:05.", in the gateway's local time); <code>limit</code> <code>{window: hour \| day, limit, used, resets_at}</code> when a send limit held it back</td>
 </tr>
 </tbody>
 </table>
@@ -3803,7 +4007,7 @@ response ever carries a password, token or OAuth client secret.</p>
 <tbody>
 <tr>
 <td><code>GET /admin/users</code></td>
-<td>each human row carries <code>email_account: {configured, address, state, admin_enabled, agent_tools_available}</code></td>
+<td>every row carries <code>email_address</code> and <code>mailbox{state: connected \| not_connected \| paused \| unavailable, address, provider, reason}</code> from the same resolver as <code>GET /me/email</code> (so your own row matches your card; <code>email</code> stays the raw record field); each human row also carries <code>email_account: {configured, address, state, admin_enabled, agent_tools_available, capabilities}</code> (<code>capabilities</code>: <code>{email, email_agent_tools}</code> as <code>{value, source: user \| gateway \| built-in}</code>; <code>user</code> = a per-user override)</td>
 </tr>
 <tr>
 <td><code>GET /admin/users/{user_id}/email</code></td>
@@ -3815,7 +4019,7 @@ response ever carries a password, token or OAuth client secret.</p>
 </tr>
 <tr>
 <td><code>GET /admin/email/capabilities</code></td>
-<td>gateway-wide defaults: <code>email</code> (on), <code>email_agent_tools</code> (off), <code>email_recovery</code> (on)</td>
+<td><code>capabilities[{id, label, description, per_user, advanced, default, built_in_default}]</code>: <code>email</code> "Mailboxes for users" (on), under Advanced <code>email_agent_tools</code> "Agent email tools for users" (on) and <code>email_recovery</code> "Sign-in by email" (on)</td>
 </tr>
 <tr>
 <td><code>PUT /admin/email/capabilities</code></td>
@@ -3846,11 +4050,11 @@ response ever carries a password, token or OAuth client secret.</p>
 </tr>
 <tr>
 <td><code>POST /session/recovery/request</code></td>
-<td><code>{user_id, tenant_id?, purpose: sign_in \| reset_token}</code> → the same answer for every account</td>
+<td><code>{user_id, tenant_id?, purpose?: sign_in (default) \| reset_token}</code> → <code>{sent: true, to: "l•••@•••", expires_in_s, message}</code>, <code>{sent: false, reason_code: "no_email_address", message}</code> (also for an unknown account), <code>{sent: false, reason_code: "no_mailbox", message}</code> (an address but no mailbox to send from), <code>{sent: false, reason_code: "send_failed", message}</code> (the mail server refused or could not be reached; the request waits up to 12 s for the real outcome) or <code>{sent: false, reason_code: "too_many_requests", retry_after_s, message}</code>; 404 <code>recovery_off</code> when sign-in by email is off (<a href="../email/#sign-in-by-email">email.md</a>)</td>
 </tr>
 <tr>
 <td><code>POST /session/recovery/redeem</code></td>
-<td><code>{user_id, tenant_id?, purpose, code, remember?}</code> → a browser session; <code>reset_token</code> also returns the new <code>token</code> once. A wrong, expired or used code answers 401 <code>recovery_code_refused</code></td>
+<td><code>{user_id, tenant_id?, purpose?, code, remember?}</code> → a browser session; <code>reset_token</code> also returns the new <code>token</code> once. A wrong, expired or used code answers 401 <code>recovery_code_refused</code></td>
 </tr>
 </tbody>
 </table>

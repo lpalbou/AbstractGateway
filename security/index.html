@@ -793,6 +793,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#who-sees-which-account" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who sees which account
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#per-user-email" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1207,6 +1218,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#who-sees-which-account" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Who sees which account
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#per-user-email" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1549,7 +1571,10 @@ is set for compatibility. Admin principals can manage users through:</p>
 <li><code>GET /api/gateway/admin/users?kind=human|entity|all</code> (default <code>all</code>)</li>
 <li><code>POST /api/gateway/admin/users</code></li>
 <li><code>GET /api/gateway/admin/users/{user_id}?tenant_id=...</code></li>
-<li><code>PATCH /api/gateway/admin/users/{user_id}?tenant_id=...</code></li>
+<li><code>PATCH /api/gateway/admin/users/{user_id}?tenant_id=...</code> (<code>enabled</code> is the Active switch:
+  false = signed out and unable to sign in; an admin cannot deactivate their own account,
+  <code>409 cannot_deactivate_self</code>, nor the last active admin, <code>409 last_admin</code>; <code>email</code> is the
+  user's email address)</li>
 <li><code>DELETE /api/gateway/admin/users/{user_id}?tenant_id=...</code></li>
 <li><code>GET /api/gateway/admin/runtime-reservations</code></li>
 <li><code>POST /api/gateway/admin/runtime-reservations/{runtime_id}/transfer</code></li>
@@ -1679,6 +1704,31 @@ admin principal. The current capability-default cascade uses execution-host
 Core defaults, then the Gateway/root Core config baseline, then the user's
 runtime Core config override under that user's Gateway data plane. A stronger encrypted vault, audit model, and
 bridge/delegated-tool propagation policy remain future hardening work.</p>
+<h3 id="who-sees-which-account">Who sees which account<a class="headerlink" href="#who-sees-which-account" title="Permanent link">&para;</a></h3>
+<p>An admin sees every user and every entity (<code>GET /api/gateway/admin/accounts</code>,
+admin-only: other accounts get 403). Anyone else sees only their own account
+and the entities they created (<code>GET /api/gateway/me/accounts</code>, and
+<code>GET /api/gateway/me/accounts/{id}/activity</code> for their own activity or an own
+entity's). The console's Accounts page follows the same rule.</p>
+<ul>
+<li><code>POST /entities</code> records the creator (<code>created_by: {tenant_id, user_id}</code>) in
+  the new entity's manifest. Entities created before this field existed have
+  no creator and are visible to admins only; no creator is guessed and no
+  manifest is rewritten.</li>
+<li>Every entity route checks visibility first. An entity you may not see
+  answers exactly like a missing one (404, same message), so names cannot be
+  probed.</li>
+<li>Entity names belong to the whole gateway: creating an entity under a name
+  another account already holds (an entity in any runtime, or a user account)
+  answers 409 "That name is taken".</li>
+<li>Seeing an entity is not managing it: admin-only entity writes (state, tool
+  policy, prompt, substrate, …) stay admin-only for the entities you created,
+  and only an admin can suspend an entity or rotate a user's token.</li>
+<li>A gateway without user accounts is one shared world: every entity is visible.</li>
+</ul>
+<p>An entity has no token to rotate (its credential is discarded when it is
+created) and cannot be deleted (its name is kept for life); an admin suspends
+it instead. Details: <a href="../api/#who-sees-which-account">api.md</a>.</p>
 <h3 id="per-user-email">Per-user email<a class="headerlink" href="#per-user-email" title="Permanent link">&para;</a></h3>
 <p>Each user's mailbox (<a href="../email/">email.md</a>) lives in that user's own data plane,
 resolved from the authenticated principal on every route; no path or body id
@@ -1780,12 +1830,20 @@ The setting is read per request: a change applies to the next request, no
 restart. Each origin is validated (<code>scheme://host[:port]</code>, no path, no trailing
 slash); <code>*</code> and wildcard patterns are accepted only as typed and are flagged.
 See <a href="../configuration/#reverse-proxy-allowed-origins-and-trust-proxy">configuration.md</a>.</p>
+<p>One more case is allowed without a list entry: an https page asking its own
+address. The Origin is <code>https://</code> plus the request's <code>Host</code>, and the request
+itself arrived over TLS: either native TLS, or <code>X-Forwarded-Proto: https</code>
+from a proxy on the gateway machine (the only peer whose forwarded headers
+are believed). This is <code>tailscale serve</code> or a local nginx that keeps the
+browser's <code>Host</code>. DNS rebinding cannot produce it. The browser writes the
+Origin, a rebinding page is plain <code>http://</code>, and an <code>https://</code> rebinding page
+would need a certificate for its own name from the proxy on this machine.</p>
 <p>A gateway started with <code>ABSTRACTGATEWAY_ALLOWED_ORIGINS</code> in its environment
 uses that list instead (a deployment pin): every surface says "This gateway was
 started with ABSTRACTGATEWAY_ALLOWED_ORIGINS in its environment" and reports
 <code>overridden_by_env: true</code>; the saved setting applies once it starts without it.</p>
-<p>Evidence: <code>GatewayAuthPolicy.allowed_origins</code>, <code>_effective_allowed_origins()</code> and
-<code>_origin_allowed()</code> in <code>src/abstractgateway/security/gateway_security.py</code>;
+<p>Evidence: <code>GatewayAuthPolicy.allowed_origins</code>, <code>_effective_allowed_origins()</code>,
+<code>_origin_allowed()</code> and <code>_https_same_origin()</code> in <code>src/abstractgateway/security/gateway_security.py</code>;
 <code>live_reverse_proxy()</code> in <code>src/abstractgateway/network_exposure.py</code>.</p>
 <p>Important nuance:
 - FastAPI’s CORS middleware in <code>src/abstractgateway/app.py</code> is permissive, but <strong>origin enforcement for gateway endpoints is done by this security middleware</strong>.

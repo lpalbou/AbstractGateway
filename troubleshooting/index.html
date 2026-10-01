@@ -1927,7 +1927,7 @@ or easy to guess, on a non-loopback bind or with public wildcard origins.</p>
 <p>The installed AbstractRuntime lacks live token deltas or the built-in tool
 deny rules the gateway relies on; the message names what is missing. Upgrade
 it in the gateway's Python, then start again:</p>
-<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>-U<span class="w"> </span><span class="s2">"abstractruntime&gt;=0.7.0"</span>
+<div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>-U<span class="w"> </span><span class="s2">"abstractruntime&gt;=0.8.2"</span>
 </code></pre></div>
 <h3 id="the-one-time-sign-in-link-does-not-work">The one-time sign-in link does not work<a class="headerlink" href="#the-one-time-sign-in-link-does-not-work" title="Permanent link">&para;</a></h3>
 <p><strong>Checks and fixes.</strong></p>
@@ -1946,7 +1946,7 @@ it in the gateway's Python, then start again:</p>
 <p>It is kept in <code>&lt;data dir&gt;/auth/bootstrap-admin-token</code> (mode <code>0600</code>).
 <code>abstractgateway-config status</code> prints the data dir. For a loopback gateway
 you can also sign in with <code>abstractgateway claim --open</code> and rotate tokens
-from the console's <strong>Users &amp; Entities</strong> tab.</p>
+from the console's <strong>Accounts</strong> tab (<strong>Rotate</strong> on the account's row).</p>
 <h3 id="401-403-429-or-413-from-apigateway"><code>401</code>, <code>403</code>, <code>429</code> or <code>413</code> from <code>/api/gateway/*</code><a class="headerlink" href="#401-403-429-or-413-from-apigateway" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
@@ -2052,7 +2052,7 @@ and set the mode again. See <a href="../security/#network-exposure">security.md<
 default for that interface cannot run: its workflow was removed or
 deprecated, or no longer declares the interface. The message names the
 setting and where its value comes from. Choose another workflow in the
-console (Workflows → <em>Default agent workflow</em>), or run
+console (Workflows → <em>Default workflow per app</em>), or run
 <code>abstractgateway config unset agents.default_workflow.&lt;interface&gt;</code> to return
 to the built-in default. A 400 means the request itself is wrong: <code>interface</code>
 is missing, or <code>bundle_id</code>/<code>bundle_version</code> were sent with <code>@default</code>. See

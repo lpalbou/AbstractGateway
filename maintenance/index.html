@@ -1161,7 +1161,7 @@ Security enforcement for <code>/api/gateway/*</code> is in <code>src/abstractgat
 <p>Notification helpers used by <code>triage-reports --notify</code>:
 - Telegram: <code>ABSTRACT_BACKLOG_TELEGRAM_CHAT_ID</code> or <code>ABSTRACT_TRIAGE_TELEGRAM_CHAT_ID</code>
 - Email: sent to the administrator's registered address through the administrator's own email account
-  (Users tab → <strong>My email</strong>), from the durable notification outbox — the recipient policy and send limits apply and
+  (Accounts → <strong>Email</strong> on the administrator's row), from the durable notification outbox — the recipient policy and send limits apply and
   a retry never sends a notice twice. See <a href="../email/">email.md</a>.</p>
 <p>Evidence: CLI wiring in <code>src/abstractgateway/cli.py</code>.</p>
 <h2 id="backlog-browsingediting">Backlog browsing/editing<a class="headerlink" href="#backlog-browsingediting" title="Permanent link">&para;</a></h2>
@@ -1257,7 +1257,7 @@ abstractgateway<span class="w"> </span>config<span class="w"> </span><span class
   - <code>/reset</code> controls: <code>ABSTRACT_TELEGRAM_RESET_DELETE_MESSAGES</code>, <code>ABSTRACT_TELEGRAM_RESET_DELETE_MAX</code>, <code>ABSTRACT_TELEGRAM_RESET_MESSAGE</code></p>
 <p>Evidence: bridge startup in <code>src/abstractgateway/service.py</code> (<code>start_gateway_runner</code>).</p>
 <h2 id="email">Email<a class="headerlink" href="#email" title="Permanent link">&para;</a></h2>
-<p>Email is configured per user (Users tab → <strong>My email</strong>), never through environment variables; new mail reaches
+<p>Email is configured per user (Accounts → <strong>Email</strong> on your own row), never through environment variables; new mail reaches
 automations through the <code>email.received@1</code> trigger. See <a href="../email/">email.md</a> for the watcher, notifications,
 recovery codes and the one-time import of the retired <code>ABSTRACT_EMAIL_*</code> variables, and <a href="../api/#email">api.md</a> for
 the routes (including the deprecated <code>/api/gateway/email/*</code> aliases).</p>

@@ -711,6 +711,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#what-get-meemail-tells-the-account-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What GET /me/email tells the account page
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -761,10 +772,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#account-recovery-by-email" class="md-nav__link">
+  <a href="#sign-in-by-email" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Account recovery by email
+        Sign-in by email
       
     </span>
   </a>
@@ -1023,6 +1034,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#what-get-meemail-tells-the-account-page" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What GET /me/email tells the account page
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -1073,10 +1095,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#account-recovery-by-email" class="md-nav__link">
+  <a href="#sign-in-by-email" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Account recovery by email
+        Sign-in by email
       
     </span>
   </a>
@@ -1137,18 +1159,26 @@
 
 
 <h1 id="email-one-user-one-runtime-one-mailbox">Email: one user, one runtime, one mailbox<a class="headerlink" href="#email-one-user-one-runtime-one-mailbox" title="Permanent link">&para;</a></h1>
-<p>Every signed-in person on an AbstractGateway can connect <strong>their own</strong> mailbox. The account is
-stored encrypted in that user's data home and is used for three things:</p>
+<p>Two things carry the word "email", and the gateway names them differently everywhere:</p>
+<ul>
+<li>your <strong>email address</strong> — where sign-in codes, "Forgot your token?" and notifications go, and the
+  first address your agents may write to. It has no password. An administrator sets it when
+  creating your user, or you set it yourself (<code>PUT /api/gateway/me/email/address</code>);</li>
+<li>your <strong>mailbox</strong> — a connection you make (Google or Microsoft sign-in, or address + password for
+  other providers) so that your agents and automations can read and send mail as you. Only you
+  connect it; administrators never see or touch it.</li>
+</ul>
+<p>Every signed-in person on an AbstractGateway can connect <strong>their own</strong> mailbox. It is stored
+encrypted in that user's data home and is used for:</p>
 <ul>
 <li><strong>automations on new mail</strong> — the <code>email.received@1</code> trigger (for example "forward invoices",
   "tell me when X writes", or an AI triage that opens a session with you);</li>
-<li><strong>email notifications</strong> — job finished/failed, approval needed and automation results, emailed
-  to you through your own account;</li>
-<li><strong>account recovery</strong> — "Forgot your token?" and "Email me a sign-in code" on the sign-in page.</li>
+<li><strong>notifications</strong> — "Job failed" and "Approval needed", emailed to you through your own mailbox,
+  plus the automation results and job completions you ask for per automation or per run;</li>
+<li><strong>sign-in by email</strong> — "Forgot your token? Email me a sign-in code" on the sign-in page.</li>
 </ul>
-<p>Email is optional and nothing is active by default: no watcher runs until you create an
-email-triggered automation, notifications stay in the console until you choose email, and your
-agents get no email tools until you turn them on. Without an account there is no sending and no
+<p>Nothing reads your mail by default: no watcher runs until you create an email-triggered
+automation, and your agents get no email tools until you switch <strong>Agent email tools</strong> on. Without an account there is no sending and no
 email notification; the gateway has no shared "system" sender. The mailbox is only read: nothing marks messages read, moves or
 deletes them.</p>
 <p>This page is the user and operator guide. The HTTP surface is listed in <a href="../api/#email">api.md</a>,
@@ -1157,28 +1187,52 @@ the security model in <a href="../security/#per-user-email">security.md</a>, and
 <h2 id="connect-your-mailbox">Connect your mailbox<a class="headerlink" href="#connect-your-mailbox" title="Permanent link">&para;</a></h2>
 <p>You can connect from any of these surfaces; they share the same fields and words:</p>
 <ul>
-<li><strong>Web console</strong> → Users tab → <strong>My email</strong> (every signed-in user).</li>
-<li><strong>Terminal console</strong> (<code>abstractgateway-console</code>) → Users screen → <code>@</code>.</li>
-<li><strong>HTTP</strong>: <code>PUT /api/gateway/me/email</code>.</li>
+<li><strong>Web console</strong> → Accounts → <strong>Email</strong> on your own row (every signed-in user): the <strong>Mailbox</strong>
+  card, tab <strong>IMAP</strong> (the default) for address + password, <strong>Google</strong> or <strong>Microsoft</strong> to sign in
+  with the provider.</li>
+<li><strong>Terminal console</strong> (<code>abstractgateway-console</code>) → <strong>2 Accounts</strong> → <code>@</code> on your own row.</li>
 </ul>
-<p>Give the address, the password (or app password), and the IMAP and SMTP servers:</p>
+<p>In both consoles the IMAP pane shows the incoming (IMAP) and outgoing (SMTP) server, port and
+security. They are filled in with the standard <code>imap.&lt;domain&gt;</code> / <code>smtp.&lt;domain&gt;</code> values as soon as
+the address has a domain, then replaced by what discovery finds, except a field you edited. There is
+no user name or display name field: a small link ("My provider uses a different login name", <code>Ctrl+O</code>
+in the terminal) shows a Login field for the few providers that need one. When your email address
+is empty, the pane's <strong>Mailbox address</strong> is the only address field and connecting fills your email
+address; when it is set, the pane reads "Mailbox account: x@y" with <strong>Use a different account</strong>.
+- <strong>HTTP</strong>: <code>PUT /api/gateway/me/email</code>.</p>
+<p>Give the address and the password (or app password). The gateway finds the IMAP and SMTP servers
+from the address — a table of common providers, the domain's own autoconfig file, the Thunderbird
+ISPDB, DNS SRV records, then the domain's MX hosts (AbstractCore's deterministic discovery):</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer &lt;your gateway token&gt;"</span><span class="w"> </span>-H<span class="w"> </span><span class="s2">"Content-Type: application/json"</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/me/email"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{</span>
-<span class="s1">    "address": "me@example.com",</span>
-<span class="s1">    "password": "&lt;app password&gt;",</span>
-<span class="s1">    "imap": {"host": "imap.example.com", "port": 993, "security": "ssl"},</span>
-<span class="s1">    "smtp": {"host": "smtp.example.com", "port": 587, "security": "starttls"}</span>
-<span class="s1">  }'</span>
+<span class="w">  </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/me/email"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"address": "me@fastmail.com", "password": "&lt;app password&gt;"}'</span>
 </code></pre></div>
-<p>The gateway signs in to both servers first and stores nothing when a leg fails; the answer names
-the cause and the fix (for example <code>email_auth_failed</code>: "The IMAP server rejected the user name or
-password … many providers need an app password when two-step verification is on"). TLS
-certificates and host names are always verified; there is no unencrypted mode.</p>
+<p><code>POST /api/gateway/me/email/discover {"address": "..."}</code> shows what discovery finds without
+connecting (<code>found</code>, <code>source</code>, <code>imap</code>, <code>smtp</code>, <code>username</code>, and <code>tried</code>: every step with its result),
+plus <code>defaults</code>: what the mailbox form pre-fills — the discovered servers, else the standard
+<code>imap.&lt;domain&gt;</code> (993, SSL) and <code>smtp.&lt;domain&gt;</code> (465, SSL) — with the login and one sentence
+("Settings found for fastmail.com." / "Standard settings for example.com — change them if your
+provider uses others.").
+When no step finds both servers, the connect answers <code>400 email_discovery_failed</code> with the same
+<code>tried</code> list and the message "Couldn't find the mail servers for <domain>." (the fix: "Standard
+settings are filled in: check them and change any your provider does differently."); give the
+servers yourself then (<code>imap</code> and <code>smtp</code>: <code>host</code>, <code>port</code>, <code>security</code>).
+<code>username</code> defaults to the form the provider's configuration names, else the address;
+<code>display_name</code> is optional: an empty one keeps the stored name, else the address's local part (it is
+the name on the From line of mail you send). Connecting a mailbox sets your email address when it is
+empty (recorded as <code>email.address_changed</code>, reason <code>mailbox_connected</code>); an address you already set
+is never replaced.</p>
+<p>Connect saves and tests in one call: the gateway signs in to both servers first and stores nothing
+when a step fails. The error names the step (<code>detail.step</code>: <code>imap</code> or <code>smtp</code>) and says it the way
+the consoles show it — "Sign-in refused by imap.example.com — check the password." or "Couldn't
+reach smtp.example.com:465." — next to the cause and the fix (for example <code>email_auth_failed</code>:
+"many providers need an app password when two-step verification is on"). TLS certificates and
+host names are always verified; there is no unencrypted mode.</p>
 <p>Many providers (Gmail, iCloud, Fastmail, most hosted IMAP) accept an <strong>app password</strong> when
 two-step verification is on.</p>
 <h3 id="oauth2-sign-in-google-microsoft">OAuth2 sign-in (Google, Microsoft)<a class="headerlink" href="#oauth2-sign-in-google-microsoft" title="Permanent link">&para;</a></h3>
-<p>Microsoft 365 / Outlook needs OAuth2. In <strong>My email → Sign in with OAuth2</strong>, pick the provider and
-start the sign-in:</p>
+<p>Microsoft 365 / Outlook needs OAuth2. In the <strong>Mailbox</strong> card, pick the <strong>Google</strong> or <strong>Microsoft</strong>
+tab and select <strong>Sign in with Google</strong> / <strong>Sign in with Microsoft</strong> (your own client id and secret go
+under the tab's <strong>Advanced</strong>):</p>
 <ul>
 <li><strong>Microsoft</strong> uses a device code by default: open the link shown in any browser, on any machine,
   and enter the code.</li>
@@ -1200,19 +1254,67 @@ gateway connect, to a host a user chose.</p>
 <code>PUT /api/gateway/admin/email/oauth-clients/{google|microsoft}</code> (<code>client_id</code>, <code>client_secret</code>,
 <code>tenant</code>); the consoles do not edit OAuth clients yet. The secret is sealed at rest and never
 returned; the read shows <code>client_secret_set</code>.</p>
-<p>While an administrator has email turned off for a user, that user's <strong>Connect</strong>, <strong>Test</strong> and
-OAuth sign-in are refused (<code>409 email_disabled</code>) before any connection is made; the stored
-settings are kept.</p>
+<p><code>GET /api/gateway/me/email</code> lists <code>oauth_providers</code> (<code>[{id, available, reason}]</code>): a provider is
+available with the gateway's own client or a built-in one; otherwise <code>reason</code> says so.</p>
+<p>While mailboxes are off for a user, that user's <strong>Connect</strong>, <strong>Test</strong> and OAuth sign-in are refused
+(<code>409 email_disabled</code>, "Your admin turned mailboxes off for your account.") before any connection is
+made; the stored settings are kept.</p>
+<h3 id="what-get-meemail-tells-the-account-page">What <code>GET /me/email</code> tells the account page<a class="headerlink" href="#what-get-meemail-tells-the-account-page" title="Permanent link">&para;</a></h3>
+<p>Besides the mailbox settings and status (never a secret):</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>email_address</code></td>
+<td>where your sign-in codes and notifications go: your email address as stored on your user record, else your connected mailbox's own address (<code>""</code> when neither)</td>
+</tr>
+<tr>
+<td><code>mailbox</code></td>
+<td><code>{"state": "connected" \| "not_connected" \| "paused" \| "unavailable", "address", "provider", "reason"}</code> — the same value the administrator's Accounts table shows for you</td>
+</tr>
+<tr>
+<td><code>registered_address</code></td>
+<td>"self" for your runs: your email address, else your connected mailbox's own address</td>
+</tr>
+<tr>
+<td><code>email_available</code></td>
+<td>your administrator allows mailboxes ("Mailboxes for users")</td>
+</tr>
+<tr>
+<td><code>notifications</code></td>
+<td><code>{"job_failed": bool, "approval_needed": bool}</code>; <code>notifications_unavailable_reason</code> says why they cannot send yet ("Connect a mailbox first.")</td>
+</tr>
+<tr>
+<td><code>agent_tools</code></td>
+<td><code>{"on", "available", "unavailable_reason", "active"}</code>: your switch, whether it can be switched on now, and why not ("Connect a mailbox first.", "Your admin turned mailboxes off.", "Your admin turned agent email tools off.")</td>
+</tr>
+<tr>
+<td><code>oauth_providers</code></td>
+<td><code>[{"id": "google" \| "microsoft", "available", "reason"}]</code></td>
+</tr>
+</tbody>
+</table>
+<p>The mailbox's <strong>Active</strong> switch, next to its status once connected (<code>PUT /api/gateway/me/email/enabled
+{"enabled": false}</code>), keeps the settings but stops watching, sending and notifications until you
+switch it back on. <strong>Folder</strong>
+(<code>PUT /api/gateway/me/email/folder {"folder": "Archive"}</code>, empty = INBOX) changes the folder your
+agents and the mail watcher read without reconnecting; the watcher starts that folder from mail that
+arrives after the change.</p>
 <h2 id="agent-email-tools-off-by-default">Agent email tools (off by default)<a class="headerlink" href="#agent-email-tools-off-by-default" title="Permanent link">&para;</a></h2>
 <p>Your agents and workflows — chats, workflow runs and automations, from every client (Code,
 Assistant, Observer, the consoles) — get the email tools (list and search mail, read a message,
 list folders, send, reply, download an attachment) only when <strong>all</strong> of these hold:</p>
 <ol>
-<li>an administrator made <strong>Agent email tools</strong> available to you (they are not, by default);</li>
-<li>your account is connected and turned on, and email is allowed for you;</li>
-<li>you turned on <strong>Agent email tools</strong> (My email in the web console, <strong>Policy, limits &amp; tools</strong> in
-   the terminal console, or <code>PUT /api/gateway/me/email/agent-tools {"enabled": true}</code>). When they
-   are not available the switch reads "not available — ask your admin".</li>
+<li><strong>Agent email tools for users</strong> is on (the administrator's Advanced setting; on by default);</li>
+<li>your mailbox is connected and in use, and mailboxes are allowed for you;</li>
+<li>you switched <strong>Agent email tools</strong> on (your account page in the web console, the terminal
+   console, or <code>PUT /api/gateway/me/email/agent-tools {"enabled": true}</code>). Your own switch is off
+   by default; while it cannot be switched on, it shows the reason.</li>
 </ol>
 <p>The rule is applied twice: when your toolsets are built (the tools are listed only then; turning
 the switch reloads your workflows so the change applies at once) and again when a tool runs (a
@@ -1236,16 +1338,21 @@ code — goes through the same checks, in this order:</p>
    written as its own entry. The policy applies to To, Cc and Bcc, and a message with any refused
    recipient is refused whole, naming the refused addresses. A new account starts with an allowlist
    holding your registered address;</li>
-<li>the <strong>send limits</strong>: 20 messages per rolling hour and 100 per day by default, editable by you.</li>
+<li>the <strong>send limits</strong>: 100 messages per rolling hour and 1000 per day by default, editable by you.
+   Limits you set are kept across upgrades; a mailbox where nobody set them follows the defaults.
+   Until AbstractCore 2.21 the defaults were 20 and 100 and connecting a mailbox stored them
+   unmarked; an upgrade treats exactly that pair as the old defaults, so the mailbox follows the new
+   ones. Any other unmarked value is kept (the limits document's <code>source</code> is <code>legacy</code>; <code>default</code>
+   and <code>user</code> are the other values). Set new values under Advanced in your email settings to move
+   on.</li>
 </ol>
 <p>On top of the policy, the approval gate still decides whether an agent's send runs unattended: a
 send to anyone but you (or an automation's pre-authorised recipients) waits for your approval, and
-a send to you runs without asking in chats and automations alike. "You" is the address My email
-shows as your registered address: the email on your user account (or the gateway's registered
+a send to you runs without asking in chats and automations alike. "You" is your registered address: the email on your user account (or the gateway's registered
 address for the operator), else the connected mailbox's own address.</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/me/email/policy"</span><span class="w"> </span><span class="se">\</span>
 <span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"mode": "allowlist", "entries": ["me@example.com", "mycompany.com"]}'</span>
-curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/me/email/limits"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"per_hour": 20, "per_day": 100}'</span>
+curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/me/email/limits"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"per_hour": 100, "per_day": 1000}'</span>
 </code></pre></div>
 <h2 id="automations-on-new-mail">Automations on new mail<a class="headerlink" href="#automations-on-new-mail" title="Permanent link">&para;</a></h2>
 <p>The mail watcher reads your mailbox only while at least one of your automations is active on the
@@ -1258,9 +1365,9 @@ Connection problems back off from 60 seconds to 15 minutes; nothing is paused, a
 shows the cause and the fix.</p>
 <p>Mail that is already in your mailbox when the watcher starts is never an event. The watcher marks
 where new mail starts when you connect an account and whenever an email automation becomes active
-after a time with none (creating one takes that mark within seconds, so a message you send to test
-it right after counts); mail that arrived while none of your email automations was active is not
-processed later. A gateway restart keeps the mark: mail that arrives while the gateway is down is
+after a time with none (creating or resuming one takes that mark within seconds, so a message you
+send to test it right after counts); mail that arrived while none of your email automations was
+active is not processed later. A gateway restart keeps the mark: mail that arrives while the gateway is down is
 read when it is back.</p>
 <p>How often an automation <strong>runs</strong> on new mail is its own trigger setting: every 60 seconds when it
 needs no model (<code>"uses_model": false</code>), once an hour by default when it runs a model (summarise,
@@ -1279,62 +1386,125 @@ result") never re-triggers it. By default the trigger also ignores automatic mai
 (auto-replies, vacation notices, other automations); set <code>"auto_submitted": "admit"</code> in its
 configuration to run on those too.</p>
 <h2 id="notifications">Notifications<a class="headerlink" href="#notifications" title="Permanent link">&para;</a></h2>
-<p>Email notifications are opt-in: every event is off until you turn it on, and the console stays
-the default channel. <strong>My email → Notifications</strong> (or <code>GET/PUT /api/gateway/me/notifications</code>)
-chooses which events email you:</p>
+<p>Two switches, both on by default; nothing is sent until your mailbox is connected and in use.
+Set them on your account page or with <code>PUT /api/gateway/me/email/notifications</code>
+(<code>{"job_failed"?: bool, "approval_needed"?: bool}</code>):</p>
 <table>
 <thead>
 <tr>
-<th>Event</th>
-<th>When</th>
+<th>Switch</th>
+<th>Emails you when</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>automation_result</code></td>
-<td>an automation occurrence asked to notify, and the automation is set to "email me the result" (<code>notify.channels</code> holds <code>email</code>)</td>
+<td><strong>Job failed</strong> (<code>job_failed</code>)</td>
+<td>an automation of yours failed after its retries</td>
 </tr>
 <tr>
-<td><code>automation_failed</code></td>
-<td>an occurrence failed after its retries (same channel rule)</td>
-</tr>
-<tr>
-<td><code>approval_needed</code></td>
+<td><strong>Approval needed</strong> (<code>approval_needed</code>)</td>
 <td>one of your runs waits for your approval or answer</td>
-</tr>
-<tr>
-<td><code>job_finished</code> / <code>job_failed</code></td>
-<td>a run started with <code>_runtime.notify = {"on": ["finished", "failed"], "channels": ["email"]}</code></td>
 </tr>
 </tbody>
 </table>
+<p>Two options stand on their own, with no switch involved:</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Emails you when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>an automation's <strong>Email me the result</strong> (<code>notify.channels</code> holds <code>email</code>)</td>
+<td>an occurrence of that automation asked to notify</td>
+</tr>
+<tr>
+<td>a run's <strong>email me when done</strong> (<code>_runtime.notify = {"on": ["finished", "failed"], "channels": ["email"]}</code>)</td>
+<td>that run finished or failed, as asked</td>
+</tr>
+</tbody>
+</table>
+<p><code>GET/PUT /api/gateway/me/notifications</code> keep working: the earlier five-event body is accepted,
+<code>automation_failed</code> counts for <code>job_failed</code>, and <code>automation_result</code> / <code>job_finished</code> are ignored
+as preferences (the per-automation and per-run options above decide). Saved preferences carry
+over the same way: <code>job_failed</code> is on when <code>job_failed</code> or <code>automation_failed</code> was on,
+<code>approval_needed</code> keeps its value, and preferences never saved take the new defaults.</p>
 <p>Notices go to your registered address (else your mailbox address), sent by your own account, from
 a durable outbox: each notice is queued once and sent once. If the gateway stops in the middle of a
 send, that notice is marked <code>unknown</code> and never resent automatically. Temporary SMTP refusals are
 retried with backoff; sign-in and permanent refusals are shown with their cause and fix. Over your
-send limits, the waiting notices go out as one digest when the window allows. <strong>Send test
-notification</strong> checks the whole path. Notification emails use fixed templates; the only
+send limits, the waiting notices go out as one digest when the window allows; the waiting notices
+keep why they wait and when they go (<code>GET /me/notifications</code> → <code>outbox.rate_limited {count, cause,
+resets_at}</code>). <strong>Send a test</strong> checks the whole path and always answers with a sentence: "Sent to
+x@y.", "Not sent: no mailbox connected.", "Not sent: your mailbox is paused.", "Not sent: hourly
+limit reached (100 of 100 this hour) — resets at 14:05.", "Queued behind 3 earlier notifications; they
+go out when the limit resets at 14:05." or "Not sent: smtp.x.com refused the message (<cause>)."
+(<code>message</code>, with <code>reason_code</code> and <code>limit</code> for programs; the consoles show reset times in your local
+time). <strong>Send a test</strong> sits under Notifications in your email settings. Notification emails use fixed templates; the only
 model-written text is an automation's own <code>notify</code> title and body, labelled as such. Replying to a
 notification does nothing.</p>
-<h2 id="account-recovery-by-email">Account recovery by email<a class="headerlink" href="#account-recovery-by-email" title="Permanent link">&para;</a></h2>
-<p>When at least one account on the gateway has email configured, the sign-in page offers
-<strong>Forgot your token?</strong> and <strong>Email me a sign-in code</strong>. Enter your Gateway user and choose one; an
-8-digit code is sent to your registered address through your own account. The code works once,
-expires after 10 minutes and allows 5 tries. "Forgot your token?" issues a new token (shown once;
-the old one stops working) and signs you in; "Email me a sign-in code" signs you in.</p>
-<p>The answer is the same whether or not the account exists or has email, requests are rate-limited
-per account (3 per 15 minutes) and per client address (10 per 15 minutes) before any work starts
-(a flood of requests costs no background sends), codes are stored only as keyed hashes, and every issue and use
-is recorded in the audit log without the code. Users without email use the administrator's token
-rotation as before.</p>
+<h2 id="sign-in-by-email">Sign-in by email<a class="headerlink" href="#sign-in-by-email" title="Permanent link">&para;</a></h2>
+<p>When at least one account on the gateway has a connected mailbox, the sign-in page offers
+<strong>Forgot your token? Email me a sign-in code</strong>. Enter your Gateway user and select the link: it
+shows "Sending…", then the code step with what happened ("A sign-in code is on its way to
+l•••@•••." or why no code was sent), a field for the code, <strong>Use code</strong>, <strong>Send a new code</strong> (after
+30 seconds) and <strong>Back to token</strong>. The 8-digit code is sent to your email address through your own mailbox. The code works once, expires
+after 10 minutes and allows 5 tries; it signs you in (<code>purpose: "sign_in"</code>, the default), and your
+account page can then rotate your token. Clients may also ask for <code>purpose: "reset_token"</code>, which
+issues a new token (shown once; the old one stops working) with the session.</p>
+<p><code>POST /api/gateway/session/recovery/request {"user_id": "..."}</code> answers what happened:</p>
+<table>
+<thead>
+<tr>
+<th>Answer</th>
+<th>Body</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>sent</td>
+<td><code>{"sent": true, "to": "l•••@•••", "expires_in_s": 600, "message": "A sign-in code is on its way to l•••@•••. It expires in 10 minutes."}</code> — the first character of the address, never the domain</td>
+</tr>
+<tr>
+<td>no address</td>
+<td><code>{"sent": false, "reason_code": "no_email_address", "message": "This account has no email address, so a code can't be sent. Ask your gateway admin for a token."}</code> — also for an unknown account, a deactivated one, or one without a mailbox to send with</td>
+</tr>
+<tr>
+<td>an address, but no mailbox</td>
+<td><code>{"sent": false, "reason_code": "no_mailbox", "message": "This account has an email address, but no mailbox is connected to send the code from. Ask your gateway admin for a token."}</code></td>
+</tr>
+<tr>
+<td>the mail server refused or could not be reached</td>
+<td><code>{"sent": false, "reason_code": "send_failed", "message": "The code couldn't be emailed (&lt;cause&gt;). Try again, or ask your gateway admin for a token."}</code> — the request waits up to 12 s for the real outcome; a send still in flight after that is answered as on its way</td>
+</tr>
+<tr>
+<td>rate limited</td>
+<td><code>{"sent": false, "reason_code": "too_many_requests", "retry_after_s": N, "message": "Too many codes requested for this account. Try again in N minutes."}</code></td>
+</tr>
+<tr>
+<td>sign-in by email off</td>
+<td><code>404 recovery_off</code></td>
+</tr>
+</tbody>
+</table>
+<p>The trade-off is deliberate: a requester can learn that an account id has an email address, which
+makes the page honest ("a code is on its way" or "ask your admin"). Requests are rate-limited per
+account (3 per 15 minutes) and per client address (10 per 15 minutes) before any lookup or
+background send, codes are stored only as keyed hashes, and every request, issue and use is
+recorded in the audit log without the code. An administrator who prefers no such answer turns
+<strong>Sign-in by email</strong> off under Advanced; users without an email address use the administrator's
+token rotation.</p>
 <h2 id="administrators">Administrators<a class="headerlink" href="#administrators" title="Permanent link">&para;</a></h2>
-<p>Administrators decide what is <strong>available</strong> to users, with a gateway-wide default and per-user
-overrides (web console Users tab → <strong>Email for users</strong> and the row buttons; terminal console Users
-screen → <code>@</code> → <strong>Email for users (admin)</strong>, <code>x</code> and <code>X</code>; or the HTTP routes):</p>
+<p>Administrators decide what is <strong>available</strong> to users. The <strong>Email for everyone</strong> section under the
+Accounts table has one switch, <strong>Mailboxes for users</strong>; two more sit under its Advanced disclosure
+(<code>GET/PUT /api/gateway/admin/email/capabilities</code>, which returns each one's label and description):</p>
 <table>
 <thead>
 <tr>
 <th>Capability</th>
+<th>Label</th>
 <th>Default</th>
 <th>Meaning</th>
 </tr>
@@ -1342,30 +1512,52 @@ screen → <code>@</code> → <strong>Email for users (admin)</strong>, <code>x<
 <tbody>
 <tr>
 <td><code>email</code></td>
+<td>Mailboxes for users</td>
 <td>on</td>
-<td>users may connect their own mailbox (off: no watcher, no sending, no email notifications; settings are kept)</td>
+<td>users may connect their own mailbox for their agents, automations and notifications (off: no watcher, no sending, no notifications; settings are kept)</td>
 </tr>
 <tr>
 <td><code>email_agent_tools</code></td>
-<td>off</td>
-<td>users may turn on Agent email tools for their own agents</td>
+<td>Agent email tools for users (Advanced)</td>
+<td>on</td>
+<td>users may let their agents use their mailbox; each user still switches it on for themselves</td>
 </tr>
 <tr>
 <td><code>email_recovery</code></td>
+<td>Sign-in by email (Advanced)</td>
 <td>on (gateway-wide only)</td>
-<td>"Forgot your token?" and "Email me a sign-in code" on the sign-in page</td>
+<td>"Forgot your token? Email me a sign-in code" on the sign-in page</td>
 </tr>
 </tbody>
 </table>
-<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$ADMIN</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/admin/email/capabilities"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"email_agent_tools": true}'</span>
-curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$ADMIN</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/admin/users/alice/email"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"enabled": true, "agent_tools": false}'</span>
-curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$ADMIN</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/admin/users/alice/email"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"inherit": ["email_agent_tools"]}'</span>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$ADMIN</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/admin/email/capabilities"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"email": false}'</span>
+curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$ADMIN</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/admin/email/capabilities"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"reset": ["email"]}'</span>
 </code></pre></div>
+<p>Per-user overrides (<code>PUT /api/gateway/admin/users/{user_id}/email {"enabled"?, "agent_tools"?}</code>)
+are honoured; the consoles do not create them and show an existing one (a <code>user</code> source in
+the <code>email_account.capabilities</code> of <code>GET /api/gateway/admin/users</code>) as "not allowed for this user"
+with a <strong>Reset</strong> action (<code>{"inherit": ["email", "email_agent_tools"]}</code>).</p>
+<p>Agent email tools became available by default with <code>capabilities.json</code> version 3. On the first
+start, the gateway upgrades the file so that nobody gains tools they could not use before: a user
+whose own agent-tools switch was on while the tools were not available to them gets a per-user
+<code>email_agent_tools: false</code> override, recorded in the audit log as <code>email.capabilities_migrated</code>.</p>
+<p>An administrator creates a user with their email address (<code>POST /api/gateway/admin/users</code>,
+<code>"email"</code>) and changes it with <code>PATCH /api/gateway/admin/users/{user_id}</code> (<code>"email"</code>); the user can
+set it too. <strong>Active</strong> is <code>"enabled"</code> in the same PATCH (false = signed out and unable to sign in);
+an administrator cannot deactivate their own account (<code>409 cannot_deactivate_self</code>, "You can't
+deactivate your own account.") nor the last active administrator (<code>409 last_admin</code>).</p>
 <p>Sign-in by email means that whoever controls a user's mailbox can sign in as that user; turn it off
-where mailboxes are not as well protected as gateway tokens. The Users table
-shows each user's mailbox state (<code>connected</code>, <code>not connected</code>, <code>needs action</code>, <code>turned off by an
-administrator</code>, …). Administrators see the state, the address and the last error — never messages,
-the user's recipient list or credentials.</p>
+where mailboxes are not as well protected as gateway tokens. The Accounts table
+(<code>GET /api/gateway/admin/accounts</code>) shows each account's email address and mailbox (<code>connected</code>,
+<code>not_connected</code>, <code>paused</code>, <code>unavailable</code> with the reason) through the same resolver as the account's
+own email settings, so the administrator's own row always matches their card. The address shown
+there and on the card is where sign-in codes and notifications go: the registered email address,
+else the account's own connected mailbox address. Entities have no
+mailbox of their own: mailboxes belong to a user's runtime, and entity runs use their own runtime
+without the host's mailbox. Administrators see the state, the address and the last error — never messages,
+the user's recipient list or credentials. The administrator's server file helpers (<code>/files/*</code>,
+workspace import and export) never serve the gateway data folder, where every user's runs,
+received mail and sealed credentials live, even when it sits inside the server workspace.</p>
 <p>The administrator's own account (the default runtime) is configured like everyone else's. It is the
 gateway's account, separate from AbstractCore's own local account (<code>abstractcore email</code>); on the
 first start, when the gateway has no account for the administrator and AbstractCore has one, that
@@ -1420,7 +1612,7 @@ account is copied once into the gateway settings (the consoles say which account
 that still has the <code>ABSTRACT_EMAIL_*</code> variables (or values saved through the process manager's
 environment overrides) imports that account <strong>once</strong> into the administrator's email settings; from
 then on the variables are ignored, and each one still set is named at startup and in the
-administrator's <strong>My email</strong> notices with the setting that replaced it. The email bridge
+administrator's own email settings (Accounts → <strong>Email</strong> on their row) with the setting that replaced it. The email bridge
 (<code>ABSTRACT_EMAIL_BRIDGE</code>) is replaced by the per-user watcher and the <code>email.received@1</code> trigger.
 Maintenance notices go to the administrator's registered address through the administrator's own
 account (<code>ABSTRACT_BACKLOG_EMAIL_TO</code> and the related account variables are ignored); the same notice

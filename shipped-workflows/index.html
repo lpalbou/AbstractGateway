@@ -1026,12 +1026,14 @@ co-scientist hypothesis engine out of the box — no manual bundle install.</p>
 <h2 id="the-shipped-set">The shipped set<a class="headerlink" href="#the-shipped-set" title="Permanent link">&para;</a></h2>
 <p><code>flow_id</code> values below are what you pass to the API — an entrypoint's display
 name is not resolvable. A <code>*</code> marks the bundle's default entrypoint, used when
-you omit <code>flow_id</code>.</p>
+you omit <code>flow_id</code>. The name and the one-line description are what the
+Workflows page and the console TUI show for each bundle.</p>
 <table>
 <thead>
 <tr>
 <th>Bundle</th>
 <th>Version</th>
+<th>Name</th>
 <th><code>flow_id</code> (interfaces)</th>
 <th>What it does</th>
 </tr>
@@ -1039,48 +1041,84 @@ you omit <code>flow_id</code>.</p>
 <tbody>
 <tr>
 <td><code>basic-agent</code></td>
-<td>0.0.4</td>
+<td>0.0.5</td>
+<td>Basic agent</td>
 <td><code>81795ea9</code>* (<code>abstractcode.agent.v1</code>)</td>
-<td>The framework default chat agent: one Agent node with tools, memory, and status updates. Serves entity phases and chat hosts.</td>
+<td>Chat agent: answers a prompt in one agent loop that can use tools and memory, and returns the reply. The default agent for chat hosts and entities.</td>
 </tr>
 <tr>
 <td><code>coding-agent</code></td>
 <td>0.2.8</td>
-<td><code>coder</code> (<code>abstractcode.agent.v1</code>), <code>coding-agent</code>* (<code>abstractcode.coding.v1</code>)</td>
-<td>Verify-gated coding: a builder agent writes code, an independent verifier runs build/execute/match gates each round, and failures feed back as reprompts until gates pass. <code>coder</code> is the chat entrypoint; <code>coding-agent</code> is the structured pipeline.</td>
+<td>Coding agent</td>
+<td><code>coding-agent</code>* (<code>abstractcode.coding.v1</code>)</td>
+<td>Takes a build request and a workspace, writes the code, and runs build and run checks each round until they pass; returns a report.</td>
+</tr>
+<tr>
+<td></td>
+<td></td>
+<td>Coding agent (chat)</td>
+<td><code>coder</code> (<code>abstractcode.agent.v1</code>)</td>
+<td>Chat version of the coding agent: builds what the prompt asks in the session workspace, checks it each round, and replies with a report.</td>
 </tr>
 <tr>
 <td><code>deep-research</code></td>
 <td>0.1.8</td>
+<td>Deep research</td>
 <td><code>deep-research</code>* (<code>abstractcode.agent.v1</code>, <code>abstractresearch.deep.v1</code>)</td>
-<td>Production research with adversarial review, a verified source ledger, and Markdown/PDF/DOCX export. See <a href="../deep-research/">deep-research.md</a>.</td>
+<td>Takes a research question, searches the web, has three critics review the draft, and writes a cited report (Markdown, PDF, DOCX). See <a href="../deep-research/">deep-research.md</a>.</td>
 </tr>
 <tr>
 <td><code>co-scientist</code></td>
 <td>0.2.1</td>
+<td>Co-scientist</td>
 <td><code>co-scientist</code>* (<code>abstractresearch.coscientist.v1</code>)</td>
-<td>Multi-agent hypothesis engine: literature grounding through the deep-research investigation flows, then cycles of generation, reflection, Elo-ranked pairwise debate, and evolution into a final reviewed research overview.</td>
+<td>Takes a research goal, grounds it in web sources, then generates, debates and ranks hypotheses over cycles; returns a research overview.</td>
 </tr>
 <tr>
 <td><code>abstractassistant-orchestrator</code></td>
 <td>0.0.0</td>
+<td>AbstractAssistant Orchestrator</td>
 <td><code>d5d4e5a1</code>* (<code>abstractassistant.agent.v1</code>)</td>
-<td>Orchestrator for the compact AbstractAssistant tray surface.</td>
+<td>The menu-bar Assistant's workflow: sends each request to a tools agent or to image, video or music generation, and returns the reply.</td>
 </tr>
 <tr>
 <td><code>docs-qa</code></td>
-<td>0.1.1</td>
+<td>0.1.2</td>
+<td>Docs Q&amp;A</td>
 <td><code>docsqa001</code>*</td>
-<td>Documentation Q&amp;A grounded on the asking app's <code>llms.txt</code> corpus; history comes from the run's session (<code>use_session_history</code>); also auto-published into the tenant workflow catalog at boot.</td>
+<td>Answers a question about an app from that app's documentation (its llms.txt), citing it, and says so when the docs do not cover it. History comes from the run's session; also auto-published into the tenant workflow catalog at boot. 0.1.2 changes only the name and description; 0.1.1 and 0.1.0 stay installed for what pins them.</td>
 </tr>
 <tr>
-<td><code>react-agent</code> / <code>codeact-agent</code> / <code>memact-agent</code></td>
+<td><code>react-agent</code></td>
 <td>0.1.0</td>
-<td><code>react</code><em> / <code>codeact</code></em> / <code>memact</code>* (<code>abstractcode.agent.v1</code>)</td>
-<td>Native ReAct / CodeAct / MemAct agent loops (abstractagent).</td>
+<td>ReAct agent</td>
+<td><code>react</code>* (<code>abstractcode.agent.v1</code>)</td>
+<td>Chat agent (ReAct): reasons step by step and calls tools until it can answer the prompt, then returns the reply.</td>
+</tr>
+<tr>
+<td><code>codeact-agent</code></td>
+<td>0.1.0</td>
+<td>CodeAct agent</td>
+<td><code>codeact</code>* (<code>abstractcode.agent.v1</code>)</td>
+<td>Chat agent (CodeAct): works on the prompt mainly by writing and running Python code, then returns the reply.</td>
+</tr>
+<tr>
+<td><code>memact-agent</code></td>
+<td>0.1.0</td>
+<td>MemAct agent</td>
+<td><code>memact</code>* (<code>abstractcode.agent.v1</code>)</td>
+<td>Chat agent (MemAct): keeps a long-term memory that it reads and updates on each turn, can call tools, and returns the reply.</td>
 </tr>
 </tbody>
 </table>
+<p>A source checkout (<code>flows/bundles/</code> in the repository) also carries building
+blocks that the wheel does not ship: <code>map-reduce</code> (Map-reduce),
+<code>structured-extract</code> (Structured extraction), <code>adversarial-review</code> (Adversarial
+review) and six deliberation patterns (<code>meta-baseline</code>, <code>meta-consensus</code>,
+<code>meta-debate</code>, <code>meta-deliberate</code>, <code>meta-perspectives</code>, <code>meta-reflect</code>).</p>
+<p>The names and descriptions come from one table in the AbstractFlow repository
+(<code>scripts/workflow_labels.py</code>); <code>scripts/relabel_shipped_bundles.py check</code>
+verifies that the build scripts and the latest shipped bundles carry it.</p>
 <p>Interfaces are how clients pick workflows without knowing bundle internals:
 anything declaring <code>abstractcode.agent.v1</code> can serve a plain chat prompt.
 AbstractCode TUI resolves its default agent through that contract — a saved
@@ -1106,10 +1144,15 @@ only the figures are skipped. Install it if you want them:</p>
 <div class="highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>matplotlib
 </code></pre></div>
 <h2 id="managing-workflows-from-the-console">Managing workflows from the console<a class="headerlink" href="#managing-workflows-from-the-console" title="Permanent link">&para;</a></h2>
-<p>Both consoles carry a <strong>Workflows</strong> surface — a tab in the web console, step 6
-in the console-TUI — listing every workflow registered on this gateway with how
-many published and draft versions each has. Select a workflow to see its
-versions and its entrypoints with their declared interfaces.</p>
+<p>Both consoles carry a <strong>Workflows</strong> surface — a tab in the web console, screen
+3 in the console-TUI — listing one row per workflow bundle registered on this
+gateway: its name, what it does, its latest version (and how many older ones),
+its source ("Shipped with the gateway", "Imported" or "Published from
+AbstractFlow") and the apps that use it. Select a workflow to see its versions
+and its entrypoints with their names, descriptions and the apps that use them.
+Below the list, <strong>Default workflow per app</strong> chooses which workflow runs when an
+app asks for "an agent" without naming one (see
+<a href="../console/#workflows">console.md</a>).</p>
 <p>From there you can:</p>
 <ul>
 <li><strong>Import</strong> one or more <code>.flow</code> bundles. Each file reports whether the gateway
@@ -1118,11 +1161,14 @@ versions and its entrypoints with their declared interfaces.</p>
   installed, so it can be archived or re-installed elsewhere. In the TUI, <code>e</code>
   writes the file next to your working directory.</li>
 <li><strong>Delete</strong> a single version or every version of a workflow, behind a
-  confirmation that states what is irreversible. In the TUI, <code>d</code> removes the
-  selected version and <code>D</code> the whole workflow.</li>
+  confirmation that states what is irreversible. Deleting a workflow that ships
+  with the gateway removes its file: nothing puts it back at the next restart,
+  only reinstalling the gateway does. In the TUI, <code>d</code> removes the selected
+  version and <code>D</code> the whole workflow.</li>
 </ul>
-<p>Versions the gateway is not serving are listed separately under <strong>Not loaded</strong>,
-with the reason and the file path. They stay on disk until you remove them.</p>
+<p>Bundle files the gateway cannot run are listed separately under <strong>Broken
+workflows</strong>, with the versions affected and the reason. They stay on disk until
+you remove them.</p>
 <h2 id="who-can-change-the-registry">Who can change the registry<a class="headerlink" href="#who-can-change-the-registry" title="Permanent link">&para;</a></h2>
 <p>The gateway's own bundle directory is the shared set: every user sees it and can
 run what it contains. Changing it is an operator act, so installing, replacing,

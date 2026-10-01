@@ -471,6 +471,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#reached-through-tailscale-https" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reached through Tailscale (https)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#cli" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1423,6 +1434,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#reached-through-tailscale-https" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reached through Tailscale (https)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#cli" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1803,8 +1825,8 @@ sentence-transformer embeddings on the Gateway host.</p>
 - <code>abstractgateway[docs]</code>: MkDocs site tooling
 - <code>abstractgateway[dev]</code>: local dev/test deps</p>
 <p>Default dependency floors (see <code>pyproject.toml</code>):
-- <code>AbstractRuntime&gt;=0.8.1</code> (per-user email: run binding, event inbox, <code>email.received@1</code>, the email facade; the automatic-mail loop guard and in-process media children)
-- <code>abstractcore&gt;=2.20.2</code> (the mail library behind per-user email, automatic-mail marking, the media-only capability host)
+- <code>AbstractRuntime&gt;=0.8.2</code> (per-user email: run binding, event inbox, <code>email.received@1</code>, the email facade; the automatic-mail loop guard, in-process media children, and pause stopping an automation's retries)
+- <code>abstractcore&gt;=2.22.0</code> (the mail library behind per-user email, mailbox server discovery and defaults, automatic-mail marking, the media-only capability host)
 - <code>abstractvoice&gt;=0.13.0</code> (the voice listings import <code>abstractvoice.engine_runtime</code>)
 - <code>abstractagent&gt;=0.3.17</code>
 - <code>AbstractMemory[lancedb]&gt;=0.3.0</code></p>
@@ -2054,7 +2076,7 @@ change from the console, the TUI or the CLI (another process) is live at once.</
 <tbody>
 <tr>
 <td><code>allowed_origins</code></td>
-<td>Browser origins whose pages may call the gateway, <strong>added</strong> to the always-allowed <code>http://localhost:*</code>, <code>http://127.0.0.1:*</code> (and, in a network mode, the gateway's own LAN origins).</td>
+<td>Browser origins whose pages may call the gateway, <strong>added</strong> to the always-allowed <code>http://localhost:*</code>, <code>http://127.0.0.1:*</code> (and, in a network mode, the gateway's own LAN origins). An https page calling its own address through a TLS proxy on the gateway machine that keeps the browser's <code>Host</code> (for example <code>tailscale serve</code>) needs no entry: see <a href="#reached-through-tailscale-https">Reached through Tailscale</a>.</td>
 <td>none</td>
 </tr>
 <tr>
@@ -2172,7 +2194,10 @@ resolution. Each row says whether the gateway listens there now
 (<code>reachable</code>). The WAN address (<code>kind: public</code>) is looked up only on request
 (<code>?lookup_public=1</code>, admin, <code>internet</code> mode only; one HTTPS GET to
 <code>api.ipify.org</code>), never on a poll. <code>copy_hint</code> is the URL to copy first (the
-LAN IPv4 when listening on the network, else loopback).</p>
+LAN IPv4 when listening on the network, else loopback). <code>browser_url</code> is the
+address the caller itself uses (<code>https://&lt;host&gt;.&lt;tailnet&gt;.ts.net</code> behind
+<code>tailscale serve</code>), and <code>browser_url_listed</code> says whether it is one of the
+addresses above (false behind a proxy or tunnel).</p>
 <h3 id="api-gateway_network_v1">API (<code>gateway_network_v1</code>)<a class="headerlink" href="#api-gateway_network_v1" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>GET /api/gateway/network[?lookup_public=1]</code>: any authenticated principal
@@ -2211,6 +2236,25 @@ LAN IPv4 when listening on the network, else loopback).</p>
 <span class="w">  </span><span class="nt">"warnings"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"Traffic is plain HTTP: …"</span><span class="p">]</span>
 <span class="p">}</span>
 </code></pre></div>
+<h3 id="reached-through-tailscale-https">Reached through Tailscale (https)<a class="headerlink" href="#reached-through-tailscale-https" title="Permanent link">&para;</a></h3>
+<p>Reached through Tailscale? On the gateway machine run
+<code>tailscale serve --bg http://127.0.0.1:&lt;port&gt;</code> and open
+<code>https://&lt;host&gt;.&lt;tailnet&gt;.ts.net/</code> (the console at <code>/console</code>, the apps at
+<code>/apps/&lt;app&gt;/</code>). <code>tailscale serve reset</code> undoes it. Voice and camera in the
+browser need this https address: browsers offer the microphone, the camera,
+the clipboard and <code>crypto.randomUUID</code> only on https pages (or on the gateway
+machine itself), never on a plain <code>http://</code> address such as
+<code>http://100.x.y.z:8080</code>.</p>
+<p>The gateway can stay in <code>localhost</code> mode: Tailscale delivers each request to
+<code>127.0.0.1</code> with the browser's <code>Host</code> kept and <code>X-Forwarded-Proto: https</code>
+added. The gateway believes forwarded headers from a loopback peer only, and
+it accepts a page whose Origin is <code>https://</code> plus that same <code>Host</code>, so no
+<code>allowed_origins</code> entry is needed; sign-in cookies are marked <code>Secure</code>. The
+first-run <code>#claim=</code> link works from the gateway machine only; from another
+device, sign in with your user name and token. Tailscale issues and renews the
+certificate; the address is reachable from your tailnet only (<code>tailscale
+funnel</code> would publish it to the internet, and needs the <code>internet</code> mode's
+precautions).</p>
 <h3 id="cli">CLI<a class="headerlink" href="#cli" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code>abstractgateway<span class="w"> </span>network<span class="w"> </span>status<span class="p">|</span>show<span class="w"> </span><span class="o">[</span>--json<span class="o">]</span><span class="w"> </span><span class="o">[</span>--data-dir<span class="w"> </span>DIR<span class="o">]</span>
 abstractgateway<span class="w"> </span>network<span class="w"> </span><span class="nb">set</span><span class="w"> </span><span class="o">[</span>localhost<span class="p">|</span>lan<span class="p">|</span>internet<span class="o">]</span><span class="w"> </span><span class="o">[</span>--port<span class="w"> </span>N<span class="o">]</span><span class="w"> </span><span class="o">[</span>--acknowledge-internet<span class="o">]</span>
@@ -2737,8 +2781,8 @@ may itself contain <code>:</code> (the bundle part ends at the first <code>:</co
 </table>
 <p>A saved value is checked when it is saved (it must exist on this gateway and
 declare that interface; 400 with the reason otherwise) and again at every
-run start: a value that no longer works is shown as unavailable with the
-reason, and runs that ask for the default are refused (409) until it is
+run start: a value that no longer works is shown as broken with the reason
+("Broken: … — pick another workflow or choose “Clients choose”."), and runs that ask for the default are refused (409) until it is
 changed. It never falls back to another workflow on its own.</p>
 <p><code>GET /api/gateway/admin/runtime-config</code> returns</p>
 <div class="highlight"><pre><span></span><code><span class="nt">"agents"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"default_workflow"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"abstractcode.agent.v1"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
@@ -2763,14 +2807,14 @@ variable for this setting).</p>
 <tbody>
 <tr>
 <td>Where</td>
-<td>Workflows → <em>Default agent workflow</em> (one row per interface), or <em>Make agent default</em> on an entrypoint</td>
-<td>Runtimes → <em>Runtime knobs</em> → <em>Edit default agent workflows</em>; Workflows marks the default with ★</td>
+<td>Workflows → <em>Default workflow per app</em> (one row per interface, with its plain name; interfaces no app asks for under <em>Other workflow types</em>)</td>
+<td>Workflows → <em>Default workflow per app</em> (<code>Tab</code>), or Runtimes → <em>Runtime knobs</em> → <em>Edit default agent workflows</em></td>
 <td><code>abstractgateway config get agents.default_workflow.&lt;interface&gt;</code></td>
 </tr>
 <tr>
 <td>Change</td>
-<td>choose in the list, <em>Save default agent workflows</em></td>
-<td>type the value (the choices are listed under the field; empty = the built-in default)</td>
+<td>choose in the row's list; it applies at once ("Clients choose" or "Built in: …" = nothing saved)</td>
+<td><code>Enter</code> on a row picks and saves at once; on Runtimes, type the value (the choices are listed under the field; empty = the built-in default)</td>
 <td><code>abstractgateway config set agents.default_workflow.&lt;interface&gt; bundle[@version]:flow</code>, <code>config unset …</code></td>
 </tr>
 </tbody>
@@ -2805,7 +2849,7 @@ effective default from <code>GET /api/gateway/discovery/capabilities</code>
 <tbody>
 <tr>
 <td>Read</td>
-<td>Workflows → <em>Stream replies by default</em></td>
+<td>Workflows → <em>Settings</em> → <em>Streamed replies</em></td>
 <td>Runtimes → <em>Runtime knobs</em></td>
 <td><code>abstractgateway config get agents.streaming_default</code></td>
 </tr>

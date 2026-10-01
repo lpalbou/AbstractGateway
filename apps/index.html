@@ -1412,6 +1412,13 @@ one address it already has.</p>
   refused. A request or WebSocket whose <code>Origin</code> is not the gateway's own
   address (another site, or another port on the same host) is refused too
   (403 <code>cross_origin</code>).</li>
+<li><strong>Public assets.</strong> What a browser fetches without cookies answers without
+  a session: the web app manifest (<code>manifest.webmanifest</code>, <code>manifest.json</code>,
+  <code>site.webmanifest</code>), <code>favicon*</code>, <code>icon*</code>, <code>apple-touch-icon*</code> and
+  <code>icons/&lt;file&gt;</code> at the app's root, GET/HEAD only. They are relayed with no
+  cookie and returned only when the app answers 200/304 with a manifest or
+  image type, with no <code>Set-Cookie</code>. Pages, scripts, <code>sw.js</code> and everything
+  under <code>api/</code> stay signed-in only.</li>
 <li><strong>Streaming.</strong> Responses are relayed as they arrive (live updates, server-sent
   events), and WebSockets frame by frame.</li>
 <li><strong>What the app receives.</strong> The path with <code>/apps/&lt;app&gt;</code> removed, plus
@@ -1733,7 +1740,7 @@ Python environment as the gateway; a gateway-only install may not.</p>
 <tr>
 <td><code>GET /apps?latest=true</code></td>
 <td>any user</td>
-<td>Node.js status, one row per app (<code>kind</code> <code>web</code> with <code>interfaces[]</code>, see "Terminal versions", and <code>install_parts</code>; then the Assistant, <code>kind</code> <code>desktop</code> with <code>desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason}</code>) and <code>console_tui</code> (the gateway console's terminal app). <code>latest=false</code> skips the npm registry and GitHub release lookups (cached 10 minutes).</td>
+<td>Node.js status, one row per app (<code>kind</code> <code>web</code> with <code>interfaces[]</code>, see "Terminal versions", and <code>install_parts</code>; then the Assistant, <code>kind</code> <code>desktop</code> with <code>desktop {location, found_by, launch_command, install_command, launch_available, launch_blocked, launch_blocked_reason}</code>) and <code>console_tui</code> (the gateway console's terminal app). <code>gateway_url</code> is where the app servers reach the gateway (on its machine); <code>browser_gateway_url</code> is the address the caller uses (e.g. <code>https://&lt;host&gt;.ts.net</code> behind <code>tailscale serve</code>), the one to show in any command or link. <code>latest=false</code> skips the npm registry and GitHub release lookups (cached 10 minutes).</td>
 </tr>
 <tr>
 <td><code>POST /apps/runtime/install</code></td>

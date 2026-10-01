@@ -1219,7 +1219,7 @@ estimate; the recommendation does not quietly switch to another model.</p>
    memory, one card per model with its 4-bit and 8-bit builds. Click
    <strong>Download</strong> on the build you want; its progress bar shows on the row.</li>
 <li>When the download finishes, the row reads <em>Downloaded</em>. Click <strong>Use as
-   default</strong>: the gateway's text route now uses it.</li>
+   default</strong>: the gateway's text route uses it from then on.</li>
 </ol>
 <p>The same steps are available later in the <strong>Engines</strong> and <strong>Models</strong> tabs (see
 <a href="../console/#models-and-engines-tabs">console.md</a>) and from the command line
@@ -1230,15 +1230,16 @@ is on by default for a gateway that listens on this machine only, and for
 someone at the gateway machine whatever it listens on.</p>
 <p>The guide opens by itself once per data folder. <strong>Finish</strong> or <strong>Skip setup</strong>
 records that it ran (<code>POST /api/gateway/host/first-run</code>); clicking outside the
-dialog closes it without recording anything. The <strong>Setup</strong> button (⚑, top
-right, admins only) reopens it at any time.</p>
+dialog closes it without recording anything. <strong>Setup</strong>, at the bottom of the
+sidebar (admins only), reopens it at any time and keeps your current choices
+unless you replace them.</p>
 <h3 id="on-a-headless-server">On a headless server<a class="headerlink" href="#on-a-headless-server" title="Permanent link">&para;</a></h3>
 <p>On a machine without a browser (for example a Linux server you reach over SSH),
 run the same guide in the terminal console on that machine:</p>
 <div class="highlight"><pre><span></span><code>cargo<span class="w"> </span>install<span class="w"> </span>abstractgateway-console
-abstractgateway-console<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8080<span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>--token-file<span class="w"> </span><span class="s2">"&lt;data dir&gt;/auth/bootstrap-admin-token"</span>
+abstractgateway-console<span class="w"> </span>--url<span class="w"> </span>http://127.0.0.1:8080<span class="w"> </span>--token<span class="w"> </span>&lt;token&gt;
 </code></pre></div>
+<p><code>&lt;token&gt;</code> is the admin token <code>abstractgateway serve</code> prints when it starts.</p>
 <p>It opens the setup guide for an admin whose first run is not completed, with
 the same steps through the same gateway routes, and records <strong>Finish</strong> or
 <strong>Skip setup</strong> on the gateway. See
