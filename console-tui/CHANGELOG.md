@@ -25,6 +25,8 @@ gateway does not have fails with its error.
   is the only address field (connecting makes it your email address); with one saved, the pane says "Mailbox
   account: x@y — use a different account (Ctrl+U)" and Ctrl+U shows the field.
 - Activity times and send-limit reset times are shown in your local time zone (the gateway writes UTC).
+- After a network failure, the automatic retry of a non-admin's Accounts table reads `GET /me/accounts`, like
+  the screen and `r`; it used to call the admin-only `GET /admin/accounts` once and show its refusal.
 - **My email**: the mailbox tabs are **IMAP** (first, the default), **Google** and **Microsoft**. The IMAP pane
   always shows the server fields, filled with the standard values as soon as the address has a domain and then with
   what `POST /me/email/discover` returns (`defaults`), never over a field you edited. No User name and no Display

@@ -1741,7 +1741,9 @@ This is enforced on every entity route, not only on the Accounts page:
 - `POST /entities/meets/open` needs both entities visible; `/entities/meets/{id}` answers 404 for a
   meet with an entity you may not see.
 - Creating an entity under a name another account already holds answers 409 ("That name is taken
-  …"): entity names are unique per gateway, so this is the one place a name's existence shows.
+  …"): entity names are unique per gateway, so this is the one place a name's existence shows. This
+  holds across runtimes: an entity living in another user's runtime, or a user account with that
+  name, also answers 409 (`POST /entities/{name}/validate` reports the same error).
 - Visibility is not management: entity writes that are admin-only (state, tool policy, prompt,
   substrate, …) stay admin-only for the entities you created.
 

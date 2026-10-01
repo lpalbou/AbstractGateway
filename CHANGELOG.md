@@ -195,6 +195,12 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
   working directory, which is the data folder under the OS service and contains it after a launch
   from a parent folder: an administrator could read another user's received mail and run ledgers
   through `/files/read`. Administrators never read mail.
+- `POST /entities` refuses a name the gateway already holds (409 "That name is taken") when the
+  caller's runtime has no home under that name: an entity created by another user in another
+  runtime, or a user account's name. Entity names belong to the whole gateway while homes belong to
+  a runtime, so such a create used to take over the existing account as the new entity's identity.
+  Re-creating your own entity still answers as before. `POST /entities/{name}/validate` reports the
+  same refusal.
 
 ### Tests
 - Two CI timing flakes are now deterministic. The automations test `test_d2_waiting_only_on_a_person`
