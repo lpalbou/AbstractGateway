@@ -149,9 +149,14 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert 'id="entity-prompt-layers"' in console.text
     assert 'id="entity-reembed"' in console.text
     assert 'id="entity-verify"' in console.text
-    assert 'id="entity-owntime-toggle"' in console.text  # laurent 12:32: ONE push button, server-truth rendered
+    # Round 3 §12: Manage is a kit modal; on/off states are switches labelled by the
+    # feature (Awake, Personal time), never Wake/Sleep/Stop verb buttons.
+    assert 'id="entity-manage-backdrop" class="af-modal-backdrop"' in console.text
+    assert 'role="switch" id="entity-owntime-toggle"' in console.text
+    assert 'role="switch" id="entity-state-awake"' in console.text
+    assert 'id="entity-state-asleep"' not in console.text
+    assert 'id="entity-stop"' not in console.text and 'id="entity-restore"' not in console.text
     assert 'aria-pressed' in console.text
-    assert 'id="entity-state-asleep"' in console.text
     assert "/api/gateway/entities/templates" in console.text
     assert "/api/gateway/entities/inventory/capability-matrix" in console.text
     assert "/api/gateway/entities/${enc}/validate" in console.text
