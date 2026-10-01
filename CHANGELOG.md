@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Web console, Sandbox: the chat is the AbstractUIC kit's chat (the thread and composer AbstractCode
+  uses), with the standard Attach button, drop and paste to attach, attachment chips that say when an
+  upload failed and why, hold to dictate (when a transcription route is configured) and a speaker on
+  replies (when a voice route is configured). Generated images, audio and video play inline in the
+  thread with a link to the raw file. The output modes, system prompt, reasoning and MTP settings sit
+  above the chat; every mode stays choosable, and one that is not configured says so instead of being
+  greyed out. Each mode still uses its existing gateway endpoint.
+
 ## [0.10.0] - 2026-10-01
 
 Email settings follow one model across the consoles: your **email address** (where sign-in codes and

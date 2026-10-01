@@ -1291,55 +1291,54 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      gap: 18px;
 	      align-items: stretch;
 	    }
+	    /* Output modes: one labelled radio pill per configured route (icon +
+	       name); an unconfigured mode stays choosable and the chat says why it
+	       cannot send. */
 	    .sandbox-mode-grid {
 	      display: flex;
 	      flex-wrap: wrap;
-	      justify-content: flex-end;
-	      gap: 7px;
+	      gap: 6px;
 	      margin: 0;
 	    }
 	    .sandbox-mode {
-	      display: inline-grid;
-	      place-items: center;
-	      position: relative;
-	      width: 38px;
-	      min-width: 38px;
-	      height: 38px;
-	      min-height: 38px;
-	      padding: 0;
+	      display: inline-flex;
+	      align-items: center;
+	      gap: 6px;
+	      min-height: 36px;
+	      padding: 3px 12px 3px 4px;
 	      border: 1px solid var(--line-soft);
-	      border-radius: var(--radius-lg);
-	      background: rgba(255, 255, 255, .03);
+	      border-radius: 999px;
+	      background: transparent;
 	      color: var(--text-secondary);
-	      text-align: center;
+	      font-size: var(--font-size-sm);
+	      font-weight: 600;
 	    }
-	    .sandbox-mode:hover:not(:disabled) {
+	    .sandbox-mode:hover {
 	      border-color: color-mix(in srgb, var(--info) 45%, transparent);
 	      background: color-mix(in srgb, var(--info) 8%, transparent);
 	      color: var(--text-primary);
 	    }
 	    .sandbox-mode.active {
 	      border-color: color-mix(in srgb, var(--info) 75%, transparent);
-	      background: color-mix(in srgb, var(--info) 10%, transparent);
+	      background: color-mix(in srgb, var(--info) 12%, transparent);
 	      color: var(--text-primary);
 	    }
-	    .sandbox-mode:disabled {
-	      opacity: .46;
-	      cursor: not-allowed;
+	    .sandbox-mode.is-unconfigured .sandbox-mode-icon {
+	      background: transparent;
+	      color: var(--text-muted);
 	    }
 	    .sandbox-mode-icon {
 	      display: inline-grid;
 	      place-items: center;
-	      width: 30px;
-	      height: 30px;
-	      border-radius: var(--radius-lg);
+	      width: 28px;
+	      height: 28px;
+	      border-radius: 999px;
 	      background: var(--accent-subtle);
 	      color: var(--accent);
-	      font-weight: 700;
 	    }
 	    .sandbox-mode-icon svg {
-	      width: 18px;
-	      height: 18px;
+	      width: 16px;
+	      height: 16px;
 	      stroke: currentColor;
 	      stroke-width: 2;
 	      stroke-linecap: round;
@@ -1350,40 +1349,21 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      fill: currentColor;
 	      stroke: none;
 	    }
-	    .sandbox-mode-copy {
-	      position: absolute;
-	      width: 1px;
-	      height: 1px;
-	      overflow: hidden;
-	      clip: rect(0 0 0 0);
-	      white-space: nowrap;
+	    .sandbox-mode-copy { display: inline-flex; min-width: 0; }
+	    .sandbox-mode-main { white-space: nowrap; }
+	    .sandbox-mode-sub { display: none; }
+	    @media (pointer: coarse) {
+	      .sandbox-mode { min-height: 44px; }
 	    }
-	    .sandbox-mode-main {
-	      display: none;
-	      overflow: hidden;
-	      text-overflow: ellipsis;
-	      white-space: nowrap;
-	      font-weight: 700;
-	    }
-	    .sandbox-mode-sub {
-	      display: none;
-	      overflow: hidden;
-	      text-overflow: ellipsis;
-	      white-space: nowrap;
-	      color: var(--text-muted);
-	      font-size: var(--font-size-xs);
-	      font-weight: 700;
-	      margin-top: 2px;
-	    }
+	    /* The card: head, settings, then the kit chat filling the rest. The
+	       card scrolls (never clips) when the viewport is too short for the
+	       settings + a usable chat. */
 	    .sandbox-chat {
-	      min-height: min(560px, calc(var(--vh-full, 100vh) - 160px));
-	      max-height: calc(var(--vh-full, 100vh) - 205px);
+	      height: calc(var(--vh-full, 100vh) - 150px);
+	      min-height: 560px;
 	      display: grid;
-	      /* The transcript gives way first (down to 140 px) and, when the
-	         composer still does not fit (1280x800, 1366x768: system prompt +
-	         reasoning + MTP + input), the card scrolls instead of clipping the
-	         composer out of reach (it was overflow:hidden). */
-	      grid-template-rows: auto minmax(140px, 1fr) auto;
+	      grid-template-rows: auto auto minmax(320px, 1fr) auto;
+	      gap: 12px;
 	      overflow-x: hidden;
 	      overflow-y: auto;
 	      overscroll-behavior: contain;
@@ -1393,175 +1373,76 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      padding-bottom: 12px;
 	      border-bottom: 1px solid var(--line-soft);
 	    }
-	    .sandbox-transcript {
-	      min-height: 0;
-	      max-height: none;
-	      overflow-y: auto;
-	      padding: 18px;
-	      background:
-	        linear-gradient(180deg, rgba(255,255,255,.025), rgba(255,255,255,0)),
-	        rgba(0, 0, 0, .10);
+	    .sandbox-settings {
+	      display: grid;
+	      gap: 12px;
 	    }
-	    .sandbox-message {
+	    .sandbox-modes-field { display: grid; gap: 6px; }
+	    .sandbox-field-label {
+	      color: var(--text-secondary);
+	      font-size: var(--font-size-sm);
+	      font-weight: 600;
+	    }
+	    .sandbox-field-help {
+	      display: block;
+	      margin: 0;
+	      color: var(--text-muted);
+	      font-size: var(--af-helper-size, 13px);
+	      font-weight: 400;
+	      text-transform: none;
+	      letter-spacing: 0;
+	    }
+	    .sandbox-composer-toolbar {
+	      display: grid;
+	      grid-template-columns: minmax(0, 1fr) minmax(150px, auto) minmax(150px, auto);
+	      gap: 12px;
+	      align-items: start;
+	    }
+	    .sandbox-system-compact { margin: 0; display: grid; gap: 6px; }
+	    .sandbox-system-compact input,
+	    .sandbox-system-compact select { min-height: 36px; }
+	    /* The kit chat island (islands mountSandboxChat) fills this box. */
+	    .sandbox-chat-root {
 	      display: flex;
-	      margin: 0 0 12px;
+	      flex-direction: column;
+	      min-height: 0;
+	      border: 1px solid var(--line-soft);
+	      border-radius: var(--radius-lg);
+	      overflow: hidden;
+	      background: var(--panel-2);
 	    }
-	    .sandbox-message.user {
-	      justify-content: flex-end;
-	    }
-	    .sandbox-message.assistant,
-	    .sandbox-message.system,
-	    .sandbox-message.error {
-	      justify-content: flex-start;
-	    }
+	    .sandbox-chat-root > .pc-workflow-chat { flex: 1 1 auto; min-height: 0; }
+	    .sandbox-chat-root .pc-workflow-chat__transcript { overflow: hidden; }
+	    .sandbox-chat-root .pc-chat-thread { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 	    /* Dialogue bubbles: the abstractuic panel-chat component's .pc-chat-item
 	       recipe (operator 12:24: "reuse the shared component for dialogue of
-	       abstractuic"). panel_chat.css is the source of truth; tokens map onto
-	       the console's own variables. sandbox-bubble keeps only the layout. */
-	    .sandbox-bubble { width: min(760px, 88%); box-shadow: 0 10px 28px rgba(0, 0, 0, .12); }
-	    .pc-chat-item {
+	       abstractuic"), for the console's own renderers (entity chat, docs
+	       assistant). The Sandbox renders the kit's real ChatMessageCard with
+	       the kit's panel_chat.css (af-kit-css), so these hand-mapped rules
+	       stay out of it (:where keeps their specificity unchanged). */
+	    .pc-chat-item:where(:not(.af-sandbox-chat *)) {
 	      position: relative;
 	      border: 1px solid var(--line);
 	      border-radius: 12px;
 	      padding: 10px 12px;
 	      background: var(--panel-2);
 	    }
-	    .pc-chat-item--user {
+	    .pc-chat-item--user:where(:not(.af-sandbox-chat *)) {
 	      background: var(--info-subtle);
 	      border-color: color-mix(in srgb, var(--info) 36%, transparent);
 	      border-bottom-right-radius: var(--radius-sm);
 	    }
-	    .pc-chat-item--assistant {
+	    .pc-chat-item--assistant:where(:not(.af-sandbox-chat *)) {
 	      background: color-mix(in srgb, var(--accent) 8%, var(--panel));
 	      border-color: color-mix(in srgb, var(--accent) 26%, transparent);
 	      border-bottom-left-radius: var(--radius-sm);
 	    }
-	    .pc-chat-item--status { background: var(--panel-2); }
-	    .pc-chat-item--error {
+	    .pc-chat-item--status:where(:not(.af-sandbox-chat *)) { background: var(--panel-2); }
+	    .pc-chat-item--error:where(:not(.af-sandbox-chat *)) {
 	      background: color-mix(in srgb, var(--danger) 12%, var(--panel));
 	      border-color: color-mix(in srgb, var(--danger) 32%, transparent);
 	    }
-	    .sandbox-message-meta {
-	      display: flex;
-	      align-items: center;
-	      gap: 8px;
-	      margin-bottom: 6px;
-	      color: var(--text-muted);
-	      font-size: var(--font-size-xs);
-	      font-weight: 800;
-	    }
-	    .sandbox-message-role {
-	      color: var(--accent);
-	      font-size: var(--font-size-sm);
-	      font-weight: 700;
-	    }
-	    .sandbox-message-spacer {
-	      flex: 1;
-	    }
-	    .sandbox-message-body {
-	      white-space: pre-wrap;
-	      color: var(--text-primary);
-	      line-height: 1.45;
-	    }
-	    .sandbox-message-body.markdown {
-	      white-space: normal;
-	    }
-	    .sandbox-message-body.markdown > :first-child {
-	      margin-top: 0;
-	    }
-	    .sandbox-message-body.markdown > :last-child {
-	      margin-bottom: 0;
-	    }
-	    .sandbox-message-body.markdown p {
-	      margin: 0 0 10px;
-	    }
-	    .sandbox-message-body.markdown h1,
-	    .sandbox-message-body.markdown h2,
-	    .sandbox-message-body.markdown h3 {
-	      margin: 12px 0 8px;
-	      color: var(--text-primary);
-	      font-weight: 700;
-	      letter-spacing: 0;
-	      line-height: 1.2;
-	    }
-	    .sandbox-message-body.markdown h1 { font-size: 1.18em; }
-	    .sandbox-message-body.markdown h2 { font-size: 1.10em; }
-	    .sandbox-message-body.markdown h3 { font-size: 1.03em; }
-	    .sandbox-message-body.markdown ul,
-	    .sandbox-message-body.markdown ol {
-	      margin: 8px 0 10px 22px;
-	      padding: 0;
-	    }
-	    .sandbox-message-body.markdown li {
-	      margin: 4px 0;
-	    }
-	    .sandbox-message-body.markdown blockquote {
-	      margin: 10px 0;
-	      border-left: 3px solid color-mix(in srgb, var(--info) 45%, transparent);
-	      padding: 4px 0 4px 12px;
-	      color: var(--text-secondary);
-	    }
-	    .sandbox-message-body.markdown code {
-	      border: 1px solid rgba(255, 255, 255, .10);
-	      border-radius: var(--radius-sm);
-	      padding: 1px 5px;
-	      background: rgba(0, 0, 0, .26);
-	      color: var(--text-primary);
-	      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-	      font-size: .93em;
-	    }
-	    .sandbox-message-body.markdown pre {
-	      overflow: auto;
-	      margin: 10px 0;
-	      border: 1px solid var(--line-soft);
-	      border-radius: var(--radius-lg);
-	      padding: 10px 12px;
-	      background: rgba(0, 0, 0, .28);
-	    }
-	    .sandbox-message-body.markdown pre code {
-	      border: 0;
-	      padding: 0;
-	      background: transparent;
-	    }
-	    .sandbox-message-body.markdown a {
-	      color: var(--accent-2);
-	      font-weight: 800;
-	    }
-	    .sandbox-speak {
-	      width: 30px;
-	      min-width: 30px;
-	      height: 28px;
-	      padding: 0;
-	    }
-	    .sandbox-speak.speaking {
-	      border-color: color-mix(in srgb, var(--info) 70%, transparent);
-	      color: var(--accent);
-	    }
-	    .sandbox-progress {
-	      display: grid;
-	      gap: 8px;
-	      margin-top: 8px;
-	    }
-	    .sandbox-progress-bar {
-	      position: relative;
-	      height: 6px;
-	      overflow: hidden;
-	      border-radius: 999px;
-	      background: rgba(255, 255, 255, .08);
-	    }
-	    .sandbox-progress-bar::before {
-	      content: "";
-	      position: absolute;
-	      inset: 0;
-	      width: 38%;
-	      border-radius: inherit;
-	      background: linear-gradient(90deg, var(--accent), var(--accent-2));
-	      animation: sandbox-progress 1.25s ease-in-out infinite;
-	    }
-	    @keyframes sandbox-progress {
-	      0% { transform: translateX(-110%); }
-	      100% { transform: translateX(280%); }
-	    }
+	    /* Generated-audio audition (Multimodal Test, entity voice audition). */
 	    .sandbox-artifact {
 	      display: grid;
 	      gap: 8px;
@@ -1605,134 +1486,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      color: var(--accent-2);
 	      font-weight: 700;
 	    }
-	    .sandbox-composer {
-	      border-top: 1px solid var(--line-soft);
-	      padding: 14px 16px 16px;
-	      background: color-mix(in srgb, var(--panel-2) 55%, transparent);
-	    }
-	    .sandbox-composer-toolbar {
-	      display: grid;
-	      grid-template-columns: minmax(0, 1fr);
-	      gap: 10px;
-	      align-items: end;
-	      margin-bottom: 10px;
-	    }
-	    .sandbox-system-compact {
-	      margin: 0;
-	    }
-	    .sandbox-system-compact input {
-	      min-height: 34px;
-	      padding-top: 6px;
-	      padding-bottom: 6px;
-	    }
-	    .sandbox-composer-toolbar { grid-template-columns: minmax(0, 1fr) auto; }
-	    #sandbox-reasoning { min-height: 34px; }
-	    .sandbox-reasoning-block {
-	      margin: 0 0 8px 0;
-	      font-size: var(--font-size-sm);
-	      color: var(--muted, #8a93a6);
-	    }
-	    .sandbox-reasoning-block summary { cursor: pointer; user-select: none; }
-	    .sandbox-reasoning-block pre {
-	      white-space: pre-wrap;
-	      margin: 6px 0 0 0;
-	      max-height: 240px;
-	      overflow: auto;
-	    }
-	    .sandbox-dropzone {
-	      display: grid;
-	      grid-template-columns: auto minmax(0, 1fr) auto;
-	      gap: 12px;
-	      align-items: end;
-	      border: 1px solid var(--line-soft);
-	      border-radius: var(--radius-lg);
-	      padding: 10px 12px;
-	      /* Theme-safe composer pill (was a near-black literal — a dark slab
-	         inside the light theme's white page). */
-	      background: var(--panel-2);
-	    }
-	    .sandbox-dropzone:focus-within {
-	      border-color: color-mix(in srgb, var(--info) 62%, transparent);
-	      box-shadow: 0 0 0 3px color-mix(in srgb, var(--info) 10%, transparent), inset 0 1px 0 rgba(255, 255, 255, .05);
-	    }
-	    .sandbox-dropzone.dragover {
-	      border-color: color-mix(in srgb, var(--info) 75%, transparent);
-	      box-shadow: 0 0 0 3px var(--info-subtle);
-	    }
-	    .sandbox-input-area {
-	      display: grid;
-	      min-width: 0;
-	    }
-	    .sandbox-dropzone textarea {
-	      min-height: 56px;
-	      max-height: 170px;
-	      resize: vertical;
-	      border: 0;
-	      padding: 8px 2px;
-	      background: transparent;
-	      color: var(--text-primary);
-	      font-size: var(--font-size-md);
-	      line-height: 1.45;
-	      box-shadow: none;
-	    }
-	    .sandbox-dropzone textarea:focus {
-	      box-shadow: none;
-	    }
-	    .sandbox-composer-side {
-	      display: grid;
-	      gap: 8px;
-	      align-items: end;
-	      justify-items: end;
-	      align-self: stretch;
-	      align-content: end;
-	    }
-	    .sandbox-composer-actions {
-	      display: flex;
-	      align-items: center;
-	      justify-content: flex-end;
-	      gap: 8px;
-	    }
-	    .sandbox-composer-icon,
-	    .sandbox-send {
-	      width: 40px;
-	      min-width: 40px;
-	      height: 40px;
-	      min-height: 40px;
-	      border-radius: var(--radius-lg);
-	      padding: 0;
-	    }
-	    .sandbox-send {
-	      background: var(--accent);
-	      border-color: rgba(96, 165, 250, .36);
-	    }
-	    .sandbox-send .button-icon,
-	    .sandbox-composer-icon .button-icon {
-	      margin: 0;
-	    }
-	    .sandbox-attachments {
-	      display: flex;
-	      flex-wrap: wrap;
-	      gap: 6px;
-	      margin: 8px 0 0;
-	    }
-	    .sandbox-attachment {
-	      display: inline-flex;
-	      align-items: center;
-	      gap: 6px;
-	      max-width: 260px;
-	      border: 1px solid var(--line-soft);
-	      border-radius: 999px;
-	      padding: 4px 8px;
-	      color: var(--text-secondary);
-	      background: rgba(255, 255, 255, .04);
-	      font-size: var(--font-size-xs);
-	      font-weight: 800;
-	    }
-	    .sandbox-attachment span {
-	      overflow: hidden;
-	      text-overflow: ellipsis;
-	      white-space: nowrap;
-	    }
 	    .appearance-form {
 	      display: grid;
 	      grid-template-columns: 140px minmax(0, 1fr);
@@ -1766,8 +1519,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    @media (max-width: 1023.98px) {
 	      .tab-grid { grid-template-columns: minmax(0, 1fr); }
 	      .sandbox-workspace { grid-template-columns: minmax(0, 1fr); }
-	      .sandbox-composer-toolbar { grid-template-columns: minmax(0, 1fr); }
-	      .sandbox-mode-grid { justify-content: flex-start; }
 	      main { padding: 16px; }
 	    }
 	    @media (max-width: 479.98px) {
@@ -1781,22 +1532,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	       card's overflow:hidden cut it off unreachably. The card grows with
 	       its content; the transcript alone scrolls. */
 	    @media (max-width: 1023.98px), (pointer: coarse) {
-	      .sandbox-chat { min-height: 0; max-height: none; overflow: visible; grid-template-rows: auto minmax(220px, auto) auto; }
-	      .sandbox-transcript { max-height: calc(var(--vh-full, 100vh) * .55); }
+	      .sandbox-chat { height: auto; min-height: 0; overflow: visible; grid-template-rows: auto auto auto auto; }
+	      .sandbox-chat-root { height: calc(var(--vh-full, 100vh) * .72); min-height: 420px; }
+	      .sandbox-composer-toolbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+	      #sandbox-system-label { grid-column: 1 / -1; }
 	    }
 	    @media (max-width: 767.98px) {
 	      body:not(.signed-in) .console-shell { align-content: start; padding-block: 18px; }
 	      .appearance-form { grid-template-columns: 1fr; }
 	      .provider-modal .provider-config-form { grid-template-columns: 1fr; }
 	      .provider-modal .field-span-2 { grid-column: auto; }
-	      .sandbox-dropzone { grid-template-columns: auto minmax(0, 1fr); }
-	      .sandbox-composer-side {
-	        grid-column: 1 / -1;
-	        grid-template-columns: minmax(0, 1fr) auto;
-	        align-items: center;
-	        justify-items: stretch;
-	      }
-	      .sandbox-composer-actions { justify-content: flex-end; }
+	      .sandbox-composer-toolbar { grid-template-columns: minmax(0, 1fr); }
 	    }
     /* Models / Engines tabs: AbstractCore's embedded screens (scoped under
        .acc-root, they read the kit variables above), then the host chrome. */
@@ -2549,6 +2295,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 
 	      <div id="tab-sandbox" class="tab-panel">
 	        <div class="sandbox-workspace">
+	          <!-- The chat is the abstractuic kit's (islands mountSandboxChat: panel-chat's
+	               thread + composer, Attach / drop / paste, dictation and a speaker on replies,
+	               as in AbstractCode). The console keeps the output modes, system prompt,
+	               reasoning and MTP around it and sends every mode through its gateway
+	               endpoint (runSandbox). -->
 	          <section class="session-only sandbox-chat">
 	            <div class="section-head">
 	              <div>
@@ -2556,14 +2307,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <p id="sandbox-context" class="section-note">Select a provider/model and run a smoke test.</p>
 	              </div>
 	            </div>
-	            <div id="sandbox-transcript" class="sandbox-transcript pc-chat-thread"><div class="empty" id="sandbox-empty-hint">No messages yet — pick an output mode below and ask anything.</div></div>
-	            <div class="sandbox-composer">
+	            <div class="sandbox-settings">
 	              <label class="hidden">Capability<select id="sandbox-capability"></select></label>
 	              <label id="sandbox-provider-label" class="hidden">Provider<select id="sandbox-provider"></select></label>
 	              <label id="sandbox-model-label" class="hidden">Model<select id="sandbox-model"></select></label>
+	              <div class="sandbox-modes-field">
+	                <span id="sandbox-modes-label" class="sandbox-field-label">Output</span>
+	                <div id="sandbox-output-modes" class="sandbox-mode-grid" role="radiogroup" aria-labelledby="sandbox-modes-label"></div>
+	                <p class="sandbox-field-help">What the next message generates; each uses its route from Multimodal.</p>
+	              </div>
 	              <div class="sandbox-composer-toolbar">
-	                <label id="sandbox-system-label" class="sandbox-system-compact" title="Instructions sent before your message. Leave empty for none.">System prompt<input id="sandbox-system"></label>
-	                <label id="sandbox-reasoning-label" class="sandbox-system-compact" title="Reasoning effort for reasoning models. Default sends nothing; the model behaves as before.">Reasoning<select id="sandbox-reasoning">
+	                <label id="sandbox-system-label" class="sandbox-system-compact">System prompt<input id="sandbox-system" placeholder="None"><span class="sandbox-field-help">Instructions sent before your message.</span></label>
+	                <label id="sandbox-reasoning-label" class="sandbox-system-compact">Reasoning<select id="sandbox-reasoning">
 	                  <option value="">default</option>
 	                  <option value="none">none</option>
 	                  <option value="minimal">minimal</option>
@@ -2571,29 +2326,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                  <option value="medium">medium</option>
 	                  <option value="high">high</option>
 	                  <option value="xhigh">xhigh</option>
-	                </select></label>
-	                <label id="sandbox-speculation-label" class="sandbox-system-compact" title="Per-request MTP override. Inherit uses the Core default; explicit depths require a compatible loaded backend.">MTP<select id="sandbox-speculation">
+	                </select><span class="sandbox-field-help">Effort for reasoning models; default sends none.</span></label>
+	                <label id="sandbox-speculation-label" class="sandbox-system-compact">MTP<select id="sandbox-speculation">
 	                  <option value="">inherit</option><option value="off">off</option>
 	                  <option value="2">depth 2</option><option value="3">depth 3</option><option value="4">depth 4</option><option value="5">depth 5</option>
-	                </select></label>
+	                </select><span class="sandbox-field-help">Per-request speculative decoding; inherit uses the Core default.</span></label>
 	              </div>
-	              <div id="sandbox-dropzone" class="sandbox-dropzone">
-	                <button id="sandbox-attach" class="secondary icon-only sandbox-composer-icon" title="Attach files" aria-label="Attach files"><span class="button-icon" aria-hidden="true">＋</span></button>
-	                <div class="sandbox-input-area">
-	                  <textarea id="sandbox-prompt" placeholder="Ask a question, describe an image/video/music request, or drop files here."></textarea>
-	                  <div id="sandbox-attachments" class="sandbox-attachments"></div>
-	                </div>
-	                <div class="sandbox-composer-side">
-	                  <div id="sandbox-output-modes" class="sandbox-mode-grid" role="radiogroup" aria-label="Sandbox output mode"></div>
-	                  <div class="sandbox-composer-actions">
-	                    <button id="sandbox-clear" class="secondary icon-only sandbox-composer-icon" title="Clear chat" aria-label="Clear chat"><span class="button-icon" aria-hidden="true">×</span></button>
-	                    <button id="sandbox-run" class="sandbox-send icon-only" title="Send" aria-label="Send"><span class="button-icon" aria-hidden="true">▶</span></button>
-	                  </div>
-	                </div>
-	              </div>
-	              <input id="sandbox-file-input" class="hidden" type="file" multiple>
-	              <div id="sandbox-message" class="message"></div>
 	            </div>
+	            <div id="sandbox-chat-root" class="sandbox-chat-root"></div>
+	            <input id="sandbox-file-input" class="hidden" type="file" multiple>
+	            <div id="sandbox-message" class="message"></div>
 	          </section>
 	        </div>
 	      </div>
@@ -3655,7 +3397,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
   <script id="af-console-islands">/*__AF_CONSOLE_ISLANDS_JS__*/</script>
   <!--__ABSTRACTCORE_FRAGMENT_SCRIPT__-->
   <script>
-		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), voiceReasons: new Map(), providerStateLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
+		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), voiceReasons: new Map(), providerStateLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], sandboxChat: [], sandboxDraft: "", sandboxBusy: false, activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
 		    const $ = (id) => document.getElementById(id);
 		    const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 		    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] || ch);
@@ -3917,16 +3659,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      closeParagraph();
 	      closeList();
 	      return out.join("") || "";
-	    }
-	    function setSandboxMessageBody(body, content, { markdown = false } = {}) {
-	      if (!body) return;
-	      if (markdown) {
-	        body.classList.add("markdown");
-	        body.innerHTML = renderMarkdown(content);
-	      } else {
-	        body.classList.remove("markdown");
-	        body.textContent = String(content || "");
-	      }
 	    }
 	    const UI_SETTINGS_KEY = "abstractgateway_ui_settings_v1";
 	    const ACTIVE_TAB_KEY = "abstractgateway_active_tab_v1";
@@ -12936,15 +12668,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          const configured = defaultRowConfigured(row);
 	          const btn = document.createElement("button");
 	          btn.type = "button";
-	          btn.className = "sandbox-mode";
-	          btn.disabled = !configured;
+	          // Every mode stays choosable: an unconfigured one says so in the
+	          // chat (blocked notice) instead of being greyed out here.
+	          btn.className = `sandbox-mode${configured ? "" : " is-unconfigured"}`;
 	          btn.setAttribute?.("role", "radio");
+	          if (btn.dataset) btn.dataset.mode = mode;
 	          const label = sandboxRouteShortLabel(row);
 	          btn.title = `${label}: ${configured ? `${state.providerLabels.get(row.provider) || row.provider || ""} / ${row.model || ""}` : "not configured"}`;
 	          btn.setAttribute?.("aria-label", btn.title);
 	          btn.innerHTML = `<span class="sandbox-mode-icon" aria-hidden="true">${sandboxRouteIconMarkup(mode)}</span><span class="sandbox-mode-copy"><span class="sandbox-mode-main">${esc(label)}</span><span class="sandbox-mode-sub">${configured ? esc(row.model || "configured") : "not configured"}</span></span>`;
 	          btn.onclick = () => {
-	            if (btn.disabled) return;
 	            select.value = defaultRowKey(row);
 	            updateSandboxControls();
 	          };
@@ -13002,6 +12735,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("sandbox-provider-label").classList.add("hidden");
 	      $("sandbox-model-label").classList.add("hidden");
 	      $("sandbox-system-label").classList.toggle("hidden", mode !== "text");
+	      $("sandbox-reasoning-label").classList.toggle("hidden", mode !== "text");
 	      $("sandbox-speculation-label").classList.toggle("hidden", mode !== "text");
 	      if (mode === "text") refreshSandboxSpeculationSupport(row);
 	      const configured = defaultRowConfigured(row);
@@ -13009,25 +12743,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("sandbox-context").textContent = configured
 	        ? `${sandboxRouteLabel(row)} will use ${prov} / ${row.model}${row.inherited_from ? ` (inherited from ${row.inherited_from})` : ""}.`
 	        : `${sandboxRouteLabel(row)} is not configured yet. Configure it in Multimodal Capabilities first.`;
-	      const prompt = $("sandbox-prompt");
-	      if (prompt) {
-	        prompt.placeholder = {
-	          text: "Ask a question. Drop files here to include images, audio, video, PDFs, markdown, or text documents.",
-	          image: "Describe the image you want to generate.",
-	          voice: "Type the sentence to synthesize.",
-	          sound: "Describe the sound effect you want to generate.",
-	          music: "Describe the music you want to generate.",
-	          video: "Describe the video you want to generate.",
-	        }[mode] || "Type your request.";
-	      }
-	      const run = $("sandbox-run");
-	      if (run) run.disabled = !configured;
 	      const buttons = $("sandbox-output-modes")?.children || [];
 	      for (const btn of buttons) {
 	        const label = btn.children?.[1]?.children?.[0]?.textContent || "";
 	        btn.classList.toggle("active", label === sandboxRouteShortLabel(row));
 	        btn.setAttribute?.("aria-checked", label === sandboxRouteShortLabel(row) ? "true" : "false");
 	      }
+	      renderSandboxChat();
 	    }
 	    function sandboxNow() {
 	      const d = new Date();
@@ -13184,160 +12906,121 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      wrap.append(link);
 	      target.append(wrap);
 	    }
-	    function appendSandboxMessage(role, content, options = {}) {
-	      const target = $("sandbox-transcript");
-	      const hint = $("sandbox-empty-hint");
-	      if (hint) { try { hint.remove(); } catch { hint.className = "hidden"; } }
-	      const div = document.createElement("div");
-	      const kind = String(options.kind || role || "").toLowerCase();
-	      const kindClass = kind.includes("you") || kind === "user" ? "user" : kind.includes("error") ? "error" : kind.includes("system") ? "system" : "assistant";
-	      div.className = `sandbox-message ${kindClass}`;
-	      const bubble = document.createElement("div");
-	      // Dual-class: sandbox-bubble = layout; pc-chat-item = the shared
-	      // abstractuic dialogue look (system renders as the kit's status item).
-	      bubble.className = `sandbox-bubble pc-chat-item pc-chat-item--${kindClass === "system" ? "status" : kindClass}`;
-	      const meta = document.createElement("div");
-	      meta.className = "sandbox-message-meta";
-	      const roleEl = document.createElement("span");
-	      roleEl.className = "sandbox-message-role";
-	      roleEl.textContent = role;
-	      const timeEl = document.createElement("span");
-	      timeEl.textContent = options.meta || sandboxNow();
-	      const spacer = document.createElement("span");
-	      spacer.className = "sandbox-message-spacer";
-	      meta.append(roleEl, timeEl, spacer);
-	      const body = document.createElement("div");
-	      body.className = "sandbox-message-body";
-	      const messageIsAssistant = String(div.className || "").includes("assistant");
-	      setSandboxMessageBody(body, content, { markdown: options.markdown === true || (options.markdown !== false && messageIsAssistant) });
-	      if (options.speakable && content && sandboxVoiceDefaultRow()) {
-	        const speak = document.createElement("button");
-	        speak.type = "button";
-	        speak.className = "secondary sandbox-speak";
-	        speak.title = "Speak this message";
-	        speak.setAttribute?.("aria-label", "Speak this message");
-	        speak.innerHTML = `<span aria-hidden="true">&#128266;</span>`;
-	        speak.onclick = () => speakSandboxText(String(content || ""), bubble, speak);
-	        meta.append(speak);
-	      }
-	      bubble.append(meta, body);
-	      if (Array.isArray(options.attachments) && options.attachments.length) {
-	        const chips = document.createElement("div");
-	        chips.className = "sandbox-attachments";
-	        for (const item of options.attachments) {
-	          const chip = document.createElement("span");
-	          chip.className = "sandbox-attachment";
-	          chip.innerHTML = `<span>${esc(item.name || item.filename || "attachment")}</span>`;
-	          chips.append(chip);
-	        }
-	        bubble.append(chips);
-	      }
-	      if (options.pending) {
-	        const progress = document.createElement("div");
-	        progress.className = "sandbox-progress";
-	        progress.innerHTML = `<span>${esc(options.pendingLabel || "Working...")}</span><div class="sandbox-progress-bar"></div>`;
-	        bubble.append(progress);
-	      }
-	      if (options.artifactRef) {
-	        renderSandboxArtifact(bubble, { runId: options.runId, ref: options.artifactRef, mode: options.mode, label: options.artifactLabel });
-	      }
-	      div.append(bubble);
-	      target.append(div);
-	      target.scrollTop = target.scrollHeight;
-	      return { el: div, bubble, body, meta };
+	    // ---- The Sandbox chat: the kit island (islands mountSandboxChat) ----
+	    // The console owns the transcript (`state.sandboxChat`, panel-chat
+	    // ChatMessage objects), the draft and the attachments; the island is a
+	    // view re-rendered with `update(props)`. Each output mode still sends
+	    // through its gateway endpoint (runSandbox); results land in the thread
+	    // as messages (generated media in `media`, reasoning in `reasoning`).
+	    let sandboxChatIsland = null;
+	    let sandboxSeq = 0;
+	    function sandboxMessageId() {
+	      sandboxSeq += 1;
+	      return `sbx_${Date.now().toString(36)}_${sandboxSeq}`;
 	    }
-	    function finalizeSandboxMessage(message, { content = "", meta = "", artifactRef = null, runId = "", mode = "", artifactLabel = "", usage = null, elapsedMs = 0, speakable = false, reasoning = "" } = {}) {
-	      if (!message || !message.bubble) return;
-	      const progress = Array.from(message.bubble.children || []).find((child) => String(child.className || "").includes("sandbox-progress"));
-	      if (progress) progress.className = "hidden";
-	      if (message.body) {
-	        const messageIsAssistant = String(message.el?.className || "").includes("assistant");
-	        setSandboxMessageBody(message.body, content, { markdown: messageIsAssistant });
-	      }
-	      // Show the model's reasoning, collapsed, above the answer — so a
-	      // test with a reasoning effort has a visible result.
-	      if (reasoning && message.body) {
-	        const details = document.createElement("details");
-	        details.className = "sandbox-reasoning-block";
-	        const summary = document.createElement("summary");
-	        summary.textContent = "Reasoning";
-	        const pre = document.createElement("pre");
-	        pre.textContent = String(reasoning);
-	        details.append(summary, pre);
-	        message.body.parentNode?.insertBefore(details, message.body);
-	      }
-	      const metaLine = [sandboxUsageLabel(usage, elapsedMs), meta].filter(Boolean).join(" · ");
-	      if (metaLine && message.meta?.children?.[1]) message.meta.children[1].textContent = metaLine;
-	      if (speakable && content && sandboxVoiceDefaultRow()) {
-	        const speak = document.createElement("button");
-	        speak.type = "button";
-	        speak.className = "secondary sandbox-speak";
-	        speak.title = "Speak this message";
-	        speak.setAttribute?.("aria-label", "Speak this message");
-	        speak.innerHTML = `<span aria-hidden="true">&#128266;</span>`;
-	        speak.onclick = () => speakSandboxText(String(content || ""), message.bubble, speak);
-	        message.meta.append(speak);
-	      }
-	      if (artifactRef) renderSandboxArtifact(message.bubble, { runId, ref: artifactRef, mode, label: artifactLabel });
-	      const target = $("sandbox-transcript");
-	      target.scrollTop = target.scrollHeight;
+	    function sandboxPush(message) {
+	      const entry = { id: sandboxMessageId(), ts: new Date().toISOString(), ...message };
+	      state.sandboxChat = [...state.sandboxChat, entry];
+	      renderSandboxChat();
+	      return entry.id;
 	    }
-	    function findSandboxChild(root, className) {
-	      if (!root) return null;
-	      if (String(root.className || "").split(/\\s+/).includes(className)) return root;
-	      for (const child of Array.from(root.children || [])) {
-	        const found = findSandboxChild(child, className);
-	        if (found) return found;
-	      }
-	      return null;
+	    function sandboxPatch(id, patch) {
+	      state.sandboxChat = state.sandboxChat.map((m) => {
+	        if (m.id !== id) return m;
+	        const next = { ...m, ...patch };
+	        for (const key of Object.keys(patch)) if (patch[key] === undefined) delete next[key];
+	        return next;
+	      });
+	      renderSandboxChat();
 	    }
-	    function sandboxMessageFromElement(el) {
-	      if (!el) return null;
-	      const bubble = findSandboxChild(el, "sandbox-bubble");
-	      if (!bubble) return null;
+	    function sandboxSttDefaultRow() {
+	      return (state.defaults || []).find((row) => defaultRowKey(row) === "input.voice" && defaultRowConfigured(row));
+	    }
+	    // Voice out (the speaker on replies): synthesize with the configured
+	    // output.voice route, hand the bytes to the kit's useGatewayVoice.
+	    async function sandboxTts(text) {
+	      const row = sandboxVoiceDefaultRow();
+	      if (!row) throw new Error("Voice output is not configured (Multimodal → output.voice).");
+	      const runId = sandboxRunId();
+	      const body = { text, provider: row.provider, model: row.model, request_id: sandboxRequestId() };
+	      const voice = textValue(objectValue(row.options)?.voice || objectValue(row.options)?.profile);
+	      if (voice) body.voice = voice;
+	      const res = await api(`/api/gateway/runs/${encodeURIComponent(runId)}/voice/tts`, { slow: true, method: "POST", body: JSON.stringify(body) });
+	      const url = sandboxArtifactUrl(runId, res.audio_artifact);
+	      if (!url) throw new Error("The gateway did not return an audio artifact.");
+	      const audio = await fetch(url, { method: "GET", credentials: "same-origin" });
+	      if (!audio.ok) throw new Error(`Speech download failed (${audio.status}).`);
+	      return audio.arrayBuffer();
+	    }
+	    // Voice in (hold to dictate): upload the recording to the sandbox
+	    // session, transcribe it with the configured input.voice route.
+	    async function sandboxTranscribe(blob, mime) {
+	      const row = sandboxSttDefaultRow();
+	      if (!row) throw new Error("Transcription is not configured (Multimodal → input.voice).");
+	      const type = String(mime || blob?.type || "audio/webm");
+	      const extension = type.includes("mp4") ? "m4a" : type.includes("ogg") ? "ogg" : type.includes("wav") ? "wav" : "webm";
+	      const uploaded = await uploadSandboxFile(new File([blob], `recording.${extension}`, { type }));
+	      if (!uploaded.artifact) throw new Error("The gateway did not return the uploaded recording.");
+	      const body = { audio_artifact: uploaded.artifact, provider: row.provider, model: row.model, request_id: sandboxRequestId() };
+	      const res = await api(`/api/gateway/runs/${encodeURIComponent(sandboxRunId())}/audio/transcribe`, { slow: true, method: "POST", body: JSON.stringify(body) });
+	      return String(res.text || "");
+	    }
+	    function sandboxBlockedNotice() {
+	      const row = selectedSandboxRoute();
+	      if (defaultRowConfigured(row)) return null;
+	      return `${sandboxRouteShortLabel(row)} is not configured yet: set its route in Multimodal, then send from here.`;
+	    }
+	    function sandboxPlaceholder() {
+	      const mode = sandboxRouteMode(defaultRowKey(selectedSandboxRoute()));
 	      return {
-	        el,
-	        bubble,
-	        body: findSandboxChild(bubble, "sandbox-message-body"),
-	        meta: findSandboxChild(bubble, "sandbox-message-meta"),
+	        text: "Ask a question. Attach or drop images, audio, video, PDFs or text files to include them.",
+	        image: "Describe the image you want to generate.",
+	        voice: "Type the sentence to synthesize.",
+	        sound: "Describe the sound effect you want to generate.",
+	        music: "Describe the music you want to generate.",
+	        video: "Describe the video you want to generate.",
+	      }[mode] || "Type your request.";
+	    }
+	    function sandboxChatProps() {
+	      return {
+	        messages: state.sandboxChat,
+	        draft: state.sandboxDraft,
+	        onDraftChange: (next) => { state.sandboxDraft = String(next || ""); renderSandboxChat(); },
+	        onSend: (draft) => runSandbox(draft),
+	        busy: state.sandboxBusy,
+	        busyLabel: "Generating…",
+	        sendLabel: "Send",
+	        placeholder: sandboxPlaceholder(),
+	        blockedNotice: sandboxBlockedNotice(),
+	        attachments: state.sandboxAttachments.map((item) => ({ id: item.id, name: item.name, status: item.status, message: item.message })),
+	        onAttach: () => $("sandbox-file-input").click(),
+	        onFiles: (files) => handleSandboxFiles(files),
+	        onRemoveAttachment: (id) => { state.sandboxAttachments = state.sandboxAttachments.filter((item) => item.id !== id); renderSandboxChat(); },
+	        onClear: clearSandbox,
+	        emptyText: "No messages yet. Pick an output above and send a message.",
+	        voice: {
+	          tts: sandboxVoiceDefaultRow() ? sandboxTts : undefined,
+	          transcribe: sandboxSttDefaultRow() ? sandboxTranscribe : undefined,
+	        },
 	      };
 	    }
-	    function latestPendingSandboxMessage() {
-	      const target = $("sandbox-transcript");
-	      const messages = Array.from(target?.children || []);
-	      for (let index = messages.length - 1; index >= 0; index -= 1) {
-	        const message = sandboxMessageFromElement(messages[index]);
-	        const progress = findSandboxChild(message?.bubble, "sandbox-progress");
-	        if (progress && !String(progress.className || "").includes("hidden")) return message;
-	      }
-	      return null;
+	    function renderSandboxChat() {
+	      if (sandboxChatIsland) sandboxChatIsland.update(sandboxChatProps());
 	    }
-	    function hideAllSandboxProgress() {
-	      const visit = (node) => {
-	        if (!node) return;
-	        if (String(node.className || "").includes("sandbox-progress")) node.className = "hidden";
-	        for (const child of Array.from(node.children || [])) visit(child);
-	      };
-	      visit($("sandbox-transcript"));
-	    }
-	    function failSandboxMessage(message, errorText) {
-	      const targetMessage = message?.bubble ? message : latestPendingSandboxMessage();
-	      if (!targetMessage || !targetMessage.bubble) {
-	        hideAllSandboxProgress();
-	        return false;
+	    // The chat IS the island: a bundle without mountSandboxChat is a
+	    // vendoring defect, said on the tab (and logged), never a silent blank.
+	    function mountSandboxChat() {
+	      const lib = islandsLib();
+	      if (!lib || typeof lib.mountSandboxChat !== "function") {
+	        const why = lib ? "the abstractuic islands bundle has no mountSandboxChat (kit 0.4.0 round 3+ required)" : "the abstractuic islands bundle did not load";
+	        if (typeof window !== "undefined" && window.document && window.document.getElementById("af-console-islands")) {
+	          console.error(`AbstractGateway console: ${why}; the Sandbox chat is unavailable.`);
+	          $("sandbox-message").textContent = `The Sandbox chat is unavailable: ${why}.`;
+	          $("sandbox-message").className = "message error";
+	        }
+	        return;
 	      }
-	      const text = String(errorText || "Generation failed.");
-	      const progress = findSandboxChild(targetMessage.bubble, "sandbox-progress");
-	      if (progress) progress.className = "hidden";
-	      hideAllSandboxProgress();
-	      if (targetMessage.el) targetMessage.el.className = "sandbox-message error";
-	      if (targetMessage.bubble) targetMessage.bubble.className = "sandbox-bubble pc-chat-item pc-chat-item--error";
-	      if (targetMessage.body) setSandboxMessageBody(targetMessage.body, text, { markdown: false });
-	      if (targetMessage.meta?.children?.[0]) targetMessage.meta.children[0].textContent = "Error";
-	      if (targetMessage.meta?.children?.[1]) targetMessage.meta.children[1].textContent = sandboxNow();
-	      const target = $("sandbox-transcript");
-	      target.scrollTop = target.scrollHeight;
-	      return true;
+	      sandboxChatIsland = lib.mountSandboxChat($("sandbox-chat-root"), sandboxChatProps());
 	    }
 	    // ONE SANDBOX SESSION, ONE OWNER RUN. POST /attachments/upload takes a
 	    // SESSION id and stores under its owner run `session_memory_<session_id>`
@@ -13379,130 +13062,68 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const text = await res.text();
 	      let data = {};
 	      try { data = text ? JSON.parse(text) : {}; } catch { data = { detail: text }; }
-	      if (!res.ok) throw new Error(data.detail || `Upload failed (${res.status})`);
+	      if (!res.ok) throw new Error(data.message || data.detail || `Upload failed (${res.status})`);
 	      const artifact = data.attachment || data.artifact;
 	      return { name: file?.name || "upload.bin", size: file?.size || 0, content_type: file?.type || artifact?.content_type || "", artifact };
 	    }
-	    function renderSandboxAttachments() {
-	      const target = $("sandbox-attachments");
-	      if (!target) return;
-	      target.textContent = "";
-	      for (const item of state.sandboxAttachments || []) {
-	        const chip = document.createElement("span");
-	        chip.className = "sandbox-attachment";
-	        chip.innerHTML = `<span>${esc(item.name || "attachment")}</span>`;
-	        target.append(chip);
-	      }
-	    }
+	    // Each file is a chip at once (Uploading…), then attached or failed
+	    // with the gateway's reason; a failed chip is never sent.
 	    async function handleSandboxFiles(files) {
 	      const list = Array.from(files || []).filter(Boolean);
-	      if (!list.length) return;
-	      $("sandbox-message").textContent = "Uploading attachments...";
-	      $("sandbox-message").className = "message";
-	      try {
-	        for (const file of list) state.sandboxAttachments.push(await uploadSandboxFile(file));
-	        renderSandboxAttachments();
-	        $("sandbox-message").textContent = "";
-	      } catch (err) {
-	        $("sandbox-message").textContent = String(err.message || err);
-	        $("sandbox-message").className = "message error";
-	      }
-	    }
-	    function setSandboxSpeakButton(button, mode) {
-	      if (!button) return;
-	      if (mode === "pause") {
-	        button.disabled = false;
-	        button.classList.add("speaking");
-	        button.title = "Pause speech";
-	        button.setAttribute?.("aria-label", "Pause speech");
-	        button.innerHTML = `<span aria-hidden="true">II</span>`;
-	      } else if (mode === "loading") {
-	        button.disabled = true;
-	        button.title = "Generating speech";
-	        button.setAttribute?.("aria-label", "Generating speech");
-	        button.innerHTML = `<span aria-hidden="true">...</span>`;
-	      } else {
-	        button.disabled = false;
-	        button.classList.remove("speaking");
-	        button.title = "Speak this message";
-	        button.setAttribute?.("aria-label", "Speak this message");
-	        button.innerHTML = `<span aria-hidden="true">&#128266;</span>`;
-	      }
-	    }
-	    async function playSandboxAudio(audio, button) {
-	      if (!audio) return;
-	      try {
-	        if (typeof audio.play === "function") {
-	          await audio.play();
-	          setSandboxSpeakButton(button, "pause");
+	      for (const file of list) {
+	        const id = sandboxMessageId();
+	        state.sandboxAttachments = [...state.sandboxAttachments, { id, name: file?.name || "upload.bin", status: "uploading" }];
+	        renderSandboxChat();
+	        let patch;
+	        try {
+	          patch = { ...(await uploadSandboxFile(file)), status: "attached" };
+	        } catch (err) {
+	          patch = { status: "failed", message: String(err.message || err) };
 	        }
-	      } catch (err) {
-	        setSandboxSpeakButton(button, "speak");
-	        throw err;
+	        state.sandboxAttachments = state.sandboxAttachments.map((item) => (item.id === id ? { ...item, ...patch } : item));
+	        renderSandboxChat();
 	      }
 	    }
-	    async function speakSandboxText(text, host, button = null) {
-	      const row = sandboxVoiceDefaultRow();
-	      if (!row) return;
-	      if (host?._sandboxSpeechAudio) {
-	        const audio = host._sandboxSpeechAudio;
-	        if (!audio.paused) {
-	          if (typeof audio.pause === "function") audio.pause();
-	          setSandboxSpeakButton(button, "speak");
-	        } else {
-	          await playSandboxAudio(audio, button);
-	        }
+	    // A generated artifact: the raw link at once, the inline player once
+	    // the bytes arrived (blob: URL, so the session cookie authorizes it).
+	    async function sandboxAttachMedia(messageId, { runId, ref, kind, label }) {
+	      const href = sandboxArtifactUrl(runId, ref);
+	      if (!href) {
+	        sandboxPatch(messageId, { content: "The gateway answered without an artifact." });
 	        return;
 	      }
-	      if (host?._sandboxSpeechBusy) return;
-	      if (host) host._sandboxSpeechBusy = true;
-	      setSandboxSpeakButton(button, "loading");
-	      const runId = sandboxRunId();
+	      sandboxPatch(messageId, { media: [{ kind, src: "", href, label }] });
 	      try {
-	        const body = { text, provider: row.provider, model: row.model, request_id: sandboxRequestId() };
-	        const voice = textValue(objectValue(row.options)?.voice || objectValue(row.options)?.profile);
-	        if (voice) body.voice = voice;
-	        const res = await api(`/api/gateway/runs/${encodeURIComponent(runId)}/voice/tts`, { slow: true, method: "POST", body: JSON.stringify(body) });
-	        const audio = document.createElement("audio");
-	        audio.preload = "auto";
-	        audio.className = "hidden";
-	        audio.onended = () => setSandboxSpeakButton(button, "speak");
-	        audio.onpause = () => setSandboxSpeakButton(button, "speak");
-	        audio.onplay = () => setSandboxSpeakButton(button, "pause");
-	        if (host) host.append(audio);
-	        await setSandboxMediaSource(audio, host, runId, res.audio_artifact, "Speech");
-	        if (host) host._sandboxSpeechAudio = audio;
-	        await playSandboxAudio(audio, button);
+	        const res = await fetch(href, { method: "GET", credentials: "same-origin" });
+	        if (!res.ok) throw new Error(`artifact download failed (${res.status})`);
+	        const blob = await res.blob();
+	        const type = String(ref?.content_type || "").trim();
+	        const typed = type && (!blob.type || blob.type === "application/octet-stream") ? new Blob([blob], { type }) : blob;
+	        sandboxPatch(messageId, { media: [{ kind, src: sandboxRememberObjectUrl(URL.createObjectURL(typed)), href, label }] });
 	      } catch (err) {
-	        addSandboxMediaError(host, String(err.message || err));
-	        setSandboxSpeakButton(button, "speak");
-	      } finally {
-	        if (host) host._sandboxSpeechBusy = false;
+	        sandboxPatch(messageId, { media: [{ kind, src: href, href, label }], content: `${label}: ${String(err.message || err)}. Open the raw file with the link.` });
 	      }
 	    }
-	    async function runSandbox() {
+	    async function runSandbox(draftText) {
 	      $("sandbox-message").textContent = "";
 	      $("sandbox-message").className = "message";
-	      const prompt = $("sandbox-prompt").value.trim();
-	      const attachments = (state.sandboxAttachments || []).slice();
-	      if (!prompt && !attachments.length) {
-	        $("sandbox-message").textContent = "Prompt is required.";
-	        $("sandbox-message").className = "message error";
-	        return;
-	      }
+	      const prompt = String(draftText ?? state.sandboxDraft ?? "").trim();
+	      const attachments = state.sandboxAttachments.filter((item) => item.status === "attached");
+	      if (!prompt && !attachments.length) return;
 	      const row = selectedSandboxRoute();
 	      const key = defaultRowKey(row);
 	      const mode = sandboxRouteMode(key);
-	      $("sandbox-run").disabled = true;
-	      let pendingMessage = null;
+	      if (!defaultRowConfigured(row)) throw new Error(`${sandboxRouteLabel(row)} is not configured.`);
+	      const promptText = prompt || "Please analyze the attached file(s).";
+	      // The draft and the chips clear BEFORE the request leaves: the
+	      // message is in the thread, the composer is ready for the next one.
+	      state.sandboxDraft = "";
+	      state.sandboxAttachments = state.sandboxAttachments.filter((item) => item.status === "uploading");
+	      sandboxPush({ role: "user", title: "You", content: promptText, stats: attachments.map((item) => ({ label: item.name, title: "Attached file" })) });
+	      state.sandboxBusy = true;
+	      const started = Date.now();
+	      let pendingId = "";
 	      try {
-	        const promptText = prompt || "Please analyze the attached file(s).";
-	        appendSandboxMessage("You", promptText, { kind: "user", attachments });
-	        $("sandbox-prompt").value = "";
-	        state.sandboxAttachments = [];
-	        renderSandboxAttachments();
-	        if (!defaultRowConfigured(row)) throw new Error(`${sandboxRouteLabel(row)} is not configured.`);
-	        const started = Date.now();
 	        if (mode === "text") {
 	          const provider = row.provider;
 	          const model = row.model;
@@ -13520,11 +13141,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          if (reasoningChoice) payload.reasoning = reasoningChoice;
 	          const mtpChoice = $("sandbox-speculation").value;
 	          if (mtpChoice) payload.speculation = speculationFromChoice(mtpChoice, undefined, true);
-	          pendingMessage = appendSandboxMessage(`${state.providerLabels.get(provider) || provider} / ${model}`, "Thinking...", { pending: true, pendingLabel: "Generating answer", kind: "assistant" });
+	          pendingId = sandboxPush({ role: "assistant", title: `${state.providerLabels.get(provider) || provider} / ${model}`, content: "", live: { callId: "sandbox", reasoning: "", label: "generating answer" } });
 	          const res = await api("/api/gateway/sandbox/generate", { slow: true, method: "POST", body: JSON.stringify(payload) });
 	          const text = res.response || "(empty response)";
 	          state.sandboxMessages.push({ role: "user", content: promptText }, { role: "assistant", content: text });
-	          finalizeSandboxMessage(pendingMessage, { content: text, usage: res.usage, elapsedMs: Date.now() - started, speakable: true, reasoning: res.reasoning || "", meta: speculationSummary(res) });
+	          const usage = sandboxUsageLabel(res.usage, Date.now() - started);
+	          sandboxPatch(pendingId, {
+	            content: text,
+	            reasoning: res.reasoning || undefined,
+	            live: undefined,
+	            stats: [usage, speculationSummary(res)].filter(Boolean).map((label) => ({ label })),
+	          });
 	        } else {
 	          const runId = sandboxRunId();
 	          let endpoint = "";
@@ -13545,7 +13172,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            endpoint = `/api/gateway/runs/${encodeURIComponent(runId)}/videos/generate`;
 	            body = { prompt: promptText, video_provider: row.provider, video_model: row.model, request_id: sandboxRequestId() };
 	          }
-	          pendingMessage = appendSandboxMessage(sandboxRouteShortLabel(row), "Starting generation...", { pending: true, pendingLabel: mode === "image" || mode === "video" ? "Generating media" : "Generating artifact", kind: "assistant" });
+	          const label = sandboxRouteShortLabel(row);
+	          pendingId = sandboxPush({ role: "assistant", title: `${label} · ${row.model || ""}`, content: "", live: { callId: "sandbox", reasoning: "", label: `generating ${label.toLowerCase()}` } });
 	          // The slow lane, like every other media route: local diffusion on
 	          // Apple silicon runs for MINUTES (the seeded flux/wan defaults), so
 	          // the 60s budget would abort the socket while the gateway kept
@@ -13555,33 +13183,31 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          const res = await api(endpoint, { slow: true, method: "POST", body: JSON.stringify(body) });
 	          if (res.ok === false) throw new Error(res.error || res.code || "Generation failed.");
 	          const ref = res.image_artifact || res.audio_artifact || res.music_artifact || res.video_artifact || null;
-	          finalizeSandboxMessage(pendingMessage, {
-	            content: "Generation completed.",
-	            elapsedMs: Date.now() - started,
-	            artifactRef: ref,
-	            runId,
-	            mode,
-	            artifactLabel: mode === "image" ? "Open image" : mode === "video" ? "Open video" : "Open audio",
-	          });
+	          const kind = mode === "image" ? "image" : mode === "video" ? "video" : "audio";
+	          sandboxPatch(pendingId, { live: undefined, stats: [{ label: formatSandboxDuration(Date.now() - started) || "done" }] });
+	          await sandboxAttachMedia(pendingId, { runId, ref, kind, label: kind === "image" ? "Open image" : kind === "video" ? "Open video" : "Open audio" });
 	        }
 	      } catch (err) {
+	        // The failure replaces the pending reply in the thread, with the
+	        // gateway's reason (never a silent stop).
 	        const message = String(err.message || err);
-	        $("sandbox-message").textContent = message;
-	        $("sandbox-message").className = "message error";
-	        if (!failSandboxMessage(pendingMessage, message)) appendSandboxMessage("Error", message, { kind: "error" });
+	        const failed = { role: "system", level: "error", title: "Error", content: message, live: undefined };
+	        if (pendingId) sandboxPatch(pendingId, failed);
+	        else sandboxPush(failed);
 	      } finally {
-	        updateSandboxControls();
+	        state.sandboxBusy = false;
+	        renderSandboxChat();
 	      }
 	    }
 	    function clearSandbox() {
 	      sandboxRevokeObjectUrls();
 	      state.sandboxMessages = [];
 	      state.sandboxAttachments = [];
-	      $("sandbox-transcript").textContent = "";
+	      state.sandboxChat = [];
+	      state.sandboxDraft = "";
 	      $("sandbox-message").textContent = "";
 	      $("sandbox-message").className = "message";
-	      $("sandbox-prompt").value = "";
-	      renderSandboxAttachments();
+	      renderSandboxChat();
 	    }
 	    function defaultRowTestable(row) {
 	      // Test renders only where a REAL generation is cheap and the goal is
@@ -15306,22 +14932,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("clear-default").onclick = () => clearDefault();
 	    $("sandbox-capability").onchange = updateSandboxControls;
 	    $("sandbox-provider").onchange = () => loadSandboxModels();
-	    $("sandbox-run").onclick = runSandbox;
-	    $("sandbox-prompt").onkeydown = (event) => {
-	      if (event.key === "Enter" && !event.shiftKey) {
-	        event.preventDefault();
-	        if (!$("sandbox-run").disabled) runSandbox();
-	      }
-	    };
-	    $("sandbox-clear").onclick = clearSandbox;
-	    $("sandbox-attach").onclick = () => $("sandbox-file-input").click();
-	    $("sandbox-file-input").onchange = (event) => handleSandboxFiles(event?.target?.files || []);
-	    $("sandbox-dropzone").ondragover = (event) => { event.preventDefault(); $("sandbox-dropzone").classList.add("dragover"); };
-	    $("sandbox-dropzone").ondragleave = () => $("sandbox-dropzone").classList.remove("dragover");
-	    $("sandbox-dropzone").ondrop = (event) => {
-	      event.preventDefault();
-	      $("sandbox-dropzone").classList.remove("dragover");
-	      handleSandboxFiles(event?.dataTransfer?.files || []);
+	    $("sandbox-file-input").onchange = (event) => {
+	      const input = event?.target;
+	      const files = Array.from(input?.files || []);
+	      if (input) input.value = "";
+	      handleSandboxFiles(files);
 	    };
     $("save-endpoint-profile").onclick = saveEndpointProfile;
     $("cancel-endpoint-profile").onclick = closeEndpointModal;
@@ -15334,6 +14949,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    initAppearanceControls();
 	    applyAppearanceSettings();
 	    mountConsoleIslands();
+	    mountSandboxChat();
 	    uiInitAdvanced();
 	    uiInitLayout();
 	    state.activeTab = readStringSetting(ACTIVE_TAB_KEY, "users");
