@@ -1979,6 +1979,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .notify-test-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin: 10px 0 0; }
 	    .mailbox-active { margin-top: 10px; }
 	    .mailbox-differs { color: var(--muted); }
+	    .address-view, .address-line { margin: 0; font-size: var(--font-size-base); color: var(--text); overflow-wrap: anywhere; }
+	    .address-view .link-button, .address-line .link-button { margin-left: 6px; }
 	    .advanced-sentences { gap: 10px; }
 	    .advanced-sentence { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: var(--font-size-base); color: var(--text); }
 	    .advanced-sentence select { width: auto; }
@@ -2034,7 +2036,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      .accounts-table td.accounts-name { grid-column: 1; grid-row: 1; box-shadow: none; }
 	      .accounts-table td.accounts-active { grid-column: 2; grid-row: 1; justify-self: end; }
 	      .accounts-table td.accounts-mailbox { grid-column: 1 / -1; grid-row: 2; }
-	      .accounts-table td.accounts-actions { grid-column: 1 / -1; grid-row: 4; margin-top: 6px; }
+	      .accounts-table td.accounts-actions { grid-column: 1 / -1; grid-row: 4; margin-top: 6px; width: auto; min-width: 0; }
+	      .accounts-table tr.accounts-row > td.accounts-col-role, .accounts-table tr.accounts-row > td.accounts-col-email { display: none; }
+	      /* One flat block per row: the tint and the kind bar paint the row, not each cell. */
+	      .accounts-table tr.accounts-row > td { background: transparent !important; box-shadow: none !important; }
+	      .accounts-table tr.af-row--admin { background-color: var(--af-row-tint-admin); box-shadow: inset 3px 0 0 var(--af-row-mark-admin); }
+	      .accounts-table tr.af-row--user { box-shadow: inset 3px 0 0 var(--af-row-mark-user); }
+	      .accounts-table tr.af-row--entity { background-color: var(--af-row-tint-entity); box-shadow: inset 3px 0 0 var(--af-row-mark-entity); }
 	      .accounts-fold { display: none; }
 	      .accounts-table .accounts-col-runtime { display: block !important; grid-column: 1 / -1; grid-row: 3; color: var(--af-row-text-muted, var(--muted)); }
 	      .accounts-table .accounts-col-runtime::before { content: "Runtime " !important; }
@@ -2736,7 +2744,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                 <div class="af-form">
                   <div class="af-form__field">
                     <label class="af-form__label sr-only" for="my-email-registered">Your email address</label>
-                    <div class="af-form__inline">
+                    <!-- DESIGN-v2 §11: ONE editable address field on screen at a time. -->
+                    <p id="my-email-registered-view" class="address-view"><span id="my-email-registered-text"></span> <button id="my-email-registered-change" class="link-button" type="button"></button></p>
+                    <div id="my-email-registered-edit" class="af-form__inline" hidden>
                       <input id="my-email-registered" type="email" autocomplete="email" spellcheck="false" aria-describedby="my-email-registered-help my-email-registered-error">
                       <button id="my-email-registered-save" class="secondary" type="button">Save</button>
                     </div>
@@ -2776,7 +2786,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                   </div>
                   <div id="my-email-pane-imap" class="af-tabs__panel" role="tabpanel" aria-labelledby="my-email-tab-imap">
                     <div class="af-form">
-                      <div class="af-form__field">
+                      <p class="address-line mailbox-address-line" hidden><span class="mailbox-address-line__text"></span> <button class="link-button mailbox-address-other" type="button">Use a different account</button></p>
+                      <div class="af-form__field mailbox-address-field">
                         <label class="af-form__label" for="my-email-address">Mailbox address</label>
                         <input id="my-email-address" type="email" autocomplete="email" spellcheck="false" aria-describedby="my-email-address-help">
                         <p id="my-email-address-help" class="af-form__help">The account your agents read and send from — usually your own address.</p>
@@ -2817,7 +2828,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                   </div>
                   <div id="my-email-pane-oauth" class="af-tabs__panel" role="tabpanel" aria-labelledby="my-email-tab-google" hidden>
                     <div class="af-form">
-                      <div class="af-form__field">
+                      <p class="address-line mailbox-address-line" hidden><span class="mailbox-address-line__text"></span> <button class="link-button mailbox-address-other" type="button">Use a different account</button></p>
+                      <div class="af-form__field mailbox-address-field">
                         <label class="af-form__label" for="my-email-oauth-address">Mailbox address</label>
                         <input id="my-email-oauth-address" type="email" autocomplete="email" spellcheck="false" aria-describedby="my-email-oauth-address-help">
                         <p id="my-email-oauth-address-help" class="af-form__help">The account you sign in with; it pre-fills the sign-in page.</p>
@@ -6842,7 +6854,45 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     // Mailbox tabs (DESIGN-v2 §3): IMAP first and the default, then Google, Microsoft.
     const MY_EMAIL_TABS = ["imap", "google", "microsoft"];
     const MY_EMAIL_SERVER_FIELDS = ["my-email-imap-host", "my-email-imap-port", "my-email-imap-security", "my-email-smtp-host", "my-email-smtp-port", "my-email-smtp-security", "my-email-username"];
-    const myEmailUi = { tab: "", discovered: null, discoveredFor: "", oauth: null, edited: new Set(), timer: null, prefilledFor: "" };
+    const myEmailUi = { tab: "", discovered: null, discoveredFor: "", oauth: null, edited: new Set(), timer: null, prefilledFor: "", editReg: false, editMailbox: false };
+    // ONE address question (DESIGN-v2 §11): at most one editable address field on screen.
+    // Card 1 shows the address as text + "Change" (or "Not set yet" + "Set it now"); the
+    // mailbox panes show "Mailbox account: x — Use a different account" whenever an address
+    // is set; revealing one editable field folds the other back to its read-only line.
+    function myEmailAddressRender() {
+      const reg = String((state.myEmail && state.myEmail.email_address) || "").trim();
+      const editReg = myEmailUi.editReg;
+      const editMailbox = myEmailUi.editMailbox && !editReg;
+      $("my-email-registered-edit").hidden = !editReg;
+      $("my-email-registered-view").hidden = editReg;
+      $("my-email-registered-text").textContent = reg ? reg : "Not set yet — connecting a mailbox below sets it.";
+      $("my-email-registered-text").classList.toggle("muted", !reg);
+      $("my-email-registered-change").textContent = reg ? "Change" : "Set it now";
+      const mailboxField = editMailbox || (!reg && !editReg);
+      const account = myEmailVal("my-email-address") || reg;
+      for (const pane of ["my-email-pane-imap", "my-email-pane-oauth"]) {
+        const root = $(pane);
+        if (!root || typeof root.querySelector !== "function") continue;
+        const line = root.querySelector(".mailbox-address-line");
+        const field = root.querySelector(".mailbox-address-field");
+        if (line) line.hidden = mailboxField;
+        if (field) field.hidden = !mailboxField;
+        const text = root.querySelector(".mailbox-address-line__text");
+        if (text) text.textContent = account ? `Mailbox account: ${account}` : "Mailbox account: the address above";
+      }
+    }
+    function myEmailEditRegistered() {
+      myEmailUi.editReg = true;
+      myEmailUi.editMailbox = false;
+      myEmailAddressRender();
+      try { $("my-email-registered").focus(); } catch {}
+    }
+    function myEmailUseOtherAccount() {
+      myEmailUi.editMailbox = true;
+      myEmailUi.editReg = false;
+      myEmailAddressRender();
+      try { $(myEmailUi.tab === "imap" ? "my-email-address" : "my-email-oauth-address").focus(); } catch {}
+    }
     function myEmailSelectTab(tab, focus = false) {
       myEmailUi.tab = tab;
       for (const t of MY_EMAIL_TABS) {
@@ -6894,6 +6944,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // One email-address model, said on screen (§3 item 7): only when the mailbox is another account.
       const differs = Boolean(d.configured && d.address && d.email_address && String(d.address).toLowerCase() !== String(d.email_address).toLowerCase());
       myEmailShow("my-email-registered-differs", differs ? `Your mailbox is a different account: ${d.address}.` : "");
+      if (document.activeElement !== $("my-email-registered")) myEmailUi.editReg = false;
       // 2. Mailbox: connected status, or the tabs.
       const connected = Boolean(d.configured);
       const mailboxesOff = d.email_available === false;
@@ -6917,6 +6968,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         myEmailSelectTab(myEmailUi.tab);
         myEmailPrefillServers();
       }
+      myEmailAddressRender();
       // 3. Notifications.
       const n = d.notifications || {};
       const nReason = d.notifications_unavailable_reason || "";
@@ -6988,9 +7040,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         btn.textContent = "Saved";
         if (typeof setTimeout === "function") setTimeout(() => { btn.textContent = "Save"; }, 2000);
         if (!state.myEmail || !state.myEmail.configured) {
-          if (!myEmailVal("my-email-address")) myEmailSet("my-email-address", address);
-          if (!myEmailVal("my-email-oauth-address")) myEmailSet("my-email-oauth-address", address);
+          if (!myEmailUi.editMailbox || !myEmailVal("my-email-address")) { myEmailSet("my-email-address", address); myEmailUi.discovered = null; myEmailPrefillServers(); }
+          if (!myEmailUi.editMailbox || !myEmailVal("my-email-oauth-address")) myEmailSet("my-email-oauth-address", address);
         }
+        state.myEmail = { ...(state.myEmail || {}), email_address: address };
+        myEmailUi.editReg = false;
+        myEmailAddressRender();
+        inlineState("my-email-message", address ? `Saved: sign-in codes and notifications go to ${address}.` : "Saved: no email address.", "ok", 4000);
       } catch (e) {
         myEmailShow("my-email-registered-error", emailErrorText(e));
       } finally {
@@ -7158,6 +7214,25 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         inlineState("my-email-folder-state", emailErrorText(e), "error");
       }
     }
+    // Reset times are the VIEWER's local time (DESIGN-v2 §11): the API's sentence carries the
+    // server's clock, so the two limit sentences are written here from the structured fields
+    // (an explicit table by reason_code); every other answer is the API's own sentence.
+    function emailLocalHHMM(iso) {
+      const d = new Date(String(iso || ""));
+      if (!Number.isFinite(d.getTime())) return "";
+      return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    }
+    function notifyTestSentence(out) {
+      const lim = out.limit;
+      const at = lim ? emailLocalHHMM(lim.resets_at) : "";
+      if (out.reason_code === "rate_limited" && lim && at) {
+        return `Not sent: ${lim.window === "day" ? "daily" : "hourly"} limit reached (${lim.used} of ${lim.limit} this ${lim.window === "day" ? "day" : "hour"}) — resets at ${at}.`;
+      }
+      if (out.reason_code === "queued_behind" && lim && at && typeof out.queued_behind === "number") {
+        return `Queued behind ${out.queued_behind} earlier notification${out.queued_behind === 1 ? "" : "s"}; they go out when the limit resets at ${at}.`;
+      }
+      return out.message;
+    }
     async function testMyNotifications() {
       // The answer is always the API's sentence (§3 item 8): "Sent to x@y." /
       // "Not sent: hourly limit reached (20 of 20 this hour) — resets at 14:05." ...
@@ -7170,7 +7245,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         if (!out || typeof out.message !== "string" || !out.message) {
           throw new Error("The test answer carries no message (gateway-api seam, DESIGN-v2 §6).");
         }
-        inlineState("my-email-notify-test-state", out.message, out.sent ? "ok" : "error", out.sent ? 6000 : 0);
+        inlineState("my-email-notify-test-state", notifyTestSentence(out), out.sent ? "ok" : "error", out.sent ? 6000 : 0);
       } catch (e) {
         inlineState("my-email-notify-test-state", emailErrorText(e), "error");
       } finally {
@@ -7261,6 +7336,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function bindMyEmail() {
       $("my-email-refresh").onclick = loadMyEmail;
       $("my-email-registered-save").onclick = saveMyEmailAddress;
+      $("my-email-registered-change").onclick = myEmailEditRegistered;
+      for (const b of Array.from(document.querySelectorAll ? document.querySelectorAll(".mailbox-address-other") : [])) b.onclick = myEmailUseOtherAccount;
       $("my-email-registered").onkeydown = (event) => { if (event && event.key === "Enter") saveMyEmailAddress(); };
       for (const t of MY_EMAIL_TABS) {
         $(`my-email-tab-${t}`).onclick = () => { myEmailSelectTab(t); if (t === "imap") myEmailPrefillServers(); };
@@ -12311,7 +12388,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // through the gateway's app door (POST /apps/observer/open validates the path).
       const tab = typeof window !== "undefined" && window.open ? window.open("about:blank", "_blank") : null;
       try {
-        const res = await api("/api/gateway/apps/observer/open", { method: "POST", body: JSON.stringify({ origin: appBrowserOrigin(), path }) });
+        // observer_path is the gateway path of an Observer page (app_proxy prefix + app id); the
+        // app door takes the path inside the app.
+        const prefix = "/apps/observer";
+        if (!path.startsWith(prefix + "/")) throw new Error(`observer_path ${path} is not an Observer page (gateway-api seam, DESIGN-v2 §6).`);
+        const res = await api("/api/gateway/apps/observer/open", { method: "POST", body: JSON.stringify({ origin: appBrowserOrigin(), path: path.slice(prefix.length) }) });
         if (tab) tab.location = res.open_url; else location.assign(res.open_url);
       } catch (e) {
         if (tab) tab.close();

@@ -217,6 +217,21 @@ try {
     // at once, then replaced by discovery `defaults` unless edited.
     const tabs = await page.$$eval("#my-email-connect [role=tab]", (ts) => ts.map((t) => [t.textContent.trim(), t.getAttribute("aria-selected")]));
     check(JSON.stringify(tabs) === JSON.stringify([["IMAP", "true"], ["Google", "false"], ["Microsoft", "false"]]), "IMAP first and default", tabs);
+    const editableAddr = () => page.evaluate(() => ["my-email-registered", "my-email-address", "my-email-oauth-address"].filter((id) => document.getElementById(id).checkVisibility()));
+    let vis = await editableAddr();
+    check(JSON.stringify(vis) === JSON.stringify(["my-email-address"]) && (await page.textContent("#my-email-registered-text")).startsWith("Not set yet"), "no address yet: the mailbox address is the ONE address field", vis);
+    await page.click("#my-email-registered-change");
+    vis = await editableAddr();
+    check(JSON.stringify(vis) === JSON.stringify(["my-email-registered"]) && (await page.locator("#my-email-pane-imap .mailbox-address-line").isVisible()), "editing card 1 folds the mailbox field to its read-only line", vis);
+    await page.fill("#my-email-registered", "admin@example.net");
+    await page.click("#my-email-registered-save");
+    await page.waitForFunction(() => document.getElementById("my-email-registered-text").textContent === "admin@example.net", null, { timeout: 10000 });
+    vis = await editableAddr();
+    const line = (await page.textContent("#my-email-pane-imap .mailbox-address-line")).trim();
+    check(vis.length === 0 && line === "Mailbox account: admin@example.net Use a different account", "address set: read-only lines, no editable address field", { vis, line });
+    await page.click("#my-email-pane-imap .mailbox-address-other");
+    vis = await editableAddr();
+    check(JSON.stringify(vis) === JSON.stringify(["my-email-address"]) && (await page.inputValue("#my-email-address")) === "admin@example.net", "Use a different account reveals the prefilled mailbox field, alone", vis);
     check(await page.evaluate(() => !document.getElementById("my-email-display-name") && document.getElementById("my-email-login-field").hidden && !Array.from(document.querySelectorAll("#my-email-pane-imap label")).some((l) => /user name|display name/i.test(l.textContent))), "no User name / Display name fields");
     await page.route("**/api/gateway/me/email/discover", async (route) => {
       await new Promise((r) => setTimeout(r, 600));
@@ -241,7 +256,8 @@ try {
     await page.click("#my-email-notify-test");
     await page.waitForFunction(() => document.getElementById("my-email-notify-test-state").textContent.startsWith("Not sent: hourly"), null, { timeout: 10000 });
     const limited = (await page.textContent("#my-email-notify-test-state")).trim();
-    check(limited === "Not sent: hourly limit reached (20 of 20 this hour) — resets at 14:05.", "rate_limited: the API's sentence, never 'queued'", limited);
+    const localAt = await page.evaluate(() => { const d = new Date("2026-10-01T12:05:00Z"); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; });
+    check(limited === `Not sent: hourly limit reached (20 of 20 this hour) — resets at ${localAt}.` && !/Z|T\d\d:/.test(limited), "rate_limited: a sentence with the viewer's local reset time, never 'queued' or ISO", limited);
     await page.unroute("**/api/gateway/me/notifications/test");
     await page.evaluate(() => { document.getElementById("my-email-advanced").open = true; });
     await labelScale(page, "#account-email-body", "email modal");
