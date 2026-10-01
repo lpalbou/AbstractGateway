@@ -43,15 +43,14 @@ NOTE = (
     "send with their email tools are not recorded."
 )
 
-# Observer links. The Observer reads exactly two hash routes (abstractobserver
-# src/ui/automations.ts:172-176 `parse_app_hash`: `#automations` and `#launch[/once|/automate]`,
-# wired in src/ui/app.tsx:869-880; nothing reads ?run= or a path), so:
-# - an automation event links to its Automations page;
-# - a run event has NO link (the Observer has no address that opens one run): `observer_path`
-#   stays null until the Observer serves one; then set OBSERVER_RUN_HASH (e.g. "#run/{run_id}").
+# Observer links: the Observer's hash routes (abstractobserver src/ui/automations.ts
+# `parse_app_hash`, wired in src/ui/app.tsx on load and hashchange): `#automations` (the
+# Automations page) and, since abstractobserver round2 32926ba, `#run/<run_id>` (that run in
+# Observe; the id is decodeURIComponent'ed, so it is quoted here). An Observer build older than
+# that opens a uuid run id at load too (its last-hash-segment rule), without the not-found sentence.
 OBSERVER_APP_ID = "observer"  # apps_manager.APPS
 OBSERVER_AUTOMATIONS_HASH = "#automations"
-OBSERVER_RUN_HASH: Optional[str] = None
+OBSERVER_RUN_HASH = "#run/{run_id}"
 
 
 def observer_app_path() -> str:
@@ -67,9 +66,11 @@ def observer_app_path() -> str:
 
 
 def observer_path_for(run_id: Optional[str]) -> Optional[str]:
-    if not run_id or OBSERVER_RUN_HASH is None:
+    if not run_id:
         return None
-    return observer_app_path() + OBSERVER_RUN_HASH.format(run_id=run_id)
+    from urllib.parse import quote
+
+    return observer_app_path() + OBSERVER_RUN_HASH.format(run_id=quote(str(run_id), safe=""))
 
 
 def observer_automations_path() -> str:
