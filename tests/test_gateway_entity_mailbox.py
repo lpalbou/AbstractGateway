@@ -85,6 +85,7 @@ def test_creator_connects_the_entity_mailbox_and_it_is_the_entitys_own(world, im
     card = c.get("/api/gateway/accounts/aster/email", headers=world["alice"]).json()
     assert card["mailbox"] == {"state": "connected", "address": ENTITY_ADDR, "provider": "imap", "reason": None}
     assert card["email_address"] == ENTITY_ADDR  # connecting set the entity's address
+    assert card["send_capable"] is True  # the same flags as GET /me/email (both legs stored)
     # The creator's own mailbox is untouched.
     mine = c.get("/api/gateway/me/email", headers=world["alice"]).json()
     assert mine["mailbox"]["state"] == "not_connected" and mine["email_address"] == ALICE
