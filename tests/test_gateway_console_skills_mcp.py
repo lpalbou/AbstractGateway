@@ -44,18 +44,18 @@ def test_sidebar_work_group_and_page_structure() -> None:
     assert ">Test connection</button>" in html
 
 
-def test_mcp_truth_sentence_is_the_gateways_and_matches_the_design() -> None:
-    assert AGENTS_NOTE == (
-        "Agents can't call MCP tools yet: registering a server records it and checks the connection; "
-        "using its tools in runs comes in a later version."
-    )
+def test_mcp_agents_sentence_is_the_gateways() -> None:
+    from abstractgateway.mcp_registry import AGENTS_OFFERED_NOTE
+
+    # Both sentences are true statements about what agents get (lane mcp-runs wired MCP into runs).
+    assert AGENTS_NOTE == "No server is offered to agents yet: turn on Enabled for agents for a tested server to offer its tools."
+    assert AGENTS_OFFERED_NOTE.startswith("Tools from enabled servers are offered to your agents.")
     source = _console_script()
     render = _slice_function(source, "renderMcpList")
-    assert 'skmcp.mcp.agents_note' in render
-    # Nothing on the page claims agents can use MCP tools.
+    assert "skmcp.mcp.agents_note" in render
     html = gateway_console_html()
     page = html[html.index('id="skmcp-pane-mcp"') : html.index('id="tab-runtimes"')]
-    assert "agents can use" not in page.lower() and "available to agents" not in page.lower()
+    assert "can't call" not in page and "later version" not in page
 
 
 def test_skill_rows_render_only_available_actions() -> None:
@@ -92,7 +92,7 @@ console.log(JSON.stringify(out));
 
 def test_mcp_rows_status_and_test_result() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "skmcpMore", "skmcpAgo", "mcpTransportText", "mcpStatusText", "mcpToolsCell", "mcpRowsMarkup", "mcpTestResultMarkup") + """
+    harness = HELPERS + _fns(source, "skmcpMore", "mcpAgentsBlockReason", "mcpAgentsControlMarkup", "skmcpAgo", "mcpTransportText", "mcpStatusText", "mcpToolsCell", "mcpRowsMarkup", "mcpTestResultMarkup") + """
 const now = Date.parse("2026-10-01T12:00:00Z");
 const ok = { ok: true, at: "2026-10-01T11:58:00Z", message: "Connected", tools: [{ name: "a", description: "A" }, { name: "b" }, { name: "c" }] };
 const rows = [
@@ -128,7 +128,7 @@ console.log(JSON.stringify(out));
 
 def test_mcp_modal_masks_saved_header_values() -> None:
     source = _console_script()
-    harness = HELPERS + _fns(source, "mcpTestResultMarkup", "mcpModalMarkup") + """
+    harness = HELPERS + _fns(source, "mcpTestResultMarkup", "mcpAgentsBlockReason", "mcpAgentsControlMarkup", "mcpModalMarkup") + """
 const m = { existing: { name: "docs", transport: "http", url: "https://e/mcp", headers: { Authorization: { fingerprint: "ab12cd34ef56" } } },
   transport: "http", url: "https://e/mcp", headers: [{ name: "Authorization", value: "", saved: true }], args: [], result: null };
 console.log(JSON.stringify([{ html: mcpModalMarkup(m) }]));
@@ -167,3 +167,35 @@ def test_skills_mcp_entry_and_page_are_admin_only() -> None:
     source = _console_script()
     assert '$("tab-button-skills").classList.toggle("hidden", !p.admin);' in source
     assert "if (!state.principal || !skmcpAdmin()) return;" in _slice_function(source, "openSkillsMcpPage")
+
+
+def test_enabled_for_agents_switch_rows_and_modal() -> None:
+    source = _console_script()
+    harness = HELPERS + _fns(source, "mcpAgentsBlockReason", "mcpAgentsControlMarkup") + """
+const ok = { ok: true, tools: [{ name: "a" }, { name: "b" }] };
+const out = [];
+out.push({ k: "off", html: mcpAgentsControlMarkup({ name: "docs", last_test: ok, enabled_for_agents: false, agents_status: "Not offered to agents" }) });
+out.push({ k: "pending", html: mcpAgentsControlMarkup({ name: "docs", last_test: ok, enabled_for_agents: false, agents_status: "Not offered to agents" }, { pending: "docs" }) });
+out.push({ k: "on", html: mcpAgentsControlMarkup({ name: "docs", last_test: { ok: false }, enabled_for_agents: true, agents_status: "Not offered: test the connection first" }) });
+out.push({ k: "untested", html: mcpAgentsControlMarkup({ name: "calc", last_test: { ok: false, message: "x" }, enabled_for_agents: false }) });
+out.push({ k: "archived", html: mcpAgentsControlMarkup({ name: "old", archived: true, last_test: ok, enabled_for_agents: false }) });
+out.push({ k: "new", html: mcpAgentsControlMarkup(null, { where: "modal" }) });
+console.log(JSON.stringify(out));
+"""
+    r = {x["k"]: x["html"] for x in _node(harness)}
+    off = r["off"]
+    assert 'role="switch"' in off and 'class="af-switch af-switch--sm"' in off and 'aria-checked="false"' in off
+    assert ">Enabled for agents<" in off and "Not offered to agents" in off and "aria-disabled" not in off
+    assert "skmcp-confirm" not in off
+    # Turning ON confirms inline first, naming what agents get.
+    assert "Offer its 2 tools to your agents? Each call asks for approval" in r["pending"]
+    assert 'data-mcp-agents-confirm="docs"' in r["pending"] and 'data-mcp-agents-cancel="docs"' in r["pending"]
+    # A switch that is on can always be turned off, even when the last test failed.
+    assert 'aria-checked="true"' in r["on"] and "aria-disabled" not in r["on"]
+    assert 'aria-disabled="true"' in r["untested"] and "Test the connection first" in r["untested"]
+    assert 'aria-disabled="true"' in r["archived"] and "Archived: unarchive it first." in r["archived"]
+    assert 'aria-disabled="true"' in r["new"] and "Save and test the server first" in r["new"]
+    # The row and the modal both carry the control, and the click goes to the mcp-runs route.
+    assert "mcpAgentsControlMarkup(" in _slice_function(source, "mcpRowsMarkup")
+    assert "mcpAgentsControlMarkup(" in _slice_function(source, "mcpModalMarkup")
+    assert "/agents`" in _slice_function(source, "setMcpAgents") and "{ enabled }" in _slice_function(source, "setMcpAgents")

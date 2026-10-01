@@ -6,7 +6,8 @@ Version · Trust · Source · actions View · Export · Archive (imported). The 
 (`af-modal af-modal--wide`) shows SKILL.md in a monospace editor with the metadata fields and ONE
 primary action: Save (imported), Duplicate to edit (curated), Unarchive (archived).
 
-MCP servers: one sentence says agents can't call MCP tools yet (runs do not read the registry);
+MCP servers: the gateway's `agents_note` sentence (whether agents are offered tools) and a per-server
+kit switch **Enabled for agents** (inline confirmation to turn on; lane mcp-runs owns the route);
 a table Name · Transport · Status (last test) · Tools · actions Edit · Test · Archive; the Add /
 Edit modal has Name, How to reach it (Command | URL tabs), headers (values masked once saved),
 description, **Test connection** (the real handshake, result inline) and primary **Save**.
@@ -45,7 +46,7 @@ SKILLS_MCP_CSS = r"""
 .skills-table th.sk-col-actions { width: 16rem; }
 .mcp-table th.mcp-col-name { width: 18%; }
 .mcp-table th.mcp-col-transport { width: auto; }
-.mcp-table th.mcp-col-status { width: 22%; }
+.mcp-table th.mcp-col-status { width: 26%; }
 .mcp-table th.mcp-col-tools { width: 9rem; }
 .mcp-table th.mcp-col-actions { width: 14rem; }
 .skmcp-name { font-weight: 600; }
@@ -63,6 +64,9 @@ SKILLS_MCP_CSS = r"""
 .skmcp-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 @media (min-width: 1024px) { .skmcp-actions { flex-wrap: nowrap; } }
 .skmcp-actions > button { white-space: nowrap; }
+.skmcp-agents { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 8px; }
+.skmcp-confirm { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: var(--font-size-base); }
+.skmcp-confirm__buttons { display: flex; gap: 6px; flex-wrap: wrap; }
 .skmcp-status.is-failed { color: var(--error, #d6336c); }
 .skmcp-tools > summary { cursor: pointer; min-height: 28px; }
 .skmcp-tools ul, .skmcp-test__tools { margin: 6px 0 0; padding-left: 18px; font-size: var(--font-size-md); }
@@ -116,7 +120,7 @@ SKILLS_MCP_JS = r"""
     const skmcp = {
       tab: "skills", opened: false,
       skills: null, skillsError: "", skillsArchived: false, search: "",
-      mcp: null, mcpError: "", mcpArchived: false,
+      mcp: null, mcpError: "", mcpArchived: false, agentsPending: "",
       skillModal: null, mcpModal: null, release: null,
     };
     const SKILL_TRUST_TEXT = { first_party: "First party", audited: "Audited", adopted: "Adopted", community: "Community", unverified: "Unverified", blocked: "Blocked" };
@@ -189,6 +193,37 @@ SKILLS_MCP_JS = r"""
       const items = tools.map((t) => `<li><code>${esc(t.name)}</code>${t.description ? ` — ${esc(t.description)}` : ""}</li>`).join("");
       return `<details class="skmcp-tools"><summary>${tools.length} tool${tools.length === 1 ? "" : "s"}</summary><ul>${items}</ul></details>`;
     }
+    // "Enabled for agents" (lane mcp-runs: POST /admin/mcp/servers/{name}/agents {enabled}): a kit
+    // af-switch labelled by the feature. Turning it ON asks inline first (the tools become callable by
+    // agents); OFF applies at once. ON is refused, with the reason shown, for an archived server or one
+    // whose last test did not succeed; a switch that is on can always be turned off.
+    function mcpAgentsBlockReason(s) {
+      if (!s) return "Save and test the server first: agents get the tools a successful test lists.";
+      if (s.enabled_for_agents) return "";
+      if (s.archived) return "Archived: unarchive it first.";
+      if (!(s.last_test && s.last_test.ok)) return "Test the connection first: agents get the tools a successful test lists.";
+      return "";
+    }
+    function mcpAgentsControlMarkup(s, opts) {
+      const where = (opts && opts.where) || "row";
+      const n = s ? esc(s.name) : "";
+      const on = !!(s && s.enabled_for_agents);
+      const reason = mcpAgentsBlockReason(s);
+      const rid = `mcp-agents-${where}-${n || "new"}-reason`;
+      const sw = `<button type="button" role="switch" class="af-switch af-switch--sm" aria-checked="${on ? "true" : "false"}" data-mcp-agents="${n}"`
+        + (reason ? ` aria-disabled="true" title="${esc(reason)}" aria-describedby="${rid}"` : "")
+        + `><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Enabled for agents</span></span></button>`;
+      const line = reason
+        ? `<span id="${rid}" class="skmcp-sub skmcp-agents__why">${esc(reason)}</span>`
+        : `<span class="skmcp-sub skmcp-agents__status" data-mcp-agents-status>${esc((s && s.agents_status) || "")}</span>`;
+      let confirm = "";
+      if (s && opts && opts.pending === s.name && !on) {
+        const k = ((s.last_test && s.last_test.tools) || []).length;
+        confirm = `<div class="skmcp-confirm" role="group" aria-label="Confirm Enabled for agents"><span>Offer its ${k} tool${k === 1 ? "" : "s"} to your agents? Each call asks for approval unless a run allows all tools.</span>`
+          + `<span class="skmcp-confirm__buttons"><button type="button" data-mcp-agents-confirm="${n}">Turn on</button><button type="button" class="secondary" data-mcp-agents-cancel="${n}">Cancel</button></span></div>`;
+      }
+      return `<div class="skmcp-agents">${sw}${line}${confirm}</div>`;
+    }
     function mcpRowsMarkup(rows, opts) {
       const admin = !!(opts && opts.admin);
       const archived = !!(opts && opts.archived);
@@ -213,7 +248,7 @@ SKILLS_MCP_JS = r"""
           + `${s.description ? `<span class="skmcp-sub">${esc(s.description)}</span>` : ""}`
           + `<span class="skmcp-sub skmcp-fold">${how}</span><div class="skmcp-fold">${skmcpMore(mcpTransportText(s), "skmcp-mono")}</div></td>`
           + `<td class="mcp-transport"><span class="skmcp-sub">${how}</span>${skmcpMore(mcpTransportText(s), "skmcp-mono")}</td>`
-          + `<td class="mcp-status"><span class="skmcp-status${st.failed ? " is-failed" : ""}">${esc(st.text)}</span></td>`
+          + `<td class="mcp-status"><span class="skmcp-status${st.failed ? " is-failed" : ""}">${esc(st.text)}</span>${admin ? mcpAgentsControlMarkup(s, { where: "row", pending: opts && opts.pending }) : ""}</td>`
           + `<td class="mcp-tools">${mcpToolsCell(s.last_test)}</td>`
           + `<td class="mcp-actions"><div class="skmcp-actions">${acts.join("")}</div></td></tr>`;
       }).join("");
@@ -297,7 +332,7 @@ SKILLS_MCP_JS = r"""
       if (!skmcp.mcp) { body.innerHTML = `<tr><td colspan="5" class="skmcp-empty">Reading the MCP servers...</td></tr>`; return; }
       // The truth sentence comes from the gateway (agents_note), never a client-side claim.
       $("mcp-truth").textContent = String(skmcp.mcp.agents_note || "");
-      body.innerHTML = mcpRowsMarkup(skmcp.mcp.servers || [], { admin: skmcpAdmin(), archived: skmcp.mcpArchived });
+      body.innerHTML = mcpRowsMarkup(skmcp.mcp.servers || [], { admin: skmcpAdmin(), archived: skmcp.mcpArchived, pending: skmcp.agentsPending });
     }
     function exportSkill(name) {
       // A plain navigation: the gateway's Content-Disposition names the zip.
@@ -447,6 +482,7 @@ SKILLS_MCP_JS = r"""
       return `<div class="skmcp-form">`
         + `<div class="skmcp-field">${editing ? `<span class="skmcp-label">Name</span><code>${esc(s.name)}</code>` : `<label for="mcp-f-name">Name</label><input id="mcp-f-name" type="text" autocomplete="off" spellcheck="false" value="${esc(m.name || "")}">`}<p class="skmcp-help">A short name for this server (letters, digits, - _ .); its tools will be named after it.</p></div>`
         + `<div class="skmcp-field"><label for="mcp-f-description">Description</label><input id="mcp-f-description" type="text" autocomplete="off" value="${esc(m.description || "")}"><p class="skmcp-help">What this server is for, for the admins who read this list.</p></div>`
+        + `<div class="skmcp-field skmcp-field--wide"><span class="skmcp-label">Agents</span>${mcpAgentsControlMarkup(m.existing || null, { where: "modal", pending: m.agentsPending })}</div>`
         + `<div class="skmcp-field skmcp-field--wide"><span class="skmcp-label" id="mcp-how-label">How to reach it</span>`
         + `<div class="af-tabs"><div class="af-tabs__list" role="tablist" aria-labelledby="mcp-how-label">`
         + `<button type="button" class="af-tabs__tab" role="tab" id="mcp-how-stdio" data-mcp-how="stdio" aria-controls="mcp-pane-stdio" aria-selected="${transport === "stdio"}"${transport === "stdio" ? "" : ' tabindex="-1"'}>Command</button>`
@@ -506,6 +542,9 @@ SKILLS_MCP_JS = r"""
     function renderMcpModal() {
       const m = skmcp.mcpModal;
       if (!m) return;
+      // The agents switch shows the server's current row (the list is re-read after each change).
+      if (m.existing) m.existing = { ...m.existing, ...(mcpServerRow(m.existing.name) || {}) };
+      m.agentsPending = skmcp.agentsPending;
       $("mcp-modal-title").textContent = m.existing ? `MCP server — ${m.existing.name}` : "Add MCP server";
       $("mcp-modal-body").innerHTML = mcpModalMarkup(m);
     }
@@ -566,6 +605,39 @@ SKILLS_MCP_JS = r"""
       } catch (e) {
         $("mcp-modal-note").textContent = `Not saved: ${skmcpErr(e)}`;
       }
+    }
+    function mcpServerRow(name) {
+      return (((skmcp.mcp && skmcp.mcp.servers) || []).find((x) => x.name === name)) || null;
+    }
+    async function setMcpAgents(name, enabled) {
+      skmcp.agentsPending = "";
+      try {
+        const row = await api(`/api/gateway/admin/mcp/servers/${encodeURIComponent(name)}/agents`, { method: "POST", body: JSON.stringify({ enabled }) });
+        skmcpMessage("mcp-message", `${name}: ${row.agents_status || (enabled ? "Offered to agents" : "Not offered to agents")}.`, "ok");
+        if (skmcp.mcpModal && skmcp.mcpModal.existing && skmcp.mcpModal.existing.name === name) skmcp.mcpModal.existing = { ...skmcp.mcpModal.existing, ...row };
+      } catch (e) {
+        skmcpMessage("mcp-message", `${name}: ${skmcpErr(e)}`, "error");
+        if (skmcp.mcpModal) $("mcp-modal-note").textContent = `${name}: ${skmcpErr(e)}`;
+      }
+      await loadMcpList();
+      if (skmcp.mcpModal) { mcpModalCollect(); renderMcpModal(); }
+    }
+    // One click handler for the switch and its inline confirmation (table rows and the modal).
+    function mcpAgentsClick(t) {
+      if (t.dataset.mcpAgentsConfirm) { setMcpAgents(t.dataset.mcpAgentsConfirm, true); return true; }
+      if (t.dataset.mcpAgentsCancel !== undefined && t.dataset.mcpAgentsCancel !== "" ) { skmcp.agentsPending = ""; renderMcpList(); if (skmcp.mcpModal) { mcpModalCollect(); renderMcpModal(); } return true; }
+      if (t.dataset.mcpAgents === undefined) return false;
+      const name = t.dataset.mcpAgents;
+      if (t.getAttribute("aria-disabled") === "true") {
+        skmcpMessage("mcp-message", `${name || "This server"}: ${t.title}`, "error");
+        return true;
+      }
+      const row = mcpServerRow(name);
+      if (row && row.enabled_for_agents) { setMcpAgents(name, false); return true; }
+      skmcp.agentsPending = name;
+      renderMcpList();
+      if (skmcp.mcpModal) { mcpModalCollect(); renderMcpModal(); }
+      return true;
     }
     async function mcpRowAction(kind, name) {
       if (kind === "edit") {
@@ -644,6 +716,7 @@ SKILLS_MCP_JS = r"""
         if (skmcpToggleMore(e)) return;
         const t = e.target && e.target.closest ? e.target.closest("button") : null;
         if (!t) return;
+        if (mcpAgentsClick(t)) return;
         if (t.dataset.mcpEdit) mcpRowAction("edit", t.dataset.mcpEdit);
         else if (t.dataset.mcpTest) mcpRowAction("test", t.dataset.mcpTest);
         else if (t.dataset.mcpArchive) mcpRowAction("archive", t.dataset.mcpArchive);
@@ -655,6 +728,7 @@ SKILLS_MCP_JS = r"""
       $("mcp-modal-body").onclick = (e) => {
         const t = e.target && e.target.closest ? e.target.closest("button") : null;
         if (!t || !skmcp.mcpModal) return;
+        if (mcpAgentsClick(t)) return;
         if (t.dataset.mcpHow) { mcpModalCollect(); skmcp.mcpModal.transport = t.dataset.mcpHow; renderMcpModal(); const b = $(`mcp-how-${t.dataset.mcpHow}`); if (b) b.focus(); }
         else if (t.dataset.mcpHeaderAdd) { mcpModalCollect(); skmcp.mcpModal.headers.push({ name: "", value: "", saved: false }); renderMcpModal(); }
         else if (t.dataset.mcpHeaderRemove) { mcpModalCollect(); skmcp.mcpModal.headers.splice(Number(t.dataset.mcpHeaderRemove), 1); renderMcpModal(); }

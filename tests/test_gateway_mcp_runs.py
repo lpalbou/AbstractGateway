@@ -236,7 +236,7 @@ def test_a_disabled_or_archived_server_offers_nothing(gateway, tmp_path, state):
         names = [i["name"] for i in gateway.get("/api/gateway/discovery/tools", headers=HEADERS).json()["items"]]
         assert MCP not in names and "read_file" in names
         inv = gateway.get("/api/gateway/mcp/servers", headers=HEADERS).json()
-        assert inv["agents_can_call"] is False and inv["agents_note"].startswith("Agents can't call MCP tools yet")
+        assert inv["agents_can_call"] is False and inv["agents_note"].startswith("No server is offered to agents yet")
         run_id = _start(gateway, {"tools": ["read_file", MCP]})
         _wait_until(lambda: _run(gateway, run_id).get("status") == "completed")
         assert all(MCP not in _offered_names(p) for p in LLM_PAYLOADS) and LLM_PAYLOADS
