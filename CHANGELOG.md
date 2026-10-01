@@ -11,9 +11,32 @@ Email settings follow one model across the consoles: your **email address** (whe
 notifications go) and your **mailbox** (the connection your agents and automations use) are named
 apart, the administrator has one switch, notifications are two switches, and the sign-in page says
 what happened to a code request. Needs AbstractCore with mailbox server discovery
-(`abstractcore.comms.email.discover_servers`).
+(`abstractcore.comms.email.discover_servers`) and its form defaults
+(`abstractcore.comms.email.discovery.server_defaults`).
 
 ### Added
+- `GET /api/gateway/admin/accounts`: users and entities in one list (role, email address, mailbox
+  state, runtime, Active, entity state) with each row's actions and, when one cannot apply, the
+  reason (an entity has no mailbox, no token to rotate and no delete).
+- `PUT /api/gateway/admin/accounts/{id}/active {"active"}`: the Active switch for users and entities.
+  Suspending an entity pauses it and switches its door credential off; resuming restores the state
+  it had before (kept in the new file `<data_dir>/auth/entity_suspended.json`).
+- `GET /api/gateway/admin/accounts/{id}/activity` and `GET /api/gateway/me/activity`: sign-ins,
+  token rotations, runs started, automation commands, account changes and email events from the
+  audit log (and its rotated files), newest first, read backwards within a fixed budget (well under
+  a second on a 13 MB log). The answer says what the log does not record.
+- Audit log lines now name who signed in (`signed_in`), the run a start created (`run`), the
+  automation and command (`automation`) and the account an administrator changed
+  (`account_change`).
+- `POST /api/gateway/me/email/discover` also returns `defaults`, the server fields a mailbox form
+  pre-fills (AbstractCore `server_defaults`).
+- `GET /api/gateway/bundles` items carry `source` (`shipped`, `published`, `imported`) and
+  `description` (the default entrypoint's).
+- `GET /api/gateway/admin/runtime-config`: every default-agent-workflow row carries `interface`,
+  `label`, `app`, `help`, `group` and `state` (`clients_choose`, `builtin`, `set`, `broken`) from
+  one interface table; `reason` is only set for a broken saved value.
+- docs-qa 0.1.2 ships ("Docs Q&A" with a plain description; otherwise the same as 0.1.1, which
+  stays installed); the native-loop and docs-qa build scripts write the shipped entrypoint names.
 - `POST /api/gateway/me/email/discover {"address"}` finds a mailbox's IMAP and SMTP servers from its
   address (known providers, the domain's autoconfig file, the Thunderbird ISPDB, DNS SRV, MX) and
   lists every step it tried.
@@ -41,6 +64,16 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
   https same-origin rule in security.md.
 
 ### Changed
+- `POST /api/gateway/me/notifications/test` answers with `sent`, `reason_code` (`no_mailbox`,
+  `mailbox_paused`, `rate_limited`, `queued_behind`, `send_failed`), a ready sentence in `message`
+  ("Not sent: hourly limit reached (20 of 20 this hour) — resets at 14:05.") and `limit`. Notices
+  held back by a send limit keep the reason and the retry time (`outbox.rate_limited` in
+  `GET /me/notifications`). `POST /me/email/test` carries a `message` too.
+- `/admin/users` rows and `GET /me/email` carry `email_address` and `mailbox` from one resolver, so
+  an administrator's own row matches their email card (it showed "—" / "not connected" when the
+  address lived in the gateway's operator setting).
+- Connecting a mailbox sets your email address when it is empty; the user name and display name
+  are optional (the discovered login or the address; the stored name or the address's local part).
 - The administrator's one switch is **Mailboxes for users** (capability `email`, on by default).
   **Agent email tools for users** (`email_agent_tools`) is now on by default, next to **Sign-in by
   email** under Advanced; each user still switches their own agent email tools on. On the first

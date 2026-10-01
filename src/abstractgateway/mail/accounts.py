@@ -57,9 +57,9 @@ from .core_mail import (
 )
 from .core_mail import legacy as core_legacy
 
-# The mailbox form's pre-filled server fields (DESIGN-v2 §3, §6): AbstractCore's own function,
-# imported directly so an AbstractCore without it fails at import, never silently.
-from abstractcore.comms.email.discovery import server_defaults
+# The mailbox form's pre-filled server fields (DESIGN-v2 §3, §6): AbstractCore's own function
+# through the facade, so an AbstractCore without it fails at import, never silently.
+from .core_mail import server_defaults
 
 from ..security.principal import GatewayPrincipal, local_admin_principal, safe_principal_component
 from ..users import gateway_data_dir_from_env
