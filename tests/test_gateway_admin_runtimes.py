@@ -127,9 +127,9 @@ def test_console_runtimes_tab_order_and_creation_modals() -> None:
     assert 'value="user" selected' in html and 'value="admin"' in html and 'value="readonly"' in html
     assert 'value="entity"' not in html
 
-    # The users table has no Tenant column (demoted to Advanced in the modal)
-    # and carries the entity-principal count note hook.
-    assert 'id="users-entity-note"' in html
+    # The users table has no Tenant column (demoted to Advanced in the modal). Round 2: entities
+    # are rows of the one Accounts table, so the separate entity-principal count note is gone.
+    assert 'id="users-entity-note"' not in html
 
     # Shared abstractuic dialogue classes ride the console conversations.
     assert "pc-chat-item" in html and "pc-chat-thread" in html
