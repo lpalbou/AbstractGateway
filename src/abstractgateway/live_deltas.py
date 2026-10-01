@@ -92,7 +92,8 @@ _role_lock = threading.Lock()
 # 0.8.1: the run facade's in-process children (`run_facade.inline_run_active`, the runner skips
 # them) and the feeder's own-automatic-mail guard (`EmailInboxFeeder(is_own_sent=...)`).
 # 0.8.2: pausing an automation also stops its retries (an occurrence in retry backoff is cancelled).
-ABSTRACTRUNTIME_FLOOR = "0.8.2"
+# 0.8.3: registered MCP servers run through integrations.abstractcore.mcp_facade.
+ABSTRACTRUNTIME_FLOOR = "0.8.3"
 
 
 class LiveDeltaError(RuntimeError):
