@@ -78,7 +78,7 @@ A typical path from a fresh install to a working local model:
    memory, one card per model with its 4-bit and 8-bit builds. Click
    **Download** on the build you want; its progress bar shows on the row.
 3. When the download finishes, the row reads *Downloaded*. Click **Use as
-   default**: the gateway's text route now uses it.
+   default**: the gateway's text route uses it from then on.
 
 The same steps are available later in the **Engines** and **Models** tabs (see
 [console.md](./console.md#models-and-engines-tabs)) and from the command line
@@ -100,9 +100,10 @@ run the same guide in the terminal console on that machine:
 
 ```bash
 cargo install abstractgateway-console
-abstractgateway-console --url http://127.0.0.1:8080 \
-  --token-file "<data dir>/auth/bootstrap-admin-token"
+abstractgateway-console --url http://127.0.0.1:8080 --token <token>
 ```
+
+`<token>` is the admin token `abstractgateway serve` prints when it starts.
 
 It opens the setup guide for an admin whose first run is not completed, with
 the same steps through the same gateway routes, and records **Finish** or

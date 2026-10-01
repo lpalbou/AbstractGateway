@@ -2,8 +2,8 @@
 
 Gateway packages `deep-research@0.1.8.flow` as a supported shipped bundle. It
 is available from the normal bundle registry alongside `basic-agent` when the
-packaged bundle directory is used. It replaces the `dp-research` bundle id,
-which is no longer shipped.
+packaged bundle directory is used. The `dp-research` bundle id is not
+shipped; use `deep-research`.
 
 ## Contract
 

@@ -5,13 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.0] - 2026-10-01
 
 Email settings follow one model across the consoles: your **email address** (where sign-in codes and
 notifications go) and your **mailbox** (the connection your agents and automations use) are named
 apart, the administrator has one switch, notifications are two switches, and the sign-in page says
-what happened to a code request. Needs AbstractCore with mailbox server discovery
-(`abstractcore.comms.email.discover_servers`).
+what happened to a code request. The consoles work behind Tailscale or another https proxy, and the
+server file helpers never serve the gateway's data folder (see Security).
+
+Needs AbstractCore 2.22.0 (mailbox server discovery, `abstractcore.comms.email.discover_servers`)
+and AbstractRuntime 0.8.2; the floors are raised in the base install and in the `apple`, `gpu` and
+`embeddings` extras. The terminal console is `abstractgateway-console` 0.13.0.
+
+### Migration notes
+- **Email settings model (version 3).** On the first start `capabilities.json` moves to version 3.
+  A connected mailbox stays connected and keeps its settings. A user whose own Agent email tools
+  switch was on while the tools were not available to them gets a per-user override that keeps
+  them off; the audit log records it. Saved notification preferences carry over to the two
+  switches (`job_failed` = job failed or automation failed).
+- `POST /api/gateway/session/recovery/request` says what happened (`sent: false` with a
+  `reason_code`: `no_email_address`, `no_mailbox`, `send_failed` or `too_many_requests`) instead of
+  always answering that a code is on its way; show its `message` to the person signing in.
 
 ### Added
 - `POST /api/gateway/me/email/discover {"address"}` finds a mailbox's IMAP and SMTP servers from its

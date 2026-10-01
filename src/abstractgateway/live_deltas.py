@@ -91,7 +91,8 @@ _role_lock = threading.Lock()
 # (`Runtime.set_email_context_resolver` / `set_email_binding` / `set_event_inbox`).
 # 0.8.1: the run facade's in-process children (`run_facade.inline_run_active`, the runner skips
 # them) and the feeder's own-automatic-mail guard (`EmailInboxFeeder(is_own_sent=...)`).
-ABSTRACTRUNTIME_FLOOR = "0.8.1"
+# 0.8.2: pausing an automation also stops its retries (an occurrence in retry backoff is cancelled).
+ABSTRACTRUNTIME_FLOOR = "0.8.2"
 
 
 class LiveDeltaError(RuntimeError):

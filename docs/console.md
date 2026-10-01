@@ -361,8 +361,7 @@ abstractgateway-console --help
 records in `~/.abstractframework/gateway.json` (a loopback address only), else
 `http://127.0.0.1:8080`; when that gateway stops answering, the console reads
 the file again and follows it to a new port. Give the token with `--token
-<token>` or paste it on the Connection screen (`--token-file PATH` and
-`ABSTRACTGATEWAY_AUTH_TOKEN` remain as legacy aliases for existing scripts).
+<token>` or paste it on the Connection screen.
 When sign-in fails, the Connection screen says whether no token was
 sent or the token was rejected. When the gateway offers sign-in by email, the
 screen shows **Forgot your token? Email me a sign-in code** under your gateway

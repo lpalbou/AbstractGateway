@@ -287,7 +287,7 @@ curl -sS -X PUT -H "$ADMIN" "$BASE_URL/api/gateway/admin/email/capabilities" -d 
 ```
 
 Per-user overrides (`PUT /api/gateway/admin/users/{user_id}/email {"enabled"?, "agent_tools"?}`)
-are still honoured; the consoles no longer create them and show an existing one (a `user` source in
+are honoured; the consoles do not create them and show an existing one (a `user` source in
 the `email_account.capabilities` of `GET /api/gateway/admin/users`) as "not allowed for this user"
 with a **Reset** action (`{"inherit": ["email", "email_agent_tools"]}`).
 

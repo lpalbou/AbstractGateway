@@ -1,11 +1,11 @@
 # Changelog — abstractgateway-console
 
-## [Unreleased]
+## 0.13.0 (2026-10-01)
 
-Needs abstractcore-console 0.4. The new email routes (`POST /me/email/discover`, `PUT /me/email/address`,
-`PUT /me/email/notifications`) and the honest sign-in-by-email answers need the AbstractGateway release that
-carries them; against an older gateway the page still reads (missing fields fall back), and a write to a route the
-gateway does not have fails with its error.
+Needs abstractcore-console 0.4 and AbstractGateway 0.10.0 (the email routes `POST /me/email/discover`,
+`PUT /me/email/address`, `PUT /me/email/notifications`, `PUT /me/email/folder` and the sign-in-by-email answers).
+Against an older gateway the page still reads (missing fields fall back), and a write to a route the gateway does
+not have fails with its error.
 
 ### Changed
 - **Switches for every on/off setting.** A setting reads `[x] Feature` (accent, bold) when on, `[ ] Feature` when off

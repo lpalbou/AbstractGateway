@@ -166,8 +166,6 @@ abstractgateway-console --gateway-url http://127.0.0.1:8080 --token <token>
 `ABSTRACTGATEWAY_URL` (legacy alias), else `~/.abstractframework/gateway.json`
 (the address this computer's gateway records), else `http://127.0.0.1:8080`.
 Give the token with `--token <token>` or paste it on the Connection screen.
-Legacy aliases, kept for existing scripts: `--token-file PATH` (the token read
-from a file) and the `ABSTRACTGATEWAY_AUTH_TOKEN` environment variable.
 
 The crate is released from the AbstractGateway repository
 (`console-tui/`); see [CHANGELOG.md](CHANGELOG.md). The gateway-side guide is

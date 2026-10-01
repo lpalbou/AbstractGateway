@@ -88,7 +88,7 @@ A typical path from a fresh install to a working local model:
    memory, one card per model with its 4-bit and 8-bit builds. Click
    **Download** on the build you want; its progress bar shows on the row.
 3. When the download finishes, the row reads *Downloaded*. Click **Use as
-   default**: the gateway's text route now uses it.
+   default**: the gateway's text route uses it from then on.
 
 The same steps are available later in the **Engines** and **Models** tabs (see
 [console.md](docs/console.md#models-and-engines-tabs)) and from the command line
@@ -110,9 +110,10 @@ run the same guide in the terminal console on that machine:
 
 ```bash
 cargo install abstractgateway-console
-abstractgateway-console --url http://127.0.0.1:8080 \
-  --token-file "<data dir>/auth/bootstrap-admin-token"
+abstractgateway-console --url http://127.0.0.1:8080 --token <token>
 ```
+
+`<token>` is the admin token `abstractgateway serve` prints when it starts.
 
 It opens the setup guide for an admin whose first run is not completed, with
 the same steps through the same gateway routes, and records **Finish** or
@@ -310,8 +311,8 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.8.1` (per-user email: run binding, event inbox, `email.received@1`, the email facade; the automatic-mail loop guard and in-process media children)
-- `abstractcore>=2.20.2` (the mail library behind per-user email, automatic-mail marking, the media-only capability host)
+- `AbstractRuntime>=0.8.2` (per-user email: run binding, event inbox, `email.received@1`, the email facade; the automatic-mail loop guard, in-process media children, and pause stopping an automation's retries)
+- `abstractcore>=2.22.0` (the mail library behind per-user email, mailbox server discovery and defaults, automatic-mail marking, the media-only capability host)
 - `abstractvoice>=0.13.0` (the voice listings import `abstractvoice.engine_runtime`)
 - `abstractagent>=0.3.17`
 - `AbstractMemory[lancedb]>=0.3.0`
@@ -3830,7 +3831,7 @@ deliberately narrower than what history views display):
   `input_data.session_history_max_chars` are ignored and listed in
   `_runtime.session_history.ignored_inputs`. The environment variables
   `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_MESSAGES` and
-  `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS` are no longer read.
+  `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS` are not read.
 - Failures degrade to a labeled `_runtime.session_history` `#FALLBACK` note
   and an unseeded start — never a blocked run. Success records the window on
   the run as `_runtime.session_history`: `{seeded, policy, max_tokens,
@@ -5768,8 +5769,7 @@ abstractgateway-console --help
 records in `~/.abstractframework/gateway.json` (a loopback address only), else
 `http://127.0.0.1:8080`; when that gateway stops answering, the console reads
 the file again and follows it to a new port. Give the token with `--token
-<token>` or paste it on the Connection screen (`--token-file PATH` and
-`ABSTRACTGATEWAY_AUTH_TOKEN` remain as legacy aliases for existing scripts).
+<token>` or paste it on the Connection screen.
 When sign-in fails, the Connection screen says whether no token was
 sent or the token was rejected. When the gateway offers sign-in by email, the
 screen shows **Forgot your token? Email me a sign-in code** under your gateway
@@ -5947,17 +5947,31 @@ curl -sS -H "Authorization: Bearer $TOKEN" \
 
 `flow_id` values below are what you pass to the API — an entrypoint's display
 name is not resolvable. A `*` marks the bundle's default entrypoint, used when
-you omit `flow_id`.
+you omit `flow_id`. The name and the one-line description are what the
+Workflows page and the console TUI show for each bundle.
 
-| Bundle | Version | `flow_id` (interfaces) | What it does |
-| --- | --- | --- | --- |
-| `basic-agent` | 0.0.4 | `81795ea9`* (`abstractcode.agent.v1`) | The framework default chat agent: one Agent node with tools, memory, and status updates. Serves entity phases and chat hosts. |
-| `coding-agent` | 0.2.8 | `coder` (`abstractcode.agent.v1`), `coding-agent`* (`abstractcode.coding.v1`) | Verify-gated coding: a builder agent writes code, an independent verifier runs build/execute/match gates each round, and failures feed back as reprompts until gates pass. `coder` is the chat entrypoint; `coding-agent` is the structured pipeline. |
-| `deep-research` | 0.1.8 | `deep-research`* (`abstractcode.agent.v1`, `abstractresearch.deep.v1`) | Production research with adversarial review, a verified source ledger, and Markdown/PDF/DOCX export. See [deep-research.md](docs/deep-research.md). |
-| `co-scientist` | 0.2.1 | `co-scientist`* (`abstractresearch.coscientist.v1`) | Multi-agent hypothesis engine: literature grounding through the deep-research investigation flows, then cycles of generation, reflection, Elo-ranked pairwise debate, and evolution into a final reviewed research overview. |
-| `abstractassistant-orchestrator` | 0.0.0 | `d5d4e5a1`* (`abstractassistant.agent.v1`) | Orchestrator for the compact AbstractAssistant tray surface. |
-| `docs-qa` | 0.1.1 | `docsqa001`* | Documentation Q&A grounded on the asking app's `llms.txt` corpus; history comes from the run's session (`use_session_history`); also auto-published into the tenant workflow catalog at boot. |
-| `react-agent` / `codeact-agent` / `memact-agent` | 0.1.0 | `react`* / `codeact`* / `memact`* (`abstractcode.agent.v1`) | Native ReAct / CodeAct / MemAct agent loops (abstractagent). |
+| Bundle | Version | Name | `flow_id` (interfaces) | What it does |
+| --- | --- | --- | --- | --- |
+| `basic-agent` | 0.0.5 | Basic agent | `81795ea9`* (`abstractcode.agent.v1`) | Chat agent: answers a prompt in one agent loop that can use tools and memory, and returns the reply. The default agent for chat hosts and entities. |
+| `coding-agent` | 0.2.8 | Coding agent | `coding-agent`* (`abstractcode.coding.v1`) | Takes a build request and a workspace, writes the code, and runs build and run checks each round until they pass; returns a report. |
+| | | Coding agent (chat) | `coder` (`abstractcode.agent.v1`) | Chat version of the coding agent: builds what the prompt asks in the session workspace, checks it each round, and replies with a report. |
+| `deep-research` | 0.1.8 | Deep research | `deep-research`* (`abstractcode.agent.v1`, `abstractresearch.deep.v1`) | Takes a research question, searches the web, has three critics review the draft, and writes a cited report (Markdown, PDF, DOCX). See [deep-research.md](docs/deep-research.md). |
+| `co-scientist` | 0.2.1 | Co-scientist | `co-scientist`* (`abstractresearch.coscientist.v1`) | Takes a research goal, grounds it in web sources, then generates, debates and ranks hypotheses over cycles; returns a research overview. |
+| `abstractassistant-orchestrator` | 0.0.0 | AbstractAssistant Orchestrator | `d5d4e5a1`* (`abstractassistant.agent.v1`) | The menu-bar Assistant's workflow: sends each request to a tools agent or to image, video or music generation, and returns the reply. |
+| `docs-qa` | 0.1.2 | Docs Q&A | `docsqa001`* | Answers a question about an app from that app's documentation (its llms.txt), citing it, and says so when the docs do not cover it. History comes from the run's session; also auto-published into the tenant workflow catalog at boot. 0.1.2 changes only the name and description; 0.1.1 and 0.1.0 stay installed for what pins them. |
+| `react-agent` | 0.1.0 | ReAct agent | `react`* (`abstractcode.agent.v1`) | Chat agent (ReAct): reasons step by step and calls tools until it can answer the prompt, then returns the reply. |
+| `codeact-agent` | 0.1.0 | CodeAct agent | `codeact`* (`abstractcode.agent.v1`) | Chat agent (CodeAct): works on the prompt mainly by writing and running Python code, then returns the reply. |
+| `memact-agent` | 0.1.0 | MemAct agent | `memact`* (`abstractcode.agent.v1`) | Chat agent (MemAct): keeps a long-term memory that it reads and updates on each turn, can call tools, and returns the reply. |
+
+A source checkout (`flows/bundles/` in the repository) also carries building
+blocks that the wheel does not ship: `map-reduce` (Map-reduce),
+`structured-extract` (Structured extraction), `adversarial-review` (Adversarial
+review) and six deliberation patterns (`meta-baseline`, `meta-consensus`,
+`meta-debate`, `meta-deliberate`, `meta-perspectives`, `meta-reflect`).
+
+The names and descriptions come from one table in the AbstractFlow repository
+(`scripts/workflow_labels.py`); `scripts/relabel_shipped_bundles.py check`
+verifies that the build scripts and the latest shipped bundles carry it.
 
 Interfaces are how clients pick workflows without knowing bundle internals:
 anything declaring `abstractcode.agent.v1` can serve a plain chat prompt.
@@ -7037,7 +7051,7 @@ curl -sS -X PUT -H "$ADMIN" "$BASE_URL/api/gateway/admin/email/capabilities" -d 
 ```
 
 Per-user overrides (`PUT /api/gateway/admin/users/{user_id}/email {"enabled"?, "agent_tools"?}`)
-are still honoured; the consoles no longer create them and show an existing one (a `user` source in
+are honoured; the consoles do not create them and show an existing one (a `user` source in
 the `email_account.capabilities` of `GET /api/gateway/admin/users`) as "not allowed for this user"
 with a **Reset** action (`{"inherit": ["email", "email_agent_tools"]}`).
 
@@ -7113,7 +7127,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.9.0
+docker pull ghcr.io/lpalbou/abstractgateway:0.10.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -7121,7 +7135,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.9.0-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.10.0-gpu
 ```
 
 The image names `ghcr.io/lpalbou/abstractgateway-server:*` and
@@ -7412,7 +7426,7 @@ Before a version is published to PyPI, build from the checkout:
 
 ```bash
 ABSTRACTGATEWAY_INSTALL_MODE=local \
-ABSTRACTGATEWAY_IMAGE_TAG=0.9.0-local \
+ABSTRACTGATEWAY_IMAGE_TAG=0.10.0-local \
 docker compose -f docker/abstractgateway-server/compose.yml up -d --build
 ```
 
@@ -7576,7 +7590,7 @@ Release images are published to GHCR. The default image is the light,
 portable server image:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.9.0
+docker pull ghcr.io/lpalbou/abstractgateway:0.10.0
 ```
 
 NVIDIA hosts can try the experimental full GPU image when local
@@ -7584,7 +7598,7 @@ vLLM/HuggingFace/Diffusers engines are wanted. This image is published
 best-effort until it has a real CUDA build and smoke gate:
 
 ```bash
-docker pull ghcr.io/lpalbou/abstractgateway:0.9.0-gpu
+docker pull ghcr.io/lpalbou/abstractgateway:0.10.0-gpu
 ```
 
 The `abstractgateway-server` and `abstractgateway-server-nvidia` GHCR names are
@@ -7918,7 +7932,7 @@ Related repos:
 ## Prerequisites
 
 - Python `>=3.10` (see `pyproject.toml`)
-- AbstractRuntime 0.8.1 or later, installed with the gateway; the gateway
+- AbstractRuntime 0.8.2 or later, installed with the gateway; the gateway
   refuses to start on an older runtime and names the version to install
 - Workflows: none needed to start. The gateway serves its shipped bundles
   ([shipped-workflows.md](docs/shipped-workflows.md)); you can point it at your
@@ -8109,7 +8123,7 @@ customization.
 
 On first start, the container creates `default/admin` and writes the token to
 `runtime/auth/bootstrap-admin-token`. NVIDIA hosts can try
-`ghcr.io/lpalbou/abstractgateway:0.9.0-gpu` with the compose overlay in
+`ghcr.io/lpalbou/abstractgateway:0.10.0-gpu` with the compose overlay in
 `docker/abstractgateway-server/compose.nvidia.yml`.
 It is experimental until a real CUDA build/smoke gate is part of release
 validation.
@@ -8641,13 +8655,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.10.0] - 2026-10-01
 
 Email settings follow one model across the consoles: your **email address** (where sign-in codes and
 notifications go) and your **mailbox** (the connection your agents and automations use) are named
 apart, the administrator has one switch, notifications are two switches, and the sign-in page says
-what happened to a code request. Needs AbstractCore with mailbox server discovery
-(`abstractcore.comms.email.discover_servers`).
+what happened to a code request. The consoles work behind Tailscale or another https proxy, and the
+server file helpers never serve the gateway's data folder (see Security).
+
+Needs AbstractCore 2.22.0 (mailbox server discovery, `abstractcore.comms.email.discover_servers`)
+and AbstractRuntime 0.8.2; the floors are raised in the base install and in the `apple`, `gpu` and
+`embeddings` extras. The terminal console is `abstractgateway-console` 0.13.0.
+
+### Migration notes
+- **Email settings model (version 3).** On the first start `capabilities.json` moves to version 3.
+  A connected mailbox stays connected and keeps its settings. A user whose own Agent email tools
+  switch was on while the tools were not available to them gets a per-user override that keeps
+  them off; the audit log records it. Saved notification preferences carry over to the two
+  switches (`job_failed` = job failed or automation failed).
+- `POST /api/gateway/session/recovery/request` says what happened (`sent: false` with a
+  `reason_code`: `no_email_address`, `no_mailbox`, `send_failed` or `too_many_requests`) instead of
+  always answering that a code is on its way; show its `message` to the person signing in.
 
 ### Added
 - `POST /api/gateway/me/email/discover {"address"}` finds a mailbox's IMAP and SMTP servers from its
@@ -12242,8 +12270,8 @@ book), not the operator's HTTP surface.
 
 Gateway packages `deep-research@0.1.8.flow` as a supported shipped bundle. It
 is available from the normal bundle registry alongside `basic-agent` when the
-packaged bundle directory is used. It replaces the `dp-research` bundle id,
-which is no longer shipped.
+packaged bundle directory is used. The `dp-research` bundle id is not
+shipped; use `deep-research`.
 
 ## Contract
 

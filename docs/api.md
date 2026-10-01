@@ -200,7 +200,7 @@ deliberately narrower than what history views display):
   `input_data.session_history_max_chars` are ignored and listed in
   `_runtime.session_history.ignored_inputs`. The environment variables
   `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_MESSAGES` and
-  `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS` are no longer read.
+  `ABSTRACTGATEWAY_SESSION_HISTORY_MAX_CHARS` are not read.
 - Failures degrade to a labeled `_runtime.session_history` `#FALLBACK` note
   and an unseeded start — never a blocked run. Success records the window on
   the run as `_runtime.session_history`: `{seeded, policy, max_tokens,
