@@ -139,6 +139,33 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     ("PUT", "/api/gateway/me/email/notifications"),
     # The caller's OWN mailbox folder (same plane rule as PUT /me/email/limits).
     ("PUT", "/api/gateway/me/email/folder"),
+    # Entity mailboxes (round 3 §3.1): the /accounts/{account_id}/... mirror of the
+    # routes above. The handler (routes/email.py `_entity_target`) admits only an
+    # admin or the entity's CREATOR, refuses user targets, entities the caller
+    # can't see and archived entities (403), and acts on that entity's own plane;
+    # nobody reads its mail.
+    ("PUT", "/api/gateway/accounts/{account_id}/email"),
+    ("DELETE", "/api/gateway/accounts/{account_id}/email"),
+    ("POST", "/api/gateway/accounts/{account_id}/email/test"),
+    ("PUT", "/api/gateway/accounts/{account_id}/email/policy"),
+    ("POST", "/api/gateway/accounts/{account_id}/email/policy/check"),
+    ("PUT", "/api/gateway/accounts/{account_id}/email/limits"),
+    ("PUT", "/api/gateway/accounts/{account_id}/email/enabled"),
+    ("PUT", "/api/gateway/accounts/{account_id}/email/agent-tools"),
+    ("POST", "/api/gateway/accounts/{account_id}/email/oauth/start"),
+    ("POST", "/api/gateway/accounts/{account_id}/email/oauth/poll"),
+    ("POST", "/api/gateway/accounts/{account_id}/email/oauth/finish"),
+    ("POST", "/api/gateway/accounts/{account_id}/email/oauth/cancel"),
+    ("PUT", "/api/gateway/accounts/{account_id}/notifications"),
+    ("POST", "/api/gateway/accounts/{account_id}/notifications/test"),
+    ("POST", "/api/gateway/accounts/{account_id}/email/discover"),
+    ("PUT", "/api/gateway/accounts/{account_id}/email/address"),
+    ("PUT", "/api/gateway/accounts/{account_id}/email/notifications"),
+    ("PUT", "/api/gateway/accounts/{account_id}/email/folder"),
+    # Archiving an entity YOU created (round 3 §2): the handler admits only the
+    # caller's own entities (anything else answers 404 like a missing account);
+    # only an admin unarchives (/admin/accounts/{id}/unarchive, admin-gated).
+    ("POST", "/api/gateway/me/accounts/{account_id}/archive"),
     # Account recovery by email (framework backlog 0992): the public writes
     # below — single-use HMAC-stored codes, 10-minute expiry, rate-limited
     # per account and client address, a constant answer (no enumeration);
