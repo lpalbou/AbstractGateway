@@ -79,7 +79,7 @@ console.log(JSON.stringify([out]));
     assert out["afterFail"] == {"tone": "err", "head": "Not saved", "text": "agents.streaming_default must be true or false"}
 
 
-def test_skills_block_shows_path_source_bundled_version_count_and_refresh() -> None:
+def test_skills_block_shows_path_source_bundled_version_and_refresh() -> None:
     from test_gateway_console_offline import _console_script, _node, _slice_function
 
     source = _console_script()
@@ -109,13 +109,13 @@ console.log(JSON.stringify([out]));
 """
     out = _node(harness)[0]
     three = out["three"]
-    assert "Reads <code>/d/skills/registry</code>" in three  # path
-    assert "The gateway&#39;s own copy" in three  # source word
-    assert "Curated shelf shipped with this gateway: version 2026.09.25" in three  # bundled version
-    assert "3 skills on this shelf" in three  # count
-    assert "Refresh the curated shelf" in three and "data-skills-shelf-reseed" in three
-    assert "Counting the skills on this shelf..." in out["counting"]
-    assert "1 skill on this shelf" in out["one"]
-    assert "Could not count the skills on this shelf: HTTP 500" in out["failed"]
-    assert "This gateway did not list its skills." in out["unlisted"]
-    assert "Saved setting" in out["noVersion"] and "The curated shelf version is not reported by this gateway." in out["noVersion"]
+    # DESIGN-v3 §6.1 + C3F review: the block is the folded "Shelf folder" disclosure under the
+    # Skills table — the folder (placeholder = the gateway's own copy), one helper line with the
+    # bundled version, "Refresh curated shelf" the only button. The count lives in the table
+    # itself (one row per skill), so the block no longer repeats it.
+    assert 'placeholder="/d/skills/registry"' in three  # path
+    assert "Empty: the gateway's own copy of the curated shelf (version 2026.09.25)" in three  # source + bundled version
+    assert ">Refresh curated shelf<" in three and "data-skills-shelf-reseed" in three
+    assert "skills on this shelf" not in three and "Reads <code>" not in three
+    assert "Saved setting" in out["noVersion"] and 'value="/x"' in out["noVersion"]
+    assert "(version" not in out["noVersion"]

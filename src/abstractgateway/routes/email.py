@@ -398,6 +398,56 @@ async def me_email_get(request: Request) -> Any:
     return await _call(run)
 
 
+def _reload_my_toolsets(principal: GatewayPrincipal, plane: EmailPlane) -> bool:
+    """Rebuild THIS principal's host toolsets after a change that decides whether agents get
+    the email tools (connect, disconnect, Active, Agent email tools): the lists are built with
+    the host, and a run started from a stale host never receives a tool the client lists as
+    enabled (operator report 2026-10-01). Only an already-built host is reloaded — never a
+    first build from here; the host also re-checks the rule at every run start. An entity's
+    plane (the `/accounts/{id}/...` mirror) has no host: its runtime reads the switch at each
+    tool call (entities.py), so nothing is reloaded."""
+
+    if plane.is_entity:
+        return False
+    try:
+        from .. import service as service_mod
+
+        built = (
+            service_mod.principal_service_cached(principal)
+            if service_mod.gateway_multi_user_enabled()
+            else service_mod._service is not None
+        )
+        if not built:
+            return False
+        service_mod.get_gateway_service().host.reload_bundles_from_disk()
+        return True
+    except Exception:  # noqa: BLE001 - the run-start re-check applies either way
+        return False
+
+
+def _reload_every_toolset() -> int:
+    """An administrator's capability change (Mailboxes for users, Agent email tools for users)
+    moves the rule for EVERY user: rebuild every host already built. Returns how many."""
+
+    try:
+        from .. import service as service_mod
+
+        with service_mod._service_lock:
+            services = list(service_mod._services_by_principal.values())
+            if service_mod._service is not None:
+                services.append(service_mod._service)
+    except Exception:  # noqa: BLE001
+        return 0
+    done = 0
+    for svc in services:
+        try:
+            svc.host.reload_bundles_from_disk()
+            done += 1
+        except Exception:  # noqa: BLE001 - each host re-checks at its next run start
+            continue
+    return done
+
+
 @router.post(
     "/me/email/discover",
     summary="Find my mailbox's IMAP and SMTP servers from its address",
@@ -427,21 +477,20 @@ async def me_email_put(request: Request, body: ConnectBody) -> Any:
     principal, plane = _self_plane(request)
 
     def run() -> Dict[str, Any]:
-        return {
-            "ok": True,
-            **mail_accounts.connect_password(
-                plane,
-                address=body.address,
-                password=body.password,
-                username=body.username,
-                display_name=body.display_name,
-                imap=_server_dict(body.imap),
-                smtp=_server_dict(body.smtp),
-                test=body.test,
-                allow_ca_file=principal.is_admin(),
-                actor=_actor(principal),
-            ),
-        }
+        out = mail_accounts.connect_password(
+            plane,
+            address=body.address,
+            password=body.password,
+            username=body.username,
+            display_name=body.display_name,
+            imap=_server_dict(body.imap),
+            smtp=_server_dict(body.smtp),
+            test=body.test,
+            allow_ca_file=principal.is_admin(),
+            actor=_actor(principal),
+        )
+        out["tools_reloaded"] = _reload_my_toolsets(principal, plane)
+        return {"ok": True, **out}
 
     return await _call(run)
 
@@ -507,7 +556,9 @@ async def me_email_delete(request: Request) -> Any:
     principal, plane = _self_plane(request)
 
     def run() -> Dict[str, Any]:
-        return {"ok": True, **mail_accounts.disconnect(plane, actor=_actor(principal))}
+        out = mail_accounts.disconnect(plane, actor=_actor(principal))
+        out["tools_reloaded"] = _reload_my_toolsets(principal, plane)
+        return {"ok": True, **out}
 
     return await _call(run)
 
@@ -570,7 +621,8 @@ async def me_email_enabled(request: Request, body: EnabledBody) -> Any:
         from ..mail.audit import audit_email_event
 
         audit_email_event("email.user_switch", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=_actor(principal), enabled=bool(body.enabled))
-        return {"ok": True, **mail_accounts.public_status(plane)}
+        reloaded = _reload_my_toolsets(principal, plane)
+        return {"ok": True, "tools_reloaded": reloaded, **mail_accounts.public_status(plane)}
 
     return await _call(run)
 
@@ -581,23 +633,10 @@ async def me_email_agent_tools(request: Request, body: EnabledBody) -> Any:
 
     def run() -> Dict[str, Any]:
         mail_accounts.set_agent_tools_switch(plane, body.enabled, actor=_actor(principal))
-        reloaded = False
-        # The toolsets are built with the host: reload THIS user's host (only when it is
-        # already built — never a first build from here) so agents see the change now.
-        # An entity's runtime reads the switch at each tool call (entities.py): no host to reload.
-        try:
-            from .. import service as service_mod
-
-            built = not plane.is_entity and (
-                service_mod.principal_service_cached(principal)
-                if service_mod.gateway_multi_user_enabled()
-                else service_mod._service is not None
-            )
-            if built:
-                service_mod.get_gateway_service().host.reload_bundles_from_disk()
-                reloaded = True
-        except Exception:  # noqa: BLE001 - the execution-time gate applies either way
-            reloaded = False
+        # The toolsets are built with the host: reload THIS user's host so agents see the
+        # change now (connect / disconnect / Active do the same; the host also re-checks
+        # the rule at every run start).
+        reloaded = _reload_my_toolsets(principal, plane)
         return {"ok": True, "tools_reloaded": reloaded, **mail_accounts.public_status(plane)}
 
     return await _call(run)
@@ -645,7 +684,14 @@ async def me_email_oauth_poll(request: Request, body: FlowBody) -> Any:
 @router.post("/me/email/oauth/finish", summary="Complete my OAuth2 sign-in (waits up to 60 s)")
 async def me_email_oauth_finish(request: Request, body: FlowBody) -> Any:
     principal, plane = _self_plane(request)
-    return await _call(mail_accounts.oauth_finish, plane, body.flow_id, wait_s=body.wait_s, actor=_actor(principal))
+
+    def run() -> Dict[str, Any]:
+        out = mail_accounts.oauth_finish(plane, body.flow_id, wait_s=body.wait_s, actor=_actor(principal))
+        if isinstance(out, dict) and out.get("configured"):
+            out["tools_reloaded"] = _reload_my_toolsets(principal, plane)
+        return out
+
+    return await _call(run)
 
 
 @router.post("/me/email/oauth/cancel", summary="Cancel my pending OAuth2 sign-in")
@@ -781,7 +827,14 @@ async def admin_capabilities_put(request: Request, body: CapabilityDefaultsBody)
         v = getattr(body, k)
         if v is not None:
             changes[k] = v
-    return await _call(mail_accounts.set_capability_defaults, changes, actor=_actor(admin))
+
+    def run() -> Dict[str, Any]:
+        out = mail_accounts.set_capability_defaults(changes, actor=_actor(admin))
+        if isinstance(out, dict):
+            out["tools_reloaded"] = _reload_every_toolset()
+        return out
+
+    return await _call(run)
 
 
 @router.get("/admin/email/oauth-clients", summary="Bring-your-own OAuth clients of this gateway")

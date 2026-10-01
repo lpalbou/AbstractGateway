@@ -77,7 +77,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 # The canonical route key for "the execution host's default text-generation
 # provider/model", then the storage key read as a migration fallback. Both are
@@ -138,6 +138,37 @@ def _gateway_capability_text_default(
     except Exception:
         pass
     return None, None, None
+
+
+def default_text_route_connection_kwargs(provider: Any, *, base_dir: Optional[Path] = None) -> Dict[str, Any]:
+    """`{"base_url": <url>}` when the text-generation default names its own endpoint
+    for `provider`, else `{}`.
+
+    The console's text route carries a `base_url` next to provider/model (an
+    LM Studio or Ollama on another machine, any OpenAI-compatible server).
+    Released 0.10.0 dropped it: the route showed the address but every run
+    called the provider's built-in one (backlog 0994 item 64).
+
+    It applies to the route's OWN provider only -- the same rule the runtime
+    pool keeps for connection settings (`base_url`/`api_key` travel with the
+    default provider identity, never with another provider). An
+    `endpoint:<id>` provider carries its address in the profile, so it is not
+    overridden here. Nothing is returned when the route names no `base_url`,
+    so an unset field changes nothing.
+    """
+    name = _clean_provider(provider)
+    if not name or name.startswith("endpoint:"):
+        return {}
+    try:
+        from .core_config import text_default
+
+        row = text_default(base_dir=base_dir)
+    except Exception:
+        return {}
+    base_url = str(row.get("base_url") or "").strip()
+    if not base_url or _clean_provider(row.get("provider")) != name:
+        return {}
+    return {"base_url": base_url}
 
 
 def provider_model_config_error(*, purpose: str = "LLM helper") -> str:

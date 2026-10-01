@@ -123,13 +123,23 @@ def test_mcp_inventory_serves_declared_rows_unprobed(tmp_path: Path) -> None:
     assert out["probed"] is False
     assert len(out["servers"]) == 1
     row = out["servers"][0]
+    # v1 rows are served in the v2 shape (DESIGN-v3 §6.2): declared fields kept, connection
+    # fields filled, no secrets, never tested.
     assert row == {
         "name": "docs-mcp",
+        "transport": "http",
+        "command": "",
+        "args": [],
+        "cwd": None,
         "url": "http://127.0.0.1:9000",
+        "headers": {},
         "description": "Docs server",
+        "archived": False,
+        "last_test": None,
         "auth_required": True,
         "tags": ["docs"],
     }
+    assert out["agents_can_call"] is False
     # Malformed/duplicate rows are labeled, never silently dropped.
     assert sum("skipped" in w for w in out["warnings"]) == 3
 
