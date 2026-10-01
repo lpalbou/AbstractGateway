@@ -1175,16 +1175,17 @@ run what it contains. Changing it is an operator act, so installing, replacing,
 removing, deprecating and reloading workflows there require an admin principal.
 Listing and running remain available to every user.</p>
 <p>Under hosted user auth each principal also gets its own workflow registry, and
-you can install and remove workflows there without admin rights — the shared
+you can install and archive workflows there without admin rights — the shared
 directory stays visible and read-only alongside it. The rule is ownership: you
 may change the registry you own.</p>
 <p>The same check covers every route that writes the registry, including
-<code>POST /bundles/upload</code>, <code>DELETE /bundles/{bundle_id}</code>, <code>POST /bundles/reload</code>
+<code>POST /bundles/upload</code>, <code>POST /bundles/{bundle_id}/archive</code>, <code>POST /bundles/reload</code>
 and <code>POST /visualflows/{flow_id}/publish</code>. A non-admin request against the
 shared registry returns <code>403</code>.</p>
-<p><code>basic-agent.flow</code> is the default framework agent and the gateway verifies it at
-startup, so <code>DELETE</code> refuses to remove it and answers <code>409</code>. To replace the
-default agent, install the replacement bundle first, then remove the old file.</p>
+<p>Workflows are archived, never deleted (<code>DELETE /bundles/{bundle_id}</code> answers
+<code>410</code>). Bundles that ship with the gateway, <code>basic-agent.flow</code> included, cannot
+be archived either (<code>409</code>); an admin hides one from users with the <strong>Available
+to users</strong> switch on the console's Workflows page.</p>
 <h2 id="customizing-the-registry">Customizing the registry<a class="headerlink" href="#customizing-the-registry" title="Permanent link">&para;</a></h2>
 <ul>
 <li>The shipped registry is used when <code>ABSTRACTGATEWAY_FLOWS_DIR</code> is unset;

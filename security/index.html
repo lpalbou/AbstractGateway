@@ -826,6 +826,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#workflow-availability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workflow availability
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#shared-workflow-catalog" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1244,6 +1255,17 @@
     <span class="md-ellipsis">
       
         Workflow registry ownership
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#workflow-availability" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Workflow availability
       
     </span>
   </a>
@@ -1783,7 +1805,7 @@ directory, which that user may change freely. The gateway's own directory is
 the shared set every user can see and run, so changing it requires an admin
 principal.</p>
 <p>One check covers every route that writes a registry — <code>POST /bundles/upload</code>,
-<code>DELETE /bundles/{bundle_id}</code>, <code>POST /bundles/reload</code>,
+<code>POST /bundles/reload</code>,
 <code>POST /bundles/{bundle_id}/deprecate</code>, <code>POST /bundles/{bundle_id}/undeprecate</code>
 and <code>POST /visualflows/{flow_id}/publish</code> — so a shared workflow cannot be
 replaced through one route while another is restricted. The check runs before
@@ -1793,9 +1815,23 @@ does not exist as well. Since a non-admin account cannot be signed in while user
 <code>bundle_id</code>, <code>bundle_version</code> and <code>overwrite</code>, and installs into the same
 registry as <code>upload</code>; it is gated on the same rule. Non-admin requests against
 the shared registry return <code>403</code>. Read routes are unchanged.</p>
-<p><code>DELETE /bundles/{bundle_id}</code> returns <code>409</code> for the <code>basic-agent.flow</code> the
-gateway verifies at startup: removal has no undo and would prevent the next
-start. Install a replacement bundle first, then remove the old file.</p>
+<p>Workflows are archived, never deleted: <code>DELETE /bundles/{bundle_id}</code> answers
+<code>410</code> for everyone. <code>POST /bundles/{bundle_id}/archive</code> and <code>/unarchive</code>
+(optional body <code>{"bundle_version": "..."}</code>) hide a bundle from lists and refuse
+its new runs while the file and every past run stay; an admin archives shared
+bundles, a user their own, and bundles that ship with the gateway (including
+<code>basic-agent</code>) answer <code>409</code>.</p>
+<h3 id="workflow-availability">Workflow availability<a class="headerlink" href="#workflow-availability" title="Permanent link">&para;</a></h3>
+<p><code>PUT /api/gateway/admin/workflows/{bundle_id}/availability</code> with
+<code>{"available": false}</code> (admin only; <code>403</code> otherwise) hides a shared workflow
+from non-admins. One rule applies everywhere: <code>GET /bundles</code> (the list every
+app picker reads), <code>GET /bundles/{bundle_id}</code>, its flows and download, run start,
+scheduling and automation creation (<code>403</code> with "This workflow isn't available to
+users on this gateway. Ask an admin."). An app's default workflow keeps running
+for everyone. The setting is stored in
+<code>&lt;data_dir&gt;/config/workflow_availability.json</code>; archives in
+<code>&lt;data_dir&gt;/config/workflow_archive.json</code> (shared bundles) and
+<code>&lt;data_dir&gt;/users/&lt;tenant&gt;/&lt;user&gt;/config/workflow_archive.json</code> (a user's own).</p>
 <h3 id="shared-workflow-catalog">Shared workflow catalog<a class="headerlink" href="#shared-workflow-catalog" title="Permanent link">&para;</a></h3>
 <p>Do not share workflows by pointing multiple users at another user's private
 bundle directory. Private <code>/api/gateway/bundles</code> routes stay scoped to the

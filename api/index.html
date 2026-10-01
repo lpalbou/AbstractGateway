@@ -2662,7 +2662,14 @@ as trace availability or Gateway-owned trace records.</p>
 workspace roots, mounted roots, ignored paths, and size limits are enforced on
 the server. Browser-local files should be uploaded through
 <code>POST /api/gateway/attachments/upload</code>; browser-local file paths are not
-interpreted as Gateway workspace paths. In hosted user-auth mode, server
+interpreted as Gateway workspace paths. An upload belongs to the conversation
+it was uploaded in: a run of another session that references it (any shape —
+<code>context.attachments</code>, <code>context.media</code>, <code>attachments</code>, <code>media</code>, a bare id or one naming its
+owner <code>run_id</code>) is refused at the start door with 400 <code>artifact_not_in_session</code> (and by the
+host for in-process callers), so one conversation's attachment can never reach another's
+model, whatever a client sends. Artifacts a run produced keep the hand-off below: a later
+run, in any session of the same user, may name them by <code>run_id</code>. An artifact tagged
+<code>shared: user</code> is visible to every session of its owner. In hosted user-auth mode, server
 workspace import/export and <code>/files/*</code> helpers require an admin principal. They
 never list, read or write the gateway data folder or the account's credential
 folders (<code>.ssh</code>, <code>.aws</code>, <code>Library/Keychains</code>, ...), even when the workspace root
@@ -3824,7 +3831,7 @@ later <code>LLM_CALL.params.prompt_cache_binding</code> used inside real Runtime
 <tbody>
 <tr>
 <td><code>GET /admin/accounts</code></td>
-<td><code>{accounts: [{id, tenant_id, kind: user \| entity, role: admin \| user \| entity, own, email_address, mailbox{state: connected \| not_connected \| paused \| unavailable, address, provider, reason}, runtime_id, active, entity_state, actions{email, logs, workspace, rotate, manage, delete, suspend: {available, reason}}}]}</code>, sorted admins, users, entities, then id; <code>entities_warning</code> when the entity list could not be read</td>
+<td><code>{accounts: [{id, tenant_id, kind: user \| entity, role: admin \| user \| entity, own, email_address, mailbox{state: connected \| receive_only \| not_connected \| paused \| unavailable, address, provider, reason}, runtime_id, active, entity_state, actions{email, logs, workspace, rotate, manage, delete, suspend: {available, reason}}}]}</code>, sorted admins, users, entities, then id; <code>entities_warning</code> when the entity list could not be read</td>
 </tr>
 <tr>
 <td><code>PUT /admin/accounts/{id}/active</code></td>
@@ -3912,7 +3919,7 @@ automations can read and send mail as them.</p>
 <tbody>
 <tr>
 <td><code>GET /me/email</code></td>
-<td>settings and status (<code>mailbox{state, address, provider, reason}</code> as in <code>/admin/accounts</code>): <code>configured</code>, <code>address</code>, <code>imap</code>, <code>smtp</code>, <code>auth_kind</code>, <code>secret_set</code>, <code>policy</code>, <code>limits</code> (+ usage), <code>status{last_test, last_ok, last_error{code, cause, fix}}</code>, <code>watcher{state, last_poll, cursor, received}</code>, <code>admin_enabled</code>, <code>effective_enabled</code>; for the account page: <code>email_address</code> (your email address as stored), <code>registered_address</code> ("self" for runs: that address, else the mailbox's own), <code>email_available</code>, <code>notifications{job_failed, approval_needed}</code> + <code>notifications_unavailable_reason</code>, <code>agent_tools{on, available, unavailable_reason, active}</code>, <code>oauth_providers[{id, available, reason}]</code></td>
+<td>settings and status (<code>mailbox{state, address, provider, reason}</code> as in <code>/admin/accounts</code>): <code>configured</code>, <code>address</code>, <code>imap</code>, <code>smtp</code>, <code>auth_kind</code>, <code>secret_set</code>, <code>policy</code>, <code>limits</code> (+ usage), <code>status{last_test, last_ok, last_error{code, cause, fix}}</code>, <code>watcher{state, last_poll, cursor, received}</code>, <code>admin_enabled</code>, <code>effective_enabled</code>; for the account page: <code>email_address</code> (your email address as stored), <code>registered_address</code> ("self" for runs: that address, else the mailbox's own), <code>email_available</code>, <code>notifications{job_failed, approval_needed}</code> + <code>notifications_unavailable_reason</code>, <code>agent_tools{on, available, unavailable_reason, active}</code>, <code>oauth_providers[{id, available, reason}]</code>; <code>send_capable</code> (false for a mailbox stored without its SMTP leg — <code>mailbox.state: receive_only</code>)</td>
 </tr>
 <tr>
 <td><code>POST /me/email/discover</code></td>
@@ -3920,7 +3927,7 @@ automations can read and send mail as them.</p>
 </tr>
 <tr>
 <td><code>PUT /me/email</code></td>
-<td>connect (save + test): <code>{address, password, username?, display_name?, imap?{host, port, security, folder}, smtp?{host, port, security}, test}</code>; <code>username</code> defaults to the discovered login, else the address; <code>display_name</code> to the stored name, else the address's local part; connecting sets your email address when it is empty (audited <code>email.address_changed</code>, reason <code>mailbox_connected</code>); without <code>imap</code> and <code>smtp</code> the servers are discovered (<code>discovery{source, provider, tried}</code> in the answer; none found = 400 <code>email_discovery_failed</code> with <code>tried</code>); signs in to both servers first (unless <code>test: false</code>), stores nothing on a failure and names the failing step (<code>detail.step</code>: <code>imap</code> | <code>smtp</code>, <code>detail.message</code>)</td>
+<td>connect (save + test): <code>{address, password, username?, display_name?, imap?{host, port, security, folder}, smtp?{host, port, security}, test}</code>; <code>username</code> defaults to the discovered login, else the address; <code>display_name</code> to the stored name, else the address's local part; connecting sets your email address when it is empty (audited <code>email.address_changed</code>, reason <code>mailbox_connected</code>); without <code>imap</code> and <code>smtp</code> the servers are discovered (<code>discovery{source, provider, tried}</code> in the answer; none found = 400 <code>email_discovery_failed</code> with <code>tried</code>); signs in to both servers first (unless <code>test: false</code>), stores nothing on a failure and names the failing step (<code>detail.step</code>: <code>imap</code> | <code>smtp</code>, <code>detail.message</code>); a leg left out is filled with the domain's standard server (or the discovered one) and the test signs in to BOTH, so a connected mailbox can always send (an unreachable outgoing server is <code>detail.step: smtp</code>, nothing stored); <code>tools_reloaded</code>: the caller's workflows were reloaded so agents' toolsets follow</td>
 </tr>
 <tr>
 <td><code>PUT /me/email/address</code></td>
@@ -3936,15 +3943,15 @@ automations can read and send mail as them.</p>
 </tr>
 <tr>
 <td><code>DELETE /me/email</code></td>
-<td>disconnect: credentials and cursor deleted (policy and limits kept)</td>
+<td>disconnect: credentials and cursor deleted (policy and limits kept); <code>tools_reloaded</code></td>
 </tr>
 <tr>
 <td><code>PUT /me/email/policy</code></td>
-<td><code>{mode: "allowlist" \| "denylist", entries: [address \| domain]}</code></td>
+<td><code>{mode: "allowlist" \| "denylist", always_allow?: [address \| domain], always_deny?: [address \| domain]}</code>; a list given replaces that list. Precedence: own address → allowed; Always denied → refused; Always allowed → allowed; else the mode (<code>allowlist</code> = Only the Allowed list → refused, <code>denylist</code> = Anyone not on the Denied list → allowed). A domain covers its subdomains. The older <code>{mode, entries}</code> is accepted (<code>entries</code> = the mode's list)</td>
 </tr>
 <tr>
 <td><code>POST /me/email/policy/check</code></td>
-<td><code>{addresses}</code> → per-recipient verdicts</td>
+<td><code>{to?, cc?, bcc?, addresses?}</code> (<code>addresses</code> = To) → per-recipient verdicts with <code>source</code> (<code>self</code>, <code>always_deny</code>, <code>always_allow</code>, <code>mode</code>)</td>
 </tr>
 <tr>
 <td><code>PUT /me/email/limits</code></td>
@@ -3956,7 +3963,7 @@ automations can read and send mail as them.</p>
 </tr>
 <tr>
 <td><code>PUT /me/email/enabled</code></td>
-<td><code>{enabled}</code> — "Use this mailbox" (off keeps the settings; stops watching, sending and notifications)</td>
+<td><code>{enabled}</code> — "Use this mailbox" (off keeps the settings; stops watching, sending and notifications); <code>tools_reloaded</code></td>
 </tr>
 <tr>
 <td><code>PUT /me/email/agent-tools</code></td>
@@ -3976,7 +3983,7 @@ automations can read and send mail as them.</p>
 </tr>
 <tr>
 <td><code>POST /me/email/oauth/finish</code></td>
-<td><code>{flow_id, wait_s}</code> — waits up to 60 s for the approval</td>
+<td><code>{flow_id, wait_s}</code> — waits up to 60 s for the approval; <code>tools_reloaded</code> once connected</td>
 </tr>
 <tr>
 <td><code>POST /me/email/oauth/cancel</code></td>
@@ -4007,7 +4014,7 @@ automations can read and send mail as them.</p>
 <tbody>
 <tr>
 <td><code>GET /admin/users</code></td>
-<td>every row carries <code>email_address</code> and <code>mailbox{state: connected \| not_connected \| paused \| unavailable, address, provider, reason}</code> from the same resolver as <code>GET /me/email</code> (so your own row matches your card; <code>email</code> stays the raw record field); each human row also carries <code>email_account: {configured, address, state, admin_enabled, agent_tools_available, capabilities}</code> (<code>capabilities</code>: <code>{email, email_agent_tools}</code> as <code>{value, source: user \| gateway \| built-in}</code>; <code>user</code> = a per-user override)</td>
+<td>every row carries <code>email_address</code> and <code>mailbox{state: connected \| receive_only \| not_connected \| paused \| unavailable, address, provider, reason}</code> from the same resolver as <code>GET /me/email</code> (so your own row matches your card; <code>email</code> stays the raw record field); each human row also carries <code>email_account: {configured, address, state, admin_enabled, agent_tools_available, capabilities}</code> (<code>capabilities</code>: <code>{email, email_agent_tools}</code> as <code>{value, source: user \| gateway \| built-in}</code>; <code>user</code> = a per-user override)</td>
 </tr>
 <tr>
 <td><code>GET /admin/users/{user_id}/email</code></td>
@@ -4023,7 +4030,7 @@ automations can read and send mail as them.</p>
 </tr>
 <tr>
 <td><code>PUT /admin/email/capabilities</code></td>
-<td><code>{email?, email_agent_tools?, email_recovery?, reset?: [...]}</code></td>
+<td><code>{email?, email_agent_tools?, email_recovery?, reset?: [...]}</code>; <code>tools_reloaded</code>: how many built hosts were rebuilt so every user's agents follow the change</td>
 </tr>
 <tr>
 <td><code>GET /admin/email/oauth-clients</code></td>

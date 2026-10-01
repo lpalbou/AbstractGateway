@@ -448,10 +448,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#models-and-engines-tabs" class="md-nav__link">
+  <a href="#models-and-local-providers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Models and Engines tabs
+        Models and local providers
       
     </span>
   </a>
@@ -1085,10 +1085,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#models-and-engines-tabs" class="md-nav__link">
+  <a href="#models-and-local-providers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Models and Engines tabs
+        Models and local providers
       
     </span>
   </a>
@@ -1253,7 +1253,7 @@ You can also sign in with a user id and token (the admin's first token is in
 <tr>
 <td>Work</td>
 <td><strong>Workflows</strong></td>
-<td>the workflow bundles on this gateway (name, what each does, version, source, the apps that use it), import, export, delete, the default workflow for each app and the <strong>Streamed replies</strong> setting (<a href="#workflows">below</a>)</td>
+<td>the workflow bundles on this gateway, shared by the gateway or your own (name, what each does, version, source, the apps that use it, availability to users), import, export, open in AbstractFlow, archive, the default workflow for each app and the <strong>Streamed replies</strong> setting (<a href="#workflows">below</a>)</td>
 </tr>
 <tr>
 <td>Work</td>
@@ -1268,17 +1268,12 @@ You can also sign in with a user id and token (the admin's first token is in
 <tr>
 <td>Models</td>
 <td><strong>Providers</strong></td>
-<td>provider connections (OpenAI, Anthropic, OpenRouter, Portkey, LM Studio, Ollama, custom OpenAI-compatible endpoints) with write-only keys</td>
+<td><strong>Local providers</strong>: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, <strong>Browse models</strong> and its server connection; <strong>Remote providers</strong>: OpenAI, Anthropic, OpenRouter, Portkey and custom OpenAI-compatible connections with write-only keys (shown as fingerprints); then the <strong>Available Providers</strong> table (<a href="#models-and-local-providers">below</a>)</td>
 </tr>
 <tr>
 <td>Models</td>
 <td><strong>Models</strong></td>
 <td>browse models that fit this machine, download them, delete installed ones (below)</td>
-</tr>
-<tr>
-<td>Models</td>
-<td><strong>Engines</strong></td>
-<td>the local engines on the gateway host: installed or not, running or not, install, start, stop (below)</td>
 </tr>
 <tr>
 <td>Models</td>
@@ -1317,7 +1312,7 @@ the apps keep answering. A banner on every tab says so while it is on.</p>
 <p>Every persistent on/off setting in the console is a switch labelled by the
 feature (highlighted when on). It applies at once, shows the new state, and an
 unavailable switch stays visible with its reason ("Connect a mailbox first.").
-One-shot actions (Rotate, Delete, Test, Disconnect) stay buttons.</p>
+One-shot actions (Rotate token, Archive, Test, Disconnect) stay buttons.</p>
 <p>The <strong>sign-in page</strong> asks for the gateway user and the token, with one status
 ("Not signed in", "Signed in as admin", "Token refused") and errors under the
 field that failed. When sign-in by email is on, <strong>Forgot your token? Email me a
@@ -1380,28 +1375,31 @@ from a spark template (its name is permanent, <a href="../entities/">entities.md
 </tr>
 <tr>
 <td><strong>Mailbox</strong></td>
-<td>"Connected as x@y", "Not connected", "Paused", or "Not available" for an entity</td>
+<td>"Connected as x@y", "Receive only — no outgoing server" (with the reason under it), "Not connected" or "Paused" (users and entities alike: an entity has its own mailbox)</td>
 </tr>
 <tr>
 <td><strong>Runtime</strong></td>
-<td>the account's runtime, or "None"</td>
+<td>the account's runtime id (plain text that wraps), or "No runtime"</td>
 </tr>
 <tr>
 <td><strong>Active</strong></td>
-<td>the switch described below</td>
+<td>the switch described below; "Archived" on an archived row</td>
 </tr>
 <tr>
 <td><strong>Actions</strong></td>
-<td><strong>Email</strong>, <strong>Logs</strong>, <strong>Workspace</strong>, <strong>Rotate</strong>, <strong>Manage</strong> (entities) and <strong>Delete</strong></td>
+<td>users: <strong>Email</strong>, <strong>Logs</strong>, <strong>Workspace</strong> and a "⋯" menu (<strong>Rotate token</strong>, <strong>Archive</strong>); entities: <strong>Email</strong>, <strong>Logs</strong>, <strong>Manage</strong> and a "⋯" menu (<strong>Archive</strong>); archived rows: <strong>Logs</strong> and a "⋯" menu (<strong>Unarchive</strong>)</td>
 </tr>
 </tbody>
 </table>
 <p>Rows are tinted by kind (a legend under the table reads "Tint: admin · user ·
-entity"). An action that cannot apply to a row is shown disabled, and one line
-under the buttons says why: for an entity, "Rotate and Delete don't apply to
-entities: no credential is kept, and an entity's name is kept for life —
-suspend it instead."; for your own row, "You can't deactivate or delete your
-own account."</p>
+entity"). Only the actions that apply to a row are shown: your own row has no
+<strong>Archive</strong>, and an entity has no <strong>Rotate token</strong> (hover the "⋯" button for
+why). The table never scrolls sideways: long names and addresses wrap, and when
+the table does not fit (narrow windows, tablets, phones) each account becomes
+one flat block: name, kind chip and Active, then the address and mailbox, then
+the runtime, then the actions.</p>
+<p><strong>Show archived</strong> (administrators, above the table) lists archived accounts too;
+it is off by default and your browser remembers it.</p>
 <ul>
 <li><strong>Active</strong> for a user: off signs them out and refuses their sign-in until you
   turn it back on. Turning it off asks first ("Deactivate alice? They are
@@ -1418,8 +1416,10 @@ own account."</p>
   administrator's own agents. On another user's row it holds only that user's
   <strong>Email address</strong> (with Save) and a read-only mailbox line ("Mailbox: not
   connected — only alice can connect a mailbox. You never see anyone's mail.").
-  On an entity's row it says "Entities can't have their own mailbox yet:
-  mailboxes belong to a user's runtime."</li>
+  On an entity's row it holds the same email settings as your own, for the
+  entity's own mailbox (an entity is an AI user: its agents read and send from
+  it, and notifications about its runs go to its address); the administrator
+  and the entity's creator can open it.</li>
 <li><strong>Logs</strong> opens "Activity — <id>": the account's sign-ins, token rotations,
   runs started, automation commands, account changes and email events from the
   gateway's audit log, newest first, in your local time. The chips <strong>All</strong>,
@@ -1431,15 +1431,19 @@ own account."</p>
   "Test notification"). The footer says what the audit log does not
   record (page views and reads, mail received, what agents send with their
   email tools).</li>
-<li><strong>Workspace</strong> opens the account's workspace policy (which folders its agents
-  may read and write); for an entity it opens the entity's management page.</li>
-<li><strong>Rotate</strong> issues a new token for a user (the old one stops working at once;
-  the new one is shown once). Entities have no token to rotate.</li>
-<li><strong>Manage</strong> (entities) opens the entity's lifecycle, substrate, capabilities
-  and prompt; <strong>Talk</strong> is there too.</li>
-<li><strong>Delete</strong> asks in a row under the account. The account and its token are
-  removed; its runtime and data are kept. Entities cannot be deleted: suspend
-  them instead.</li>
+<li><strong>Workspace</strong> (users) opens the account's workspace policy (which folders its
+  agents may read and write).</li>
+<li><strong>Rotate token</strong> issues a new token for a user (the old one stops working at
+  once; the new one is shown once). Entities have no token to rotate.</li>
+<li><strong>Manage</strong> (entities) opens the entity's lifecycle, mind and voice,
+  capabilities and prompt; <strong>Talk</strong> is there too. <strong>Mind &amp; voice</strong> uses the
+  shared pickers: <strong>Gateway default</strong> (the gateway's text model and default
+  voice) or its own choice; changes save themselves.</li>
+<li><strong>Archive</strong> asks in a row under the account ("Archive alice? They can't sign
+  in any more. Their runtime, runs and history are kept; you can unarchive
+  later." / for an entity: "It stops acting and never wakes. Its memory, runs
+  and history are kept"). Nothing is deleted. <strong>Unarchive</strong> brings the account
+  back inactive: turn <strong>Active</strong> on to let it sign in (or act).</li>
 </ul>
 <p>Under the table, <strong>Email for everyone</strong> (administrators) holds the switch
 <strong>Mailboxes for users</strong>, with <strong>Agent email tools for users</strong> and <strong>Sign-in by
@@ -1448,16 +1452,18 @@ email</strong> under Advanced (<a href="../email/#administrators">email.md</a>).
 <p>Someone who is not an administrator sees the page as <strong>Your account</strong> ("Your
 account and the entities you created."): the same table with their own row and
 one row per entity they created (<code>GET /api/gateway/me/accounts</code>). There is no
-Create user and no Email for everyone; their own Rotate says "Only an admin can
-rotate your token." and an entity's Active switch "Only an admin can suspend an
-entity." See <a href="../security/#who-sees-which-account">security.md</a>.</p>
-<p>On phones each account is one flat block: name, kind chip and Active, then the
-address and mailbox, then the runtime and the actions.</p>
+Create user and no Email for everyone; their own row has no <strong>Rotate token</strong>
+(only an admin rotates tokens), they can archive an entity they created but not
+unarchive it, and an entity's Active switch says "Only an admin can suspend an
+entity." Archived accounts are not listed for them. See <a href="../security/#who-sees-which-account">security.md</a>.</p>
 <h3 id="workflows">Workflows<a class="headerlink" href="#workflows" title="Permanent link">&para;</a></h3>
 <p>The <strong>Workflows</strong> tab starts with what workflows are: the programs your apps
 and automations run, packaged as bundles (<code>.flow</code> files) that ship with the
 gateway, that you import, or that you publish from AbstractFlow.</p>
-<p>The table has one row per bundle:</p>
+<p>The table has one row per bundle, in two groups: <strong>Shared with everyone</strong> (bundles that ship with the gateway and those an admin imported or
+published) and <strong>Mine</strong> (bundles you imported or published yourself; shown only
+when you have some). An admin's own imports are shared, so admins see one group.
+A user sees the shared bundles an admin left available, and their own.</p>
 <table>
 <thead>
 <tr>
@@ -1468,7 +1474,7 @@ gateway, that you import, or that you publish from AbstractFlow.</p>
 <tbody>
 <tr>
 <td><strong>Name</strong></td>
-<td>the default entrypoint's name, with the bundle id under it, and a <strong>Deprecated</strong> pill when it applies</td>
+<td>the default entrypoint's name, with the bundle id under it, and <strong>Deprecated</strong> / <strong>Archived</strong> pills when they apply</td>
 </tr>
 <tr>
 <td><strong>What it does</strong></td>
@@ -1480,27 +1486,49 @@ gateway, that you import, or that you publish from AbstractFlow.</p>
 </tr>
 <tr>
 <td><strong>Source</strong></td>
-<td>"Shipped with the gateway", "Imported" or "Published from AbstractFlow"</td>
+<td>a badge: "Shipped", "Imported" or "From AbstractFlow"</td>
 </tr>
 <tr>
 <td><strong>Used by</strong></td>
 <td>the plain names of the apps that ask for its interfaces, each with a (?) that explains it, or "No app"</td>
 </tr>
 <tr>
+<td><strong>Available to users</strong></td>
+<td>(administrators only, shared bundles) a switch; off hides the workflow from users' lists and app pickers</td>
+</tr>
+<tr>
 <td><strong>Actions</strong></td>
-<td><strong>Export</strong> and <strong>Delete</strong> (administrators)</td>
+<td><strong>Export</strong>, <strong>Open</strong> (in AbstractFlow, a new tab) and <strong>Archive</strong> for imported and published bundles</td>
 </tr>
 </tbody>
 </table>
-<p>Click a row to expand it: each version with its channel, date, <strong>Export</strong> and
-<strong>Delete</strong>, and its entrypoints with their names, descriptions and the apps
-that use them. The toolbar has a search field, the switches <strong>Drafts</strong> and
-<strong>Older versions</strong>, and <strong>Import .flow</strong> (administrators). <strong>Delete</strong> asks in
-the row and says how many runs reference the version; for a bundle that ships
-with the gateway it adds that nothing puts it back at the next restart, only
-reinstalling the gateway does. The default framework agent (<code>basic-agent</code>)
-cannot be deleted. <strong>Broken workflows</strong> appears only when the gateway refused a
-bundle file: the workflow, the versions affected and why it cannot run.</p>
+<p>Click a row to expand it: each version with its channel, date and the same
+actions, and its entrypoints with their names, descriptions and the apps that
+use them. The toolbar has a search field, the switches <strong>Drafts</strong>, <strong>Older
+versions</strong> and <strong>Show archived</strong>, and <strong>Import .flow</strong>. Everyone can import: a
+user's import lands in <strong>Mine</strong>, an admin's in the shared group.</p>
+<p>Workflows are never deleted. <strong>Archive</strong> asks in the row ("Archive … ? It
+disappears from lists and can't start new runs; the file and every past run
+stay on the gateway.") and hides the bundle (or one version); runs and
+automations that already use it keep resuming and replaying. <strong>Show archived</strong>
+lists archived bundles with <strong>Unarchive</strong>. Bundles that ship with the gateway
+have no Archive at all; an admin hides them with <strong>Available to users</strong> instead.
+Admins archive shared bundles; each user archives their own.</p>
+<p><strong>Available to users</strong> (administrators): off hides the workflow from every
+user's lists and app pickers (AbstractCode, the Assistant, AbstractFlow), refuses
+their new runs and automations with "This workflow isn't available to users on
+this gateway. Ask an admin.", and pauses their existing automations on it with
+the reason "Paused: this workflow is no longer available to users — ask an
+admin." Turning it back on does not resume those automations; each user resumes
+their own. Admins always see every workflow, and an app's default workflow
+(<strong>Default workflow per app</strong>) keeps running for everyone even when it is hidden.</p>
+<p><strong>Open</strong> opens the workflow in the visual editor in a new tab
+(AbstractFlow must be running: <strong>Apps &gt; Flow Editor</strong>). A bundle published from
+one of your flows opens that flow; any other bundle opens as an unsaved copy
+titled <code>&lt;name&gt; · &lt;bundle id&gt;@&lt;version&gt;</code>, so Save creates your own flow and never
+changes the bundle. <strong>Broken workflows</strong> appears only when the gateway refused a
+bundle file: the workflow, the versions affected and why it cannot run, with
+<strong>Archive</strong> to hide them.</p>
 <p><strong>Default workflow per app</strong> comes next: "When an app asks for "an agent"
 without naming a workflow, the gateway runs this one." One row per interface,
 with its plain name ("AbstractCode — chat agent", "Assistant", "Deep research",
@@ -1562,8 +1590,8 @@ failed after you switched the default model: "Will eject X when the in-flight
 call ends" (the old model is still answering a call), "X: eject failed:
 reason", "X kept in memory: reason" (something else still uses it) and "X
 ejected".</p>
-<h3 id="models-and-engines-tabs">Models and Engines tabs<a class="headerlink" href="#models-and-engines-tabs" title="Permanent link">&para;</a></h3>
-<p>Everything these two tabs show and do happens <strong>on the gateway host</strong>: the
+<h3 id="models-and-local-providers">Models and local providers<a class="headerlink" href="#models-and-local-providers" title="Permanent link">&para;</a></h3>
+<p>Everything the Models tab and the Providers tab's Local providers show and do happens <strong>on the gateway host</strong>: the
 machine that runs <code>abstractgateway serve</code>, not the computer your browser runs
 on. The catalog data, the presence checks and the fit verdicts come from
 AbstractCore (<code>GET /api/gateway/models/catalog</code>, contract <code>model_catalog_v1</code>);
@@ -1634,12 +1662,13 @@ model and any blocker, such as a model that is loaded right now).</p>
 <strong>Fits this computer</strong> already on; <strong>Open in the Models tab</strong> carries the
 filters over. An engine card's <strong>Browse models</strong> opens the tab filtered to that
 engine's builds.</p>
-<p><strong>Engines</strong> (tab id <code>engines</code>):</p>
+<p><strong>Local providers</strong> (the Providers tab, id <code>providers</code>; the Engines tab of
+0.10.0 and older merged into it, and a <code>#engines</code> link opens Providers):</p>
 <ul>
 <li>One card per engine with a status pill (Ready, Running, Installing, Needs
   your approval, Needs Apple tools, Not installed, Not for this computer),
-  its version, base URL and model count, and one primary action for its
-  state: <strong>Install</strong>, <strong>Start</strong>, <strong>Stop</strong>, <strong>Continue with administrator
+  its version, base URL and model count, <strong>Browse models</strong>, <strong>Learn more</strong>,
+  and one primary action for its state: <strong>Install</strong>, <strong>Start</strong>, <strong>Stop</strong>, <strong>Continue with administrator
   password</strong>, <strong>Install tools</strong> or <strong>Try again</strong>.</li>
 <li><strong>Install</strong> opens a confirmation that shows what will run and the host it
   runs on, with a <strong>Preview (dry run)</strong> button. Ollama and LM Studio offer
@@ -1868,8 +1897,8 @@ lives inside Review &amp; Test.</p>
   the two): the plain name of each app's interface, what runs ("Clients
   choose", "Built in: …", a workflow, or "Broken"), and the selected row's
   help; <code>Enter</code> picks a default and saves it at once, <code>o</code> shows <strong>Other
-  workflow types</strong>. Also <code>t</code> drafts on/off, <code>e</code> export, <code>d</code> delete a version,
-  <code>D</code> delete every version, <code>i</code> import a <code>.flow</code> bundle, <code>L</code> reload from disk.
+  workflow types</strong>. Also <code>t</code> drafts on/off, <code>e</code> export, <code>d</code> archive a version,
+  <code>D</code> archive every version (nothing is deleted), <code>i</code> import a <code>.flow</code> bundle, <code>L</code> reload from disk.
   The per-app defaults are also on Runtimes (<em>Runtime knobs</em>).</li>
 <li><strong>5 Apps</strong> is the web console's Apps tab: open browser apps signed in,
   install or update them, start and stop them, the desktop Assistant and

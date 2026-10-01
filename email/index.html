@@ -1200,6 +1200,12 @@ in the terminal) shows a Login field for the few providers that need one. When y
 is empty, the pane's <strong>Mailbox address</strong> is the only address field and connecting fills your email
 address; when it is set, the pane reads "Mailbox account: x@y" with <strong>Use a different account</strong>.
 - <strong>HTTP</strong>: <code>PUT /api/gateway/me/email</code>.</p>
+<p>Connecting stores <strong>both</strong> servers: a leg you leave empty is the domain's standard one (<code>imap.</code>/<code>smtp.&lt;domain&gt;</code>,
+993/465 SSL, or the one discovery found), and the connect test signs in to both — a mailbox is never connected
+"receive only" by accident; an outgoing server that cannot be reached refuses the connect and names its step. A
+mailbox stored before gateway 0.10.1 without its outgoing server shows <strong>receive only</strong> (reads work, sends do not)
+until you connect it again. Connecting, disconnecting or pausing a mailbox also reloads your workflows, so your
+agents' tool lists follow at once (the host re-checks at every run start as well).</p>
 <p>Give the address and the password (or app password). The gateway finds the IMAP and SMTP servers
 from the address — a table of common providers, the domain's own autoconfig file, the Thunderbird
 ISPDB, DNS SRV records, then the domain's MX hosts (AbstractCore's deterministic discovery):</p>
@@ -1333,11 +1339,16 @@ tool list, even an empty one, is used as given.</p>
 code — goes through the same checks, in this order:</p>
 <ol>
 <li>email is on (your switch <strong>and</strong> the administrator's);</li>
-<li>the <strong>recipient policy</strong>: <code>allowlist</code> (only the listed addresses and domains) or <code>denylist</code>
-   (everyone except them). Entries are exact addresses or domains; a subdomain matches only when
-   written as its own entry. The policy applies to To, Cc and Bcc, and a message with any refused
-   recipient is refused whole, naming the refused addresses. A new account starts with an allowlist
-   holding your registered address;</li>
+<li>the <strong>recipient rules</strong>: two lists, <strong>Always allowed</strong> and <strong>Always denied</strong>, each holding
+   exact addresses (<code>name@example.com</code>) or domains (<code>example.com</code>, which also covers its
+   subdomains), and one mode for recipients on neither list: <strong>Only the Allowed list</strong>
+   (<code>allowlist</code>: refused) or <strong>Anyone not on the Denied list</strong> (<code>denylist</code>: allowed). Your own
+   address is always allowed, and denied always wins over allowed. The rules apply to To, Cc and
+   Bcc; a message with any refused recipient is refused whole, and the refusal names the
+   recipient and the rule ("Not sent: x@xxx.gov is on your Always denied list (xxx.gov)."). A new
+   account starts with Only the Allowed list, holding your registered address. A policy stored by
+   an older version keeps its meaning: an allowlist's entries are the Always allowed list, a
+   denylist's entries the Always denied list;</li>
 <li>the <strong>send limits</strong>: 100 messages per rolling hour and 1000 per day by default, editable by you.
    Limits you set are kept across upgrades; a mailbox where nobody set them follows the defaults.
    Until AbstractCore 2.21 the defaults were 20 and 100 and connecting a mailbox stored them
@@ -1351,7 +1362,7 @@ send to anyone but you (or an automation's pre-authorised recipients) waits for 
 a send to you runs without asking in chats and automations alike. "You" is your registered address: the email on your user account (or the gateway's registered
 address for the operator), else the connected mailbox's own address.</p>
 <div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/me/email/policy"</span><span class="w"> </span><span class="se">\</span>
-<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"mode": "allowlist", "entries": ["me@example.com", "mycompany.com"]}'</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"mode": "allowlist", "always_allow": ["mycompany.com"], "always_deny": ["xxx.gov"]}'</span>
 curl<span class="w"> </span>-sS<span class="w"> </span>-X<span class="w"> </span>PUT<span class="w"> </span>-H<span class="w"> </span><span class="s2">"</span><span class="nv">$AUTH</span><span class="s2">"</span><span class="w"> </span><span class="s2">"</span><span class="nv">$BASE_URL</span><span class="s2">/api/gateway/me/email/limits"</span><span class="w"> </span>-d<span class="w"> </span><span class="s1">'{"per_hour": 100, "per_day": 1000}'</span>
 </code></pre></div>
 <h2 id="automations-on-new-mail">Automations on new mail<a class="headerlink" href="#automations-on-new-mail" title="Permanent link">&para;</a></h2>
