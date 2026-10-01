@@ -9562,7 +9562,7 @@ fn a_choice_dialog_covers_the_screen_while_open() {
     h.goto_screen(2);
     h.store.routes.set(Loadable::Ready(routes_fixture()));
     let s = h.turns(3);
-    assert!(s.contains("Routes — which provider"), "{s}");
+    assert!(s.contains("Multimodal — which provider"), "{s}");
     h.key(b"a");
     let s = h.turns(3);
     assert!(
@@ -9570,13 +9570,13 @@ fn a_choice_dialog_covers_the_screen_while_open() {
         "the dialog:\n{s}"
     );
     assert!(
-        !s.contains("Routes — which provider") && !s.contains("input.video"),
+        !s.contains("Multimodal — which provider") && !s.contains("input.video"),
         "the screen does not show around/through the dialog:\n{s}"
     );
     h.press_escape();
     let s = h.turns(3);
     assert!(
-        s.contains("Routes — which provider"),
+        s.contains("Multimodal — which provider"),
         "the screen is back:\n{s}"
     );
 }

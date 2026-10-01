@@ -14,7 +14,7 @@
 use abstracttui::prelude::*;
 use abstracttui::widgets::{Table, TextInput};
 
-use super::util::{field, line, span, span_bold};
+use super::util::{ellipsize, field, line, span, span_bold};
 use super::widths;
 use super::{open_form, Ctx};
 use crate::store::{WorkflowRow, WorkflowsData};
@@ -26,6 +26,16 @@ use crate::worker::Cmd;
 /// stay open to every principal — the web keeps the tab for everyone.
 pub const ADMIN_KEYS: &[&str] = &["d", "D", "i", "L"];
 
+/// The purpose line at the top of the screen (DESIGN-v2 §4).
+pub const PURPOSE: &str = "Workflows are the programs your apps and automations run. They come in bundles (.flow files): some ship with the gateway, others you import or publish from AbstractFlow.";
+/// The per-app defaults section (DESIGN-v2 §4.2).
+pub const DEFAULTS_TITLE: &str = "Default workflow per app";
+pub const DEFAULTS_SENTENCE: &str =
+    "When an app asks for 'an agent' without naming a workflow, the gateway runs this one.";
+/// Said when the gateway's runtime-config rows lack the §6 interface
+/// table fields (`label` / `state`): the section refuses to show raw ids.
+pub const DEFAULTS_NOT_SERVED: &str = "This gateway sends no plain names for its agent interfaces (label/state missing) — update the gateway. Runtimes (Knobs) still edits the raw settings.";
+
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
@@ -36,6 +46,29 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             .workflows
             .with(|d| d.ready().map(|w| w.rows.len()).unwrap_or(0))
     });
+    // The per-app defaults: selection + the folded "Other workflow types".
+    let defaults_sel = cx.signal(0usize);
+    let other_open = cx.signal(false);
+    super::util::clamp_selection(cx, defaults_sel, move || {
+        let open = other_open.get();
+        store.runtime_config.with(|d| {
+            d.ready()
+                .map(|c| visible_defaults(&c.agent_defaults, open).len())
+                .unwrap_or(0)
+        })
+    });
+    // The defaults (and the plain "Used by" names) come from the admin
+    // runtime-config read: load it once an admin is here.
+    {
+        let ctx_load = ctx.clone();
+        cx.effect(move || {
+            let admin = store.conn.with(crate::store::ConnPhase::is_admin);
+            if admin && matches!(store.runtime_config.get(), crate::store::Loadable::NotAsked) {
+                store.runtime_config.set(crate::store::Loadable::Loading);
+                ctx_load.send(Cmd::LoadRuntimeConfig);
+            }
+        });
+    }
 
     let ctx_table = ctx.clone();
     let ctx_export = ctx.clone();
@@ -53,7 +86,14 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             move |_| {
                 c.send(Cmd::LoadWorkflows {
                     include_drafts: c.ui.workflow_drafts.get_untracked(),
-                })
+                });
+                if c.store
+                    .conn
+                    .with_untracked(crate::store::ConnPhase::is_admin)
+                {
+                    c.store.runtime_config.set(crate::store::Loadable::Loading);
+                    c.send(Cmd::LoadRuntimeConfig);
+                }
             }
         })
         .shortcut(KeyChord::plain(Key::Char('t')), {
@@ -64,6 +104,9 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     include_drafts: c.ui.workflow_drafts.get_untracked(),
                 })
             }
+        })
+        .shortcut(KeyChord::plain(Key::Char('o')), move |_| {
+            other_open.update(|v| *v = !*v)
         })
         .shortcut(KeyChord::plain(Key::Char('e')), {
             let c = ctx_export.clone();
@@ -84,23 +127,41 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .shortcut(KeyChord::plain(Key::Char('L')), move |_| {
             reload(&ctx_reload)
         })
+        // The purpose line, wrapped to the terminal (never cut).
+        .child(dyn_view_scoped(
+            LayoutStyle::column().gap(0).shrink(0.0),
+            move |pcx| {
+                let w = (abstracttui::app::use_viewport(pcx).get().w - 2).max(20) as usize;
+                let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+                for l in super::util::wrap_text(PURPOSE, w) {
+                    col = col.child(line(vec![span(format!(" {l}"), tt.text_muted)]));
+                }
+                col.build()
+            },
+        ))
         .child(
             Block::new()
                 .border(BorderKind::Rounded)
-                .title("Workflows — every workflow registered on this gateway")
+                .title("Workflows")
                 .fill(t.surface)
                 .layout(
                     LayoutStyle::column()
                         .gap(0)
                         .grow(1.0)
                         .min_h(6)
-                        .padding(Edges::all(1)),
+                        .padding(Edges {
+                            left: 1,
+                            right: 1,
+                            top: 0,
+                            bottom: 0,
+                        }),
                 )
                 .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), {
                     let keeper = super::util::FocusKeeper::new();
                     move |gcx| {
                         let conn = store.conn.get();
                         let data = store.workflows.get();
+                        let labels = interface_labels(&store.runtime_config.get());
                         let sel = ui.workflow_sel;
                         let _ = &ctx_table;
                         super::util::loadable_view_kept(
@@ -113,15 +174,9 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                             "no workflows registered on this gateway",
                             |d: &WorkflowsData| {
                                 let mut children: Vec<View> =
-                                    vec![master_table(gcx, &tt, d, sel, &keeper)];
+                                    vec![master_table(gcx, &tt, d, &labels, sel, &keeper)];
                                 if let Some(row) = d.rows.get(sel.get()) {
-                                    children.push(detail_block(
-                                        gcx,
-                                        &tt,
-                                        row,
-                                        &d.default_bundle_id,
-                                        &d.agent_defaults,
-                                    ));
+                                    children.push(detail_block(gcx, &tt, row, &labels));
                                 }
                                 if !d.skipped.is_empty() {
                                     children.push(skipped_block(gcx, &tt, d));
@@ -139,9 +194,16 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 .element(t)
                 .build(),
         )
+        .child(defaults_block(cx, ctx, t, defaults_sel, other_open))
         .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
             let drafts = ui.workflow_drafts.get();
             line(vec![
+                span("Tab", tt.accent),
+                span(" workflows ⇄ defaults  ", tt.text_muted),
+                span("Enter", tt.accent),
+                span(" pick a default  ", tt.text_muted),
+                span("o", tt.accent),
+                span(" other types  ", tt.text_muted),
                 span("e", tt.accent),
                 span(" export  ", tt.text_muted),
                 span("d", tt.accent),
@@ -166,6 +228,299 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             ])
         }))
         .build()
+}
+
+/// interface id → plain name, from the runtime-config agent-default rows
+/// (the gateway's ONE interface table, DESIGN-v2 §6). Empty when not read.
+pub fn interface_labels(
+    cfg: &crate::store::Loadable<crate::store::RuntimeConfigData>,
+) -> Vec<(String, String)> {
+    cfg.ready()
+        .map(|c| {
+            c.agent_defaults
+                .iter()
+                .filter_map(|a| a.label.clone().map(|l| (a.interface.clone(), l)))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The "Used by" cell: the plain names of the interfaces a bundle declares
+/// (an interface the table does not name keeps its id); "—" for none.
+pub fn used_by_text(interfaces: &[String], labels: &[(String, String)]) -> String {
+    if interfaces.is_empty() {
+        return "—".to_string();
+    }
+    interfaces
+        .iter()
+        .map(|i| {
+            labels
+                .iter()
+                .find(|(id, _)| id == i)
+                .map(|(_, l)| l.clone())
+                .unwrap_or_else(|| i.clone())
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// The rows the defaults table shows: the "apps" group, then (when the
+/// fold is open) the "other" group.
+pub fn visible_defaults(
+    rows: &[crate::store::AgentDefault],
+    other_open: bool,
+) -> Vec<crate::store::AgentDefault> {
+    let mut out: Vec<_> = rows
+        .iter()
+        .filter(|a| a.group != "other")
+        .cloned()
+        .collect();
+    if other_open {
+        out.extend(rows.iter().filter(|a| a.group == "other").cloned());
+    }
+    out
+}
+
+fn defaults_block(
+    cx: Scope,
+    ctx: &Ctx,
+    t: &TokenSet,
+    sel: Signal<usize>,
+    other_open: Signal<bool>,
+) -> View {
+    let store = ctx.store;
+    let tt = *t;
+    let ctx_pick = ctx.clone();
+    Block::new()
+        .border(BorderKind::Rounded)
+        .title(DEFAULTS_TITLE)
+        .fill(t.surface)
+        .layout(LayoutStyle::column().gap(0).shrink(0.0).padding(Edges {
+            left: 1,
+            right: 1,
+            top: 0,
+            bottom: 0,
+        }))
+        .child(line(vec![span(DEFAULTS_SENTENCE, tt.text_muted)]))
+        .child(dyn_view_scoped(
+            LayoutStyle::column().gap(0).shrink(0.0),
+            move |dcx| {
+                use crate::store::Loadable;
+                if let Some(why) = store
+                    .conn
+                    .with(|c| c.admin_refusal("the default workflow per app"))
+                {
+                    return line(vec![span(why, tt.text_muted)]);
+                }
+                let open = other_open.get();
+                match store.runtime_config.get() {
+                    Loadable::NotAsked | Loadable::Loading => {
+                        line(vec![span("⟳ reading the defaults…", tt.info)])
+                    }
+                    Loadable::Failed(e) => line(vec![span(
+                        format!("couldn't read the defaults: {e} — r retries"),
+                        tt.error,
+                    )]),
+                    Loadable::Ready(c) => {
+                        if c.agent_defaults.is_empty() {
+                            return line(vec![span(
+                                "no app on this gateway asks for an agent workflow",
+                                tt.text_muted,
+                            )]);
+                        }
+                        if c.agent_defaults
+                            .iter()
+                            .any(|a| a.label.is_none() || a.state.is_none())
+                        {
+                            return line(vec![span(DEFAULTS_NOT_SERVED, tt.error)]);
+                        }
+                        let rows = visible_defaults(&c.agent_defaults, open);
+                        let others = c
+                            .agent_defaults
+                            .iter()
+                            .filter(|a| a.group == "other")
+                            .count();
+                        let vw = abstracttui::app::use_viewport(dcx).get().w;
+                        let mut cells: Vec<Vec<String>> = rows
+                            .iter()
+                            .map(|a| {
+                                let label = a.label.clone().unwrap_or_default();
+                                let label = if a.group == "other" {
+                                    format!("  {label}")
+                                } else {
+                                    label
+                                };
+                                vec![label, a.state_text().unwrap_or_default()]
+                            })
+                            .collect();
+                        let rules = [
+                            widths::ColRule::head("app", 16),
+                            widths::ColRule::head("runs", 14),
+                        ];
+                        let cols = widths::columns(&rules, &mut cells, vw - widths::BLOCK_CHROME);
+                        let ctx_act = ctx_pick.clone();
+                        let rows_act = rows.clone();
+                        let h = rows.len() as i32 + 1;
+                        let mut col = Element::new()
+                            .style(LayoutStyle::column().gap(0).shrink(0.0))
+                            .child(
+                                Table::new(cols)
+                                    .rows(cells)
+                                    .selection(sel)
+                                    .on_activate(move |i| {
+                                        if let Some(a) = rows_act.get(i) {
+                                            open_default_picker(cx, &ctx_act, a.clone());
+                                        }
+                                    })
+                                    .layout(LayoutStyle::default().h(h).shrink(0.0))
+                                    .element(dcx, &tt)
+                                    .build(),
+                            );
+                        if others > 0 {
+                            col = col.child(line(vec![span(
+                                format!(
+                                    "{} Other workflow types ({others}) — o {}",
+                                    if open { "▾" } else { "▸" },
+                                    if open { "hides them" } else { "shows them" }
+                                ),
+                                tt.text_faint,
+                            )]));
+                        }
+                        col.build()
+                    }
+                }
+            },
+        ))
+        // The selected row's sentence (and a broken row's reason): its own
+        // region, so moving the selection never rebuilds the table (the
+        // table keeps the keyboard).
+        .child(dyn_view_scoped(
+            LayoutStyle::column().gap(0).shrink(0.0),
+            move |dcx| {
+                let open = other_open.get();
+                let idx = sel.get();
+                if store.conn.with(|c| c.admin_refusal("x").is_some()) {
+                    return Element::new().style(LayoutStyle::default().h(0)).build();
+                }
+                let Some(a) = store.runtime_config.with(|c| {
+                    c.ready().and_then(|c| {
+                        if c.agent_defaults
+                            .iter()
+                            .any(|a| a.label.is_none() || a.state.is_none())
+                        {
+                            return None;
+                        }
+                        visible_defaults(&c.agent_defaults, open).get(idx).cloned()
+                    })
+                }) else {
+                    return Element::new().style(LayoutStyle::default().h(0)).build();
+                };
+                let vw = abstracttui::app::use_viewport(dcx).get().w;
+                let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+                let w = (vw - widths::BLOCK_CHROME).max(20) as usize;
+                if a.state.as_deref() == Some("broken") {
+                    let why = if a.reason.is_empty() {
+                        "the configured workflow can't run".to_string()
+                    } else {
+                        a.reason.clone()
+                    };
+                    for l in super::util::wrap_text(&why, w) {
+                        col = col.child(line(vec![span(l, tt.warn)]));
+                    }
+                }
+                let mut help = a.help.clone();
+                if let Some(app) = &a.app {
+                    if help.is_empty() {
+                        help = format!("Asked for by {app}.");
+                    }
+                }
+                for l in super::util::wrap_text(&help, w) {
+                    col = col.child(line(vec![span(l, tt.text_faint)]));
+                }
+                if abstracttui::app::use_viewport(dcx).get().h >= 36 {
+                    col = col.child(line(vec![span(
+                        ellipsize(&format!("interface {}", a.interface), w),
+                        tt.text_faint,
+                    )]));
+                }
+
+                col.build()
+            },
+        ))
+        .element(t)
+        .build()
+}
+
+/// Enter on a default: a picker of the entrypoints declaring that
+/// interface plus the empty choice; the choice saves at once (no Save).
+pub fn open_default_picker(cx: Scope, ctx: &Ctx, a: crate::store::AgentDefault) {
+    use abstracttui::app::{ChoiceOutcome, ChoicePrompt};
+    if !super::util::admin_gate(&ctx.store, "changing the default workflow per app") {
+        return;
+    }
+    let writable = ctx
+        .store
+        .runtime_config
+        .with_untracked(|c| c.ready().map(|c| c.writable).unwrap_or(false));
+    if !writable {
+        ctx.store.notice.set(Some(
+            "the gateway reports these settings as read-only for this token".into(),
+        ));
+        return;
+    }
+    let label = a.label.clone().unwrap_or_else(|| a.interface.clone());
+    let empty_label = if a.builtin.is_empty() {
+        "Clients choose".to_string()
+    } else {
+        let n = if a.state.as_deref() == Some("builtin") && !a.name.is_empty() {
+            a.name.clone()
+        } else {
+            a.builtin.clone()
+        };
+        format!("Built in: {n}")
+    };
+    let mut prompt = ChoicePrompt::new(format!("{label} — which workflow runs by default?"));
+    for (i, (value, name, ver)) in a.eligible_named.iter().enumerate() {
+        let current = a.state.as_deref() == Some("set") && a.value == *value;
+        prompt = prompt.option_detail(
+            i.to_string(),
+            format!("{name} {ver}{}", if current { " (current)" } else { "" }),
+            value.clone(),
+        );
+    }
+    prompt = prompt.option_detail(
+        "none",
+        empty_label,
+        if a.builtin.is_empty() {
+            "the gateway runs nothing by default; each app picks its workflow".to_string()
+        } else {
+            "back to the gateway's built-in workflow".to_string()
+        },
+    );
+    prompt = prompt.option("keep", "Keep the current choice");
+    let ctx2 = ctx.clone();
+    let choices: Vec<String> = a.eligible_named.iter().map(|(v, _, _)| v.clone()).collect();
+    let iface = a.interface.clone();
+    super::open_prompt(cx, ctx.ui, prompt, move |outcome| {
+        let ChoiceOutcome::Answered(ans) = outcome else {
+            return;
+        };
+        let Some(pick) = ans.selected.first() else {
+            return;
+        };
+        let value = match pick.as_str() {
+            "keep" => return,
+            "none" => String::new(),
+            i => match i.parse::<usize>().ok().and_then(|i| choices.get(i)) {
+                Some(v) => v.clone(),
+                None => return,
+            },
+        };
+        ctx2.send(Cmd::SaveRuntimeConfig {
+            body: serde_json::json!({ "agents": { "default_workflow": { iface: value } } }).into(),
+            form_id: None,
+        });
+    });
 }
 
 fn selected_row(ctx: &Ctx) -> Option<WorkflowRow> {
@@ -416,74 +771,57 @@ fn master_table(
     cx: Scope,
     t: &TokenSet,
     d: &WorkflowsData,
+    labels: &[(String, String)],
     sel: Signal<usize>,
     keeper: &super::util::FocusKeeper,
 ) -> View {
     let vw = abstracttui::app::use_viewport(cx).get().w;
     let wide = vw >= 100;
-    let default_id = d.default_bundle_id.clone();
-    let agent_defaults = d.agent_defaults.clone();
 
     let mut rows: Vec<Vec<String>> = d
         .rows
         .iter()
         .map(|r| {
-            // TWO numbers, always: "4 pub" alone would hide 15 drafts.
-            let versions = if r.draft > 0 {
-                format!("{} pub · {} draft", r.published, r.draft)
+            let name = if r.name.is_empty() {
+                r.bundle_id.clone()
             } else {
-                format!("{} pub", r.published)
+                r.name.clone()
             };
-            let latest = if r.latest.is_empty() {
-                "— (draft only)".to_string()
+            let name = if r.deprecated {
+                format!("{name} · Deprecated")
             } else {
-                r.latest.clone()
+                name
             };
-            let mut status: Vec<&str> = Vec::new();
-            if r.bundle_id == default_id {
-                status.push("default");
-            }
-            if !agent_default_marks(&r.bundle_id, &agent_defaults).is_empty() {
-                status.push("★agent");
-            }
-            if r.deprecated {
-                status.push("deprecated");
-            }
-            let mut row = vec![r.bundle_id.clone(), versions, latest];
-            if wide {
-                row.push(r.entrypoints.to_string());
-                row.push(if r.scope == "private" {
-                    "registry".to_string()
-                } else {
-                    r.scope.clone()
-                });
-            }
-            row.push(if status.is_empty() {
+            let what = if r.description.is_empty() {
                 "—".to_string()
             } else {
-                status.join(" ")
-            });
+                r.description.clone()
+            };
+            let mut row = vec![name, what, r.version_text()];
+            if wide {
+                row.push(r.source_text().to_string());
+                row.push(used_by_text(&r.interfaces, labels));
+            }
             row
         })
         .collect();
 
     let mut rules = vec![
-        widths::ColRule::tail("workflow", 18),
-        widths::ColRule::head("versions", 14),
-        widths::ColRule::head("latest", 10),
+        widths::ColRule::head("name", 14),
+        widths::ColRule::head("what it does", 18),
+        widths::ColRule::head("version", 14),
     ];
     if wide {
-        rules.push(widths::ColRule::head("eps", 4));
-        rules.push(widths::ColRule::head("scope", 8));
+        rules.push(widths::ColRule::head("source", 8));
+        rules.push(widths::ColRule::head("used by", 12));
     }
-    rules.push(widths::ColRule::head("status", 10));
 
     let cols = widths::columns(&rules, &mut rows, vw - widths::BLOCK_CHROME);
     keeper.wire(
         Table::new(cols)
             .rows(rows)
             .selection(sel)
-            .layout(LayoutStyle::default().grow(1.0))
+            .layout(LayoutStyle::default().grow(1.0).min_h(3))
             .element(cx, t),
     )
 }
@@ -502,80 +840,70 @@ pub fn agent_default_marks(
         .collect()
 }
 
-fn detail_block(
-    cx: Scope,
-    t: &TokenSet,
-    row: &WorkflowRow,
-    default_id: &str,
-    agent_defaults: &[(String, String)],
-) -> View {
+fn detail_block(cx: Scope, t: &TokenSet, row: &WorkflowRow, labels: &[(String, String)]) -> View {
     let vw = abstracttui::app::use_viewport(cx).get().w;
+    // A short terminal keeps the table readable: the detail shrinks to
+    // the name line and one line of description.
+    let tall = abstracttui::app::use_viewport(cx).get().h >= 36;
+    let w = (vw - widths::BLOCK_CHROME).max(20) as usize;
     let mut children: Vec<View> = Vec::new();
 
-    let mut head = vec![
-        span_bold(row.bundle_id.clone(), t.accent),
-        span("  ", t.text_muted),
-        span(
-            format!("{} published, {} draft", row.published, row.draft),
-            t.text_muted,
+    children.push(line(vec![
+        span_bold(
+            if row.name.is_empty() {
+                row.bundle_id.clone()
+            } else {
+                row.name.clone()
+            },
+            t.accent,
         ),
-    ];
-    if row.bundle_id == default_id {
-        head.push(span("  ", t.text_muted));
-        head.push(span("default", t.accent));
-    }
-    children.push(line(head));
-    // ★ = the gateway default agent workflow for an interface (what a client
-    // choosing "Gateway default" runs) — not the bundle default above.
-    for (iface, wid) in agent_default_marks(&row.bundle_id, agent_defaults) {
-        children.push(line(vec![
-            span("★ agent default ", t.accent),
-            span(format!("for {iface}: "), t.text_muted),
-            span(wid, t.text),
-        ]));
+        span(format!("  bundle {}", row.bundle_id), t.text_faint),
+        span(format!("  · {}", row.source_text()), t.text_faint),
+    ]));
+    // The full description when it is longer than the table cell.
+    if !row.description.is_empty() {
+        for l in super::util::wrap_text(&row.description, w)
+            .into_iter()
+            .take(if tall { 3 } else { 0 })
+        {
+            children.push(line(vec![span(l, t.text_muted)]));
+        }
     }
 
-    let mut rows: Vec<Vec<String>> = row
+    let rows: Vec<Vec<String>> = row
         .versions
         .iter()
         .map(|(ver, channel, created, eps)| {
             vec![
                 ver.clone(),
                 channel.clone(),
-                created.chars().take(19).collect::<String>(),
+                created.chars().take(10).collect::<String>(),
                 eps.to_string(),
             ]
         })
         .collect();
     let rules = vec![
-        widths::ColRule::tail("version", 16),
+        widths::ColRule::tail("version", 10),
         widths::ColRule::head("channel", 9),
-        widths::ColRule::head("created", 19),
-        widths::ColRule::head("eps", 4),
+        widths::ColRule::head("created", 10),
+        widths::ColRule::head("entrypoints", 11),
     ];
-    let cols = widths::columns(&rules, &mut rows, vw - widths::BLOCK_CHROME);
-    children.push(Table::new(cols).rows(rows).element(cx, t).build());
-
-    if !row.flows.is_empty() {
-        let joined = row
-            .flows
-            .iter()
-            .map(|(flow, _, ifaces)| {
-                if ifaces.is_empty() {
-                    flow.clone()
-                } else {
-                    format!("{flow} [{ifaces}]")
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("  ");
-        children.push(line(vec![
-            span("entrypoints: ", t.text_muted),
-            span(joined, t.text),
-        ]));
+    if tall {
+        children.push(text_table(t, &rules, rows, vw - widths::BLOCK_CHROME));
     }
 
-    let mut col = Element::new().style(LayoutStyle::column().gap(0));
+    for (name, desc, ifaces) in row.entrypoint_info.iter().filter(|_| tall) {
+        let mut text = name.clone();
+        if !desc.is_empty() {
+            text.push_str(&format!(" — {desc}"));
+        }
+        if !ifaces.is_empty() {
+            text.push_str(&format!(" · used by {}", used_by_text(ifaces, labels)));
+        }
+        children.push(line(vec![span(ellipsize(&text, w), t.text)]));
+    }
+
+    let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
     for child in children {
         col = col.child(child);
     }
@@ -608,7 +936,7 @@ fn skipped_block(cx: Scope, t: &TokenSet, d: &WorkflowsData) -> View {
         ids.len()
     };
 
-    let mut rows: Vec<Vec<String>> = groups
+    let rows: Vec<Vec<String>> = groups
         .iter()
         .map(|(bundle, reason, n)| {
             vec![
@@ -627,10 +955,8 @@ fn skipped_block(cx: Scope, t: &TokenSet, d: &WorkflowsData) -> View {
         widths::ColRule::head("affected", 11),
         widths::ColRule::head("why the gateway cannot run it", 30),
     ];
-    let cols = widths::columns(&rules, &mut rows, vw - widths::BLOCK_CHROME);
-
     Element::new()
-        .style(LayoutStyle::column().gap(0))
+        .style(LayoutStyle::column().gap(0).shrink(0.0))
         .child(line(vec![
             span_bold("Broken workflows", t.warn),
             span(
@@ -640,10 +966,48 @@ fn skipped_block(cx: Scope, t: &TokenSet, d: &WorkflowsData) -> View {
                 t.text_muted,
             ),
         ]))
-        .child(line(vec![span(
-            "the files are still on disk and nothing was deleted — fix the cause and reload, or remove them deliberately",
-            t.text_faint,
-        )]))
-        .child(Table::new(cols).rows(rows).element(cx, t).build())
+        .child(if abstracttui::app::use_viewport(cx).get().h >= 36 {
+            line(vec![span(
+                "the files are still on disk and nothing was deleted — fix the cause and reload, or remove them deliberately",
+                t.text_faint,
+            )])
+        } else {
+            Element::new().style(LayoutStyle::default().h(0)).build()
+        })
+        .child(text_table(t, &rules, rows, vw - widths::BLOCK_CHROME))
         .build()
+}
+
+/// A read-only grid as plain lines: the same column solver as the tables,
+/// but not focusable — Tab moves between the two lists the screen acts on
+/// (workflows, defaults), never into a reference grid.
+fn text_table(
+    t: &TokenSet,
+    rules: &[widths::ColRule],
+    mut rows: Vec<Vec<String>>,
+    rect_w: i32,
+) -> View {
+    let w = widths::solve(rules, &rows, rect_w);
+    widths::fit_cells(rules, &mut rows, &w);
+    let fmt = |cells: Vec<String>| {
+        cells
+            .iter()
+            .zip(&w)
+            .map(|(c, width)| {
+                let pad = (*width as usize).saturating_sub(c.chars().count());
+                format!("{c}{}", " ".repeat(pad))
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let mut col = Element::new()
+        .style(LayoutStyle::column().gap(0).shrink(0.0))
+        .child(line(vec![span(
+            fmt(rules.iter().map(|r| r.title.to_string()).collect()),
+            t.text_muted,
+        )]));
+    for r in rows {
+        col = col.child(line(vec![span(fmt(r), t.text)]));
+    }
+    col.build()
 }
