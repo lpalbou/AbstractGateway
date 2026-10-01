@@ -5455,8 +5455,8 @@ Your email address and mailbox (`/api/gateway/me/...`, every signed-in human):
 | `PUT /me/email/notifications` | `{job_failed?, approval_needed?}` — the two notification switches (both on by default); the earlier `{email: {...}}` body is accepted and mapped; answers like `GET /me/email` |
 | `POST /me/email/test` | per-leg result `{imap, smtp, ok, message}`; `message`: "Test passed: signed in to imap.x and smtp.x." or the failing step and its cause ("Sign-in refused by imap.x — check the password. (…)") |
 | `DELETE /me/email` | disconnect: credentials and cursor deleted (policy and limits kept) |
-| `PUT /me/email/policy` | `{mode: "allowlist" \| "denylist", entries: [address \| domain]}` |
-| `POST /me/email/policy/check` | `{addresses}` → per-recipient verdicts |
+| `PUT /me/email/policy` | `{mode: "allowlist" \| "denylist", always_allow?: [address \| domain], always_deny?: [address \| domain]}`; a list given replaces that list. Precedence: own address → allowed; Always denied → refused; Always allowed → allowed; else the mode (`allowlist` = Only the Allowed list → refused, `denylist` = Anyone not on the Denied list → allowed). A domain covers its subdomains. The older `{mode, entries}` is accepted (`entries` = the mode's list) |
+| `POST /me/email/policy/check` | `{to?, cc?, bcc?, addresses?}` (`addresses` = To) → per-recipient verdicts with `source` (`self`, `always_deny`, `always_allow`, `mode`) |
 | `PUT /me/email/limits` | `{per_hour, per_day}` |
 | `PUT /me/email/folder` | `{folder}` — the folder your mailbox is read from (empty = INBOX); the connection is kept and nothing is tested; 404 `email_not_configured` without a mailbox |
 | `PUT /me/email/enabled` | `{enabled}` — "Use this mailbox" (off keeps the settings; stops watching, sending and notifications) |
@@ -7200,11 +7200,16 @@ Every send — an agent's `send_email`, an automation's send action, a notificat
 code — goes through the same checks, in this order:
 
 1. email is on (your switch **and** the administrator's);
-2. the **recipient policy**: `allowlist` (only the listed addresses and domains) or `denylist`
-   (everyone except them). Entries are exact addresses or domains; a subdomain matches only when
-   written as its own entry. The policy applies to To, Cc and Bcc, and a message with any refused
-   recipient is refused whole, naming the refused addresses. A new account starts with an allowlist
-   holding your registered address;
+2. the **recipient rules**: two lists, **Always allowed** and **Always denied**, each holding
+   exact addresses (`name@example.com`) or domains (`example.com`, which also covers its
+   subdomains), and one mode for recipients on neither list: **Only the Allowed list**
+   (`allowlist`: refused) or **Anyone not on the Denied list** (`denylist`: allowed). Your own
+   address is always allowed, and denied always wins over allowed. The rules apply to To, Cc and
+   Bcc; a message with any refused recipient is refused whole, and the refusal names the
+   recipient and the rule ("Not sent: x@xxx.gov is on your Always denied list (xxx.gov)."). A new
+   account starts with Only the Allowed list, holding your registered address. A policy stored by
+   an older version keeps its meaning: an allowlist's entries are the Always allowed list, a
+   denylist's entries the Always denied list;
 3. the **send limits**: 100 messages per rolling hour and 1000 per day by default, editable by you.
    Limits you set are kept across upgrades; a mailbox where nobody set them follows the defaults.
    Until AbstractCore 2.21 the defaults were 20 and 100 and connecting a mailbox stored them
@@ -7220,7 +7225,7 @@ address for the operator), else the connected mailbox's own address.
 
 ```bash
 curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/policy" \
-  -d '{"mode": "allowlist", "entries": ["me@example.com", "mycompany.com"]}'
+  -d '{"mode": "allowlist", "always_allow": ["mycompany.com"], "always_deny": ["xxx.gov"]}'
 curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/limits" -d '{"per_hour": 100, "per_day": 1000}'
 ```
 
@@ -8960,6 +8965,31 @@ All notable changes to this project are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+- Recipient rules in the Email settings (Advanced): "Your agents may send to [Only the Allowed list |
+  Anyone not on the Denied list]", an **Always allowed** and an **Always denied** list (addresses
+  such as `name@example.com` or domains such as `example.com`, which also cover their subdomains),
+  and one sentence: "Denied always wins. Your own address is always allowed. A domain also covers
+  its subdomains." Every chip added or removed saves at once ("Saved", or the gateway's reason).
+  One renderer, `renderEmailRecipientRules(policy, apiBase)`, draws it for any Email modal.
+- `PUT /me/email/policy` takes `always_allow` and `always_deny` (a list given replaces that list;
+  an omitted list is kept); `GET /me/email` returns both. `POST /me/email/policy/check` takes
+  `to`, `cc` and `bcc` (and the older `addresses`, read as To) and each verdict says which rule
+  decided (`source`: `self`, `always_deny`, `always_allow`, `mode`).
+- The terminal console shows and edits both lists under Advanced.
+
+### Changed
+- Sends to To, Cc and Bcc, from agent tools and notifications alike, follow the precedence: your own
+  address is allowed, Always denied refuses ("Not sent: x@xxx.gov is on your Always denied list
+  (xxx.gov)."), Always allowed allows, then the mode decides. A notification to your own address is
+  therefore always delivered, also when your lists do not name it.
+- A policy stored by an earlier version keeps its meaning: an allowlist's entries become the Always
+  allowed list, a denylist's entries the Always denied list. The older `{mode, entries}` body is
+  still accepted (`entries` replaces the list the mode uses). Needs the AbstractCore version that
+  adds the two lists.
 
 ## [0.10.0] - 2026-10-01
 

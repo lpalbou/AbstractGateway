@@ -1796,8 +1796,8 @@ Your email address and mailbox (`/api/gateway/me/...`, every signed-in human):
 | `PUT /me/email/notifications` | `{job_failed?, approval_needed?}` — the two notification switches (both on by default); the earlier `{email: {...}}` body is accepted and mapped; answers like `GET /me/email` |
 | `POST /me/email/test` | per-leg result `{imap, smtp, ok, message}`; `message`: "Test passed: signed in to imap.x and smtp.x." or the failing step and its cause ("Sign-in refused by imap.x — check the password. (…)") |
 | `DELETE /me/email` | disconnect: credentials and cursor deleted (policy and limits kept) |
-| `PUT /me/email/policy` | `{mode: "allowlist" \| "denylist", entries: [address \| domain]}` |
-| `POST /me/email/policy/check` | `{addresses}` → per-recipient verdicts |
+| `PUT /me/email/policy` | `{mode: "allowlist" \| "denylist", always_allow?: [address \| domain], always_deny?: [address \| domain]}`; a list given replaces that list. Precedence: own address → allowed; Always denied → refused; Always allowed → allowed; else the mode (`allowlist` = Only the Allowed list → refused, `denylist` = Anyone not on the Denied list → allowed). A domain covers its subdomains. The older `{mode, entries}` is accepted (`entries` = the mode's list) |
+| `POST /me/email/policy/check` | `{to?, cc?, bcc?, addresses?}` (`addresses` = To) → per-recipient verdicts with `source` (`self`, `always_deny`, `always_allow`, `mode`) |
 | `PUT /me/email/limits` | `{per_hour, per_day}` |
 | `PUT /me/email/folder` | `{folder}` — the folder your mailbox is read from (empty = INBOX); the connection is kept and nothing is tested; 404 `email_not_configured` without a mailbox |
 | `PUT /me/email/enabled` | `{enabled}` — "Use this mailbox" (off keeps the settings; stops watching, sending and notifications) |
