@@ -252,3 +252,64 @@ def test_the_bundle_read_route_says_shipped_and_owner_for_flows_deep_link(gw):
     flow = c.get("/api/gateway/bundles/alice-wf/flows/root?bundle_version=1.0.0", headers=alice)
     assert flow.status_code == 200 and flow.json()["flow"]["id"] == "root"
     assert c.get("/api/gateway/bundles/alice-wf", headers=gw["bob"]).status_code == 404, "another user's bundle is not on bob's gateway view"
+
+
+def _write_iface_bundle(path: Path, *, bundle_id: str, interfaces: list[str]) -> None:
+    """Two entrypoints: `main` declares `interfaces`, `aux` declares nothing."""
+    from test_gateway_workflow_registry_honesty import _min_flow
+
+    manifest = {
+        "bundle_format_version": "1",
+        "bundle_id": bundle_id,
+        "bundle_version": "1.0.0",
+        "created_at": "2026-10-01T00:00:00Z",
+        "entrypoints": [
+            {"flow_id": "main", "name": "main", "description": "", "interfaces": interfaces},
+            {"flow_id": "aux", "name": "aux", "description": "", "interfaces": []},
+        ],
+        "default_entrypoint": "main",
+        "flows": {"main": "flows/main.json", "aux": "flows/aux.json"},
+        "metadata": {},
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("manifest.json", json.dumps(manifest))
+        z.writestr("flows/main.json", json.dumps(_min_flow("main")))
+        z.writestr("flows/aux.json", json.dumps(_min_flow("aux")))
+
+
+def test_executable_for_lists_only_runnable_bundles_declaring_the_interface(gw):
+    """The app pickers' query (`?executable_for=<interface>`): only bundles declaring the
+    interface that the caller may run — admin: all, a user: available shared + their own,
+    archived never — with only the entrypoints that declare it."""
+    c, alice = gw["c"], gw["alice"]
+    iface = "test.picker.v1"
+    _write_iface_bundle(gw["shared"] / "shared-iface@1.0.0.flow", bundle_id="shared-iface", interfaces=[iface])
+    _write_iface_bundle(gw["shared"] / "hidden-iface@1.0.0.flow", bundle_id="hidden-iface", interfaces=[iface])
+    _write_iface_bundle(gw["shared"] / "other-iface@1.0.0.flow", bundle_id="other-iface", interfaces=["test.other.v1"])
+    _write_iface_bundle(gw["alice_flows"] / "alice-iface@1.0.0.flow", bundle_id="alice-iface", interfaces=[iface])
+    assert c.post("/api/gateway/bundles/reload", headers=ADMIN).status_code == 200
+    assert c.post("/api/gateway/bundles/reload", headers=alice).status_code == 200
+    assert _set_available(c, "hidden-iface", False).status_code == 200
+
+    def picker(headers, **extra):
+        res = c.get(f"/api/gateway/bundles?executable_for={iface}" + "".join(f"&{k}={v}" for k, v in extra.items()), headers=headers)
+        assert res.status_code == 200, res.text
+        body = res.json()
+        assert body["executable_for"] == iface
+        for it in body["items"]:
+            assert it["owner"]["kind"] in ("gateway", "user") and isinstance(it["shipped"], bool)
+            assert it["entrypoints"] and all(iface in ep["interfaces"] for ep in it["entrypoints"]), it
+        return {it["bundle_id"]: it for it in body["items"]}
+
+    mine = picker(alice)
+    assert set(mine) == {"shared-iface", "alice-iface"}, sorted(mine)
+    assert [ep["flow_id"] for ep in mine["shared-iface"]["entrypoints"]] == ["main"]
+    assert mine["alice-iface"]["owner"] == {"kind": "user", "user_id": "alice"}
+
+    admin = picker(ADMIN)
+    assert {"shared-iface", "hidden-iface"} <= set(admin) and "other-iface" not in admin, sorted(admin)
+    assert "alice-iface" not in admin, "an admin's picker lists the gateway's registry, never a user's own"
+
+    assert c.post("/api/gateway/bundles/alice-iface/archive", headers=alice, json={}).status_code == 200
+    assert "alice-iface" not in picker(alice, include_archived="true"), "archived never appears in a picker"

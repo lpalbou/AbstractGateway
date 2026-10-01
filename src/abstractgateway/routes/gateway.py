@@ -7708,6 +7708,12 @@ async def list_bundles(
     include_drafts: bool = Query(default=False, description="If true, include draft bundle versions."),
     include_deprecated: bool = Query(default=False, description="If true, include deprecated entrypoints in discovery."),
     include_archived: bool = Query(default=False, description="If true, include archived bundles (marked `archived: true`)."),
+    executable_for: Optional[str] = Query(
+        default=None,
+        description="An interface id (e.g. abstractcode.agent.v1): only bundles with an entrypoint declaring it that the "
+        "signed-in principal may run (admin: all; others: available shared + their own; archived never). "
+        "`entrypoints` then lists only the entrypoints that declare it. The app workflow pickers read this.",
+    ),
 ) -> Dict[str, Any]:
     svc = get_gateway_service()
     host = _require_bundle_host(svc)
@@ -7723,6 +7729,10 @@ async def list_bundles(
         OWNER_GATEWAY: _bundle_archive_store(host, {"kind": OWNER_GATEWAY}).records(),
         OWNER_USER: (_bundle_archive_store(host, {"kind": OWNER_USER}).records() if not shared_host else {}),
     }
+
+    want_iface = str(executable_for or "").strip()
+    if want_iface:
+        include_archived = False  # a picker never offers an archived workflow
 
     def _archived(owner_kind: str, bid0: str, ver0: str) -> bool:
         rec = archives.get(owner_kind, {}).get(bid0)
@@ -7827,6 +7837,9 @@ async def list_bundles(
                         "deprecated_reason": (str(rec.get("reason") or "").strip() if isinstance(rec, dict) else "") or None,
                     }
                 )
+            if want_iface:
+                # Executable for one interface (picker query): only the entrypoints declaring it.
+                eps = [ep for ep in eps if want_iface in (ep.get("interfaces") or [])]
             if not eps:
                 continue
             default_ep = str(getattr(man, "default_entrypoint", "") or "") or (
@@ -7909,8 +7922,11 @@ async def list_bundles(
             continue
         governed_skipped.append({**row, "owner": owner, "archived": archived, "can_archive": is_admin if owner["kind"] == OWNER_GATEWAY else True})
     skipped_rows = governed_skipped
+    if want_iface:
+        skipped_rows = []  # a picker lists runnable workflows only
     return {
         "items": items,
+        "executable_for": want_iface or None,
         "default_bundle_id": default_bundle_id,
         "default_agent_workflows": agent_defaults,
         "default_agent_workflows_unavailable": agent_defaults_unavailable,
