@@ -13,7 +13,7 @@ import module from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 
-const [BASE, ADMIN, ALICE, PW, KIT] = process.argv.slice(2);
+const [BASE, ADMIN, ALICE, PW, KIT, RUN_ID] = process.argv.slice(2);
 const require = createRequire(path.join(PW, "/"));
 const { chromium } = require("playwright-core");
 
@@ -163,7 +163,7 @@ try {
     check(JSON.stringify(caps) === JSON.stringify([["email-cap-email", "switch", "true"], ["email-cap-agent-tools", "switch", "true"], ["email-cap-recovery", "switch", "true"]]), "admin switches on by default", caps);
     // Accounts (§2): ONE table, users AND entities, tinted by kind, from GET /admin/accounts.
     const cols = await page.$$eval("#users-section thead th", (ths) => ths.map((t) => t.textContent.trim()));
-    check(JSON.stringify(cols) === JSON.stringify(["Name", "Role", "Email address", "Mailbox", "Runtime", "Active", "Actions"]), "accounts columns", cols);
+    check(JSON.stringify(cols) === JSON.stringify(["Name", "Email address", "Mailbox", "Runtime", "Active", "Actions"]), "accounts columns (the kind chip carries the role)", cols);
     const rows = await page.$$eval("#users-table tr.accounts-row", (trs) => trs.map((t) => [t.dataset.user, t.className.split(" ").find((c) => c.startsWith("af-row--")), getComputedStyle(t.cells[0]).backgroundColor]));
     check(JSON.stringify(rows.map((r) => r.slice(0, 2))) === JSON.stringify([["admin", "af-row--admin"], ["alice", "af-row--user"], ["bob", "af-row--user"], ["castor", "af-row--entity"]]), "one table: admin, users, entity rows with kind classes", rows);
     check(rows[0][2] !== "rgba(0, 0, 0, 0)" && rows[3][2] !== "rgba(0, 0, 0, 0)" && rows[0][2] !== rows[3][2], "admin and entity rows are tinted (kit tokens), differently", rows);
@@ -172,9 +172,26 @@ try {
     check(own && own.dis === "true" && own.reason === "You can't deactivate your own account.", "own Active row unavailable with the reason", own);
     const alice = await page.textContent("tr[data-user='alice'] .accounts-mailbox__text");
     check(alice.trim() === "Connected as alice@fastmail.com", "alice mailbox cell", alice);
-    check((await page.textContent("tr[data-user='bob'] .accounts-col-email")).trim() === "—", "bob has no email address");
+    check((await page.textContent("tr[data-user='bob'] .accounts-col-email")).trim() === "No address", "bob has no email address (words, not a dash)");
+    check((await page.textContent("tr[data-user='castor'] .accounts-mailbox__text")).trim() === "Not available", "entity mailbox reads Not available");
     const entityWhy = (await page.textContent("tr[data-user='castor'] .accounts-reasons")).trim();
-    check(entityWhy.includes("Delete:") && (await page.isDisabled("tr[data-user='castor'] button[data-action='delete']")), "entity Delete disabled with its reason visible in the row", entityWhy);
+    check(entityWhy === "Rotate and Delete don't apply to entities: no credential is kept, and an entity's name is kept for life — suspend it instead." && (await page.isDisabled("tr[data-user='castor'] button[data-action='delete']")), "entity Rotate/Delete disabled with ONE combined reason line (no 'Delete:' prefix)", entityWhy);
+    const ownWhy = (await page.textContent("tr[data-user='admin'] .accounts-reasons")).trim();
+    check(ownWhy === "You can't deactivate or delete your own account.", "own row: one reason line for Active and Delete", ownWhy);
+    // Round-2 polish: no placeholder dashes, actions on ONE row per account at 1440, one card title.
+    const polish = await page.evaluate(() => {
+      const cells = Array.from(document.querySelectorAll("#users-table tr.accounts-row td")).filter((td) => td.getClientRects().length).map((td) => td.innerText.trim());
+      const text = document.getElementById("users-table").innerText;
+      const rows = Array.from(document.querySelectorAll("#users-table tr.accounts-row")).map((tr) => {
+        const tops = Array.from(tr.querySelectorAll(".accounts-actions__buttons > button")).map((b) => Math.round(b.getBoundingClientRect().top));
+        const wrap = tr.closest(".users-table-wrap");
+        return { id: tr.dataset.user, lines: new Set(tops).size, h: Math.round(tr.getBoundingClientRect().height), overflow: wrap.scrollWidth > wrap.clientWidth + 1 };
+      });
+      return { dashCells: cells.filter((c) => c === "—").length, dashPairs: /— ·|· —/.test(text), rows, titles: Array.from(document.querySelectorAll("#users-section h2, #users-section .section-title")).map((h) => h.textContent.trim()) };
+    });
+    check(polish.dashCells === 0 && !polish.dashPairs, "no placeholder dash cells and no '— · —' text in the accounts table", polish);
+    check(polish.rows.every((r) => r.lines === 1 && !r.overflow && r.h < 100), "1440: every account's actions fit on one row (no wrap, no overflow, row < 100 px)", polish.rows);
+    check(!polish.titles.includes("Accounts"), "no second 'Accounts' title in the card (the top bar carries it)", polish.titles);
     check((await page.locator("tr[data-user='castor'] button[data-action='manage']").count()) === 1 && (await page.locator("tr[data-user='alice'] button[data-action='manage']").count()) === 0, "Manage only on entity rows");
     // Active switch on a user row: inline confirmation, stays on until confirmed.
     await page.click("tr[data-user='bob'] .users-active [role=switch]");
@@ -271,6 +288,8 @@ try {
     await page.waitForSelector("#account-logs-backdrop:not([hidden]) .account-logs-item", { timeout: 10000 });
     const logs = await page.evaluate(() => ({ title: document.getElementById("account-logs-title").textContent, chips: Array.from(document.querySelectorAll("#account-logs-filters button")).map((b) => b.textContent), items: Array.from(document.querySelectorAll(".account-logs-item")).map((li) => li.querySelector(".account-logs-item__title").textContent), note: document.getElementById("account-logs-note").textContent }));
     check(logs.title === "Activity — alice" && JSON.stringify(logs.chips) === JSON.stringify(["All", "Sign-ins", "Runs", "Automations", "Email"]) && logs.items.some((t) => /mailbox/i.test(t)) && /not recorded/.test(logs.note), "Logs modal renders alice's events with the honest footer", logs);
+    const runLink = await page.evaluate(() => { const li = document.querySelector(".account-logs-item[data-kind='run']"); const a = li && li.querySelector(".account-logs-item__link"); return li && { title: li.querySelector(".account-logs-item__title").textContent, link: a && a.textContent, path: a && a.getAttribute("data-observer-path") }; });
+    check(runLink && runLink.title === "Run started" && runLink.link === "Open in Observer" && runLink.path === `/apps/observer/#run/${RUN_ID}`, "a run event links into the Observer's run page (/apps/observer/#run/<run_id>)", runLink);
     await page.click("#account-logs-filters button:nth-child(2)");
     await page.waitForFunction(() => !document.getElementById("account-logs-message").textContent.startsWith("Loading"), null, { timeout: 10000 });
     check(await page.evaluate(() => Array.from(document.querySelectorAll(".account-logs-item")).every((li) => li.dataset.kind === "sign_in")), "the Sign-ins filter shows sign-ins only");
@@ -300,6 +319,32 @@ try {
     check(wf.warn === 0 && !wf.notAvailable, "no warnings and no 'Not available' on a fresh install", wf);
     check(wf.labels.includes("AbstractCode — chat agent") && wf.labels.includes("Assistant"), "default workflow per app: plain names", wf.labels);
     check(wf.purpose.startsWith("Workflows are the programs your apps and automations run."), "purpose line");
+    // Round-2 polish: a real table at 1440 — one compact row per bundle, no captioned blocks,
+    // no second "Workflows" title, (?) a small glyph, Drafts / Older versions labelled by the feature.
+    const table = await page.evaluate(() => {
+      const t = document.querySelector("#tab-workflows .workflows-table");
+      const rows = Array.from(t.querySelectorAll("tr.workflows-row"));
+      const tall = rows.map((r) => [r.dataset.bundle, Math.round(r.getBoundingClientRect().height)]).filter(([, h]) => h >= 120);
+      const what = rows[0].querySelector(".workflows-what");
+      return { stacked: t.classList.contains("ui-stacked"), display: getComputedStyle(rows[0]).display, heads: Array.from(t.querySelectorAll("thead th")).filter((th) => th.getClientRects().length).length, tall, n: rows.length,
+        captions: getComputedStyle(what, "::before").content, titles: Array.from(document.querySelectorAll("#workflows-section h2")).map((h) => h.textContent.trim()),
+        help: Math.round(document.querySelector("#workflows-table .help-q > summary").getBoundingClientRect().height),
+        switches: Array.from(document.querySelectorAll(".workflows-toolbar .af-switch__label")).map((l) => l.textContent) };
+    });
+    check(!table.stacked && table.display === "table-row" && table.heads === 6 && table.tall.length === 0 && table.n > 5, "1440: workflows is a table, one row per bundle, every row < 120 px", table);
+    check(table.captions === "none" || table.captions === "normal", "no repeated per-cell captions at 1440", table.captions);
+    check(!table.titles.includes("Workflows") && table.help <= 20, "no second 'Workflows' title; (?) is a small glyph", table);
+    check(JSON.stringify(table.switches) === JSON.stringify(["Drafts", "Older versions"]), "toolbar switches labelled by the feature, not a verb", table.switches);
+    // Delete asks INLINE in the row (with the run count sentence), never the console's dialog.
+    await page.click("#workflows-table tr[data-bundle='basic-agent'] .workflows-actions button.danger");
+    await page.waitForSelector("#workflows-table tr.workflows-confirm", { timeout: 10000 });
+    const ask = await page.evaluate(() => { const c = document.querySelector("#workflows-table tr.workflows-confirm"); const prev = c.previousElementSibling; const dlg = document.getElementById("confirm-title"); return { text: c.textContent, after: prev && prev.dataset.bundle, dialog: !!(dlg && dlg.checkVisibility && dlg.checkVisibility()) }; });
+    check(ask.after === "basic-agent" && /^Delete basic-agent\? Every version of this workflow is removed from disk; there is no undo\./.test(ask.text) && /(No runs reference it|runs? reference it)/.test(ask.text) && !ask.dialog, "workflow Delete: inline confirmation in the row with the run sentence, no dialog", ask);
+    await page.click("#workflows-table tr.workflows-confirm button.secondary");
+    check((await page.locator("#workflows-table tr.workflows-confirm").count()) === 0 && (await page.locator("#workflows-table tr[data-bundle='basic-agent']").count()) === 1, "Cancel closes the inline confirmation; nothing deleted");
+    // Streamed replies: a gateway-wide setting under "Settings", a kit switch labelled by the feature.
+    const stream = await page.evaluate(() => { const b = document.querySelector("#agent-defaults-root [data-streaming-default]"); const box = b && b.closest(".workflows-settings"); return b && { role: b.getAttribute("role"), label: b.querySelector(".af-switch__label").textContent, heading: box && box.querySelector(".section-subtitle").textContent, checkbox: !!document.querySelector("#agent-defaults-root input[type=checkbox]") }; });
+    check(stream && stream.role === "switch" && stream.label === "Streamed replies" && stream.heading === "Settings" && !stream.checkbox, "Streamed replies is a kit switch row under Settings", stream);
     await ctx.close();
   }
   // ---------------------------------------------------------------- phone: flat rows, one column, label scale + font floor
@@ -325,6 +370,10 @@ try {
     await page.waitForSelector("#workflows-table tr.workflows-row");
     await page.waitForSelector("#agent-defaults-root .agent-default", { timeout: 15000 });
     await fontFloor(page, "#tab-workflows", "workflows (touch)");
+    const helpTouch = await page.evaluate(() => { const s = document.querySelector("#workflows-table .help-q > summary"); const r = s.getBoundingClientRect(); const a = getComputedStyle(s, "::after"); return { h: Math.round(r.height), hitW: a.width, hitH: a.height }; });
+    check(helpTouch.h <= 20 && helpTouch.hitW === "44px" && helpTouch.hitH === "44px", "touch: (?) stays a small glyph with a 44 px hit area", helpTouch);
+    const phoneWf = await page.evaluate(() => { const r = document.querySelector("#workflows-table tr[data-bundle='basic-agent']"); return { meta: r.querySelector(".workflows-fold-meta").innerText.trim(), version: r.querySelector(".workflows-version-cell").getClientRects().length }; });
+    check(/^Version \S+ · Shipped with the gateway$/.test(phoneWf.meta) && phoneWf.version === 0, "phone: one 'Version · source' line, no captioned blocks", phoneWf);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
     check(!overflow, "no horizontal page scroll at 390 px");
     await page.click("#nav-toggle");

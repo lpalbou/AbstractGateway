@@ -14,6 +14,7 @@ override pins his agent email tools off).
 
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import re
@@ -33,6 +34,7 @@ pytestmark = pytest.mark.e2e
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE / "browser" / "state_toggles.mjs"
 ALICE, BOB = "alice-browser-test-token-01", "bob-browser-test-token-001"
+RUN_ID = "8f2c1a6e-4b7d-4e2a-9c1f-3d5e6a7b8c9d"
 
 
 def _playwright_modules() -> Path:
@@ -151,6 +153,12 @@ def scratch_gateway(tmp_path: Path):
         _stop(proc)
         seeded = subprocess.run([sys.executable, "-c", _SEED_ENTITY, str(data)], env=env, capture_output=True, text=True, timeout=120)
         assert seeded.returncode == 0, seeded.stderr[-3000:]
+        # One "Run started" record for alice in the audit log (the shape the gateway's audit
+        # middleware writes for POST /runs/start), so the Logs modal shows a run event with
+        # its Observer link without starting a real run (no model).
+        with open(data / "audit_log.jsonl", "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(), "method": "POST", "path": "/api/gateway/runs/start", "status": 200,
+                                 "principal_user_id": "alice", "principal_tenant_id": "default", "run": {"run_id": RUN_ID, "workflow": "basic-agent"}}) + "\n")
         proc = _start(port, env, log)
         admin = re.findall(r"Gateway admin token: (\S+)$", log.read_text(), flags=re.M)[-1]
         yield base, admin
@@ -166,7 +174,7 @@ def test_console_state_toggles_in_a_browser(scratch_gateway) -> None:
     kit = console_islands_sync.locate_kit()
     base, admin = scratch_gateway
     proc = subprocess.run(
-        [node, str(SCRIPT), base, admin, ALICE, str(modules), str(kit or "")],
+        [node, str(SCRIPT), base, admin, ALICE, str(modules), str(kit or ""), RUN_ID],
         capture_output=True, text=True, timeout=600, check=False,
     )
     assert proc.returncode == 0, proc.stderr[-4000:]

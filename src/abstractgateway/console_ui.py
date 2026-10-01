@@ -2724,22 +2724,26 @@ CONSOLE_UI_JS = r"""
     // The switch POSTs {"agents": {"streaming_default": true|false}} at once
     // (the gateway answers with the new read). A gateway whose read lacks the
     // key says so -- the switch is never silently hidden.
+    // A gateway-wide runtime setting, so it sits under a small "Settings" subheading after the
+    // per-app defaults, as a kit af-switch row labelled by the feature (never a verb) with one
+    // sentence; it applies at once.
+    const STREAMING_DEFAULT_LABEL = "Streamed replies";
+    const STREAMING_DEFAULT_DESC = "New interactive runs show the model's reply as it is written, unless the app asks for it whole; scheduled runs, bridges and entities always get whole replies.";
     function streamingDefaultMarkup(data, st) {
       const block = (data && data.agents) || {};
       const r = block.streaming_default;
-      const head = `<div class="ui-apps-setting" data-streaming-default-row><div class="ui-apps-setting__head"><label for="agent-streaming-default">${esc((r && r.label) || "Stream replies by default")}</label>`;
+      const head = `<div class="workflows-settings" data-streaming-default-row><h3 class="section-subtitle">Settings</h3>`;
       if (!r || typeof r !== "object" || typeof r.value !== "boolean") {
-        return head + `${uiPill("Not available", "muted")}</div><p class="ui-field-msg tone-warn" data-streaming-default-missing>Not available on this gateway: its settings read has no agents.streaming_default.</p></div>`;
+        return head + `<p class="ui-field-msg tone-warn" data-streaming-default-missing>${esc(STREAMING_DEFAULT_LABEL)}: not available on this gateway — its settings read has no agents.streaming_default.</p></div>`;
       }
       const admin = !!(data && data.writable);
-      const pill = r.source === "stored" ? uiPill("Saved setting", "info") : uiPill("Default", "muted");
       const busy = !!(st && st.streamSaving);
-      let out = head + `${pill}</div>`
-        + `<label class="entity-checkbox"><input type="checkbox" id="agent-streaming-default" data-streaming-default${r.value ? " checked" : ""}${admin && !busy ? "" : " disabled"}> ${r.value ? "On" : "Off"} — ${r.value ? "interactive replies stream live" : "replies arrive whole"}</label>`
-        + `<p class="ui-net-proxy__text">${esc(r.help || "")}</p>`
+      const why = admin ? "" : "Only an admin can change this.";
+      let out = head
+        + `<button type="button" role="switch" id="agent-streaming-default" class="af-switch af-switch--row" data-streaming-default aria-checked="${r.value ? "true" : "false"}"${busy ? ` aria-busy="true"` : ""}${why ? ` aria-disabled="true" title="${esc(why)}"` : ""} aria-describedby="agent-streaming-default-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">${esc(STREAMING_DEFAULT_LABEL)}</span><span class="af-switch__desc" id="agent-streaming-default-desc">${esc(STREAMING_DEFAULT_DESC)}</span></span></button>`
+        + (why ? `<span class="af-switch__reason">${esc(why)}</span>` : "")
         + `<span class="ui-advanced ui-sub"><code>abstractgateway config set ${esc(r.key || "agents.streaming_default")} true|false</code></span>`;
-      if (st && st.streamSaved) out += `<p class="ui-net-proxy__saved tone-${esc(st.streamSaved.tone)}" role="status" data-streaming-default-saved><b>${esc(st.streamSaved.head)}</b><span>${esc(st.streamSaved.text)}</span></p>`;
-      else if (!admin) out += `<p class="ui-net-proxy__saved" role="status"><span>Only an admin can change this.</span></p>`;
+      if (st && st.streamSaved) out += `<p class="inline-state${st.streamSaved.tone === "ok" ? " ok" : " error"}" role="status" data-streaming-default-saved>${esc(st.streamSaved.head)}: ${esc(st.streamSaved.text)}</p>`;
       return out + `</div>`;
     }
     function streamingDefaultBody(on) { return { agents: { streaming_default: !!on } }; }
@@ -2822,12 +2826,17 @@ CONSOLE_UI_JS = r"""
       if (!el) return;
       agentDefStore.views.set(key, el);
       el.onclick = (event) => {
+        const sw = event && event.target && event.target.closest ? event.target.closest("[data-streaming-default]") : null;
+        if (sw) {
+          if (sw.getAttribute("aria-disabled") === "true" || sw.getAttribute("aria-busy") === "true") return;
+          streamingDefaultSave(sw.getAttribute("aria-checked") !== "true");
+          return;
+        }
         const b = event && event.target && event.target.closest ? event.target.closest("[data-agent-defaults-save]") : null;
         if (b && !b.disabled) agentDefaultsSave();
       };
       el.onchange = (event) => {
         const t = event && event.target && event.target.matches ? event.target : null;
-        if (t && t.matches("[data-streaming-default]")) { streamingDefaultSave(!!t.checked); return; }
         const i = t && t.matches("[data-agent-default-select]") ? t : null;
         if (i) agentDefaultApply(i.dataset.agentDefaultSelect, i.value);
       };

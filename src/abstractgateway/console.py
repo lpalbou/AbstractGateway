@@ -1907,25 +1907,40 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    /* ---- Workflows (DESIGN-v2 §4): purpose line, one row per bundle with a plain
 	       name and what it does, expandable versions; per-app defaults below, neutral
 	       unless broken. Nothing is coloured except a broken default and "Deprecated". */
-	    .workflows-purpose { max-width: 72ch; }
-	    .workflows-toolbar { flex-wrap: wrap; align-items: center; }
+	    .workflows-head { margin-bottom: 12px; align-items: center; }
+	    .workflows-purpose { max-width: 80ch; margin: 0; }
+	    .workflows-toolbar { flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 	    .workflows-toolbar input[type="search"] { flex: 1 1 260px; min-width: 0; }
 	    .workflows-switch { display: inline-flex; align-items: center; }
-	    .workflows-scroll { max-height: none; }
-	    .workflows-table { width: 100%; }
-	    .workflows-table td { vertical-align: top; }
-	    .workflows-name { min-width: 200px; }
+	    .workflows-scroll { max-height: none; overflow: visible; }
+	    /* >= 1024 px: a real table, one compact row per bundle (fixed columns, the description
+	       clamped to two lines, full text when the row is expanded). */
+	    .workflows-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+	    .workflows-table th { white-space: nowrap; }
+	    .workflows-table td { vertical-align: top; padding-top: 10px; padding-bottom: 10px; overflow-wrap: anywhere; }
+	    .workflows-table th.workflows-col-name { width: 18%; }
+	    .workflows-table th.workflows-col-what { width: auto; }
+	    .workflows-table th.workflows-col-version { width: 6.5rem; }
+	    .workflows-table th.workflows-col-source { width: 11rem; }
+	    .workflows-table th.workflows-col-usedby { width: 15rem; }
+	    .workflows-table th.workflows-col-actions { width: 9.5rem; }
 	    .workflows-name__wrap { display: flex; gap: 6px; align-items: flex-start; }
 	    .workflows-name__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-	    .workflows-name__text small { font-size: var(--font-size-md); font-family: var(--font-mono); overflow-wrap: anywhere; }
-	    .workflows-chevron { color: var(--muted); width: 1em; }
-	    .workflows-what { max-width: 52ch; color: var(--text); }
-	    .workflows-row:not([aria-expanded="true"]) .workflows-what { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40ch; }
-	    .workflows-version-cell, .workflows-source { white-space: nowrap; }
-	    .workflows-usedby { min-width: 140px; }
-	    .workflows-usedby__item { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
-	    .workflows-usedby__item + .workflows-usedby__item { margin-top: 2px; }
-	    .workflows-actions .actions { flex-wrap: nowrap; }
+	    .workflows-name__text small { font-size: var(--af-helper-size, var(--font-size-md)); font-family: var(--font-mono); overflow-wrap: anywhere; }
+	    .workflows-chevron { color: var(--muted); width: 1em; flex: 0 0 auto; }
+	    .workflows-what { color: var(--text); }
+	    .workflows-clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+	    .workflows-row[aria-expanded="true"] .workflows-clamp { display: block; -webkit-line-clamp: unset; line-clamp: none; overflow: visible; }
+	    .workflows-fold-what, .workflows-fold-meta { display: none; }
+	    .workflows-fold-what, .workflows-fold-meta { font-size: var(--af-helper-size, var(--font-size-md)); color: var(--muted); font-weight: 400; }
+	    .workflows-fold-what { color: var(--text); font-size: var(--font-size-base); }
+	    .workflows-usedby__item { display: block; }
+	    .workflows-usedby__item > .help-q { margin-left: 6px; }
+	    .workflows-usedby__item + .workflows-usedby__item { margin-top: 4px; }
+	    .workflows-actions .actions { flex-wrap: nowrap; justify-content: flex-end; gap: 6px; }
+	    .workflows-actions .actions > button { white-space: nowrap; }
+	    .workflows-confirm > td { padding-top: 0; }
+	    .workflows-confirm-box { margin-top: 8px; }
 	    .workflows-detail > td { background: var(--panel-2, transparent); padding: 10px 14px 14px 36px; }
 	    .workflows-versions { display: flex; flex-direction: column; gap: 12px; }
 	    .workflows-version__head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -1933,11 +1948,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .workflows-entry { display: grid; grid-template-columns: minmax(120px, max-content) minmax(0, 1fr) auto; gap: 2px 14px; padding: 4px 0 0 2px; font-size: var(--font-size-base); }
 	    .workflows-entry__name { font-weight: 500; }
 	    .workflows-entry__desc, .workflows-entry__ifaces { color: var(--muted); }
-	    .help-q { display: inline-block; position: relative; }
-	    .help-q > summary { list-style: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: var(--font-size-xs); font-weight: 600; cursor: pointer; line-height: 1; }
+	    /* (?) help: a small 18 px glyph; on touch a 44 px hit area from a pseudo-element, so
+	       the row keeps its height and the glyph sits on the text's centre line. */
+	    .help-q { display: inline-flex; position: relative; vertical-align: middle; line-height: 1; }
+	    details.help-q > summary { --tap-min: 18px; position: relative; min-height: 0; min-width: 0; padding: 0; box-sizing: border-box; list-style: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 600; cursor: pointer; line-height: 1; }
 	    .help-q > summary::-webkit-details-marker { display: none; }
 	    .help-q[open] > summary { color: var(--text); border-color: var(--accent); }
 	    .help-q__text { position: absolute; z-index: 5; left: 0; top: calc(100% + 6px); width: min(320px, 70vw); margin: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-secondary); box-shadow: var(--shadow); color: var(--text); font-size: var(--font-size-md); font-weight: 400; line-height: 1.45; white-space: normal; }
+	    @media (pointer: coarse) {
+	      .help-q > summary::after { content: ""; position: absolute; left: 50%; top: 50%; width: 44px; height: 44px; transform: translate(-50%, -50%); }
+	    }
 	    .workflows-defaults { border-top: 1px solid var(--line-soft); padding-top: 18px; margin-top: 8px; }
 	    .workflows-defaults .section-subtitle { margin: 0 0 4px; }
 	    .agent-defaults { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px 18px; }
@@ -1952,21 +1972,43 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .agent-default__control { display: flex; align-items: center; gap: 8px; min-width: 0; }
 	    .agent-default__control select { flex: 1 1 auto; min-width: 0; max-width: 360px; }
 	    .agent-default__state { margin: 0; color: var(--muted); font-size: var(--font-size-md); }
+	    /* Settings under the per-app defaults (gateway-wide runtime settings). */
+	    .workflows-settings { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
+	    .workflows-settings .af-switch--row { width: 100%; max-width: none; }
+	    .workflows-settings .ui-advanced { display: block; margin-top: 6px; }
+	    /* 768-1023 px: the table keeps Name | Version | Used by | Actions; what it does and the
+	       source fold under the name. */
 	    @media (max-width: 1023.98px) {
+	      .workflows-table .workflows-th-what, .workflows-table .workflows-th-source, .workflows-table td.workflows-what, .workflows-table td.workflows-source { display: none; }
+	      .workflows-table th.workflows-col-name { width: auto; }
+	      .workflows-table th.workflows-col-version { width: 6.5rem; }
+	      .workflows-table th.workflows-col-usedby { width: 12rem; }
+	      .workflows-table th.workflows-col-actions { width: 11rem; }
+	      .workflows-fold-what { display: -webkit-box; margin-top: 2px; }
+	      .workflows-fold-meta { display: block; }
+	      .workflows-fold-version { display: none; }
+	      .agent-defaults { grid-template-columns: minmax(0, 1fr); }
+	    }
+	    /* < 768 px: one flat block per bundle — name + actions, what it does, ONE meta line
+	       "Version x · source", then "Used by · …" (DESIGN §12: label · value on one line). */
+	    @media (max-width: 767.98px) {
 	      .workflows-table, .workflows-table tbody, .workflows-table tr, .workflows-table td { display: block; width: 100%; }
-	      .workflows-table td[data-label]::before { content: none; }
 	      .workflows-table thead { display: none; }
 	      .workflows-table tr.workflows-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
-	      .workflows-table tr.workflows-row > td { padding: 0; border: 0; }
-	      .workflows-name { grid-column: 1; }
-	      .workflows-actions { grid-column: 2; grid-row: 1; }
-	      .workflows-what, .workflows-version-cell, .workflows-source, .workflows-usedby { grid-column: 1 / -1; max-width: none; }
-	      .workflows-table td.workflows-version-cell::before, .workflows-table td.workflows-source::before, .workflows-table td.workflows-usedby::before { content: attr(data-label) " · "; color: var(--muted); }
-	      .workflows-usedby { display: flex !important; flex-wrap: wrap; gap: 4px 12px; }
+	      .workflows-table tr.workflows-row > td { padding: 0; border: 0; width: auto; }
+	      .workflows-table td.workflows-name { grid-column: 1 / -1; grid-row: 1; }
+	      .workflows-table td.workflows-actions { grid-column: 1 / -1; grid-row: 3; margin-top: 4px; }
+	      .workflows-actions .actions { justify-content: flex-start; }
+	      .workflows-table td.workflows-version-cell { display: none; }
+	      .workflows-fold-version { display: inline; }
+	      .workflows-usedby { grid-column: 1 / -1; grid-row: 2; display: flex !important; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+	      .workflows-usedby__item + .workflows-usedby__item::before { content: "·"; margin-right: 6px; color: var(--muted); }
+	      .workflows-table td.workflows-usedby::before { content: "Used by · "; color: var(--muted); }
+	      .workflows-usedby__item + .workflows-usedby__item { margin-top: 0; }
+	      .workflows-actions .actions > button { min-height: 44px; }
+	      .workflows-confirm, .workflows-confirm > td { display: block; padding: 0 0 10px; border: 0; }
 	      .workflows-detail > td { padding: 8px 0 12px; }
 	      .workflows-entry { grid-template-columns: minmax(0, 1fr); }
-	      .agent-defaults { grid-template-columns: minmax(0, 1fr); }
-	      .help-q > summary { width: 28px; height: 28px; }
 	    }
 	    /* ---- Account email UI (DESIGN-v2 §3): IMAP servers always visible, one row per
 	       server (Server · Port · Security) from 768 px; Advanced as plain sentences. */
@@ -1998,47 +2040,63 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	       visible in the row. 834: Role / Email address / Runtime fold under the name.
 	       390: one flat block per row (no card in a card), 44 px targets. */
 	    #tab-users #account { display: none; }
-	    .accounts-page { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-	    .accounts-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px 20px; flex-wrap: wrap; }
-	    .accounts-head__text { flex: 1 1 320px; min-width: 0; }
-	    .accounts-head__text .section-title { margin: 0 0 4px; }
-	    .accounts-head__text .section-note { margin: 0; }
+	    /* One subheading size on every round-2 page (= the card heading, h2 15 px / 600). */
+	    .section-subtitle { font-size: calc(15px * var(--font-scale)); font-weight: 600; color: var(--text); margin: 0 0 4px; }
+	    .accounts-page { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+	    /* The top bar carries the page title and its line: the card header is the buttons row only. */
+	    .accounts-head { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+	    .accounts-head:not(:has(button:not(.hidden))) { display: none; }
 	    .accounts-head__actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 	    .accounts-table { width: 100%; border-collapse: collapse; }
 	    .accounts-table th { text-align: left; white-space: nowrap; }
-	    .accounts-table td { vertical-align: top; padding-top: 10px; padding-bottom: 10px; }
-	    .accounts-name__line { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-	    .accounts-fold, .accounts-phone-email { display: none; }
-	    .accounts-mailbox { overflow-wrap: anywhere; }
-	    .accounts-actions { min-width: 0; }
-	    .accounts-table td.accounts-actions { width: 34%; min-width: 300px; }
+	    .accounts-table td { vertical-align: top; padding-top: 12px; padding-bottom: 12px; }
+	    .accounts-name__line { display: inline-flex; align-items: center; gap: 8px; flex-wrap: nowrap; white-space: nowrap; }
+	    .accounts-fold, .accounts-phone-line { display: none; }
+	    .accounts-mailbox { overflow-wrap: normal; }
+	    .accounts-table th, .accounts-table td { padding-left: 10px; padding-right: 10px; }
+	    #users-section > .message:empty, #users-section > .issued.hidden { display: none; }
+	    #email-caps-message:empty { display: none; }
+	    .accounts-none { font-style: normal; }
+	    /* Active: the switch only. Its unavailable reason (aria-describedby) is written in the row's
+	       ONE reasons line under the actions, so the column stays narrow. */
+	    .accounts-table td.accounts-active { width: 1%; }
+	    .accounts-active .af-switch__reason { display: none; }
+	    /* Actions: compact, icon + label, one height; one row where the width allows. */
+	    .accounts-table td.accounts-actions { width: 1%; min-width: 0; }
 	    .users-table td.accounts-actions { white-space: normal; }
 	    .accounts-actions__buttons { display: flex; flex-wrap: wrap; gap: 6px; }
-	    .accounts-actions__buttons > button { min-height: 30px; padding: 4px 10px; font-size: var(--font-size-md); }
-	    .accounts-actions__buttons > button .button-icon { font-size: .95em; }
-	    .accounts-reasons { margin: 6px 0 0; font-size: var(--font-size-md); line-height: 1.4; }
-	    .accounts-legend { margin-top: 2px; }
-	    #users-section .accounts-email { margin: 18px 0 0; padding: 16px 0 0; border: 0; border-top: 1px solid var(--line-soft); background: transparent; box-shadow: none; max-width: 720px; }
-	    .accounts-name__line { white-space: nowrap; }
-	    .accounts-email .section-subtitle { margin: 0 0 4px; }
+	    .accounts-actions__buttons > button { display: inline-flex; align-items: center; gap: 5px; height: 32px; min-height: 32px; padding: 0 9px; font-size: var(--font-size-md); white-space: nowrap; }
+	    .accounts-actions__buttons > button .button-icon svg { width: 14px; height: 14px; }
+	    .accounts-reasons { margin: 6px 0 0; font-size: var(--af-helper-size, var(--font-size-md)); line-height: 1.4; }
+	    .accounts-legend { margin: 0; }
+	    /* Email for everyone: a full-width settings row (label + description left, switch at the card edge). */
+	    #users-section .accounts-email { margin: 8px 0 0; padding: 16px 0 0; border: 0; border-top: 1px solid var(--line-soft); background: transparent; box-shadow: none; max-width: none; width: 100%; }
+	    #users-section .accounts-email .switch-list, #users-section .accounts-email .af-switch--row { width: 100%; max-width: none; }
+	    #users-section .accounts-email .plain-disclosure { margin-top: 8px; }
+	    @media (min-width: 1440px) {
+	      .accounts-actions__buttons { flex-wrap: nowrap; }
+	    }
 	    @media (max-width: 1439.98px) {
-	      .accounts-table .accounts-col-role, .accounts-table .accounts-col-email, .accounts-table .accounts-col-runtime,
-	      .accounts-table th:nth-child(2), .accounts-table th:nth-child(3), .accounts-table th:nth-child(5) { display: none; }
-	      .accounts-fold { display: block; margin-top: 4px; font-size: var(--font-size-md); overflow-wrap: anywhere; }
+	      .accounts-table td.accounts-actions { width: 42%; }
+	      .accounts-table .accounts-col-email, .accounts-table .accounts-col-runtime,
+	      .accounts-table th:nth-child(2), .accounts-table th:nth-child(4) { display: none; }
+	      .accounts-fold { display: block; margin-top: 4px; font-size: var(--af-helper-size, var(--font-size-md)); overflow-wrap: break-word; }
+	      .accounts-fold > span { display: block; }
 	    }
 	    @media (max-width: 767.98px) {
+	      .accounts-head { justify-content: stretch; }
 	      .accounts-head__actions { flex: 1 1 100%; }
 	      .accounts-head__actions > button { flex: 1 1 100%; min-height: 44px; }
 	      .accounts-table, .accounts-table tbody, .accounts-table tr { display: block; width: 100%; }
 	      .accounts-table thead { display: none; }
 	      .accounts-table tr.accounts-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 12px 12px 12px 14px; border-top: 1px solid var(--line-soft); }
-	      .accounts-table tr.accounts-row > td { display: block; padding: 0; border: 0; min-width: 0; }
+	      .accounts-table tr.accounts-row > td { display: block; padding: 0; border: 0; min-width: 0; width: auto; }
 	      .accounts-table tr.accounts-row > td::before { content: none; }
-	      .accounts-table td.accounts-name { grid-column: 1; grid-row: 1; box-shadow: none; }
+	      .accounts-table td.accounts-name { grid-column: 1; grid-row: 1; box-shadow: none; align-self: center; }
 	      .accounts-table td.accounts-active { grid-column: 2; grid-row: 1; justify-self: end; }
 	      .accounts-table td.accounts-mailbox { grid-column: 1 / -1; grid-row: 2; }
-	      .accounts-table td.accounts-actions { grid-column: 1 / -1; grid-row: 4; margin-top: 6px; width: auto; min-width: 0; }
-	      .accounts-table tr.accounts-row > td.accounts-col-role, .accounts-table tr.accounts-row > td.accounts-col-email { display: none; }
+	      .accounts-table td.accounts-actions { grid-column: 1 / -1; grid-row: 4; margin-top: 8px; width: auto; min-width: 0; }
+	      .accounts-table tr.accounts-row > td.accounts-col-email { display: none; }
 	      /* One flat block per row: the tint and the kind bar paint the row, not each cell. */
 	      .accounts-table tr.accounts-row > td { background: transparent !important; box-shadow: none !important; }
 	      .accounts-table tr.af-row--admin { background-color: var(--af-row-tint-admin); box-shadow: inset 3px 0 0 var(--af-row-mark-admin); }
@@ -2047,9 +2105,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      .accounts-fold { display: none; }
 	      .accounts-table .accounts-col-runtime { display: block !important; grid-column: 1 / -1; grid-row: 3; color: var(--af-row-text-muted, var(--muted)); }
 	      .accounts-table .accounts-col-runtime::before { content: "Runtime " !important; }
-	      .accounts-phone-email { display: inline; }
+	      .accounts-phone-line { display: block; }
+	      .accounts-mailbox__text { display: none; }
 	      .accounts-actions__buttons { gap: 8px; }
-	      .accounts-actions__buttons > button { min-height: 44px; padding: 6px 12px; font-size: var(--font-size-base); }
+	      .accounts-actions__buttons > button { height: 44px; min-height: 44px; padding: 0 12px; font-size: var(--font-size-base); }
 	      .accounts-table .row-confirm, .accounts-table .row-confirm > td { display: block; padding: 0 0 10px; border: 0; }
 	    }
 	    /* Account modals (kit af-modal): content rules only; the shell is the kit's. */
@@ -2100,7 +2159,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      </div>
 	      <div class="shell_nav_group af-nav-group" role="group" aria-labelledby="nav-group-work">
 	        <div id="nav-group-work" class="shell_nav_caption af-nav-group__caption">Work</div>
-	        <button id="tab-button-workflows" class="tab-button shell_nav_item" type="button" title="Registered workflows: versions, import, export, delete"><span class="shell_nav_icon" aria-hidden="true">⑂</span><span class="shell_nav_label">Workflows</span></button>
+	        <button id="tab-button-workflows" class="tab-button shell_nav_item" type="button" title="Bundles, versions, import and export"><span class="shell_nav_icon" aria-hidden="true">⑂</span><span class="shell_nav_label">Workflows</span></button>
 	        <button id="tab-button-runtimes" class="tab-button shell_nav_item" type="button" title="Each user's data plane: runs, flows, sessions and memory"><span class="shell_nav_icon" aria-hidden="true">◎</span><span class="shell_nav_label">Runtimes</span></button>
 	        <button id="tab-button-apps" class="tab-button shell_nav_item" type="button" title="Browser apps (Flow, Code, Observer...): install, start, open"><span class="shell_nav_icon" aria-hidden="true">▣</span><span class="shell_nav_label">Apps</span></button>
 	      </div>
@@ -2226,9 +2285,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            <!-- WORKFLOWS (DESIGN-v2 §4): what exists (one row per bundle, plain names and
 	                 what each does), then — secondary — which workflow each app runs by default. -->
 	            <section id="workflows-section" class="session-only workflows-page">
-	              <div class="section-head">
+	              <div class="section-head workflows-head">
 	                <div>
-	                  <h2 class="section-title"><span>Workflows</span></h2>
 	                  <p class="section-note workflows-purpose">Workflows are the programs your apps and automations run. They come in bundles (.flow files): some ship with the gateway, others you import or publish from AbstractFlow.</p>
 	                </div>
 	                <button id="workflows-refresh" class="secondary icon-only" title="Reload the workflow registry" aria-label="Refresh workflows"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
@@ -2242,8 +2300,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              </div>
 	              <div id="workflows-message" class="message" role="status" aria-live="polite"></div>
 	              <div class="table-scroll workflows-scroll" id="workflows-scroll">
-	                <table class="workflows-table">
-	                  <thead><tr><th>Name</th><th>What it does</th><th>Version</th><th>Source</th><th>Used by</th><th><span class="sr-only">Actions</span></th></tr></thead>
+	                <table class="workflows-table" data-ui-no-stack>
+	                  <thead><tr><th class="workflows-col-name">Name</th><th class="workflows-col-what workflows-th-what">What it does</th><th class="workflows-col-version">Version</th><th class="workflows-col-source workflows-th-source">Source</th><th class="workflows-col-usedby">Used by</th><th class="workflows-col-actions"><span class="sr-only">Actions</span></th></tr></thead>
 	                  <tbody id="workflows-table"></tbody>
 	                </table>
 	              </div>
@@ -2666,10 +2724,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                 actions that say why when they cannot apply, and the Email / Logs modals. -->
 	            <section id="users-section" class="session-only hidden accounts-page">
 	              <div class="accounts-head">
-	                <div class="accounts-head__text">
-	                  <h2 class="section-title"><span>Accounts</span></h2>
-	                  <p class="section-note">People who use this gateway and the entities that act on it.</p>
-	                </div>
 	                <div class="accounts-head__actions">
 	                  <button id="open-create-user" type="button" title="Create a gateway user and issue their token (shown once)">Create user</button>
 	                  <button id="accounts-create-entity" class="secondary" type="button" title="Summon a new entity from a spark template (the name is permanent)">Create entity</button>
@@ -2678,8 +2732,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <div id="issued-token" class="issued hidden"></div>
 	              <div id="users-message" class="message" role="status" aria-live="polite"></div>
 	              <div class="users-table-wrap">
-	                <table class="users-table accounts-table">
-	                  <thead><tr><th>Name</th><th>Role</th><th>Email address</th><th>Mailbox</th><th>Runtime</th><th>Active</th><th>Actions</th></tr></thead>
+	                <table class="users-table accounts-table" data-ui-no-stack>
+	                  <thead><tr><th>Name</th><th>Email address</th><th>Mailbox</th><th>Runtime</th><th>Active</th><th>Actions</th></tr></thead>
 	                  <tbody id="users-table"></tbody>
 	                </table>
 	              </div>
@@ -3609,6 +3663,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      gear: svgIcon('<circle cx="12" cy="12" r="3"></circle><path d="M12 2.5v3M12 18.5v3M4.4 6.2l2.1 2.1M17.5 15.7l2.1 2.1M2.5 12h3M18.5 12h3M4.4 17.8l2.1-2.1M17.5 8.3l2.1-2.1"></path>'),
 	      warn: svgIcon('<path d="M12 4 2.8 19.5h18.4L12 4z"></path><path d="M12 10v4.5"></path><circle cx="12" cy="17" r=".6"></circle>'),
 	      lock: svgIcon('<rect x="6" y="11" width="12" height="9" rx="2"></rect><path d="M9 11V8a3 3 0 0 1 6 0v3"></path>'),
+	      mail: svgIcon('<rect x="3" y="5.5" width="18" height="13" rx="2"></rect><path d="m3.5 7 8.5 6 8.5-6"></path>'),
+	      logs: svgIcon('<path d="M8 6.5h12M8 12h12M8 17.5h12"></path><circle cx="4" cy="6.5" r=".9"></circle><circle cx="4" cy="12" r=".9"></circle><circle cx="4" cy="17.5" r=".9"></circle>'),
+	      folder: svgIcon('<path d="M3 7.5a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>'),
+	      trash: svgIcon('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4.5h6V7"></path>'),
 	    };
 	    // Card 015 wave 3 (usability P2-1/2): a header-only table reads as
 	    // BROKEN while its fetch runs — every table loader says what is
@@ -4153,7 +4211,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    const TAB_TITLES = {
 	      users: ["Accounts", "People who use this gateway and the entities that act on it"],
 	      runtimes: ["Runtimes", "Each user's own data plane: runs, flows, sessions and memory"],
-      workflows: ["Workflows", "Registered workflows: versions, import, export, delete"],
+      workflows: ["Workflows", "Bundles, versions, import and export"],
 	      providers: ["Providers", "LLM provider connections and endpoint profiles"],
 	      defaults: ["Multimodal Capabilities", "Which provider/model serves each capability route"],
 	      sandbox: ["Sandbox", "Try any provider/model directly — text, image, audio, video"],
@@ -4274,7 +4332,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const td = document.createElement("td");
 	      td.className = "workflows-usedby";
 	      td.setAttribute("data-label", "Used by");
-	      if (!row.interfaces.length) { td.textContent = "—"; return td; }
+	      if (!row.interfaces.length) { td.innerHTML = `<span class="muted">None</span>`; return td; }
 	      for (const iface of row.interfaces) {
 	        const info = workflowInterfaceInfo(iface);
 	        const item = document.createElement("span");
@@ -4322,7 +4380,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          const del = document.createElement("button");
 	          del.type = "button"; del.className = "secondary danger small"; del.textContent = "Delete";
 	          del.setAttribute("aria-label", `Delete ${row.name} ${v.bundle_version}`);
-	          del.onclick = () => deleteWorkflow(row.bundle_id, String(v.bundle_version || ""), null);
+	          del.onclick = (ev) => { if (ev && ev.stopPropagation) ev.stopPropagation(); deleteWorkflow(row.bundle_id, String(v.bundle_version || ""), null, box); };
 	          acts.append(del);
 	        }
 	        head.append(acts);
@@ -4350,7 +4408,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (!state.workflowsShowOlder && row.versions.length > 1) {
 	        const more = document.createElement("p");
 	        more.className = "section-note";
-	        more.textContent = `${row.versions.length - 1} older version${row.versions.length === 2 ? "" : "s"} — switch on “Show older versions” to see them.`;
+	        more.textContent = `${row.versions.length - 1} older version${row.versions.length === 2 ? "" : "s"} — turn on “Older versions” to see them.`;
 	        list.append(more);
 	      }
 	      td.append(list);
@@ -4385,27 +4443,43 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        name.querySelector("strong").textContent = row.name;
 	        name.querySelector("small").textContent = row.bundle_id;
 	        if (row.deprecated) { const pill = document.createElement("span"); pill.className = "pill"; pill.textContent = "Deprecated"; name.querySelector(".workflows-name__text").append(pill); }
+	        const olderCount = row.versions.length - 1;
+	        const versionText = `${row.latest.bundle_version || "—"}${olderCount > 0 ? ` +${olderCount} older` : ""}`;
+	        if (!WORKFLOW_SOURCE_TEXT[row.source]) console.error(`AbstractGateway console: GET /bundles item ${row.bundle_id} has no known source (gateway-api seam, DESIGN-v2 §6): ${row.source}`);
+	        const sourceText = WORKFLOW_SOURCE_TEXT[row.source] || "Unknown source";
+	        // Narrow screens (DESIGN §12): the description and "Version · source" fold under the
+	        // name as label·value lines instead of one captioned block per field.
+	        const foldWhat = document.createElement("span");
+	        foldWhat.className = "workflows-fold-what workflows-clamp";
+	        foldWhat.textContent = row.description || "No description.";
+	        const foldMeta = document.createElement("span");
+	        foldMeta.className = "workflows-fold-meta";
+	        foldMeta.innerHTML = `<span class="workflows-fold-version"></span><span class="workflows-fold-source"></span>`;
+	        foldMeta.querySelector(".workflows-fold-version").textContent = `Version ${versionText} · `;
+	        foldMeta.querySelector(".workflows-fold-source").textContent = sourceText;
+	        name.querySelector(".workflows-name__text").append(foldWhat, foldMeta);
 	        tr.appendChild(name);
 
 	        const what = document.createElement("td");
 	        what.className = "workflows-what";
 	        what.setAttribute("data-label", "What it does");
-	        what.textContent = row.description || "—";
+	        const whatText = document.createElement("span");
+	        whatText.className = "workflows-clamp";
+	        whatText.textContent = row.description || "No description.";
+	        what.append(whatText);
 	        if (row.description) what.title = row.description;
 	        tr.appendChild(what);
 
 	        const version = document.createElement("td");
 	        version.className = "workflows-version-cell";
 	        version.setAttribute("data-label", "Version");
-	        const older = row.versions.length - 1;
-	        version.textContent = `${row.latest.bundle_version || "—"}${older > 0 ? ` +${older} older` : ""}`;
+	        version.textContent = versionText;
 	        tr.appendChild(version);
 
 	        const source = document.createElement("td");
 	        source.className = "workflows-source";
 	        source.setAttribute("data-label", "Source");
-	        if (!WORKFLOW_SOURCE_TEXT[row.source]) console.error(`AbstractGateway console: GET /bundles item ${row.bundle_id} has no known source (gateway-api seam, DESIGN-v2 §6): ${row.source}`);
-	        source.textContent = WORKFLOW_SOURCE_TEXT[row.source] || "—";
+	        source.textContent = sourceText;
 	        tr.appendChild(source);
 
 	        tr.appendChild(workflowUsedByCell(row));
@@ -4427,7 +4501,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          del.textContent = "Delete";
 	          del.setAttribute("aria-label", `Delete ${row.name}`);
 	          del.title = "Remove every version of this workflow";
-	          del.onclick = (ev) => { ev.stopPropagation(); deleteWorkflow(row.bundle_id, null, row); };
+	          del.onclick = (ev) => { ev.stopPropagation(); deleteWorkflow(row.bundle_id, null, row, tr); };
 	          wrap.appendChild(del);
 	        }
 	        actions.appendChild(wrap);
@@ -4542,12 +4616,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      renderWorkflows();
 	    }
 	    function mountWorkflowSwitches() {
-	      // Show drafts / Show older versions: kit switches, applied at once.
+	      // Drafts / Older versions: kit switches labelled by the feature (never a verb), applied at once.
 	      if ($("workflows-drafts-slot").childNodes.length) return;
-	      const drafts = afSwitchCreate({ id: "workflows-show-drafts", label: "Show drafts", checked: state.workflowsShowDrafts, small: true });
+	      const drafts = afSwitchCreate({ id: "workflows-show-drafts", label: "Drafts", checked: state.workflowsShowDrafts, small: true });
 	      $("workflows-drafts-slot").append(...drafts.nodes);
 	      afSwitchBind(drafts.button, async (next) => { state.workflowsShowDrafts = next; await loadWorkflows(); return next; }, (e) => { $("workflows-message").textContent = emailErrorText(e); $("workflows-message").className = "message error"; });
-	      const older = afSwitchCreate({ id: "workflows-show-older", label: "Show older versions", checked: state.workflowsShowOlder, small: true });
+	      const older = afSwitchCreate({ id: "workflows-show-older", label: "Older versions", checked: state.workflowsShowOlder, small: true });
 	      $("workflows-older-slot").append(...older.nodes);
 	      afSwitchBind(older.button, async (next) => { state.workflowsShowOlder = next; renderWorkflows(); return next; }, () => {});
 	    }
@@ -4583,42 +4657,80 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      return { seen, capped };
 	    }
 
-	    async function deleteWorkflow(bundleId, bundleVersion, row) {
-	      const label = bundleVersion ? `${bundleId}@${bundleVersion}` : bundleId;
-	      let usageLine = "";
-	      try {
-	        const usage = await workflowUsage(bundleId, bundleVersion, row);
-	        if (usage && usage.seen) {
-	          usageLine = usage.capped
-	            ? `\\nAt least ${usage.seen} run(s) reference it — the run store cannot count exactly, so this is a floor, not a total.`
-	            : `\\n${usage.seen} run(s) reference it.`;
-	          usageLine += "\\nThose runs keep their records but can no longer be replayed or resumed.";
-	        } else if (usage) {
-	          usageLine = "\\nNo runs reference it in the pages checked.";
-	        }
-	      } catch (err) { usageLine = ""; }
-
-	      const scope = bundleVersion ? "this version" : "EVERY version of this workflow";
-	      const ok = await confirmAction({
-	        title: `Delete ${label}?`,
-	        message: `This removes ${scope} from disk. There is no undo.${usageLine}\\n\\nIf you may need it again, export it first.`,
-	        confirmLabel: "Delete",
-	        danger: true,
-	      });
-	      if (!ok) return;
-	      $("workflows-message").textContent = `Deleting ${label}…`;
-	      $("workflows-message").className = "message";
-	      try {
-	        const qs = bundleVersion ? `?bundle_version=${encodeURIComponent(bundleVersion)}&reload=true` : "?reload=true";
-	        const res = await api(`/api/gateway/bundles/${encodeURIComponent(bundleId)}${qs}`, { method: "DELETE" });
-	        $("workflows-message").textContent = `Removed ${res.removed} file(s) for ${label}.`;
-	        $("workflows-message").className = "message ok";
-	        if (!bundleVersion) state.workflowsExpanded.delete(bundleId);
-	        await loadWorkflows();
-	      } catch (err) {
-	        $("workflows-message").textContent = String(err.message || err);
-	        $("workflows-message").className = "message error";
+	    // Delete asks INLINE, in the row (round-2 polish): the sentence names what goes, the run
+	    // count (or its floor), and the way back (export first); Delete / Cancel sit beside it.
+	    // anchor = the bundle's <tr> (whole bundle) or the version box in the expanded row.
+	    function workflowDeleteSentence(label, bundleVersion, usage) {
+	      const scope = bundleVersion ? "This version is removed from disk" : "Every version of this workflow is removed from disk";
+	      let runs = "";
+	      if (usage && usage.seen) {
+	        runs = usage.capped
+	          ? ` At least ${usage.seen} run${usage.seen === 1 ? "" : "s"} reference it (the run store cannot count exactly); they keep their records but can no longer be replayed or resumed.`
+	          : ` ${usage.seen} run${usage.seen === 1 ? "" : "s"} reference it; they keep their records but can no longer be replayed or resumed.`;
+	      } else if (usage) {
+	        runs = " No runs reference it in the pages checked.";
 	      }
+	      return `Delete ${label}? ${scope}; there is no undo.${runs} Export it first if you may need it again.`;
+	    }
+	    function workflowConfirmInline(anchor, text, onConfirm) {
+	      for (const old of Array.from(document.querySelectorAll("#tab-workflows .workflows-confirm"))) old.remove();
+	      const box = document.createElement("div");
+	      box.className = "inline-confirm workflows-confirm-box";
+	      box.setAttribute("role", "group");
+	      const span = document.createElement("span");
+	      span.textContent = text;
+	      const yes = document.createElement("button");
+	      yes.type = "button"; yes.className = "danger"; yes.textContent = "Delete";
+	      const no = document.createElement("button");
+	      no.type = "button"; no.className = "secondary"; no.textContent = "Cancel";
+	      box.append(span, yes, no);
+	      let holder;
+	      if (anchor.tagName === "TR") {
+	        holder = document.createElement("tr");
+	        holder.className = "workflows-confirm";
+	        const td = document.createElement("td");
+	        td.colSpan = 6;
+	        td.append(box);
+	        holder.append(td);
+	        const next = anchor.nextElementSibling;
+	        const after = next && next.classList.contains("workflows-detail") ? next : anchor;
+	        after.after(holder);
+	      } else {
+	        holder = box;
+	        holder.classList.add("workflows-confirm");
+	        anchor.append(holder);
+	      }
+	      holder.onclick = (ev) => ev.stopPropagation();
+	      no.onclick = () => holder.remove();
+	      yes.onclick = async () => {
+	        yes.disabled = true; no.disabled = true;
+	        yes.setAttribute("aria-busy", "true");
+	        await onConfirm();
+	        holder.remove();
+	      };
+	      try { no.focus(); } catch {}
+	      return holder;
+	    }
+	    async function deleteWorkflow(bundleId, bundleVersion, row, anchor) {
+	      if (!anchor) throw new Error("deleteWorkflow needs the row (or version box) that asks inline.");
+	      const label = bundleVersion ? `${bundleId}@${bundleVersion}` : bundleId;
+	      let usage = null;
+	      try { usage = await workflowUsage(bundleId, bundleVersion, row); } catch (err) { usage = null; }
+	      workflowConfirmInline(anchor, workflowDeleteSentence(label, bundleVersion, usage), async () => {
+	        $("workflows-message").textContent = `Deleting ${label}…`;
+	        $("workflows-message").className = "message";
+	        try {
+	          const qs = bundleVersion ? `?bundle_version=${encodeURIComponent(bundleVersion)}&reload=true` : "?reload=true";
+	          const res = await api(`/api/gateway/bundles/${encodeURIComponent(bundleId)}${qs}`, { method: "DELETE" });
+	          $("workflows-message").textContent = `Removed ${res.removed} file(s) for ${label}.`;
+	          $("workflows-message").className = "message ok";
+	          if (!bundleVersion) state.workflowsExpanded.delete(bundleId);
+	          await loadWorkflows();
+	        } catch (err) {
+	          $("workflows-message").textContent = `Not deleted: ${String(err.message || err)}`;
+	          $("workflows-message").className = "message error";
+	        }
+	      });
 	    }
 
 	    async function importWorkflows(files) {
@@ -11955,7 +12067,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const row = document.createElement("tr");
       row.className = "row-confirm";
       const td = document.createElement("td");
-      td.colSpan = 7;
+      td.colSpan = 6;
       const box = document.createElement("div");
       box.className = "inline-confirm";
       box.setAttribute("role", "group");
@@ -12004,12 +12116,46 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       }
       return act;
     }
+    // Words, never placeholder dashes (round-2 polish): an entity's mailbox is "Not available"
+    // (the reason is in its Email modal), a missing address is "No address".
     function accountMailboxText(a) {
       const m = a.mailbox || {};
       if (m.state === "connected") return m.address ? `Connected as ${m.address}` : "Connected";
       if (m.state === "paused") return "Paused";
       if (m.state === "not_connected") return "Not connected";
-      return "—";
+      if (m.state === "unavailable") return "Not available";
+      throw new Error(`GET /admin/accounts row ${a.id} has mailbox.state ${JSON.stringify(m.state)} (gateway-api seam, DESIGN-v2 §6).`);
+    }
+    // The phone line "address · mailbox" says the address once: a mailbox on the same
+    // account reads "Mailbox connected" instead of repeating it.
+    function accountPhoneLine(a) {
+      const m = a.mailbox || {};
+      const address = a.email_address || "No address";
+      const mailbox = (m.state === "connected" && m.address && m.address === a.email_address) ? "Mailbox connected" : accountMailboxText(a);
+      return `${address} · ${mailbox}`;
+    }
+    // Reasons of the unavailable actions as ONE short muted line, without "Delete:" prefixes
+    // (the disabled button sits right beside it). An entity whose Rotate AND Delete are both
+    // unavailable gets one combined sentence (explicit rule on the two action keys).
+    const ACCOUNT_ENTITY_ROTATE_DELETE = "Rotate and Delete don't apply to entities: no credential is kept, and an entity's name is kept for life — suspend it instead.";
+    const ACCOUNT_OWN_SUSPEND_DELETE = "You can't deactivate or delete your own account.";
+    function accountReasonsLine(a, keys) {
+      const off = ["suspend", ...keys].filter((k) => !accountAction(a, k).available);
+      const out = [];
+      let rest = off;
+      if (a.kind === "entity" && off.includes("rotate") && off.includes("delete")) {
+        out.push(ACCOUNT_ENTITY_ROTATE_DELETE);
+        rest = rest.filter((k) => k !== "rotate" && k !== "delete");
+      }
+      if (a.own === true && off.includes("suspend") && off.includes("delete")) {
+        out.push(ACCOUNT_OWN_SUSPEND_DELETE);
+        rest = rest.filter((k) => k !== "suspend" && k !== "delete");
+      }
+      for (const k of rest) {
+        const why = accountAction(a, k).reason || "Not available for this account.";
+        if (!out.includes(why)) out.push(why);
+      }
+      return out.join(" ");
     }
     function accountIsOwn(a) {
       const p = state.principal || {};
@@ -12044,7 +12190,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       tbody.textContent = "";
       if (!rows.length) {
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td colspan="7" class="empty">No accounts yet.</td>`;
+        tr.innerHTML = `<td colspan="6" class="empty">No accounts yet.</td>`;
         tbody.append(tr);
         return;
       }
@@ -12056,15 +12202,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         tr.setAttribute("data-user", a.id);
         tr.setAttribute("data-kind", a.kind);
         const shown = (a.tenant_id && a.tenant_id !== "default") ? `${a.tenant_id}/${a.id}` : a.id;
-        const email = a.email_address || "—";
-        const runtime = a.runtime_id || "—";
+        const email = a.email_address || "No address";
+        const emailCell = a.email_address ? esc(a.email_address) : `<span class="accounts-none af-row__muted">No address</span>`;
         const mailbox = accountMailboxText(a);
-        tr.innerHTML = `<td data-label="Name" class="accounts-name"><span class="accounts-name__line"><strong>${esc(shown)}</strong> <span class="af-kind-chip af-kind-chip--${kind}">${ACCOUNT_KIND_LABEL[kind]}</span></span>`
-          + `<span class="accounts-fold af-row__muted">${esc(ACCOUNT_KIND_LABEL[kind])} · ${esc(email)} · ${a.runtime_id ? `runtime ${esc(runtime)}` : "no runtime"}</span></td>`
-          + `<td data-label="Role" class="accounts-col-role" title="${esc(ACCOUNT_ROLE_TITLE[kind])}">${ACCOUNT_KIND_LABEL[kind]}</td>`
-          + `<td data-label="Email address" class="accounts-col-email">${esc(email)}</td>`
-          + `<td data-label="Mailbox" class="accounts-mailbox"><span class="accounts-phone-email af-row__muted">${esc(email)} · </span><span class="accounts-mailbox__text">${esc(mailbox)}</span></td>`
-          + `<td data-label="Runtime" class="accounts-col-runtime">${a.runtime_id ? `<code>${esc(runtime)}</code>` : "—"}</td>`
+        const mailboxNone = a.mailbox && a.mailbox.state === "unavailable";
+        tr.innerHTML = `<td data-label="Name" class="accounts-name"><span class="accounts-name__line"><strong>${esc(shown)}</strong> <span class="af-kind-chip af-kind-chip--${kind}" title="${esc(ACCOUNT_ROLE_TITLE[kind])}">${ACCOUNT_KIND_LABEL[kind]}</span></span>`
+          + `<span class="accounts-fold af-row__muted"><span>${esc(email)}</span><span>${a.runtime_id ? `Runtime ${esc(a.runtime_id)}` : "No runtime"}</span></span></td>`
+          + `<td data-label="Email address" class="accounts-col-email">${emailCell}</td>`
+          + `<td data-label="Mailbox" class="accounts-mailbox${mailboxNone ? " accounts-mailbox--none" : ""}"><span class="accounts-phone-line af-row__muted">${esc(accountPhoneLine(a))}</span><span class="accounts-mailbox__text${mailboxNone ? " af-row__muted" : ""}">${esc(mailbox)}</span></td>`
+          + `<td data-label="Runtime" class="accounts-col-runtime">${a.runtime_id ? `<code>${esc(a.runtime_id)}</code>` : `<span class="af-row__muted">None</span>`}</td>`
           + `<td data-label="Active" class="users-active accounts-active"></td>`;
         // Active (§2.2): users = registry `enabled`; entities = suspend / resume.
         const activeCell = tr.querySelector(".accounts-active");
@@ -12114,15 +12260,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         actions.setAttribute("data-label", "Actions");
         const buttons = document.createElement("div");
         buttons.className = "accounts-actions__buttons";
-        const reasons = [];
+        const shownKeys = [];
         const add = (key, btn, onClick) => {
           const act = accountAction(a, key);
           btn.setAttribute("data-action", key);
+          shownKeys.push(key);
           if (!act.available) {
             btn.disabled = true;
-            const why = act.reason || "Not available for this account.";
-            btn.title = why;
-            reasons.push(`${btn.getAttribute("data-label")}: ${why}`);
+            btn.title = act.reason || "Not available for this account.";
           } else {
             btn.onclick = onClick;
           }
@@ -12131,15 +12276,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         if (a.kind === "entity") {
           // DESIGN-v2 §2.3: an entity's Email opens the modal that says why it has no mailbox
           // (actions.email.reason), rather than a dead button.
-          const b = accountButton("Email", { icon: "✉", aria: `Email for ${a.id}` });
+          const b = accountButton("Email", { icon: ICONS.mail, aria: `Email for ${a.id}` });
           b.setAttribute("data-action", "email");
           b.onclick = () => openAccountEmail(a);
           buttons.append(b);
         } else {
-          add("email", accountButton("Email", { icon: "✉", aria: `Email for ${a.id}` }), () => openAccountEmail(a));
+          add("email", accountButton("Email", { icon: ICONS.mail, aria: `Email for ${a.id}` }), () => openAccountEmail(a));
         }
-        add("logs", accountButton("Logs", { icon: "☰", aria: `Activity of ${a.id}` }), () => openAccountLogs(a));
-        add("workspace", accountButton("Workspace", { aria: `Workspace policy for ${a.id}`, title: "Where this account's agents may read and write" }), () => (a.kind === "entity"
+        add("logs", accountButton("Logs", { icon: ICONS.logs, aria: `Activity of ${a.id}` }), () => openAccountLogs(a));
+        add("workspace", accountButton("Workspace", { icon: ICONS.folder, aria: `Workspace policy for ${a.id}`, title: "Where this account's agents may read and write" }), () => (a.kind === "entity"
           ? openEntityManage(a.id)
           : openWorkspacePolicyModal({ tenant_id: a.tenant_id || "default", user_id: a.id })));
         add("rotate", accountButton("Rotate", { icon: ICONS.refresh, aria: `Rotate token for ${a.id}`, title: "Issue a new token — the old one stops working immediately; the new one is shown once" }), () => (a.kind === "entity"
@@ -12148,16 +12293,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         if (a.kind === "entity") {
           add("manage", accountButton("Manage", { icon: ICONS.gear, aria: `Manage ${a.id}`, title: "Lifecycle, substrate, capabilities, prompt; Talk lives here too" }), () => openEntityManage(a.id));
         }
-        add("delete", accountButton("Delete", { icon: "×", cls: "danger", aria: `Delete ${a.id}` }), () => userConfirmRow(tr, `Delete ${a.id}? The account and its token are removed; the runtime ${a.runtime_id || a.id} and its data are kept and stay reserved for this user.`, "Delete", async () => {
+        add("delete", accountButton("Delete", { icon: ICONS.trash, cls: "danger", aria: `Delete ${a.id}` }), () => userConfirmRow(tr, `Delete ${a.id}? The account and its token are removed; the runtime ${a.runtime_id || a.id} and its data are kept and stay reserved for this user.`, "Delete", async () => {
           await api(`/api/gateway/admin/users/${encodeURIComponent(a.id)}?tenant_id=${encodeURIComponent(a.tenant_id || "default")}`, { method: "DELETE" });
           usersMessage(`${a.id} is deleted. Their runtime data is kept.`, "ok");
           await refresh();
         }));
         actions.append(buttons);
-        if (reasons.length) {
+        const reasonLine = accountReasonsLine(a, shownKeys);
+        if (reasonLine) {
           const why = document.createElement("p");
           why.className = "accounts-reasons af-row__muted";
-          why.textContent = reasons.join(" · ");
+          why.textContent = reasonLine;
           actions.append(why);
         }
         tr.append(actions);
@@ -12382,16 +12528,28 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           det.textContent = String(ev.detail);
           li.append(det);
         }
-        if (ev.observer_path) {
+        const observerPath = accountLogObserverPath(ev);
+        if (observerPath) {
           const link = document.createElement("button");
           link.type = "button";
           link.className = "link-button account-logs-item__link";
           link.textContent = "Open in Observer";
-          link.onclick = () => openObserverPath(String(ev.observer_path));
+          link.setAttribute("data-observer-path", observerPath);
+          link.onclick = () => openObserverPath(observerPath);
           li.append(link);
         }
         list.append(li);
       }
+    }
+    // The Observer's run deep link (observer lane, SEAMS 02:26: OBSERVER_RUN_PATH =
+    // "/apps/observer/#run/{run_id}"). The API's observer_path wins; until gateway-api flips
+    // account_activity.OBSERVER_RUN_HASH (integration), a run event that carries run_id and no
+    // observer_path links through this exact path.
+    const OBSERVER_RUN_PATH = "/apps/observer/#run/{run_id}";
+    function accountLogObserverPath(ev) {
+      if (ev.observer_path) return String(ev.observer_path);
+      if (ev.kind === "run" && ev.run_id) return OBSERVER_RUN_PATH.replace("{run_id}", encodeURIComponent(String(ev.run_id)));
+      return "";
     }
     async function openObserverPath(path) {
       // The Observer app route of a run (observer_path, §6), opened in a new tab

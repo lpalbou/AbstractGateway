@@ -96,10 +96,11 @@ def test_switches_replace_the_verb_buttons() -> None:
 def test_users_table_and_create_user_follow_design() -> None:
     html = _html()
     # DESIGN-v2 §2.1: one Accounts table (users + entities); "Email for everyone" BELOW it.
-    assert "<th>Name</th><th>Role</th><th>Email address</th><th>Mailbox</th><th>Runtime</th><th>Active</th><th>Actions</th>" in html
+    # Round-2 polish: no Role column (the kind chip says Admin / User / Entity, its title the role).
+    assert "<th>Name</th><th>Email address</th><th>Mailbox</th><th>Runtime</th><th>Active</th><th>Actions</th>" in html
     users = html[html.index('<section id="users-section"'):html.index('<details id="my-workspace-policy-section"')]
     assert "<th>State</th>" not in users
-    assert users.index('<table class="users-table accounts-table">') < users.index('id="email-cap-email"')
+    assert users.index('<table class="users-table accounts-table" data-ui-no-stack>') < users.index('id="email-cap-email"')
     assert users.index('id="open-create-user"') < users.index('id="accounts-create-entity"') < users.index("<table")
     adv = _slice(users, '<details id="email-caps-advanced"', "</details>")
     assert 'id="email-cap-agent-tools"' in adv and 'id="email-cap-recovery"' in adv and 'id="email-cap-email"' not in adv

@@ -1,4 +1,4 @@
-"""Console settings doors (G2): the "Stream replies by default" switch
+"""Console settings doors (G2): the "Streamed replies" switch
 (`agents.streaming_default`) beside the default agent workflow block, and the
 Apps-tab Skills block's facts (shelf path, source word, bundled version, count,
 the "Refresh the curated shelf" action) — on the SHIPPED functions."""
@@ -22,9 +22,12 @@ def test_streaming_default_switch_reads_writes_and_never_hides() -> None:
     # Rendered inside the default agent workflow block, wired to the change handler.
     assert "streamingDefaultMarkup(agentDefStore.data, agentDefStore)" in _slice_function(source, "agentDefaultsRender")
     mount = _slice_function(source, "mountAgentDefaults")
-    assert '[data-streaming-default]' in mount and "streamingDefaultSave(!!t.checked)" in mount
+    # A kit af-switch (role=switch, aria-checked) toggled by a click, never a checkbox change.
+    assert '[data-streaming-default]' in mount and 'streamingDefaultSave(sw.getAttribute("aria-checked") !== "true")' in mount
     harness = _PRELUDE + f"""
 {_slice_function(source, "uiPill")}
+const STREAMING_DEFAULT_LABEL = "Streamed replies";
+const STREAMING_DEFAULT_DESC = "New interactive runs show the model's reply as it is written.";
 {_slice_function(source, "streamingDefaultMarkup")}
 {_slice_function(source, "streamingDefaultBody")}
 {_slice_function(source, "streamingDefaultSave")}
@@ -53,12 +56,18 @@ out.afterFail = agentDefStore.streamSaved;
 console.log(JSON.stringify([out]));
 """
     out = _node(harness)[0]
-    assert "checked" in out["on"] and "Saved setting" in out["on"] and "interactive replies stream live" in out["on"]
-    assert "checked" not in out["off"] and ">Default<" in out["off"] and "replies arrive whole" in out["off"]
+    # Round-2 polish: one feature-labelled kit switch row under "Settings"; the state is the switch
+    # (aria-checked), no "On — …/Off — …" text and no Default / Saved setting chip.
+    for key in ("on", "off", "viewer"):
+        assert 'role="switch"' in out[key] and "af-switch af-switch--row" in out[key] and ">Settings<" in out[key], out[key]
+        assert "Streamed replies" in out[key] and 'type="checkbox"' not in out[key], out[key]
+        assert "replies arrive whole" not in out[key] and ">Default<" not in out[key] and "Saved setting" not in out[key], out[key]
+    assert 'aria-checked="true"' in out["on"] and 'aria-checked="false"' in out["off"]
     assert "abstractgateway config set agents.streaming_default true|false" in out["on"]
-    assert " disabled" in out["viewer"] and "Only an admin can change this." in out["viewer"]
+    assert 'aria-disabled="true"' in out["viewer"] and "Only an admin can change this." in out["viewer"]
+    assert 'aria-disabled' not in out["on"]
     for key in ("missing", "junk"):
-        assert "Not available on this gateway" in out[key] and "data-streaming-default-missing" in out[key], out[key]
+        assert "not available on this gateway" in out[key] and "data-streaming-default-missing" in out[key], out[key]
         assert "data-streaming-default " not in out[key] and "type=\"checkbox\"" not in out[key]
     assert out["bodyOn"] == {"agents": {"streaming_default": True}}
     assert out["bodyOff"] == {"agents": {"streaming_default": False}}
