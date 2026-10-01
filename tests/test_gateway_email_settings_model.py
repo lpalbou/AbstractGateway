@@ -226,7 +226,7 @@ def test_connect_discovery_failure_is_400_with_tried_and_stores_nothing(gateway,
     assert r.status_code == 400, r.text
     detail = r.json()["detail"]
     assert detail["reason_code"] == "email_discovery_failed"
-    assert detail["message"] == "Couldn't find the mail servers for example.test. Open Server settings and enter them."
+    assert detail["message"] == "Couldn't find the mail servers for example.test. Standard settings are filled in: check them and change any your provider does differently."
     assert [t["step"] for t in detail["tried"]][0] == "known"
     assert c.get("/api/gateway/me/email", headers=gateway["alice"]).json()["configured"] is False
 
