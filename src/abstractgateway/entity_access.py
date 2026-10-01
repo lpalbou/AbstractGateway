@@ -22,8 +22,8 @@ so a non-admin cannot probe which names exist through these routes. Creating an 
 name another account already holds is the one place a name's existence shows (names are unique
 per gateway): 409 "That name is taken".
 
-No principal on the request (user accounts off: the single-operator gateway) = everything is
-visible, as before.
+A gateway without user accounts (the single-operator gateway, one shared world) shows everything
+to every caller, as before.
 """
 
 from __future__ import annotations
@@ -50,7 +50,13 @@ def creator_of(principal: Optional[GatewayPrincipal]) -> Optional[dict]:
 
 
 def sees_every_entity(principal: Optional[GatewayPrincipal]) -> bool:
-    return principal is None or principal.is_admin()
+    """Admins see every entity; so does everyone on a gateway WITHOUT user accounts (one shared
+    world: the operator's, as before — e.g. the loopback dev-read principal)."""
+    if principal is None or principal.is_admin():
+        return True
+    from .service import gateway_multi_user_enabled
+
+    return not gateway_multi_user_enabled()
 
 
 def same_account(principal: GatewayPrincipal, created_by: Mapping[str, Any]) -> bool:
