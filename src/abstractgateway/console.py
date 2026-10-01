@@ -1376,16 +1376,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      height: calc(var(--vh-full, 100vh) - 150px);
 	      min-height: 560px;
 	      display: grid;
-	      grid-template-rows: auto auto minmax(320px, 1fr) auto;
+	      grid-template-rows: auto minmax(360px, 1fr) auto;
 	      gap: 12px;
 	      overflow-x: hidden;
 	      overflow-y: auto;
 	      overscroll-behavior: contain;
-	    }
-	    .sandbox-chat .section-head {
-	      margin-bottom: 0;
-	      padding-bottom: 12px;
-	      border-bottom: 1px solid var(--line-soft);
 	    }
 	    .sandbox-settings {
 	      display: grid;
@@ -1546,7 +1541,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	       card's overflow:hidden cut it off unreachably. The card grows with
 	       its content; the transcript alone scrolls. */
 	    @media (max-width: 1023.98px), (pointer: coarse) {
-	      .sandbox-chat { height: auto; min-height: 0; overflow: visible; grid-template-rows: auto auto auto auto; }
+	      .sandbox-chat { height: auto; min-height: 0; overflow: visible; grid-template-rows: auto auto auto; }
 	      .sandbox-chat-root { height: calc(var(--vh-full, 100vh) * .72); min-height: 420px; }
 	      .sandbox-composer-toolbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 	      #sandbox-system-label { grid-column: 1 / -1; }
@@ -2333,13 +2328,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	               as in AbstractCode). The console keeps the output modes, system prompt,
 	               reasoning and MTP around it and sends every mode through its gateway
 	               endpoint (runSandbox). -->
-	          <section class="session-only sandbox-chat">
-	            <div class="section-head">
-	              <div>
-	                <h2 class="section-title"><span class="section-icon" aria-hidden="true">◌</span><span>Sandbox Chat</span></h2>
-	                <p id="sandbox-context" class="section-note">Select a provider/model and run a smoke test.</p>
-	              </div>
-	            </div>
+	          <section class="session-only sandbox-chat" aria-label="Sandbox chat">
 	            <div class="sandbox-settings">
 	              <label class="hidden">Capability<select id="sandbox-capability"></select></label>
 	              <label id="sandbox-provider-label" class="hidden">Provider<select id="sandbox-provider"></select></label>
@@ -2347,7 +2336,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <div class="sandbox-modes-field">
 	                <span id="sandbox-modes-label" class="sandbox-field-label">Output</span>
 	                <div id="sandbox-output-modes" class="sandbox-mode-grid" role="radiogroup" aria-labelledby="sandbox-modes-label"></div>
-	                <p class="sandbox-field-help">What the next message generates; each uses its route from Multimodal.</p>
+	                <p id="sandbox-context" class="sandbox-field-help">What the next message generates, with its route from Multimodal.</p>
 	              </div>
 	              <div class="sandbox-composer-toolbar">
 	                <label id="sandbox-system-label" class="sandbox-system-compact">System prompt<input id="sandbox-system" placeholder="None"><span class="sandbox-field-help">Instructions sent before your message.</span></label>
