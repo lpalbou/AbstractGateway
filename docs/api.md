@@ -22,6 +22,7 @@ serve:
 |---|---|---|
 | `/api/gateway/session/login`, `/session/logout`, `/session/claim`, `/me` | browser sessions, one-time sign-in links, the current principal | [security.md](./security.md), [first-run.md](./first-run.md) |
 | `/api/gateway/admin/users`, `/admin/runtime-reservations` | user accounts and retained runtimes (admin) | [security.md](./security.md#tenant-and-user-isolation) |
+| `/api/gateway/admin/accounts`, `/admin/accounts/{id}/active`, `/admin/accounts/{id}/activity`, `/me/activity` | the Accounts page: users and entities in one list, the Active switch, activity from the audit log | [below](#accounts-and-activity) |
 | `/api/gateway/admin/runtime-config` | runtime settings (admin) | [configuration.md](./configuration.md) |
 | `/api/gateway/network`, `/network/restart` | network exposure, addresses, reverse proxy | [configuration.md](./configuration.md#api-gateway_network_v1) |
 | `/api/gateway/apps/*`, `/apps/handover/{code}`, `/apps/tui-handover`, `/api/gateway/apps/desktop-handover` | browser apps, terminal apps, the Assistant and its sign-in | [apps.md](./apps.md#http-api) |
@@ -76,6 +77,13 @@ fixed profile allowlist or the live endpoint model catalog.
 ```bash
 curl -sS -H "$AUTH" "$BASE_URL/api/gateway/bundles"
 ```
+
+Each item also says where the bundle came from and what it does:
+
+- `source`: `shipped` (a file the gateway package ships), `published` (published from
+  AbstractFlow through this gateway: the publish route's stamp in the manifest metadata) or
+  `imported` (anything else: an uploaded `.flow`, or a file copied into the folder);
+- `description`: the default entrypoint's description (`""` when it has none).
 
 Upload a bundle:
 
@@ -156,7 +164,17 @@ and every entrypoint row carries `is_agent_default` and
 `is_default` (its default version) and from a bundle's `default_entrypoint`.
 
 The setting itself is `agents.default_workflow.<interface>` (see
-[Configuration](configuration.md#default-agent-workflow)).
+[Configuration](configuration.md#default-agent-workflow)). In `GET /admin/runtime-config`, each
+`agents.default_workflow.<interface>` row also carries the plain words the consoles show, from one
+table in `agent_defaults.py` (`INTERFACE_TABLE`):
+
+| Field | Meaning |
+|---|---|
+| `interface`, `label`, `app`, `help` | the interface id, its plain name ("AbstractCode — chat agent"), the app that asks for it (`null` when none does) and one sentence of help |
+| `group` | `apps` (an app asks the gateway for it as its default agent) or `other` (declared by a workflow; no app asks for it by default) |
+| `state` | `clients_choose` (nothing saved and no built-in: each client picks its own workflow — normal, not a warning), `builtin` (nothing saved; the built-in default runs), `set` (a saved value that runs) or `broken` (a saved value that no longer resolves) |
+| `value` | the saved value, else the built-in default, else `null` |
+| `reason` | only for `broken`: "Broken: workflow bundle 'coding-agent' is not on this gateway — pick another workflow or choose “Clients choose”." |
 
 For VisualFlow bundles, Gateway runs the packed JSON through AbstractRuntime.
 Structured LLM/Agent schemas are Runtime/Core-owned: `response` remains textual,
@@ -1692,6 +1710,33 @@ These remain explicitly local/operator-oriented:
 - remote and hybrid runtimes return `code=prompt_cache_local_only`
 - response payloads follow Runtime's host-local export/import contract, including `operation`, `local_only`, `artifact_*`, `capabilities`, and `provider_response`
 
+## Accounts and activity
+
+The Accounts page (admin): users and entities in one list.
+
+| Route | Purpose |
+|---|---|
+| `GET /admin/accounts` | `{accounts: [{id, tenant_id, kind: user \| entity, role: admin \| user \| entity, own, email_address, mailbox{state: connected \| not_connected \| paused \| unavailable, address, provider, reason}, runtime_id, active, entity_state, actions{email, logs, workspace, rotate, manage, delete, suspend: {available, reason}}}]}`, sorted admins, users, entities, then id; `entities_warning` when the entity list could not be read |
+| `PUT /admin/accounts/{id}/active` | `{active}` → the updated row. Users: `false` = deactivated (signed out, cannot sign in); 409 `{message}` for your own account ("You can't deactivate your own account.") or the last active admin. Entities: `false` = suspended (entity state `paused`, its door credential off, an open visit closed); `true` = resumed (the state it had before is restored, stored in `<data_dir>/auth/entity_suspended.json`) |
+| `GET /admin/accounts/{id}/activity` | `?limit=100&kind=sign_in,run,…` (admin) |
+| `GET /me/activity` | the same for the signed-in account |
+
+The email address and mailbox of a row come from the resolver `GET /me/email` uses. An action that
+cannot apply says why in `reason`: an entity has no mailbox ("Entities can't have their own mailbox
+yet: mailboxes belong to a user's runtime." — entity runs use their own runtime, without the host's
+mailbox), no token to rotate (its credential is discarded at creation) and no delete ("An entity's
+name is kept for life; suspend it instead.").
+
+Activity answers `{events: [{ts, kind: sign_in \| token \| run \| automation \| email \| account,
+title, detail, run_id, observer_path, ok}], source: "audit_log", oldest_ts, truncated, note}`, newest
+first. It reads `<data_dir>/audit_log.jsonl` and its rotated files backwards within a fixed read
+budget (`truncated`: older entries were not read). Events come from two explicit tables: the request
+lines (sign-ins, sign-out, runs started with their `run_id`, automation commands, account changes by
+an admin) and the typed email events (mailbox connected, tested, notification sent or not, …). The
+audit log records writes only: read-only requests (page views, token use on reads), mail received and
+what agents send with their email tools are not in it, and `note` says so. `observer_path` is `null`:
+the Observer app has no address that opens a single run yet.
+
 ## Email
 
 Per-user email ([email.md](./email.md)): every route acts on the **caller's own** account, resolved
@@ -1706,12 +1751,12 @@ Your email address and mailbox (`/api/gateway/me/...`, every signed-in human):
 
 | Route | Purpose |
 |---|---|
-| `GET /me/email` | settings and status: `configured`, `address`, `imap`, `smtp`, `auth_kind`, `secret_set`, `policy`, `limits` (+ usage), `status{last_test, last_ok, last_error{code, cause, fix}}`, `watcher{state, last_poll, cursor, received}`, `admin_enabled`, `effective_enabled`; for the account page: `email_address` (your email address as stored), `registered_address` ("self" for runs: that address, else the mailbox's own), `email_available`, `notifications{job_failed, approval_needed}` + `notifications_unavailable_reason`, `agent_tools{on, available, unavailable_reason, active}`, `oauth_providers[{id, available, reason}]` |
-| `POST /me/email/discover` | `{address}` → `{address, domain, found, source, provider, imap, smtp, username, tried}` (known providers, autoconfig, ISPDB, SRV, MX); 400 for a non-address |
-| `PUT /me/email` | connect (save + test): `{address, password, username?, display_name?, imap?{host, port, security, folder}, smtp?{host, port, security}, test}`; without `imap` and `smtp` the servers are discovered (`discovery{source, provider, tried}` in the answer; none found = 400 `email_discovery_failed` with `tried`); signs in to both servers first (unless `test: false`), stores nothing on a failure and names the failing step (`detail.step`: `imap` \| `smtp`, `detail.message`) |
+| `GET /me/email` | settings and status (`mailbox{state, address, provider, reason}` as in `/admin/accounts`): `configured`, `address`, `imap`, `smtp`, `auth_kind`, `secret_set`, `policy`, `limits` (+ usage), `status{last_test, last_ok, last_error{code, cause, fix}}`, `watcher{state, last_poll, cursor, received}`, `admin_enabled`, `effective_enabled`; for the account page: `email_address` (your email address as stored), `registered_address` ("self" for runs: that address, else the mailbox's own), `email_available`, `notifications{job_failed, approval_needed}` + `notifications_unavailable_reason`, `agent_tools{on, available, unavailable_reason, active}`, `oauth_providers[{id, available, reason}]` |
+| `POST /me/email/discover` | `{address}` → `{address, domain, found, source, provider, imap, smtp, username, tried, defaults}` (known providers, autoconfig, ISPDB, SRV, MX); `defaults` is what the form pre-fills: `{imap{host, port, security}, smtp{…}, login, source: discovered \| standard, provider, message}` (AbstractCore `server_defaults`: the discovered servers, else `imap.<domain>` 993 SSL and `smtp.<domain>` 465 SSL, "Standard settings for <domain> — change them if your provider uses others."); 400 for a non-address |
+| `PUT /me/email` | connect (save + test): `{address, password, username?, display_name?, imap?{host, port, security, folder}, smtp?{host, port, security}, test}`; `username` defaults to the discovered login, else the address; `display_name` to the stored name, else the address's local part; connecting sets your email address when it is empty (audited `email.address_changed`, reason `mailbox_connected`); without `imap` and `smtp` the servers are discovered (`discovery{source, provider, tried}` in the answer; none found = 400 `email_discovery_failed` with `tried`); signs in to both servers first (unless `test: false`), stores nothing on a failure and names the failing step (`detail.step`: `imap` \| `smtp`, `detail.message`) |
 | `PUT /me/email/address` | `{address}` — your email address, stored on your user record (`""` clears it; 400 `email_invalid_settings` for anything but one plain address) |
 | `PUT /me/email/notifications` | `{job_failed?, approval_needed?}` — the two notification switches (both on by default); the earlier `{email: {...}}` body is accepted and mapped; answers like `GET /me/email` |
-| `POST /me/email/test` | per-leg result `{imap, smtp, ok}` |
+| `POST /me/email/test` | per-leg result `{imap, smtp, ok, message}`; `message`: "Test passed: signed in to imap.x and smtp.x." or the failing step and its cause ("Sign-in refused by imap.x — check the password. (…)") |
 | `DELETE /me/email` | disconnect: credentials and cursor deleted (policy and limits kept) |
 | `PUT /me/email/policy` | `{mode: "allowlist" \| "denylist", entries: [address \| domain]}` |
 | `POST /me/email/policy/check` | `{addresses}` → per-recipient verdicts |
@@ -1726,13 +1771,13 @@ Your email address and mailbox (`/api/gateway/me/...`, every signed-in human):
 | `POST /me/email/oauth/cancel` | `{flow_id}` |
 | `GET /me/notifications` | events and choices, channel availability, outbox summary |
 | `PUT /me/notifications` | `{email: {job_failed, approval_needed: bool}}`; the earlier kinds are accepted (`automation_failed` counts for `job_failed`; `automation_result` and `job_finished` are per-automation / per-run options now) |
-| `POST /me/notifications/test` | sends one test notification now → `{ok, state, error?}` |
+| `POST /me/notifications/test` | sends one test notification now → `{ok, sent, reason_code, message, limit, state, error?}`: `reason_code` is `null` (sent) or `no_mailbox`, `mailbox_paused`, `rate_limited`, `queued_behind` (+ `queued_behind`: how many), `send_failed`; `message` is the sentence to show ("Sent to x@y.", "Not sent: hourly limit reached (20 of 20 this hour) — resets at 14:05.", in the gateway's local time); `limit` `{window: hour \| day, limit, used, resets_at}` when a send limit held it back |
 
 Administrators (status and the switch only; administrators never read mail):
 
 | Route | Purpose |
 |---|---|
-| `GET /admin/users` | each human row carries `email_account: {configured, address, state, admin_enabled, agent_tools_available, capabilities}` (`capabilities`: `{email, email_agent_tools}` as `{value, source: user \| gateway \| built-in}`; `user` = a per-user override) |
+| `GET /admin/users` | every row carries `email_address` and `mailbox{state: connected \| not_connected \| paused \| unavailable, address, provider, reason}` from the same resolver as `GET /me/email` (so your own row matches your card; `email` stays the raw record field); each human row also carries `email_account: {configured, address, state, admin_enabled, agent_tools_available, capabilities}` (`capabilities`: `{email, email_agent_tools}` as `{value, source: user \| gateway \| built-in}`; `user` = a per-user override) |
 | `GET /admin/users/{user_id}/email` | `configured`, `address`, `auth_kind`, `user_enabled`, `admin_enabled`, `effective_enabled`, `status` (last test / last error), `capabilities` (`{value, source: user \| gateway \| built-in}`), `agent_tools` (`available`, `user_enabled`, `active`), `watcher`, `state` |
 | `PUT /admin/users/{user_id}/email` | `{enabled?, agent_tools?, inherit?: ["email", "email_agent_tools"]}` — per-user capabilities; `enabled: false` = no watcher, no sending, no notifications (settings kept); `agent_tools` = Agent email tools available |
 | `GET /admin/email/capabilities` | `capabilities[{id, label, description, per_user, advanced, default, built_in_default}]`: `email` "Mailboxes for users" (on), under Advanced `email_agent_tools` "Agent email tools for users" (on) and `email_recovery` "Sign-in by email" (on) |

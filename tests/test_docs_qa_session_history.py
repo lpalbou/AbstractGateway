@@ -23,7 +23,7 @@ import pytest
 pytestmark = pytest.mark.basic
 
 ROOT = Path(__file__).resolve().parents[1]
-BUNDLE = ROOT / "flows" / "bundles" / "docs-qa@0.1.1.flow"
+BUNDLE = ROOT / "flows" / "bundles" / "docs-qa@0.1.2.flow"
 SESSION = "gateway-docs-assistant:test"
 DOCS = "# AbstractGateway\n\n## Providers\nAdd a provider on the Providers screen.\n"
 
@@ -44,7 +44,7 @@ def test_bundle_contract_has_no_history_input_and_no_turn_cap() -> None:
     assert llm["data"]["effectConfig"]["use_context"] is True
     with zipfile.ZipFile(BUNDLE) as zf:
         manifest = json.loads(zf.read("manifest.json"))
-    assert manifest["bundle_version"] == "0.1.1"
+    assert manifest["bundle_version"] == "0.1.2"
     assert "history" not in manifest["metadata"]["contract"]["inputs"]
 
 
@@ -55,7 +55,7 @@ def test_the_builder_reproduces_the_shipped_bundle(tmp_path: Path) -> None:
     mod = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(mod)
-    built = mod.build_bundle("0.1.1", tmp_path)
+    built = mod.build_bundle("0.1.2", tmp_path)
     with zipfile.ZipFile(built) as a, zipfile.ZipFile(BUNDLE) as b:
         fa, fb = json.loads(a.read("flows/docsqa001.json")), json.loads(b.read("flows/docsqa001.json"))
     for f in (fa, fb):

@@ -247,6 +247,9 @@ def test_activity_reads_rotated_files_and_says_when_truncated(tmp_path) -> None:
     out = account_activity("alice", data_dir=tmp_path)
     assert [e["title"] for e in out["events"]] == ["Automation paused", "Automation created"]
     assert out["events"][0]["detail"] == "auto-1"
+    # The Observer's Automations page (its `#automations` hash route), under the gateway's app mount.
+    assert out["events"][0]["observer_path"] == "/apps/observer/#automations"
+    assert out["events"][0]["ts_local"].startswith("2026-09-30T") and out["events"][0]["ts_local"][-6] in "+-"
     assert out["oldest_ts"] == "2026-09-01T09:00:00+00:00" and out["truncated"] is False
     small = account_activity("alice", data_dir=tmp_path, byte_budget=10)
     assert small["truncated"] is True
@@ -259,5 +262,8 @@ def test_run_started_event_carries_the_run_id(tmp_path) -> None:
             "principal_user_id": "alice", "principal_tenant_id": "default", "run": {"run_id": "r-42", "workflow": "basic-agent"}}
     (tmp_path / "audit_log.jsonl").write_text(json.dumps(line) + "\n")
     ev = account_activity("alice", data_dir=tmp_path)["events"][0]
+    # No Observer link for a run: the Observer has no address that opens one run.
+    ts_local = ev.pop("ts_local")
+    assert ts_local and ts_local[-6] in "+-"
     assert ev == {"ts": line["ts"], "kind": "run", "title": "Run started", "detail": "basic-agent", "run_id": "r-42",
                   "observer_path": None, "ok": True}

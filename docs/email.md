@@ -47,12 +47,19 @@ curl -sS -X PUT -H "Authorization: Bearer <your gateway token>" -H "Content-Type
 ```
 
 `POST /api/gateway/me/email/discover {"address": "..."}` shows what discovery finds without
-connecting (`found`, `source`, `imap`, `smtp`, `username`, and `tried`: every step with its result).
+connecting (`found`, `source`, `imap`, `smtp`, `username`, and `tried`: every step with its result),
+plus `defaults`: what the mailbox form pre-fills — the discovered servers, else the standard
+`imap.<domain>` (993, SSL) and `smtp.<domain>` (465, SSL) — with the login and one sentence
+("Settings found for fastmail.com." / "Standard settings for example.com — change them if your
+provider uses others.").
 When no step finds both servers, the connect answers `400 email_discovery_failed` with the same
 `tried` list and the message "Couldn't find the mail servers for <domain>. Open Server settings and
 enter them."; give the servers yourself then (`imap` and `smtp`: `host`, `port`, `security`).
 `username` defaults to the form the provider's configuration names, else the address;
-`display_name` is optional.
+`display_name` is optional: an empty one keeps the stored name, else the address's local part (it is
+the name on the From line of mail you send). Connecting a mailbox sets your email address when it is
+empty (recorded as `email.address_changed`, reason `mailbox_connected`); an address you already set
+is never replaced.
 
 Connect saves and tests in one call: the gateway signs in to both servers first and stores nothing
 when a step fails. The error names the step (`detail.step`: `imap` or `smtp`) and says it the way
@@ -107,6 +114,7 @@ Besides the mailbox settings and status (never a secret):
 | Field | Meaning |
 |---|---|
 | `email_address` | your email address as stored on your user record (`""` when none) |
+| `mailbox` | `{"state": "connected" \| "not_connected" \| "paused" \| "unavailable", "address", "provider", "reason"}` — the same value the administrator's Accounts table shows for you |
 | `registered_address` | "self" for your runs: your email address, else your connected mailbox's own address |
 | `email_available` | your administrator allows mailboxes ("Mailboxes for users") |
 | `notifications` | `{"job_failed": bool, "approval_needed": bool}`; `notifications_unavailable_reason` says why they cannot send yet ("Connect a mailbox first.") |
@@ -234,8 +242,13 @@ Notices go to your registered address (else your mailbox address), sent by your 
 a durable outbox: each notice is queued once and sent once. If the gateway stops in the middle of a
 send, that notice is marked `unknown` and never resent automatically. Temporary SMTP refusals are
 retried with backoff; sign-in and permanent refusals are shown with their cause and fix. Over your
-send limits, the waiting notices go out as one digest when the window allows. **Send test
-notification** checks the whole path. Notification emails use fixed templates; the only
+send limits, the waiting notices go out as one digest when the window allows; the waiting notices
+keep why they wait and when they go (`GET /me/notifications` → `outbox.rate_limited {count, cause,
+resets_at}`). **Send a test** checks the whole path and always answers with a sentence: "Sent to
+x@y.", "Not sent: no mailbox connected.", "Not sent: your mailbox is paused.", "Not sent: hourly
+limit reached (20 of 20 this hour) — resets at 14:05.", "Queued behind 3 earlier notifications; they
+go out when the limit resets at 14:05." or "Not sent: smtp.x.com refused the message (<cause>)."
+(`message`, with `reason_code` and `limit` for programs). Notification emails use fixed templates; the only
 model-written text is an automation's own `notify` title and body, labelled as such. Replying to a
 notification does nothing.
 
@@ -303,9 +316,12 @@ an administrator cannot deactivate their own account (`409 cannot_deactivate_sel
 deactivate your own account.") nor the last active administrator (`409 last_admin`).
 
 Sign-in by email means that whoever controls a user's mailbox can sign in as that user; turn it off
-where mailboxes are not as well protected as gateway tokens. The Users table
-shows each user's mailbox state (`connected`, `not connected`, `needs action`, `turned off by an
-administrator`, …). Administrators see the state, the address and the last error — never messages,
+where mailboxes are not as well protected as gateway tokens. The Accounts table
+(`GET /api/gateway/admin/accounts`) shows each account's email address and mailbox (`connected`,
+`not_connected`, `paused`, `unavailable` with the reason) through the same resolver as the account's
+own email settings, so the administrator's own row always matches their card. Entities have no
+mailbox of their own: mailboxes belong to a user's runtime, and entity runs use their own runtime
+without the host's mailbox. Administrators see the state, the address and the last error — never messages,
 the user's recipient list or credentials. The administrator's server file helpers (`/files/*`,
 workspace import and export) never serve the gateway data folder, where every user's runs,
 received mail and sealed credentials live, even when it sits inside the server workspace.

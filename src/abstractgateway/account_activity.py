@@ -43,16 +43,52 @@ NOTE = (
     "send with their email tools are not recorded."
 )
 
-# The Observer app has no address that opens one run (untracked/round2/wt/abstractobserver
-# src/ui/automations.ts:172-176 parses only #automations and #launch; no ?run= handling), so
-# no run link is invented: `observer_path` stays null until the Observer serves one.
-OBSERVER_RUN_PATH: Optional[str] = None
+# Observer links. The Observer reads exactly two hash routes (abstractobserver
+# src/ui/automations.ts:172-176 `parse_app_hash`: `#automations` and `#launch[/once|/automate]`,
+# wired in src/ui/app.tsx:869-880; nothing reads ?run= or a path), so:
+# - an automation event links to its Automations page;
+# - a run event has NO link (the Observer has no address that opens one run): `observer_path`
+#   stays null until the Observer serves one; then set OBSERVER_RUN_HASH (e.g. "#run/{run_id}").
+OBSERVER_APP_ID = "observer"  # apps_manager.APPS
+OBSERVER_AUTOMATIONS_HASH = "#automations"
+OBSERVER_RUN_HASH: Optional[str] = None
+
+
+def observer_app_path() -> str:
+    """`/apps/observer/`: the gateway's mount of the Observer app (app_proxy.APPS_PREFIX + the
+    app id). Fails loudly when the apps table has no Observer."""
+    from .app_proxy import APPS_PREFIX
+    from .apps_manager import APPS
+
+    spec = next((a for a in APPS if a.id == OBSERVER_APP_ID), None)
+    if spec is None:
+        raise RuntimeError(f"the apps table has no {OBSERVER_APP_ID!r} app (apps_manager.APPS)")
+    return f"{APPS_PREFIX}/{spec.id}/"
 
 
 def observer_path_for(run_id: Optional[str]) -> Optional[str]:
-    if not run_id or OBSERVER_RUN_PATH is None:
+    if not run_id or OBSERVER_RUN_HASH is None:
         return None
-    return OBSERVER_RUN_PATH.format(run_id=run_id)
+    return observer_app_path() + OBSERVER_RUN_HASH.format(run_id=run_id)
+
+
+def observer_automations_path() -> str:
+    return observer_app_path() + OBSERVER_AUTOMATIONS_HASH
+
+
+def _ts_local(ts: Any) -> Optional[str]:
+    """The event time in the gateway's local time zone, ISO 8601 with its offset."""
+    if not ts:
+        return None
+    try:
+        import datetime
+
+        at = datetime.datetime.fromisoformat(str(ts).replace("Z", "+00:00"))
+        if at.tzinfo is None:
+            at = at.replace(tzinfo=datetime.timezone.utc)
+        return at.astimezone().isoformat(timespec="seconds")
+    except ValueError:
+        return None
 
 
 # (method, route template) -> (kind, title). Templates are matched segment by segment; a
@@ -238,6 +274,7 @@ def _classify(doc: Dict[str, Any], user_id: str, tenant_id: str) -> Optional[Dic
         command = str(auto.get("command") or "")
         out["title"] = AUTOMATION_COMMAND_TITLES.get(command, title)
         out["detail"] = str(auto.get("automation_id") or "") or None
+        out["observer_path"] = observer_automations_path()
     elif kind == "account":
         changes = (change or {}).get("changes") if isinstance((change or {}).get("changes"), dict) else {}
         target = str((change or {}).get("user_id") or "")
@@ -334,6 +371,7 @@ def account_activity(
                 ev = _classify(doc, uid, tenant)
                 if ev is None or (wanted is not None and ev["kind"] not in wanted):
                     continue
+                ev["ts_local"] = _ts_local(ev.get("ts"))
                 events.append(ev)
                 if len(events) >= limit:
                     break
