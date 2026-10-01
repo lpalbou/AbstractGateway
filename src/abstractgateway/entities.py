@@ -1734,17 +1734,8 @@ class EntityRegistry:
             except _ec.ChatOpenRefused as e:
                 return EffectOutcome.failed(f"LLM_CALL refused: {e.detail}")
 
-            # Output headroom: no code default (ADR-0026 §2 + the standing
-            # rule — never cap a budget unless the operator asked). The old
-            # hardcoded 4096 was a silent 20x shrink of the model's advertised
-            # ceiling (verified 2026-08-02 on qwen/qwen3.6-35b-a3b: uncapped
-            # sends max_tokens 81920, the 4096 constant sent 4096). Unset =>
-            # AbstractCore derives the bound from the model's registry
-            # capability, or omits it where the API allows.
+            # No output cap ever (operator 2026-10-02): the model works at its full capacity.
             llm_kwargs: Dict[str, Any] = {"model": model}
-            output_cap = _ec.resolve_entity_output_cap(None)
-            if output_cap is not None:
-                llm_kwargs["max_output_tokens"] = output_cap
             if thinking:
                 # The substrate's reasoning effort applies to the resident
                 # lane too — one mind, one triple, every lane.

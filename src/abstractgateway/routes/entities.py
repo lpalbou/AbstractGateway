@@ -2604,13 +2604,12 @@ class OpenChatRequest(BaseModel):
         description="Recall shelf seats (None = the wide default 50 — "
         "maintainer 2026-07-09: widened so the entity retrieves enough memories to function)",
     )
-    max_output_tokens: Optional[int] = Field(
+    max_output_tokens: Optional[Any] = Field(
         default=None,
-        ge=1,
-        description="Output-token cap for this session (None = no cap asked for, so the "
-        "model's full advertised output budget is used; ABSTRACTGATEWAY_ENTITY_MAX_OUTPUT_TOKENS "
-        "sets a host-wide operator safeguard). The former 2048 default silently shrank the wire "
-        "cap by ~40x on a 81,920-token model — ADR-0026 forbids that.",
+        deprecated=True,
+        description="REMOVED in 0.11.1 and ignored: the gateway never caps an entity's output "
+        "(the model works at its full capacity). A request still sending it opens normally and the "
+        "response carries a one-line `deprecation`.",
     )
     enable_tools: bool = Field(default=True, description="Entity tools per the home's tool_policy.yaml (ruled defaults: the full set)")
     enable_workspace: bool = Field(
@@ -2661,7 +2660,7 @@ async def open_entity_chat(name: str, req: OpenChatRequest) -> Dict[str, Any]:
         pass  # no visit host on this service shape
 
     try:
-        return await run_in_threadpool(
+        out = await run_in_threadpool(
             _chat_host().open,
             name,
             provider=req.provider,
@@ -2670,7 +2669,6 @@ async def open_entity_chat(name: str, req: OpenChatRequest) -> Dict[str, Any]:
             participants=req.participants,
             context_window=req.context_window,
             shelf_size=req.shelf_size,
-            max_output_tokens=req.max_output_tokens,
             enable_tools=req.enable_tools,
             enable_workspace=req.enable_workspace,
         )
@@ -2689,6 +2687,11 @@ async def open_entity_chat(name: str, req: OpenChatRequest) -> Dict[str, Any]:
             detail=f"the mind's provider refused the open ({kind}: {e}) — nothing was opened; "
             "check the provider/model (substrate) is loaded and retry, or swap the substrate",
         )
+    if req.max_output_tokens is not None and isinstance(out, dict):
+        out["deprecation"] = (
+            "max_output_tokens is ignored (removed in 0.11.1): the gateway never caps an entity's output"
+        )
+    return out
 
 
 def _provider_error_name(e: BaseException) -> Optional[str]:

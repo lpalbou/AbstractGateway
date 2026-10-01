@@ -69,46 +69,14 @@ DEFAULT_YIELD_WAIT_S = 55.0
 DEFAULT_ENTITY_CHAT_SHELF_SIZE = 50
 DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW = 65536
 
-# Output headroom has NO code default (ADR-0026 §2 + the operator's standing
-# rule: never cap a budget unless the user asked). The prior 4096/2048 code
-# constants were exactly the forbidden shape — an arbitrary literal nobody
-# asked for, silently shrinking the wire cap. Measured on 2026-08-02 against
-# a local qwen/qwen3.6-35b-a3b: with no caller cap AbstractCore sends the
-# model's advertised ceiling (max_tokens 81920); with the old hardcoded 4096
-# it sent 4096 — a 20x silent shrink of an entity's ability to finish a
-# thought, and a `finish_reason=length` waiting to happen on any long report.
-# None means "the caller chose nothing": AbstractCore then derives the bound
-# from the model's registry capability (LM Studio, which requires a bound) or
-# omits the parameter entirely (APIs that allow it) — never a literal here.
-# An operator who WANTS a safeguard sets it explicitly, per request or via
-# this env knob; an explicit operator cap is honored verbatim.
-ENTITY_MAX_OUTPUT_TOKENS_ENV = "ABSTRACTGATEWAY_ENTITY_MAX_OUTPUT_TOKENS"
+# Output headroom: NONE, ever (operator 2026-10-02: "we should never use that
+# parameter; by default models work at their full capacity"). The gateway never
+# sends an output-token cap for an entity -- no code default, no env knob, no
+# per-request field -- so AbstractCore uses the model's full advertised output
+# capability (or omits the bound where the API allows). The former
+# entity output-cap env var and the chat-open cap field were removed in 0.11.1.
 
 
-def resolve_entity_output_cap(explicit: Optional[int] = None) -> Optional[int]:
-    """Resolve the entity output-token cap: request > operator env > unset.
-
-    Returns None when nobody asked for a cap, which is the signal to leave
-    `max_output_tokens` OUT of the LLM kwargs so AbstractCore uses the model's
-    full advertised output capability. Never invents a number.
-    """
-    if explicit is not None:
-        try:
-            value = int(explicit)
-        except (TypeError, ValueError):
-            return None
-        return value if value > 0 else None
-
-    import os as _os
-
-    raw = (_os.getenv(ENTITY_MAX_OUTPUT_TOKENS_ENV) or "").strip()
-    if not raw:
-        return None
-    try:
-        value = int(raw)
-    except ValueError:
-        return None
-    return value if value > 0 else None
 # The entity's mind (round 3, operator 2026-10-01: "no env-var fallbacks for
 # entity minds"). ONE persisted choice per entity -- an operator file in its
 # home (substrate.yaml, beside tool_policy.yaml) -- used by visits, summons
@@ -511,11 +479,6 @@ class EntityChatHost:
         participants: Optional[List[str]] = None,
         context_window: Optional[int] = None,
         shelf_size: Optional[int] = None,
-        # Output headroom: None = nobody asked for a cap, so the model's full
-        # advertised output capability is used (see resolve_entity_output_cap
-        # and ENTITY_MAX_OUTPUT_TOKENS_ENV). An explicit value is an operator
-        # safeguard and is honored verbatim.
-        max_output_tokens: Optional[int] = None,
         enable_tools: bool = True,
         enable_workspace: bool = False,
     ) -> Dict[str, Any]:
@@ -696,11 +659,7 @@ class EntityChatHost:
         try:
             home = open_home(home_dir, embedder=self._registry._resolve_embedder())
             llm_kwargs: Dict[str, Any] = {"model": model}
-            output_cap = resolve_entity_output_cap(max_output_tokens)
-            if output_cap is not None:
-                # Only an ASKED-FOR cap rides the wire; otherwise the key stays
-                # absent so AbstractCore uses the model's full output budget.
-                llm_kwargs["max_output_tokens"] = output_cap
+            # No output cap ever rides the wire: the model works at full capacity.
             if thinking:
                 # The mind's reasoning effort rides every turn of this visit.
                 llm_kwargs["thinking"] = thinking
