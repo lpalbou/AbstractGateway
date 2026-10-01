@@ -3839,9 +3839,9 @@ fn footer_leads_with_the_screen_keys_at_80x24() {
     for (screen, lead) in [
         (1usize, "a add connection"),
         (2, "Enter/e edit route"),
-        (3, "a add user"),
+        (3, "space Active"),
         (4, "Enter inspect runtime"),
-        (5, "t show/hide drafts"),
+        (5, "Tab workflows ⇄ defaults"),
         (7, "u unload"),
     ] {
         h.ui.screen.set(screen);
@@ -4171,9 +4171,9 @@ fn wizard_steps_carry_a_goal_line() {
         (2, "Step 5/8", "a applies the recommended set"),
         (ui::SCREEN_APPS, "Step 7/8", "i installs a browser app"),
         (6, "Step 8/8", "run one real test"),
-        (3, "Step goal:", "mint a token"),
+        (3, "Step goal:", "a creates a user"),
         (4, "Step goal:", "storage inventory"),
-        (5, "Step goal:", "the registered workflows"),
+        (5, "Step goal:", "per-app defaults"),
         (7, "Step goal:", "live models"),
     ] {
         h.ui.screen.set(screen);
@@ -7338,7 +7338,7 @@ fn footer_hints_stay_in_lockstep_with_screens() {
     for (screen, needle) in [
         (1usize, "add connection"),
         (2, "edit route"),
-        (3, "rotate token"),
+        (3, "l logs"),
         (4, "inspect runtime"),
         (5, "drafts"),
         (6, "run the test"),

@@ -674,6 +674,12 @@ impl Ctx {
                 self.send(Cmd::LoadWorkflows {
                     include_drafts: self.ui.workflow_drafts.get_untracked(),
                 });
+                // The "Default workflow per app" section reads the
+                // runtime config's agent-default rows (admin).
+                if s.conn.with_untracked(ConnPhase::is_admin) {
+                    s.runtime_config.set(Loadable::Loading);
+                    self.send(Cmd::LoadRuntimeConfig);
+                }
             }
             6 => {
                 // The inline sandbox feeds its provider picker from
@@ -1469,7 +1475,7 @@ fn wizard_goal(screen: usize) -> &'static str {
         }
         4 => "nothing to configure — storage inventory; glance and continue.",
         SCREEN_WORKFLOWS => {
-            "nothing to configure — the registered workflows; e exports, d/D delete."
+            "optional — Tab to the per-app defaults, Enter picks one; e exports, d/D delete."
         }
         SCREEN_REVIEW => "optionally run one real test (Tab to the prompt, Enter), then Finish.",
         SCREEN_WELCOME => "this computer at a glance — every step is optional; Ctrl+G jumps to a step or leaves.",
@@ -2063,6 +2069,9 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 // screen and Review showed none. Pinned by
                 // footer_hints_stay_in_lockstep_with_screens.
                 SCREEN_WORKFLOWS => {
+                    pairs.push(("Tab", "workflows ⇄ defaults"));
+                    pairs.push(("Enter", "pick a default"));
+                    pairs.push(("o", "other workflow types"));
                     pairs.push(("t", "show/hide drafts"));
                     pairs.push(("e", "export .flow"));
                     pairs.push(("d", "delete version"));

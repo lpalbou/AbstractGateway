@@ -73,7 +73,7 @@ fn kit_phase(store: &Store) -> u8 {
     })
 }
 
-/// The summon form (`n` on the Users & Entities screen).
+/// The summon form (`n` on the Accounts screen).
 ///
 /// FOCUS LAW: every focusable widget lives in a region that re-renders
 /// only when its own options change, and the button row is static — a
@@ -771,7 +771,7 @@ fn summon(
 
 const TPL_W: i32 = 92;
 
-/// The templates modal (`s` on the Users & Entities screen).
+/// The templates modal (`s` on the Accounts screen).
 pub fn open_templates_modal(cx: Scope, ctx: &Ctx) {
     let store = ctx.store;
     reload_kit(ctx);

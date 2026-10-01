@@ -941,7 +941,7 @@ fn open_plan(cx: Scope, ctx: &Ctx) {
         }
         rows.push(line(vec![span(
             if store.conn.with_untracked(|c| c.is_admin()) {
-                "On Routes: a applies the recommended routes (yours are kept) · D downloads all · C cancels it"
+                "On Multimodal: a applies the recommended routes (yours are kept) · D downloads all · C cancels it"
             } else {
                 "Applying the recommended routes and downloading models are admin-only"
             },

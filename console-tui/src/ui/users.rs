@@ -479,8 +479,14 @@ fn email_selected(cx: Scope, ctx: &Ctx) {
             Some(why) => ctx.store.notice.set(Some(why)),
             None => {
                 let line = other_mailbox_line(&r);
-                // R2_OPEN_OTHER: my_email::open_other lands with the email merge.
-                let _ = (cx, line);
+                super::my_email::open_other(
+                    cx,
+                    ctx,
+                    r.id.clone(),
+                    r.tenant_id.clone(),
+                    r.email_address.clone(),
+                    line,
+                );
             }
         },
     }
