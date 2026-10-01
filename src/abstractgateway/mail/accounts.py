@@ -1655,7 +1655,7 @@ def import_core_account_once() -> List[str]:
         ctx = core.context(require_enabled=False)
         gw.connect(st.account, ctx.secret, test=False, registered_address=registered_address(plane) or None)
         if not st.policy_is_default:
-            gw.set_policy(mode=st.policy.mode, add=list(st.policy.entries), clear=True)
+            gw.set_policy(mode=st.policy.mode, always_allow=list(st.policy.always_allow), always_deny=list(st.policy.always_deny))
         # Only limits someone set are copied; core limits that follow the defaults (nothing
         # stored, limits_source "default") stay unstored here too, so they keep following them.
         if st.limits_source != "default":

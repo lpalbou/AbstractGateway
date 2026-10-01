@@ -103,7 +103,11 @@ pub struct MyEmail {
     pub smtp: Option<MailServer>,
     pub secret_storage: String,
     pub policy_mode: String,
+    /// The list the mode uses (the older `{mode, entries}` view).
     pub policy_entries: Vec<String>,
+    /// Recipient rules (round 3): "Always allowed" / "Always denied", addresses or domains.
+    pub always_allow: Vec<String>,
+    pub always_deny: Vec<String>,
     pub per_hour: Option<i64>,
     pub per_day: Option<i64>,
     pub used_last_hour: i64,
@@ -219,6 +223,8 @@ impl MyEmail {
                         .collect()
                 })
                 .unwrap_or_default(),
+            always_allow: policy_list(&policy, "always_allow"),
+            always_deny: policy_list(&policy, "always_deny"),
             per_hour: n(&limits, "per_hour"),
             per_day: n(&limits, "per_day"),
             used_last_hour: n(&limits, "used_last_hour").unwrap_or(0),
@@ -1078,15 +1084,47 @@ pub fn connect_body(
     }))
 }
 
-/// `PUT /me/email/policy`: one address or domain per line.
-pub fn policy_body(mode: &str, entries: &str) -> Value {
-    let list: Vec<String> = entries
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .map(str::to_string)
-        .collect();
-    json!({"mode": if mode.is_empty() { "allowlist" } else { mode }, "entries": list})
+/// The policy's `always_allow` / `always_deny`. A gateway older than the recipient rules sends
+/// only `{mode, entries}`: its entries are the mode's list (allowlist -> Always allowed, denylist
+/// -> Always denied), exactly how the gateway migrates such a stored policy.
+fn policy_list(policy: &Value, key: &str) -> Vec<String> {
+    let strings = |v: Option<&Value>| -> Option<Vec<String>> {
+        v.and_then(Value::as_array).map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect()
+        })
+    };
+    if let Some(list) = strings(policy.get(key)) {
+        return list;
+    }
+    let mode = policy
+        .get("mode")
+        .and_then(Value::as_str)
+        .unwrap_or("allowlist");
+    let mine = (key == "always_allow") == (mode != "denylist");
+    if mine {
+        strings(policy.get("entries")).unwrap_or_default()
+    } else {
+        Vec::new()
+    }
+}
+
+/// `PUT /me/email/policy`: the mode and both lists (each replaces the stored list).
+pub fn policy_body(mode: &str, always_allow: &[String], always_deny: &[String]) -> Value {
+    let clean = |l: &[String]| -> Vec<String> {
+        l.iter()
+            .map(|e| e.trim())
+            .filter(|e| !e.is_empty())
+            .map(str::to_string)
+            .collect()
+    };
+    json!({
+        "mode": if mode.is_empty() { "allowlist" } else { mode },
+        "always_allow": clean(always_allow),
+        "always_deny": clean(always_deny),
+    })
 }
 
 /// `PUT /me/email/limits`.
@@ -1193,6 +1231,20 @@ mod tests {
             "rejected Fix: update it"
         );
         assert_eq!(e.policy_entries, vec!["me@example.test".to_string()]);
+        // An older gateway's {mode, entries}: the entries are the mode's list.
+        assert_eq!(e.always_allow, vec!["me@example.test".to_string()]);
+        assert!(e.always_deny.is_empty());
+        let old_deny =
+            MyEmail::from_value(&json!({"policy": {"mode": "denylist", "entries": ["spam.test"]}}));
+        assert_eq!(old_deny.always_deny, vec!["spam.test".to_string()]);
+        assert!(old_deny.always_allow.is_empty());
+        // The recipient-rules shape.
+        let rules = MyEmail::from_value(
+            &json!({"policy": {"mode": "allowlist", "entries": ["abstractframework.ai"],
+            "always_allow": ["abstractframework.ai"], "always_deny": ["xxx.gov"]}}),
+        );
+        assert_eq!(rules.always_allow, vec!["abstractframework.ai".to_string()]);
+        assert_eq!(rules.always_deny, vec!["xxx.gov".to_string()]);
         assert_eq!(e.usage_text(), "1 sent this hour, 3 today");
         assert_eq!(e.credentials_text(), "encrypted, key in the OS keychain");
         let off = MyEmail::from_value(
@@ -1233,8 +1285,12 @@ mod tests {
         )
         .is_err());
         assert_eq!(
-            policy_body("denylist", " a@b.test \n\nexample.org"),
-            json!({"mode": "denylist", "entries": ["a@b.test", "example.org"]})
+            policy_body(
+                "denylist",
+                &[" abstractframework.ai ".to_string(), "".to_string()],
+                &["xxx.gov".to_string()]
+            ),
+            json!({"mode": "denylist", "always_allow": ["abstractframework.ai"], "always_deny": ["xxx.gov"]})
         );
         assert_eq!(
             limits_body("5", "").unwrap(),

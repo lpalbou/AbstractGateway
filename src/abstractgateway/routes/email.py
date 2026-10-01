@@ -14,8 +14,9 @@ user makes so their agents and automations can read and send mail as them.
     PUT    /me/email/notifications       {job_failed?, approval_needed?}  my two notification switches
     POST   /me/email/test                sign in to IMAP and SMTP with the stored mailbox
     DELETE /me/email                     disconnect the mailbox: credentials and cursor deleted
-    PUT    /me/email/policy              {mode: allowlist|denylist, entries: [address | domain]}
-    POST   /me/email/policy/check        {addresses} -> would they be allowed?
+    PUT    /me/email/policy              {mode: allowlist|denylist, always_allow?, always_deny?}
+                                         (older {mode, entries} accepted: entries = the mode's list)
+    POST   /me/email/policy/check        {to?, cc?, bcc?, addresses?} -> would they be allowed?
     PUT    /me/email/limits              {per_hour, per_day}
     PUT    /me/email/folder              {folder}    the IMAP folder read (empty = INBOX; connection kept)
     PUT    /me/email/enabled             {enabled}   "Use this mailbox" (the user's own switch)
@@ -181,16 +182,65 @@ class MyNotificationsBody(BaseModel):
 
 
 class PolicyBody(BaseModel):
-    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"mode": "allowlist", "entries": ["me@example.test", "example.org"]}]})
+    """Recipient rules. `mode` decides recipients on neither list: "allowlist" = Only the Allowed
+    list, "denylist" = Anyone not on the Denied list. `always_allow` / `always_deny`, when given,
+    REPLACE that list. The older `{mode, entries}` body is still accepted: `entries` replaces the
+    list the mode uses (allowlist -> Always allowed, denylist -> Always denied)."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [
+                {"mode": "allowlist", "always_allow": ["abstractframework.ai"], "always_deny": ["xxx.gov"]},
+                {"mode": "allowlist", "entries": ["me@example.test", "example.org"]},
+            ]
+        },
+    )
 
     mode: str = "allowlist"
-    entries: List[str] = Field(default_factory=list)
+    entries: Optional[List[str]] = Field(None, description="Older shape: the list the mode uses (replaced)")
+    always_allow: Optional[List[str]] = Field(None, description="Always allowed: addresses or domains (replaces the list)")
+    always_deny: Optional[List[str]] = Field(None, description="Always denied: addresses or domains (replaces the list); denied always wins")
 
 
 class CheckBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    addresses: List[str] = Field(default_factory=list)
+    addresses: List[str] = Field(default_factory=list, description="Checked as To (older shape)")
+    to: List[str] = Field(default_factory=list)
+    cc: List[str] = Field(default_factory=list)
+    bcc: List[str] = Field(default_factory=list)
+
+
+def apply_policy_body(store: Any, body: PolicyBody) -> None:
+    """PUT .../email/policy for ONE plane's store (own `/me/email` and the entity mirror share it).
+
+    `entries` given (older body) replaces the mode's list; `always_allow` / `always_deny` given
+    replace their list and win over `entries`; an omitted list is kept."""
+
+    entries_given = body.entries is not None
+    store.set_policy(
+        mode=body.mode,
+        add=list(body.entries or ()),
+        clear=entries_given,
+        always_allow=body.always_allow,
+        always_deny=body.always_deny,
+    )
+
+
+def check_policy_body(plane: Any, body: CheckBody) -> Dict[str, Any]:
+    """POST .../email/policy/check for ONE plane: To (+ the older `addresses`), Cc and Bcc, with
+    the account's own addresses allowed exactly as a real send allows them."""
+
+    try:
+        to = parse_recipients(list(body.addresses) + list(body.to))
+        cc = parse_recipients(list(body.cc))
+        bcc = parse_recipients(list(body.bcc))
+    except ValueError as exc:
+        raise EmailInvalidMessage(f"A recipient is not valid: {exc}.", "Give recipients as name@example.test.") from None
+    st = mail_accounts.account_store(plane).settings()
+    selves = tuple(st.self_addresses) + tuple(a for a in (mail_accounts.self_address(plane),) if a)
+    return evaluate(st.policy, to=to, cc=cc, bcc=bcc, self_addresses=selves).to_dict()
 
 
 class LimitsBody(BaseModel):
@@ -405,7 +455,7 @@ async def me_email_policy(request: Request, body: PolicyBody) -> Any:
     _principal, plane = _self_plane(request)
 
     def run() -> Dict[str, Any]:
-        mail_accounts.account_store(plane).set_policy(mode=body.mode, add=body.entries, clear=True)
+        apply_policy_body(mail_accounts.account_store(plane), body)
         return {"ok": True, **mail_accounts.public_status(plane)}
 
     return await _call(run)
@@ -416,11 +466,7 @@ async def me_email_policy_check(request: Request, body: CheckBody) -> Any:
     _principal, plane = _self_plane(request)
 
     def run() -> Dict[str, Any]:
-        try:
-            addrs = parse_recipients(list(body.addresses))
-        except ValueError as exc:
-            raise EmailInvalidMessage(f"A recipient is not valid: {exc}.", "Give recipients as name@example.test.") from None
-        return evaluate(mail_accounts.account_store(plane).settings().policy, to=addrs).to_dict()
+        return check_policy_body(plane, body)
 
     return await _call(run)
 

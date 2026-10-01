@@ -2037,6 +2037,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .advanced-sentence input.advanced-folder { width: 12em; max-width: 100%; }
 	    .advanced-sentences .af-form__help { margin: -4px 0 4px; }
 	    .advanced-add { max-width: 520px; }
+	    .recipient-rules { display: grid; gap: 12px; }
+	    .recipient-list { display: grid; gap: 6px; }
+	    .recipient-list__title { font-size: var(--font-size-base); font-weight: 600; color: var(--text); }
+	    .recipient-list .inline-state:empty { display: none; }
+	    @media (pointer: coarse) { .recipient-rules .chip__remove { min-height: 44px; min-width: 44px; } }
 	    @media (max-width: 767.98px) {
 	      .mail-server-row__fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 	      .mail-server-row__host { grid-column: 1 / -1; }
@@ -2938,17 +2943,33 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
               <details id="my-email-advanced" class="af-card account-card account-advanced">
                 <summary>Advanced</summary>
                 <div class="af-form advanced-sentences">
-                  <div class="advanced-sentence">
-                    <span id="my-email-policy-title">Your agents may send to</span>
-                    <select id="my-email-policy-mode" aria-labelledby="my-email-policy-title"><option value="allowlist">Only these recipients</option><option value="denylist">Everyone except these</option></select>
-                    <span id="my-email-policy-state" class="inline-state" role="status" aria-live="polite"></span>
+                  <!-- Mode + Always allowed + Always denied (DESIGN-v3 §4 / §13.3): rendered by renderEmailRecipientRules(policy, apiBase). -->
+                  <div id="my-email-recipient-rules" class="recipient-rules">
+                    <div class="advanced-sentence">
+                      <span id="my-email-policy-title">Your agents may send to</span>
+                      <select id="my-email-policy-mode" aria-labelledby="my-email-policy-title" aria-describedby="my-email-policy-help"><option value="allowlist">Only the Allowed list</option><option value="denylist">Anyone not on the Denied list</option></select>
+                      <span id="my-email-policy-state" class="inline-state" role="status" aria-live="polite"></span>
+                    </div>
+                    <div class="recipient-list" data-rule-list="always_allow">
+                      <span id="my-email-allow-title" class="recipient-list__title">Always allowed</span>
+                      <ul id="my-email-allow-list" class="chip-list" aria-labelledby="my-email-allow-title"></ul>
+                      <div class="af-form__inline advanced-add">
+                        <input id="my-email-allow-add" autocomplete="off" spellcheck="false" placeholder="address or domain (e.g. abstractframework.ai)" aria-label="Address or domain to always allow">
+                        <button id="my-email-allow-add-button" class="secondary" type="button">Add</button>
+                      </div>
+                      <span id="my-email-allow-state" class="inline-state" role="status" aria-live="polite"></span>
+                    </div>
+                    <div class="recipient-list" data-rule-list="always_deny">
+                      <span id="my-email-deny-title" class="recipient-list__title">Always denied</span>
+                      <ul id="my-email-deny-list" class="chip-list" aria-labelledby="my-email-deny-title"></ul>
+                      <div class="af-form__inline advanced-add">
+                        <input id="my-email-deny-add" autocomplete="off" spellcheck="false" placeholder="address or domain (e.g. xxx.gov)" aria-label="Address or domain to always deny">
+                        <button id="my-email-deny-add-button" class="secondary" type="button">Add</button>
+                      </div>
+                      <span id="my-email-deny-state" class="inline-state" role="status" aria-live="polite"></span>
+                    </div>
+                    <p id="my-email-policy-help" class="af-form__help">Denied always wins. Your own address is always allowed. A domain also covers its subdomains. To, Cc and Bcc are all checked: a message with any refused recipient is not sent.</p>
                   </div>
-                  <ul id="my-email-policy-list" class="chip-list" aria-label="Recipients"></ul>
-                  <div class="af-form__inline advanced-add">
-                    <input id="my-email-policy-add" autocomplete="off" spellcheck="false" placeholder="name@example.com or example.com" aria-label="Address or domain to add" aria-describedby="my-email-policy-help">
-                    <button id="my-email-policy-add-button" class="secondary" type="button">Add</button>
-                  </div>
-                  <p id="my-email-policy-help" class="af-form__help">Applies to To, Cc and Bcc; a message with any refused recipient is not sent.</p>
                   <div class="advanced-sentence">
                     <span>At most</span>
                     <input id="my-email-per-hour" class="advanced-num" type="number" min="0" inputmode="numeric" aria-label="Most emails per hour">
@@ -7116,9 +7137,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       afSwitchSet($("my-email-agent-tools"), { checked: Boolean(at.on), reason: at.available === false ? (at.unavailable_reason || "Connect a mailbox first.") : "" });
       // 5. Advanced.
       afSwitchSet($("my-email-enabled"), { checked: d.enabled !== false, reason: "" });
-      const pol = d.policy || { mode: "allowlist", entries: [] };
-      $("my-email-policy-mode").value = pol.mode || "allowlist";
-      renderMyEmailPolicyList(pol.entries || []);
+      renderEmailRecipientRules(d.policy);
       const lim = d.limits || {};
       if (document.activeElement !== $("my-email-per-hour")) myEmailSet("my-email-per-hour", lim.per_hour);
       if (document.activeElement !== $("my-email-per-day")) myEmailSet("my-email-per-day", lim.per_day);
@@ -7133,8 +7152,36 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         if (smtp.host && !myEmailVal("my-email-smtp-host")) { myEmailSet("my-email-smtp-host", smtp.host); myEmailSet("my-email-smtp-port", smtp.port); $("my-email-smtp-security").value = smtp.security || "ssl"; ["my-email-smtp-host", "my-email-smtp-port", "my-email-smtp-security"].forEach((f) => myEmailUi.edited.add(f)); }
       }
     }
-    function renderMyEmailPolicyList(entries) {
-      const ul = $("my-email-policy-list");
+    // Recipient rules (DESIGN-v3 §4 / §13.3), ONE renderer for the own Email modal and an entity's
+    // (accounts-web passes the API base: /api/gateway/me/email or /api/gateway/accounts/<id>/email).
+    // Mode + "Always allowed" + "Always denied" chip lists; every change auto-saves through
+    // PUT <apiBase>/policy and shows "Saved" or the API's message.
+    const RECIPIENT_RULES_BASE = "/api/gateway/me/email";
+    const RECIPIENT_RULE_LISTS = {
+      always_allow: { list: "my-email-allow-list", input: "my-email-allow-add", button: "my-email-allow-add-button", state: "my-email-allow-state" },
+      always_deny: { list: "my-email-deny-list", input: "my-email-deny-add", button: "my-email-deny-add-button", state: "my-email-deny-state" },
+    };
+    const recipientRulesUi = { base: RECIPIENT_RULES_BASE, policy: null };
+    function renderEmailRecipientRules(policy, apiBase = RECIPIENT_RULES_BASE) {
+      const base = apiBase || RECIPIENT_RULES_BASE;
+      if (base !== recipientRulesUi.base) {
+        // Another principal's rules: nothing typed for the previous one carries over.
+        for (const ids of Object.values(RECIPIENT_RULE_LISTS)) { $(ids.input).value = ""; inlineState(ids.state, "", ""); }
+        inlineState("my-email-policy-state", "", "");
+      }
+      recipientRulesUi.base = base;
+      const pol = policy || { mode: "allowlist", always_allow: [], always_deny: [] };
+      if (!Array.isArray(pol.always_allow) || !Array.isArray(pol.always_deny)) {
+        throw new Error("The email policy has no always_allow / always_deny lists (gateway older than this console?)");
+      }
+      recipientRulesUi.policy = { mode: pol.mode === "denylist" ? "denylist" : "allowlist", always_allow: pol.always_allow.slice(), always_deny: pol.always_deny.slice() };
+      $("my-email-policy-mode").value = recipientRulesUi.policy.mode;
+      for (const which of Object.keys(RECIPIENT_RULE_LISTS)) renderRecipientRuleList(which);
+    }
+    function renderRecipientRuleList(which) {
+      const ids = RECIPIENT_RULE_LISTS[which];
+      const entries = recipientRulesUi.policy[which];
+      const ul = $(ids.list);
       ul.textContent = "";
       for (const entry of entries) {
         const li = document.createElement("li");
@@ -7146,16 +7193,44 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         x.className = "chip__remove";
         x.textContent = "×";
         x.setAttribute("aria-label", `Remove ${entry}`);
-        x.onclick = () => saveMyEmailPolicy(entries.filter((e) => e !== entry), `${entry} removed.`);
+        x.title = `Remove ${entry}`;
+        x.onclick = () => saveEmailRecipientRules({ [which]: entries.filter((e) => e !== entry) }, ids.state, `${entry} removed.`);
         li.append(t, x);
         ul.append(li);
       }
       if (!entries.length) {
         const li = document.createElement("li");
         li.className = "chip-list__empty";
-        li.textContent = $("my-email-policy-mode").value === "denylist" ? "No refused recipients." : "No allowed recipients yet: sends are refused until you add one.";
+        li.textContent = which === "always_allow" && recipientRulesUi.policy.mode === "allowlist"
+          ? "Nobody yet: your agents may send only to your own address."
+          : "Nobody yet.";
         ul.append(li);
       }
+    }
+    async function saveEmailRecipientRules(change, stateId, okText) {
+      const cur = recipientRulesUi.policy;
+      const body = { mode: $("my-email-policy-mode").value, always_allow: cur.always_allow, always_deny: cur.always_deny, ...change };
+      const base = recipientRulesUi.base;
+      try {
+        const out = await api(`${base}/policy`, { method: "PUT", body: JSON.stringify(body) });
+        if (!out || !out.policy) throw new Error("The gateway did not return the saved policy.");
+        state.myEmail = { ...(state.myEmail || {}), policy: out.policy };
+        renderEmailRecipientRules(out.policy, base);
+        inlineState(stateId, okText || "Saved", "ok");
+        return true;
+      } catch (e) {
+        renderEmailRecipientRules(cur, base); // not saved: show what is stored
+        inlineState(stateId, emailErrorText(e), "error");
+        return false;
+      }
+    }
+    async function addEmailRecipientRule(which) {
+      const ids = RECIPIENT_RULE_LISTS[which];
+      const v = String($(ids.input).value || "").trim();
+      if (!v) return;
+      const cur = recipientRulesUi.policy[which];
+      if (cur.includes(v.toLowerCase())) { $(ids.input).value = ""; inlineState(ids.state, `${v} is already on the list.`, "ok"); return; }
+      if (await saveEmailRecipientRules({ [which]: cur.concat([v]) }, ids.state, `${v} added.`)) $(ids.input).value = "";
     }
     async function loadMyEmail() {
       try {
@@ -7309,26 +7384,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       } finally {
         btn.disabled = false;
       }
-    }
-    async function saveMyEmailPolicy(entries, okText) {
-      try {
-        const out = await api("/api/gateway/me/email/policy", { method: "PUT", body: JSON.stringify({ mode: $("my-email-policy-mode").value, entries }) });
-        const pol = (out && out.policy) || { mode: $("my-email-policy-mode").value, entries };
-        state.myEmail = { ...(state.myEmail || {}), policy: pol };
-        renderMyEmailPolicyList(pol.entries || entries);
-        inlineState("my-email-policy-state", okText || "Saved", "ok");
-        return true;
-      } catch (e) {
-        inlineState("my-email-policy-state", emailErrorText(e), "error");
-        return false;
-      }
-    }
-    async function addMyEmailPolicyEntry() {
-      const v = myEmailVal("my-email-policy-add");
-      if (!v) return;
-      const cur = ((state.myEmail && state.myEmail.policy && state.myEmail.policy.entries) || []).slice();
-      if (!cur.includes(v)) cur.push(v);
-      if (await saveMyEmailPolicy(cur, `${v} added.`)) $("my-email-policy-add").value = "";
     }
     async function saveMyEmailLimits() {
       try {
@@ -7501,9 +7556,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       $("my-email-disconnect").onclick = () => { $("my-email-disconnect-confirm").hidden = false; try { $("my-email-disconnect-cancel").focus(); } catch {} };
       $("my-email-disconnect-cancel").onclick = () => { $("my-email-disconnect-confirm").hidden = true; };
       $("my-email-disconnect-now").onclick = disconnectMyEmail;
-      $("my-email-policy-mode").onchange = () => saveMyEmailPolicy(((state.myEmail && state.myEmail.policy && state.myEmail.policy.entries) || []).slice(), "Saved");
-      $("my-email-policy-add-button").onclick = addMyEmailPolicyEntry;
-      $("my-email-policy-add").onkeydown = (event) => { if (event && event.key === "Enter") addMyEmailPolicyEntry(); };
+      $("my-email-policy-mode").onchange = () => saveEmailRecipientRules({}, "my-email-policy-state", "Saved");
+      for (const [which, ids] of Object.entries(RECIPIENT_RULE_LISTS)) {
+        $(ids.button).onclick = () => addEmailRecipientRule(which);
+        $(ids.input).onkeydown = (event) => { if (event && event.key === "Enter") addEmailRecipientRule(which); };
+      }
       $("my-email-per-hour").onchange = saveMyEmailLimits;
       $("my-email-per-day").onchange = saveMyEmailLimits;
       $("my-email-imap-folder").onchange = saveMyEmailFolder;

@@ -26,7 +26,7 @@ def test_account_page_carries_the_fields_and_words() -> None:
         "my-email-registered", "my-email-registered-save", "my-email-address", "my-email-password",
         "my-email-imap-host", "my-email-imap-port", "my-email-imap-security", "my-email-imap-folder",
         "my-email-smtp-host", "my-email-smtp-port", "my-email-smtp-security", "my-email-oauth-client-id",
-        "my-email-oauth-client-secret", "my-email-oauth-flow", "my-email-policy-mode", "my-email-policy-list",
+        "my-email-oauth-client-secret", "my-email-oauth-flow", "my-email-policy-mode", "my-email-allow-list", "my-email-deny-list",
         "my-email-per-hour", "my-email-per-day", "my-email-notify-job-failed", "my-email-notify-approval",
         "my-email-notify-test", "my-email-agent-tools", "my-email-enabled", "my-email-connect-go",
     ):
@@ -46,13 +46,16 @@ def test_account_page_carries_the_fields_and_words() -> None:
 def test_console_calls_only_the_callers_own_routes() -> None:
     html = _html()
     for route in (
-        "/api/gateway/me/email", "/api/gateway/me/email/test", "/api/gateway/me/email/policy",
+        "/api/gateway/me/email", "/api/gateway/me/email/test",
         "/api/gateway/me/email/limits", "/api/gateway/me/email/enabled", "/api/gateway/me/email/agent-tools",
         "/api/gateway/me/email/address", "/api/gateway/me/email/discover", "/api/gateway/me/email/notifications",
         "/api/gateway/me/email/folder", "/api/gateway/me/email/oauth/start", "/api/gateway/me/email/oauth/finish",
         "/api/gateway/me/email/oauth/cancel", "/api/gateway/me/notifications/test",
     ):
         assert route in html, route
+    # Recipient rules save through the API base they were rendered with (own or an entity's).
+    assert 'const RECIPIENT_RULES_BASE = "/api/gateway/me/email";' in html
+    assert "await api(`${base}/policy`, { method: \"PUT\"" in html
     # The only per-user admin call left is Reset (clears an old override).
     assert "/api/gateway/admin/users/${encodeURIComponent(u.user_id)}/email" in html
     assert 'JSON.stringify({ inherit: ["email", "email_agent_tools"] })' in html

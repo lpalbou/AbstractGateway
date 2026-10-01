@@ -169,11 +169,16 @@ Every send — an agent's `send_email`, an automation's send action, a notificat
 code — goes through the same checks, in this order:
 
 1. email is on (your switch **and** the administrator's);
-2. the **recipient policy**: `allowlist` (only the listed addresses and domains) or `denylist`
-   (everyone except them). Entries are exact addresses or domains; a subdomain matches only when
-   written as its own entry. The policy applies to To, Cc and Bcc, and a message with any refused
-   recipient is refused whole, naming the refused addresses. A new account starts with an allowlist
-   holding your registered address;
+2. the **recipient rules**: two lists, **Always allowed** and **Always denied**, each holding
+   exact addresses (`name@example.com`) or domains (`example.com`, which also covers its
+   subdomains), and one mode for recipients on neither list: **Only the Allowed list**
+   (`allowlist`: refused) or **Anyone not on the Denied list** (`denylist`: allowed). Your own
+   address is always allowed, and denied always wins over allowed. The rules apply to To, Cc and
+   Bcc; a message with any refused recipient is refused whole, and the refusal names the
+   recipient and the rule ("Not sent: x@xxx.gov is on your Always denied list (xxx.gov)."). A new
+   account starts with Only the Allowed list, holding your registered address. A policy stored by
+   an older version keeps its meaning: an allowlist's entries are the Always allowed list, a
+   denylist's entries the Always denied list;
 3. the **send limits**: 100 messages per rolling hour and 1000 per day by default, editable by you.
    Limits you set are kept across upgrades; a mailbox where nobody set them follows the defaults.
    Until AbstractCore 2.21 the defaults were 20 and 100 and connecting a mailbox stored them
@@ -189,7 +194,7 @@ address for the operator), else the connected mailbox's own address.
 
 ```bash
 curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/policy" \
-  -d '{"mode": "allowlist", "entries": ["me@example.com", "mycompany.com"]}'
+  -d '{"mode": "allowlist", "always_allow": ["mycompany.com"], "always_deny": ["xxx.gov"]}'
 curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/limits" -d '{"per_hour": 100, "per_day": 1000}'
 ```
 
