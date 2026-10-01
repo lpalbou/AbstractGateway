@@ -210,9 +210,15 @@ class EntityManifest:
     # entities gain keypairs; None until then, never removed.
     public_key_id: Optional[str] = None
     key_registry: Optional[str] = None
+    # Who created this entity (operator ruling 2026-10-01, RBAC): {"tenant_id", "user_id"} of
+    # the authenticated principal whose POST /entities minted the home. ABSENT on homes created
+    # before the field existed (and on homes created with no authenticated principal) — such an
+    # entity is visible to admins only; a creator is never guessed and old manifests are never
+    # rewritten to add one.
+    created_by: Optional[Dict[str, str]] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        out = {
             "format_version": self.format_version,
             "entity_id": self.entity_id,
             "name": self.name,
@@ -229,6 +235,9 @@ class EntityManifest:
                 "record) is deferred to the keys/signature work."
             ),
         }
+        if self.created_by:
+            out["created_by"] = dict(self.created_by)
+        return out
 
     @staticmethod
     def from_dict(data: Mapping[str, Any]) -> "EntityManifest":
@@ -243,7 +252,18 @@ class EntityManifest:
             format_version=int(data.get("format_version") or ENTITY_FORMAT_VERSION),
             public_key_id=data.get("public_key_id"),
             key_registry=data.get("key_registry"),
+            created_by=_creator_from(data.get("created_by")),
         )
+
+
+def _creator_from(raw: Any) -> Optional[Dict[str, str]]:
+    """A manifest's `created_by`, or None when absent or malformed (never guessed)."""
+    if not isinstance(raw, Mapping):
+        return None
+    user_id = str(raw.get("user_id") or "").strip()
+    if not user_id:
+        return None
+    return {"tenant_id": str(raw.get("tenant_id") or "default").strip() or "default", "user_id": user_id}
 
 
 class EntityHome:
@@ -1085,8 +1105,12 @@ class EntityRegistry:
         framework: bool = True,
         embedding_model: Optional[str] = None,
         embedding_dimension: Optional[int] = None,
+        created_by: Optional[Mapping[str, str]] = None,
     ) -> EntityCreateResult:
         """Create (or idempotently re-adopt) an entity home.
+
+        `created_by` ({tenant_id, user_id} of the creating principal) is written into a NEW
+        home's manifest only; an existing home keeps the manifest it has.
 
         Order: lint -> store the spark verbatim -> engram -> manifest. The
         engram's own guards do the heavy lifting and their errors are
@@ -1182,6 +1206,7 @@ class EntityRegistry:
                     created_at=_utc_now_iso(),
                     spark_version=int(spark_doc.get("spark", 1) or 1),
                     spark_hash=new_hash,
+                    created_by=_creator_from(created_by),
                 )
                 manifest_path.write_text(
                     json.dumps(manifest.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8"

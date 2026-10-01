@@ -22,14 +22,16 @@ import asyncio
 import json
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Header, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from ..entities import EntityRegistry
+from ..entity_access import entity_name_guard
 from ..entity_replay import merged_replay, validate_families
 from ..service import get_gateway_service
 
-router = APIRouter(prefix="/gateway/entities", tags=["entities"])
+# RBAC (entity_access.py): the same `{name}` visibility check as routes/entities.py.
+router = APIRouter(prefix="/gateway/entities", tags=["entities"], dependencies=[Depends(entity_name_guard)])
 
 # Max envelopes per off-loop collection pass on the live tail (H7b). Each
 # chunk borrows a worker thread briefly and hands control back to the event
