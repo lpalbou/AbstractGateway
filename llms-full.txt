@@ -90,8 +90,8 @@ A typical path from a fresh install to a working local model:
 3. When the download finishes, the row reads *Downloaded*. Click **Use as
    default**: the gateway's text route uses it from then on.
 
-The same steps are available later in the **Engines** and **Models** tabs (see
-[console.md](docs/console.md#models-and-engines-tabs)) and from the command line
+The same steps are available later in the **Providers** (Local providers) and **Models** tabs (see
+[console.md](docs/console.md#models-and-local-providers)) and from the command line
 (`abstractgateway engines install ollama`, `abstractgateway models download
 ollama qwen3:8b`). Installing an engine needs an admin and the
 [`allow_engine_install`](docs/configuration.md#allow_engine_install) setting, which
@@ -5375,7 +5375,7 @@ The Accounts page (admin): users and entities in one list.
 
 | Route | Purpose |
 |---|---|
-| `GET /admin/accounts` | `{accounts: [{id, tenant_id, kind: user \| entity, role: admin \| user \| entity, own, email_address, mailbox{state: connected \| not_connected \| paused \| unavailable, address, provider, reason}, runtime_id, active, entity_state, actions{email, logs, workspace, rotate, manage, delete, suspend: {available, reason}}}]}`, sorted admins, users, entities, then id; `entities_warning` when the entity list could not be read |
+| `GET /admin/accounts` | `{accounts: [{id, tenant_id, kind: user \| entity, role: admin \| user \| entity, own, email_address, mailbox{state: connected \| receive_only \| not_connected \| paused \| unavailable, address, provider, reason}, runtime_id, active, entity_state, actions{email, logs, workspace, rotate, manage, delete, suspend: {available, reason}}}]}`, sorted admins, users, entities, then id; `entities_warning` when the entity list could not be read |
 | `PUT /admin/accounts/{id}/active` | `{active}` → the updated row. Users: `false` = deactivated (signed out, cannot sign in); 409 `{message}` for your own account ("You can't deactivate your own account.") or the last active admin. Entities: `false` = suspended (entity state `paused`, its door credential off, an open visit closed); `true` = resumed (the state it had before is restored, stored in `<data_dir>/auth/entity_suspended.json`) |
 | `GET /admin/accounts/{id}/activity` | `?limit=100&kind=sign_in,run,…` (admin) |
 | `GET /me/activity` | the same for the signed-in account |
@@ -5448,23 +5448,23 @@ Your email address and mailbox (`/api/gateway/me/...`, every signed-in human):
 
 | Route | Purpose |
 |---|---|
-| `GET /me/email` | settings and status (`mailbox{state, address, provider, reason}` as in `/admin/accounts`): `configured`, `address`, `imap`, `smtp`, `auth_kind`, `secret_set`, `policy`, `limits` (+ usage), `status{last_test, last_ok, last_error{code, cause, fix}}`, `watcher{state, last_poll, cursor, received}`, `admin_enabled`, `effective_enabled`; for the account page: `email_address` (your email address as stored), `registered_address` ("self" for runs: that address, else the mailbox's own), `email_available`, `notifications{job_failed, approval_needed}` + `notifications_unavailable_reason`, `agent_tools{on, available, unavailable_reason, active}`, `oauth_providers[{id, available, reason}]` |
+| `GET /me/email` | settings and status (`mailbox{state, address, provider, reason}` as in `/admin/accounts`): `configured`, `address`, `imap`, `smtp`, `auth_kind`, `secret_set`, `policy`, `limits` (+ usage), `status{last_test, last_ok, last_error{code, cause, fix}}`, `watcher{state, last_poll, cursor, received}`, `admin_enabled`, `effective_enabled`; for the account page: `email_address` (your email address as stored), `registered_address` ("self" for runs: that address, else the mailbox's own), `email_available`, `notifications{job_failed, approval_needed}` + `notifications_unavailable_reason`, `agent_tools{on, available, unavailable_reason, active}`, `oauth_providers[{id, available, reason}]`; `send_capable` (false for a mailbox stored without its SMTP leg — `mailbox.state: receive_only`) |
 | `POST /me/email/discover` | `{address}` → `{address, domain, found, source, provider, imap, smtp, username, tried, defaults}` (known providers, autoconfig, ISPDB, SRV, MX); `defaults` is what the form pre-fills: `{imap{host, port, security}, smtp{…}, login, source: discovered \| standard, provider, message}` (AbstractCore `server_defaults`: the discovered servers, else `imap.<domain>` 993 SSL and `smtp.<domain>` 465 SSL, "Standard settings for <domain> — change them if your provider uses others."); 400 for a non-address |
-| `PUT /me/email` | connect (save + test): `{address, password, username?, display_name?, imap?{host, port, security, folder}, smtp?{host, port, security}, test}`; `username` defaults to the discovered login, else the address; `display_name` to the stored name, else the address's local part; connecting sets your email address when it is empty (audited `email.address_changed`, reason `mailbox_connected`); without `imap` and `smtp` the servers are discovered (`discovery{source, provider, tried}` in the answer; none found = 400 `email_discovery_failed` with `tried`); signs in to both servers first (unless `test: false`), stores nothing on a failure and names the failing step (`detail.step`: `imap` \| `smtp`, `detail.message`) |
+| `PUT /me/email` | connect (save + test): `{address, password, username?, display_name?, imap?{host, port, security, folder}, smtp?{host, port, security}, test}`; `username` defaults to the discovered login, else the address; `display_name` to the stored name, else the address's local part; connecting sets your email address when it is empty (audited `email.address_changed`, reason `mailbox_connected`); without `imap` and `smtp` the servers are discovered (`discovery{source, provider, tried}` in the answer; none found = 400 `email_discovery_failed` with `tried`); signs in to both servers first (unless `test: false`), stores nothing on a failure and names the failing step (`detail.step`: `imap` \| `smtp`, `detail.message`); a leg left out is filled with the domain's standard server (or the discovered one) and the test signs in to BOTH, so a connected mailbox can always send (an unreachable outgoing server is `detail.step: smtp`, nothing stored); `tools_reloaded`: the caller's workflows were reloaded so agents' toolsets follow |
 | `PUT /me/email/address` | `{address}` — your email address, stored on your user record (`""` clears it; 400 `email_invalid_settings` for anything but one plain address) |
 | `PUT /me/email/notifications` | `{job_failed?, approval_needed?}` — the two notification switches (both on by default); the earlier `{email: {...}}` body is accepted and mapped; answers like `GET /me/email` |
 | `POST /me/email/test` | per-leg result `{imap, smtp, ok, message}`; `message`: "Test passed: signed in to imap.x and smtp.x." or the failing step and its cause ("Sign-in refused by imap.x — check the password. (…)") |
-| `DELETE /me/email` | disconnect: credentials and cursor deleted (policy and limits kept) |
+| `DELETE /me/email` | disconnect: credentials and cursor deleted (policy and limits kept); `tools_reloaded` |
 | `PUT /me/email/policy` | `{mode: "allowlist" \| "denylist", always_allow?: [address \| domain], always_deny?: [address \| domain]}`; a list given replaces that list. Precedence: own address → allowed; Always denied → refused; Always allowed → allowed; else the mode (`allowlist` = Only the Allowed list → refused, `denylist` = Anyone not on the Denied list → allowed). A domain covers its subdomains. The older `{mode, entries}` is accepted (`entries` = the mode's list) |
 | `POST /me/email/policy/check` | `{to?, cc?, bcc?, addresses?}` (`addresses` = To) → per-recipient verdicts with `source` (`self`, `always_deny`, `always_allow`, `mode`) |
 | `PUT /me/email/limits` | `{per_hour, per_day}` |
 | `PUT /me/email/folder` | `{folder}` — the folder your mailbox is read from (empty = INBOX); the connection is kept and nothing is tested; 404 `email_not_configured` without a mailbox |
-| `PUT /me/email/enabled` | `{enabled}` — "Use this mailbox" (off keeps the settings; stops watching, sending and notifications) |
+| `PUT /me/email/enabled` | `{enabled}` — "Use this mailbox" (off keeps the settings; stops watching, sending and notifications); `tools_reloaded` |
 | `PUT /me/email/agent-tools` | `{enabled}` — your agents' email tools (default off; 409 `email_disabled` while "Agent email tools for users" is off for you; active only with a connected, allowed mailbox); reloads your workflows so toolsets follow (`tools_reloaded`) |
 | `GET /me/email/oauth/clients` | which providers have a gateway OAuth client (no secrets) |
 | `POST /me/email/oauth/start` | `{address, provider: google \| microsoft, client_id?, client_secret?, tenant?, flow?: device \| loopback}` → device code (`user_code`, `verification_uri`) or `authorization_url`. `token_endpoint`, `authorization_endpoint`, `device_authorization_endpoint` and `scopes` are accepted only from an administrator with `provider: "custom"` (own client id); otherwise 403 `email_oauth_override_refused` |
 | `POST /me/email/oauth/poll` | `{flow_id}` → `{pending: true}` or the connected account |
-| `POST /me/email/oauth/finish` | `{flow_id, wait_s}` — waits up to 60 s for the approval |
+| `POST /me/email/oauth/finish` | `{flow_id, wait_s}` — waits up to 60 s for the approval; `tools_reloaded` once connected |
 | `POST /me/email/oauth/cancel` | `{flow_id}` |
 | `GET /me/notifications` | events and choices, channel availability, outbox summary |
 | `PUT /me/notifications` | `{email: {job_failed, approval_needed: bool}}`; the earlier kinds are accepted (`automation_failed` counts for `job_failed`; `automation_result` and `job_finished` are per-automation / per-run options now) |
@@ -5474,11 +5474,11 @@ Administrators (status and the switch only; administrators never read mail):
 
 | Route | Purpose |
 |---|---|
-| `GET /admin/users` | every row carries `email_address` and `mailbox{state: connected \| not_connected \| paused \| unavailable, address, provider, reason}` from the same resolver as `GET /me/email` (so your own row matches your card; `email` stays the raw record field); each human row also carries `email_account: {configured, address, state, admin_enabled, agent_tools_available, capabilities}` (`capabilities`: `{email, email_agent_tools}` as `{value, source: user \| gateway \| built-in}`; `user` = a per-user override) |
+| `GET /admin/users` | every row carries `email_address` and `mailbox{state: connected \| receive_only \| not_connected \| paused \| unavailable, address, provider, reason}` from the same resolver as `GET /me/email` (so your own row matches your card; `email` stays the raw record field); each human row also carries `email_account: {configured, address, state, admin_enabled, agent_tools_available, capabilities}` (`capabilities`: `{email, email_agent_tools}` as `{value, source: user \| gateway \| built-in}`; `user` = a per-user override) |
 | `GET /admin/users/{user_id}/email` | `configured`, `address`, `auth_kind`, `user_enabled`, `admin_enabled`, `effective_enabled`, `status` (last test / last error), `capabilities` (`{value, source: user \| gateway \| built-in}`), `agent_tools` (`available`, `user_enabled`, `active`), `watcher`, `state` |
 | `PUT /admin/users/{user_id}/email` | `{enabled?, agent_tools?, inherit?: ["email", "email_agent_tools"]}` — per-user capabilities; `enabled: false` = no watcher, no sending, no notifications (settings kept); `agent_tools` = Agent email tools available |
 | `GET /admin/email/capabilities` | `capabilities[{id, label, description, per_user, advanced, default, built_in_default}]`: `email` "Mailboxes for users" (on), under Advanced `email_agent_tools` "Agent email tools for users" (on) and `email_recovery` "Sign-in by email" (on) |
-| `PUT /admin/email/capabilities` | `{email?, email_agent_tools?, email_recovery?, reset?: [...]}` |
+| `PUT /admin/email/capabilities` | `{email?, email_agent_tools?, email_recovery?, reset?: [...]}`; `tools_reloaded`: how many built hosts were rebuilt so every user's agents follow the change |
 | `GET /admin/email/oauth-clients` | bring-your-own OAuth clients: `client_id`, `client_secret_set`, `tenant` per provider |
 | `PUT /admin/email/oauth-clients/{provider}` | `{client_id, client_secret?, tenant?}`; an empty `client_id` removes the provider's client; omitting `client_secret` keeps the stored one for the same id |
 
@@ -5556,9 +5556,8 @@ The sidebar groups the tabs in four sections, in this order:
 | Work | **Workflows** | the workflow bundles on this gateway (name, what each does, version, source, the apps that use it), import, export, delete, the default workflow for each app and the **Streamed replies** setting ([below](#workflows)) |
 | Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches |
 | Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), plus *Advanced: apps settings* and *Advanced: backlog settings (Continuum)* |
-| Models | **Providers** | provider connections (OpenAI, Anthropic, OpenRouter, Portkey, LM Studio, Ollama, custom OpenAI-compatible endpoints) with write-only keys |
+| Models | **Providers** | **Local providers**: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, **Browse models** and its server connection; **Remote providers**: OpenAI, Anthropic, OpenRouter, Portkey and custom OpenAI-compatible connections with write-only keys (shown as fingerprints); then the **Available Providers** table ([below](#models-and-local-providers)) |
 | Models | **Models** | browse models that fit this machine, download them, delete installed ones (below) |
-| Models | **Engines** | the local engines on the gateway host: installed or not, running or not, install, start, stop (below) |
 | Models | **Multimodal** | capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
 | System | **Resources** | memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the **Gateway** card (pause, update, restart, desktop icon, start at login) |
 | System | **Sandbox** | quick chat and media generation against the configured defaults |
@@ -5782,9 +5781,9 @@ call ends" (the old model is still answering a call), "X: eject failed:
 reason", "X kept in memory: reason" (something else still uses it) and "X
 ejected".
 
-### Models and Engines tabs
+### Models and local providers
 
-Everything these two tabs show and do happens **on the gateway host**: the
+Everything the Models tab and the Providers tab's Local providers show and do happens **on the gateway host**: the
 machine that runs `abstractgateway serve`, not the computer your browser runs
 on. The catalog data, the presence checks and the fit verdicts come from
 AbstractCore (`GET /api/gateway/models/catalog`, contract `model_catalog_v1`);
@@ -5858,12 +5857,13 @@ The setup guide's **Default model** step shows the same catalog cards with
 filters over. An engine card's **Browse models** opens the tab filtered to that
 engine's builds.
 
-**Engines** (tab id `engines`):
+**Local providers** (the Providers tab, id `providers`; the Engines tab of
+0.10.0 and older merged into it, and a `#engines` link opens Providers):
 
 - One card per engine with a status pill (Ready, Running, Installing, Needs
   your approval, Needs Apple tools, Not installed, Not for this computer),
-  its version, base URL and model count, and one primary action for its
-  state: **Install**, **Start**, **Stop**, **Continue with administrator
+  its version, base URL and model count, **Browse models**, **Learn more**,
+  and one primary action for its state: **Install**, **Start**, **Stop**, **Continue with administrator
   password**, **Install tools** or **Try again**.
 - **Install** opens a confirmation that shows what will run and the host it
   runs on, with a **Preview (dry run)** button. Ollama and LM Studio offer
@@ -7075,6 +7075,13 @@ in the terminal) shows a Login field for the few providers that need one. When y
 is empty, the pane's **Mailbox address** is the only address field and connecting fills your email
 address; when it is set, the pane reads "Mailbox account: x@y" with **Use a different account**.
 - **HTTP**: `PUT /api/gateway/me/email`.
+
+Connecting stores **both** servers: a leg you leave empty is the domain's standard one (`imap.`/`smtp.<domain>`,
+993/465 SSL, or the one discovery found), and the connect test signs in to both — a mailbox is never connected
+"receive only" by accident; an outgoing server that cannot be reached refuses the connect and names its step. A
+mailbox stored before gateway 0.10.1 without its outgoing server shows **receive only** (reads work, sends do not)
+until you connect it again. Connecting, disconnecting or pausing a mailbox also reloads your workflows, so your
+agents' tool lists follow at once (the host re-checks at every run start as well).
 
 Give the address and the password (or app password). The gateway finds the IMAP and SMTP servers
 from the address — a table of common providers, the domain's own autoconfig file, the Thunderbird
@@ -8986,6 +8993,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fields (wrapping on phones), and "Watch folder" is a sentence-case label like the others.
 
 ### Changed
+
+- Web console: **Providers** and **Engines** are one page. The **Providers** tab lists **Local
+  providers** first (one card per local engine: status, Install, Start, Stop, Cancel, Continue,
+  **Browse models**, **Learn more**, and the provider's server connection for Ollama, LM Studio and
+  vLLM), then **Remote providers** (OpenAI, Anthropic, OpenRouter, Portkey, custom
+  OpenAI-compatible, each with its connection state; keys appear as fingerprints only), then the
+  **Available Providers** table as before. **Engines** is no longer in the sidebar; a `#engines`
+  link opens Providers. The terminal console and the API are unchanged.
 - Sends to To, Cc and Bcc, from agent tools and notifications alike, follow the precedence: your own
   address is allowed, Always denied refuses ("Not sent: x@xxx.gov is on your Always denied list
   (xxx.gov)."), Always allowed allows, then the mode decides. A notification to your own address is
@@ -8994,6 +9009,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   allowed list, a denylist's entries the Always denied list. The older `{mode, entries}` body is
   still accepted (`entries` replaces the list the mode uses). Needs the AbstractCore version that
   adds the two lists.
+
+### Fixed
+
+- Runs now use the base URL set on the text-generation default (`output.text`, stored as `input.text`). Released 0.10.0 saved and showed it, but runs, run summaries, Ask and the sandbox called the provider's built-in address instead (for example LM Studio on `localhost:1234`). The base URL applies to the route's own provider only; an endpoint profile (`endpoint:<id>`) keeps its own address, and nothing changes when the field is empty. Affects 0.10.0; ships in the next release.
+
+- **Agents get the email tools the client lists.** The agents' tool lists are built with a user's
+  host; only the "Agent email tools" switch rebuilt it, so a mailbox connected, paused or
+  disconnected afterwards — or an administrator's capability change — left a run without
+  `send_email` while Run settings showed it enabled (Mac mini, 2026-10-01). Connect, disconnect,
+  Active and the OAuth finish now reload the caller's host (`tools_reloaded` in their answers), an
+  administrator's capability change reloads every built host, and the host re-checks the rule at
+  every run start and rebuilds when it moved.
+- **A connected mailbox can always send.** Connect stores both legs: a leg the form or the
+  discovery left out is the domain's standard one (`imap.`/`smtp.<domain>`, 993/465 SSL) and the
+  connect test signs in to both — an unreachable outgoing server refuses the connect with its step
+  (`detail.step: smtp`) instead of a "Connected" mailbox whose first send answers "no SMTP (send)
+  settings". A mailbox stored without its SMTP leg reads `mailbox.state: receive_only` (with the
+  reason) and `send_capable: false` on `GET /me/email`, `/admin/users` and `/admin/accounts`.
+- **Session history never crosses sessions — pinned.** `tests/test_gateway_session_history_isolation.py`
+  proves a new session starts with no messages from another session of the same user, of another
+  user, or after a restart, and that nothing of the other session reaches its run vars.
 
 ## [0.10.0] - 2026-10-01
 

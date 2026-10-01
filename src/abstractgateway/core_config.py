@@ -613,14 +613,19 @@ def text_route_provider_warnings(
 def text_default(*, base_dir: Optional[Path] = None) -> Dict[str, Any]:
     """The execution host's text-generation default, read BY NAME.
 
-    Returns `{"provider", "model", "reasoning", "source", "key"}` with `None`
-    for anything the store does not carry. The canonical key `output.text`
+    Returns `{"provider", "model", "base_url", "reasoning", "source", "key"}`
+    with `None` for anything the store does not carry. `base_url` is the
+    route's own endpoint (e.g. an LM Studio on another machine); the execution
+    host builds the default text client against it, so a run that uses the
+    default reaches that endpoint and not the provider's built-in address. The canonical key `output.text`
     answers first and the storage key `input.text` second, so a config that
     carries only the storage key still resolves; `source` names which key
     answered, so a run's evidence says where its default came from.
     """
 
-    out: Dict[str, Any] = {"provider": None, "model": None, "reasoning": None, "source": None, "key": None}
+    out: Dict[str, Any] = {
+        "provider": None, "model": None, "base_url": None, "reasoning": None, "source": None, "key": None,
+    }
     try:
         payload = gateway_capability_defaults_payload(base_dir=base_dir)
     except Exception:
@@ -644,12 +649,14 @@ def text_default(*, base_dir: Optional[Path] = None) -> Dict[str, Any]:
         provider = _clean_lower(row.get("provider"))
         model = _clean(row.get("model"))
         reasoning = _clean_lower(row.get("reasoning"))
+        base_url = _clean(row.get("base_url"))
         if not (provider or model or reasoning):
             continue
         origin = str(row.get("source") or payload.get("authority") or "abstractcore_config")
         return {
             "provider": provider,
             "model": model,
+            "base_url": base_url,
             "reasoning": reasoning,
             "source": f"{origin}:{wanted}",
             "key": wanted,

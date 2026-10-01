@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fields (wrapping on phones), and "Watch folder" is a sentence-case label like the others.
 
 ### Changed
+
+- Web console: **Providers** and **Engines** are one page. The **Providers** tab lists **Local
+  providers** first (one card per local engine: status, Install, Start, Stop, Cancel, Continue,
+  **Browse models**, **Learn more**, and the provider's server connection for Ollama, LM Studio and
+  vLLM), then **Remote providers** (OpenAI, Anthropic, OpenRouter, Portkey, custom
+  OpenAI-compatible, each with its connection state; keys appear as fingerprints only), then the
+  **Available Providers** table as before. **Engines** is no longer in the sidebar; a `#engines`
+  link opens Providers. The terminal console and the API are unchanged.
 - Sends to To, Cc and Bcc, from agent tools and notifications alike, follow the precedence: your own
   address is allowed, Always denied refuses ("Not sent: x@xxx.gov is on your Always denied list
   (xxx.gov)."), Always allowed allows, then the mode decides. A notification to your own address is
@@ -33,6 +41,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   allowed list, a denylist's entries the Always denied list. The older `{mode, entries}` body is
   still accepted (`entries` replaces the list the mode uses). Needs the AbstractCore version that
   adds the two lists.
+
+### Fixed
+
+- Runs now use the base URL set on the text-generation default (`output.text`, stored as `input.text`). Released 0.10.0 saved and showed it, but runs, run summaries, Ask and the sandbox called the provider's built-in address instead (for example LM Studio on `localhost:1234`). The base URL applies to the route's own provider only; an endpoint profile (`endpoint:<id>`) keeps its own address, and nothing changes when the field is empty. Affects 0.10.0; ships in the next release.
+
+- **Agents get the email tools the client lists.** The agents' tool lists are built with a user's
+  host; only the "Agent email tools" switch rebuilt it, so a mailbox connected, paused or
+  disconnected afterwards — or an administrator's capability change — left a run without
+  `send_email` while Run settings showed it enabled (Mac mini, 2026-10-01). Connect, disconnect,
+  Active and the OAuth finish now reload the caller's host (`tools_reloaded` in their answers), an
+  administrator's capability change reloads every built host, and the host re-checks the rule at
+  every run start and rebuilds when it moved.
+- **A connected mailbox can always send.** Connect stores both legs: a leg the form or the
+  discovery left out is the domain's standard one (`imap.`/`smtp.<domain>`, 993/465 SSL) and the
+  connect test signs in to both — an unreachable outgoing server refuses the connect with its step
+  (`detail.step: smtp`) instead of a "Connected" mailbox whose first send answers "no SMTP (send)
+  settings". A mailbox stored without its SMTP leg reads `mailbox.state: receive_only` (with the
+  reason) and `send_capable: false` on `GET /me/email`, `/admin/users` and `/admin/accounts`.
+- **Session history never crosses sessions — pinned.** `tests/test_gateway_session_history_isolation.py`
+  proves a new session starts with no messages from another session of the same user, of another
+  user, or after a restart, and that nothing of the other session reaches its run vars.
 
 ## [0.10.0] - 2026-10-01
 
