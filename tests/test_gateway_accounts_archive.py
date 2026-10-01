@@ -149,6 +149,8 @@ def test_logs_show_archived_and_unarchived(gateway) -> None:
     assert c.post("/api/gateway/admin/accounts/alice/unarchive", headers=ADMIN).status_code == 200
     events = c.get("/api/gateway/admin/accounts/alice/activity?kind=account", headers=ADMIN).json()["events"]
     assert [e["title"] for e in events][:2] == ["Unarchived", "Archived"]
+    # Who did it (the actor) is on the line.
+    assert all((e["detail"] or "").startswith("By ") for e in events[:2]), events[:2]
 
 
 def test_delete_and_purge_answer_410_with_the_sentence(gateway) -> None:

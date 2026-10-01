@@ -19,11 +19,13 @@ use crate::store::{ConnPhase, EntityRow, Loadable, UserRow};
 use crate::worker::Cmd;
 
 /// The footer verbs of this screen that only an admin may use: the users
-/// registry (add / edit / rotate / delete — `/admin/users*`) and the kept
-/// data of deleted users (`/admin/runtime-reservations`). The entity
+/// registry (add / edit / rotate — `/admin/users*`) and the retained
+/// runtimes (`/admin/runtime-reservations`). The entity
 /// roster verbs stay open (their own admin-only acts are gated inside the
 /// manage menu).
-pub const ADMIN_KEYS: &[&str] = &["a", "e", "t", "d", "v", "x"];
+/// `d` (archive) is not here: a non-admin archives an entity they created
+/// (the gateway's row says what applies).
+pub const ADMIN_KEYS: &[&str] = &["a", "e", "t", "v", "x"];
 
 pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
@@ -241,7 +243,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             rotate_selected(cx, &ctx_rotate);
         })
         .shortcut(KeyChord::plain(Key::Char('d')), move |_| {
-            delete_selected(cx, &ctx_del);
+            archive_selected(cx, &ctx_del);
         })
         .child(
             Block::new()
@@ -333,13 +335,6 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
 /// The screen's block title (DESIGN-v2 §2.1: the page line, in words).
 pub const ACCOUNTS_TITLE: &str =
     "Accounts — people who use this gateway and the entities that act on it";
-
-/// An entity's Email view (DESIGN-v2 §2.3): entities cannot hold a
-/// mailbox (`plane_for_principal` refuses entity principals; mail belongs
-/// to a user's runtime plane). Used when the gateway's row carries no
-/// reason of its own.
-pub const ENTITY_EMAIL_REASON: &str =
-    "Entities can't have their own mailbox yet: mailboxes belong to a user's runtime.";
 
 /// The selected row of the one table (admin view).
 pub fn selected_account(ctx: &Ctx) -> Option<AccountRow> {
@@ -490,13 +485,8 @@ fn email_selected(cx: Scope, ctx: &Ctx) {
     match row {
         None => super::my_email::open(cx, ctx),
         Some(r) if is_own(&ctx.store, &r) => super::my_email::open(cx, ctx),
-        Some(r) if r.is_entity() => {
-            let why = r
-                .refusal("email")
-                .or_else(|| r.mailbox.reason.clone())
-                .unwrap_or_else(|| ENTITY_EMAIL_REASON.to_string());
-            ctx.store.notice.set(Some(why));
-        }
+        // Entities are AI users with their own mailbox (round 3): the same
+        // read-only view as another user's; it is set up in the web console.
         Some(r) => match r.refusal("email") {
             Some(why) => ctx.store.notice.set(Some(why)),
             None => {
@@ -546,29 +536,12 @@ fn rotate_selected(cx: Scope, ctx: &Ctx) {
             .set(Some("no account selected — no token to rotate".into()));
         return;
     };
+    // Entities have no token (the gateway's `rotate` reason says so).
     if let Some(why) = r.refusal("rotate") {
         ctx.store.notice.set(Some(why));
         return;
     }
-    if r.is_entity() {
-        let ctx2 = ctx.clone();
-        super::confirm_danger(
-            cx,
-            ctx.ui,
-            format!(
-                "Rotate the token of entity '{}'? Its current token stops working immediately; the new one is shown once.",
-                r.id
-            ),
-            "Rotate the token",
-            "Keep the current token",
-            move || {
-                ctx2.send(Cmd::RotateAccount {
-                    id: r.id,
-                    tenant_id: r.tenant_id,
-                })
-            },
-        );
-    } else if let Some(u) = selected_user(ctx) {
+    if let Some(u) = selected_user(ctx) {
         confirm_rotate(cx, ctx, u);
     } else {
         ctx.store.notice.set(Some(format!(
@@ -578,29 +551,67 @@ fn rotate_selected(cx: Scope, ctx: &Ctx) {
     }
 }
 
-/// `d`: delete the selected user (an entity's name is kept for life —
-/// the gateway's reason says so).
-fn delete_selected(cx: Scope, ctx: &Ctx) {
-    if !super::util::admin_gate(&ctx.store, "deleting an account") {
-        return;
-    }
+/// `d`: archive the selected account, or unarchive an archived one
+/// (round 3: accounts are archived, never deleted). The gateway's row says
+/// which applies (`actions.archive` / `actions.unarchive`) and why not.
+fn archive_selected(cx: Scope, ctx: &Ctx) {
     let Some(r) = selected_account(ctx) else {
         ctx.store
             .notice
-            .set(Some("no account selected — nothing to delete".into()));
+            .set(Some("no account selected — nothing to archive".into()));
         return;
     };
-    if let Some(why) = r.refusal("delete") {
+    let verb = if r.archived { "unarchive" } else { "archive" };
+    if let Some(why) = r.refusal(verb) {
         ctx.store.notice.set(Some(why));
         return;
     }
-    match selected_user(ctx) {
-        Some(u) if !r.is_entity() => confirm_delete(cx, ctx, u),
-        _ => ctx.store.notice.set(Some(format!(
-            "the users registry has not loaded {} yet — r refreshes",
-            r.id
-        ))),
+    let admin = ctx.store.conn.with_untracked(|c| c.is_admin());
+    if r.archived {
+        // Unarchive applies at once: the account comes back INACTIVE.
+        ctx.send(Cmd::ArchiveAccount {
+            id: r.id,
+            tenant_id: r.tenant_id,
+            unarchive: true,
+            admin,
+        });
+    } else {
+        confirm_archive(cx, ctx, r, admin);
     }
+}
+
+/// The archive confirm, in the web's words (DESIGN-v3 §1.3).
+pub fn archive_question(r: &AccountRow) -> String {
+    if r.is_entity() {
+        format!(
+            "Archive {}? It stops acting and never wakes. Its memory, runs and history are kept; you can unarchive later.",
+            r.id
+        )
+    } else {
+        format!(
+            "Archive {}? They can't sign in any more. Their runtime, runs and history are kept; you can unarchive later.",
+            r.id
+        )
+    }
+}
+
+fn confirm_archive(cx: Scope, ctx: &Ctx, r: AccountRow, admin: bool) {
+    let ctx2 = ctx.clone();
+    super::confirm_danger(
+        cx,
+        ctx.ui,
+        archive_question(&r),
+        "Archive",
+        "Keep it",
+        move || {
+            ctx2.send(Cmd::ArchiveAccount {
+                id: r.id,
+                tenant_id: r.tenant_id,
+                unarchive: false,
+                admin,
+            })
+        },
+    );
 }
 
 /// The Active switch of the selected account: OFF asks first (a user is
@@ -780,7 +791,7 @@ fn selected_row_lines(scx: Scope, ctx: &Ctx, tt: &TokenSet) -> View {
         ("workspace", "Workspace"),
         ("rotate", "Rotate"),
         ("manage", "Manage"),
-        ("delete", "Delete"),
+        ("archive", "Archive"),
     ];
     let mut refusals: Vec<String> = Vec::new();
     for (key, label) in labels {
@@ -791,10 +802,12 @@ fn selected_row_lines(scx: Scope, ctx: &Ctx, tt: &TokenSet) -> View {
             refusals.push(format!("{label}: {why}"));
         }
     }
-    let keys = if r.is_entity() {
-        "@ email · l logs · w workspace · t rotate · m manage · d delete · space Active"
+    let keys = if r.archived {
+        "l logs · d unarchive"
+    } else if r.is_entity() {
+        "@ email · l logs · w workspace · m manage · d archive · space Active"
     } else {
-        "@ email · l logs · w workspace · t rotate · e edit · d delete · space Active"
+        "@ email · l logs · w workspace · t rotate · e edit · d archive · space Active"
     };
     for l in super::util::wrap_text(keys, (vw - 6).max(20) as usize) {
         col = col.child(line(vec![span(l, tt.text_faint)]));
@@ -1012,8 +1025,9 @@ fn activity_table(cx: Scope, t: &TokenSet, d: &crate::store::accounts::ActivityD
         .build()
 }
 
-/// Retained runtime planes of deleted users: transfer to a living user
-/// or purge (delete_data) — the web's reservations panel.
+/// Retained runtime planes (a user moved to another runtime, or a deleted
+/// user before 0.11): transfer to a living user. Never purged — accounts
+/// and their data are archived, never deleted (round 3).
 /// The retained-runtimes dialog's declared width, and what its chrome
 /// spends: the Modal's own 1-cell margin plus the dress Block's border
 /// and padding, left and right (`ui::open_form_guarded`). Budgeting the
@@ -1033,7 +1047,7 @@ fn open_reservations_modal(cx: Scope, ctx: &Ctx) {
         let ctx3 = ctx2.clone();
         let close_b = close.clone();
         let target = mcx.signal(String::new());
-        // F8: rows shrink by this modal's own actions (transfer/purge) —
+        // F8: rows shrink by this modal's own action (transfer) —
         // an unclamped stranded index would dead-end the reopened modal.
         super::util::clamp_selection(mcx, ui.resv_sel, move || {
             store
@@ -1045,7 +1059,7 @@ fn open_reservations_modal(cx: Scope, ctx: &Ctx) {
             .child(dyn_view(LayoutStyle::line(1), move || {
                 let t = theme.get().tokens;
                 line(vec![span_bold(
-                    "Kept data of deleted users — transfer or purge".to_string(),
+                    "Retained runtimes — transfer to a user (data is never deleted)".to_string(),
                     t.accent,
                 )])
             }))
@@ -1133,9 +1147,7 @@ fn open_reservations_modal(cx: Scope, ctx: &Ctx) {
                 move |bcx| {
                     let t = theme.get().tokens;
                     let ctx_t = ctx3.clone();
-                    let ctx_p = ctx3.clone();
                     let close_t = close_b.clone();
-                    let close_p = close_b.clone();
                     let close_esc = close_b.clone();
                     Element::new()
                         .style(LayoutStyle::row().gap(2))
@@ -1169,27 +1181,6 @@ fn open_reservations_modal(cx: Scope, ctx: &Ctx) {
                                 .build(),
                         )
                         .child(
-                            Button::new("Purge (delete data)")
-                                .on_click(move || {
-                                    let idx = ctx_p.ui.resv_sel.get_untracked();
-                                    let row = ctx_p.store.reservations.with_untracked(|d| {
-                                        d.ready().and_then(|r| r.get(idx).cloned())
-                                    });
-                                    let Some(row) = row else {
-                                        ctx_p
-                                            .store
-                                            .notice
-                                            .set(Some("no reservation selected".into()));
-                                        return;
-                                    };
-                                    let c = ctx_p.clone();
-                                    close_p();
-                                    confirm_resv_purge(screen_cx, &c, row);
-                                })
-                                .element(bcx, &t)
-                                .build(),
-                        )
-                        .child(
                             Button::new("Close (Esc)")
                                 .on_click(move || close_esc())
                                 .element(bcx, &t)
@@ -1218,26 +1209,6 @@ fn confirm_transfer(cx: Scope, ctx: &Ctx, row: crate::store::ReservationRow, tar
                 runtime_id: row.runtime_id,
                 tenant_id: row.tenant_id,
                 target_user_id: target,
-            })
-        },
-    );
-}
-
-fn confirm_resv_purge(cx: Scope, ctx: &Ctx, row: crate::store::ReservationRow) {
-    let ctx2 = ctx.clone();
-    super::confirm_danger(
-        cx,
-        ctx.ui,
-        format!(
-            "PURGE retained runtime '{}' (tenant {})? Its data on disk is DELETED — this cannot be undone.",
-            row.runtime_id, row.tenant_id
-        ),
-        "Delete the data",
-        "Keep it retained",
-        move || {
-            ctx2.send(Cmd::ReservationPurge {
-                runtime_id: row.runtime_id,
-                tenant_id: row.tenant_id,
             })
         },
     );
@@ -1444,26 +1415,6 @@ fn confirm_rotate(cx: Scope, ctx: &Ctx, u: UserRow) {
                 tenant_id: u.tenant_id,
                 body: json!({ "rotate_token": true }).into(),
                 form_id: None,
-            })
-        },
-    );
-}
-
-fn confirm_delete(cx: Scope, ctx: &Ctx, u: UserRow) {
-    let ctx = ctx.clone();
-    super::confirm_danger(
-        cx,
-        ctx.ui,
-        format!(
-            "Delete user '{}' (tenant {})? Their token stops working; their runtime data stays on disk as a retained plane.",
-            u.user_id, u.tenant_id
-        ),
-        "Delete the user",
-        "Keep the user",
-        move || {
-            ctx.send(Cmd::DeleteUser {
-                user_id: u.user_id,
-                tenant_id: u.tenant_id,
             })
         },
     );

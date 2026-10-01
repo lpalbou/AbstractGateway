@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sign in."). **Archive** sits in the same menu and asks inline first; nothing is deleted.
 - Accounts: an entity's **Email** opens the same Email settings as your own (address, mailbox,
   notifications, agent email tools, Advanced), on the entity's own mailbox.
+- **Entities have their own mailbox.** An entity's mailbox lives in its home
+  (`<runtime>/entities/<name>/email/...`). An admin or the entity's creator sets it up through
+  `/api/gateway/accounts/{id}/email...` and `/api/gateway/accounts/{id}/notifications...`, which mirror every
+  `/me/email...` and `/me/notifications...` route with the same bodies and answers; a user target, an entity
+  you can't manage or an archived entity answers 403 with the reason. The entity's watcher reads its mailbox
+  into its own event inbox, its notifications go to its own address through its own account, and its send
+  limits and recipient rules are its own. With its Agent email tools switch on, the entity's agents get the
+  email tools during visits and send through the entity's account. An archived or suspended entity's watcher
+  stops. No route reads an entity's mail. The Accounts row shows the entity's real mailbox state.
 
 ### Changed
 - Web console: **Providers** and **Engines** are one page. The **Providers** tab lists **Local
@@ -38,6 +47,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Archive). Actions that do not apply are no longer shown greyed out with an explanation under the
   row. Long names and addresses wrap instead of widening the table; when the table does not fit,
   each account becomes a block (name and Active, address and mailbox, runtime, actions).
+- **Accounts are archived, never deleted.** `POST /api/gateway/admin/accounts/{id}/archive` and `/unarchive`
+  (admin) answer the updated row; a signed-in user archives an entity they created with
+  `POST /api/gateway/me/accounts/{id}/archive`. An archived user can't sign in (their token answers 401 and
+  their sessions end); an archived entity is suspended and never wakes: the state verb, summon, talk, visits,
+  meets, its own-time loop and the self-repair and need-check sweeps all refuse it. Records, runtimes, runs,
+  memory and history are kept. Unarchive brings the account back inactive; turn Active on to let it sign in or
+  act. Archived accounts are left out of `GET /admin/accounts` unless `include_archived=true` and are never
+  listed on `GET /me/accounts`. Rows carry `archived` and `archived_at`; row actions are `email, logs,
+  workspace, rotate, manage, archive, unarchive, suspend` (`delete` is gone). Logs show "Archived" and
+  "Unarchived" with who did it.
+- **`DELETE /api/gateway/admin/users/{id}` and `POST /api/gateway/admin/runtime-reservations/{id}/purge`
+  answer 410** with "Accounts are archived, never deleted: use Archive (POST
+  /api/gateway/admin/accounts/{id}/archive). Runs and history are kept." Nothing is changed. Listing and
+  transferring retained runtimes stay.
 - Sends to To, Cc and Bcc, from agent tools and notifications alike, follow the precedence: your own
   address is allowed, Always denied refuses ("Not sent: x@xxx.gov is on your Always denied list
   (xxx.gov)."), Always allowed allows, then the mode decides. A notification to your own address is
@@ -48,7 +71,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   adds the two lists.
 
 ### Fixed
-
 - Runs now use the base URL set on the text-generation default (`output.text`, stored as `input.text`). Released 0.10.0 saved and showed it, but runs, run summaries, Ask and the sandbox called the provider's built-in address instead (for example LM Studio on `localhost:1234`). The base URL applies to the route's own provider only; an endpoint profile (`endpoint:<id>`) keeps its own address, and nothing changes when the field is empty. Affects 0.10.0; ships in the next release.
 
 - **Agents get the email tools the client lists.** The agents' tool lists are built with a user's
@@ -67,6 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Session history never crosses sessions — pinned.** `tests/test_gateway_session_history_isolation.py`
   proves a new session starts with no messages from another session of the same user, of another
   user, or after a restart, and that nothing of the other session reaches its run vars.
+
 
 ## [0.10.0] - 2026-10-01
 

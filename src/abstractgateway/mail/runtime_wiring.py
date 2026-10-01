@@ -201,19 +201,18 @@ def entity_email_tools_offered(slug: str) -> tuple:
 
 def entity_email_tool_specs(slug: str) -> list:
     """`[{name, description, parameters}]` of the offered email tools (AbstractCore's own
-    definitions), for the entity's tool declarations."""
+    definitions through AbstractRuntime's tool catalog), for the entity's tool declarations."""
 
     names = entity_email_tools_offered(slug)
     if not names:
         return []
-    from abstractcore.tools import comms_tools
+    from abstractruntime.integrations.abstractcore.default_tools import list_default_tool_specs
 
-    out = []
-    for name in names:
-        fn = getattr(comms_tools, name)
-        td = fn.tool_definition
-        out.append({"name": name, "description": td.description, "parameters": dict(td.parameters)})
-    return out
+    specs = {str(sp.get("name")): sp for sp in list_default_tool_specs(email_enabled=True)}
+    return [
+        {"name": n, "description": str(specs[n].get("description") or ""), "parameters": dict(specs[n].get("parameters") or {})}
+        for n in names
+    ]
 
 
 def _tool_refusal(code: str, cause: str, fix: str) -> dict:
@@ -226,9 +225,8 @@ def run_entity_email_tool(slug: str, name: str, arguments: dict) -> dict:
     AbstractCore tool's own result dict (`success: false` with a typed `error_code` when
     refused: not connected, paused, agent tools off, recipient refused, limit reached)."""
 
-    from abstractcore.tools import comms_tools
-
-    from .core_mail import EmailError
+    from abstractruntime.email import bind_email_account, email_run_scope, install_core_resolver
+    from abstractruntime.integrations.abstractcore.default_tools import build_default_tool_map
 
     plane = entity_mail_plane(slug)
     if plane is None:
@@ -240,10 +238,10 @@ def run_entity_email_tool(slug: str, name: str, arguments: dict) -> dict:
     binding = current_binding(plane)
     if binding is None:
         return _tool_refusal("email_not_configured", f"{slug}'s mailbox is not connected or is paused.", "Connect its mailbox from Accounts → Email.")
-    try:
-        ctx = make_email_resolver(plane)(binding, use="agent_tool")
-    except EmailError as err:
-        return _tool_refusal(err.code, err.cause, err.fix)
-    fn = getattr(comms_tools, name)
-    with comms_tools.use_email_context(ctx):
-        return fn(**dict(arguments or {}))
+    tool = build_default_tool_map(email_enabled=True)[name]
+    # The runtime's own run scope: the tool resolves THIS binding through the entity's plane
+    # resolver ("agent_tool": the entity's Agent email tools switch applies).
+    run = SimpleNamespace(run_id=f"entity:{slug}", vars=bind_email_account({}, binding=binding))
+    install_core_resolver()
+    with email_run_scope(run, resolver=make_email_resolver(plane), use="agent_tool"):
+        return tool(**dict(arguments or {}))

@@ -183,3 +183,8 @@ def test_non_admin_is_refused_on_every_mcp_write(env) -> None:
     assert client.post("/api/gateway/admin/mcp/servers/x/archive", headers=user).status_code == 403
     assert client.post("/api/gateway/admin/mcp/servers/x/test", headers=user).status_code == 403
     assert client.post("/api/gateway/admin/mcp/test", headers=user, json=body).status_code == 403
+    # The list is admin configuration too (commands, URLs): 403 with a sentence.
+    listing = client.get("/api/gateway/mcp/servers", headers=user)
+    assert listing.status_code == 403
+    assert listing.json()["detail"]["message"] == "Only an admin can see the MCP servers of this gateway."
+    assert client.get("/api/gateway/mcp/servers", headers=ADMIN).status_code == 200

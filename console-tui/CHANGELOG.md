@@ -1,5 +1,15 @@
 # Changelog — abstractgateway-console
 
+## Unreleased
+
+### Changed
+- **Accounts: archive instead of delete.** `d` archives the selected account after a confirmation ("Archive
+  <id>? They can't sign in any more. ..." / "Archive <name>? It stops acting and never wakes. ...") and
+  unarchives an archived one (it comes back inactive). A non-admin archives an entity they created. Archived
+  rows show "Archived" in the Active column. The retained-runtimes dialog no longer offers Purge. Needs the
+  gateway's archive routes (`POST /admin/accounts/{id}/archive`, `/unarchive`, `POST /me/accounts/{id}/archive`).
+- An entity's `@` opens the same read-only mailbox line as another user's (entities have their own mailbox).
+
 ## 0.13.0 (2026-10-01)
 
 Needs abstractcore-console 0.4 and AbstractGateway 0.10.0 (the Accounts routes `/admin/accounts`, `/me/accounts`

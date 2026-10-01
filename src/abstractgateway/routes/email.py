@@ -398,13 +398,17 @@ async def me_email_get(request: Request) -> Any:
     return await _call(run)
 
 
-def _reload_my_toolsets(principal: GatewayPrincipal) -> bool:
+def _reload_my_toolsets(principal: GatewayPrincipal, plane: EmailPlane) -> bool:
     """Rebuild THIS principal's host toolsets after a change that decides whether agents get
     the email tools (connect, disconnect, Active, Agent email tools): the lists are built with
     the host, and a run started from a stale host never receives a tool the client lists as
     enabled (operator report 2026-10-01). Only an already-built host is reloaded — never a
-    first build from here; the host also re-checks the rule at every run start."""
+    first build from here; the host also re-checks the rule at every run start. An entity's
+    plane (the `/accounts/{id}/...` mirror) has no host: its runtime reads the switch at each
+    tool call (entities.py), so nothing is reloaded."""
 
+    if plane.is_entity:
+        return False
     try:
         from .. import service as service_mod
 
@@ -485,7 +489,7 @@ async def me_email_put(request: Request, body: ConnectBody) -> Any:
             allow_ca_file=principal.is_admin(),
             actor=_actor(principal),
         )
-        out["tools_reloaded"] = _reload_my_toolsets(principal)
+        out["tools_reloaded"] = _reload_my_toolsets(principal, plane)
         return {"ok": True, **out}
 
     return await _call(run)
@@ -553,7 +557,7 @@ async def me_email_delete(request: Request) -> Any:
 
     def run() -> Dict[str, Any]:
         out = mail_accounts.disconnect(plane, actor=_actor(principal))
-        out["tools_reloaded"] = _reload_my_toolsets(principal)
+        out["tools_reloaded"] = _reload_my_toolsets(principal, plane)
         return {"ok": True, **out}
 
     return await _call(run)
@@ -617,7 +621,7 @@ async def me_email_enabled(request: Request, body: EnabledBody) -> Any:
         from ..mail.audit import audit_email_event
 
         audit_email_event("email.user_switch", tenant_id=plane.tenant_id, user_id=plane.user_id, actor=_actor(principal), enabled=bool(body.enabled))
-        reloaded = _reload_my_toolsets(principal)
+        reloaded = _reload_my_toolsets(principal, plane)
         return {"ok": True, "tools_reloaded": reloaded, **mail_accounts.public_status(plane)}
 
     return await _call(run)
@@ -631,9 +635,8 @@ async def me_email_agent_tools(request: Request, body: EnabledBody) -> Any:
         mail_accounts.set_agent_tools_switch(plane, body.enabled, actor=_actor(principal))
         # The toolsets are built with the host: reload THIS user's host so agents see the
         # change now (connect / disconnect / Active do the same; the host also re-checks
-        # the rule at every run start). An entity's runtime reads the switch at each tool
-        # call (entities.py): no host to reload.
-        reloaded = False if plane.is_entity else _reload_my_toolsets(principal)
+        # the rule at every run start).
+        reloaded = _reload_my_toolsets(principal, plane)
         return {"ok": True, "tools_reloaded": reloaded, **mail_accounts.public_status(plane)}
 
     return await _call(run)
@@ -685,7 +688,7 @@ async def me_email_oauth_finish(request: Request, body: FlowBody) -> Any:
     def run() -> Dict[str, Any]:
         out = mail_accounts.oauth_finish(plane, body.flow_id, wait_s=body.wait_s, actor=_actor(principal))
         if isinstance(out, dict) and out.get("configured"):
-            out["tools_reloaded"] = _reload_my_toolsets(principal)
+            out["tools_reloaded"] = _reload_my_toolsets(principal, plane)
         return out
 
     return await _call(run)

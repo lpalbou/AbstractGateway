@@ -202,11 +202,13 @@ pub enum Cmd {
         entity: bool,
         active: bool,
     },
-    /// Rotate an account's token where the gateway offers it (entities:
-    /// `POST /admin/accounts/{id}/rotate`); the token goes to the modal.
-    RotateAccount {
+    /// Archive (or, `unarchive`, bring back inactive) an account: accounts
+    /// are archived, never deleted (round 3). `admin` picks the route.
+    ArchiveAccount {
         id: String,
         tenant_id: String,
+        unarchive: bool,
+        admin: bool,
     },
     /// One account's activity (`None` = the caller's own, `/me/activity`),
     /// filtered by `kind` ("" = all). `key` names the list in the store.
@@ -386,10 +388,6 @@ pub enum Cmd {
         body: Body,
         form_id: Option<u64>,
     },
-    DeleteUser {
-        user_id: String,
-        tenant_id: String,
-    },
     /// A real text generation — the wizard's "Test" verb. `request` is
     /// the full web-shaped body (ui::sandbox::text_body: system prompt,
     /// reasoning, MTP, history).
@@ -562,10 +560,6 @@ pub enum Cmd {
         runtime_id: String,
         tenant_id: String,
         target_user_id: String,
-    },
-    ReservationPurge {
-        runtime_id: String,
-        tenant_id: String,
     },
 }
 
@@ -1718,19 +1712,48 @@ fn handle(
             }
         }
 
-        Cmd::RotateAccount { id, tenant_id } => {
-            let action = format!("rotate the token of {id}");
-            let write = with_busy(store, wake, &format!("rotating {id}"), || {
+        Cmd::ArchiveAccount {
+            id,
+            tenant_id,
+            unarchive,
+            admin,
+        } => {
+            // The status line names the NEW state (state-toggles rule).
+            let action = if unarchive {
+                format!("{id} is back, inactive — switch Active on to let it in")
+            } else {
+                format!("{id} is archived — runs and history are kept")
+            };
+            let write = with_busy(store, wake, &format!("archiving {id}"), || {
                 require_client(client)
-                    .and_then(|c| c.rotate_account(&id, &tenant_id))
+                    .and_then(|c| {
+                        if unarchive {
+                            c.unarchive_account(&id, &tenant_id)
+                        } else {
+                            c.archive_account(&id, &tenant_id, admin)
+                        }
+                    })
                     .map_err(api_message)
             });
-            if let Ok(v) = &write {
-                if let Some(tok) = v.get("token").and_then(Value::as_str) {
-                    on_token(id.clone(), tok.to_string());
-                }
+            let verified =
+                write
+                    .as_ref()
+                    .ok()
+                    .map(|v| match v.get("archived").and_then(Value::as_bool) {
+                        Some(a) if a != unarchive => Ok(format!(
+                            "the gateway answers {id} {}",
+                            if unarchive {
+                                "not archived"
+                            } else {
+                                "archived"
+                            }
+                        )),
+                        _ => Err(format!("the gateway's row for {id} is unchanged")),
+                    });
+            finish_write(store, wake, action, write, verified, None, on_done);
+            if admin {
+                refresh_accounts(store, wake, client);
             }
-            finish_write(store, wake, action, write, None, None, on_done);
         }
 
         Cmd::LoadMyAccounts => load(store, wake, "loading your accounts", store.accounts, || {
@@ -2507,31 +2530,6 @@ fn handle(
             refresh_accounts(store, wake, client);
         }
 
-        Cmd::DeleteUser { user_id, tenant_id } => {
-            let action = format!("DELETE user '{user_id}'");
-            let (write, verify) =
-                with_busy(store, wake, &format!("deleting user {user_id}"), || {
-                    let write =
-                        require_client(client).and_then(|c| c.delete_user(&user_id, &tenant_id));
-                    let verify = require_client(client).and_then(|c| c.users());
-                    (write, verify)
-                });
-            let uid = user_id.clone();
-            let verified = verify.as_ref().ok().map(|v| {
-                let users = users_from_payload(v);
-                if users.humans.iter().any(|u| u.user_id == uid) {
-                    Err(format!("GET still lists user '{uid}'"))
-                } else {
-                    Ok(format!("GET no longer lists user '{uid}'"))
-                }
-            });
-            finish_write(store, wake, action, write, verified, None, on_done);
-            if let Ok(v) = verify {
-                publish_ready(wake, store.users, users_from_payload(&v));
-            }
-            refresh_accounts(store, wake, client);
-        }
-
         Cmd::SandboxTest {
             provider,
             model,
@@ -3292,41 +3290,6 @@ fn handle(
                 });
                 let write =
                     require_client(client).and_then(|c| c.reservation_transfer(&runtime_id, &body));
-                let verify = require_client(client).and_then(|c| c.runtime_reservations());
-                (write, verify)
-            });
-            let rid = runtime_id.clone();
-            let verified = verify.as_ref().ok().map(|v| {
-                let rows = crate::store::reservations_from_payload(v);
-                if rows.iter().any(|r| r.runtime_id == rid) {
-                    Err(format!("GET still lists reservation '{rid}'"))
-                } else {
-                    Ok(format!("GET no longer lists reservation '{rid}'"))
-                }
-            });
-            finish_write(store, wake, action, write, verified, None, on_done);
-            if let Ok(v) = verify {
-                publish_ready(
-                    wake,
-                    store.reservations,
-                    crate::store::reservations_from_payload(&v),
-                );
-            }
-        }
-
-        Cmd::ReservationPurge {
-            runtime_id,
-            tenant_id,
-        } => {
-            let action = format!("purge retained runtime '{runtime_id}'");
-            let (write, verify) = with_busy(store, wake, &action, || {
-                let body = serde_json::json!({
-                    "tenant_id": tenant_id,
-                    "confirm_runtime_id": runtime_id,
-                    "delete_data": true,
-                });
-                let write =
-                    require_client(client).and_then(|c| c.reservation_purge(&runtime_id, &body));
                 let verify = require_client(client).and_then(|c| c.runtime_reservations());
                 (write, verify)
             });

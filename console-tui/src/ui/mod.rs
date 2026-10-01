@@ -2040,7 +2040,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     pairs.push(("w", "workspace"));
                     pairs.push(("t", "rotate"));
                     pairs.push(("m", "manage entity"));
-                    pairs.push(("d", "delete"));
+                    pairs.push(("d", "archive"));
                     pairs.push(("e", "edit user"));
                     pairs.push(("a", "create user"));
                     pairs.push(("n", "create entity"));

@@ -85,6 +85,7 @@ def test_creator_connects_the_entity_mailbox_and_it_is_the_entitys_own(world, im
     card = c.get("/api/gateway/accounts/aster/email", headers=world["alice"]).json()
     assert card["mailbox"] == {"state": "connected", "address": ENTITY_ADDR, "provider": "imap", "reason": None}
     assert card["email_address"] == ENTITY_ADDR  # connecting set the entity's address
+    assert card["send_capable"] is True  # the same flags as GET /me/email (both legs stored)
     # The creator's own mailbox is untouched.
     mine = c.get("/api/gateway/me/email", headers=world["alice"]).json()
     assert mine["mailbox"]["state"] == "not_connected" and mine["email_address"] == ALICE
@@ -190,3 +191,17 @@ def test_entity_watcher_reads_its_mailbox_and_stops_when_archived(world, imap, s
     assert r.status_code == 403 and "archived" in r.json()["detail"]["message"]
     r = world["c"].put("/api/gateway/admin/accounts/borea/active", headers=world["admin"], json={"active": False})
     assert r.status_code == 200 and entity_worker("borea") is None
+
+
+def test_entity_recipient_rules_are_its_own(world, imap, smtp) -> None:
+    """The recipients lane's policy body on the entity mirror: Always denied on the ENTITY's plane
+    refuses there and leaves the creator's own policy alone."""
+    c = world["c"]
+    _connect(world, imap, smtp)
+    r = c.put("/api/gateway/accounts/aster/email/policy", headers=world["alice"], json={"mode": "denylist", "always_deny": ["xxx.gov"]})
+    assert r.status_code == 200, r.text
+    r = c.post("/api/gateway/accounts/aster/email/policy/check", headers=world["alice"], json={"to": ["a@sub.xxx.gov"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["allowed"] is False, r.json()
+    mine = c.post("/api/gateway/me/email/policy/check", headers=world["alice"], json={"to": ["a@sub.xxx.gov"]})
+    assert mine.status_code == 200 and "xxx.gov" not in json.dumps(c.get("/api/gateway/me/email", headers=world["alice"]).json().get("policy"))

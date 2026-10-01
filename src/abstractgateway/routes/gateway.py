@@ -15117,12 +15117,15 @@ async def gateway_admin_skills_reseed(request: Request) -> Dict[str, Any]:
 
 @router.get("/mcp/servers")
 async def gateway_mcp_servers_inventory(request: Request) -> Dict[str, Any]:
-    """The declared MCP server registry (v1: config-file-managed at
-    `<data_dir>/config/mcp_servers.json`). Served fields are DECLARED-only
-    with `probed: false` — connect state and tool counts require a probe
-    lane this endpoint deliberately does not fake."""
+    """The MCP server registry (`<data_dir>/config/mcp_servers.json`, v1 or v2): rows with
+    header fingerprints only, `last_test`, `agents_can_call` and `agents_note`. ADMIN ONLY
+    (round 3, C3F): commands and URLs are admin configuration; a non-admin gets 403."""
     principal = _principal_from_request(request)
-    del principal  # any authenticated read
+    if not principal.is_admin():
+        raise HTTPException(
+            status_code=403,
+            detail={"reason_code": "admin_required", "message": "Only an admin can see the MCP servers of this gateway."},
+        )
     from ..capability_inventories import mcp_servers_inventory
 
     svc = get_gateway_service()
