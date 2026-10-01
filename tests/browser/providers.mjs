@@ -76,7 +76,8 @@ async function buttons(page, id) {
   return page.$$eval(`${card(id)} button, ${card(id)} a`, (els) => els.map((e) => e.textContent.trim()));
 }
 async function waitCards(page) {
-  await page.waitForFunction(() => document.querySelectorAll('#engines-core-root [data-engine-card]').length === 6, null, { timeout: 20000 });
+  const ok = await page.waitForFunction(() => document.querySelectorAll('#engines-core-root [data-engine-card]').length === 6, null, { timeout: 20000 }).then(() => true, () => false);
+  check(ok, "six local provider cards rendered");
 }
 
 const browser = await chromium.launch();
@@ -95,6 +96,9 @@ try {
   const nav = await page.$$eval("#nav-group-models", (els) => Array.from(els[0].parentElement.querySelectorAll(".shell_nav_label")).map((e) => e.textContent.trim()));
   check(JSON.stringify(nav) === JSON.stringify(["Providers", "Models", "Multimodal"]), "sidebar MODELS = Providers · Models · Multimodal", nav);
   await waitCards(page);
+  // The connections arrive with the provider list (loaded after sign-in, independently of the engines).
+  const conns = await page.waitForFunction(() => { const c = document.querySelector('[data-provider-connection="lmstudio"]'); return !!c && c.textContent.includes("studio Mac"); }, null, { timeout: 15000 }).then(() => true, () => false);
+  check(conns, "local provider cards show their stored connections");
   const order = await page.$$eval("#engines-core-root [data-engine-card]", (els) => els.map((e) => e.dataset.engineCard).sort());
   check(JSON.stringify(order) === JSON.stringify(["huggingface", "llamacpp", "lmstudio", "mlx", "ollama", "vllm"]), "one card per engine id the API returns", order);
   // Sections in order: Local providers, Remote providers, Available Providers.
