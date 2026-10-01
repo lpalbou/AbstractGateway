@@ -1193,6 +1193,13 @@ def _start_email_worker(svc: GatewayService) -> None:
         worker.start()
     except Exception:  # noqa: BLE001 - email is optional; never blocks a runner start
         logging.getLogger("abstractgateway.service").warning("email worker failed to start", exc_info=True)
+    try:
+        # Entities are AI users with their own mailbox (round 3 §3.1): their workers run beside.
+        from .mail.worker import sync_entity_workers
+
+        sync_entity_workers()
+    except Exception:  # noqa: BLE001 - email is optional; never blocks a runner start
+        logging.getLogger("abstractgateway.service").warning("entity email workers failed to start", exc_info=True)
 
 
 def stop_gateway_runner() -> None:
@@ -1212,6 +1219,13 @@ def stop_gateway_runner() -> None:
         sweep = _rehydrate_thread
     if sweep is not None and sweep is not threading.current_thread() and sweep.is_alive():
         sweep.join(timeout=REHYDRATE_STOP_WAIT_S)
+    try:
+        # Entity mailbox workers (round 3 §3.1) are gateway-wide, not per service.
+        from .mail.worker import stop_all_entity_workers
+
+        stop_all_entity_workers()
+    except Exception:  # noqa: BLE001 - stop must always keep going
+        logging.getLogger("abstractgateway.service").warning("entity email workers stop failed", exc_info=True)
     try:
         # Snapshot + clear the caches ATOMICALLY under the lock (adversary
         # P1-1): the old unlocked snapshot let an in-flight build land in the

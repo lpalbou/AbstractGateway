@@ -1637,6 +1637,11 @@ class EntityRegistry:
                         f"{manifest.entity_id!r} — engram/manifest drift; refusing to serve"
                     )
                 wrap_entity_runtime_routing(er, data_dir=self.data_dir)
+                # An entity is an AI user with its own mailbox (round 3 §3.1): its runtime
+                # resolves email through the entity's plane, never its creator's.
+                from .mail.runtime_wiring import wire_entity_runtime_email
+
+                wire_entity_runtime_email(er.runtime, slug)
                 self._entity_runtimes[slug] = er
             return er
 
@@ -1859,6 +1864,12 @@ class EntityRegistry:
                 return EffectOutcome.completed({"mode": "executed", "results": []})
 
             grant = resolve_tool_grant(home_dir, "visit")
+            # Agent email tools (round 3 §3.1): offered by the entity's OWN mailbox switch, run
+            # through its own account (mail/runtime_wiring.py), never the visit grant's.
+            from .mail.runtime_wiring import entity_email_tool_names, entity_email_tools_offered, run_entity_email_tool
+
+            email_names = set(entity_email_tool_names())
+            email_offered = set(entity_email_tools_offered(slug))
             payload_allow = payload.get("allowed_tools")
             if isinstance(payload_allow, list) and payload_allow:
                 wanted = {str(t).strip() for t in payload_allow if str(t).strip()}
@@ -1881,7 +1892,7 @@ class EntityRegistry:
             # must never reach native_tool_elections, whose `allowed or
             # TIER1` default treats "empty" as "unspecified" and would fall
             # OPEN to tier-1 against the operator's explicit zero grant.
-            if not allowed:
+            if not allowed and not email_offered:
                 return EffectOutcome.completed(
                     {
                         "mode": "executed",
@@ -1956,6 +1967,38 @@ class EntityRegistry:
                         f"tool call refused: this turn's tool budget ({turn_cap}) is spent — "
                         "answer with what you have",
                     ))
+                    continue
+                fn_part = call_dict.get("function") if isinstance(call_dict.get("function"), dict) else {}
+                call_name = str(call_dict.get("name") or fn_part.get("name") or "").strip().lower()
+                if call_name in email_names:
+                    if call_name not in email_offered:
+                        results.append(_refusal(
+                            call_dict,
+                            f"tool call refused: {call_name} needs this entity's Agent email tools "
+                            "(its own mailbox, switched on in Accounts → Email)",
+                        ))
+                        continue
+                    raw_args = call_dict.get("arguments", fn_part.get("arguments"))
+                    if isinstance(raw_args, str):
+                        try:
+                            raw_args = json.loads(raw_args or "{}")
+                        except ValueError:
+                            raw_args = None
+                    if not isinstance(raw_args, dict):
+                        results.append(_refusal(call_dict, f"tool call refused: {call_name} arguments are not a JSON object"))
+                        continue
+                    budget["executed"] = int(budget.get("executed") or 0) + 1
+                    try:
+                        email_result = run_entity_email_tool(slug, call_name, raw_args)
+                    except TypeError as e:  # wrong argument names: an honest error back to the entity
+                        email_result = {"success": False, "error": str(e), "error_code": "invalid_arguments"}
+                    results.append({
+                        "call_id": str(call_dict.get("call_id") or call_dict.get("id") or "").strip() or None,
+                        "name": call_name,
+                        "success": True,
+                        "output": json.dumps(email_result, ensure_ascii=False, default=str),
+                        "error": None,
+                    })
                     continue
                 elections, markers, call_notices = native_tool_elections(
                     [call_dict],
