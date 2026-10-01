@@ -9,6 +9,8 @@
 //! The real interface through AbstractTUI's capture harness; the worker is
 //! a channel the test drains.
 
+mod accounts_fixture;
+
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{mpsc, Arc};
@@ -92,6 +94,10 @@ fn harness() -> Harness {
     let out = slot.clone();
     app.mount(move |cx| {
         let store = Store::create(cx);
+        // DESIGN-v2 §2: the Accounts table reads `/admin/accounts`. These
+        // suites seed the users registry and the entity roster; derive
+        // the §6 accounts reply from them (tests/accounts_fixture).
+        accounts_fixture::mirror(cx, store);
         let ui_state = UiState::create(cx, "http://127.0.0.1:8080".to_string(), String::new());
         *out.borrow_mut() = Some((store, ui_state));
         let transport: Arc<dyn ConsoleTransport> = Arc::new(NoTransport);
@@ -378,7 +384,9 @@ fn users_registry_is_not_read_for_a_non_admin() {
     let s = h.turns(3);
     let cmds = h.drain();
     assert!(
-        !cmds.iter().any(|c| matches!(c, Cmd::LoadUsers)),
+        !cmds
+            .iter()
+            .any(|c| matches!(c, Cmd::LoadUsers | Cmd::LoadAccounts)),
         "{cmds:?}"
     );
     assert!(
@@ -386,7 +394,7 @@ fn users_registry_is_not_read_for_a_non_admin() {
         "{cmds:?}"
     );
     assert!(
-        s.contains("the users registry is admin-only on the gateway"),
+        s.contains("the accounts list is admin-only on the gateway"),
         "{s}"
     );
     // The roster landing settles the screen: the never-read registry must
@@ -539,7 +547,7 @@ fn users_screen_keys_live_without_any_table() {
     h.store.notice.set(None);
     h.key(b"a");
     assert!(
-        h.notice().contains("adding a user is admin-only"),
+        h.notice().contains("creating a user is admin-only"),
         "{:?}",
         h.notice()
     );

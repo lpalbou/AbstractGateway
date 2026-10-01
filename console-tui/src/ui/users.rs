@@ -12,6 +12,9 @@ use serde_json::{json, Value};
 use super::util::{badge, field, line, loadable_view, span, span_bold};
 use super::widths;
 use super::{open_form, Ctx};
+use crate::store::accounts::{
+    activity_time, AccountRow, ACTIVITY_EMPTY, ACTIVITY_FILTERS, ACTIVITY_SCOPE,
+};
 use crate::store::{ConnPhase, EntityRow, Loadable, UserRow};
 use crate::worker::Cmd;
 
@@ -27,11 +30,6 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ui = ctx.ui;
     let tt = *t;
 
-    super::util::clamp_selection(cx, ui.user_sel, move || {
-        store
-            .users
-            .with(|d| d.ready().map(|u| u.humans.len()).unwrap_or(0))
-    });
     super::util::clamp_selection(cx, ui.entity_sel, move || {
         store
             .entities
@@ -51,6 +49,36 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let ctx_summon = ctx.clone();
     let ctx_talk = ctx.clone();
     let ctx_tpl = ctx.clone();
+    let ctx_logs = ctx.clone();
+
+    super::util::clamp_selection(cx, ui.account_sel, move || {
+        store
+            .accounts
+            .with(|d| d.ready().map(Vec::len).unwrap_or(0))
+    });
+    // The account selection drives the entity selection: an entity row
+    // selected in the one table IS the entity the inspector, Manage and
+    // Talk act on (they read `entity_sel`).
+    cx.effect(move || {
+        let idx = ui.account_sel.get();
+        let Some(name) = store.accounts.with(|d| {
+            d.ready()
+                .and_then(|rows| rows.get(idx))
+                .filter(|r| r.is_entity())
+                .map(|r| r.id.clone())
+        }) else {
+            return;
+        };
+        let pos = store.entities.with(|d| {
+            d.ready()
+                .and_then(|es| es.iter().position(|e| e.is_account(&name)))
+        });
+        if let Some(pos) = pos {
+            if ui.entity_sel.get_untracked() != pos {
+                ui.entity_sel.set(pos);
+            }
+        }
+    });
 
     // Keep the manage snapshot warm for the SELECTED entity: arrowing
     // to a row loads its detail (worker serializes; entity rosters are
@@ -100,18 +128,17 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
 
     Element::new()
         // Focusable + autofocus content root: the screen's keys must live
-        // even when no table exists to take the keyboard — a non-admin
-        // (no users table) on a gateway with no entities yet would
-        // otherwise have dead keys, `n` (summon the first entity)
-        // included. A table that mounts later still takes the focus.
+        // even when no table exists to take the keyboard (a non-admin on a
+        // gateway with no entities yet). A table that mounts later still
+        // takes the focus.
         .focusable()
         .autofocus()
-        .style(LayoutStyle::column().gap(1))
+        .style(LayoutStyle::column().gap(0))
         .shortcut(KeyChord::plain(Key::Char('m')), move |_| {
             manage_selected_entity(cx, &ctx_manage);
         })
         .shortcut(KeyChord::plain(Key::Char('n')), move |_| {
-            // Summon — the web's "Summon entity" (create is user-level;
+            // Create entity (the web's secondary header button; summon —
             // Advanced configuration inside is admin-only).
             if store.conn.with_untracked(ConnPhase::is_connected) {
                 super::entity_create::open_summon_form(cx, &ctx_summon);
@@ -122,7 +149,6 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             }
         })
         .shortcut(KeyChord::plain(Key::Char('c')), move |_| {
-            // Talk first — the web's first row action.
             if !store.conn.with_untracked(ConnPhase::is_connected) {
                 store.notice.set(Some(
                     "not connected — probe on the Connection screen first".into(),
@@ -149,28 +175,37 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 open_reservations_modal(cx, &ctx_resv);
             }
         })
-        // The caller's OWN workspace policy (web: "My workspace policy"
-        // on the Users tab) — any principal, see ui/my_policy.rs.
-        .shortcut(KeyChord::plain(Key::Char('w')), move |_| super::my_policy::open(cx, &ctx_mypolicy))
-        // The caller's OWN mailbox (web: "My email" on the Users tab) — any
-        // human principal, see ui/my_email.rs.
-        .shortcut(KeyChord::plain(Key::Char('@')), move |_| super::my_email::open(cx, &ctx_myemail))
+        // Workspace: the selected account's workspace policy (your own on
+        // your row or for a non-admin).
+        .shortcut(KeyChord::plain(Key::Char('w')), move |_| {
+            workspace_selected(cx, &ctx_mypolicy)
+        })
+        // Email: your row = the full account email view; another user's
+        // row = the address-only view; an entity = the reason.
+        .shortcut(KeyChord::plain(Key::Char('@')), move |_| {
+            email_selected(cx, &ctx_myemail)
+        })
+        // Logs: the selected account's activity (yours for a non-admin).
+        .shortcut(KeyChord::plain(Key::Char('l')), move |_| {
+            open_activity(cx, &ctx_logs)
+        })
         // Reset an old per-user mailbox override (a one-shot action; the
-        // console never creates per-user overrides — "Mailboxes for users"
-        // is the one switch, state-toggles §7).
+        // console never creates per-user overrides).
         .shortcut(KeyChord::plain(Key::Char('x')), move |_| {
             if !super::util::admin_gate(&store, "resetting a user's mailbox override") {
                 return;
             }
             match selected_user(&ctx_mail) {
                 Some(u) if u.mailbox_view().1 => {
-                    ctx_mail.send(crate::worker::Cmd::Operator(crate::worker::operator::OpCmd::Email {
-                        action: crate::worker::operator::EmailAction::AdminResetMailbox {
-                            user_id: u.user_id.clone(),
-                            tenant_id: u.tenant_id.clone(),
+                    ctx_mail.send(crate::worker::Cmd::Operator(
+                        crate::worker::operator::OpCmd::Email {
+                            action: crate::worker::operator::EmailAction::AdminResetMailbox {
+                                user_id: u.user_id.clone(),
+                                tenant_id: u.tenant_id.clone(),
+                            },
+                            form_id: None,
                         },
-                        form_id: None,
-                    }));
+                    ));
                 }
                 Some(u) => store.notice.set(Some(format!(
                     "{} has no mailbox override — nothing to reset",
@@ -182,9 +217,8 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             }
         })
         .shortcut(KeyChord::plain(Key::Char('i')), move |_| {
-            // Toggle the entity-inspector drawer (passive: the roster
-            // keeps the keyboard; i again closes; leaving the screen
-            // closes it automatically).
+            // Toggle the entity-inspector drawer (passive: the table keeps
+            // the keyboard; i again closes; leaving the screen closes it).
             if selected_entity(&ctx_inspect).is_some() {
                 if let Some(h) = ctx_inspect.entity_drawer.borrow().as_ref() {
                     h.toggle();
@@ -196,8 +230,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             }
         })
         .shortcut(KeyChord::plain(Key::Char('a')), move |_| {
-            // F2: refusals name their reason — silent keys read as dead.
-            if super::util::admin_gate(&store, "adding a user") {
+            if super::util::admin_gate(&store, "creating a user") {
                 open_user_form(cx, &ctx_add, None);
             }
         })
@@ -205,176 +238,15 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             edit_selected_user(cx, &ctx_edit);
         })
         .shortcut(KeyChord::plain(Key::Char('t')), move |_| {
-            if !super::util::admin_gate(&store, "rotating a user's token") {
-                return;
-            }
-            if let Some(u) = selected_user(&ctx_rotate) {
-                confirm_rotate(cx, &ctx_rotate, u);
-            } else {
-                store
-                    .notice
-                    .set(Some("no user selected — no token to rotate".into()));
-            }
+            rotate_selected(cx, &ctx_rotate);
         })
         .shortcut(KeyChord::plain(Key::Char('d')), move |_| {
-            if !super::util::admin_gate(&store, "deleting a user") {
-                return;
-            }
-            if let Some(u) = selected_user(&ctx_del) {
-                confirm_delete(cx, &ctx_del, u);
-            } else {
-                store
-                    .notice
-                    .set(Some("no user selected — nothing to delete".into()));
-            }
+            delete_selected(cx, &ctx_del);
         })
         .child(
             Block::new()
                 .border(BorderKind::Rounded)
-                .title("Users (admin)")
-                .fill(t.surface)
-                .layout(
-                    LayoutStyle::column()
-                        .gap(0)
-                        .grow(1.0)
-                        .padding(Edges::all(1)),
-                )
-                // The administrator's ONE email switch (+ Advanced), above
-                // the table (DESIGN §5.2).
-                .child(email_switches(cx, ctx, t))
-                .child(dyn_view_scoped(LayoutStyle::default().grow(1.0).min_h(1), {
-                    let ctx_act = ctx.clone();
-                    move |gcx| {
-                        // The users registry is an admin surface
-                        // (`/admin/users`; the web hides the section):
-                        // a non-admin gets the reason, never a 403 panel.
-                        if let Some(why) = store.conn.with(|c| {
-                            c.is_known_non_admin().then(|| c.admin_refusal("the users registry"))
-                        }).flatten()
-                        {
-                            return line(vec![span(
-                                format!("{why} — w edits your own workspace policy"),
-                                tt.text_muted,
-                            )]);
-                        }
-                        let data = store.users.get();
-                        // Empty-state honesty: 0 humans with N hidden
-                        // entity principals is NOT an empty registry.
-                        let empty_text = match &data {
-                            crate::store::Loadable::Ready(u)
-                                if u.humans.is_empty() && u.entity_principals > 0 =>
-                            {
-                                "no human users — entity principals are managed in Entities below"
-                            }
-                            _ => "no users in the registry",
-                        };
-                        let ctx_act = ctx_act.clone();
-                        loadable_view(
-                            &tt,
-                            &store.conn.get(),
-                            || store.tick.get(),
-                            &data,
-                            |d: &crate::store::UsersData| d.humans.is_empty(),
-                            empty_text,
-                            |d| {
-                                let me = own_key(&store);
-                                let ctx_space = ctx_act.clone();
-                                users_table(
-                                    gcx,
-                                    &tt,
-                                    &d.humans,
-                                    ui.user_sel,
-                                    me,
-                                    move |_| {
-                                        // Activation (Enter / double-click) =
-                                        // the `e` edit path, one body.
-                                        edit_selected_user(cx, &ctx_act);
-                                    },
-                                    // Space switches the row's one switch
-                                    // (Active), state-toggles rule.
-                                    move || switch_selected_active(cx, &ctx_space),
-                                )
-                            },
-                        )
-                    }
-                }))
-                // The selected user's switch, highlighted (the table's cells
-                // carry the marker only — the engine Table has no per-cell
-                // ink), with the keys that act on the row.
-                .child(dyn_view_scoped(LayoutStyle::line(1).shrink(0.0), {
-                    let ctx_sw = ctx.clone();
-                    move |scx| {
-                        if store.conn.with(ConnPhase::is_known_non_admin) {
-                            return line(vec![span(String::new(), tt.text)]);
-                        }
-                        let idx = ui.user_sel.get();
-                        let Some(u) = store
-                            .users
-                            .with(|d| d.ready().and_then(|d| d.humans.get(idx).cloned()))
-                        else {
-                            return line(vec![span(String::new(), tt.text)]);
-                        };
-                        let own = own_key(&store)
-                            .map(|k| k == (u.user_id.clone(), u.tenant_id.clone()))
-                            .unwrap_or(false);
-                        let on = scx.signal(u.enabled);
-                        let ctx_req = ctx_sw.clone();
-                        Element::new()
-                            .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
-                            .child(line(vec![span_bold(u.user_id.clone(), tt.text)]))
-                            .child(
-                                super::switch::Switch::new("Active", on)
-                                    .unavailable(own.then(|| OWN_ACCOUNT_REASON.to_string()))
-                                    .notice(store.notice)
-                                    .on_request(move |_| switch_selected_active(cx, &ctx_req))
-                                    .element(scx, &tt)
-                                    .build(),
-                            )
-                            .child(line(vec![span(
-                                if u.mailbox_view().1 {
-                                    "  space switches Active · e edits · x resets the mailbox override"
-                                } else {
-                                    "  space switches Active · e edits"
-                                },
-                                tt.text_faint,
-                            )]))
-                            .build()
-                    }
-                }))
-                .element(t)
-                .build(),
-        )
-        // The web console's exact partition note: entity principals
-        // hold a door credential but are MANAGED in the entities lane
-        // — never through the users table (where rotate/delete on one
-        // would mint a live entity credential / invite identity
-        // capture; the rows are simply not rendered, so the actions
-        // cannot target them by construction).
-        .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-            let n = store
-                .users
-                .with(|d| d.ready().map(|u| u.entity_principals).unwrap_or(0));
-            if n == 0 {
-                return line(vec![span(String::new(), tt.text)]);
-            }
-            // Grammar-correct at both n (REG-2: the earlier singular-
-            // possessive "its own access token" broke at n>=2).
-            let (noun, verb, poss, obj) = if n == 1 {
-                ("entity", "holds", "its own access token", "it")
-            } else {
-                ("entities", "hold", "their own access tokens", "them")
-            };
-            line(vec![span(
-                format!(
-                    " {n} {noun} also {verb} {poss} — manage {obj} in Entities below, never here"
-                ),
-                tt.text_muted,
-            )])
-        }))
-        .child(
-            Block::new()
-                .border(BorderKind::Rounded)
-                .title("Entities (n = summon · c = talk · m = manage · s = spark templates)")
+                .title(ACCOUNTS_TITLE)
                 .fill(t.surface)
                 .layout(
                     LayoutStyle::column()
@@ -383,93 +255,175 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         .padding(Edges::all(1)),
                 )
                 .child(dyn_view_scoped(
-                    // min_h(1) (D2, cycle-1 UX): the empty-roster `∅`
-                    // line must always render — it used to be crushed
-                    // to zero while the users block above hoarded blank
-                    // rows, so a first-run gateway with no entities
-                    // showed an empty box over a crash-looking footer.
                     LayoutStyle::default().grow(1.0).min_h(1),
                     {
                         let ctx_act = ctx.clone();
                         move |gcx| {
-                            let data = store.entities.get();
+                            // The accounts list is an admin surface
+                            // (`/admin/accounts`; the web hides the table): a
+                            // non-admin gets the reason and the entity roster
+                            // they can see.
+                            if let Some(why) = store
+                                .conn
+                                .with(|c| {
+                                    c.is_known_non_admin()
+                                        .then(|| c.admin_refusal("the accounts list"))
+                                })
+                                .flatten()
+                            {
+                                return non_admin_view(gcx, &ctx_act, &tt, why);
+                            }
+                            let data = store.accounts.get();
                             let ctx_act = ctx_act.clone();
                             loadable_view(
                                 &tt,
                                 &store.conn.get(),
                                 || store.tick.get(),
                                 &data,
-                                |d: &Vec<EntityRow>| d.is_empty(),
-                                "no entities yet — n summons the first one",
+                                |d: &Vec<AccountRow>| d.is_empty(),
+                                "no accounts yet — a creates a user, n creates an entity",
                                 |d| {
-                                    // The roster takes the keyboard when
-                                    // the users table is absent (a
-                                    // non-admin: the registry is not
-                                    // theirs to list) — else the screen's
-                                    // keys would have nothing focused.
-                                    let focus = store.conn.with_untracked(ConnPhase::is_known_non_admin);
-                                    entities_table(gcx, &tt, d, ui.entity_sel, focus, move |_| {
-                                        // Activation = the `m` manage
-                                        // path (entities have no "edit";
-                                        // the manage menu is the row's
-                                        // one modal).
-                                        manage_selected_entity(cx, &ctx_act);
-                                    })
+                                    let ctx_space = ctx_act.clone();
+                                    accounts_table(
+                                        gcx,
+                                        &tt,
+                                        d,
+                                        ui.account_sel,
+                                        move |_| {
+                                            // Activation (Enter / double-click):
+                                            // a user → edit; an entity → Manage.
+                                            activate_selected(cx, &ctx_act);
+                                        },
+                                        // Space switches the row's Active.
+                                        move || switch_selected_active(cx, &ctx_space),
+                                    )
                                 },
                             )
                         }
                     },
                 ))
-                // The `i inspects…` teaching line appears only when
-                // there are rows to inspect (P3-B: teaching keys for
-                // rows that don't exist is first-run noise); it returns
-                // with the first entity. Pinned so it never crushes the
-                // roster it describes.
-                .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-                    let has_rows = store
-                        .entities
-                        .with(|d| d.ready().map(|e| !e.is_empty()).unwrap_or(false));
-                    if has_rows {
-                        line(vec![span(
-                            "i inspects the selected entity (side panel) · the detail loads as you move the selection",
-                            tt.text_faint,
-                        )])
-                    } else {
-                        line(vec![span(String::new(), tt.text)])
-                    }
+                // The selected account: its kind chip, its Active switch and
+                // the actions that cannot apply, each with its reason.
+                .child(dyn_view_scoped(LayoutStyle::column().gap(0).shrink(0.0), {
+                    let ctx_sw = ctx.clone();
+                    move |scx| selected_row_lines(scx, &ctx_sw, &tt)
                 }))
+                // The administrator's email switches: "Email for everyone"
+                // below the table (DESIGN-v2 §2.1).
+                .child(email_switches(cx, ctx, t))
                 .element(t)
                 .build(),
         )
         .build()
 }
 
+/// The screen's block title (DESIGN-v2 §2.1: the page line, in words).
+pub const ACCOUNTS_TITLE: &str =
+    "Accounts — people who use this gateway and the entities that act on it";
+
+/// An entity's Email view (DESIGN-v2 §2.3): entities cannot hold a
+/// mailbox (`plane_for_principal` refuses entity principals; mail belongs
+/// to a user's runtime plane). Used when the gateway's row carries no
+/// reason of its own.
+pub const ENTITY_EMAIL_REASON: &str =
+    "Entities can't have their own mailbox yet: mailboxes belong to a user's runtime.";
+
+/// The selected row of the one table (admin view).
+pub fn selected_account(ctx: &Ctx) -> Option<AccountRow> {
+    let idx = ctx.ui.account_sel.get_untracked();
+    ctx.store
+        .accounts
+        .with_untracked(|d| d.ready().and_then(|rows| rows.get(idx).cloned()))
+}
+
+/// Is `row` the signed-in principal's own account?
+fn is_own(store: &crate::store::Store, row: &AccountRow) -> bool {
+    own_key(store) == Some((row.id.clone(), row.tenant_id.clone()))
+}
+
+/// The accounts table is the selection surface for an admin; a
+/// non-admin selects in the entity roster.
+fn uses_accounts(ctx: &Ctx) -> bool {
+    !ctx.store.conn.with_untracked(ConnPhase::is_known_non_admin)
+}
+
 fn selected_entity(ctx: &Ctx) -> Option<EntityRow> {
+    if uses_accounts(ctx) {
+        let row = selected_account(ctx).filter(AccountRow::is_entity)?;
+        return ctx.store.entities.with_untracked(|d| {
+            d.ready()
+                .and_then(|es| es.iter().find(|e| e.is_account(&row.id)).cloned())
+        });
+    }
     let idx = ctx.ui.entity_sel.get_untracked();
     ctx.store
         .entities
         .with_untracked(|d| d.ready().and_then(|d| d.get(idx).cloned()))
 }
 
-/// ONE edit entry — shared verbatim by the `e` key and the users
-/// table's activation (Enter / Space / double-click): guards and
-/// refusal notices can never drift between the two gestures.
+/// The registry record of the selected USER row (edit / rotate / delete
+/// / reset act on it).
+fn selected_user(ctx: &Ctx) -> Option<UserRow> {
+    let row = selected_account(ctx).filter(|r| !r.is_entity())?;
+    ctx.store.users.with_untracked(|d| {
+        d.ready().and_then(|u| {
+            u.humans
+                .iter()
+                .find(|h| h.user_id == row.id && h.tenant_id == row.tenant_id)
+                .cloned()
+        })
+    })
+}
+
+/// ONE edit entry — shared by the `e` key and a user row's activation.
 fn edit_selected_user(cx: Scope, ctx: &Ctx) {
     if !super::util::admin_gate(&ctx.store, "editing a user") {
         return;
     }
-    if let Some(u) = selected_user(ctx) {
-        open_user_form(cx, ctx, Some(u));
-    } else {
-        ctx.store
+    match selected_account(ctx) {
+        Some(r) if r.is_entity() => ctx.store.notice.set(Some(format!(
+            "{} is an entity — m manages it (entities have no user record to edit)",
+            r.id
+        ))),
+        Some(r) => match selected_user(ctx) {
+            Some(u) => open_user_form(cx, ctx, Some(u)),
+            None => ctx.store.notice.set(Some(format!(
+                "the users registry has not loaded {} yet — r refreshes",
+                r.id
+            ))),
+        },
+        None => ctx
+            .store
             .notice
-            .set(Some("no user selected — nothing to edit".into()));
+            .set(Some("no account selected — nothing to edit".into())),
     }
 }
 
-/// ONE manage entry — shared by the `m` key and the entities table's
-/// activation.
+/// Enter / double-click on a row: a user → edit, an entity → Manage.
+fn activate_selected(cx: Scope, ctx: &Ctx) {
+    match selected_account(ctx) {
+        Some(r) if r.is_entity() => manage_selected_entity(cx, ctx),
+        Some(_) => edit_selected_user(cx, ctx),
+        None => {}
+    }
+}
+
+/// ONE manage entry — the `m` key and an entity row's activation.
 fn manage_selected_entity(cx: Scope, ctx: &Ctx) {
+    if uses_accounts(ctx) {
+        if let Some(r) = selected_account(ctx) {
+            if let Some(why) = r.refusal("manage") {
+                ctx.store.notice.set(Some(why));
+                return;
+            }
+            if !r.is_entity() {
+                ctx.store
+                    .notice
+                    .set(Some(format!("Manage is for entities — e edits {}", r.id)));
+                return;
+            }
+        }
+    }
     if let Some(e) = selected_entity(ctx) {
         super::entity_manage::open_manage_menu(cx, ctx, e);
     } else {
@@ -477,6 +431,596 @@ fn manage_selected_entity(cx: Scope, ctx: &Ctx) {
             .notice
             .set(Some("no entity selected — nothing to manage".into()));
     }
+}
+
+/// `w`: the selected account's workspace policy — your own on your row
+/// (and always for a non-admin), a user's own policy as the admin, the
+/// reason for an entity.
+fn workspace_selected(cx: Scope, ctx: &Ctx) {
+    let row = if uses_accounts(ctx) {
+        selected_account(ctx)
+    } else {
+        None
+    };
+    match row {
+        None => super::my_policy::open(cx, ctx),
+        Some(r) if is_own(&ctx.store, &r) => super::my_policy::open(cx, ctx),
+        Some(r) => match r.refusal("workspace") {
+            Some(why) => ctx.store.notice.set(Some(why)),
+            None if r.is_entity() => ctx.store.notice.set(Some(format!(
+                "{}'s file access is set on the entity itself (workspace mounts) — m manages it",
+                r.id
+            ))),
+            None => super::runtimes::open_user_policy(cx, ctx, r.tenant_id.clone(), r.id.clone()),
+        },
+    }
+}
+
+/// `@`: Email. Your row → the full account email view; another user's
+/// row → the address-only view (you never touch anyone's mailbox); an
+/// entity → why it has none.
+fn email_selected(cx: Scope, ctx: &Ctx) {
+    let row = if uses_accounts(ctx) {
+        selected_account(ctx)
+    } else {
+        None
+    };
+    match row {
+        None => super::my_email::open(cx, ctx),
+        Some(r) if is_own(&ctx.store, &r) => super::my_email::open(cx, ctx),
+        Some(r) if r.is_entity() => {
+            let why = r
+                .refusal("email")
+                .or_else(|| r.mailbox.reason.clone())
+                .unwrap_or_else(|| ENTITY_EMAIL_REASON.to_string());
+            ctx.store.notice.set(Some(why));
+        }
+        Some(r) => match r.refusal("email") {
+            Some(why) => ctx.store.notice.set(Some(why)),
+            None => {
+                let line = other_mailbox_line(&r);
+                // R2_OPEN_OTHER: my_email::open_other lands with the email merge.
+                let _ = (cx, line);
+            }
+        },
+    }
+}
+
+/// Another user's mailbox, read-only, in the web's words.
+pub fn other_mailbox_line(r: &AccountRow) -> String {
+    match r.mailbox.state.as_str() {
+        "connected" => match &r.mailbox.address {
+            Some(a) => format!("Connected as {a}."),
+            None => "Connected.".to_string(),
+        },
+        "paused" => format!("Paused — {} turned their mailbox off.", r.id),
+        "unavailable" => r
+            .mailbox
+            .reason
+            .clone()
+            .unwrap_or_else(|| "Mailboxes are not available for this account.".into()),
+        _ => format!(
+            "Not connected — only {} can connect a mailbox. You never see anyone's mail.",
+            r.id
+        ),
+    }
+}
+
+/// `t`: rotate the selected account's token (a user: the registry's
+/// rotate; an entity: only where the gateway offers it).
+fn rotate_selected(cx: Scope, ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "rotating a token") {
+        return;
+    }
+    let Some(r) = selected_account(ctx) else {
+        ctx.store
+            .notice
+            .set(Some("no account selected — no token to rotate".into()));
+        return;
+    };
+    if let Some(why) = r.refusal("rotate") {
+        ctx.store.notice.set(Some(why));
+        return;
+    }
+    if r.is_entity() {
+        let ctx2 = ctx.clone();
+        super::confirm_danger(
+            cx,
+            ctx.ui,
+            format!(
+                "Rotate the token of entity '{}'? Its current token stops working immediately; the new one is shown once.",
+                r.id
+            ),
+            "Rotate the token",
+            "Keep the current token",
+            move || {
+                ctx2.send(Cmd::RotateAccount {
+                    id: r.id,
+                    tenant_id: r.tenant_id,
+                })
+            },
+        );
+    } else if let Some(u) = selected_user(ctx) {
+        confirm_rotate(cx, ctx, u);
+    } else {
+        ctx.store.notice.set(Some(format!(
+            "the users registry has not loaded {} yet — r refreshes",
+            r.id
+        )));
+    }
+}
+
+/// `d`: delete the selected user (an entity's name is kept for life —
+/// the gateway's reason says so).
+fn delete_selected(cx: Scope, ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "deleting an account") {
+        return;
+    }
+    let Some(r) = selected_account(ctx) else {
+        ctx.store
+            .notice
+            .set(Some("no account selected — nothing to delete".into()));
+        return;
+    };
+    if let Some(why) = r.refusal("delete") {
+        ctx.store.notice.set(Some(why));
+        return;
+    }
+    match selected_user(ctx) {
+        Some(u) if !r.is_entity() => confirm_delete(cx, ctx, u),
+        _ => ctx.store.notice.set(Some(format!(
+            "the users registry has not loaded {} yet — r refreshes",
+            r.id
+        ))),
+    }
+}
+
+/// The Active switch of the selected account: OFF asks first (a user is
+/// signed out; an entity stops acting), ON applies at once; an
+/// unavailable switch (your own account) says why.
+fn switch_selected_active(cx: Scope, ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "switching an account's Active state") {
+        return;
+    }
+    let Some(r) = selected_account(ctx) else {
+        ctx.store
+            .notice
+            .set(Some("no account selected — nothing to switch".into()));
+        return;
+    };
+    if is_own(&ctx.store, &r) {
+        ctx.store.notice.set(Some(
+            r.refusal("suspend")
+                .unwrap_or_else(|| OWN_ACCOUNT_REASON.to_string()),
+        ));
+        return;
+    }
+    if let Some(why) = r.refusal("suspend") {
+        ctx.store.notice.set(Some(why));
+        return;
+    }
+    let send = {
+        let ctx = ctx.clone();
+        let r = r.clone();
+        move |active: bool| {
+            ctx.send(Cmd::SetAccountActive {
+                id: r.id.clone(),
+                tenant_id: r.tenant_id.clone(),
+                entity: r.is_entity(),
+                active,
+            })
+        }
+    };
+    if r.active {
+        let (question, verb) = if r.is_entity() {
+            (
+                format!(
+                    "Suspend {}? It stops acting until you turn Active back on.",
+                    r.id
+                ),
+                "Suspend",
+            )
+        } else {
+            (
+                format!(
+                    "Deactivate {}? They are signed out until you turn Active back on.",
+                    r.id
+                ),
+                "Deactivate",
+            )
+        };
+        super::confirm_danger(cx, ctx.ui, question, verb, "Cancel", move || send(false));
+    } else {
+        send(true);
+    }
+}
+
+/// The kind chip's tone: admin accent, user neutral, entity info — the
+/// web's row tints, as colour on the chip (the engine Table has no
+/// per-row ink).
+pub fn kind_tone(label: &str) -> Tone {
+    match label {
+        "Admin" => Tone::Accent,
+        "Entity" => Tone::Info,
+        _ => Tone::Muted,
+    }
+}
+
+/// The accounts table: Name · Kind · Email address · Mailbox · Runtime ·
+/// Active (`[x]` / `[ ]` / `[-] reason`).
+fn accounts_table(
+    cx: Scope,
+    t: &TokenSet,
+    data: &[AccountRow],
+    sel: Signal<usize>,
+    on_activate: impl FnMut(usize) + 'static,
+    mut on_space: impl FnMut() + 'static,
+) -> View {
+    let vw = abstracttui::app::use_viewport(cx).get().w;
+    let mut rows: Vec<Vec<String>> = data
+        .iter()
+        .map(|r| {
+            vec![
+                r.id.clone(),
+                r.kind_label().to_string(),
+                r.email_address.clone().unwrap_or_else(|| "—".into()),
+                r.mailbox_cell(),
+                r.runtime_id.clone().unwrap_or_else(|| "—".into()),
+                r.active_cell(),
+            ]
+        })
+        .collect();
+    // Ids and addresses discriminate on their TAIL; the kind word, the
+    // mailbox words and the switch marker lead with what matters.
+    let rules = vec![
+        widths::ColRule::tail("name", 10),
+        widths::ColRule::head("kind", 6),
+        widths::ColRule::tail("email address", 14),
+        widths::ColRule::head("mailbox", 14),
+        widths::ColRule::tail("runtime", 8),
+        widths::ColRule::head("active", 6),
+    ];
+    let cols = widths::columns(&rules, &mut rows, vw - widths::BLOCK_CHROME);
+    let table = Table::new(cols)
+        .rows(rows)
+        .selection(sel)
+        .on_activate(on_activate)
+        .layout(LayoutStyle::default().grow(1.0))
+        .element(cx, t)
+        .autofocus()
+        .build();
+    // Space is the switch key (the Table would alias it to activation):
+    // caught on the way down, before the Table sees it.
+    Element::new()
+        .style(LayoutStyle::column().grow(1.0))
+        .on(abstracttui::ui::Phase::Capture, move |ectx, ev| {
+            if let abstracttui::ui::UiEvent::Key(k) = ev {
+                if k.key == Key::Char(' ') && k.mods.0 == 0 {
+                    on_space();
+                    ectx.stop_propagation();
+                }
+            }
+        })
+        .child(table)
+        .build()
+}
+
+/// Under the table: the selected account (chip + id + Active switch), the
+/// actions that cannot apply with their reasons, and the kind legend.
+fn selected_row_lines(scx: Scope, ctx: &Ctx, tt: &TokenSet) -> View {
+    let store = ctx.store;
+    let ui = ctx.ui;
+    let empty = || Element::new().style(LayoutStyle::default().h(0)).build();
+    if store.conn.with(ConnPhase::is_known_non_admin) {
+        return empty();
+    }
+    let idx = ui.account_sel.get();
+    let Some(r) = store
+        .accounts
+        .with(|d| d.ready().and_then(|rows| rows.get(idx).cloned()))
+    else {
+        return empty();
+    };
+    let on = scx.signal(r.active);
+    let ctx_req = ctx.clone();
+    let vw = abstracttui::app::use_viewport(scx).get_untracked().w;
+    let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+    col = col.child(
+        Element::new()
+            .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
+            .child(badge(tt, r.kind_label(), kind_tone(r.kind_label())))
+            .child(line(vec![span_bold(r.id.clone(), tt.text)]))
+            .child(
+                super::switch::Switch::new("Active", on)
+                    .unavailable(r.refusal("suspend"))
+                    .notice(store.notice)
+                    .on_request(move |_| switch_selected_active(scx, &ctx_req))
+                    .element(scx, tt)
+                    .build(),
+            )
+            .build(),
+    );
+    // Every action that cannot apply, with its reason (visible, never
+    // tooltip-only — DESIGN-v2 §2.1).
+    let labels = [
+        ("email", "Email"),
+        ("logs", "Logs"),
+        ("workspace", "Workspace"),
+        ("rotate", "Rotate"),
+        ("manage", "Manage"),
+        ("delete", "Delete"),
+    ];
+    let mut refusals: Vec<String> = Vec::new();
+    for (key, label) in labels {
+        if key == "manage" && !r.is_entity() {
+            continue; // Manage is an entity action: users never show it
+        }
+        if let Some(why) = r.refusal(key) {
+            refusals.push(format!("{label}: {why}"));
+        }
+    }
+    let keys = if r.is_entity() {
+        "@ email · l logs · w workspace · t rotate · m manage · d delete · space Active"
+    } else {
+        "@ email · l logs · w workspace · t rotate · e edit · d delete · space Active"
+    };
+    for l in super::util::wrap_text(keys, (vw - 6).max(20) as usize) {
+        col = col.child(line(vec![span(l, tt.text_faint)]));
+    }
+    if !refusals.is_empty() {
+        let text = format!("Unavailable — {}", refusals.join(" · "));
+        for l in super::util::wrap_text(&text, (vw - 6).max(20) as usize) {
+            col = col.child(line(vec![span(l, tt.text_muted)]));
+        }
+    }
+    col.child(kind_legend(tt))
+        .child(line(vec![span(String::new(), tt.text)]))
+        .build()
+}
+
+/// The chip legend (the web's "Tint: admin · user · entity").
+fn kind_legend(t: &TokenSet) -> View {
+    Element::new()
+        .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
+        .child(line(vec![span("kind:", t.text_faint)]))
+        .child(badge(t, "Admin", kind_tone("Admin")))
+        .child(badge(t, "User", kind_tone("User")))
+        .child(badge(t, "Entity", kind_tone("Entity")))
+        .build()
+}
+
+/// A non-admin's Accounts screen: why the list is not theirs, their own
+/// keys, and the entity roster they can see.
+fn non_admin_view(gcx: Scope, ctx: &Ctx, tt: &TokenSet, why: String) -> View {
+    let store = ctx.store;
+    let ui = ctx.ui;
+    let ctx_act = ctx.clone();
+    let data = store.entities.get();
+    let cx = gcx;
+    Element::new()
+        .style(LayoutStyle::column().gap(0).grow(1.0))
+        .child(line(vec![span(
+            format!("{why} — @ your email · l your activity · w your workspace policy"),
+            tt.text_muted,
+        )]))
+        .child(line(vec![span_bold("Entities", tt.text)]))
+        .child(loadable_view(
+            tt,
+            &store.conn.get(),
+            || store.tick.get(),
+            &data,
+            |d: &Vec<EntityRow>| d.is_empty(),
+            "no entities yet — n creates the first one",
+            |d| {
+                entities_table(gcx, tt, d, ui.entity_sel, true, move |_| {
+                    manage_selected_entity(cx, &ctx_act);
+                })
+            },
+        ))
+        .build()
+}
+
+/// `l`: the activity of the selected account (admin) or your own.
+fn open_activity(cx: Scope, ctx: &Ctx) {
+    let target = if uses_accounts(ctx) {
+        match selected_account(ctx) {
+            Some(r) => {
+                if let Some(why) = r.refusal("logs") {
+                    ctx.store.notice.set(Some(why));
+                    return;
+                }
+                if is_own(&ctx.store, &r) {
+                    None
+                } else {
+                    Some((r.id.clone(), r.tenant_id.clone()))
+                }
+            }
+            None => None,
+        }
+    } else {
+        None
+    };
+    let who = match (&target, own_key(&ctx.store)) {
+        (Some((id, _)), _) => id.clone(),
+        (None, Some((id, _))) => id,
+        (None, None) => "you".to_string(),
+    };
+    let key = target
+        .as_ref()
+        .map(|(i, t)| format!("{t}/{i}"))
+        .unwrap_or_else(|| "me".to_string());
+    let filter = ctx.ui.activity_filter;
+    filter.set(0);
+    ctx.send(Cmd::LoadActivity {
+        target: target.clone(),
+        key: key.clone(),
+        kind: String::new(),
+    });
+    let ctx2 = ctx.clone();
+    super::open_form(ctx, cx, Size::new(110, 30), move |mcx, close| {
+        let theme = use_theme(mcx);
+        let store = ctx2.store;
+        let cycle = {
+            let ctx3 = ctx2.clone();
+            let target = target.clone();
+            let key = key.clone();
+            move |dir: isize| {
+                let n = ACTIVITY_FILTERS.len() as isize;
+                let next = (filter.get_untracked() as isize + dir).rem_euclid(n) as usize;
+                filter.set(next);
+                ctx3.send(Cmd::LoadActivity {
+                    target: target.clone(),
+                    key: key.clone(),
+                    kind: ACTIVITY_FILTERS[next].1.to_string(),
+                });
+            }
+        };
+        let cycle_b = cycle.clone();
+        let close_b = close.clone();
+        Element::new()
+            .focusable()
+            .autofocus()
+            .style(LayoutStyle::column().gap(0))
+            .shortcut(KeyChord::plain(Key::Char('f')), move |_| cycle(1))
+            .shortcut(KeyChord::plain(Key::Char('F')), move |_| cycle_b(-1))
+            .child(dyn_view(LayoutStyle::line(1), {
+                let who = who.clone();
+                move || {
+                    let t = theme.get().tokens;
+                    line(vec![span_bold(format!("Activity — {who}"), t.accent)])
+                }
+            }))
+            // The filter chips: the current one lit (f / F cycle).
+            .child(dyn_view(LayoutStyle::line(1), move || {
+                let t = theme.get().tokens;
+                let cur = filter.get();
+                let mut spans = vec![span("filter: ", t.text_faint)];
+                for (i, (label, _)) in ACTIVITY_FILTERS.iter().enumerate() {
+                    if i > 0 {
+                        spans.push(span(" · ", t.text_faint));
+                    }
+                    if i == cur {
+                        spans.push(span_bold(format!("[{label}]"), t.accent));
+                    } else {
+                        spans.push(span(label.to_string(), t.text_muted));
+                    }
+                }
+                spans.push(span("   f / F change the filter", t.text_faint));
+                line(spans)
+            }))
+            .child(dyn_view_scoped(
+                LayoutStyle::default().grow(1.0),
+                move |gcx| {
+                    let t = theme.get().tokens;
+                    match store.activity.get().map(|(_, _, d)| d) {
+                        None | Some(Loadable::NotAsked) | Some(Loadable::Loading) => {
+                            line(vec![span("⟳ reading the activity…", t.info)])
+                        }
+                        Some(Loadable::Failed(e)) => super::util::error_panel_hint(
+                            &t,
+                            &e,
+                            Some("change the filter (f) or reopen to read again"),
+                        ),
+                        Some(Loadable::Ready(d)) if d.events.is_empty() => {
+                            line(vec![span(ACTIVITY_EMPTY, t.text_muted)])
+                        }
+                        Some(Loadable::Ready(d)) => activity_table(gcx, &t, &d),
+                    }
+                },
+            ))
+            .child(dyn_view_scoped(
+                LayoutStyle::column().gap(0).shrink(0.0),
+                move |_| {
+                    let t = theme.get().tokens;
+                    let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+                    if let Some((_, _, Loadable::Ready(d))) = store.activity.get() {
+                        let mut note = d.note.clone().unwrap_or_default();
+                        if d.truncated {
+                            note.push_str(" Older events are not shown.");
+                        }
+                        if !note.trim().is_empty() {
+                            col =
+                                col.child(line(vec![span(note.trim().to_string(), t.text_faint)]));
+                        }
+                    }
+                    col.child(line(vec![span(ACTIVITY_SCOPE, t.text_faint)]))
+                        .build()
+                },
+            ))
+            .child(dyn_view_scoped(
+                LayoutStyle::line(1).shrink(0.0),
+                move |bcx| {
+                    let t = theme.get().tokens;
+                    let close_c = close_b.clone();
+                    Button::new("Close (Esc)")
+                        .on_click(move || close_c())
+                        .element(bcx, &t)
+                        .build()
+                },
+            ))
+            .build()
+    });
+}
+
+/// Today's date (UTC, `YYYY-MM-DD`) — the activity list shows the time
+/// alone for today's events.
+fn today_utc() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    // Civil-from-days (Howard Hinnant's algorithm).
+    let z = secs.div_euclid(86_400) + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// One line per event, newest first: time · event · detail · run (with
+/// the Observer path to open it).
+fn activity_table(cx: Scope, t: &TokenSet, d: &crate::store::accounts::ActivityData) -> View {
+    let vw = 110.min(abstracttui::app::use_viewport(cx).get().w) - 4;
+    let today = today_utc();
+    let mut rows: Vec<Vec<String>> = d
+        .events
+        .iter()
+        .map(|e| {
+            let title = if e.ok {
+                e.title.clone()
+            } else {
+                format!("✗ {}", e.title)
+            };
+            let run = match (&e.run_id, &e.observer_path) {
+                (Some(id), Some(p)) => format!("{id} · Observer {p}"),
+                (Some(id), None) => id.clone(),
+                _ => String::new(),
+            };
+            vec![
+                activity_time(&e.ts, &today),
+                title,
+                e.detail.clone().unwrap_or_default(),
+                run,
+            ]
+        })
+        .collect();
+    let rules = [
+        widths::ColRule::head("time", 12),
+        widths::ColRule::head("event", 18),
+        widths::ColRule::head("detail", 20),
+        widths::ColRule::tail("run", 16),
+    ];
+    let cols = widths::columns(&rules, &mut rows, vw);
+    Table::new(cols)
+        .rows(rows)
+        .layout(LayoutStyle::default().grow(1.0))
+        .element(cx, t)
+        .build()
 }
 
 /// Retained runtime planes of deleted users: transfer to a living user
@@ -710,13 +1254,6 @@ fn confirm_resv_purge(cx: Scope, ctx: &Ctx, row: crate::store::ReservationRow) {
     );
 }
 
-fn selected_user(ctx: &Ctx) -> Option<UserRow> {
-    let idx = ctx.ui.user_sel.get_untracked();
-    ctx.store
-        .users
-        .with_untracked(|d| d.ready().and_then(|d| d.humans.get(idx).cloned()))
-}
-
 /// "Mailboxes for users" — the administrator's one email switch.
 pub const MAILBOXES_LABEL: &str = "Mailboxes for users";
 pub const MAILBOXES_HELP: &str = "Users may connect their own mailbox for their agents, automations and notifications. You never see anyone's mail.";
@@ -899,133 +1436,6 @@ fn own_key(store: &crate::store::Store) -> Option<(String, String)> {
         }
         _ => None,
     })
-}
-
-/// The Active switch of the selected user: OFF asks first (the user is
-/// signed out and cannot sign in), ON applies at once; your own row is
-/// unavailable, with the reason.
-fn switch_selected_active(cx: Scope, ctx: &Ctx) {
-    if !super::util::admin_gate(&ctx.store, "switching a user's Active state") {
-        return;
-    }
-    let Some(u) = selected_user(ctx) else {
-        ctx.store
-            .notice
-            .set(Some("no user selected — nothing to switch".into()));
-        return;
-    };
-    if own_key(&ctx.store) == Some((u.user_id.clone(), u.tenant_id.clone())) {
-        ctx.store.notice.set(Some(OWN_ACCOUNT_REASON.into()));
-        return;
-    }
-    let send = {
-        let ctx = ctx.clone();
-        let u = u.clone();
-        move |active: bool| {
-            ctx.send(Cmd::PatchUser {
-                user_id: u.user_id.clone(),
-                tenant_id: u.tenant_id.clone(),
-                body: json!({ "enabled": active }).into(),
-                form_id: None,
-            })
-        }
-    };
-    if u.enabled {
-        super::confirm_danger(
-            cx,
-            ctx.ui,
-            format!(
-                "Deactivate {}? They are signed out until you turn Active back on.",
-                u.user_id
-            ),
-            "Deactivate",
-            "Cancel",
-            move || send(false),
-        );
-    } else {
-        send(true);
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn users_table(
-    cx: Scope,
-    t: &TokenSet,
-    data: &[UserRow],
-    sel: Signal<usize>,
-    me: Option<(String, String)>,
-    on_activate: impl FnMut(usize) + 'static,
-    mut on_space: impl FnMut() + 'static,
-) -> View {
-    let vw = abstracttui::app::use_viewport(cx).get().w;
-    let wide = vw >= 104;
-    let mut rows: Vec<Vec<String>> = data
-        .iter()
-        .map(|u| {
-            let own = me
-                .as_ref()
-                .map(|(id, tn)| *id == u.user_id && *tn == u.tenant_id)
-                .unwrap_or(false);
-            let mut row = vec![
-                u.user_id.clone(),
-                u.roles.join(", "),
-                if u.email.is_empty() {
-                    "—".into()
-                } else {
-                    u.email.clone()
-                },
-                u.mailbox_view().0,
-                u.runtime_id.clone(),
-                // The Active switch's marker (the row below the table
-                // carries the highlighted switch of the selected user).
-                if own {
-                    format!("{} (you)", super::switch::marker(u.enabled, true))
-                } else {
-                    super::switch::marker(u.enabled, false).to_string()
-                },
-            ];
-            if wide {
-                row.push(u.tenant_id.clone());
-            }
-            row
-        })
-        .collect();
-    // User ids and addresses discriminate on their TAIL; the role list,
-    // the mailbox words and the switch marker are bounded.
-    let mut rules = vec![
-        widths::ColRule::tail("user", 10),
-        widths::ColRule::head("role", 10),
-        widths::ColRule::tail("email address", 14),
-        widths::ColRule::head("mailbox", 14),
-        widths::ColRule::tail("runtime", 8),
-        widths::ColRule::head("active", 9),
-    ];
-    if wide {
-        rules.push(widths::ColRule::tail("tenant", 8));
-    }
-    let cols = widths::columns(&rules, &mut rows, vw - widths::BLOCK_CHROME);
-    let table = Table::new(cols)
-        .rows(rows)
-        .selection(sel)
-        .on_activate(on_activate)
-        .layout(LayoutStyle::default().grow(1.0))
-        .element(cx, t)
-        .autofocus()
-        .build();
-    // Space is the switch key (the Table would alias it to activation):
-    // caught on the way down, before the Table sees it.
-    Element::new()
-        .style(LayoutStyle::column().grow(1.0))
-        .on(abstracttui::ui::Phase::Capture, move |ectx, ev| {
-            if let abstracttui::ui::UiEvent::Key(k) = ev {
-                if k.key == Key::Char(' ') && k.mods.0 == 0 {
-                    on_space();
-                    ectx.stop_propagation();
-                }
-            }
-        })
-        .child(table)
-        .build()
 }
 
 fn entities_table(

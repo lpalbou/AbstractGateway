@@ -9,6 +9,8 @@
 //! entity-manage sub-forms and the runtimes/reservations actions are
 //! proven live by scripts/pty_smoke.py rather than headless.
 
+mod accounts_fixture;
+
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -73,6 +75,10 @@ fn harness_sized(size: Size) -> Harness {
     let screens_out = screens_slot.clone();
     app.mount(move |cx| {
         let store = Store::create(cx);
+        // DESIGN-v2 §2: the Accounts table reads `/admin/accounts`. These
+        // suites seed the users registry and the entity roster; derive
+        // the §6 accounts reply from them (tests/accounts_fixture).
+        accounts_fixture::mirror(cx, store);
         *store_out.borrow_mut() = Some(store);
         let ui_state = UiState::create(cx, "http://127.0.0.1:8080".to_string(), String::new());
         *ui_out.borrow_mut() = Some(ui_state);
@@ -208,6 +214,19 @@ impl Harness {
     fn connect_as_admin(&mut self) {
         self.store.conn.set(ConnPhase::Connected(admin_identity()));
         self.turn();
+    }
+
+    /// Select the Accounts row `id` (DESIGN-v2 §2: entity keys act on
+    /// the selected row of the one table).
+    fn select_account(&mut self, id: &str) {
+        self.turns(1);
+        let idx = self
+            .store
+            .accounts
+            .with_untracked(|d| d.ready().and_then(|r| r.iter().position(|a| a.id == id)))
+            .unwrap_or_else(|| panic!("no account {id:?}"));
+        self.ui.account_sel.set(idx);
+        self.turns(2);
     }
 
     fn goto_screen(&mut self, n: usize) {
@@ -2104,39 +2123,30 @@ fn users_and_entities_render_with_admin_gate() {
         .entities
         .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
     let s = h.turns(2);
+    // DESIGN-v2 §2: ONE table — users and entities, a kind per row.
     assert!(s.contains("alice"), "user row:\n{s}");
-    assert!(s.contains("admin, user"), "roles cell:\n{s}");
-    // The partition (operator complaint 2026-07-25): entity principals
-    // NEVER render as user rows — they are counted in the teaching
-    // line and managed through the entities lane (rotate/delete cannot
-    // target what is not rendered).
+    assert!(s.contains("Admin"), "kind chip of the admin:\n{s}");
+    assert!(
+        s.contains("testor") && s.contains("Entity"),
+        "entity row:\n{s}"
+    );
+    // Entity principals of the registry are never shown as USERS: the
+    // gateway lists each entity once, as an entity.
     assert!(
         !s.contains("castorp") && !s.contains("hypnosp"),
-        "entity principals hidden from the users table:\n{s}"
+        "no registry entity principal as a user row:\n{s}"
     );
-    assert!(
-        s.contains("2 entities also hold their own access tokens"),
-        "partition teaching line with count:\n{s}"
-    );
-    assert!(s.contains("Testor"), "entity row:\n{s}");
-    assert!(s.contains("asleep"), "entity state:\n{s}");
-    assert!(s.contains("q:3 p:0 i:7"), "drives summary:\n{s}");
-    // Entities are summoned, talked to and managed here (web parity) —
-    // the title teaches the keys.
-    assert!(s.contains("m = manage"), "manage affordance:\n{s}");
-    assert!(s.contains("n = summon"), "summon affordance:\n{s}");
-    assert!(s.contains("c = talk"), "talk affordance:\n{s}");
-    // Selecting a row keeps its manage snapshot warm; the inline strip
-    // became the right Drawer — `i` teaches and toggles it.
+    assert!(s.contains("kind:"), "kind legend:\n{s}");
+    // Selecting the entity row keeps its manage snapshot warm; `i`
+    // toggles the inspector drawer.
+    h.select_account("testor");
+    let s = h.turns(2);
     assert!(
         h.find_cmd(|c| matches!(c, Cmd::LoadEntityDetail { .. }))
             .is_some(),
         "selection-driven detail load fired"
     );
-    assert!(
-        s.contains("i inspects the selected entity"),
-        "drawer teaching line:\n{s}"
-    );
+    assert!(s.contains("m manage"), "the entity row's keys:\n{s}");
     h.type_text("i");
     let s = h.turns(3);
     assert!(s.contains("Entity inspector"), "drawer open:\n{s}");
@@ -2163,7 +2173,7 @@ fn forbidden_users_render_admin_hint() {
     h.connect_as_admin();
     h.goto_screen(3);
     h.store
-        .users
+        .accounts
         .set(Loadable::Failed(abstractgateway_console::api::ApiError {
             kind: abstractgateway_console::api::ApiErrorKind::Forbidden,
             message: "admin role required".into(),
@@ -2286,6 +2296,7 @@ fn entity_manage_menu_state_flow_sends_post() {
         .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
     h.turns(2);
 
+    h.select_account("testor");
     // m over the selected entity opens the manage menu.
     h.type_text("m");
     let s = h.turns(2);
@@ -2340,6 +2351,8 @@ fn entity_screen(h: &mut Harness) {
         .entities
         .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
     h.turns(2);
+    // The one Accounts table: entity keys act on the selected row.
+    h.select_account("testor");
 }
 
 /// Recorded `/entities/templates` + `/creation-defaults` shapes.
@@ -2567,7 +2580,7 @@ fn talk_opens_a_visit_sends_turns_and_renders_replies() {
     h.press_escape();
     let s = h.turns(2);
     assert!(!s.contains("Talk — Testor"), "Esc hides the panel:\n{s}");
-    assert!(s.contains("n = summon"), "still on Users & Entities:\n{s}");
+    assert!(s.contains("Accounts — people"), "still on Accounts:\n{s}");
     assert_eq!(
         h.store.entity_chat.get_untracked().chat_id.as_deref(),
         Some("chat_42"),
@@ -2634,6 +2647,7 @@ fn manage_menu_opens_the_identity_card() {
 fn voice_audition_sends_the_unsaved_selection_and_shows_the_file() {
     let mut h = harness_sized(Size::new(110, 40));
     entity_screen(&mut h);
+    h.select_account("testor");
     h.type_text("m");
     h.turns(2);
     // state → substrate → voice.
@@ -2706,6 +2720,7 @@ fn own_time_start_with_blank_fields_sends_the_web_body() {
         .entities
         .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
     h.turns(2);
+    h.select_account("testor");
     h.type_text("m");
     h.turns(2);
     for _ in 0..4 {
@@ -2746,6 +2761,7 @@ fn entity_tool_policy_editor_saves_changed_phases_only() {
     h.turns(2);
 
     // Open the manage menu, walk down to "Tool policy", Enter.
+    h.select_account("testor");
     h.type_text("m");
     h.turns(2);
     for _ in 0..5 {
@@ -4092,8 +4108,8 @@ fn first_run_screens_survive_tight_height() {
     h.goto_screen(3);
     let s = h.turns(3);
     assert!(
-        s.contains("no entities yet — n summons the first one"),
-        "entities empty-state renders (not crushed):\n{s}"
+        s.contains("alice") && s.contains("kind:"),
+        "the accounts table and its legend render (not crushed):\n{s}"
     );
 
     // Review with one journal entry (the operator who did the wizard
@@ -4249,34 +4265,9 @@ fn connection_screen_fits_at_macos_default_80x24() {
 }
 
 /// REG-2 (cycle-3): the entity-partition line is grammatical at n>=2.
-#[test]
-fn entity_partition_line_plural_grammar() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_screen(3);
-    h.store
-        .users
-        .set(Loadable::Ready(users_from_payload(&json!({
-            "users": [
-                {"user_id": "a", "roles": ["entity"], "principal_kind": "entity"},
-                {"user_id": "b", "roles": ["entity"], "principal_kind": "entity"},
-            ]
-        }))));
-    let s = h.turns(2);
-    assert!(
-        s.contains("2 entities also hold their own access tokens"),
-        "plural grammar:\n{s}"
-    );
-    assert!(
-        !s.contains("hold its own"),
-        "no singular-possessive at n>=2:\n{s}"
-    );
-}
-
 // =======================================================================
 // Double-click-to-edit (COMPLAINT A) + runtime→runs follow (COMPLAINT B)
 // =======================================================================
-
 use abstractgateway_console::store::{RunScope, RunsData};
 
 /// SGR mouse press+release at 1-based cell (x, y).
@@ -4705,7 +4696,7 @@ fn double_click_opens_user_editor() {
         "double-click selects then opens the editor:\n{s}"
     );
     assert_eq!(
-        h.ui.user_sel.get_untracked(),
+        h.ui.account_sel.get_untracked(),
         1,
         "first press moved the selection to the clicked row"
     );
@@ -4725,7 +4716,8 @@ fn double_click_opens_entity_manage_menu() {
         .entities
         .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
     let s = h.turns(2);
-    let y = find_row(&s, "Testor");
+    // The Accounts row names the entity by its id (the slug).
+    let y = find_row(&s, "testor");
     double_click_at(&mut h, 4, y);
     let s = h.turns(3);
     assert!(
@@ -10525,7 +10517,7 @@ fn my_email_server_settings_open_by_themselves_when_discovery_finds_nothing() {
 }
 
 #[test]
-fn users_table_has_the_design_columns_and_the_active_switch() {
+fn accounts_table_has_the_design_columns_and_the_active_switch() {
     use abstractgateway_console::worker::operator::{EmailAction, OpCmd};
     let mut h = harness_sized(Size::new(160, 44));
     h.connect_as_admin();
@@ -10540,8 +10532,8 @@ fn users_table_has_the_design_columns_and_the_active_switch() {
         .set(Loadable::Ready(users_from_payload(&users)));
     let s = h.turns(3);
     for col in [
-        "user",
-        "role",
+        "name",
+        "kind",
         "email address",
         "mailbox",
         "runtime",
@@ -10550,12 +10542,11 @@ fn users_table_has_the_design_columns_and_the_active_switch() {
         assert!(s.contains(col), "column {col:?}:\n{s}");
     }
     assert!(!s.contains("enabled"), "no State/enabled column:\n{s}");
-    assert!(s.contains("connected as a@x.io"), "{s}");
+    assert!(s.contains("Connected as a@x.io"), "{s}");
     assert!(
-        s.contains("not allowed for this user"),
-        "the old override:\n{s}"
+        s.contains("[-] You can't deactivate your own account."),
+        "own row unavailable, with the reason:\n{s}"
     );
-    assert!(s.contains("[-] (you)"), "own row unavailable:\n{s}");
     // Own row (admin, selected first): space says why, sends nothing.
     let _ = h.drain_cmds();
     h.type_text(" ");
@@ -10564,7 +10555,9 @@ fn users_table_has_the_design_columns_and_the_active_switch() {
         h.store.notice.get_untracked().as_deref(),
         Some("You can't deactivate your own account.")
     );
-    assert!(h.find_cmd(|c| matches!(c, Cmd::PatchUser { .. })).is_none());
+    assert!(h
+        .find_cmd(|c| matches!(c, Cmd::SetAccountActive { .. }))
+        .is_none());
     // x resets the old override (a one-shot action).
     h.type_text("x");
     h.turns(2);
@@ -10588,17 +10581,22 @@ fn users_table_has_the_design_columns_and_the_active_switch() {
         s.contains("Deactivate alice? They are signed out until you turn"),
         "confirm:\n{s}"
     );
-    assert!(h.find_cmd(|c| matches!(c, Cmd::PatchUser { .. })).is_none());
+    assert!(h
+        .find_cmd(|c| matches!(c, Cmd::SetAccountActive { .. }))
+        .is_none());
     h.key(b"\x1b[A"); // up to "Deactivate" (Cancel is the default)
     h.turns(1);
     h.key(b"\r");
     h.turns(2);
-    match h.find_cmd(|c| matches!(c, Cmd::PatchUser { .. })) {
-        Some(Cmd::PatchUser { user_id, body, .. }) => {
-            assert_eq!(user_id, "alice");
-            assert_eq!(body.0, json!({"enabled": false}));
+    match h.find_cmd(|c| matches!(c, Cmd::SetAccountActive { .. })) {
+        Some(Cmd::SetAccountActive {
+            id, entity, active, ..
+        }) => {
+            assert_eq!(id, "alice");
+            assert!(!entity);
+            assert!(!active);
         }
-        other => panic!("PATCH user, got {other:?}"),
+        other => panic!("PUT /admin/accounts/alice/active, got {other:?}"),
     }
 }
 

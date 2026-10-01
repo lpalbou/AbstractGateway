@@ -267,6 +267,10 @@ pub struct UiState {
     pub provider_sel: Signal<usize>,
     pub route_sel: Signal<usize>,
     pub user_sel: Signal<usize>,
+    /// The Accounts table's selection (users + entities, DESIGN-v2 §2).
+    pub account_sel: Signal<usize>,
+    /// The Logs view's filter chip (index into ACTIVITY_FILTERS).
+    pub activity_filter: Signal<usize>,
     pub entity_sel: Signal<usize>,
     pub runtime_sel: Signal<usize>,
     pub workflow_sel: Signal<usize>,
@@ -373,6 +377,8 @@ impl UiState {
             provider_sel: cx.signal(0),
             route_sel: cx.signal(0),
             user_sel: cx.signal(0),
+            account_sel: cx.signal(0),
+            activity_filter: cx.signal(0),
             entity_sel: cx.signal(0),
             runtime_sel: cx.signal(0),
             workflow_sel: cx.signal(0),
@@ -632,6 +638,9 @@ impl Ctx {
                 if !s.conn.with_untracked(ConnPhase::is_known_non_admin) {
                     s.users.set(Loadable::Loading);
                     self.send(Cmd::LoadUsers);
+                    // The one table (DESIGN-v2 §2): users + entities.
+                    s.accounts.set(Loadable::Loading);
+                    self.send(Cmd::LoadAccounts);
                 }
                 s.entities.set(Loadable::Loading);
                 // The inspector's detail must honor `r`'s "refreshing
@@ -1456,7 +1465,7 @@ fn wizard_goal(screen: usize) -> &'static str {
         1 => "optional — cloud providers only need a key: a adds one; e edits; t tests.",
         2 => "your default model — a applies the recommended set; D downloads all of it.",
         SCREEN_USERS => {
-            "mint a token per app/person that connects (a); skip if the admin token is enough."
+            "a creates a user (their token is shown once); skip if the admin token is enough."
         }
         4 => "nothing to configure — storage inventory; glance and continue.",
         SCREEN_WORKFLOWS => {
@@ -1521,7 +1530,8 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
                 }
                 2 => matches!(store.routes.get(), Loadable::NotAsked),
                 3 => {
-                    (matches!(store.users.get(), Loadable::NotAsked)
+                    ((matches!(store.users.get(), Loadable::NotAsked)
+                        || matches!(store.accounts.get(), Loadable::NotAsked))
                         && !store.conn.with(ConnPhase::is_known_non_admin))
                         || matches!(store.entities.get(), Loadable::NotAsked)
                 }
@@ -2012,19 +2022,22 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     pairs.push(("r", "refresh"));
                 }
                 3 => {
-                    pairs.push(("a", "add user"));
-                    pairs.push(switch::KEY_HINT);
-                    pairs.push(("e", "edit"));
-                    pairs.push(("t", "rotate token"));
-                    pairs.push(("d", "delete"));
+                    // DESIGN-v2 §2: the row's actions, then the header's
+                    // Create user / Create entity.
+                    pairs.push(("space", "Active"));
+                    pairs.push(("@", "email"));
+                    pairs.push(("l", "logs"));
+                    pairs.push(("w", "workspace"));
+                    pairs.push(("t", "rotate"));
                     pairs.push(("m", "manage entity"));
-                    pairs.push(("n", "summon entity"));
+                    pairs.push(("d", "delete"));
+                    pairs.push(("e", "edit user"));
+                    pairs.push(("a", "create user"));
+                    pairs.push(("n", "create entity"));
                     pairs.push(("c", "talk"));
-                    pairs.push(("s", "spark templates"));
                     pairs.push(("i", "inspect"));
+                    pairs.push(("s", "spark templates"));
                     pairs.push(("v", "kept data of deleted users"));
-                    pairs.push(("w", "my workspace policy"));
-                    pairs.push(("@", "my email"));
                     pairs.push(("x", "reset mailbox override"));
                     pairs.push(("r", "refresh"));
                 }

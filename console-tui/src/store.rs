@@ -26,6 +26,11 @@ pub mod operator;
 #[path = "store_email.rs"]
 pub mod email;
 
+/// The Accounts screen (DESIGN-v2 §2): users + entities in one list, and
+/// one account's activity.
+#[path = "store_accounts.rs"]
+pub mod accounts;
+
 /// Remote data honesty: never render a guess.
 #[derive(Clone, Debug, Default)]
 pub enum Loadable<T> {
@@ -1060,6 +1065,9 @@ pub fn users_from_payload(v: &Value) -> UsersData {
 #[derive(Clone, Debug)]
 pub struct EntityRow {
     pub name: String,
+    /// The entity's slug — its registry principal's id (the Accounts
+    /// row id, DESIGN-v2 §2).
+    pub slug: Option<String>,
     /// "awake" | "asleep" | "paused" — the operator-state vocabulary.
     pub state: String,
     /// resting/dreaming/visiting when present — secondary text.
@@ -1082,11 +1090,23 @@ impl EntityRow {
                 .unwrap_or_else(|| "unknown".into()),
             mode: state_obj.and_then(|st| s(st, "mode")),
             handle: s(v, "handle"),
+            slug: s(v, "slug"),
             open_questions: drive("questions", "open"),
             open_problems: drive("problems", "open"),
             open_interests: drive("interests", "open"),
             name,
         })
+    }
+}
+
+impl EntityRow {
+    /// Is this the entity of Accounts row `id`? (Its slug is the registry
+    /// principal's id; an entity row without a slug matches its name.)
+    pub fn is_account(&self, id: &str) -> bool {
+        match &self.slug {
+            Some(slug) => slug == id,
+            None => self.name == id,
+        }
     }
 }
 
@@ -2762,6 +2782,11 @@ pub struct Store {
     /// confirm-gated flow cannot realistically produce.
     pub unload_locked: Signal<Option<(String, String)>>,
     pub users: Signal<Loadable<UsersData>>,
+    /// `GET /admin/accounts`: users and entities in one list (DESIGN-v2 §2).
+    pub accounts: Signal<Loadable<Vec<accounts::AccountRow>>>,
+    /// The activity list open in the Logs view: (account id or "me", the
+    /// filter's `kind=` value, the read).
+    pub activity: Signal<Option<(String, String, Loadable<accounts::ActivityData>)>>,
     pub entities: Signal<Loadable<Vec<EntityRow>>>,
     pub runtimes: Signal<Loadable<Vec<RuntimeRow>>>,
     /// The registered workflow registry: one row per bundle, plus the
@@ -3561,6 +3586,8 @@ impl Store {
             host_poll_gen: cx.signal(0),
             unload_locked: cx.signal(None),
             users: cx.signal(Loadable::default()),
+            accounts: cx.signal(Loadable::default()),
+            activity: cx.signal(None),
             entities: cx.signal(Loadable::default()),
             runtimes: cx.signal(Loadable::default()),
             workflows: cx.signal(Loadable::default()),
@@ -3643,6 +3670,8 @@ impl Store {
             host_state,
             unload_locked,
             users,
+            accounts,
+            activity,
             entities,
             runtimes,
             workflows,
@@ -3698,6 +3727,8 @@ impl Store {
         host_poll_gen.update(|g| *g += 1);
         unload_locked.set(None);
         users.set(Loadable::NotAsked);
+        accounts.set(Loadable::NotAsked);
+        activity.set(None);
         entities.set(Loadable::NotAsked);
         runtimes.set(Loadable::NotAsked);
         workflows.set(Loadable::NotAsked);
