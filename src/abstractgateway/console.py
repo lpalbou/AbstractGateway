@@ -12034,7 +12034,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           }
           buttons.append(btn);
         };
-        add("email", accountButton("Email", { icon: "✉", aria: `Email for ${a.id}` }), () => openAccountEmail(a));
+        if (a.kind === "entity") {
+          // DESIGN-v2 §2.3: an entity's Email opens the modal that says why it has no mailbox
+          // (actions.email.reason), rather than a dead button.
+          const b = accountButton("Email", { icon: "✉", aria: `Email for ${a.id}` });
+          b.setAttribute("data-action", "email");
+          b.onclick = () => openAccountEmail(a);
+          buttons.append(b);
+        } else {
+          add("email", accountButton("Email", { icon: "✉", aria: `Email for ${a.id}` }), () => openAccountEmail(a));
+        }
         add("logs", accountButton("Logs", { icon: "☰", aria: `Activity of ${a.id}` }), () => openAccountLogs(a));
         add("workspace", accountButton("Workspace", { aria: `Workspace policy for ${a.id}`, title: "Where this account's agents may read and write" }), () => (a.kind === "entity"
           ? openEntityManage(a.id)
@@ -12118,7 +12127,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         // plane_for_principal refuses entity principals: mail belongs to a user's runtime plane.
         const p = document.createElement("p");
         p.className = "account-modal-lead";
-        p.textContent = "Entities can't have their own mailbox yet: mailboxes belong to a user's runtime.";
+        const why = accountAction(a, "email");
+        p.textContent = why.reason || (a.mailbox && a.mailbox.reason) || "Entities can't have their own mailbox yet: mailboxes belong to a user's runtime.";
         body.append(p);
       } else if (accountIsOwn(a)) {
         if (a.role === "admin") {
