@@ -169,8 +169,10 @@ it is off by default and your browser remembers it.
   agents may read and write).
 - **Rotate token** issues a new token for a user (the old one stops working at
   once; the new one is shown once). Entities have no token to rotate.
-- **Manage** (entities) opens the entity's lifecycle, substrate, capabilities
-  and prompt; **Talk** is there too.
+- **Manage** (entities) opens the entity's lifecycle, mind and voice,
+  capabilities and prompt; **Talk** is there too. **Mind & voice** uses the
+  shared pickers: **Gateway default** (the gateway's text model and default
+  voice) or its own choice; changes save themselves.
 - **Archive** asks in a row under the account ("Archive alice? They can't sign
   in any more. Their runtime, runs and history are kept; you can unarchive
   later." / for an entity: "It stops acting and never wakes. Its memory, runs

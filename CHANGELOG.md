@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **An entity without its own mind thinks with the gateway's text model.** Opening a visit, a
+  summon or its own time no longer refuses with "no mind substrate chosen". The mind is the entity's
+  own choice when it has one (`substrate.yaml`, set in the console's Manage → Mind & voice or the
+  Entity app), else the gateway's text route (the console's text default, including its endpoint and
+  reasoning). The only refusal left is a gateway with no text model at all: "This gateway has no
+  text model yet: open Setup in the console, choose Use recommended defaults, then try again."
+- **`ABSTRACTGATEWAY_ENTITY_CHAT_*` are removed** (`_PROVIDER`, `_MODEL`, `_BASE_URL`,
+  `_CONTEXT_WINDOW`, `_SHELF_SIZE`). Setting them has no effect. Entity geometry uses its code
+  defaults (context 65536, shelf 50) unless a request asks otherwise.
+- **`GET /api/gateway/entities/{name}/substrate`** returns the entity's own choice (`provider`,
+  `model`, `thinking`, `speculation`; null when it has none), `gateway_default` (the text route),
+  `effective` (what the next visit uses) and `source` (`entity`, `gateway`, or `unset` with a
+  `note`). **`PUT`** accepts `{"clear": true}` (back to the gateway default, recorded in the entity's
+  history) and `speculation` (MTP: `false` or `{"mode": "native_mtp", "num_draft_tokens": N}`),
+  applied to visits and summons.
+- **Console, entity Manage → Mind & voice** uses the kit's shared pickers, the same as the apps:
+  **Gateway default** or **Custom** provider and model (reasoning and MTP for a custom model), and
+  the voice picker with **Gateway default voice**. Changes save themselves.
+
 ### Fixed
 - **`/api/health` answers at once while the gateway warms up.** While a service was being built (the
   eager warm-up after start, or a user's first request), each health probe held the whole server for

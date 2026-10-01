@@ -78,6 +78,20 @@ HTTP (rides the same auth as every `/api/gateway/*` endpoint):
 | GET | `/api/gateway/entities/{name}/replay` | The observable life as a bounded stream (NDJSON): every memory-journal moment (formations, recalls, feelings, belief changes) plus gateway host markers (summons, refused preludes), in one strict sequence. |
 | GET | `/api/gateway/entities/{name}/replay/stream` | The same stream as a live tail (SSE; `Last-Event-ID` resumes exactly). History scrub and realtime are one format — a viewer that renders one renders both. |
 
+### The entity's mind and voice
+
+| Method | Path | What it does |
+|--------|------|--------------|
+| GET | `/api/gateway/entities/{name}/substrate` | Its mind: its own choice (`provider`, `model`, `thinking`, `speculation`; null when it has none), `gateway_default` (the gateway's text route), `effective` (what its next visit thinks with) and `source`: `entity`, `gateway`, or `unset` (the gateway has no text model; `note` says what to do). |
+| PUT | `/api/gateway/entities/{name}/substrate` | Admin. `{provider, model, thinking?, speculation?}` sets its own mind; `{"clear": true}` returns it to the gateway default. Each change is recorded in its history (`substrate_changed`). `speculation` is MTP: `false` (off) or `{"mode": "native_mtp", "num_draft_tokens": N}`. |
+| GET/PUT | `/api/gateway/entities/{name}/voice` | Its voice: `{provider, model, voice}` or `{"clear": true}`; unset, it speaks with the gateway's default voice (`effective`). |
+
+An entity without its own mind thinks with the gateway's text route (the
+console's text default, with its endpoint and reasoning); a request may still
+name a provider and model for one visit. There is no environment variable for
+any of this. The console sets both in **Manage → Mind & voice**, the Entity app
+in **Settings → mind / voice**.
+
 Progressive disclosure: `inspect` shows diary **gists** only. The verbatim
 prose stays in the book and is fetched by the entity itself during a session
 (`DIARY_READ`), never bulk-exported by inspection.
