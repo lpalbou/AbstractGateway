@@ -154,8 +154,8 @@ own account."
   gateway's audit log, newest first, in your local time. The chips **All**,
   **Sign-ins**, **Runs**, **Automations** and **Email** filter the list; a run
   event names its workflow and links to the run in the Observer app (**Open in
-  Observer**, `/apps/observer/#run/<run_id>`); a run started before this
-  version says "Run id not recorded (before this version)" and has no link.
+  Observer**, `/apps/observer/#run/<run_id>`); a run started under a
+  gateway older than 0.10.0 says "Run id not recorded (before this version)" and has no link.
   Notifications say what they were about ("Approval needed", "Job failed",
   "Test notification"). The footer says what the audit log does not
   record (page views and reads, mail received, what agents send with their

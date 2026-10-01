@@ -5428,7 +5428,7 @@ is `ts` in the gateway's local time (ISO 8601 with its offset).
 A run id is created by the run-start route, so it is not in the request path: `POST /runs/start` and
 `POST /runs/schedule` write `run {run_id, workflow, bundle_id, bundle_version, entrypoint, scheduled}` on
 their audit line (`workflow` is the entrypoint's name, else the bundle id). A run event's `detail` is that
-workflow name. A run-start line written before this version has no run id: its `detail` is "Run id not
+workflow name. A run-start line written by a gateway older than 0.10.0 has no run id: its `detail` is "Run id not
 recorded (before this version)" and it has no `run_id` and no `observer_path` (nothing is guessed from
 times). A notification event's `detail` is its kind in words: "Approval needed", "Job failed", "Job
 finished", "Automation result", "Automation failed", "Test notification"; any other kind is shown as
@@ -5673,8 +5673,8 @@ own account."
   gateway's audit log, newest first, in your local time. The chips **All**,
   **Sign-ins**, **Runs**, **Automations** and **Email** filter the list; a run
   event names its workflow and links to the run in the Observer app (**Open in
-  Observer**, `/apps/observer/#run/<run_id>`); a run started before this
-  version says "Run id not recorded (before this version)" and has no link.
+  Observer**, `/apps/observer/#run/<run_id>`); a run started under a
+  gateway older than 0.10.0 says "Run id not recorded (before this version)" and has no link.
   Notifications say what they were about ("Approval needed", "Job failed",
   "Test notification"). The footer says what the audit log does not
   record (page views and reads, mail received, what agents send with their
@@ -9015,6 +9015,10 @@ terminal console is `abstractgateway-console` 0.13.0; its matching changes are i
 - Audit log lines now name who signed in (`signed_in`), the run a start created (`run`), the
   automation and command (`automation`) and the account an administrator changed
   (`account_change`).
+- Account Logs: a run started names its workflow and opens in the Observer (`/runs/start` and
+  `/runs/schedule` record `run {run_id, workflow, bundle_id, bundle_version, entrypoint}` on their
+  audit line; lines written before 0.10.0 say "Run id not recorded (before this version)"), and
+  notification events read "Approval needed", "Job failed" or "Test notification".
 - `GET /api/gateway/bundles` items carry `source` (`shipped`, `published`, `imported`) and
   `description` (the default entrypoint's).
 - `GET /api/gateway/admin/runtime-config`: every default-agent-workflow row carries `interface`,
@@ -9050,6 +9054,8 @@ terminal console is `abstractgateway-console` 0.13.0; its matching changes are i
   https same-origin rule in security.md.
 
 ### Changed
+- New dependency on Python 3.10: `tomli>=1.1` (`python_version < '3.11'`), used to read a checkout's
+  `pyproject.toml` when `GET /api/gateway/bundles` tells shipped workflows from imported ones.
 - Email send limits default to 100 per hour and 1000 per day (were 20 and 100; AbstractCore's
   defaults). A new mailbox no longer stores the defaults, so it follows them; limits a user sets
   (`PUT /me/email/limits`, Advanced in the consoles' email settings) are kept across upgrades. An
@@ -9160,10 +9166,6 @@ terminal console is `abstractgateway-console` 0.13.0; its matching changes are i
   no longer scroll inside the page.
 
 ### Fixed
-- Account Logs: a run started now names its workflow and opens in the Observer (`/runs/start` and
-  `/runs/schedule` record `run {run_id, workflow, bundle_id, bundle_version, entrypoint}` on their audit
-  line; older lines say "Run id not recorded (before this version)"), and notification events say
-  "Approval needed", "Job failed" or "Test notification" instead of their codes.
 - Sign-in by email answers with the real outcome: `no_mailbox` when the account has an email
   address but no mailbox to send the code from (it used to read like "no email address"), and
   `send_failed` when the mail server refused the code or could not be reached (the request waits up
