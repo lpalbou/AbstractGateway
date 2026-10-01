@@ -32,8 +32,12 @@ def released_ui_kit(kit_ui_dir: Path, version: str, dest: Path) -> Optional[Path
     tag = f"v{version}"
     if subprocess.run(["git", "-C", repo, "rev-parse", "--verify", "--quiet", f"refs/tags/{tag}"], capture_output=True).returncode != 0:
         return None
-    # panel-chat rides along: the islands bundle and CSS carry it (mountSandboxChat).
-    archive = subprocess.run(["git", "-C", repo, "archive", tag, "ui-kit", "panel-chat"], capture_output=True)
+    # panel-chat rides along when the tag has it: the islands bundle and CSS
+    # carry it (mountSandboxChat, round 3). Older tags predate it: ui-kit alone.
+    paths = ["ui-kit"]
+    if subprocess.run(["git", "-C", repo, "cat-file", "-e", f"{tag}:panel-chat"], capture_output=True).returncode == 0:
+        paths.append("panel-chat")
+    archive = subprocess.run(["git", "-C", repo, "archive", tag, *paths], capture_output=True)
     if archive.returncode != 0:
         return None
     with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tf:
