@@ -765,6 +765,12 @@ class WorkflowBundleGatewayHost:
     # same file without going through a Gateway route -- is not silently
     # ignored by a running host. See `refresh_capability_defaults_if_config_changed`.
     _capability_defaults_config_signature: Optional[tuple] = None
+    # Whether the agents' tool LISTS carried the email tools when this host was built
+    # (`agent_tools_active` for `email_plane`): re-checked at every run start, so a mailbox
+    # connected, paused, disconnected or (dis)allowed by an admin after the build never
+    # leaves a run without a tool the client lists as enabled (operator report 2026-10-01).
+    email_tools_listed: bool = False
+    email_plane: Any = field(default=None, repr=False, compare=False)
     _lock: Any = field(default_factory=threading.RLock, repr=False, compare=False)
     # Hooks re-applied to every REBUILT runtime before it is published
     # (reload_bundles_from_disk swaps self.runtime for a brand-new instance;
@@ -1795,6 +1801,8 @@ class WorkflowBundleGatewayHost:
             # The store as this host just published it; anything newer on disk
             # is an out-of-band write from the core entry point.
             _capability_defaults_config_signature=_capability_defaults_signature(Path(data_root)),
+            email_tools_listed=bool(email_tools_listed),
+            email_plane=email_plane,
         )
 
     @property
@@ -1991,6 +1999,34 @@ class WorkflowBundleGatewayHost:
             )
         return bool(isinstance(result, dict) and result.get("changed"))
 
+    def email_tools_current(self) -> bool:
+        """True when the agents' tool lists match the email rule NOW (`agent_tools_active`)."""
+
+        plane = getattr(self, "email_plane", None)
+        if plane is None:
+            return True
+        from ..mail.accounts import agent_tools_active
+
+        return bool(agent_tools_active(plane)) == bool(getattr(self, "email_tools_listed", False))
+
+    def ensure_email_tools_current(self) -> bool:
+        """Rebuild the toolsets when the email rule moved since this host was built (a mailbox
+        connected, paused, disconnected, the user's or an admin's switch). Returns True when a
+        rebuild happened. A failing check never blocks a start: the runtime's credential
+        resolver still refuses an unusable account at execution time."""
+
+        try:
+            if self.email_tools_current():
+                return False
+        except Exception:  # noqa: BLE001
+            return False
+        logger.info(
+            "agent email tools moved since this host was built (listed=%s): rebuilding the toolsets",
+            bool(getattr(self, "email_tools_listed", False)),
+        )
+        self.reload_bundles_from_disk()
+        return True
+
     def reload_bundles_from_disk(self) -> Dict[str, Any]:
         """Reload bundles/specs from bundles_dir (best-effort, intended for dev).
 
@@ -2054,6 +2090,8 @@ class WorkflowBundleGatewayHost:
             self.catalog_user_id = new_host.catalog_user_id
             self.catalog_runtime_id = new_host.catalog_runtime_id
             self.catalog_policy_secret = new_host.catalog_policy_secret
+            self.email_tools_listed = new_host.email_tools_listed
+            self.email_plane = new_host.email_plane
         try:
             if old_memory_store is not None and old_memory_store is not getattr(self, "memory_store", None):
                 close = getattr(old_memory_store, "close", None)
@@ -2301,6 +2339,8 @@ class WorkflowBundleGatewayHost:
         interface: Optional[str] = None,
         read_only_mounts: Sequence[str] = (),
     ) -> str:
+        # The agents' tool lists must say the truth about the email tools at THIS start.
+        self.ensure_email_tools_current()
         # flow_id "@default": the gateway default workflow for `interface`
         # (agents.default_workflow), for in-process callers (the Telegram
         # bridge) — the same resolution as POST /runs/start, recorded in the

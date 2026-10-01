@@ -5,6 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Agents get the email tools the client lists.** The agents' tool lists are built with a user's
+  host; only the "Agent email tools" switch rebuilt it, so a mailbox connected, paused or
+  disconnected afterwards — or an administrator's capability change — left a run without
+  `send_email` while Run settings showed it enabled (Mac mini, 2026-10-01). Connect, disconnect,
+  Active and the OAuth finish now reload the caller's host (`tools_reloaded` in their answers), an
+  administrator's capability change reloads every built host, and the host re-checks the rule at
+  every run start and rebuilds when it moved.
+- **A connected mailbox can always send.** Connect stores both legs: a leg the form or the
+  discovery left out is the domain's standard one (`imap.`/`smtp.<domain>`, 993/465 SSL) and the
+  connect test signs in to both — an unreachable outgoing server refuses the connect with its step
+  (`detail.step: smtp`) instead of a "Connected" mailbox whose first send answers "no SMTP (send)
+  settings". A mailbox stored without its SMTP leg reads `mailbox.state: receive_only` (with the
+  reason) and `send_capable: false` on `GET /me/email`, `/admin/users` and `/admin/accounts`.
+- **Session history never crosses sessions — pinned.** `tests/test_gateway_session_history_isolation.py`
+  proves a new session starts with no messages from another session of the same user, of another
+  user, or after a restart, and that nothing of the other session reaches its run vars.
+
 ## [0.10.0] - 2026-10-01
 
 Email settings follow one model across the consoles: your **email address** (where sign-in codes and

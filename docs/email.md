@@ -45,6 +45,13 @@ is empty, the pane's **Mailbox address** is the only address field and connectin
 address; when it is set, the pane reads "Mailbox account: x@y" with **Use a different account**.
 - **HTTP**: `PUT /api/gateway/me/email`.
 
+Connecting stores **both** servers: a leg you leave empty is the domain's standard one (`imap.`/`smtp.<domain>`,
+993/465 SSL, or the one discovery found), and the connect test signs in to both — a mailbox is never connected
+"receive only" by accident; an outgoing server that cannot be reached refuses the connect and names its step. A
+mailbox stored before gateway 0.10.1 without its outgoing server shows **receive only** (reads work, sends do not)
+until you connect it again. Connecting, disconnecting or pausing a mailbox also reloads your workflows, so your
+agents' tool lists follow at once (the host re-checks at every run start as well).
+
 Give the address and the password (or app password). The gateway finds the IMAP and SMTP servers
 from the address — a table of common providers, the domain's own autoconfig file, the Thunderbird
 ISPDB, DNS SRV records, then the domain's MX hosts (AbstractCore's deterministic discovery):
