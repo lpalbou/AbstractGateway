@@ -19,6 +19,7 @@ pub mod audio;
 pub mod health;
 /// The About facts: the vendored AbstractFramework identity descriptor.
 pub mod identity;
+pub mod localtime;
 /// Where is the gateway: flag > ABSTRACTGATEWAY_URL > the local gateway
 /// pointer (~/.abstractframework/gateway.json) > http://127.0.0.1:8080.
 pub mod pointer;

@@ -543,6 +543,26 @@ pub struct MyNotifications {
     pub outbox_text: String,
 }
 
+/// " 3 held by your send limit until 14:05." from the outbox's
+/// `rate_limited {count, cause, resets_at}` (local time); "" when none.
+fn held_text(v: Option<&Value>) -> String {
+    let Some(r) = v.filter(|r| r.is_object()) else {
+        return String::new();
+    };
+    let count = r.get("count").and_then(Value::as_u64).unwrap_or(0);
+    if count == 0 {
+        return String::new();
+    }
+    match r
+        .get("resets_at")
+        .and_then(Value::as_str)
+        .and_then(crate::localtime::local_parts)
+    {
+        Some((_, hm)) => format!(" {count} held by your send limit until {hm}."),
+        None => format!(" {count} held by your send limit."),
+    }
+}
+
 impl MyNotifications {
     pub fn from_value(v: &Value) -> MyNotifications {
         let email = v
@@ -572,10 +592,11 @@ impl MyNotifications {
             to: s(&email, "to"),
             unavailable_reason: s(v, "unavailable_reason"),
             outbox_text: format!(
-                "{} sent, {} waiting, {} failed.{fail}",
+                "{} sent, {} waiting, {} failed.{fail}{held}",
                 n(&ob, "sent").unwrap_or(0),
                 n(&ob, "queued").unwrap_or(0),
-                n(&ob, "failed").unwrap_or(0)
+                n(&ob, "failed").unwrap_or(0),
+                held = held_text(ob.get("rate_limited")),
             ),
         }
     }
@@ -942,8 +963,16 @@ pub fn test_notification_outcome(
 ) -> Result<String, String> {
     match write {
         Ok(v) => {
-            let message = s(v, "message");
             let sent = b(v, "sent").unwrap_or(false);
+            // A send-limit refusal is said from its typed fields so the reset
+            // time is the VIEWER's local time (the gateway's sentence carries
+            // the gateway machine's clock).
+            if !sent && s(v, "reason_code") == "rate_limited" {
+                if let Some(text) = rate_limited_text(v.get("limit")) {
+                    return Err(text);
+                }
+            }
+            let message = s(v, "message");
             match (sent, message.is_empty()) {
                 (true, false) => Ok(message),
                 (true, true) => Ok("Sent.".into()),
@@ -955,6 +984,26 @@ pub fn test_notification_outcome(
         }
         Err(e) => Err(email_error_text(e)),
     }
+}
+
+/// "Not sent: hourly limit reached (20 of 20 this hour) — resets at 14:05."
+/// from `limit {window, limit, used, resets_at}`, the reset in local time.
+/// None when the gateway sent no usable `limit` (its own sentence is used).
+pub fn rate_limited_text(limit: Option<&Value>) -> Option<String> {
+    let l = limit?;
+    let window = l.get("window").and_then(Value::as_str)?;
+    let adj = match window {
+        "hour" => "hourly",
+        "day" => "daily",
+        _ => return None,
+    };
+    let max = l.get("limit").and_then(Value::as_u64)?;
+    let used = l.get("used").and_then(Value::as_u64)?;
+    let resets = l.get("resets_at").and_then(Value::as_str)?;
+    let hm = crate::localtime::local_parts(resets)?.1;
+    Some(format!(
+        "Not sent: {adj} limit reached ({used} of {max} this {window}) \u{2014} resets at {hm}."
+    ))
 }
 
 /// `PUT /me/email/notifications` — one switch at a time.
@@ -1421,12 +1470,31 @@ mod tests {
         let limited = json!({"ok": true, "sent": false, "reason_code": "rate_limited",
             "message": "Not sent: hourly limit reached (20 of 20 this hour) \u{2014} resets at 14:05.",
             "limit": {"window": "hour", "limit": 20, "used": 20, "resets_at": "2026-10-01T14:05:00Z"}});
+        // The reset time is the VIEWER's local time, from the typed fields.
+        let local = crate::localtime::local_hm("2026-10-01T14:05:00Z");
         assert_eq!(
             test_notification_outcome(&Ok(limited)),
-            Err(
-                "Not sent: hourly limit reached (20 of 20 this hour) \u{2014} resets at 14:05."
-                    .into()
-            )
+            Err(format!(
+                "Not sent: hourly limit reached (20 of 20 this hour) \u{2014} resets at {local}."
+            ))
+        );
+        // Without a usable `limit`, the gateway's own sentence.
+        let bare_limit = json!({"ok": true, "sent": false, "reason_code": "rate_limited",
+            "message": "Not sent: limit reached.", "limit": null});
+        assert_eq!(
+            test_notification_outcome(&Ok(bare_limit)),
+            Err("Not sent: limit reached.".into())
+        );
+        // The outbox's held rows say when they go, in local time.
+        let n = MyNotifications::from_value(
+            &json!({"outbox": {"sent": 1, "queued": 3, "failed": 0,
+            "rate_limited": {"count": 3, "cause": "hourly limit", "resets_at": "2026-10-01T14:05:00Z"}}}),
+        );
+        assert!(
+            n.outbox_text
+                .ends_with(&format!(" 3 held by your send limit until {local}.")),
+            "{}",
+            n.outbox_text
         );
         let sent =
             json!({"ok": true, "sent": true, "reason_code": null, "message": "Sent to a@b.test."});

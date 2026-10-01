@@ -239,15 +239,21 @@ pub fn activity_from_payload(v: &Value) -> Result<ActivityData, String> {
     })
 }
 
-/// "14:05" for today, "Sep 30 14:05" for an older day — the web's form.
-/// `ts` is ISO-8601 (`2026-09-30T14:05:12+00:00`); `today` is
-/// `YYYY-MM-DD`. The time is shown as the gateway wrote it.
+/// "14:05" for today, "Sep 30 14:05" for an older day — the web's form,
+/// in the VIEWER's local time. `ts` is ISO-8601 as the gateway writes it
+/// (`2026-09-30T14:05:12+00:00`); `today` is the local `YYYY-MM-DD`
+/// (`localtime::local_today`).
 pub fn activity_time(ts: &str, today: &str) -> String {
-    let (date, rest) = match ts.split_once('T') {
-        Some(p) => p,
-        None => return ts.to_string(),
-    };
-    let hm: String = rest.chars().take(5).collect();
+    match crate::localtime::parse_iso_epoch(ts) {
+        Some(e) => activity_time_at(e, crate::localtime::local_offset(e), today),
+        None => ts.to_string(),
+    }
+}
+
+/// `activity_time` for an instant and a fixed UTC offset (seconds).
+pub fn activity_time_at(epoch: i64, offset: i64, today: &str) -> String {
+    let (date, hm) = crate::localtime::parts_at(epoch, offset);
+    let date = date.as_str();
     if date == today {
         return hm;
     }
@@ -325,13 +331,23 @@ mod tests {
 
     #[test]
     fn activity_time_reads_like_the_web() {
+        let at = |ts: &str| crate::localtime::parse_iso_epoch(ts).unwrap();
         assert_eq!(
-            activity_time("2026-10-01T14:05:09+00:00", "2026-10-01"),
+            activity_time_at(at("2026-10-01T14:05:09+00:00"), 0, "2026-10-01"),
             "14:05"
         );
         assert_eq!(
-            activity_time("2026-09-30T14:05:09+00:00", "2026-10-01"),
+            activity_time_at(at("2026-09-30T14:05:09+00:00"), 0, "2026-10-01"),
             "Sep 30 14:05"
+        );
+        // Local time, not UTC: 23:30 UTC is 01:30 the next day at UTC+2.
+        assert_eq!(
+            activity_time_at(at("2026-09-30T23:30:00Z"), 7200, "2026-10-01"),
+            "01:30"
+        );
+        assert_eq!(
+            activity_time_at(at("2026-09-30T23:30:00Z"), 0, "2026-10-01"),
+            "Sep 30 23:30"
         );
     }
 
