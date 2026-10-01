@@ -153,8 +153,11 @@ own account."
   runs started, automation commands, account changes and email events from the
   gateway's audit log, newest first, in your local time. The chips **All**,
   **Sign-ins**, **Runs**, **Automations** and **Email** filter the list; a run
-  event links to the run in the Observer app (**Open in Observer**,
-  `/apps/observer/#run/<run_id>`). The footer says what the audit log does not
+  event names its workflow and links to the run in the Observer app (**Open in
+  Observer**, `/apps/observer/#run/<run_id>`); a run started before this
+  version says "Run id not recorded (before this version)" and has no link.
+  Notifications say what they were about ("Approval needed", "Job failed",
+  "Test notification"). The footer says what the audit log does not
   record (page views and reads, mail received, what agents send with their
   email tools).
 - **Workspace** opens the account's workspace policy (which folders its agents

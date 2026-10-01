@@ -206,6 +206,10 @@ terminal console is `abstractgateway-console` 0.13.0; its matching changes are i
   no longer scroll inside the page.
 
 ### Fixed
+- Account Logs: a run started now names its workflow and opens in the Observer (`/runs/start` and
+  `/runs/schedule` record `run {run_id, workflow, bundle_id, bundle_version, entrypoint}` on their audit
+  line; older lines say "Run id not recorded (before this version)"), and notification events say
+  "Approval needed", "Job failed" or "Test notification" instead of their codes.
 - Sign-in by email answers with the real outcome: `no_mailbox` when the account has an email
   address but no mailbox to send the code from (it used to read like "no email address"), and
   `send_failed` when the mail server refused the code or could not be reached (the request waits up
