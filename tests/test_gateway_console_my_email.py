@@ -31,8 +31,11 @@ def test_account_page_carries_the_fields_and_words() -> None:
         "my-email-notify-test", "my-email-agent-tools", "my-email-enabled", "my-email-connect-go",
     ):
         assert f'id="{field}"' in html, field
-    for words in ("Recipient rules", "Send limits", "Send a test notification", "Server settings", "Sign in with Google"):
+    # DESIGN-v2 §3: Advanced as plain sentences, servers visible, "Send a test" under Notifications.
+    for words in ("Your agents may send to", "per hour and", "Watch folder", "Send a test", "Incoming mail (IMAP)", "Outgoing mail (SMTP)", "Sign in with Google"):
         assert words in html, words
+    for gone in ("Server settings", "Display name", ">User name<", "Recipient rules", "Send limits"):
+        assert gone not in html.split('id="my-email-section"', 1)[1].split('id="entities-list-section"', 1)[0], gone
     # The password field never pre-fills and is a password input.
     assert re.search(r'id="my-email-password" type="password"', html)
     # Disconnect confirms inline (the viewer has no confirm()).

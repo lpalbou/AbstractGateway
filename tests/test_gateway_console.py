@@ -222,7 +222,8 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert 'id="runtime-artifacts-refresh"' not in console.text
     # ONE toolbar shape on every list tab: compact select + search bar.
     # 5 = the four runtime-tab lists + the Workflows registry list.
-    assert console.text.count('class="list-toolbar"') == 5
+    assert console.text.count('class="list-toolbar"') == 4
+    assert console.text.count('class="list-toolbar workflows-toolbar"') == 1
     assert 'id="runs-search"' in console.text
     assert 'id="runtime-caches-search"' in console.text
     assert 'id="runtime-logs-search"' in console.text

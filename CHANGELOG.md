@@ -112,6 +112,29 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
   turned agent email tools off.").
 
 ### Web console
+- The sidebar is grouped: Accounts; Work (Workflows, Runtimes, Apps); Models (Providers, Models,
+  Engines, Multimodal); System (Resources, Sandbox, Network). A Setup button at the bottom of the
+  sidebar (administrators) opens the setup guide; the flag button in the top bar is gone.
+- Accounts (was "Users & Entities") is one table of users and entities, tinted by kind, with an
+  Active switch on every row (suspend / resume for entities) and the actions Email, Logs, Workspace,
+  Rotate, Manage (entities) and Delete; an action that cannot apply says why in the row. Email opens
+  a dialog (your own row: the full email settings; another user's row: their address only; an
+  entity: why it has no mailbox). Logs opens the account's activity from the audit log, filtered by
+  sign-ins, runs, automations or email.
+- Email settings: the mailbox tabs are IMAP (first and default), Google, Microsoft. The IMAP servers
+  are always visible and filled in as soon as the address has a domain, then replaced by what
+  discovery finds unless you edited them. No user name or display name field (a small link reveals a
+  login field for providers that need one). One editable address field at a time. The mailbox's
+  Active switch sits with its status; "Send a test" sits under Notifications and always answers with
+  a sentence, reset times in your local time. Advanced reads as three sentences.
+- Workflows says what workflows are, lists one row per bundle with its name, what it does, version,
+  source and the apps that use it (expand a row for its versions), and has Show drafts / Show older
+  versions switches. "Default workflow per app" uses plain names with a (?) explanation, applies a
+  choice at once, and warns only about a broken default.
+- The setup guide's model cards name the engine that runs a route ("faster-whisper · base"), with
+  the download as the small detail.
+- On touch screens reading text is never below 14 px: the console's small type steps have a floor
+  there (they were 11-13 px).
 - The sign-in card has one column, one status ("Not signed in", "Signed in as admin", "Token
   refused") and errors under the field that failed ("This token was refused.", "Can't reach the
   gateway at …"). Sign-in by email is one link, **Forgot your token? Email me a sign-in code**: it
