@@ -423,57 +423,68 @@ def test_concurrent_writers_never_lose_a_change(tmp_path: Path) -> None:
 # ------------------------------------------------------------------ console (WUI)
 
 
-def test_console_default_agent_block_renders_and_posts_only_changes() -> None:
-    """The Workflows tab block, on the SHIPPED source: one row per interface,
-    the source pill, what it runs or why it cannot, a select of the
-    gateway's eligible entrypoints, and a save body with the changed rows
-    only ("" = back to the built-in default)."""
+def test_console_default_agent_block_renders_plain_names_and_neutral_states() -> None:
+    """DESIGN-v2 §4.2, on the SHIPPED source: one row per interface with the
+    gateway's plain name, the interface id small, a (?) with the help, a select
+    that applies at once (no Save button), neutral "Clients choose" / "Built in"
+    states, a warning ONLY for a broken row, and interfaces no app asks for
+    folded under "Other workflow types". Never "Not available: ..." walls."""
     from abstractgateway.console import gateway_console_html
     from test_gateway_console_offline import _console_script, _node, _slice_function
 
     html = gateway_console_html()
-    assert 'id="agent-defaults-root"' in html and "Default agent workflow" in html
+    assert 'id="agent-defaults-root"' in html and "Default workflow per app" in html
     source = _console_script()
     assert 'mountAgentDefaults("workflows", $("agent-defaults-root"))' in source
-    assert "function agentDefaultCell(" in source and "Make agent default" in source
+    assert "function agentDefaultCell(" not in source and "Make agent default" not in source
     harness = f"""
 const HTML_ESCAPES = {{"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}};
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] || ch);
-{_slice_function(source, "uiPill")}
-{_slice_function(source, "agentDefaultsBody")}
+{_slice_function(source, "agentDefaultRowMarkup")}
 {_slice_function(source, "agentDefaultsMarkup")}
-const agentDefStore = {{ data: null, error: "", saving: false, saved: null, draft: {{}}, views: new Map() }};
+const agentDefStore = {{ data: null, error: "", saving: false, saved: null, draft: {{}}, views: new Map(), rowSaved: {{}} }};
+const row = (o) => Object.assign({{ source: "default", value: null, available: true, reason: null, default: null, resolved: null, eligible: [], group: "apps", help: "h" }}, o);
 const block = {{
-  label: "Default agent workflow", help: "h",
   default_workflow: {{
-    "abstractcode.agent.v1": {{ value: "coder:code", source: "stored", available: true, reason: null, key: "agents.default_workflow.abstractcode.agent.v1",
-      default: "basic-agent:ba", resolved: {{ workflow_id: "coder@1.1.0:code", name: "Coder" }},
-      eligible: [{{ value: "basic-agent:ba", name: "Basic", bundle_version: "0.0.1", flow_id: "ba" }}, {{ value: "coder:code", name: "Coder", bundle_version: "1.1.0", flow_id: "code" }}] }},
-    "abstractassistant.agent.v1": {{ value: null, source: "default", available: false, key: "agents.default_workflow.abstractassistant.agent.v1",
-      reason: "no host workflow declares abstractassistant.agent.v1; the Assistant uses its built-in orchestrator", default: null, resolved: null, eligible: [] }},
+    "abstractcode.agent.v1": row({{ label: "AbstractCode — chat agent", state: "builtin", default: "basic-agent:ba",
+      eligible: [{{ value: "basic-agent:ba", name: "basic-agent", bundle_version: "0.0.5", flow_id: "ba" }}] }}),
+    "abstractassistant.agent.v1": row({{ label: "Assistant", state: "clients_choose", available: false,
+      reason: "no default is set", eligible: [{{ value: "orch:o", name: "Orchestrator", bundle_version: "0.0.0", flow_id: "o" }}] }}),
+    "abstractcode.coding.v1": row({{ label: "AbstractCode — coding agent", state: "broken", source: "stored", value: "coding-agent:c",
+      reason: "Broken: coding-agent 0.2.8 is no longer installed — pick another or choose Clients choose" }}),
+    "abstractreview.adversarial.v1": row({{ label: "Adversarial review", state: "clients_choose", group: "other", help: "Declared by the adversarial-review workflow; no app asks for it by default." }}),
   }},
 }};
 agentDefStore.data = {{ writable: true, agents: block }};
 const html = agentDefaultsMarkup();
-const out = [];
-out.push({{ k: "html", code: html.includes("coder@1.1.0:code") && html.includes("Saved setting"),
-  assist: html.includes("Not available: no host workflow declares abstractassistant.agent.v1"),
-  none: html.includes("No workflow on this gateway declares this interface."),
-  selected: html.includes('value="coder:code" selected'), save: html.includes("data-agent-defaults-save") }});
-out.push({{ k: "same", body: agentDefaultsBody(block, {{ "abstractcode.agent.v1": "coder:code" }}) }});
-out.push({{ k: "change", body: agentDefaultsBody(block, {{ "abstractcode.agent.v1": "basic-agent:ba" }}) }});
-out.push({{ k: "clear", body: agentDefaultsBody(block, {{ "abstractcode.agent.v1": "" }}) }});
+const other = html.slice(html.indexOf("agent-defaults__other"));
+const warns = (html.match(/tone-warn/g) || []).length;
+const out = {{
+  names: ["AbstractCode — chat agent", "Assistant", "AbstractCode — coding agent"].every((n) => html.includes(n)),
+  ids: html.includes('<code class="agent-default__iface">abstractcode.agent.v1</code>'),
+  help: (html.match(/class="help-q"/g) || []).length,
+  builtin: html.includes("Built in: basic-agent"),
+  clients: html.includes(">Clients choose</p>"),
+  warns, broken: html.includes("Broken: coding-agent 0.2.8 is no longer installed"),
+  notAvailable: html.includes("Not available"),
+  save: html.includes("data-agent-defaults-save") || html.includes(">Save"),
+  otherFolded: other.includes("Other workflow types (1)") && other.includes("Adversarial review"),
+}};
 agentDefStore.data = {{ writable: false, agents: block }};
-out.push({{ k: "readonly", html: agentDefaultsMarkup() }});
-console.log(JSON.stringify(out));
+const ro = agentDefaultsMarkup();
+out.readonly = ro.includes("Only an admin can change these.") && ro.includes(" disabled");
+delete block.default_workflow["abstractcode.agent.v1"].label;
+agentDefStore.data = {{ writable: true, agents: block }};
+const origError = console.error; console.error = () => {{}};
+out.missingLabel = agentDefaultsMarkup().includes("has no label (gateway-api seam");
+console.error = origError;
+console.log(JSON.stringify([out]));
 """
-    rows = {r["k"]: r for r in _node(harness)}
-    assert rows["html"] == {"k": "html", "code": True, "assist": True, "none": True, "selected": True, "save": True}
-    assert rows["same"]["body"] is None
-    assert rows["change"]["body"] == {"agents": {"default_workflow": {CODE: "basic-agent:ba"}}}
-    assert rows["clear"]["body"] == {"agents": {"default_workflow": {CODE: ""}}}
-    ro = rows["readonly"]["html"]
-    assert "data-agent-defaults-save" not in ro and "Only an admin can change these." in ro and " disabled" in ro
+    out = _node(harness)[0]
+    assert out == {
+        "names": True, "ids": True, "help": 4, "builtin": True, "clients": True, "warns": 1, "broken": True,
+        "notAvailable": False, "save": False, "otherFolded": True, "readonly": True, "missingLabel": True,
+    }, out
 
 
 # ------------------------------------------------------------------ telegram bridge

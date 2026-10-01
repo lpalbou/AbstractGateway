@@ -1901,6 +1901,69 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      .table-scroll { max-height: none; }
 	      #tab-users #users-section { border: 0; background: transparent; box-shadow: none; padding: 8px 0 0; }
 	    }
+	    /* ---- Workflows (DESIGN-v2 §4): purpose line, one row per bundle with a plain
+	       name and what it does, expandable versions; per-app defaults below, neutral
+	       unless broken. Nothing is coloured except a broken default and "Deprecated". */
+	    .workflows-purpose { max-width: 72ch; }
+	    .workflows-toolbar { flex-wrap: wrap; align-items: center; }
+	    .workflows-toolbar input[type="search"] { flex: 1 1 260px; min-width: 0; }
+	    .workflows-switch { display: inline-flex; align-items: center; }
+	    .workflows-scroll { max-height: none; }
+	    .workflows-table { width: 100%; }
+	    .workflows-table td { vertical-align: top; }
+	    .workflows-name { min-width: 180px; }
+	    .workflows-name { display: flex; gap: 8px; align-items: flex-start; }
+	    .workflows-name__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+	    .workflows-name__text small { font-size: var(--font-size-md); font-family: var(--font-mono); overflow-wrap: anywhere; }
+	    .workflows-chevron { color: var(--muted); width: 1em; flex: 0 0 auto; }
+	    .workflows-what { max-width: 46ch; color: var(--text); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+	    .workflows-row[aria-expanded="true"] .workflows-what { -webkit-line-clamp: unset; display: table-cell; }
+	    .workflows-version-cell, .workflows-source { white-space: nowrap; }
+	    .workflows-usedby { min-width: 140px; }
+	    .workflows-usedby__item { display: flex; align-items: center; gap: 4px; }
+	    .workflows-usedby__item + .workflows-usedby__item { margin-top: 2px; }
+	    .workflows-actions .actions { flex-wrap: nowrap; }
+	    .workflows-detail > td { background: var(--panel-2, transparent); padding: 10px 14px 14px 36px; }
+	    .workflows-versions { display: flex; flex-direction: column; gap: 12px; }
+	    .workflows-version__head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+	    .workflows-version__head .actions { margin-left: auto; }
+	    .workflows-entry { display: grid; grid-template-columns: minmax(120px, max-content) minmax(0, 1fr) auto; gap: 2px 14px; padding: 4px 0 0 2px; font-size: var(--font-size-base); }
+	    .workflows-entry__name { font-weight: 500; }
+	    .workflows-entry__desc, .workflows-entry__ifaces { color: var(--muted); }
+	    .help-q { display: inline-block; position: relative; }
+	    .help-q > summary { list-style: none; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 600; cursor: pointer; line-height: 1; }
+	    .help-q > summary::-webkit-details-marker { display: none; }
+	    .help-q[open] > summary { color: var(--text); border-color: var(--accent); }
+	    .help-q__text { position: absolute; z-index: 5; left: 0; top: calc(100% + 6px); width: min(320px, 70vw); margin: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-secondary); box-shadow: var(--shadow); color: var(--text); font-size: var(--font-size-md); font-weight: 400; line-height: 1.45; white-space: normal; }
+	    .workflows-defaults { border-top: 1px solid var(--line-soft); padding-top: 18px; margin-top: 8px; }
+	    .workflows-defaults .section-subtitle { margin: 0 0 4px; }
+	    .agent-defaults { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px 18px; }
+	    .agent-defaults__other { grid-column: 1 / -1; }
+	    .agent-defaults__other > summary { margin: 4px 0 8px; }
+	    .agent-defaults__other { display: block; }
+	    .agent-defaults__other .agent-default { margin-bottom: 10px; max-width: 520px; }
+	    .agent-default { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 10px 0; border-top: 1px solid var(--line-soft); }
+	    .agent-default__head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+	    .agent-default__name { font-weight: 500; font-size: var(--font-size-base); }
+	    .agent-default__iface { font-size: var(--font-size-sm); color: var(--muted); background: transparent; border: 0; padding: 0; }
+	    .agent-default__control { display: flex; align-items: center; gap: 8px; min-width: 0; }
+	    .agent-default__control select { flex: 1 1 auto; min-width: 0; max-width: 360px; }
+	    .agent-default__state { margin: 0; color: var(--muted); font-size: var(--font-size-md); }
+	    @media (max-width: 767.98px) {
+	      .workflows-table, .workflows-table tbody, .workflows-table tr, .workflows-table td { display: block; width: 100%; }
+	      .workflows-table thead { display: none; }
+	      .workflows-table tr.workflows-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
+	      .workflows-table tr.workflows-row > td { padding: 0; border: 0; }
+	      .workflows-name { grid-column: 1; }
+	      .workflows-actions { grid-column: 2; grid-row: 1; }
+	      .workflows-what, .workflows-version-cell, .workflows-source, .workflows-usedby { grid-column: 1 / -1; max-width: none; }
+	      .workflows-version-cell::before, .workflows-source::before, .workflows-usedby::before { content: attr(data-label) " · "; color: var(--muted); }
+	      .workflows-usedby { display: flex !important; flex-wrap: wrap; gap: 4px 12px; }
+	      .workflows-detail > td { padding: 8px 0 12px; }
+	      .workflows-entry { grid-template-columns: minmax(0, 1fr); }
+	      .agent-defaults { grid-template-columns: minmax(0, 1fr); }
+	      .help-q > summary { width: 28px; height: 28px; }
+	    }
 	    /* ---- Account email UI (DESIGN-v2 §3): IMAP servers always visible, one row per
 	       server (Server · Port · Security) from 768 px; Advanced as plain sentences. */
 	    .mail-server-row { border: 0; margin: 0; padding: 0; min-width: 0; }
@@ -2145,34 +2208,27 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <div id="tab-workflows" class="tab-panel">
 	        <div class="tab-grid tab-grid-wide">
 	          <div class="tab-stack">
-	            <section id="agent-defaults-section" class="session-only">
+	            <!-- WORKFLOWS (DESIGN-v2 §4): what exists (one row per bundle, plain names and
+	                 what each does), then — secondary — which workflow each app runs by default. -->
+	            <section id="workflows-section" class="session-only workflows-page">
 	              <div class="section-head">
 	                <div>
-	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">★</span><span>Default agent workflow</span></h2>
-	                  <p class="section-note">What “Gateway default” runs in AbstractCode, the Assistant and other clients, for each agent interface.</p>
-	                </div>
-	              </div>
-	              <div id="agent-defaults-root"></div>
-	            </section>
-
-	            <section id="workflows-section" class="session-only">
-	              <div class="section-head">
-	                <div>
-	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">⑂</span><span>Workflows</span></h2>
-	                  <p class="section-note">Every workflow registered on this gateway. Click a row to see its versions and entrypoints. Import installs a <code>.flow</code> bundle; export downloads one back, byte-identical.</p>
+	                  <h2 class="section-title"><span>Workflows</span></h2>
+	                  <p class="section-note workflows-purpose">Workflows are the programs your apps and automations run. They come in bundles (.flow files): some ship with the gateway, others you import or publish from AbstractFlow.</p>
 	                </div>
 	                <button id="workflows-refresh" class="secondary icon-only" title="Reload the workflow registry" aria-label="Refresh workflows"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
 	              </div>
-	              <div class="list-toolbar">
-	                <input id="workflows-search" type="search" placeholder="Search workflows — id, entrypoint, description">
-	                <label class="entity-checkbox"><input id="workflows-show-drafts" type="checkbox"> show draft versions</label>
-	                <button id="workflows-import" class="secondary" type="button" title="Install a .flow bundle">Import…</button>
+	              <div class="list-toolbar workflows-toolbar">
+	                <input id="workflows-search" type="search" placeholder="Search by name, description or id" aria-label="Search workflows">
+	                <span id="workflows-drafts-slot" class="workflows-switch"></span>
+	                <span id="workflows-older-slot" class="workflows-switch"></span>
+	                <button id="workflows-import" class="secondary" type="button" title="Install a .flow bundle">Import .flow</button>
 	                <input id="workflows-import-file" type="file" accept=".flow" class="hidden" multiple>
 	              </div>
-	              <div id="workflows-message" class="message"></div>
-	              <div class="table-scroll" id="workflows-scroll">
-	                <table>
-	                  <thead><tr><th>Workflow</th><th>Scope</th><th>Versions</th><th>Latest</th><th>Entrypoints</th><th>Status</th><th>Actions</th></tr></thead>
+	              <div id="workflows-message" class="message" role="status" aria-live="polite"></div>
+	              <div class="table-scroll workflows-scroll" id="workflows-scroll">
+	                <table class="workflows-table">
+	                  <thead><tr><th>Name</th><th>What it does</th><th>Version</th><th>Source</th><th>Used by</th><th><span class="sr-only">Actions</span></th></tr></thead>
 	                  <tbody id="workflows-table"></tbody>
 	                </table>
 	              </div>
@@ -2183,7 +2239,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <div>
 	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">⚠</span><span>Broken workflows</span></h2>
 	                  <p id="workflows-skipped-count" class="section-note"></p>
-	                  <p class="section-note">These bundle files are on disk but the gateway cannot run them, so they do not appear above. Nothing was deleted — fix the cause and reload, or remove them deliberately.</p>
+	                  <p class="section-note">These bundle files are on disk but the gateway cannot run them, so they do not appear in the list. Nothing was deleted — fix the cause and reload, or remove them deliberately.</p>
 	                </div>
 	              </div>
 	              <div class="table-scroll">
@@ -2194,34 +2250,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              </div>
 	            </section>
 
-	            <section id="workflow-detail-section" class="session-only hidden">
+	            <section id="agent-defaults-section" class="session-only workflows-defaults">
 	              <div class="section-head">
 	                <div>
-	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">▷</span><span>Workflow <span id="workflow-detail-name"></span></span></h2>
-	                  <p id="workflow-detail-sub" class="section-note">Versions and entrypoints.</p>
-	                </div>
-	                <button id="workflow-detail-refresh" class="secondary icon-only" title="Reload this workflow" aria-label="Refresh workflow detail"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
-	              </div>
-	              <nav class="entity-subtabs" id="workflow-detail-tabs">
-	                <button id="workflow-subtab-versions" class="entity-subtab active" type="button">Versions</button>
-	                <button id="workflow-subtab-entrypoints" class="entity-subtab" type="button">Entrypoints</button>
-	              </nav>
-	              <div id="workflow-pane-versions">
-	                <div class="table-scroll">
-	                  <table>
-	                    <thead><tr><th>Version</th><th>Channel</th><th>Created</th><th>Entrypoints</th><th>Actions</th></tr></thead>
-	                    <tbody id="workflow-versions-table"></tbody>
-	                  </table>
+	                  <h2 class="section-subtitle">Default workflow per app</h2>
+	                  <p class="section-note">When an app asks for “an agent” without naming a workflow, the gateway runs this one.</p>
 	                </div>
 	              </div>
-	              <div id="workflow-pane-entrypoints" class="hidden">
-	                <div class="table-scroll">
-	                  <table>
-	                    <thead><tr><th>Entrypoint</th><th>Workflow id</th><th>Interfaces</th><th>Description</th><th>Agent default</th></tr></thead>
-	                    <tbody id="workflow-entrypoints-table"></tbody>
-	                  </table>
-	                </div>
-	              </div>
+	              <div id="agent-defaults-root"></div>
 	            </section>
 	          </div>
 	        </div>
@@ -4138,108 +4174,239 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    state.workflowsSkipped = [];
 	    state.selectedWorkflow = "";
 
+	    // DESIGN-v2 §4.1: one row per bundle -- Name (the default entrypoint's name, the
+	    // bundle id small below) · What it does · Version (latest, "+N older") · Source ·
+	    // Used by (plain app names from the interface table, each with a (?)) · Export /
+	    // Delete. A click expands the row: versions, channel, created, entrypoints.
+	    state.workflowsExpanded = new Set();
+	    state.workflowsShowDrafts = false;
+	    state.workflowsShowOlder = false;
+	    const WORKFLOW_SOURCE_TEXT = { shipped: "Shipped with the gateway", imported: "Imported", published: "Published from AbstractFlow" };
+	    function workflowVersionCmp(a, b) {
+	      const pa = String(a || "").split(/[.+-]/).map((x) => (/^\\d+$/.test(x) ? Number(x) : x));
+	      const pb = String(b || "").split(/[.+-]/).map((x) => (/^\\d+$/.test(x) ? Number(x) : x));
+	      for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+	        const x = pa[i]; const y = pb[i];
+	        if (x === undefined) return -1;
+	        if (y === undefined) return 1;
+	        if (x === y) continue;
+	        if (typeof x === "number" && typeof y === "number") return x - y;
+	        return String(x).localeCompare(String(y));
+	      }
+	      return 0;
+	    }
+	    function workflowInterfaceInfo(iface) {
+	      const rows = (agentDefStore.data && agentDefStore.data.agents && agentDefStore.data.agents.default_workflow) || {};
+	      return rows[iface] || null;
+	    }
 	    function workflowRows() {
-	      // One row per bundle_id. /bundles returns one item per (bundle,
-	      // version) when all_versions is on, so the fold happens here and the
-	      // published/draft split is counted, never guessed.
 	      const byId = new Map();
 	      for (const it of state.workflows) {
 	        const id = String(it.bundle_id || "");
 	        if (!id) continue;
 	        let row = byId.get(id);
 	        if (!row) {
-	          row = {
-	            bundle_id: id, scope: String(it.registry_scope || "private"),
-	            published: 0, draft: 0, versions: [], entrypoints: 0,
-	            latest: String(it.latest_published_version || ""),
-	            deprecated: false, is_default: false,
-	          };
+	          row = { bundle_id: id, versions: [], deprecated: false };
 	          byId.set(id, row);
 	        }
-	        if (it.is_draft) row.draft += 1; else row.published += 1;
 	        row.versions.push(it);
-	        row.entrypoints = Math.max(row.entrypoints, (it.entrypoints || []).length);
-	        if ((it.entrypoints || []).some((e) => e && e.deprecated)) row.deprecated = true;
-	        if (!row.latest && it.latest_published_version) row.latest = String(it.latest_published_version);
+	      }
+	      for (const row of byId.values()) {
+	        row.versions.sort((a, b) => workflowVersionCmp(b.bundle_version, a.bundle_version));
+	        const latestId = row.versions.find((v) => !v.is_draft) || row.versions[0];
+	        row.latest = latestId;
+	        const eps = latestId.entrypoints || [];
+	        const def = eps.find((e) => e && e.flow_id === latestId.default_entrypoint) || eps[0] || {};
+	        row.name = String(def.name || row.bundle_id);
+	        if (typeof latestId.description !== "string") {
+	          console.error(`AbstractGateway console: GET /bundles item ${row.bundle_id} has no description (gateway-api seam, DESIGN-v2 §6).`);
+	        }
+	        row.description = typeof latestId.description === "string" ? latestId.description : "";
+	        row.source = latestId.source;
+	        row.deprecated = eps.length > 0 && eps.every((e) => e && e.deprecated);
+	        const ifaces = [];
+	        for (const e of eps) for (const i of (e && e.interfaces) || []) if (!ifaces.includes(i)) ifaces.push(i);
+	        row.interfaces = ifaces;
 	      }
 	      const needle = String($("workflows-search").value || "").trim().toLowerCase();
 	      let rows = [...byId.values()];
 	      if (needle) {
-	        rows = rows.filter((r) => {
-	          if (r.bundle_id.toLowerCase().includes(needle)) return true;
-	          return r.versions.some((v) => (v.entrypoints || []).some((e) =>
-	            String(e.flow_id || "").toLowerCase().includes(needle)
-	            || String(e.name || "").toLowerCase().includes(needle)
-	            || String(e.description || "").toLowerCase().includes(needle)));
-	        });
+	        rows = rows.filter((r) => r.bundle_id.toLowerCase().includes(needle) || r.name.toLowerCase().includes(needle)
+	          || r.description.toLowerCase().includes(needle)
+	          || r.versions.some((v) => (v.entrypoints || []).some((e) => String(e.name || "").toLowerCase().includes(needle) || String(e.description || "").toLowerCase().includes(needle))));
 	      }
-	      rows.sort((a, b) => a.bundle_id.localeCompare(b.bundle_id));
+	      rows.sort((a, b) => a.name.localeCompare(b.name));
 	      return rows;
 	    }
-
+	    function workflowHelpQ(label, help) {
+	      // A (?) that says what an interface is: a disclosure, so it works on touch too.
+	      const d = document.createElement("details");
+	      d.className = "help-q";
+	      const s = document.createElement("summary");
+	      s.textContent = "?";
+	      s.setAttribute("aria-label", `What is “${label}”?`);
+	      const p = document.createElement("p");
+	      p.className = "help-q__text";
+	      p.textContent = help;
+	      d.append(s, p);
+	      return d;
+	    }
+	    function workflowUsedByCell(row) {
+	      const td = document.createElement("td");
+	      td.className = "workflows-usedby";
+	      td.setAttribute("data-label", "Used by");
+	      if (!row.interfaces.length) { td.textContent = "—"; return td; }
+	      for (const iface of row.interfaces) {
+	        const info = workflowInterfaceInfo(iface);
+	        const item = document.createElement("span");
+	        item.className = "workflows-usedby__item";
+	        if (info && info.label) {
+	          const name = document.createElement("span");
+	          name.textContent = info.label;
+	          item.append(name, workflowHelpQ(info.label, `${info.help || ""} (${iface})`.trim()));
+	        } else {
+	          const code = document.createElement("code");
+	          code.textContent = iface;
+	          item.append(code);
+	        }
+	        td.append(item);
+	      }
+	      return td;
+	    }
+	    function workflowDetailRow(row) {
+	      const tr = document.createElement("tr");
+	      tr.className = "workflows-detail";
+	      const td = document.createElement("td");
+	      td.colSpan = 6;
+	      const versions = state.workflowsShowOlder ? row.versions : [row.latest];
+	      const list = document.createElement("div");
+	      list.className = "workflows-versions";
+	      for (const v of versions) {
+	        const box = document.createElement("div");
+	        box.className = "workflows-version";
+	        const head = document.createElement("div");
+	        head.className = "workflows-version__head";
+	        const title = document.createElement("strong");
+	        title.textContent = String(v.bundle_version || "");
+	        const meta = document.createElement("span");
+	        meta.className = "muted";
+	        meta.textContent = `${v.version_channel || (v.is_draft ? "draft" : "published")} · ${String(v.created_at || "").slice(0, 10)}`;
+	        head.append(title, meta);
+	        const acts = document.createElement("span");
+	        acts.className = "actions";
+	        const ex = document.createElement("button");
+	        ex.type = "button"; ex.className = "secondary small"; ex.textContent = "Export";
+	        ex.setAttribute("aria-label", `Export ${row.name} ${v.bundle_version}`);
+	        ex.onclick = () => exportWorkflow(row.bundle_id, v.bundle_version);
+	        acts.append(ex);
+	        if (state.principal && state.principal.admin) {
+	          const del = document.createElement("button");
+	          del.type = "button"; del.className = "secondary danger small"; del.textContent = "Delete";
+	          del.setAttribute("aria-label", `Delete ${row.name} ${v.bundle_version}`);
+	          del.onclick = () => deleteWorkflow(row.bundle_id, String(v.bundle_version || ""), null);
+	          acts.append(del);
+	        }
+	        head.append(acts);
+	        box.append(head);
+	        for (const ep of v.entrypoints || []) {
+	          const line = document.createElement("div");
+	          line.className = "workflows-entry";
+	          const n = document.createElement("span");
+	          n.className = "workflows-entry__name";
+	          n.textContent = String(ep.name || ep.flow_id || "");
+	          line.append(n);
+	          if (ep.deprecated) { const pill = document.createElement("span"); pill.className = "pill"; pill.textContent = "Deprecated"; line.append(pill); }
+	          const d = document.createElement("span");
+	          d.className = "workflows-entry__desc";
+	          d.textContent = String(ep.description || "");
+	          line.append(d);
+	          const ifs = document.createElement("span");
+	          ifs.className = "workflows-entry__ifaces";
+	          ifs.textContent = (ep.interfaces || []).map((i) => (workflowInterfaceInfo(i) || {}).label || i).join(" · ");
+	          line.append(ifs);
+	          box.append(line);
+	        }
+	        list.append(box);
+	      }
+	      if (!state.workflowsShowOlder && row.versions.length > 1) {
+	        const more = document.createElement("p");
+	        more.className = "section-note";
+	        more.textContent = `${row.versions.length - 1} older version${row.versions.length === 2 ? "" : "s"} — switch on “Show older versions” to see them.`;
+	        list.append(more);
+	      }
+	      td.append(list);
+	      tr.append(td);
+	      return tr;
+	    }
 	    function renderWorkflows() {
 	      const tbody = $("workflows-table");
 	      tbody.textContent = "";
 	      const rows = workflowRows();
-	      const defaultId = String(state.workflowsDefaultId || "");
 	      if (!rows.length) {
 	        const tr = document.createElement("tr");
 	        const td = document.createElement("td");
-	        td.colSpan = 7; td.className = "message";
+	        td.colSpan = 6; td.className = "message";
 	        td.textContent = state.workflows.length ? "No workflow matches this search." : "No workflows registered.";
 	        tr.appendChild(td); tbody.appendChild(tr);
 	      }
 	      for (const row of rows) {
+	        const open = state.workflowsExpanded.has(row.bundle_id);
 	        const tr = document.createElement("tr");
-	        tr.className = "row-selectable";
-	        tr.onclick = () => selectWorkflow(row.bundle_id);
+	        tr.className = "row-selectable workflows-row";
+	        tr.setAttribute("data-bundle", row.bundle_id);
+	        tr.setAttribute("aria-expanded", open ? "true" : "false");
+	        tr.tabIndex = 0;
+	        const toggle = () => selectWorkflow(row.bundle_id);
+	        tr.onclick = toggle;
+	        tr.onkeydown = (ev) => { if (ev && (ev.key === "Enter" || ev.key === " ") && ev.target === tr) { ev.preventDefault(); toggle(); } };
 
 	        const name = document.createElement("td");
-	        const strong = document.createElement("div");
-	        strong.textContent = row.bundle_id;
-	        name.appendChild(strong);
+	        name.className = "workflows-name";
+	        name.innerHTML = `<span class="workflows-chevron" aria-hidden="true">${open ? "▾" : "▸"}</span><span class="workflows-name__text"><strong></strong><small class="muted"></small></span>`;
+	        name.querySelector("strong").textContent = row.name;
+	        name.querySelector("small").textContent = row.bundle_id;
+	        if (row.deprecated) { const pill = document.createElement("span"); pill.className = "pill"; pill.textContent = "Deprecated"; name.querySelector(".workflows-name__text").append(pill); }
 	        tr.appendChild(name);
 
-	        const scope = document.createElement("td");
-	        scope.textContent = row.scope === "private" ? "Registry" : row.scope;
-	        tr.appendChild(scope);
+	        const what = document.createElement("td");
+	        what.className = "workflows-what";
+	        what.setAttribute("data-label", "What it does");
+	        what.textContent = row.description || "—";
+	        if (row.description) what.title = row.description;
+	        tr.appendChild(what);
 
-	        // TWO numbers, always. A single total lies when most of a registry
-	        // is drafts minted one-per-authoring-run.
-	        const versions = document.createElement("td");
-	        versions.textContent = row.draft
-	          ? `${row.published} pub · ${row.draft} draft`
-	          : `${row.published} pub`;
-	        tr.appendChild(versions);
+	        const version = document.createElement("td");
+	        version.className = "workflows-version-cell";
+	        version.setAttribute("data-label", "Version");
+	        const older = row.versions.length - 1;
+	        version.textContent = `${row.latest.bundle_version || "—"}${older > 0 ? ` +${older} older` : ""}`;
+	        tr.appendChild(version);
 
-	        const latest = document.createElement("td");
-	        latest.textContent = row.latest || "— (draft only)";
-	        tr.appendChild(latest);
+	        const source = document.createElement("td");
+	        source.className = "workflows-source";
+	        source.setAttribute("data-label", "Source");
+	        if (!WORKFLOW_SOURCE_TEXT[row.source]) console.error(`AbstractGateway console: GET /bundles item ${row.bundle_id} has no known source (gateway-api seam, DESIGN-v2 §6): ${row.source}`);
+	        source.textContent = WORKFLOW_SOURCE_TEXT[row.source] || "—";
+	        tr.appendChild(source);
 
-	        const eps = document.createElement("td");
-	        eps.textContent = String(row.entrypoints || 0);
-	        tr.appendChild(eps);
-
-	        const status = document.createElement("td");
-	        const bits = [];
-	        if (row.bundle_id === defaultId) bits.push("default");
-	        if (row.deprecated) bits.push("deprecated");
-	        status.textContent = bits.join(" · ") || "—";
-	        tr.appendChild(status);
+	        tr.appendChild(workflowUsedByCell(row));
 
 	        const actions = document.createElement("td");
+	        actions.className = "workflows-actions";
 	        const wrap = document.createElement("div");
 	        wrap.className = "actions";
 	        const exportBtn = document.createElement("button");
-	        exportBtn.className = "secondary";
+	        exportBtn.className = "secondary small";
 	        exportBtn.textContent = "Export";
+	        exportBtn.setAttribute("aria-label", `Export ${row.name}`);
 	        exportBtn.title = "Download the latest version as a .flow file";
-	        exportBtn.onclick = (ev) => { ev.stopPropagation(); exportWorkflow(row.bundle_id, row.latest || (row.versions[0] || {}).bundle_version); };
+	        exportBtn.onclick = (ev) => { ev.stopPropagation(); exportWorkflow(row.bundle_id, row.latest.bundle_version); };
 	        wrap.appendChild(exportBtn);
 	        if (state.principal && state.principal.admin) {
 	          const del = document.createElement("button");
-	          del.className = "secondary danger";
+	          del.className = "secondary danger small";
 	          del.textContent = "Delete";
+	          del.setAttribute("aria-label", `Delete ${row.name}`);
 	          del.title = "Remove every version of this workflow";
 	          del.onclick = (ev) => { ev.stopPropagation(); deleteWorkflow(row.bundle_id, null, row); };
 	          wrap.appendChild(del);
@@ -4247,6 +4414,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        actions.appendChild(wrap);
 	        tr.appendChild(actions);
 	        tbody.appendChild(tr);
+	        if (open) tbody.appendChild(workflowDetailRow(row));
 	      }
 	      renderWorkflowsSkipped();
 	    }
@@ -4335,14 +4503,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("workflows-message").textContent = "Loading…";
 	      $("workflows-message").className = "message";
 	      try {
-	        const drafts = $("workflows-show-drafts").checked ? "1" : "0";
+	        const drafts = state.workflowsShowDrafts ? "1" : "0";
 	        const data = await api(`/api/gateway/bundles?all_versions=true&include_drafts=${drafts}&include_deprecated=true`);
 	        state.workflows = data.items || [];
 	        state.workflowsSkipped = data.skipped || [];
 	        state.workflowsDefaultId = data.default_bundle_id || "";
 	        $("workflows-message").textContent = "";
 	        renderWorkflows();
-	        if (state.selectedWorkflow) selectWorkflow(state.selectedWorkflow);
 	      } catch (err) {
 	        $("workflows-message").textContent = String(err.message || err);
 	        $("workflows-message").className = "message error";
@@ -4350,98 +4517,20 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 
 	    function selectWorkflow(bundleId) {
-	      state.selectedWorkflow = String(bundleId || "");
-	      const rows = workflowRows().filter((r) => r.bundle_id === state.selectedWorkflow);
-	      const row = rows[0];
-	      $("workflow-detail-section").classList.toggle("hidden", !row);
-	      if (!row) return;
-	      $("workflow-detail-name").textContent = row.bundle_id;
-	      $("workflow-detail-sub").textContent = row.draft
-	        ? `${row.published} published, ${row.draft} draft versions.`
-	        : `${row.published} published version(s).`;
-
-	      const vt = $("workflow-versions-table");
-	      vt.textContent = "";
-	      const versions = [...row.versions].sort((a, b) => String(b.bundle_version).localeCompare(String(a.bundle_version)));
-	      for (const v of versions) {
-	        const tr = document.createElement("tr");
-	        for (const value of [v.bundle_version, v.version_channel || (v.is_draft ? "draft" : "published"), v.created_at, String((v.entrypoints || []).length)]) {
-	          const td = document.createElement("td");
-	          td.textContent = String(value || "");
-	          tr.appendChild(td);
-	        }
-	        const actions = document.createElement("td");
-	        const wrap = document.createElement("div");
-	        wrap.className = "actions";
-	        const exportBtn = document.createElement("button");
-	        exportBtn.className = "secondary";
-	        exportBtn.textContent = "Export";
-	        exportBtn.onclick = () => exportWorkflow(row.bundle_id, v.bundle_version);
-	        wrap.appendChild(exportBtn);
-	        if (state.principal && state.principal.admin) {
-	          const del = document.createElement("button");
-	          del.className = "secondary danger";
-	          del.textContent = "Delete";
-	          del.onclick = () => deleteWorkflow(row.bundle_id, String(v.bundle_version || ""), null);
-	          wrap.appendChild(del);
-	        }
-	        actions.appendChild(wrap);
-	        tr.appendChild(actions);
-	        vt.appendChild(tr);
-	      }
-
-	      const et = $("workflow-entrypoints-table");
-	      et.textContent = "";
-	      const latest = versions[0] || {};
-	      for (const ep of latest.entrypoints || []) {
-	        const tr = document.createElement("tr");
-	        for (const value of [ep.name || ep.flow_id, ep.workflow_id, (ep.interfaces || []).join(", ") || "—", ep.description || ""]) {
-	          const td = document.createElement("td");
-	          td.textContent = String(value || "");
-	          tr.appendChild(td);
-	        }
-	        tr.appendChild(agentDefaultCell(row.bundle_id, ep, versions));
-	        et.appendChild(tr);
-	      }
+	      const id = String(bundleId || "");
+	      if (state.workflowsExpanded.has(id)) state.workflowsExpanded.delete(id);
+	      else state.workflowsExpanded.add(id);
+	      renderWorkflows();
 	    }
-
-	    // The "Agent default" cell of an entrypoint row: which interfaces it
-	    // is the gateway default for (any version of this workflow), and for
-	    // an admin one "Make agent default" button per declared interface it
-	    // is not yet the default for. The value saved has no version, so the
-	    // default follows new published versions of this workflow.
-	    function agentDefaultCell(bundleId, ep, versions) {
-	      const td = document.createElement("td");
-	      const isFor = new Set();
-	      for (const v of versions || []) for (const e of v.entrypoints || []) {
-	        if (e && e.flow_id === ep.flow_id) for (const i of e.agent_default_interfaces || []) isFor.add(i);
-	      }
-	      if (isFor.size) {
-	        const tag = document.createElement("span");
-	        tag.className = "pill ok";
-	        tag.textContent = `default: ${[...isFor].join(", ")}`;
-	        td.appendChild(tag);
-	      }
-	      const admin = !!(state.principal && state.principal.admin);
-	      for (const iface of ep.interfaces || []) {
-	        if (!admin || isFor.has(iface) || ep.deprecated) continue;
-	        const b = document.createElement("button");
-	        b.className = "secondary";
-	        b.textContent = (ep.interfaces || []).length > 1 ? `Make agent default (${iface})` : "Make agent default";
-	        b.title = `Save ${bundleId}:${ep.flow_id} as agents.default_workflow.${iface}`;
-	        b.onclick = async (ev) => {
-	          ev.stopPropagation();
-	          const ok = await agentDefaultsMake(iface, `${bundleId}:${ep.flow_id}`);
-	          $("workflows-message").textContent = ok
-	            ? `${bundleId}:${ep.flow_id} is now the gateway default for ${iface}.`
-	            : String((agentDefStore.saved && agentDefStore.saved.text) || "Not saved.");
-	          $("workflows-message").className = ok ? "message ok" : "message error";
-	          await loadWorkflows();
-	        };
-	        td.appendChild(b);
-	      }
-	      if (!td.childNodes.length) td.textContent = "—";
-	      return td;
+	    function mountWorkflowSwitches() {
+	      // Show drafts / Show older versions: kit switches, applied at once.
+	      if ($("workflows-drafts-slot").childNodes.length) return;
+	      const drafts = afSwitchCreate({ id: "workflows-show-drafts", label: "Show drafts", checked: state.workflowsShowDrafts, small: true });
+	      $("workflows-drafts-slot").append(...drafts.nodes);
+	      afSwitchBind(drafts.button, async (next) => { state.workflowsShowDrafts = next; await loadWorkflows(); return next; }, (e) => { $("workflows-message").textContent = emailErrorText(e); $("workflows-message").className = "message error"; });
+	      const older = afSwitchCreate({ id: "workflows-show-older", label: "Show older versions", checked: state.workflowsShowOlder, small: true });
+	      $("workflows-older-slot").append(...older.nodes);
+	      afSwitchBind(older.button, async (next) => { state.workflowsShowOlder = next; renderWorkflows(); return next; }, () => {});
 	    }
 
 	    function exportWorkflow(bundleId, bundleVersion) {
@@ -4505,10 +4594,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        const res = await api(`/api/gateway/bundles/${encodeURIComponent(bundleId)}${qs}`, { method: "DELETE" });
 	        $("workflows-message").textContent = `Removed ${res.removed} file(s) for ${label}.`;
 	        $("workflows-message").className = "message ok";
-	        if (!bundleVersion && state.selectedWorkflow === bundleId) {
-	          state.selectedWorkflow = "";
-	          $("workflow-detail-section").classList.add("hidden");
-	        }
+	        if (!bundleVersion) state.workflowsExpanded.delete(bundleId);
 	        await loadWorkflows();
 	      } catch (err) {
 	        $("workflows-message").textContent = String(err.message || err);
@@ -13948,13 +14034,24 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           pill = uiPill(firstRunCap(view.label), tone, r.evidence || r.instruction || "");
         }
         const canDownload = r.status === "absent" && !(job && (dlActive(job) || job.status === "completed"));
-        const provider = state.providerLabels.get(r.provider) || r.provider || "";
-        return `<article class="ui-card"><div class="ui-card__head"><span class="ui-mark" aria-hidden="true">${esc(copy.mark)}</span>`
+        // DESIGN-v2 §5: the card names the ENGINE that runs the route and its model
+        // ("faster-whisper · base"), AbstractCore's plan `route_provider`/`route_model`;
+        // the download (Hugging Face repo) is a technical detail.
+        if (typeof r.route_provider !== "string" || typeof r.route_model !== "string") {
+          console.error(`AbstractGateway console: the recommended plan row ${r.route} has no route_provider/route_model (core seam, DESIGN-v2 §5).`);
+        }
+        const routeProvider = typeof r.route_provider === "string" ? r.route_provider : r.provider;
+        const routeModel = typeof r.route_model === "string" ? r.route_model : r.artifact;
+        const provider = state.providerLabels.get(routeProvider) || routeProvider || "";
+        const viaDownload = (routeProvider !== r.provider || routeModel !== r.artifact)
+          ? `<li class="ui-advanced">Downloaded as <code>${esc(r.artifact || "")}</code> (${esc(state.providerLabels.get(r.provider) || r.provider || "")})</li>`
+          : "";
+        return `<article class="ui-card" data-route="${esc(r.route || "")}"><div class="ui-card__head"><span class="ui-mark" aria-hidden="true">${esc(copy.mark)}</span>`
           + `<div class="ui-card__titles"><div class="ui-card__title">${esc(copy.title)}</div><span class="ui-card__status">${pill}</span></div></div>`
           + `<div class="ui-card__blurb">${esc(copy.what)}</div>`
           // Mission GG: five rows (head, blurb, body, action row, technical)
           // in an `.is-aligned` grid: every tile's action row at one level.
-          + `<div class="ui-card__body"><ul class="ui-facts"><li><b>${esc(provider)}</b></li><li><code class="ui-ellip" title="${esc(r.artifact || "")}">${esc(r.artifact || "")}</code></li><li class="ui-advanced">Route <code>${esc(r.route || "")}</code></li>${r.tier ? `<li class="ui-advanced">Chosen by memory: ${esc(r.tier)}</li>` : ""}</ul>`
+          + `<div class="ui-card__body"><ul class="ui-facts"><li class="first-run-engine"><b>${esc(provider)}</b> · <span class="ui-ellip" title="${esc(routeModel || "")}">${esc(routeModel || "")}</span></li>${viaDownload}<li class="ui-advanced">Route <code>${esc(r.route || "")}</code></li>${r.tier ? `<li class="ui-advanced">Chosen by memory: ${esc(r.tier)}</li>` : ""}</ul>`
           // AbstractCore's fit estimate doubts the pick: say so on the card
           // (the recommendation itself never switches model on its own).
           + (gpuLimitText(r) ? `<div class="ui-alert tone-info first-run-gpu-limit" role="note"><span>${esc(firstRunCap(gpuLimitText(r)))}</span></div>` : "")
@@ -14654,28 +14751,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // Runs tab loader fires from there. Cache sizes load when the Cache
 	    // tab opens (shared ensureDataHomes cache).
 	    $("tab-button-runtimes").onclick = () => { setActiveTab("runtimes"); loadRuntimes(); };
-	    $("tab-button-workflows").onclick = () => { setActiveTab("workflows"); loadWorkflows(); mountAgentDefaults("workflows", $("agent-defaults-root")); };
+	    $("tab-button-workflows").onclick = () => { setActiveTab("workflows"); mountWorkflowSwitches(); loadWorkflows(); mountAgentDefaults("workflows", $("agent-defaults-root")); };
 	    $("workflows-refresh").onclick = () => loadWorkflows();
-	    $("workflow-detail-refresh").onclick = () => loadWorkflows();
 	    $("workflows-search").oninput = () => renderWorkflows();
-	    $("workflows-show-drafts").onchange = () => loadWorkflows();
 	    $("workflows-import").onclick = () => $("workflows-import-file").click();
 	    $("workflows-import-file").onchange = async (ev) => {
 	      const files = ev.target.files;
 	      await importWorkflows(files);
 	      ev.target.value = "";
-	    };
-	    $("workflow-subtab-versions").onclick = () => {
-	      $("workflow-subtab-versions").classList.add("active");
-	      $("workflow-subtab-entrypoints").classList.remove("active");
-	      $("workflow-pane-versions").classList.remove("hidden");
-	      $("workflow-pane-entrypoints").classList.add("hidden");
-	    };
-	    $("workflow-subtab-entrypoints").onclick = () => {
-	      $("workflow-subtab-entrypoints").classList.add("active");
-	      $("workflow-subtab-versions").classList.remove("active");
-	      $("workflow-pane-entrypoints").classList.remove("hidden");
-	      $("workflow-pane-versions").classList.add("hidden");
 	    };
 	    $("tab-button-providers").onclick = () => setActiveTab("providers");
 	    $("tab-button-defaults").onclick = () => setActiveTab("defaults");
