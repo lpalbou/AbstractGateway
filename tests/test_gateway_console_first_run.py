@@ -372,12 +372,12 @@ if (scenario.name === "claim") {
   if (scenario.expectMount) {
     // The Models / Engines tabs mount on first open, refresh on re-open.
     el("tab-button-catalog").onclick(); await settle();
-    el("tab-button-engines").onclick(); await settle();
+    el("tab-button-providers").onclick(); await settle();
     el("tab-button-catalog").onclick(); await settle();
     const tabModels = mounts.filter((x) => x.id === "catalog-core-root");
     if (tabModels.length !== 1 || tabModels[0].kind !== "models") fail("Models tab did not mount once: " + JSON.stringify(mounts.map((x) => [x.kind, x.id])));
-    if (mounts.some((x) => x.id === "engines-core-root")) fail("the Engines tab renders console cards, it must not mount AbstractCore's table");
-    if (!el("engines-core-root").innerHTML.includes("data-engine-card")) fail("Engines tab shows no engine cards: " + el("engines-core-root").innerHTML);
+    if (mounts.some((x) => x.id === "engines-core-root")) fail("the Providers tab renders engine cards, it must not mount AbstractCore's table");
+    if (!el("engines-core-root").innerHTML.includes("data-engine-card")) fail("Providers tab shows no local provider cards: " + el("engines-core-root").innerHTML);
     if (tabModels[0].refreshed !== 1) fail("re-opening the Models tab must refresh it");
     if (tabModels[0].options.cliPrefix !== "abstractgateway" || tabModels[0].options.apiBase !== "/api/gateway") fail("tab mount options wrong");
     if (!String(el("tab-catalog").className).includes("active")) fail("Models tab panel not active");
@@ -387,7 +387,7 @@ if (scenario.name === "claim") {
     if (!String(history.calls[history.calls.length - 1].url).endsWith("#catalog")) fail("the Models tab did not write its #catalog link: " + JSON.stringify(history.calls.slice(-2)));
   } else {
     el("tab-button-catalog").onclick(); await settle();
-    el("tab-button-engines").onclick(); await settle();
+    el("tab-button-providers").onclick(); await settle();
     if (mounts.length) fail("nothing may mount without the AbstractCore screens");
   }
 }
@@ -472,7 +472,7 @@ def _run(scenario: dict, html: str | None = None) -> subprocess.CompletedProcess
     # Stub elements start with the classes the REAL markup gives them (the
     # wizard backdrop and the Setup button start `hidden`).
     classes = {}
-    for element_id in WIZARD_IDS + ["tab-catalog", "tab-engines"]:
+    for element_id in WIZARD_IDS + ["tab-catalog", "tab-providers"]:
         tag = re.search(r'<[^>]*\bid="%s"[^>]*>' % re.escape(element_id), html)
         cls = re.search(r'\bclass="([^"]*)"', tag.group(0)) if tag else None
         classes[element_id] = cls.group(1) if cls else ""

@@ -2507,7 +2507,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          <section id="local-providers-section" class="session-only">
 	            <div class="section-head">
 	              <div>
-	                <h2 class="section-title"><span class="section-icon" aria-hidden="true">⚙</span><span>Local providers</span></h2>
+	                <h2 class="section-title"><span class="section-icon icon-gear" aria-hidden="true">⚙</span><span>Local providers</span></h2>
 	                <p class="section-note">Engines that run models on this computer: install, start and stop them, browse their models, and set the address the gateway uses to reach their server.</p>
 	              </div>
 	            </div>
@@ -9741,7 +9741,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         const button = document.createElement("button");
         button.type = "button";
         button.className = `provider-preset ${state.activeProviderPreset === item.id ? "active" : ""}`;
-        button.dataset.providerPreset = item.id;
+        button.setAttribute("data-provider-preset", item.id);
         // Its connections, keys as fingerprints only (the table's rule).
         const mine = (state.endpointProfiles || []).filter((p) => p && (p.provider_family || "") === item.id && !LOCAL_CONNECTION_PROFILE_IDS.has(p.id));
         const status = !mine.length ? "Not connected"
@@ -13926,7 +13926,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         // Local providers are the engine CARDS (console_ui.py), not
         // AbstractCore's table: one card per engine, one primary action per
         // state, plus the provider's connection (localProviderExtras).
-        mountEngineCards("providers", $("engines-core-root"), { extra: localProviderExtras });
+        mountEngineCards("providers", $("engines-core-root"), { extra: localProviderExtras, onClick: onLocalProviderClick });
         return;
       }
       if (tab === "catalog") {
@@ -15181,7 +15181,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      ev.target.value = "";
 	    };
 	    $("tab-button-providers").onclick = () => { setActiveTab("providers"); openCoreTab("providers"); };
-	    $("engines-core-root").addEventListener("click", onLocalProviderClick);
 	    $("tab-button-defaults").onclick = () => setActiveTab("defaults");
 	    $("tab-button-sandbox").onclick = () => setActiveTab("sandbox");
 	    // Models: load now, then start the tab-scoped 5s poll (token-guarded —

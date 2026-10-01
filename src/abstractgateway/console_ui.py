@@ -1447,6 +1447,8 @@ CONSOLE_UI_JS = r"""
       if (opts && typeof opts.extra === "function") engineStore.extras.set(key, opts.extra);
       el.onclick = (event) => {
         const b = event && event.target && event.target.closest ? event.target.closest("[data-engine-action]") : null;
+        // A view's own controls inside the cards (the Providers tab's connection buttons).
+        if (!b && opts && typeof opts.onClick === "function") { opts.onClick(event); return; }
         if (!b || b.disabled) return;
         engineAction(b.dataset.engineAction, b.dataset.engine || "", b);
       };
