@@ -1039,6 +1039,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      letter-spacing: 0;
 	      cursor: pointer;
 	    }
+	    /* The confirmation is always the TOP dialog: it opens from inside other dialogs (Summon
+	       from Create entity) and sits earlier in the DOM, so with the same z-index it was painted
+	       UNDER the dialog that asked (the Summon confirm was invisible; adversary F4). */
+	    #confirm-backdrop { z-index: calc(var(--z-connect-modal, 1000) + 50) !important; }
 	    .modal-backdrop {
 	      position: fixed;
 	      inset: 0;
@@ -5430,13 +5434,29 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    // ---- Creation + template modals (progressive disclosure: the page
 	    // shows LISTS; questions appear when the operator asks to create) ----
+	    // Create user dialog: the kit modal behaviour like Email and Logs
+	    // (bindAccountModal -> islands bindModal: Escape, backdrop click, focus trap, focus back
+	    // on the opener). One release per dialog; closing twice is harmless.
+	    const createModalRelease = {};
+	    function bindCreateModal(id, onClose) {
+	      if (createModalRelease[id]) return;
+	      createModalRelease[id] = bindAccountModal($(id), onClose);
+	    }
+	    function releaseCreateModal(id) {
+	      const release = createModalRelease[id];
+	      createModalRelease[id] = null;
+	      if (release) release();
+	    }
 	    function openEntityCreate() {
 	      $("entity-create-message").textContent = "";
-	      $("entity-create-backdrop").classList.remove("hidden");
+	      // The console's confirm-aware modal discipline (_openModal: Escape closes unless the
+	      // Summon confirmation is open above it, backdrop click). Not the kit trap: the Summon
+	      // confirmation is a separate layer the kit's focus trap would steal focus from.
+	      _openModal("entity-create-backdrop", closeEntityCreate);
 	      $("entity-name").focus();
 	    }
 	    function closeEntityCreate() {
-	      $("entity-create-backdrop").classList.add("hidden");
+	      _closeModal("entity-create-backdrop");
 	    }
 	    function openTemplates() {
 	      _fillTemplateSelect($("tpl-select"));
@@ -5485,10 +5505,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("user-create-form").classList.remove("hidden");
 	      $("user-create-done").classList.add("hidden");
 	      $("user-create-backdrop").classList.remove("hidden");
+	      bindCreateModal("user-create-backdrop", closeUserCreate);
 	      $("new-user").focus();
 	    }
 	    function closeUserCreate() {
 	      $("user-create-backdrop").classList.add("hidden");
+	      releaseCreateModal("user-create-backdrop");
 	    }
 
 	    // ---- Manage an existing entity ----
@@ -12889,6 +12911,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (typeof window !== "undefined" && window.document && window.document.getElementById("af-console-islands")) {
         console.error("AbstractGateway console: the abstractuic islands bundle has no bindModal; the account dialog binds Esc and the backdrop itself.");
       }
+      // The node-VM tests' fake document has no event API: nothing to bind there.
+      if (typeof document.addEventListener !== "function") return () => {};
       const onKey = (e) => { if (e && (e.key === "Escape" || e.key === "Esc") && !e.defaultPrevented) { if (e.preventDefault) e.preventDefault(); onClose(); } };
       const onClick = (e) => { if (e && e.target === backdrop) onClose(); };
       document.addEventListener("keydown", onKey, true);
@@ -15605,7 +15629,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("account-email-close").onclick = closeAccountEmail;
 	    $("account-logs-close").onclick = closeAccountLogs;
 	    $("entity-create-cancel").onclick = closeEntityCreate;
-	    $("entity-create-backdrop").onclick = (event) => { if (event.target === $("entity-create-backdrop")) closeEntityCreate(); };
 	    $("open-templates").onclick = openTemplates;
 	    $("templates-close").onclick = closeTemplates;
 	    $("templates-backdrop").onclick = (event) => { if (event.target === $("templates-backdrop")) closeTemplates(); };
