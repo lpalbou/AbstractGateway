@@ -144,6 +144,32 @@ try {
     check((await ownReq) && (await page.textContent("#my-email-registered-title")).trim() === "Your email address", "closing restores the signed-in user's own base and voice");
     await ctx.close();
   }
+  // ---------------------------------------------------------------- Create user + Create entity (adversary F1/F4)
+  {
+    const { ctx, page } = await open(browser, 1440, 900);
+    // F1: Create user closes on Escape (kit modal), focus back on the opener.
+    await page.click("#open-create-user");
+    await page.waitForSelector("#user-create-backdrop:not(.hidden)");
+    await page.keyboard.press("Escape");
+    const cu = await page.evaluate(() => ({ hidden: document.getElementById("user-create-backdrop").classList.contains("hidden"), focus: document.activeElement && document.activeElement.id }));
+    check(cu.hidden && cu.focus === "open-create-user", "Create user closes on Escape and focus returns to its button", cu);
+    // F4: Create entity end to end: open, name, Validate & create, Summon, the row appears.
+    await page.click("#accounts-create-entity", { timeout: 10000 });
+    await page.waitForSelector("#entity-create-backdrop:not(.hidden)");
+    await page.waitForFunction(() => document.getElementById("entity-template").options.length > 0, null, { timeout: 15000 });
+    await page.fill("#entity-name", "Nova");
+    await page.click("#entity-create");
+    await page.waitForSelector("#confirm-backdrop:not(.hidden)", { timeout: 20000 });
+    // The confirmation must be the visible top layer (it was painted under the Create entity dialog).
+    const top = await page.evaluate(() => { const b = document.getElementById("confirm-ok"); const r = b.getBoundingClientRect(); const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2); return Boolean(hit && (hit === b || b.contains(hit))); });
+    check(top, "the Summon confirmation is on top of the Create entity dialog");
+    await page.click("#confirm-ok", { timeout: 10000 });
+    const born = await page.waitForSelector("#users-table tr[data-user='nova']", { timeout: 60000 }).then(() => true, () => false);
+    check(born, "Create entity: open → name → Validate & create → Summon → the row appears", (await page.textContent("#entity-create-message").catch(() => "")) || "");
+    await page.keyboard.press("Escape");
+    check(await page.evaluate(() => document.getElementById("entity-create-backdrop").classList.contains("hidden")), "Create entity closes on Escape");
+    await ctx.close();
+  }
   // ---------------------------------------------------------------- receive only (A20): row + modal status
   {
     const REASON = "No outgoing server: this mailbox is receive only — connect it again to send.";
@@ -182,7 +208,7 @@ try {
     await ctx.close();
   }
 } catch (e) {
-  failures.push(`exception: ${String((e && e.message) || e).split("\n")[0]}`);
+  failures.push(`exception: ${String((e && e.message) || e).split("\n").slice(0, 6).join(" | ")}`);
 } finally {
   await browser.close();
 }
