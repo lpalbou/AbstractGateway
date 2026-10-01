@@ -915,6 +915,50 @@ async def gateway_me_activity(
     )
 
 
+@router.get(
+    "/me/accounts",
+    tags=["accounts"],
+    summary="My accounts: me and the entities I created",
+    description="For any signed-in account: `{accounts: [rows], scope: \"own\"}` with the same row shape as "
+    "`GET /admin/accounts` — your own row and one row per entity YOU created (`created_by`). Other users, and "
+    "entities someone else (or no recorded creator) made, are never listed: an admin sees everything on "
+    "`GET /admin/accounts` (non-admins get 403 there). Actions only an admin can take are unavailable with the "
+    "reason.",
+)
+async def gateway_me_accounts(request: Request) -> Dict[str, Any]:
+    principal = _principal_from_request(request)
+    from ..admin_accounts import list_my_accounts
+
+    return await _off_the_event_loop(list_my_accounts, principal)
+
+
+@router.get(
+    "/me/accounts/{account_id}/activity",
+    tags=["accounts"],
+    summary="Activity of me or an entity I created",
+    description=_ACTIVITY_DESCRIPTION + " `account_id` must be one of your `GET /me/accounts` rows; any other id "
+    "answers 404 (the same as an id that does not exist).",
+)
+async def gateway_me_account_activity(
+    request: Request,
+    account_id: str,
+    limit: int = Query(default=100, ge=1, le=1000),
+    kind: Optional[str] = Query(default=None),
+) -> Dict[str, Any]:
+    principal = _principal_from_request(request)
+    from ..account_activity import account_activity
+    from ..admin_accounts import my_account_ids
+
+    kinds = _activity_kinds(kind)
+    mine = dict(await _off_the_event_loop(my_account_ids, principal))
+    if account_id not in mine:
+        raise HTTPException(
+            status_code=404,
+            detail={"reason_code": "account_not_found", "message": f"There is no account named {account_id!r} on this gateway."},
+        )
+    return await _off_the_event_loop(account_activity, account_id, tenant_id=mine[account_id], limit=limit, kinds=kinds)
+
+
 @router.get("/admin/runtime-config")
 async def gateway_admin_read_runtime_config(request: Request) -> Dict[str, Any]:
     """Admin-gated runtime-config posture (continuum c1550 ask 1; operator
