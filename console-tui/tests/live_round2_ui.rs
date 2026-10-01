@@ -203,8 +203,6 @@ impl Harness {
     }
 }
 
-/// The fake gateway: the recovery routes, then /ping + /me for the token
-
 #[allow(dead_code)]
 impl Harness {
     /// Turn frames until `pred` holds (the worker answers on its thread).
