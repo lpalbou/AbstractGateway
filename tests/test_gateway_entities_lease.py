@@ -33,8 +33,8 @@ _TOKEN = "entity-lease-shared-secret"
 def _gateway_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", _TOKEN)
     # Operator's substrate choice for this suite (scripted LLM is patched in).
-    monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER", "lmstudio")
-    monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL", "test-model")
+    # The gateway text route stands in for the mind (round 3: no env vars).
+    monkeypatch.setattr("abstractgateway.entity_chat.gateway_text_mind", lambda: {"provider": "lmstudio", "model": "test-model", "base_url": None, "reasoning": None})
 
 
 def _spark(name: str = "Castor") -> dict:

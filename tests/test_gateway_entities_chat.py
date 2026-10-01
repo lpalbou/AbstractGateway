@@ -12,6 +12,8 @@ from __future__ import annotations
 import copy
 
 import pytest
+
+from abstractgateway import entity_chat
 from fastapi.testclient import TestClient
 
 pytestmark = pytest.mark.basic
@@ -24,11 +26,8 @@ _TOKEN = "entity-chat-shared-secret"
 @pytest.fixture(autouse=True)
 def _gateway_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", _TOKEN)
-    # Substrate ruling (2026-07-09): NO code default — the operator chooses.
-    # These env vars ARE the operator's choice in this suite (the scripted
-    # LLM factory is patched anyway; the names just satisfy the contract).
-    monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER", "lmstudio")
-    monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL", "test-model")
+    # The gateway text route stands in for the mind (round 3: no env vars).
+    monkeypatch.setattr("abstractgateway.entity_chat.gateway_text_mind", lambda: {"provider": "lmstudio", "model": "test-model", "base_url": None, "reasoning": None})
 
 
 def _spark(name: str = "Castor") -> dict:
@@ -86,32 +85,80 @@ def _install_scripted_llm(monkeypatch: pytest.MonkeyPatch, replies) -> _Scripted
     return llm
 
 
-def test_open_refuses_without_explicit_substrate(monkeypatch: pytest.MonkeyPatch):
-    """Maintainer ruling 2026-07-09 04:26: the operator decides provider +
-    model — NO code default, NO fallback. With neither request body nor
-    operator env carrying a choice, both summon doors refuse loudly."""
-    monkeypatch.delenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER", raising=False)
-    monkeypatch.delenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL", raising=False)
-    _install_scripted_llm(monkeypatch, ["never reached"])
+def test_open_uses_the_gateway_default_then_the_entity_mind_and_refuses_plainly_without_any(monkeypatch: pytest.MonkeyPatch):
+    """Round 3 (operator 2026-10-01): an entity without its own mind thinks
+    with the gateway's text route; its own mind (PUT /substrate) wins; the
+    only refusal left is a gateway with no text model at all, in one plain
+    sentence that names no environment variable."""
+    from abstractgateway.entity_chat import NO_TEXT_MODEL_REFUSAL
+
+    seen: list = []
+
+    def _factory(provider, **kw):
+        seen.append((provider, kw.get("model"), kw.get("base_url")))
+        return _ScriptedLLM(["Reply."])
+
+    monkeypatch.setattr(entity_chat, "_default_llm_factory", _factory)
+    no_route = {"provider": None, "model": None, "base_url": None, "reasoning": None}
+    monkeypatch.setattr("abstractgateway.entity_chat.gateway_text_mind", lambda: dict(no_route))
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
         refused = client.post("/api/gateway/entities/Castor/chat/open", json={})
         assert refused.status_code == 400, refused.text
-        assert "no mind substrate chosen" in refused.json()["detail"]
-        # The grant gate + the awake gate precede the substrate resolve on
-        # the loop path (personal off-by-default c1435; newborn=sleep c1503)
-        # — arm + wake so the substrate refusal is reachable and still loud.
+        assert refused.json()["detail"] == NO_TEXT_MODEL_REFUSAL
+        assert "ABSTRACTGATEWAY" not in refused.json()["detail"]
         assert client.put("/api/gateway/entities/Castor/personal-grant", json={"mode": "until_revoked"}).status_code == 200
         assert client.post("/api/gateway/entities/Castor/state", json={"state": "awake"}).status_code == 200
         loop_refused = client.post("/api/gateway/entities/Castor/loop/start", json={})
         assert loop_refused.status_code == 400, loop_refused.text
-        assert "no mind substrate chosen" in loop_refused.json()["detail"]
-        # An explicit request-body choice opens normally (request > env).
-        opened = client.post(
-            "/api/gateway/entities/Castor/chat/open",
-            json={"provider": "lmstudio", "model": "test-model", "context_window": 32000},
+        assert loop_refused.json()["detail"] == NO_TEXT_MODEL_REFUSAL
+        assert client.post("/api/gateway/entities/Castor/state", json={"state": "asleep"}).status_code == 200
+
+        # The gateway's text route answers for an entity with no mind of its own.
+        monkeypatch.setattr(
+            "abstractgateway.entity_chat.gateway_text_mind",
+            lambda: {"provider": "lmstudio", "model": "route-model", "base_url": "http://10.0.0.9:1234/v1", "reasoning": None},
         )
+        got = client.get("/api/gateway/entities/Castor/substrate").json()
+        assert got["source"] == "gateway" and got["provider"] is None
+        assert got["effective"]["model"] == "route-model"
+        opened = client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})
         assert opened.status_code == 200, opened.text
+        assert opened.json()["mind"] == {"provider": "lmstudio", "model": "route-model", "thinking": None, "source": "gateway"}
+        assert seen[-1] == ("lmstudio", "route-model", "http://10.0.0.9:1234/v1")  # the route's own endpoint
+        assert client.post(
+            f"/api/gateway/entities/Castor/chat/{opened.json()['chat_id']}/close", json={"reflect": False}
+        ).status_code == 200
+
+        # Its own mind wins over the gateway default.
+        put = client.put("/api/gateway/entities/Castor/substrate", json={"provider": "ollama", "model": "own-model"})
+        assert put.status_code == 200, put.text
+        assert put.json()["source"] == "entity"
+        opened2 = client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})
+        assert opened2.status_code == 200, opened2.text
+        assert opened2.json()["mind"]["source"] == "entity"
+        assert seen[-1][:2] == ("ollama", "own-model")
+        assert seen[-1][2] is None  # the route's endpoint belongs to the route's provider only
+        assert client.post(
+            f"/api/gateway/entities/Castor/chat/{opened2.json()['chat_id']}/close", json={"reflect": False}
+        ).status_code == 200
+
+        # Back to the Gateway default (clear): recorded, and the route answers again.
+        cleared = client.put("/api/gateway/entities/Castor/substrate", json={"clear": True})
+        assert cleared.status_code == 200, cleared.text
+        assert cleared.json()["source"] == "gateway" and cleared.json()["provider"] is None
+        opened3 = client.post("/api/gateway/entities/Castor/chat/open", json={"context_window": 32000})
+        assert opened3.json()["mind"]["source"] == "gateway"
+        assert client.post(
+            f"/api/gateway/entities/Castor/chat/{opened3.json()['chat_id']}/close", json={"reflect": False}
+        ).status_code == 200
+        replay = client.get("/api/gateway/entities/Castor/replay?families=host")
+        changes = [
+            __import__("json").loads(line)["payload"]
+            for line in replay.text.splitlines() if line.strip()
+        ]
+        changes = [c for c in changes if c.get("kind") == "substrate_changed"]
+        assert len(changes) == 2, changes
 
 
 def test_chat_open_turn_close_over_http(monkeypatch: pytest.MonkeyPatch):
@@ -177,28 +224,32 @@ def test_chat_open_turn_close_over_http(monkeypatch: pytest.MonkeyPatch):
         assert "summon" in kinds and "session_closed" in kinds
 
 
-def test_open_env_geometry_survives_pasted_junk(monkeypatch: pytest.MonkeyPatch):
-    """Live failure 2026-07-08: a pasted non-breaking space glued
-    SHELF_SIZE=24 to the next export ('24\\xa0ABSTRACTGATEWAY_...=32768') and
-    the parser swallowed it SILENTLY - the operator set the knob and every
-    turn stayed at 6 memories. Malformed values salvage their leading
-    integer LOUDLY; clean values just work."""
+def test_open_geometry_ignores_the_removed_environment_variables(monkeypatch: pytest.MonkeyPatch):
+    """Round 3: ABSTRACTGATEWAY_ENTITY_CHAT_* are gone. Setting them changes
+    nothing: the wide code defaults apply and no warning mentions them."""
     _install_scripted_llm(monkeypatch, ["Reply."])
-    monkeypatch.setenv(
-        "ABSTRACTGATEWAY_ENTITY_CHAT_SHELF_SIZE",
-        "24\xa0ABSTRACTGATEWAY_ENTITY_CHAT_CONTEXT_WINDOW=32768",
-    )
+    monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_SHELF_SIZE", "24")
     monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_CONTEXT_WINDOW", "32768")
+    monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER", "env-provider")
+    monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL", "env-model")
+    monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_BASE_URL", "http://env.invalid:9/v1")
+    seen: list = []
+    real_factory = entity_chat._default_llm_factory
+
+    def _spy(provider, **kw):
+        seen.append((provider, kw.get("model"), kw.get("base_url")))
+        return real_factory(provider, **kw)
+
+    monkeypatch.setattr(entity_chat, "_default_llm_factory", _spy)
     with _client() as client:
         assert client.post("/api/gateway/entities", json={"name": "Castor", "spark": _spark()}).status_code == 201
 
         opened = client.post("/api/gateway/entities/Castor/chat/open", json={})
         assert opened.status_code == 200, opened.text
         body = opened.json()
-        profile = body["budget_profile"]
-        assert profile["shelf_size"] == 24  # salvaged from the glued value
-        assert profile["token_budget"] == round(0.12 * 32768)  # env window, not the 20k floor
-        assert any("malformed" in w for w in body["warnings"])  # loud, never silent
+        assert body["budget_profile"]["shelf_size"] == entity_chat.DEFAULT_ENTITY_CHAT_SHELF_SIZE
+        assert not any("ABSTRACTGATEWAY_ENTITY_CHAT" in w for w in body["warnings"])
+        assert seen and seen[-1] == ("lmstudio", "test-model", None)  # the text route, not the env pair
         assert client.post(
             f"/api/gateway/entities/Castor/chat/{body['chat_id']}/close", json={"reflect": False}
         ).status_code == 200

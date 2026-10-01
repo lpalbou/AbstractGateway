@@ -280,8 +280,8 @@ def test_visit_open_states_a_narrowed_grant_end_to_end(monkeypatch: pytest.Monke
     from fastapi.testclient import TestClient
 
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "pruned-e2e-secret")
-    monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER", "lmstudio")
-    monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL", "scripted-model")
+    # The gateway text route stands in for the mind (round 3: no env vars).
+    monkeypatch.setattr("abstractgateway.entity_chat.gateway_text_mind", lambda: {"provider": "lmstudio", "model": "scripted-model", "base_url": None, "reasoning": None})
 
     from abstractgateway import entity_chat, entity_visits
     from abstractgateway.app import app
@@ -332,8 +332,8 @@ def test_entity_llm_result_never_carries_raw_response_or_reasoning(monkeypatch) 
     from fastapi.testclient import TestClient
 
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", "noraw-secret")
-    monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER", "lmstudio")
-    monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL", "scripted-model")
+    # The gateway text route stands in for the mind (round 3: no env vars).
+    monkeypatch.setattr("abstractgateway.entity_chat.gateway_text_mind", lambda: {"provider": "lmstudio", "model": "scripted-model", "base_url": None, "reasoning": None})
 
     from abstractgateway import entity_chat
     from abstractgateway.app import app

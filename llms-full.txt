@@ -2040,7 +2040,7 @@ the shared set every user can see and run, so changing it requires an admin
 principal.
 
 One check covers every route that writes a registry — `POST /bundles/upload`,
-`DELETE /bundles/{bundle_id}`, `POST /bundles/reload`,
+`POST /bundles/reload`,
 `POST /bundles/{bundle_id}/deprecate`, `POST /bundles/{bundle_id}/undeprecate`
 and `POST /visualflows/{flow_id}/publish` — so a shared workflow cannot be
 replaced through one route while another is restricted. The check runs before
@@ -2051,9 +2051,25 @@ does not exist as well. Since a non-admin account cannot be signed in while user
 registry as `upload`; it is gated on the same rule. Non-admin requests against
 the shared registry return `403`. Read routes are unchanged.
 
-`DELETE /bundles/{bundle_id}` returns `409` for the `basic-agent.flow` the
-gateway verifies at startup: removal has no undo and would prevent the next
-start. Install a replacement bundle first, then remove the old file.
+Workflows are archived, never deleted: `DELETE /bundles/{bundle_id}` answers
+`410` for everyone. `POST /bundles/{bundle_id}/archive` and `/unarchive`
+(optional body `{"bundle_version": "..."}`) hide a bundle from lists and refuse
+its new runs while the file and every past run stay; an admin archives shared
+bundles, a user their own, and bundles that ship with the gateway (including
+`basic-agent`) answer `409`.
+
+### Workflow availability
+
+`PUT /api/gateway/admin/workflows/{bundle_id}/availability` with
+`{"available": false}` (admin only; `403` otherwise) hides a shared workflow
+from non-admins. One rule applies everywhere: `GET /bundles` (the list every
+app picker reads), `GET /bundles/{bundle_id}`, its flows and download, run start,
+scheduling and automation creation (`403` with "This workflow isn't available to
+users on this gateway. Ask an admin."). An app's default workflow keeps running
+for everyone. The setting is stored in
+`<data_dir>/config/workflow_availability.json`; archives in
+`<data_dir>/config/workflow_archive.json` (shared bundles) and
+`<data_dir>/users/<tenant>/<user>/config/workflow_archive.json` (a user's own).
 
 ### Shared workflow catalog
 
@@ -4368,7 +4384,14 @@ Import and export use the same Gateway workspace policy as file helpers:
 workspace roots, mounted roots, ignored paths, and size limits are enforced on
 the server. Browser-local files should be uploaded through
 `POST /api/gateway/attachments/upload`; browser-local file paths are not
-interpreted as Gateway workspace paths. In hosted user-auth mode, server
+interpreted as Gateway workspace paths. An upload belongs to the conversation
+it was uploaded in: a run of another session that references it (any shape —
+`context.attachments`, `context.media`, `attachments`, `media`, a bare id or one naming its
+owner `run_id`) is refused at the start door with 400 `artifact_not_in_session` (and by the
+host for in-process callers), so one conversation's attachment can never reach another's
+model, whatever a client sends. Artifacts a run produced keep the hand-off below: a later
+run, in any session of the same user, may name them by `run_id`. An artifact tagged
+`shared: user` is visible to every session of its owner. In hosted user-auth mode, server
 workspace import/export and `/files/*` helpers require an admin principal. They
 never list, read or write the gateway data folder or the account's credential
 folders (`.ssh`, `.aws`, `Library/Keychains`, ...), even when the workspace root
@@ -5553,7 +5576,7 @@ The sidebar groups the tabs in four sections, in this order:
 | Group | Tab | What it covers |
 |---|---|---|
 | Accounts | **Accounts** | every user and entity in one table: the **Active** switch, email, activity (Logs), workspace policy, token rotation, entity management, and the administrator's **Email for everyone** switches ([below](#accounts)) |
-| Work | **Workflows** | the workflow bundles on this gateway (name, what each does, version, source, the apps that use it), import, export, delete, the default workflow for each app and the **Streamed replies** setting ([below](#workflows)) |
+| Work | **Workflows** | the workflow bundles on this gateway, shared by the gateway or your own (name, what each does, version, source, the apps that use it, availability to users), import, export, open in AbstractFlow, archive, the default workflow for each app and the **Streamed replies** setting ([below](#workflows)) |
 | Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches |
 | Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), plus *Advanced: apps settings* and *Advanced: backlog settings (Continuum)* |
 | Models | **Providers** | **Local providers**: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, **Browse models** and its server connection; **Remote providers**: OpenAI, Anthropic, OpenRouter, Portkey and custom OpenAI-compatible connections with write-only keys (shown as fingerprints); then the **Available Providers** table ([below](#models-and-local-providers)) |
@@ -5688,8 +5711,10 @@ it is off by default and your browser remembers it.
   agents may read and write).
 - **Rotate token** issues a new token for a user (the old one stops working at
   once; the new one is shown once). Entities have no token to rotate.
-- **Manage** (entities) opens the entity's lifecycle, substrate, capabilities
-  and prompt; **Talk** is there too.
+- **Manage** (entities) opens the entity's lifecycle, mind and voice,
+  capabilities and prompt; **Talk** is there too. **Mind & voice** uses the
+  shared pickers: **Gateway default** (the gateway's text model and default
+  voice) or its own choice; changes save themselves.
 - **Archive** asks in a row under the account ("Archive alice? They can't sign
   in any more. Their runtime, runs and history are kept; you can unarchive
   later." / for an entity: "It stops acting and never wakes. Its memory, runs
@@ -5716,26 +5741,51 @@ The **Workflows** tab starts with what workflows are: the programs your apps
 and automations run, packaged as bundles (`.flow` files) that ship with the
 gateway, that you import, or that you publish from AbstractFlow.
 
-The table has one row per bundle:
+The table has one row per bundle, in two groups: **Shared with everyone** (bundles that ship with the gateway and those an admin imported or
+published) and **Mine** (bundles you imported or published yourself; shown only
+when you have some). An admin's own imports are shared, so admins see one group.
+A user sees the shared bundles an admin left available, and their own.
 
 | Column | Shows |
 |---|---|
-| **Name** | the default entrypoint's name, with the bundle id under it, and a **Deprecated** pill when it applies |
+| **Name** | the default entrypoint's name, with the bundle id under it, and **Deprecated** / **Archived** pills when they apply |
 | **What it does** | the default entrypoint's description (the whole text when the row is expanded) |
 | **Version** | the latest version ("+2 older" when there are more; a manifest version 0.0.0 reads "unversioned") |
-| **Source** | "Shipped with the gateway", "Imported" or "Published from AbstractFlow" |
+| **Source** | a badge: "Shipped", "Imported" or "From AbstractFlow" |
 | **Used by** | the plain names of the apps that ask for its interfaces, each with a (?) that explains it, or "No app" |
-| **Actions** | **Export** and **Delete** (administrators) |
+| **Available to users** | (administrators only, shared bundles) a switch; off hides the workflow from users' lists and app pickers |
+| **Actions** | **Export**, **Open** (in AbstractFlow, a new tab) and **Archive** for imported and published bundles |
 
-Click a row to expand it: each version with its channel, date, **Export** and
-**Delete**, and its entrypoints with their names, descriptions and the apps
-that use them. The toolbar has a search field, the switches **Drafts** and
-**Older versions**, and **Import .flow** (administrators). **Delete** asks in
-the row and says how many runs reference the version; for a bundle that ships
-with the gateway it adds that nothing puts it back at the next restart, only
-reinstalling the gateway does. The default framework agent (`basic-agent`)
-cannot be deleted. **Broken workflows** appears only when the gateway refused a
-bundle file: the workflow, the versions affected and why it cannot run.
+Click a row to expand it: each version with its channel, date and the same
+actions, and its entrypoints with their names, descriptions and the apps that
+use them. The toolbar has a search field, the switches **Drafts**, **Older
+versions** and **Show archived**, and **Import .flow**. Everyone can import: a
+user's import lands in **Mine**, an admin's in the shared group.
+
+Workflows are never deleted. **Archive** asks in the row ("Archive … ? It
+disappears from lists and can't start new runs; the file and every past run
+stay on the gateway.") and hides the bundle (or one version); runs and
+automations that already use it keep resuming and replaying. **Show archived**
+lists archived bundles with **Unarchive**. Bundles that ship with the gateway
+have no Archive at all; an admin hides them with **Available to users** instead.
+Admins archive shared bundles; each user archives their own.
+
+**Available to users** (administrators): off hides the workflow from every
+user's lists and app pickers (AbstractCode, the Assistant, AbstractFlow), refuses
+their new runs and automations with "This workflow isn't available to users on
+this gateway. Ask an admin.", and pauses their existing automations on it with
+the reason "Paused: this workflow is no longer available to users — ask an
+admin." Turning it back on does not resume those automations; each user resumes
+their own. Admins always see every workflow, and an app's default workflow
+(**Default workflow per app**) keeps running for everyone even when it is hidden.
+
+**Open** opens the workflow in the visual editor in a new tab
+(AbstractFlow must be running: **Apps > Flow Editor**). A bundle published from
+one of your flows opens that flow; any other bundle opens as an unsaved copy
+titled `<name> · <bundle id>@<version>`, so Save creates your own flow and never
+changes the bundle. **Broken workflows** appears only when the gateway refused a
+bundle file: the workflow, the versions affected and why it cannot run, with
+**Archive** to hide them.
 
 **Default workflow per app** comes next: "When an app asks for "an agent"
 without naming a workflow, the gateway runs this one." One row per interface,
@@ -6097,8 +6147,8 @@ lives inside Review & Test.
   the two): the plain name of each app's interface, what runs ("Clients
   choose", "Built in: …", a workflow, or "Broken"), and the selected row's
   help; `Enter` picks a default and saves it at once, `o` shows **Other
-  workflow types**. Also `t` drafts on/off, `e` export, `d` delete a version,
-  `D` delete every version, `i` import a `.flow` bundle, `L` reload from disk.
+  workflow types**. Also `t` drafts on/off, `e` export, `d` archive a version,
+  `D` archive every version (nothing is deleted), `i` import a `.flow` bundle, `L` reload from disk.
   The per-app defaults are also on Runtimes (*Runtime knobs*).
 - **5 Apps** is the web console's Apps tab: open browser apps signed in,
   install or update them, start and stop them, the desktop Assistant and
@@ -6309,18 +6359,19 @@ removing, deprecating and reloading workflows there require an admin principal.
 Listing and running remain available to every user.
 
 Under hosted user auth each principal also gets its own workflow registry, and
-you can install and remove workflows there without admin rights — the shared
+you can install and archive workflows there without admin rights — the shared
 directory stays visible and read-only alongside it. The rule is ownership: you
 may change the registry you own.
 
 The same check covers every route that writes the registry, including
-`POST /bundles/upload`, `DELETE /bundles/{bundle_id}`, `POST /bundles/reload`
+`POST /bundles/upload`, `POST /bundles/{bundle_id}/archive`, `POST /bundles/reload`
 and `POST /visualflows/{flow_id}/publish`. A non-admin request against the
 shared registry returns `403`.
 
-`basic-agent.flow` is the default framework agent and the gateway verifies it at
-startup, so `DELETE` refuses to remove it and answers `409`. To replace the
-default agent, install the replacement bundle first, then remove the old file.
+Workflows are archived, never deleted (`DELETE /bundles/{bundle_id}` answers
+`410`). Bundles that ship with the gateway, `basic-agent.flow` included, cannot
+be archived either (`409`); an admin hides one from users with the **Available
+to users** switch on the console's Workflows page.
 
 ## Customizing the registry
 
@@ -8982,7 +9033,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **An entity without its own mind thinks with the gateway's text model.** Opening a visit, a
+  summon or its own time no longer refuses with "no mind substrate chosen". The mind is the entity's
+  own choice when it has one (`substrate.yaml`, set in the console's Manage → Mind & voice or the
+  Entity app), else the gateway's text route (the console's text default, including its endpoint and
+  reasoning). The only refusal left is a gateway with no text model at all: "This gateway has no
+  text model yet: open Setup in the console, choose Use recommended defaults, then try again."
+- **`ABSTRACTGATEWAY_ENTITY_CHAT_*` are removed** (`_PROVIDER`, `_MODEL`, `_BASE_URL`,
+  `_CONTEXT_WINDOW`, `_SHELF_SIZE`). Setting them has no effect. Entity geometry uses its code
+  defaults (context 65536, shelf 50) unless a request asks otherwise.
+- **`GET /api/gateway/entities/{name}/substrate`** returns the entity's own choice (`provider`,
+  `model`, `thinking`, `speculation`; null when it has none), `gateway_default` (the text route),
+  `effective` (what the next visit uses) and `source` (`entity`, `gateway`, or `unset` with a
+  `note`). **`PUT`** accepts `{"clear": true}` (back to the gateway default, recorded in the entity's
+  history) and `speculation` (MTP: `false` or `{"mode": "native_mtp", "num_draft_tokens": N}`),
+  applied to visits and summons.
+- **Console, entity Manage → Mind & voice** uses the kit's shared pickers, the same as the apps:
+  **Gateway default** or **Custom** provider and model (reasoning and MTP for a custom model), and
+  the voice picker with **Gateway default voice**. Changes save themselves.
+
+### Fixed
+- **`/api/health` answers at once while the gateway warms up.** While a service was being built (the
+  eager warm-up after start, or a user's first request), each health probe held the whole server for
+  half a second. With the stack supervisor and five apps polling at the same time, probes waited past
+  their 3-second timeout and the apps stopped with "the gateway is not reachable" until the build
+  finished (minutes on a fresh checkout). Health now never waits for a build; it answers
+  `"warming_up": true` (with `runner.building: true`) until the build is done, and `status` stays
+  `healthy`.
+
 ### Added
+- **Rotate your own token.** `POST /api/gateway/me/token/rotate` (any signed-in user) answers your new
+  token once; the old one stops working as soon as it answers, a browser session moves to the new
+  token, and your Logs show "Token rotated". Your own Accounts row offers Rotate token (the web
+  console uses this route for your row; admins keep `PATCH /admin/users/{id}` for other users).
 - Recipient rules in the Email settings (Advanced): "Your agents may send to [Only the Allowed list |
   Anyone not on the Denied list]", an **Always allowed** and an **Always denied** list (addresses
   such as `name@example.com` or domains such as `example.com`, which also cover their subdomains),
@@ -9048,6 +9132,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   address)", never removable) because they are always allowed.
 - Advanced reads "Send at most [100] per hour and [1000] per day." on one line with two small number
   fields (wrapping on phones), and "Watch folder" is a sentence-case label like the others.
+
+### Changed
+
+- Web console, Sandbox: the chat is the AbstractUIC kit's chat (the thread and composer AbstractCode
+  uses), with the standard Attach button, drop and paste to attach, attachment chips that say when an
+  upload failed and why, hold to dictate (when a transcription route is configured) and a speaker on
+  replies (when a voice route is configured). Generated images, audio and video play inline in the
+  thread with a link to the raw file. The output modes, system prompt, reasoning and MTP settings sit
+  above the chat; every mode stays choosable, and one that is not configured says so instead of being
+  greyed out. Each mode still uses its existing gateway endpoint.
+- Web console: **Providers** and **Engines** are one page. The **Providers** tab lists **Local
+  providers** first (one card per local engine: status, Install, Start, Stop, Cancel, Continue,
+  **Browse models**, **Learn more**, and the provider's server connection for Ollama, LM Studio and
+  vLLM), then **Remote providers** (OpenAI, Anthropic, OpenRouter, Portkey, custom
+  OpenAI-compatible, each with its connection state; keys appear as fingerprints only), then the
+  **Available Providers** table as before. **Engines** is no longer in the sidebar; a `#engines`
+  link opens Providers. The terminal console and the API are unchanged.
+- Sends to To, Cc and Bcc, from agent tools and notifications alike, follow the precedence: your own
+  address is allowed, Always denied refuses ("Not sent: x@xxx.gov is on your Always denied list
+  (xxx.gov)."), Always allowed allows, then the mode decides. A notification to your own address is
+  therefore always delivered, also when your lists do not name it.
+- A policy stored by an earlier version keeps its meaning: an allowlist's entries become the Always
+  allowed list, a denylist's entries the Always denied list. The older `{mode, entries}` body is
+  still accepted (`entries` replaces the list the mode uses). Needs the AbstractCore version that
+  adds the two lists.
 - Web console: an entity's **Manage** opens as a dialog over the Accounts page instead of replacing
   it (Esc or a click outside closes it and focus goes back to the entity's row; full screen on
   phones). Awake and Personal time are switches; the mind, voice, tools and prompt settings save
@@ -9057,7 +9166,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Runs now use the base URL set on the text-generation default (`output.text`, stored as `input.text`). Released 0.10.0 saved and showed it, but runs, run summaries, Ask and the sandbox called the provider's built-in address instead (for example LM Studio on `localhost:1234`). The base URL applies to the route's own provider only; an endpoint profile (`endpoint:<id>`) keeps its own address, and nothing changes when the field is empty. Affects 0.10.0; ships in the next release.
-
+- **An attachment never crosses conversations.** A reference to another session's upload — even one
+  naming its owner `run_id`, which the start door used to accept — is refused with a typed 400
+  `artifact_not_in_session` by `POST /runs/start` and by the host for every in-process caller
+  (bridges, entities, automations), so a client bug can no longer send one conversation's screenshot
+  to another conversation's model (Mac mini, 2026-10-01: the Code web form resent the previous
+  conversation's attachment; fixed there too in code web). Uploads (session-memory-owned or tagged
+  `kind: attachment`) are a conversation's own; a run's produced artifacts keep the documented
+  `run_id` hand-off; `shared: user` opens an upload to every session of its owner.
+  `src/abstractgateway/artifact_scope.py`; tests red on removal.
 - **Agents get the email tools the client lists.** The agents' tool lists are built with a user's
   host; only the "Agent email tools" switch rebuilt it, so a mailbox connected, paused or
   disconnected afterwards — or an administrator's capability change — left a run without
@@ -9076,6 +9193,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   user, or after a restart, and that nothing of the other session reaches its run vars.
 - Web console: saving or clearing an entity's voice, and giving or ending a work order, did nothing
   (the page read an entity name that was never set).
+
+- Agents can use the tools of registered MCP servers. An admin turns **Enabled for agents** on for a
+  server whose connection test succeeded (`POST /api/gateway/admin/mcp/servers/{name}/agents`); its
+  tools are then offered to agent runs as `mcp::<server>::<tool>`, listed in `/discovery/tools`
+  (grouped per server, so the Code web and Assistant tool pickers show them) and added to a run
+  started without a tool list. Each call asks for approval unless the run allows all tools. An
+  archived or disabled server offers nothing, and every call checks the registry again. Header
+  values stay in the gateway's secret store and are read only when a call runs; they never reach the
+  run, the ledger or the prompt. A server that fails `initialize` when a run starts is skipped and
+  the run records why (`_runtime.mcp_notes`). A run started by an email from someone else is never
+  offered an MCP tool. Needs the AbstractRuntime MCP facade (`mcp_facade`) and AbstractCore's MCP
+  clients with `initialize()`.
+
+### Changed
+
+- The MCP server registry lives in the gateway's root data folder, also when several users sign in
+  (one registry for every account, the one agent runs read).
+- **Workflow ownership.** The Workflows page groups bundles into **Shared with everyone** and
+  **Mine** (what you imported or published), with a Shipped / Imported / From AbstractFlow badge.
+  `GET /bundles` items carry `owner` (`gateway` or `user`), `shipped`, `available` and `archived`; imports and
+  publishes stamp `metadata.owner` (user, tenant, time). Users can import: the bundle lands in **Mine**.
+- **Available to users** (administrators): a switch per shared workflow, also
+  `PUT /api/gateway/admin/workflows/{bundle_id}/availability`. Off hides it from users' lists and app pickers,
+  refuses their new runs, schedules and automations ("This workflow isn't available to users on this gateway.
+  Ask an admin."), and pauses their existing automations on it with that reason; turning it back on does not
+  resume them. Admins always see every workflow; an app's default workflow keeps running for everyone.
+- **Open** (in AbstractFlow) on every workflow: opens it in the visual editor (AbstractFlow's
+  `?bundle=<id>&version=<v>` link). `GET /bundles/{bundle_id}` also returns `source`, `shipped` and `owner`.
+- Paused automations show why the gateway paused them (`paused_reason` in `GET /automations`).
+
+### Changed
+- **Workflows are archived, never deleted.** **Archive** / **Unarchive** (and **Show archived**) replace Delete
+  on the Workflows page, the terminal console (`d` / `D`) and broken bundle files; `POST /bundles/{bundle_id}/archive`
+  and `/unarchive`. An archived workflow leaves the lists and cannot start new runs; the file and every past run stay,
+  and existing runs and automations keep resuming. Bundles that ship with the gateway can be neither archived nor
+  deleted. `DELETE /bundles/{bundle_id}` now answers `410`.
+
+### Fixed
+- **Import .flow** in the web console works again: the upload was sent as JSON instead of a multipart form, so the
+  gateway refused every file. The Workflows page also keeps the import and archive result sentence on screen
+  after the list reloads.
 
 ## [0.10.0] - 2026-10-01
 
@@ -12600,6 +12758,20 @@ HTTP (rides the same auth as every `/api/gateway/*` endpoint):
 | GET | `/api/gateway/entities/{name}/chat` | Is a visit open on this home right now? (one life, one summon) |
 | GET | `/api/gateway/entities/{name}/replay` | The observable life as a bounded stream (NDJSON): every memory-journal moment (formations, recalls, feelings, belief changes) plus gateway host markers (summons, refused preludes), in one strict sequence. |
 | GET | `/api/gateway/entities/{name}/replay/stream` | The same stream as a live tail (SSE; `Last-Event-ID` resumes exactly). History scrub and realtime are one format — a viewer that renders one renders both. |
+
+### The entity's mind and voice
+
+| Method | Path | What it does |
+|--------|------|--------------|
+| GET | `/api/gateway/entities/{name}/substrate` | Its mind: its own choice (`provider`, `model`, `thinking`, `speculation`; null when it has none), `gateway_default` (the gateway's text route), `effective` (what its next visit thinks with) and `source`: `entity`, `gateway`, or `unset` (the gateway has no text model; `note` says what to do). |
+| PUT | `/api/gateway/entities/{name}/substrate` | Admin. `{provider, model, thinking?, speculation?}` sets its own mind; `{"clear": true}` returns it to the gateway default. Each change is recorded in its history (`substrate_changed`). `speculation` is MTP: `false` (off) or `{"mode": "native_mtp", "num_draft_tokens": N}`. |
+| GET/PUT | `/api/gateway/entities/{name}/voice` | Its voice: `{provider, model, voice}` or `{"clear": true}`; unset, it speaks with the gateway's default voice (`effective`). |
+
+An entity without its own mind thinks with the gateway's text route (the
+console's text default, with its endpoint and reasoning); a request may still
+name a provider and model for one visit. There is no environment variable for
+any of this. The console sets both in **Manage → Mind & voice**, the Entity app
+in **Settings → mind / voice**.
 
 Progressive disclosure: `inspect` shows diary **gists** only. The verbatim
 prose stays in the book and is fetched by the entity itself during a session

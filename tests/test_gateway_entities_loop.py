@@ -30,8 +30,8 @@ def _gateway_auth(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", _TOKEN)
     # Substrate ruling (2026-07-09): NO code default — these env vars are
     # the operator's explicit choice for this suite.
-    monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_PROVIDER", "lmstudio")
-    monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_MODEL", "test-model")
+    # The gateway text route stands in for the mind (round 3: no env vars).
+    monkeypatch.setattr("abstractgateway.entity_chat.gateway_text_mind", lambda: {"provider": "lmstudio", "model": "test-model", "base_url": None, "reasoning": None})
 
 
 def _spark(name: str = "Castor") -> dict:
@@ -185,16 +185,16 @@ def test_loop_start_resolves_attention_defaults_from_env(monkeypatch: pytest.Mon
         assert calls["shelf_size"] == 50
         assert calls["context_window"] == 65536
 
-        # Env overrides the defaults (the operator's knob).
+        # The removed environment variables change nothing (round 3).
         monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_SHELF_SIZE", "32")
         monkeypatch.setenv("ABSTRACTGATEWAY_ENTITY_CHAT_CONTEXT_WINDOW", "131072")
         calls.clear()
         r2 = client.post("/api/gateway/entities/Castor/loop/start", json={})
         assert r2.status_code == 200, r2.text
-        assert calls["shelf_size"] == 32
-        assert calls["context_window"] == 131072
+        assert calls["shelf_size"] == 50
+        assert calls["context_window"] == 65536
 
-        # Request body wins over env — and a sub-recommendation window
+        # Request body wins over the defaults — and a sub-recommendation window
         # STARTS with the labeled soft warning (operator 2026-08-01: 50k is
         # a recommendation, not a wall).
         calls.clear()

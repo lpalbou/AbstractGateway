@@ -165,14 +165,22 @@ try {
     await page.route("**/api/gateway/entities/*/substrate", (route) => (route.request().method() === "PUT"
       ? route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ detail: { reason_code: "test", message: "Refused by the browser test." } }) })
       : route.continue()));
-    await page.fill("#entity-substrate-provider", "lmstudio");
-    await page.fill("#entity-substrate-model", "some/model");
-    await page.locator("#entity-substrate-model").dispatchEvent("change");
+    // The Mind is the kit's shared picker: Custom, then provider and model.
+    const mind = page.locator("#entity-mind-picker");
+    check(await mind.locator('[role="tab"][aria-selected="true"]').textContent() === "Gateway default", "the Mind picker starts on Gateway default");
+    await mind.locator('[role="tab"]', { hasText: "Custom" }).click();
+    const pickCustom = async (label, value) => {
+      await mind.locator(`button[aria-label="${label}"]`).click();
+      await page.keyboard.type(value);
+      await page.keyboard.press("Enter");
+    };
+    await pickCustom("Provider", "lmstudio");
+    await pickCustom("Model", "some/model");
     await page.waitForFunction(() => /Refused by the browser test/.test(document.getElementById("entity-substrate-out").textContent || ""), null, { timeout: 10000 }).catch(() => {});
     const err = await page.textContent("#entity-substrate-out");
     check(/Not saved: Refused by the browser test\./.test(err || ""), "a failed save shows the API message", err);
     await page.unroute("**/api/gateway/entities/*/substrate");
-    await page.locator("#entity-substrate-model").dispatchEvent("change");
+    await pickCustom("Model", "other/model");
     await page.waitForFunction(() => /^Saved/.test(document.getElementById("entity-substrate-out").textContent || ""), null, { timeout: 10000 }).catch(() => {});
     check(/^Saved/.test((await page.textContent("#entity-substrate-out")) || ""), "a change saves itself and says Saved", await page.textContent("#entity-substrate-out"));
 

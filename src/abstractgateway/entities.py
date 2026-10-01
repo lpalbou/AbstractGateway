@@ -1707,17 +1707,16 @@ class EntityRegistry:
         arrived — a native tool-call response legitimately has no prose."""
 
         def handler(run: Any, effect: Any, default_next_node: Any = None) -> Any:
-            import os as _os
-
             from abstractruntime.core.runtime import EffectOutcome
 
             from . import entity_chat as _ec
 
             home_dir = self.entities_dir / slug
             try:
-                provider, model, thinking = _ec.resolve_substrate(None, None, home_dir=home_dir)
+                mind = _ec.resolve_entity_mind(None, None, home_dir=home_dir)
             except _ec.ChatOpenRefused as e:
                 return EffectOutcome.failed(f"LLM_CALL refused: {e.detail}")
+            provider, model, thinking = mind["provider"], mind["model"], mind["thinking"]
 
             # Resolve endpoint: virtual providers the SAME way bundle_host
             # does (_resolve_gateway_default_endpoint_profile). The entity
@@ -1750,16 +1749,16 @@ class EntityRegistry:
                 # The substrate's reasoning effort applies to the resident
                 # lane too — one mind, one triple, every lane.
                 llm_kwargs["thinking"] = thinking
+            if mind["speculation"] is not None:
+                # The mind's MTP intent (round 3), like thinking: every lane.
+                llm_kwargs["speculation"] = mind["speculation"]
             llm_kwargs.update(endpoint_kwargs)  # base_url/api_key from a resolved endpoint profile
-            if (
-                provider in ("lmstudio", "openai-compatible", "openai_compatible")
-                and "base_url" not in llm_kwargs
-            ):
-                # Only default a local base_url when the endpoint profile did
-                # not already supply one (a resolved profile's base_url wins).
-                llm_kwargs["base_url"] = (
-                    _os.getenv("ABSTRACTGATEWAY_ENTITY_CHAT_BASE_URL") or "http://127.0.0.1:1234/v1"
-                ).strip()
+            if "base_url" not in llm_kwargs:
+                # A resolved endpoint profile's base_url wins; otherwise the
+                # gateway text route's own endpoint when this is its provider.
+                route_base_url = _ec.entity_base_url(provider, None, mind_base_url=mind["base_url"])
+                if route_base_url:
+                    llm_kwargs["base_url"] = route_base_url
             factory = _ec._default_llm_factory  # late-bound module attribute
             llm = factory(provider, **llm_kwargs)
 

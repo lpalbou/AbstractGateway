@@ -198,8 +198,6 @@ _SPINNER_OWNERS = [
     # (function name, the transient label it sets)
     ("loadDefaultModels", "Loading models..."),
     ("loadDefaultVoices", "Loading voices..."),
-    ("loadEntityVoiceModels", "Loading models..."),
-    ("loadEntityVoiceVoices", "Loading voices..."),
     ("loadSandboxModels", "Loading models..."),
     ("discoverEndpointModels", "Discovering models from endpoint..."),
 ]

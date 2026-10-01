@@ -227,23 +227,9 @@ def summon_budget_profile(
         DEFAULT_ENTITY_CHAT_SHELF_SIZE,
     )
 
-    def _env_int(name: str) -> Optional[int]:
-        raw = os.getenv(name)
-        try:
-            return int(str(raw).strip()) if raw and str(raw).strip() else None
-        except ValueError:
-            return None
-
-    window = (
-        int(context_window_tokens)
-        if context_window_tokens
-        else (_env_int("ABSTRACTGATEWAY_ENTITY_CHAT_CONTEXT_WINDOW") or DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW)
-    )
-    shelf = (
-        int(shelf_size)
-        if shelf_size
-        else (_env_int("ABSTRACTGATEWAY_ENTITY_CHAT_SHELF_SIZE") or DEFAULT_ENTITY_CHAT_SHELF_SIZE)
-    )
+    # Request > the code defaults; no environment variable (round 3).
+    window = int(context_window_tokens) if context_window_tokens else DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW
+    shelf = int(shelf_size) if shelf_size else DEFAULT_ENTITY_CHAT_SHELF_SIZE
     # The recommendation sizes attention; the window sizes growth (docstring
     # above carries the ruling). Only the recall-budget SIZING input is
     # clamped — nothing here caps the session's actual context.
