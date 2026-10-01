@@ -156,7 +156,13 @@ code — goes through the same checks, in this order:
    written as its own entry. The policy applies to To, Cc and Bcc, and a message with any refused
    recipient is refused whole, naming the refused addresses. A new account starts with an allowlist
    holding your registered address;
-3. the **send limits**: 20 messages per rolling hour and 100 per day by default, editable by you.
+3. the **send limits**: 100 messages per rolling hour and 1000 per day by default, editable by you.
+   Limits you set are kept across upgrades; a mailbox where nobody set them follows the defaults.
+   Until AbstractCore 2.21 the defaults were 20 and 100 and connecting a mailbox stored them
+   unmarked; an upgrade treats exactly that pair as the old defaults, so the mailbox follows the new
+   ones. Any other unmarked value is kept (the limits document's `source` is `legacy`; `default`
+   and `user` are the other values). Set new
+   values in **Settings → My email** to move on.
 
 On top of the policy, the approval gate still decides whether an agent's send runs unattended: a
 send to anyone but you (or an automation's pre-authorised recipients) waits for your approval, and
@@ -166,7 +172,7 @@ address for the operator), else the connected mailbox's own address.
 ```bash
 curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/policy" \
   -d '{"mode": "allowlist", "entries": ["me@example.com", "mycompany.com"]}'
-curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/limits" -d '{"per_hour": 20, "per_day": 100}'
+curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/limits" -d '{"per_hour": 100, "per_day": 1000}'
 ```
 
 ## Automations on new mail

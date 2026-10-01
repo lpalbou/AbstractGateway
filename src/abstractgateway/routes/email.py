@@ -192,7 +192,7 @@ class CheckBody(BaseModel):
 
 
 class LimitsBody(BaseModel):
-    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"per_hour": 20, "per_day": 100}]})
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{"per_hour": 100, "per_day": 1000}]})
 
     per_hour: Optional[int] = None
     per_day: Optional[int] = None

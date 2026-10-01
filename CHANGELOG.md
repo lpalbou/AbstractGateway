@@ -55,6 +55,12 @@ and AbstractRuntime 0.8.2; the floors are raised in the base install and in the 
   https same-origin rule in security.md.
 
 ### Changed
+- Email send limits default to 100 per hour and 1000 per day (were 20 and 100; AbstractCore's
+  defaults). A new mailbox no longer stores the defaults, so it follows them; limits a user sets
+  (`PUT /me/email/limits`, Settings → My email) are kept across upgrades. An unmarked 20 / 100 stored
+  before is the old default and follows the new defaults; any other unmarked value is kept
+  (`limits.source` is `legacy`). The one-time
+  import of AbstractCore's local account copies its limits only when someone set them.
 - The administrator's one switch is **Mailboxes for users** (capability `email`, on by default).
   **Agent email tools for users** (`email_agent_tools`) is now on by default, next to **Sign-in by
   email** under Advanced; each user still switches their own agent email tools on. On the first
