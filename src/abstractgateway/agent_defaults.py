@@ -67,6 +67,90 @@ UNSET_REASONS: Dict[str, str] = {
 }
 SCOPE_WORDS = {"private": "private", "catalog": "tenant_catalog"}
 
+# THE interface table (DESIGN-v2 §4.2, §6): the plain name, the app that asks the gateway for
+# it, and one sentence of help, for every interface id the shipped workflows declare. The web
+# console and the TUI read it from GET /admin/runtime-config (never a copy). `group` "apps" =
+# an app asks for it as its default agent (abstractcode web workflow_selection.ts,
+# abstractassistant assistant_workflow.py); "other" = declared by a workflow, no app asks.
+INTERFACE_TABLE: Dict[str, Dict[str, Optional[str]]] = {
+    CODE_AGENT_INTERFACE: {
+        "label": "AbstractCode \u2014 chat agent",
+        "app": "AbstractCode",
+        "group": "apps",
+        "help": "The agent AbstractCode chats and automations run when they ask for \"an agent\": a prompt in, a reply out.",
+    },
+    ASSISTANT_AGENT_INTERFACE: {
+        "label": "Assistant",
+        "app": "Assistant",
+        "group": "apps",
+        "help": "The workflow the menu-bar Assistant runs for each request: it answers with tools or makes images, video or music.",
+    },
+    "abstractcode.coding.v1": {
+        "label": "Coding pipeline",
+        "app": None,
+        "group": "other",
+        "help": "Takes a build request and a workspace, writes code and checks it each round until the checks pass. "
+        "Declared by the coding-agent workflow; no app asks for it by default.",
+    },
+    "abstractresearch.deep.v1": {
+        "label": "Deep research",
+        "app": None,
+        "group": "other",
+        "help": "Searches the web and writes a cited research report. Declared by the deep-research workflow; no app asks for it by default.",
+    },
+    "abstractresearch.coscientist.v1": {
+        "label": "Co-scientist",
+        "app": None,
+        "group": "other",
+        "help": "Turns a research goal into ranked hypotheses and a research overview. Declared by the co-scientist workflow; "
+        "no app asks for it by default.",
+    },
+    "abstractmeta.intelligence.v1": {
+        "label": "Meta-reasoning agents",
+        "app": None,
+        "group": "other",
+        "help": "Answers one prompt through several model calls (debate, consensus, reflection, ...) so the result can be compared "
+        "with a single call. Declared by the meta-* workflows; no app asks for it by default.",
+    },
+    "abstractbatch.mapreduce.v1": {
+        "label": "Batch map-reduce",
+        "app": None,
+        "group": "other",
+        "help": "Applies one instruction to each item of a list, then combines the results into one answer. Declared by the "
+        "map-reduce workflow; no app asks for it by default.",
+    },
+    "abstractextract.structured.v1": {
+        "label": "Structured extraction",
+        "app": None,
+        "group": "other",
+        "help": "Pulls fields out of text as JSON that matches a schema you give. Declared by the structured-extract workflow; "
+        "no app asks for it by default.",
+    },
+    "abstractreview.adversarial.v1": {
+        "label": "Adversarial review",
+        "app": None,
+        "group": "other",
+        "help": "Three critics review a text or code and return findings with a pass, revise or block verdict. Declared by the "
+        "adversarial-review workflow; no app asks for it by default.",
+    },
+}
+
+
+def interface_info(interface: str, index: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Optional[str]]:
+    """{label, app, group, help} of `interface`: the table row, else (an interface only a
+    loaded or imported workflow declares) its id as the label, group "other" and a help
+    sentence naming the declaring workflows."""
+    row = INTERFACE_TABLE.get(interface)
+    if row is not None:
+        return dict(row)
+    bundles = sorted({str(r.get("bundle_id")) for r in (index or []) if interface in (r.get("interfaces") or [])})
+    if bundles:
+        who = f"the {bundles[0]} workflow" if len(bundles) == 1 else "the " + ", ".join(bundles) + " workflows"
+        help_text = f"Declared by {who}; no app asks for it by default."
+    else:
+        help_text = "No workflow on this gateway declares it any more; only a saved default names it."
+    return {"label": interface, "app": None, "group": "other", "help": help_text}
+
 REGISTRY_PRIVATE = "private"
 REGISTRY_TENANT_CATALOG = "tenant_catalog"
 
@@ -541,6 +625,7 @@ def default_workflows_payload(index: List[Dict[str, Any]], data_dir: Path) -> Di
                 "eligible": eligible_entrypoints(index, iface),
             }
         )
+        row.update(_row_state(iface, row, stored, index))
         out[iface] = row
     return {
         "default_workflow": out,
@@ -548,6 +633,29 @@ def default_workflows_payload(index: List[Dict[str, Any]], data_dir: Path) -> Di
         "help": "The workflow that answers each agent interface when a client picks \"Gateway default\". "
         "Written [catalog:]bundle[@version]:flow; without a version the latest published version runs.",
     }
+
+
+def _row_state(iface: str, row: Dict[str, Any], stored: Dict[str, str], index: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """The plain fields of one agent-default row (DESIGN-v2 §4.2, §6): {interface, label, app,
+    help, group, state, value, reason}. state: "set" (a saved value that runs), "broken" (a
+    saved value that no longer resolves: missing, deprecated, or no longer declaring the
+    interface; `reason` says which and what to do), "builtin" (nothing saved, the built-in
+    default runs) or "clients_choose" (nothing saved, no built-in: each client picks its own
+    workflow; this is normal, never a warning, `reason` null)."""
+    info = interface_info(iface, index)
+    saved = stored.get(iface)
+    if saved:
+        if row.get("available"):
+            state, reason = "set", None
+        else:
+            state = "broken"
+            reason = f"Broken: {row.get('reason')} \u2014 pick another workflow or choose \u201cClients choose\u201d."
+        value: Optional[str] = saved
+    elif row.get("available"):
+        state, reason, value = "builtin", None, row.get("value")
+    else:
+        state, reason, value = "clients_choose", None, None
+    return {"interface": iface, **info, "state": state, "value": value, "reason": reason}
 
 
 def discovery_envelope(index: List[Dict[str, Any]], data_dir: Path) -> tuple[Dict[str, Any], Dict[str, Any]]:
