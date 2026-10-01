@@ -355,14 +355,13 @@ fn capture_email_panel() {
         h.click_text("Advanced ▸");
         h.wheel_down(20);
         h.shoot("email-connected-advanced");
-        // Not connected: the Google tab (default), Microsoft unavailable.
+        // Not connected: the IMAP tab (default), Microsoft unavailable.
         let mut h = email_page(size, &my_email_not_connected());
         h.shoot("email-not-connected");
         h.click_text("Microsoft");
         h.shoot("email-not-connected-microsoft-unavailable");
-        // Other: address + password, discovery found / not found.
+        // IMAP (default): servers pre-filled, discovery found / no defaults.
         let mut h = email_page(size, &my_email_not_connected());
-        h.click_text("Other");
         h.shoot("email-discovery-looking");
         h.store.op.email_discovery.set(Some((
             "alice@fastmail.test".into(),

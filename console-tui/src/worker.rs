@@ -189,6 +189,35 @@ pub enum Cmd {
         op: u64,
     },
     LoadUsers,
+    /// `GET /admin/accounts` (DESIGN-v2 §2): users + entities, one list.
+    LoadAccounts,
+    /// `GET /me/accounts` (a non-admin's Accounts table): you + the
+    /// entities you created, into the same `accounts` slot.
+    LoadMyAccounts,
+    /// The Active switch of one account (users: enabled; entities:
+    /// suspend/resume). `label` is the account id for the status line.
+    SetAccountActive {
+        id: String,
+        tenant_id: String,
+        entity: bool,
+        active: bool,
+    },
+    /// Rotate an account's token where the gateway offers it (entities:
+    /// `POST /admin/accounts/{id}/rotate`); the token goes to the modal.
+    RotateAccount {
+        id: String,
+        tenant_id: String,
+    },
+    /// One account's activity (`None` = the caller's own, `/me/activity`),
+    /// filtered by `kind` ("" = all). `key` names the list in the store.
+    LoadActivity {
+        target: Option<(String, String)>,
+        /// The caller is not an admin: a target is read through
+        /// `/me/accounts/{id}/activity` (its own entities only).
+        mine: bool,
+        key: String,
+        kind: String,
+    },
     LoadEntities,
     LoadRuntimes,
     /// The registered workflow registry (bundles + the versions refused).
@@ -1617,6 +1646,128 @@ fn handle(
                 .map(|v| users_from_payload(&v))
         }),
 
+        Cmd::LoadAccounts => load(store, wake, "loading accounts", store.accounts, || {
+            require_client(client)?.accounts().and_then(|v| {
+                crate::store::accounts::accounts_from_payload(&v)
+                    .map_err(|m| ApiError::new(ApiErrorKind::Protocol, m))
+            })
+        }),
+
+        Cmd::SetAccountActive {
+            id,
+            tenant_id,
+            entity,
+            active,
+        } => {
+            // The status line names the NEW state (state-toggles rule).
+            let action = match (entity, active) {
+                (false, true) => format!("{id} is active — can sign in"),
+                (false, false) => format!("{id} is inactive — signed out, cannot sign in"),
+                (true, true) => format!("{id} is active — acting again"),
+                (true, false) => format!("{id} is suspended — stopped acting"),
+            };
+            let (write, verify) = with_busy(store, wake, &format!("switching {id}"), || {
+                let write = require_client(client)
+                    .and_then(|c| c.set_account_active(&id, &tenant_id, active))
+                    .map_err(api_message);
+                let verify = require_client(client).and_then(|c| c.accounts());
+                (write, verify)
+            });
+            let parsed = verify
+                .as_ref()
+                .ok()
+                .map(crate::store::accounts::accounts_from_payload);
+            let verified = parsed.as_ref().map(|r| match r {
+                Ok(rows) => match rows.iter().find(|r| r.id == id) {
+                    Some(r) if r.active == active => Ok(format!(
+                        "GET shows {id} {}",
+                        if active { "active" } else { "not active" }
+                    )),
+                    Some(_) => Err(format!("GET shows {id} unchanged")),
+                    None => Err(format!("GET does not list {id}")),
+                },
+                Err(e) => Err(e.clone()),
+            });
+            finish_write(store, wake, action, write, verified, None, on_done);
+            if let Some(Ok(rows)) = parsed {
+                publish_ready(wake, store.accounts, rows);
+            }
+            // The users registry and the entity roster read the same
+            // switch: keep them current too.
+            if !entity {
+                if let Ok(v) = require_client(client).and_then(|c| c.users()) {
+                    publish_ready(wake, store.users, users_from_payload(&v));
+                }
+            } else if let Ok(v) = require_client(client).and_then(|c| c.entities()) {
+                publish_ready(wake, store.entities, entities_from_payload(&v));
+            }
+        }
+
+        Cmd::RotateAccount { id, tenant_id } => {
+            let action = format!("rotate the token of {id}");
+            let write = with_busy(store, wake, &format!("rotating {id}"), || {
+                require_client(client)
+                    .and_then(|c| c.rotate_account(&id, &tenant_id))
+                    .map_err(api_message)
+            });
+            if let Ok(v) = &write {
+                if let Some(tok) = v.get("token").and_then(Value::as_str) {
+                    on_token(id.clone(), tok.to_string());
+                }
+            }
+            finish_write(store, wake, action, write, None, None, on_done);
+        }
+
+        Cmd::LoadMyAccounts => load(store, wake, "loading your accounts", store.accounts, || {
+            require_client(client)?.my_accounts().and_then(|v| {
+                crate::store::accounts::accounts_from_payload(&v)
+                    .map_err(|m| ApiError::new(ApiErrorKind::Protocol, m))
+            })
+        }),
+
+        Cmd::LoadActivity {
+            target,
+            mine,
+            key,
+            kind,
+        } => {
+            let s = *store;
+            let (k2, kind2) = (key.clone(), kind.clone());
+            wake.post(move || s.activity.set(Some((k2, kind2, Loadable::Loading))));
+            let result = with_busy(store, wake, "reading activity", || {
+                require_client(client)
+                    .and_then(|c| {
+                        c.account_activity(
+                            target.as_ref().map(|(i, t)| (i.as_str(), t.as_str())),
+                            mine,
+                            &kind,
+                            100,
+                        )
+                    })
+                    .map_err(api_message)
+                    .and_then(|v| {
+                        crate::store::accounts::activity_from_payload(&v)
+                            .map_err(|m| ApiError::new(ApiErrorKind::Protocol, m))
+                    })
+            });
+            wake.post(move || {
+                // Only the list still open under this key/filter lands.
+                let current = s
+                    .activity
+                    .with_untracked(|a| a.as_ref().map(|(k, f, _)| (k.clone(), f.clone())));
+                if current == Some((key.clone(), kind.clone())) {
+                    s.activity.set(Some((
+                        key,
+                        kind,
+                        match result {
+                            Ok(d) => Loadable::Ready(d),
+                            Err(e) => Loadable::Failed(e),
+                        },
+                    )));
+                }
+            });
+        }
+
         Cmd::LoadEntities => load(store, wake, "loading entities", store.entities, || {
             require_client(client)?
                 .entities()
@@ -2283,6 +2434,7 @@ fn handle(
             if let Ok(v) = verify {
                 publish_ready(wake, store.users, users_from_payload(&v));
             }
+            refresh_accounts(store, wake, client);
         }
 
         Cmd::PatchUser {
@@ -2337,6 +2489,7 @@ fn handle(
             if let Ok(v) = verify {
                 publish_ready(wake, store.users, users_from_payload(&v));
             }
+            refresh_accounts(store, wake, client);
         }
 
         Cmd::DeleteUser { user_id, tenant_id } => {
@@ -2361,6 +2514,7 @@ fn handle(
             if let Ok(v) = verify {
                 publish_ready(wake, store.users, users_from_payload(&v));
             }
+            refresh_accounts(store, wake, client);
         }
 
         Cmd::SandboxTest {
@@ -3327,6 +3481,39 @@ fn publish_model_rows(store: &Store, wake: &WakeHandle, v: &Value) {
 /// Gap between host-state polls (the endpoint is a GPU probe + residency
 /// listing — the contract says no faster than ~4s, tab-active only).
 const HOST_STATE_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(4);
+
+/// An HTTP refusal whose body carries the gateway's `message` sentence
+/// (DESIGN-v2 §6: "UIs show `message`") shows that sentence, never the
+/// JSON body.
+fn api_message(mut e: ApiError) -> ApiError {
+    if let Some(m) = e
+        .body
+        .as_ref()
+        .and_then(|b| b.get("message"))
+        .and_then(Value::as_str)
+    {
+        e.message = m.to_string();
+    }
+    e
+}
+
+/// Re-read `/admin/accounts` after a users-registry write so the Accounts
+/// table shows the write (a failed read lands as the table's error).
+fn refresh_accounts(store: &Store, wake: &WakeHandle, client: &Option<GatewayClient>) {
+    let s = *store;
+    let result = require_client(client)
+        .and_then(|c| c.accounts())
+        .and_then(|v| {
+            crate::store::accounts::accounts_from_payload(&v)
+                .map_err(|m| ApiError::new(ApiErrorKind::Protocol, m))
+        });
+    wake.post(move || {
+        s.accounts.set(match result {
+            Ok(rows) => Loadable::Ready(rows),
+            Err(e) => Loadable::Failed(e),
+        })
+    });
+}
 
 /// Publish a verify GET's parse onto a domain signal — the refresh we
 /// already paid for (F13: was 12 verbatim wake.post tails).

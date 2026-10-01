@@ -224,7 +224,7 @@ pub fn resolve_mode_route(rows: &[RouteRow], mode: SbMode) -> Option<ModeRoute> 
 /// Why an incomplete route cannot run (route line + refusal notice).
 fn incomplete_reason(mode: SbMode, stop_key: &str) -> String {
     format!(
-        "{} is not ready — {stop_key} has settings but no provider + model, and resolution stops there; complete it on Routes (3)",
+        "{} is not ready — {stop_key} has settings but no provider + model, and resolution stops there; complete it on Multimodal (9)",
         mode.route_key()
     )
 }
@@ -1604,7 +1604,7 @@ fn route_line(t: &TokenSet, store: &Store, m: SbMode) -> View {
             Some(ModeRoute::Incomplete { key }) => (incomplete_reason(m, &key), t.warn),
             Some(ModeRoute::NotConfigured) => (
                 format!(
-                    "{} is not configured yet — configure it on Routes (3) first",
+                    "{} is not configured yet — configure it on Multimodal (9) first",
                     m.route_key()
                 ),
                 t.warn,
@@ -2109,7 +2109,7 @@ fn speak(ctx: &Ctx, reply: &str) {
     }
     let Some((provider, model, voice)) = voice_pair_tracked(&store) else {
         store.notice.set(Some(
-            "output.voice is not configured — set it on Routes (3) to speak replies".into(),
+            "output.voice is not configured — set it on Multimodal (9) to speak replies".into(),
         ));
         return;
     };
@@ -2312,7 +2312,7 @@ fn run_media(ctx: &Ctx, mode: SbMode, prompt_state: &TextAreaState) {
         Loadable::Ready(d) => d.rows,
         Loadable::Failed(e) => {
             store.notice.set(Some(format!(
-                "capability routes unavailable ({}) — press r on Routes (3)",
+                "capability routes unavailable ({}) — press r on Multimodal (9)",
                 e.message
             )));
             return;
@@ -2345,7 +2345,7 @@ fn run_media(ctx: &Ctx, mode: SbMode, prompt_state: &TextAreaState) {
         }
         Some(ModeRoute::NotConfigured) => {
             store.notice.set(Some(format!(
-                "{} is not configured — configure it on Routes (3) first",
+                "{} is not configured — configure it on Multimodal (9) first",
                 mode.route_key()
             )));
             return;

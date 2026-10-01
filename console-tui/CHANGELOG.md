@@ -8,6 +8,33 @@ carries them; against an older gateway the page still reads (missing fields fall
 gateway does not have fails with its error.
 
 ### Changed
+- **Screen list in groups**, as in the web console's sidebar: `1 Connection`, then ACCOUNTS `2 Accounts`, WORK
+  `3 Workflows` `4 Runtimes` `5 Apps`, MODELS `6 Providers` `7 Models` `8 Engines` `9 Multimodal`, SYSTEM
+  `0 Resources` `N Network` `R Review & Test`, and `S Setup` last. A group line above the tabs names the groups and
+  their keys. The Routes screen is now called **Multimodal**. The setup guide's order is unchanged.
+- **Accounts** (was Users & Entities): one table of users and entities from `GET /admin/accounts` — name, kind
+  (Admin / User / Entity, with a legend), email address, mailbox, runtime and **Active**. Space switches Active for
+  users (deactivate) and entities (suspend), after a confirmation; your own row says why it can't. Row keys: `@`
+  email, `l` activity (`GET /admin/accounts/{id}/activity`, or `/me/activity` for your own; `f` changes the filter),
+  `w` workspace policy, `t` rotate, `m` manage (entities), `d` delete. An action that can't apply shows the
+  gateway's reason under the table and answers with it.
+- **Accounts for a non-admin**: the same table from `GET /me/accounts` — your own account and the entities you
+  created, with a line saying so; `l` on your entity reads `GET /me/accounts/{id}/activity`. The gateway enforces
+  the same rule on every entity route.
+- **My email asks the address once**: with no email address saved and no mailbox, the IMAP pane's Mailbox address
+  is the only address field (connecting makes it your email address); with one saved, the pane says "Mailbox
+  account: x@y — use a different account (Ctrl+U)" and Ctrl+U shows the field.
+- Activity times and send-limit reset times are shown in your local time zone (the gateway writes UTC).
+- **My email**: the mailbox tabs are **IMAP** (first, the default), **Google** and **Microsoft**. The IMAP pane
+  always shows the server fields, filled with the standard values as soon as the address has a domain and then with
+  what `POST /me/email/discover` returns (`defaults`), never over a field you edited. No User name and no Display
+  name fields: `Ctrl+O` reveals one login field when your provider uses a different login. **Active** sits in the
+  Mailbox card. **Send a test** shows the gateway's sentence ("Not sent: hourly limit reached …"). Another user's
+  row opens their address only, with their mailbox status.
+- **Workflows**: rows show the workflow's name, what it does, its version, where it comes from and the apps that use
+  it; a second section, **Default workflow per app**, edits the per-app defaults here (Enter picks; saved at once;
+  a warning only when the configured workflow is broken).
+- **Multimodal**: the transcription row names the engine and, when the engine is missing, the gateway's reason.
 - **Switches for every on/off setting.** A setting reads `[x] Feature` (accent, bold) when on, `[ ] Feature` when off
   and `[-] Feature — reason` (dimmed) when it can't be used here. Space or Enter switches it, the change applies at
   once, and the status line names the new state ("Agent email tools are on."). No Save button for a switch, and no

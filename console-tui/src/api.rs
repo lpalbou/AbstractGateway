@@ -778,6 +778,70 @@ impl GatewayClient {
         self.get("/entities", false)
     }
 
+    // ---- accounts (DESIGN-v2 §6) ------------------------------------------
+
+    /// Users and entities in one list (admin).
+    pub fn accounts(&self) -> ApiResult<Value> {
+        self.get("/admin/accounts", false)
+    }
+
+    /// `GET /me/accounts`: for a NON-admin, your own row plus the entities
+    /// you created (same row shape; the gateway's RBAC — an admin reads
+    /// everything on `/admin/accounts`, a non-admin gets 403 there).
+    pub fn my_accounts(&self) -> ApiResult<Value> {
+        self.get("/me/accounts", false)
+    }
+
+    /// Active switch of one account: users → registry `enabled`;
+    /// entities → suspend / resume (the gateway does both halves).
+    pub fn set_account_active(&self, id: &str, tenant_id: &str, active: bool) -> ApiResult<Value> {
+        let path = format!(
+            "/admin/accounts/{}/active?tenant_id={}",
+            urlencode(id),
+            urlencode(tenant_id)
+        );
+        self.send("PUT", &path, &json!({ "active": active }), false)
+    }
+
+    /// Rotate an account's token (the gateway offers it only where
+    /// `actions.rotate.available`).
+    pub fn rotate_account(&self, id: &str, tenant_id: &str) -> ApiResult<Value> {
+        let path = format!(
+            "/admin/accounts/{}/rotate?tenant_id={}",
+            urlencode(id),
+            urlencode(tenant_id)
+        );
+        self.send("POST", &path, &json!({}), false)
+    }
+
+    /// One account's activity (admin), or the caller's own (`None`).
+    /// `mine` = the caller is not an admin: a target must be one of its
+    /// `/me/accounts` rows (`/me/accounts/{id}/activity`; anything else
+    /// answers 404). `kind` "" = every kind.
+    pub fn account_activity(
+        &self,
+        target: Option<(&str, &str)>,
+        mine: bool,
+        kind: &str,
+        limit: u32,
+    ) -> ApiResult<Value> {
+        let mut path = match target {
+            Some((id, _)) if mine => {
+                format!("/me/accounts/{}/activity?limit={limit}", urlencode(id))
+            }
+            Some((id, tenant)) => format!(
+                "/admin/accounts/{}/activity?tenant_id={}&limit={limit}",
+                urlencode(id),
+                urlencode(tenant)
+            ),
+            None => format!("/me/activity?limit={limit}"),
+        };
+        if !kind.is_empty() {
+            path.push_str(&format!("&kind={}", urlencode(kind)));
+        }
+        self.get(&path, false)
+    }
+
     // ---- entity configuration + state (the web's Manage drawer) ---------
     // The operator CONFIG controls the web console exposes; summon,
     // templates, card, talk and the voice audition live in `entities`.

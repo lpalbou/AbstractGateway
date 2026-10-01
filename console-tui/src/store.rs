@@ -26,6 +26,11 @@ pub mod operator;
 #[path = "store_email.rs"]
 pub mod email;
 
+/// The Accounts screen (DESIGN-v2 §2): users + entities in one list, and
+/// one account's activity.
+#[path = "store_accounts.rs"]
+pub mod accounts;
+
 /// Remote data honesty: never render a guess.
 #[derive(Clone, Debug, Default)]
 pub enum Loadable<T> {
@@ -1060,6 +1065,9 @@ pub fn users_from_payload(v: &Value) -> UsersData {
 #[derive(Clone, Debug)]
 pub struct EntityRow {
     pub name: String,
+    /// The entity's slug — its registry principal's id (the Accounts
+    /// row id, DESIGN-v2 §2).
+    pub slug: Option<String>,
     /// "awake" | "asleep" | "paused" — the operator-state vocabulary.
     pub state: String,
     /// resting/dreaming/visiting when present — secondary text.
@@ -1082,11 +1090,23 @@ impl EntityRow {
                 .unwrap_or_else(|| "unknown".into()),
             mode: state_obj.and_then(|st| s(st, "mode")),
             handle: s(v, "handle"),
+            slug: s(v, "slug"),
             open_questions: drive("questions", "open"),
             open_problems: drive("problems", "open"),
             open_interests: drive("interests", "open"),
             name,
         })
+    }
+}
+
+impl EntityRow {
+    /// Is this the entity of Accounts row `id`? (Its slug is the registry
+    /// principal's id; an entity row without a slug matches its name.)
+    pub fn is_account(&self, id: &str) -> bool {
+        match &self.slug {
+            Some(slug) => slug == id,
+            None => self.name == id,
+        }
     }
 }
 
@@ -1110,6 +1130,49 @@ pub struct WorkflowRow {
     pub versions: Vec<(String, String, String, usize)>,
     /// (flow_id, workflow_id, interfaces) of the newest version.
     pub flows: Vec<(String, String, String)>,
+    /// The newest version's default entrypoint `name` (the manifest's);
+    /// its flow id when the manifest names none.
+    pub name: String,
+    /// What it does: the item's `description` (DESIGN-v2 §6), else the
+    /// default entrypoint's own `description`; "" when neither says.
+    pub description: String,
+    /// Where the bundle file lives (`source`: shipped | imported |
+    /// published); None when the gateway does not say — never guessed.
+    pub source: Option<String>,
+    /// Every interface the newest version's entrypoints declare, in order.
+    pub interfaces: Vec<String>,
+    /// (name, description, interfaces) per entrypoint of the newest version.
+    pub entrypoint_info: Vec<(String, String, Vec<String>)>,
+}
+
+impl WorkflowRow {
+    /// The Source column in words (DESIGN-v2 §4.1); "—" when unknown.
+    pub fn source_text(&self) -> &'static str {
+        match self.source.as_deref() {
+            Some("shipped") => "Shipped with the gateway",
+            Some("imported") => "Imported",
+            Some("published") => "Published from AbstractFlow",
+            _ => "—",
+        }
+    }
+
+    /// The Version column: the latest, then "+N older" when there are.
+    pub fn version_text(&self) -> String {
+        let latest = if self.latest.is_empty() {
+            self.versions
+                .first()
+                .map(|v| format!("{} (draft)", v.0))
+                .unwrap_or_else(|| "—".into())
+        } else {
+            self.latest.clone()
+        };
+        let older = self.versions.len().saturating_sub(1);
+        if older > 0 {
+            format!("{latest} +{older} older")
+        } else {
+            latest
+        }
+    }
 }
 
 /// A bundle file on disk the gateway is NOT serving, and why. Kept visible:
@@ -1229,6 +1292,75 @@ pub fn workflows_from_payload(v: &serde_json::Value) -> WorkflowsData {
                     )
                 })
                 .collect();
+        }
+        // The newest version names the bundle and says what it does.
+        let newer = row
+            .versions
+            .iter()
+            .all(|(v, _, _, _)| ver.as_str() >= v.as_str());
+        if newer {
+            let default_ep = it
+                .get("default_entrypoint")
+                .and_then(|x| x.as_str())
+                .unwrap_or("");
+            let text = |e: &serde_json::Value, k: &str| {
+                e.get(k)
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string()
+            };
+            let ep = eps
+                .iter()
+                .find(|e| !default_ep.is_empty() && text(e, "flow_id") == default_ep)
+                .or_else(|| eps.first());
+            if let Some(ep) = ep {
+                row.name = {
+                    let n = text(ep, "name");
+                    if n.is_empty() {
+                        text(ep, "flow_id")
+                    } else {
+                        n
+                    }
+                };
+                let item_desc = text(&it, "description");
+                row.description = if item_desc.is_empty() {
+                    text(ep, "description")
+                } else {
+                    item_desc
+                };
+            }
+            row.source = it
+                .get("source")
+                .and_then(|x| x.as_str())
+                .map(str::to_string);
+            row.entrypoint_info = eps
+                .iter()
+                .map(|e| {
+                    let n = text(e, "name");
+                    (
+                        if n.is_empty() { text(e, "flow_id") } else { n },
+                        text(e, "description"),
+                        e.get("interfaces")
+                            .and_then(|x| x.as_array())
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|i| i.as_str().map(str::to_string))
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                    )
+                })
+                .collect();
+            let mut ifaces: Vec<String> = Vec::new();
+            for (_, _, list) in &row.entrypoint_info {
+                for i in list {
+                    if !ifaces.contains(i) {
+                        ifaces.push(i.clone());
+                    }
+                }
+            }
+            row.interfaces = ifaces;
         }
         row.versions.push((ver, channel, created, eps.len()));
     }
@@ -1737,6 +1869,55 @@ pub struct AgentDefault {
     pub builtin: String,
     /// Values an admin can choose (entrypoints declaring the interface).
     pub eligible: Vec<String>,
+    /// (value, entrypoint name, bundle version) per eligible entrypoint —
+    /// what the Workflows picker shows.
+    pub eligible_named: Vec<(String, String, String)>,
+    /// The plain name from the gateway's interface table (DESIGN-v2 §6
+    /// `label`, e.g. "AbstractCode — chat agent"). None = this gateway
+    /// does not serve the table; the Workflows screen says so.
+    pub label: Option<String>,
+    /// The app that asks for it (`app`), None when no app does.
+    pub app: Option<String>,
+    /// One sentence: what the interface is for (`help`).
+    pub help: String,
+    /// "apps" | "other" (`group`).
+    pub group: String,
+    /// "clients_choose" | "builtin" | "set" | "broken" (`state`); None =
+    /// not served.
+    pub state: Option<String>,
+}
+
+impl AgentDefault {
+    /// The state in words (DESIGN-v2 §4.2): neutral unless broken; None
+    /// when the gateway sends no `state` (the screen then says so).
+    pub fn state_text(&self) -> Option<String> {
+        let name_of = |value: &str| {
+            self.eligible_named
+                .iter()
+                .find(|(v, _, _)| v == value)
+                .map(|(_, n, ver)| format!("{n} {ver}"))
+        };
+        Some(match self.state.as_deref()? {
+            "clients_choose" => "Clients choose".to_string(),
+            "builtin" => {
+                let n = if self.name.is_empty() {
+                    self.builtin.clone()
+                } else {
+                    self.name.clone()
+                };
+                format!("Built in: {n}")
+            }
+            "set" => name_of(&self.value).unwrap_or_else(|| {
+                if self.name.is_empty() {
+                    self.value.clone()
+                } else {
+                    format!("{} ({})", self.name, self.workflow_id)
+                }
+            }),
+            "broken" => "Broken".to_string(),
+            other => format!("unknown state '{other}'"),
+        })
+    }
 }
 
 /// Parse `agents.default_workflow` of GET /admin/runtime-config.
@@ -1768,6 +1949,24 @@ pub fn agent_defaults_from(v: &Value) -> Vec<AgentDefault> {
                     .and_then(Value::as_array)
                     .map(|a| a.iter().filter_map(|e| s(e, "value")).collect())
                     .unwrap_or_default(),
+                eligible_named: row
+                    .get("eligible")
+                    .and_then(Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|e| {
+                                let v = s(e, "value")?;
+                                let n = s(e, "name").unwrap_or_else(|| v.clone());
+                                Some((v, n, s(e, "bundle_version").unwrap_or_default()))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                label: s(row, "label").filter(|x| !x.trim().is_empty()),
+                app: s(row, "app").filter(|x| !x.trim().is_empty()),
+                help: s(row, "help").unwrap_or_default(),
+                group: s(row, "group").unwrap_or_else(|| "apps".into()),
+                state: s(row, "state").filter(|x| !x.trim().is_empty()),
             }
         })
         .collect()
@@ -2762,6 +2961,11 @@ pub struct Store {
     /// confirm-gated flow cannot realistically produce.
     pub unload_locked: Signal<Option<(String, String)>>,
     pub users: Signal<Loadable<UsersData>>,
+    /// `GET /admin/accounts`: users and entities in one list (DESIGN-v2 §2).
+    pub accounts: Signal<Loadable<Vec<accounts::AccountRow>>>,
+    /// The activity list open in the Logs view: (account id or "me", the
+    /// filter's `kind=` value, the read).
+    pub activity: Signal<Option<(String, String, Loadable<accounts::ActivityData>)>>,
     pub entities: Signal<Loadable<Vec<EntityRow>>>,
     pub runtimes: Signal<Loadable<Vec<RuntimeRow>>>,
     /// The registered workflow registry: one row per bundle, plus the
@@ -3561,6 +3765,8 @@ impl Store {
             host_poll_gen: cx.signal(0),
             unload_locked: cx.signal(None),
             users: cx.signal(Loadable::default()),
+            accounts: cx.signal(Loadable::default()),
+            activity: cx.signal(None),
             entities: cx.signal(Loadable::default()),
             runtimes: cx.signal(Loadable::default()),
             workflows: cx.signal(Loadable::default()),
@@ -3643,6 +3849,8 @@ impl Store {
             host_state,
             unload_locked,
             users,
+            accounts,
+            activity,
             entities,
             runtimes,
             workflows,
@@ -3698,6 +3906,8 @@ impl Store {
         host_poll_gen.update(|g| *g += 1);
         unload_locked.set(None);
         users.set(Loadable::NotAsked);
+        accounts.set(Loadable::NotAsked);
+        activity.set(None);
         entities.set(Loadable::NotAsked);
         runtimes.set(Loadable::NotAsked);
         workflows.set(Loadable::NotAsked);

@@ -74,6 +74,7 @@ fn slots() -> Vec<Slot> {
         domain!(profiles, Some(|| Cmd::LoadProfiles)),
         domain!(routes, Some(|| Cmd::LoadRoutes)),
         domain!(users, Some(|| Cmd::LoadUsers)),
+        domain!(accounts, Some(|| Cmd::LoadAccounts)),
         domain!(entities, Some(|| Cmd::LoadEntities)),
         domain!(runtimes, Some(|| Cmd::LoadRuntimes)),
         domain!(runtime_config, Some(|| Cmd::LoadRuntimeConfig)),
@@ -113,6 +114,7 @@ fn track_all(store: &Store) {
     store.profiles.with(|_| ());
     store.routes.with(|_| ());
     store.users.with(|_| ());
+    store.accounts.with(|_| ());
     store.entities.with(|_| ());
     store.runtimes.with(|_| ());
     store.runtime_config.with(|_| ());

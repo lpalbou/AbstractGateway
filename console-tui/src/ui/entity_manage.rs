@@ -674,7 +674,7 @@ fn open_voice_form(cx: Scope, ctx: &Ctx, name: String) {
                 "voice",
                 TextInput::new()
                     .value(voice)
-                    .placeholder("e.g. M3, alloy — pickable in Routes → output.voice")
+                    .placeholder("e.g. M3, alloy — pickable in Multimodal → output.voice")
                     .placeholder_while_focused(true)
                     .layout(LayoutStyle::default().w(40).h(1))
                     .element(mcx, &t0)
