@@ -3477,7 +3477,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
               <button type="button" role="switch" id="entity-owntime-toggle" class="af-switch af-switch--row" aria-checked="false" aria-describedby="entity-owntime-toggle-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Personal time</span><span class="af-switch__desc" id="entity-owntime-toggle-desc">On: it explores on its own schedule and spends tokens without anyone watching. Off: it acts only when visited or given work.</span></span></button><span id="entity-owntime-toggle-reason" class="af-switch__reason" hidden></span>
             </div>
             <p id="entity-loop-status" class="entity-line"></p>
-            <details class="entity-disclosure entity-admin-only">
+            <details id="entity-schedule-box" class="entity-disclosure entity-admin-only">
               <summary>Schedule</summary>
               <p class="af-form__help">Used the next time Personal time is switched on. Blank fields keep the defaults.</p>
               <div class="entity-grid">
@@ -3541,7 +3541,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             </div>
             <div id="entity-voice-out" class="entity-voice-out" role="status" aria-live="polite"></div>
           </section>
-          <details class="entity-disclosure entity-disclosure--danger entity-admin-only">
+          <details id="entity-reembed-box" class="entity-disclosure entity-disclosure--danger entity-admin-only">
             <summary>Danger zone: rebuild its memory index</summary>
             <p class="af-form__help">Only when the status below says MISMATCH: re-computes every memory's search vector with the gateway's embedding model. Type that model's name to confirm you mean it.</p>
             <p id="entity-embedding-status" class="entity-line"></p>
@@ -3575,7 +3575,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
               <button id="entity-workorder-clear" class="secondary hidden" type="button">End the work order</button>
               <p id="entity-workorder-out" class="inline-state" role="status" aria-live="polite"></p>
             </div>
-            <details class="entity-disclosure"><summary>Finished tasks</summary><pre id="entity-workorder-history" class="entity-pre"></pre></details>
+            <details id="entity-workorder-history-box" class="entity-disclosure"><summary>Finished tasks</summary><pre id="entity-workorder-history" class="entity-pre"></pre></details>
           </section>
           <section class="af-card entity-card" aria-labelledby="entity-tools-title">
             <div class="af-card__header">
@@ -3597,7 +3597,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             </div>
             <div id="entity-prompt-layers" class="entity-prompt-layers"></div>
             <p id="entity-prompt-out" class="inline-state" role="status" aria-live="polite"></p>
-            <details class="entity-disclosure"><summary>The full prompt its next visit will see</summary><pre id="entity-prompt-preview" class="entity-pre"></pre></details>
+            <details id="entity-prompt-preview-box" class="entity-disclosure"><summary>The full prompt its next visit will see</summary><pre id="entity-prompt-preview" class="entity-pre"></pre></details>
           </section>
         </div>
       </div>
@@ -15372,6 +15372,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("entity-manage-matrix").onchange = (ev) => { if (ev && ev.target && ev.target.type === "checkbox") entityToolsChanged(); };
 	    afSwitchBind($("entity-tools-denyall"), () => true);
 	    $("entity-verify").onclick = entityVerify;
+	    // A closed disclosure's content is inert: the modal's focus trap then never counts its
+	    // (invisible) controls, so Tab from the last summary wraps instead of leaving the dialog.
+	    for (const id of ["entity-candidates-box", "entity-schedule-box", "entity-reembed-box", "entity-workorder-history-box", "entity-prompt-preview-box"]) {
+	      const d = $(id);
+	      const sync = () => { for (const c of Array.from(d.children || [])) if (c.tagName !== "SUMMARY") c.inert = !d.open; };
+	      d.ontoggle = sync;
+	      sync();
+	    }
 	    $("runs-status").onchange = () => { state.runsOffset = 0; loadRuns(); };
 	    $("runs-root-only").onchange = () => { state.runsOffset = 0; loadRuns(); };
 	    {
