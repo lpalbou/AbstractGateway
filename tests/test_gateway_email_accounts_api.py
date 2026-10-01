@@ -33,7 +33,8 @@ def test_connect_test_disconnect_round_trip(gateway, imap, smtp) -> None:
     assert body["registered_address"] == ALICE
     # The default recipient policy: an allowlist holding the registered address.
     assert body["policy"]["mode"] == "allowlist" and body["policy"]["entries"] == [ALICE]
-    assert body["limits"]["per_hour"] == 20 and body["limits"]["per_day"] == 100
+    # AbstractCore defaults since round 2 (operator ruling 2026-10-01, core a8db58e): 100 / 1000.
+    assert body["limits"]["per_hour"] == 100 and body["limits"]["per_day"] == 1000
     assert PASSWORDS[ALICE] not in r.text
     assert "config_file" not in body
 

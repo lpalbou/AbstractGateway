@@ -5358,14 +5358,15 @@ mailbox), no token to rotate (its credential is discarded at creation) and no de
 name is kept for life; suspend it instead.").
 
 Activity answers `{events: [{ts, kind: sign_in \| token \| run \| automation \| email \| account,
-title, detail, run_id, observer_path, ok}], source: "audit_log", oldest_ts, truncated, note}`, newest
+title, detail, run_id, observer_path, ok, ts_local}], source: "audit_log", oldest_ts, truncated, note}`, newest
 first. It reads `<data_dir>/audit_log.jsonl` and its rotated files backwards within a fixed read
 budget (`truncated`: older entries were not read). Events come from two explicit tables: the request
 lines (sign-ins, sign-out, runs started with their `run_id`, automation commands, account changes by
 an admin) and the typed email events (mailbox connected, tested, notification sent or not, …). The
 audit log records writes only: read-only requests (page views, token use on reads), mail received and
-what agents send with their email tools are not in it, and `note` says so. `observer_path` is `null`:
-the Observer app has no address that opens a single run yet.
+what agents send with their email tools are not in it, and `note` says so. `observer_path` opens the event in the Observer app:
+`/apps/observer/#run/<run_id>` for a run, `/apps/observer/#automations` for an automation event; `ts_local`
+is `ts` in the gateway's local time (ISO 8601 with its offset).
 
 ## Email
 

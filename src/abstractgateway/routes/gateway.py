@@ -865,7 +865,8 @@ _ACTIVITY_DESCRIPTION = (
     "Newest first: `{events: [{ts, kind: sign_in | token | run | automation | email | account, title, detail, run_id, "
     "observer_path, ok}], source: \"audit_log\", oldest_ts, truncated, note}`. Read from the gateway's audit log "
     "(and its rotated files), newest first, within a fixed read budget: `truncated` is true when older entries were "
-    "not read. `kind` filters (comma-separated). `observer_path` is null: the Observer has no address for one run yet. "
+    "not read. `kind` filters (comma-separated). `observer_path` opens the event in the Observer app (`/apps/observer/#run/<run_id>` for a run, "
+    "`/apps/observer/#automations` for an automation event); `ts_local` is `ts` in the gateway's local time. "
     "`note` says what the log does not record (read-only requests, mail received)."
 )
 

@@ -262,8 +262,16 @@ def test_run_started_event_carries_the_run_id(tmp_path) -> None:
             "principal_user_id": "alice", "principal_tenant_id": "default", "run": {"run_id": "r-42", "workflow": "basic-agent"}}
     (tmp_path / "audit_log.jsonl").write_text(json.dumps(line) + "\n")
     ev = account_activity("alice", data_dir=tmp_path)["events"][0]
-    # No Observer link for a run: the Observer has no address that opens one run.
+    # "Open in Observer": the Observer's `#run/<run_id>` route under the gateway's app mount
+    # (exact path: a change of either side's format must fail here).
     ts_local = ev.pop("ts_local")
     assert ts_local and ts_local[-6] in "+-"
     assert ev == {"ts": line["ts"], "kind": "run", "title": "Run started", "detail": "basic-agent", "run_id": "r-42",
-                  "observer_path": None, "ok": True}
+                  "observer_path": "/apps/observer/#run/r-42", "ok": True}
+
+
+def test_observer_run_link_quotes_the_run_id() -> None:
+    from abstractgateway.account_activity import observer_path_for
+
+    assert observer_path_for("a b/c") == "/apps/observer/#run/a%20b%2Fc"
+    assert observer_path_for(None) is None
