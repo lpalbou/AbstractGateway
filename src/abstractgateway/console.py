@@ -1557,6 +1557,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      .provider-modal .provider-config-form { grid-template-columns: 1fr; }
 	      .provider-modal .field-span-2 { grid-column: auto; }
 	      .sandbox-composer-toolbar { grid-template-columns: minmax(0, 1fr); }
+	      /* Phones: one flat surface — the chat is not a second card inside the section. */
+	      .sandbox-chat-root { border: 0; background: transparent; }
+	      .sandbox-chat-root .pc-workflow-chat__transcript { padding-inline: 0; }
+	      .sandbox-chat-root .pc-workflow-chat__composer { padding-inline: 0; }
 	    }
     /* Models / Engines tabs: AbstractCore's embedded screens (scoped under
        .acc-root, they read the kit variables above), then the host chrome. */
@@ -13249,7 +13253,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          if (reasoningChoice) payload.reasoning = reasoningChoice;
 	          const mtpChoice = $("sandbox-speculation").value;
 	          if (mtpChoice) payload.speculation = speculationFromChoice(mtpChoice, undefined, true);
-	          pendingId = sandboxPush({ role: "assistant", title: `${state.providerLabels.get(provider) || provider} / ${model}`, content: "", live: { callId: "sandbox", reasoning: "", label: "generating answer" } });
+	          // The speaker is the model (the provider is in the context line above).
+	          pendingId = sandboxPush({ role: "assistant", title: model, content: "", live: { callId: "sandbox", reasoning: "", label: "generating answer" } });
 	          const res = await api("/api/gateway/sandbox/generate", { slow: true, method: "POST", body: JSON.stringify(payload) });
 	          const text = res.response || "(empty response)";
 	          state.sandboxMessages.push({ role: "user", content: promptText }, { role: "assistant", content: text });
