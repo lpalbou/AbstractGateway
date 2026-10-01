@@ -290,3 +290,20 @@ def test_a_server_failing_initialize_at_run_start_is_skipped_with_a_note(gateway
         assert all(MCP not in _offered_names(p) for p in LLM_PAYLOADS) and LLM_PAYLOADS
         rt = _vars(run_id)["_runtime"]
         assert rt["mcp_notes"] == ["MCP server fake skipped: The server answered but refused initialize: maintenance"]
+
+
+def test_a_server_disabled_after_the_run_started_refuses_the_approved_call(gateway, tmp_path):
+    """The registry is read again at call time: an approved call to a server an admin disabled in
+    the meantime never reaches it, and the run gets the reason as the tool's error."""
+    with FakeHttpEcho(require_bearer=SECRET) as fake:
+        _register(gateway, "http", tmp_path, fake)
+        run_id = _start(gateway, {"tools": ["read_file", MCP]})
+        rid, wait = _wait_until(lambda: _tool_wait(gateway, run_id))
+        off = gateway.post("/api/gateway/admin/mcp/servers/fake/agents", headers=HEADERS, json={"enabled": False})
+        assert off.status_code == 200 and off.json()["agents_status"] == "Not offered to agents"
+        gateway.post("/api/gateway/commands", headers=HEADERS, json={
+            "command_id": "approve-late", "run_id": rid, "type": "resume",
+            "payload": {"wait_key": wait["wait_key"], "payload": {"approved": True}}})
+        _wait_until(lambda: _run(gateway, run_id).get("status") == "completed")
+        assert fake.calls() == []
+        assert "The MCP server fake is not enabled for agents." in json.dumps(_ledger(gateway, rid), default=str)
