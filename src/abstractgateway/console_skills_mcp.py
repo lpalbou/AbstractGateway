@@ -25,7 +25,7 @@ SKILLS_MCP_CSS = r"""
 /* ---- Skills & MCP page (console_skills_mcp.py) ---- */
 .skmcp-page { display: flex; flex-direction: column; gap: 14px; }
 .skmcp-page .af-tabs__panel { padding-top: 14px; display: flex; flex-direction: column; gap: 12px; }
-.skmcp-purpose { margin: 0; }
+.skmcp-purpose { margin: 0; max-width: none; }
 .skmcp-truth { margin: 0; padding: 10px 12px; max-width: 90ch; border-left: 3px solid var(--warning, var(--accent)); background: color-mix(in srgb, var(--warning, var(--accent)) 9%, transparent); border-radius: var(--radius-sm); font-size: var(--font-size-base); line-height: 1.45; }
 .skmcp-shelf { border-top: 1px solid var(--line-soft); padding: 12px 0 0; }
 .skmcp-shelf[open] > summary { margin-bottom: 8px; }
@@ -42,7 +42,7 @@ SKILLS_MCP_CSS = r"""
 .skills-table th.sk-col-version { width: 6.5rem; }
 .skills-table th.sk-col-trust { width: 7.5rem; }
 .skills-table th.sk-col-source { width: 8.5rem; }
-.skills-table th.sk-col-actions { width: 13.5rem; }
+.skills-table th.sk-col-actions { width: 16rem; }
 .mcp-table th.mcp-col-name { width: 18%; }
 .mcp-table th.mcp-col-transport { width: auto; }
 .mcp-table th.mcp-col-status { width: 22%; }
@@ -61,6 +61,7 @@ SKILLS_MCP_CSS = r"""
 .skmcp-chip.is-err { border-color: color-mix(in srgb, var(--error, #d6336c) 55%, transparent); color: var(--error, #d6336c); }
 .skmcp-chip.is-muted { color: var(--muted); }
 .skmcp-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+@media (min-width: 1024px) { .skmcp-actions { flex-wrap: nowrap; } }
 .skmcp-actions > button { white-space: nowrap; }
 .skmcp-status.is-failed { color: var(--error, #d6336c); }
 .skmcp-tools > summary { cursor: pointer; min-height: 28px; }
