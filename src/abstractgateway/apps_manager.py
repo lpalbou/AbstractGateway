@@ -290,6 +290,11 @@ class JobCancelled(Exception):
     pass
 
 
+# Written by the installers (install.sh / install.ps1) when they upgrade with no gateway running:
+# one "ID VERSION" line per browser app; applied and removed at the next boot (autostart).
+APPS_UPGRADE_MARKER = "apps-upgrade.pending"
+
+
 def spec_for(app_id: str) -> AppSpec:
     spec = APP_BY_ID.get(str(app_id or "").strip().lower())
     if spec is None:
@@ -2596,6 +2601,7 @@ class AppsManager:
             self.gateway_url = str(gateway_url).rstrip("/")
         outcomes: List[Dict[str, Any]] = []
         self.reap_orphans()
+        outcomes.extend(self.apply_pending_upgrades())
         for spec in APPS:
             if cancel is not None and cancel.is_set():
                 break
@@ -2614,6 +2620,44 @@ class AppsManager:
             except AppsError as exc:
                 outcomes.append({"app_id": spec.id, "ok": False, "message": exc.message})
                 logger.warning("app %s is enabled but did not start: %s", spec.id, exc.message)
+        return outcomes
+
+    def apply_pending_upgrades(self) -> List[Dict[str, Any]]:
+        """Gateway boot: the installer's `<data dir>/apps-upgrade.pending`
+        (one "ID VERSION" per line, written when it upgraded with no gateway
+        running) brings every INSTALLED app named there to that version
+        before the apps start; apps not installed stay uninstalled. The file
+        is removed once read; a failed update is logged as an error and
+        returned as a failed outcome row, never silent."""
+        path = self.data_dir / APPS_UPGRADE_MARKER
+        try:
+            text = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return []
+        except Exception as exc:  # noqa: BLE001
+            logger.error("%s could not be read: %s", path, exc)
+            return []
+        path.unlink(missing_ok=True)
+        outcomes: List[Dict[str, Any]] = []
+        for line in text.splitlines():
+            parts = line.split()
+            if len(parts) != 2 or parts[0] not in APP_BY_ID:
+                continue
+            app_id, version = parts
+            installed = self.installed_version(app_id)
+            if not installed or installed == version:
+                continue
+            try:
+                job, _ = self.start_install(app_id, version=version, update=True, run_inline=True, same_machine=True)
+                ok = job.state == "succeeded"
+                message = str(job.message if ok else (job.error or job.message))
+            except AppsError as exc:
+                ok, message = False, exc.message
+            if ok:
+                logger.info("app %s upgraded %s -> %s (%s)", app_id, installed, version, APPS_UPGRADE_MARKER)
+            else:
+                logger.error("app %s was NOT upgraded %s -> %s (%s): %s", app_id, installed, version, APPS_UPGRADE_MARKER, message)
+            outcomes.append({"app_id": app_id, "ok": ok, "upgrade": f"{installed} -> {version}", "message": message})
         return outcomes
 
     def app_log_tail(self, app_id: str, lines: int = 200) -> List[str]:
