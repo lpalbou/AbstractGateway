@@ -148,7 +148,7 @@ try {
     await signIn(page, "admin", ADMIN);
     // Sidebar (DESIGN-v2 §1): four groups in order, Setup at the bottom opens the guide.
     const nav = await page.evaluate(() => Array.from(document.querySelectorAll("#console-nav .af-nav-group")).map((g) => [g.querySelector(".af-nav-group__caption").textContent.trim(), Array.from(g.querySelectorAll(".tab-button")).map((b) => b.id.replace("tab-button-", ""))]));
-    check(JSON.stringify(nav) === JSON.stringify([["Accounts", ["users"]], ["Work", ["workflows", "runtimes", "apps"]], ["Models", ["providers", "catalog", "defaults"]], ["System", ["models", "sandbox", "network"]]]), "sidebar groups in order", nav);
+    check(JSON.stringify(nav) === JSON.stringify([["Accounts", ["users"]], ["Work", ["workflows", "skills", "runtimes", "apps"]], ["Models", ["providers", "catalog", "defaults"]], ["System", ["models", "sandbox", "network"]]]), "sidebar groups in order", nav);
     check((await page.locator("#topbar-static #open-setup, #af-topbar-root [id*=setup]").count()) === 0, "no Setup button in the top bar");
     await page.click("#open-setup");
     await page.waitForSelector("#first-run-backdrop:not(.hidden)", { timeout: 10000 });
@@ -182,7 +182,7 @@ try {
       menu: Array.from(tr.querySelectorAll(".af-menu__item")).map((b) => b.dataset.action),
       disabled: tr.querySelectorAll("button[disabled]").length,
     }])));
-    check(JSON.stringify(acts.castor) === JSON.stringify({ vis: ["email", "logs", "manage"], menu: ["workspace", "archive"], disabled: 0 }), "entity row: Email · Logs · Manage + menu Workspace, Archive", acts.castor);
+    check(JSON.stringify(acts.castor) === JSON.stringify({ vis: ["email", "logs", "manage"], menu: ["archive"], disabled: 0 }), "entity row: Email · Logs · Manage + menu Archive", acts.castor);
     check(JSON.stringify(acts.alice) === JSON.stringify({ vis: ["email", "logs", "workspace"], menu: ["rotate", "archive"], disabled: 0 }), "user row: Email · Logs · Workspace + menu Rotate token, Archive", acts.alice);
     check(JSON.stringify(acts.admin) === JSON.stringify({ vis: ["email", "logs", "workspace"], menu: ["rotate"], disabled: 0 }), "own row: no Archive offered", acts.admin);
     check((await page.locator("#users-section .accounts-reasons").count()) === 0 && !(await page.textContent("#users-section")).includes("don't apply to entities"), "no per-row reasons paragraph");

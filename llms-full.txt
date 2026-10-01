@@ -5638,10 +5638,10 @@ from a spark template (its name is permanent, [entities.md](docs/entities.md)).
 |---|---|
 | **Name** | the account id and a kind chip: **Admin**, **User** or **Entity** (hover it for the role) |
 | **Email address** | where the account's sign-in codes and notifications go: the registered email address, else the account's own connected mailbox address; "No address" when it has neither |
-| **Mailbox** | "Connected as x@y", "Not connected" or "Paused" (users and entities alike: an entity has its own mailbox) |
-| **Runtime** | the account's runtime, or "No runtime" |
+| **Mailbox** | "Connected as x@y", "Receive only — no outgoing server" (with the reason under it), "Not connected" or "Paused" (users and entities alike: an entity has its own mailbox) |
+| **Runtime** | the account's runtime id (plain text that wraps), or "No runtime" |
 | **Active** | the switch described below; "Archived" on an archived row |
-| **Actions** | users: **Email**, **Logs**, **Workspace** and a "⋯" menu (**Rotate token**, **Archive**); entities: **Email**, **Logs**, **Manage** and a "⋯" menu (**Workspace**, **Archive**); archived rows: **Logs** and a "⋯" menu (**Unarchive**) |
+| **Actions** | users: **Email**, **Logs**, **Workspace** and a "⋯" menu (**Rotate token**, **Archive**); entities: **Email**, **Logs**, **Manage** and a "⋯" menu (**Archive**); archived rows: **Logs** and a "⋯" menu (**Unarchive**) |
 
 Rows are tinted by kind (a legend under the table reads "Tint: admin · user ·
 entity"). Only the actions that apply to a row are shown: your own row has no
@@ -5684,8 +5684,8 @@ it is off by default and your browser remembers it.
   "Test notification"). The footer says what the audit log does not
   record (page views and reads, mail received, what agents send with their
   email tools).
-- **Workspace** opens the account's workspace policy (which folders its agents
-  may read and write); for an entity it opens the entity's management page.
+- **Workspace** (users) opens the account's workspace policy (which folders its
+  agents may read and write).
 - **Rotate token** issues a new token for a user (the old one stops working at
   once; the new one is shown once). Entities have no token to rotate.
 - **Manage** (entities) opens the entity's lifecycle, substrate, capabilities
@@ -9044,6 +9044,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   allowed list, a denylist's entries the Always denied list. The older `{mode, entries}` body is
   still accepted (`entries` replaces the list the mode uses). Needs the AbstractCore version that
   adds the two lists.
+- `GET /me/email` policy carries `self_addresses`: the own addresses, shown as a fixed chip ("(your
+  address)", never removable) because they are always allowed.
+- Advanced reads "Send at most [100] per hour and [1000] per day." on one line with two small number
+  fields (wrapping on phones), and "Watch folder" is a sentence-case label like the others.
+- Web console: an entity's **Manage** opens as a dialog over the Accounts page instead of replacing
+  it (Esc or a click outside closes it and focus goes back to the entity's row; full screen on
+  phones). Awake and Personal time are switches; the mind, voice, tools and prompt settings save
+  by themselves and say "Saved", or why they were not saved; sleep, emergency freeze and the memory
+  index rebuild ask for confirmation inline. Stop and Restore are no longer in Manage: the Accounts
+  row's Active switch suspends and resumes an entity.
 
 ### Fixed
 - Runs now use the base URL set on the text-generation default (`output.text`, stored as `input.text`). Released 0.10.0 saved and showed it, but runs, run summaries, Ask and the sandbox called the provider's built-in address instead (for example LM Studio on `localhost:1234`). The base URL applies to the route's own provider only; an endpoint profile (`endpoint:<id>`) keeps its own address, and nothing changes when the field is empty. Affects 0.10.0; ships in the next release.
@@ -9064,7 +9074,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Session history never crosses sessions — pinned.** `tests/test_gateway_session_history_isolation.py`
   proves a new session starts with no messages from another session of the same user, of another
   user, or after a restart, and that nothing of the other session reaches its run vars.
-
+- Web console: saving or clearing an entity's voice, and giving or ending a work order, did nothing
+  (the page read an entity name that was never set).
 
 ## [0.10.0] - 2026-10-01
 

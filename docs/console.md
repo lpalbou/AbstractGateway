@@ -119,10 +119,10 @@ from a spark template (its name is permanent, [entities.md](./entities.md)).
 |---|---|
 | **Name** | the account id and a kind chip: **Admin**, **User** or **Entity** (hover it for the role) |
 | **Email address** | where the account's sign-in codes and notifications go: the registered email address, else the account's own connected mailbox address; "No address" when it has neither |
-| **Mailbox** | "Connected as x@y", "Not connected" or "Paused" (users and entities alike: an entity has its own mailbox) |
-| **Runtime** | the account's runtime, or "No runtime" |
+| **Mailbox** | "Connected as x@y", "Receive only — no outgoing server" (with the reason under it), "Not connected" or "Paused" (users and entities alike: an entity has its own mailbox) |
+| **Runtime** | the account's runtime id (plain text that wraps), or "No runtime" |
 | **Active** | the switch described below; "Archived" on an archived row |
-| **Actions** | users: **Email**, **Logs**, **Workspace** and a "⋯" menu (**Rotate token**, **Archive**); entities: **Email**, **Logs**, **Manage** and a "⋯" menu (**Workspace**, **Archive**); archived rows: **Logs** and a "⋯" menu (**Unarchive**) |
+| **Actions** | users: **Email**, **Logs**, **Workspace** and a "⋯" menu (**Rotate token**, **Archive**); entities: **Email**, **Logs**, **Manage** and a "⋯" menu (**Archive**); archived rows: **Logs** and a "⋯" menu (**Unarchive**) |
 
 Rows are tinted by kind (a legend under the table reads "Tint: admin · user ·
 entity"). Only the actions that apply to a row are shown: your own row has no
@@ -165,8 +165,8 @@ it is off by default and your browser remembers it.
   "Test notification"). The footer says what the audit log does not
   record (page views and reads, mail received, what agents send with their
   email tools).
-- **Workspace** opens the account's workspace policy (which folders its agents
-  may read and write); for an entity it opens the entity's management page.
+- **Workspace** (users) opens the account's workspace policy (which folders its
+  agents may read and write).
 - **Rotate token** issues a new token for a user (the old one stops working at
   once; the new one is shown once). Entities have no token to rotate.
 - **Manage** (entities) opens the entity's lifecycle, substrate, capabilities

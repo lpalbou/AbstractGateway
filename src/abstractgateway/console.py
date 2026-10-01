@@ -12968,7 +12968,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           }, (e) => usersMessage(emailErrorText(e), "error"));
         }
         // Actions (DESIGN-v3 §1.1 + §13.2): users Email · Logs · Workspace · ⋯ (Rotate token, Archive);
-        // entities Email · Logs · Manage · ⋯ (Workspace, Archive); archived Logs · ⋯ (Unarchive).
+        // entities Email · Logs · Manage · ⋯ (Archive); archived Logs · ⋯ (Unarchive).
         const actions = document.createElement("td");
         actions.className = "actions accounts-actions";
         actions.setAttribute("data-label", "Actions");
@@ -12987,7 +12987,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           if (accountCan(a, key)) menu.push({ key, label, onSelect, danger: Boolean(danger) });
           else if (accountAction(a, key).reason) absent.push(accountAction(a, key).reason);
         };
-        const entityWorkspace = () => openEntityManage(a.id);
         const userWorkspace = () => openWorkspacePolicyModal({ tenant_id: a.tenant_id || "default", user_id: a.id });
         if (archived) {
           visible("logs", "Logs", { aria: `Activity of ${a.id}` }, () => openAccountLogs(a));
@@ -12997,7 +12996,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           visible("logs", "Logs", { aria: `Activity of ${a.id}` }, () => openAccountLogs(a));
           if (a.kind === "entity") {
             visible("manage", "Manage", { aria: `Manage ${a.id}`, title: "Lifecycle, substrate, capabilities, prompt; Talk lives here too" }, () => openEntityManage(a.id));
-            offer("workspace", "Workspace", entityWorkspace);
+            // No Workspace for entities: their file access is not the per-user workspace policy, and
+            // Manage has no workspace view (C3F / manage-modal) — not offered rather than mis-routed.
             // Entities have no token: Rotate is never offered; the "⋯" title says why.
             absent.unshift(accountAction(a, "rotate").reason || "Entities have no token to rotate.");
           } else {

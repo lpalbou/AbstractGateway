@@ -93,7 +93,7 @@ try {
     check((await page.locator("#users-section .accounts-reasons").count()) === 0, "no reasons paragraph");
     check((await page.locator("#users-table [data-action='delete']").count()) === 0 && !(await page.textContent("#users-table")).includes("Delete"), "no Delete anywhere in the table");
     check(JSON.stringify([rows.alice.vis, rows.alice.menu]) === JSON.stringify([["email", "logs", "workspace"], ["rotate", "archive"]]), "user: Email · Logs · Workspace, menu Rotate token · Archive", rows.alice);
-    check(JSON.stringify([rows.castor.vis, rows.castor.menu]) === JSON.stringify([["email", "logs", "manage"], ["workspace", "archive"]]), "entity: Email · Logs · Manage, menu Workspace · Archive", rows.castor);
+    check(JSON.stringify([rows.castor.vis, rows.castor.menu]) === JSON.stringify([["email", "logs", "manage"], ["archive"]]), "entity: Email · Logs · Manage, menu Archive (no Workspace)", rows.castor);
     check(rows.castor.more.includes("no token to rotate"), "entity '⋯' says why Rotate is absent", rows.castor.more);
     check(JSON.stringify([rows.admin.vis, rows.admin.menu]) === JSON.stringify([["email", "logs", "workspace"], ["rotate"]]), "own row: no Archive", rows.admin);
     // Wrap, never truncate (operator rule): the long id and address are shown whole; the row grows.
@@ -103,9 +103,9 @@ try {
     const more = page.locator("tr[data-user='castor'] .af-menu__button");
     check((await more.getAttribute("aria-haspopup")) === "menu" && (await more.getAttribute("aria-label")) === "More actions for castor", "the '⋯' button is a labelled menu button");
     await more.click();
-    check((await more.getAttribute("aria-expanded")) === "true" && (await page.evaluate(() => document.activeElement.dataset.action)) === "workspace", "opening focuses the first item");
+    check((await more.getAttribute("aria-expanded")) === "true" && (await page.evaluate(() => document.activeElement.dataset.action)) === "archive", "opening focuses the first item");
     await page.keyboard.press("ArrowDown");
-    check((await page.evaluate(() => document.activeElement.dataset.action)) === "archive", "ArrowDown moves to Archive");
+    check((await page.evaluate(() => document.activeElement.dataset.action)) === "archive", "ArrowDown wraps on a one-item menu");
     await page.keyboard.press("Escape");
     check((await more.getAttribute("aria-expanded")) === "false" && (await page.evaluate(() => document.activeElement.getAttribute("aria-label"))) === "More actions for castor", "Escape closes and returns focus to '⋯'");
     // Archive bob: inline confirmation, then the row leaves the list (Show archived off).

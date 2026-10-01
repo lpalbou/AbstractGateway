@@ -73,6 +73,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   address)", never removable) because they are always allowed.
 - Advanced reads "Send at most [100] per hour and [1000] per day." on one line with two small number
   fields (wrapping on phones), and "Watch folder" is a sentence-case label like the others.
+- Web console: an entity's **Manage** opens as a dialog over the Accounts page instead of replacing
+  it (Esc or a click outside closes it and focus goes back to the entity's row; full screen on
+  phones). Awake and Personal time are switches; the mind, voice, tools and prompt settings save
+  by themselves and say "Saved", or why they were not saved; sleep, emergency freeze and the memory
+  index rebuild ask for confirmation inline. Stop and Restore are no longer in Manage: the Accounts
+  row's Active switch suspends and resumes an entity.
 
 ### Fixed
 - Runs now use the base URL set on the text-generation default (`output.text`, stored as `input.text`). Released 0.10.0 saved and showed it, but runs, run summaries, Ask and the sandbox called the provider's built-in address instead (for example LM Studio on `localhost:1234`). The base URL applies to the route's own provider only; an endpoint profile (`endpoint:<id>`) keeps its own address, and nothing changes when the field is empty. Affects 0.10.0; ships in the next release.
@@ -93,17 +99,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Session history never crosses sessions — pinned.** `tests/test_gateway_session_history_isolation.py`
   proves a new session starts with no messages from another session of the same user, of another
   user, or after a restart, and that nothing of the other session reaches its run vars.
-### Changed
-
-- Web console: an entity's **Manage** opens as a dialog over the Accounts page instead of replacing
-  it (Esc or a click outside closes it and focus goes back to the entity's row; full screen on
-  phones). Awake and Personal time are switches; the mind, voice, tools and prompt settings save
-  by themselves and say "Saved", or why they were not saved; sleep, emergency freeze and the memory
-  index rebuild ask for confirmation inline. Stop and Restore are no longer in Manage: the Accounts
-  row's Active switch suspends and resumes an entity.
-
-### Fixed
-
 - Web console: saving or clearing an entity's voice, and giving or ending a work order, did nothing
   (the page read an entity name that was never set).
 
