@@ -90,8 +90,9 @@ someone at the gateway machine whatever it listens on.
 
 The guide opens by itself once per data folder. **Finish** or **Skip setup**
 records that it ran (`POST /api/gateway/host/first-run`); clicking outside the
-dialog closes it without recording anything. The **Setup** button (⚑, top
-right, admins only) reopens it at any time.
+dialog closes it without recording anything. **Setup**, at the bottom of the
+sidebar (admins only), reopens it at any time and keeps your current choices
+unless you replace them.
 
 ### On a headless server
 

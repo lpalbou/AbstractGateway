@@ -770,8 +770,8 @@ may itself contain `:` (the bundle part ends at the first `:`).
 
 A saved value is checked when it is saved (it must exist on this gateway and
 declare that interface; 400 with the reason otherwise) and again at every
-run start: a value that no longer works is shown as unavailable with the
-reason, and runs that ask for the default are refused (409) until it is
+run start: a value that no longer works is shown as broken with the reason
+("Broken: … — pick another workflow or choose “Clients choose”."), and runs that ask for the default are refused (409) until it is
 changed. It never falls back to another workflow on its own.
 
 `GET /api/gateway/admin/runtime-config` returns
@@ -791,8 +791,8 @@ variable for this setting).
 
 | | Web console | Console TUI | CLI |
 |---|---|---|---|
-| Where | Workflows → *Default agent workflow* (one row per interface), or *Make agent default* on an entrypoint | Runtimes → *Runtime knobs* → *Edit default agent workflows*; Workflows marks the default with ★ | `abstractgateway config get agents.default_workflow.<interface>` |
-| Change | choose in the list, *Save default agent workflows* | type the value (the choices are listed under the field; empty = the built-in default) | `abstractgateway config set agents.default_workflow.<interface> bundle[@version]:flow`, `config unset …` |
+| Where | Workflows → *Default workflow per app* (one row per interface, with its plain name; interfaces no app asks for under *Other workflow types*) | Workflows → *Default workflow per app* (`Tab`), or Runtimes → *Runtime knobs* → *Edit default agent workflows* | `abstractgateway config get agents.default_workflow.<interface>` |
+| Change | choose in the row's list; it applies at once ("Clients choose" or "Built in: …" = nothing saved) | `Enter` on a row picks and saves at once; on Runtimes, type the value (the choices are listed under the field; empty = the built-in default) | `abstractgateway config set agents.default_workflow.<interface> bundle[@version]:flow`, `config unset …` |
 
 Writes are admin-only and audit-logged like every other setting. A write that
 names a setting the gateway does not know is refused as a whole (400) and
@@ -821,7 +821,7 @@ effective default from `GET /api/gateway/discovery/capabilities`
 
 | | Web console | Console TUI | CLI / API |
 |---|---|---|---|
-| Read | Workflows → *Stream replies by default* | Runtimes → *Runtime knobs* | `abstractgateway config get agents.streaming_default` |
+| Read | Workflows → *Settings* → *Streamed replies* | Runtimes → *Runtime knobs* | `abstractgateway config get agents.streaming_default` |
 | Change | the switch | the switch | `abstractgateway config set agents.streaming_default on`, `config unset agents.streaming_default`; `POST /api/gateway/admin/runtime-config {"agents": {"streaming_default": true}}` |
 
 ### Skills shelf

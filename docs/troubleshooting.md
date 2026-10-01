@@ -68,7 +68,7 @@ See [first-run.md](./first-run.md#3-get-a-new-sign-in-link).
 It is kept in `<data dir>/auth/bootstrap-admin-token` (mode `0600`).
 `abstractgateway-config status` prints the data dir. For a loopback gateway
 you can also sign in with `abstractgateway claim --open` and rotate tokens
-from the console's **Users & Entities** tab.
+from the console's **Accounts** tab (**Rotate** on the account's row).
 
 ### `401`, `403`, `429` or `413` from `/api/gateway/*`
 
@@ -154,7 +154,7 @@ The run asked for the gateway default (`flow_id: "@default"`), and the saved
 default for that interface cannot run: its workflow was removed or
 deprecated, or no longer declares the interface. The message names the
 setting and where its value comes from. Choose another workflow in the
-console (Workflows → *Default agent workflow*), or run
+console (Workflows → *Default workflow per app*), or run
 `abstractgateway config unset agents.default_workflow.<interface>` to return
 to the built-in default. A 400 means the request itself is wrong: `interface`
 is missing, or `bundle_id`/`bundle_version` were sent with `@default`. See

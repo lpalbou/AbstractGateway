@@ -41,16 +41,16 @@ Related repos:
 |---|---|
 | [email.md](./email.md) | per-user email: connecting your own mailbox (password or OAuth2), recipient policy and send limits, automations on new mail, email notifications, account recovery by email, the administrator switch, migration from the retired environment variables |
 | [automations.md](./automations.md) | automations: a workflow run on a trigger as a durable controller run; every route with its shapes, the error envelope, tool approval, typed waits and how to answer them, attention and `/seen`, discussions, run lists, legacy schedules, operations (one writer process, restart recovery, boot warm-up, the acceptance script) and the limits of v1 |
-| [console.md](./console.md) | the web console at `/console` (every tab, responsive layout on phones and tablets) and the `abstractgateway-console` terminal app |
+| [console.md](./console.md) | the web console at `/console` (the grouped sidebar and every tab, including Accounts and Workflows; responsive layout on phones and tablets) and the `abstractgateway-console` terminal app (its screens and keys) |
 | [apps.md](./apps.md) | installing, starting and opening the browser apps (Flow, Code, Observer, Continuum, Entity), Code's terminal app and the desktop Assistant |
 | [engines.md](./engines.md) | installing local engines (Ollama, LM Studio, MLX, llama.cpp, vLLM, Hugging Face): what each Install does, when a password or the Apple tools are needed |
 | [model-downloads.md](./model-downloads.md) | download jobs: progress, stalls, cancel, end reasons, parent jobs, the event stream |
 | [tray.md](./tray.md) | the desktop tray icon: apps, models, pause, start at login, network, restart and update |
-| [security.md](./security.md) | user accounts, sessions, origins, network exposure, callers on this computer, the Assistant's sign-in, workspace scope and the built-in deny list, limits, audit log |
+| [security.md](./security.md) | user accounts, who sees which account and entity, sessions, origins, network exposure, callers on this computer, the Assistant's sign-in, workspace scope and the built-in deny list, limits, audit log |
 | [deployment.md](./deployment.md) | Docker images, Compose, provider variables, single machine without Docker |
 | [shipped-workflows.md](./shipped-workflows.md) | the workflows a fresh install serves (coding agent, deep research, co-scientist, …) and managing the registry |
 | [deep-research.md](./deep-research.md) | the shipped `deep-research` workflow contract |
-| [entities.md](./entities.md) | summoned entities: homes, lifecycle, summoning, replay |
+| [entities.md](./entities.md) | summoned entities: who can see one, homes, lifecycle, summoning, replay |
 | [apple-local-gateway-flow.md](./apple-local-gateway-flow.md) | an Apple Silicon local Gateway + Flow setup with local engines |
 | [maintenance.md](./maintenance.md) | operator tooling: reports, triage, backlog, exec runner, process manager, bridges (high trust) |
 

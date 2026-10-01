@@ -210,6 +210,33 @@ Core defaults, then the Gateway/root Core config baseline, then the user's
 runtime Core config override under that user's Gateway data plane. A stronger encrypted vault, audit model, and
 bridge/delegated-tool propagation policy remain future hardening work.
 
+### Who sees which account
+
+An admin sees every user and every entity (`GET /api/gateway/admin/accounts`,
+admin-only: other accounts get 403). Anyone else sees only their own account
+and the entities they created (`GET /api/gateway/me/accounts`, and
+`GET /api/gateway/me/accounts/{id}/activity` for their own activity or an own
+entity's). The console's Accounts page follows the same rule.
+
+- `POST /entities` records the creator (`created_by: {tenant_id, user_id}`) in
+  the new entity's manifest. Entities created before this field existed have
+  no creator and are visible to admins only; no creator is guessed and no
+  manifest is rewritten.
+- Every entity route checks visibility first. An entity you may not see
+  answers exactly like a missing one (404, same message), so names cannot be
+  probed.
+- Entity names belong to the whole gateway: creating an entity under a name
+  another account already holds (an entity in any runtime, or a user account)
+  answers 409 "That name is taken".
+- Seeing an entity is not managing it: admin-only entity writes (state, tool
+  policy, prompt, substrate, …) stay admin-only for the entities you created,
+  and only an admin can suspend an entity or rotate a user's token.
+- A gateway without user accounts is one shared world: every entity is visible.
+
+An entity has no token to rotate (its credential is discarded when it is
+created) and cannot be deleted (its name is kept for life); an admin suspends
+it instead. Details: [api.md](./api.md#who-sees-which-account).
+
 ### Per-user email
 
 Each user's mailbox ([email.md](email.md)) lives in that user's own data plane,

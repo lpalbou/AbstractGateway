@@ -132,15 +132,19 @@ instead of keeping the token. `ABSTRACTGATEWAY_AUTH_TOKEN` is a shared
 server/operator token, not a browser sign-in token. See
 [docs/security.md](docs/security.md).
 
-The built-in console at `/console` covers users and entities, runtimes,
-workflows, provider connections, multimodal capability defaults, a sandbox,
-host resources, models, engines, apps and network access. The same
+The built-in console at `/console` groups its pages in the sidebar: Accounts
+(users and entities in one table, with each account's email settings and
+activity), Work (workflows, runtimes, apps), Models (providers, models,
+engines, multimodal capability defaults) and System (host resources, a
+sandbox, network access); **Setup** at the bottom reruns the setup guide. An
+administrator sees every account; anyone else sees their own account and the
+entities they created. The same
 configuration surfaces exist in a terminal through the `abstractgateway-console`
 Rust app (`cargo install abstractgateway-console`). See
 [docs/console.md](docs/console.md).
 
-Each user can connect their own mailbox (Users & Entities → **My email address and mailbox** in the web
-console, `@` in the terminal console, or `/api/gateway/me/email`): automations
+Each user can connect their own mailbox (Accounts → **Email** on their own row in the web
+console, `@` on their own row in the terminal console, or `/api/gateway/me/email`): automations
 can run when mail arrives, results and approvals can be emailed to the user,
 and agents can use email tools when an administrator makes them available. See
 [docs/email.md](docs/email.md).

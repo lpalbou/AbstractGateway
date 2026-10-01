@@ -2,8 +2,9 @@
 
 ## 0.13.0 (2026-10-01)
 
-Needs abstractcore-console 0.4 and AbstractGateway 0.10.0 (the email routes `POST /me/email/discover`,
-`PUT /me/email/address`, `PUT /me/email/notifications`, `PUT /me/email/folder` and the sign-in-by-email answers).
+Needs abstractcore-console 0.4 and AbstractGateway 0.10.0 (the Accounts routes `/admin/accounts`, `/me/accounts`
+and their activity, the email routes `POST /me/email/discover`, `PUT /me/email/address`, `PUT /me/email/notifications`,
+`PUT /me/email/folder`, and the sign-in-by-email answers).
 Against an older gateway the page still reads (missing fields fall back), and a write to a route the gateway does
 not have fails with its error.
 

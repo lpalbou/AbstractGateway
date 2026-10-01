@@ -33,7 +33,7 @@ CLI helpers:
 Notification helpers used by `triage-reports --notify`:
 - Telegram: `ABSTRACT_BACKLOG_TELEGRAM_CHAT_ID` or `ABSTRACT_TRIAGE_TELEGRAM_CHAT_ID`
 - Email: sent to the administrator's registered address through the administrator's own email account
-  (Users & Entities → **My email address and mailbox**), from the durable notification outbox — the recipient policy and send limits apply and
+  (Accounts → **Email** on the administrator's row), from the durable notification outbox — the recipient policy and send limits apply and
   a retry never sends a notice twice. See [email.md](./email.md).
 
 Evidence: CLI wiring in `src/abstractgateway/cli.py`.
@@ -174,7 +174,7 @@ Evidence: bridge startup in `src/abstractgateway/service.py` (`start_gateway_run
 
 ## Email
 
-Email is configured per user (Users & Entities → **My email address and mailbox**), never through environment variables; new mail reaches
+Email is configured per user (Accounts → **Email** on your own row), never through environment variables; new mail reaches
 automations through the `email.received@1` trigger. See [email.md](./email.md) for the watcher, notifications,
 recovery codes and the one-time import of the retired `ABSTRACT_EMAIL_*` variables, and [api.md](./api.md#email) for
 the routes (including the deprecated `/api/gateway/email/*` aliases).

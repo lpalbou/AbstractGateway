@@ -8,6 +8,14 @@ surface to create, inspect, verify, and summon it.
 
 This page uses human words first, API names in parentheses.
 
+Who can see an entity: an admin sees every entity; anyone else sees only the
+entities they created (recorded as `created_by` when the entity is created).
+An entity you may not see answers like a missing one (404). In the consoles,
+entities are rows of the **Accounts** table, with an **Active** switch that
+suspends and resumes them; they have no mailbox, no token to rotate and no
+delete. See [security.md](./security.md#who-sees-which-account) and
+[console.md](./console.md#accounts).
+
 ## What an entity is
 
 A summoned entity lives in two files at its **home**:

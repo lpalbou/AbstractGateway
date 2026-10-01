@@ -22,7 +22,7 @@ serve:
 |---|---|---|
 | `/api/gateway/session/login`, `/session/logout`, `/session/claim`, `/me` | browser sessions, one-time sign-in links, the current principal | [security.md](./security.md), [first-run.md](./first-run.md) |
 | `/api/gateway/admin/users`, `/admin/runtime-reservations` | user accounts and retained runtimes (admin) | [security.md](./security.md#tenant-and-user-isolation) |
-| `/api/gateway/admin/accounts`, `/admin/accounts/{id}/active`, `/admin/accounts/{id}/activity`, `/me/activity` | the Accounts page: users and entities in one list, the Active switch, activity from the audit log | [below](#accounts-and-activity) |
+| `/api/gateway/admin/accounts`, `/admin/accounts/{id}/active`, `/admin/accounts/{id}/activity`, `/me/accounts`, `/me/accounts/{id}/activity`, `/me/activity` | the Accounts page: users and entities in one list (admin), your own account and your entities (everyone), the Active switch, activity from the audit log | [below](#accounts-and-activity) |
 | `/api/gateway/admin/runtime-config` | runtime settings (admin) | [configuration.md](./configuration.md) |
 | `/api/gateway/network`, `/network/restart` | network exposure, addresses, reverse proxy | [configuration.md](./configuration.md#api-gateway_network_v1) |
 | `/api/gateway/apps/*`, `/apps/handover/{code}`, `/apps/tui-handover`, `/api/gateway/apps/desktop-handover` | browser apps, terminal apps, the Assistant and its sign-in | [apps.md](./apps.md#http-api) |
