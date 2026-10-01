@@ -2954,7 +2954,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                       <span id="my-email-allow-title" class="recipient-list__title">Always allowed</span>
                       <ul id="my-email-allow-list" class="chip-list" aria-labelledby="my-email-allow-title"></ul>
                       <div class="af-form__inline advanced-add">
-                        <input id="my-email-allow-add" autocomplete="off" spellcheck="false" placeholder="address or domain (e.g. abstractframework.ai)" aria-label="Address or domain to always allow">
+                        <input id="my-email-allow-add" autocomplete="off" spellcheck="false" placeholder="e.g. abstractframework.ai" aria-label="Address or domain to always allow">
                         <button id="my-email-allow-add-button" class="secondary" type="button">Add</button>
                       </div>
                       <span id="my-email-allow-state" class="inline-state" role="status" aria-live="polite"></span>
@@ -2963,7 +2963,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                       <span id="my-email-deny-title" class="recipient-list__title">Always denied</span>
                       <ul id="my-email-deny-list" class="chip-list" aria-labelledby="my-email-deny-title"></ul>
                       <div class="af-form__inline advanced-add">
-                        <input id="my-email-deny-add" autocomplete="off" spellcheck="false" placeholder="address or domain (e.g. xxx.gov)" aria-label="Address or domain to always deny">
+                        <input id="my-email-deny-add" autocomplete="off" spellcheck="false" placeholder="e.g. xxx.gov" aria-label="Address or domain to always deny">
                         <button id="my-email-deny-add-button" class="secondary" type="button">Add</button>
                       </div>
                       <span id="my-email-deny-state" class="inline-state" role="status" aria-live="polite"></span>
