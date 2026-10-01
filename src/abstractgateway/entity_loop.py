@@ -50,6 +50,11 @@ def start_loop(
 ) -> Dict[str, Any]:
     from abstractruntime.identity.life import spawn_loop_process
 
+    # Wake entry point: an archived entity never runs its loop (round 3; entity_access.py).
+    from .entity_access import refuse_if_entity_archived
+
+    refuse_if_entity_archived(Path(home_dir).name)
+
     # One source for the wide-posture defaults (entity_chat) — a second
     # hardcoded copy here drifted once already (24 vs the ruled 36).
     from .entity_chat import DEFAULT_ENTITY_CHAT_CONTEXT_WINDOW, DEFAULT_ENTITY_CHAT_SHELF_SIZE

@@ -2130,6 +2130,11 @@ class EntityRegistry:
             raise ValueError("a dream pass runs only inside sleep (state='asleep') — dreams need the no-summon window")
 
         manifest = self.manifest_for(name)
+        if state2 != "paused":
+            # Wake entry point: an archived entity stays paused (round 3; entity_access.py).
+            from .entity_access import refuse_if_entity_archived
+
+            refuse_if_entity_archived(manifest.slug, users_path=self._principal_registry_path())
         home_dir = self.entities_dir / manifest.slug
         prior = read_entity_state(home_dir)
         written = write_entity_state(home_dir, state2, reason=reason)

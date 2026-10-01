@@ -119,20 +119,20 @@ def test_entity_principal_patch_guards_refuse_403(tmp_path: Path, monkeypatch) -
     assert rot.json().get("token")
 
 
-def test_entity_principal_delete_refuses_403_humans_still_delete(tmp_path: Path, monkeypatch) -> None:
+def test_delete_is_gone_for_entities_and_humans_alike(tmp_path: Path, monkeypatch) -> None:
+    """Round 3: accounts are archived, never deleted. DELETE answers 410 for every account
+    and changes nothing (the entity's name-collision guard record stays too)."""
     client = _client(tmp_path, monkeypatch)
     _seed(client)
 
-    r = client.delete("/api/gateway/admin/users/hypnos", headers=_ADMIN)
-    assert r.status_code == 403, r.text
-    assert "name-collision guard" in r.json()["detail"]
+    for user_id in ("hypnos", "alice"):
+        r = client.delete(f"/api/gateway/admin/users/{user_id}", headers=_ADMIN)
+        assert r.status_code == 410, r.text
+        assert r.json()["detail"]["message"].startswith("Accounts are archived, never deleted")
 
-    # Still listed after the refusal (nothing was deleted).
     entities = client.get("/api/gateway/admin/users?kind=entity", headers=_ADMIN).json()["users"]
     assert {row["user_id"] for row in entities} == {"hypnos"}
-
-    ok = client.delete("/api/gateway/admin/users/alice", headers=_ADMIN)
-    assert ok.status_code == 200, ok.text
+    assert client.get("/api/gateway/admin/users/alice", headers=_ADMIN).status_code == 200
 
 
 def test_generic_create_refuses_entity_role(tmp_path: Path, monkeypatch) -> None:
@@ -165,9 +165,9 @@ def test_reservation_transfer_cannot_rewrite_an_entity_runtime(tmp_path: Path, m
     client = _client(tmp_path, monkeypatch)
     _seed(client)  # alice (human), hypnos (entity)
 
-    # Mint a retained reservation by deleting a disposable human user.
+    # Mint a retained reservation by moving a disposable human user to another runtime.
     client.post("/api/gateway/admin/users", headers=_ADMIN, json={"user_id": "bob", "roles": ["user"]})
-    d = client.delete("/api/gateway/admin/users/bob", headers=_ADMIN)
+    d = client.patch("/api/gateway/admin/users/bob", headers=_ADMIN, json={"runtime_id": "bob-2"})
     assert d.status_code == 200, d.text
 
     # Transfer bob's retained runtime onto the entity hypnos -> refuse.
@@ -208,8 +208,7 @@ def test_registry_chokepoint_guards_cover_the_cli_path(tmp_path: Path, monkeypat
         reg.update_user(user_id="vera", roles=["user"])
     with pytest.raises(EntityPrincipalGuardError):
         reg.update_user(user_id="vera", runtime_id="elsewhere")
-    with pytest.raises(EntityPrincipalGuardError):
-        reg.delete_user(user_id="vera")
+    assert not hasattr(reg, "delete_user")  # round 3: accounts are archived, never deleted
 
     # enabled / email / scopes pass (spec: door-side disable stays).
     rec, tok = reg.update_user(user_id="vera", enabled=False)

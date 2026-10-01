@@ -112,17 +112,17 @@ def test_accounts_list_users_and_entities_with_reasons(gateway, entity_home) -> 
     own = rows[0]
     assert own["own"] is True
     assert own["actions"]["suspend"] == {"available": False, "reason": "You can't deactivate your own account."}
-    assert own["actions"]["delete"]["available"] is False and own["actions"]["delete"]["reason"]
+    assert own["actions"]["archive"] == {"available": False, "reason": "You can't archive your own account."}
     alice = rows[1]
-    assert alice["kind"] == "user" and alice["active"] is True
-    assert all(alice["actions"][k]["available"] for k in ("email", "logs", "workspace", "rotate", "delete", "suspend"))
-    assert alice["actions"]["manage"]["available"] is False
+    assert alice["kind"] == "user" and alice["active"] is True and alice["archived"] is False
+    assert all(alice["actions"][k]["available"] for k in ("email", "logs", "workspace", "rotate", "archive", "suspend"))
+    assert alice["actions"]["manage"]["available"] is False and alice["actions"]["unarchive"]["available"] is False
+    assert set(alice["actions"]) == {"email", "logs", "workspace", "rotate", "manage", "archive", "unarchive", "suspend"}
     ent = rows[3]
-    assert ent["kind"] == "entity" and ent["mailbox"]["state"] == "unavailable"
-    assert ent["mailbox"]["reason"] == "Entities can't have their own mailbox yet: mailboxes belong to a user's runtime."
-    for action in ("rotate", "delete", "email"):
-        assert ent["actions"][action]["available"] is False and ent["actions"][action]["reason"], action
-    assert ent["actions"]["delete"]["reason"] == "An entity's name is kept for life; suspend it instead."
+    # Round 3: an entity is an AI user with its own mailbox (not connected yet).
+    assert ent["kind"] == "entity" and ent["mailbox"]["state"] == "not_connected"
+    assert ent["actions"]["rotate"]["available"] is False and ent["actions"]["rotate"]["reason"]
+    assert ent["actions"]["email"]["available"] is True and ent["actions"]["archive"]["available"] is True
     assert ent["actions"]["manage"]["available"] is True and ent["actions"]["suspend"]["available"] is True
     assert ent["entity_state"] in ("awake", "asleep")
 

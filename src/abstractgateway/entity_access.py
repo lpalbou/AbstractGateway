@@ -152,3 +152,79 @@ def name_taken_detail(caller: Optional[GatewayPrincipal], registry: Any, slug: s
     if record.principal_kind == "entity":
         return NAME_TAKEN.format(slug=slug)
     return ACCOUNT_NAME_TAKEN.format(slug=slug)
+
+
+# ---------------------------------------------------------------------------------------
+# Archived entities (round 3: accounts are archived, never deleted)
+# ---------------------------------------------------------------------------------------
+
+ENTITY_ARCHIVED = "{slug} is archived: it can't act or wake. An admin can unarchive it from Accounts."
+
+
+class EntityArchivedError(RuntimeError):
+    """An archived entity was asked to wake, act, be summoned, visited or run its loop."""
+
+    def __init__(self, slug: str) -> None:
+        self.slug = str(slug)
+        self.message = ENTITY_ARCHIVED.format(slug=self.slug)
+        super().__init__(self.message)
+
+
+def entity_archived(slug: str, *, users_path: Optional[Path] = None) -> bool:
+    """THE predicate (one rule for every wake entry point): True when the entity `slug` is
+    archived. The door's users file is the record (`archived` on the entity principal); an
+    entity whose home predates principals has no record, so its archive mark lives in the
+    Accounts suspend store (`auth/entity_suspended.json`, `archived: true`). A users file that
+    cannot be read raises (an unknown answer never lets an archived entity wake)."""
+    from .users import GatewayUserRegistry
+
+    key = str(slug or "").strip()
+    if not key:
+        return False
+    rec = GatewayUserRegistry(path=users_path).get_user(key)
+    if rec is not None and rec.principal_kind == "entity" and rec.archived:
+        return True
+    from .admin_accounts import suspended_record
+
+    mark = suspended_record(key)
+    return bool(mark and mark.get("archived"))
+
+
+def refuse_if_entity_archived(slug: str, *, users_path: Optional[Path] = None) -> None:
+    if entity_archived(slug, users_path=users_path):
+        raise EntityArchivedError(slug)
+
+
+def users_path_of(registry: Any) -> Optional[Path]:
+    """The users file an EntityRegistry authenticates against (`_principal_registry_path`), or
+    None (= the gateway's users file) for a registry stand-in that has none."""
+    fn = getattr(registry, "_principal_registry_path", None)
+    return fn() if callable(fn) else None
+
+
+def entities_dirs() -> list[Path]:
+    """Every runtime's `entities/` dir on this gateway: the default runtime's
+    (`<data_dir>/entities`) and each user runtime's (`<data_dir>/users/<tenant>/<runtime>/runtime/entities`).
+    ONE listing for the Accounts census and the entity mailbox resolver."""
+    from .users import gateway_data_dir_from_env
+
+    root = gateway_data_dir_from_env()
+    dirs: list[Path] = [root / "entities"]
+    users = root / "users"
+    if users.is_dir():
+        dirs.extend(sorted(users.glob("*/*/runtime/entities")))
+    return dirs
+
+
+def entity_home_dir(slug: str) -> Optional[Path]:
+    """The home of entity `slug` on this gateway (`<creator runtime data_dir>/entities/<slug>/`,
+    the first runtime holding a manifest for it), or None. The entity's mailbox plane is rooted
+    here (mail/accounts.py `plane_for_principal`)."""
+    key = safe_principal_component(slug, default="")
+    if not key:
+        return None
+    for entities_dir in entities_dirs():
+        home = entities_dir / key
+        if (home / "manifest.json").is_file():
+            return home
+    return None
