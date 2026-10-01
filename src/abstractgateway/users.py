@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import hashlib
 import hmac
@@ -150,6 +151,17 @@ def verify_gateway_token(token: str, token_hash: str) -> bool:
         return False
 
 
+ARCHIVED_ENABLE_MESSAGE = "{user_id} is archived: unarchive it first, then turn Active on."
+
+
+class AccountArchivedError(ValueError):
+    """An archived account can't be switched on: it must be unarchived first (round 3)."""
+
+    def __init__(self, user_id: str) -> None:
+        super().__init__(ARCHIVED_ENABLE_MESSAGE.format(user_id=user_id))
+        self.user_id = user_id
+
+
 class EntityPrincipalGuardError(ValueError):
     """A write the entities lane owns was attempted through the generic
     admin users lane (backlog 0089, operator order c5305):
@@ -181,12 +193,25 @@ class GatewayUserRecord:
     token_fingerprint: str = ""
     created_at: str = ""
     updated_at: str = ""
+    # Archive (round 3, operator decision "no pure deletion"): an archived account can't sign in
+    # or act; its runtime, runs and history are kept. Additive fields: absent = not archived.
+    archived: bool = False
+    archived_at: str = ""
+    archived_by: str = ""
 
     @property
     def key(self) -> str:
         return f"{self.tenant_id}:{self.user_id}"
 
     def to_storage_dict(self) -> dict[str, Any]:
+        out = self._storage_core()
+        if self.archived or self.archived_at:
+            out["archived"] = bool(self.archived)
+            out["archived_at"] = self.archived_at
+            out["archived_by"] = self.archived_by
+        return out
+
+    def _storage_core(self) -> dict[str, Any]:
         return {
             "user_id": self.user_id,
             "tenant_id": self.tenant_id,
@@ -218,6 +243,8 @@ class GatewayUserRecord:
             "enabled": bool(self.enabled),
             "runtime_id": self.runtime_id or self.user_id,
             "principal_kind": self.principal_kind,
+            "archived": bool(self.archived),
+            "archived_at": self.archived_at or None,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -303,6 +330,9 @@ def _normalize_record(raw: dict[str, Any]) -> GatewayUserRecord:
         token_fingerprint=str(raw.get("token_fingerprint") or ""),
         created_at=created_at,
         updated_at=updated_at,
+        archived=bool(raw.get("archived", False)),
+        archived_at=str(raw.get("archived_at") or ""),
+        archived_by=str(raw.get("archived_by") or ""),
     )
 
 
@@ -560,6 +590,8 @@ class GatewayUserRegistry:
                     "never the generic users lane (an entity bearer must not exist; "
                     "its door identity is not an admin edit)"
                 )
+            if rec.archived and enabled:
+                raise AccountArchivedError(rec.user_id)
             token_hash = rec.token_hash
             token_fp = rec.token_fingerprint
             if token is not None:
@@ -578,6 +610,9 @@ class GatewayUserRegistry:
                 token_fingerprint=token_fp,
                 created_at=rec.created_at,
                 updated_at=_now_utc_iso(),
+                archived=rec.archived,
+                archived_at=rec.archived_at,
+                archived_by=rec.archived_by,
             )
             self._require_runtime_available_unlocked(
                 records,
@@ -593,78 +628,30 @@ class GatewayUserRegistry:
             self._save_store_unlocked(records, reservations)
             return updated, issued_token
 
-    def delete_user(self, *, user_id: str, tenant_id: str = "default") -> bool:
+    def set_archived(
+        self, *, user_id: str, tenant_id: str = "default", archived: bool, actor: str = ""
+    ) -> GatewayUserRecord:
+        """Archive (or unarchive) an account: the ONE writer of the archive fields. Archiving also
+        switches the account off (`enabled=false`); unarchiving leaves it off, so an admin turns
+        Active on deliberately. Nothing else in the record (token, runtime, roles) changes, and
+        nothing is removed: accounts are archived, never deleted. Entity principals too (the
+        entities lane's guard covers token/roles/runtime_id, not these fields)."""
         key = f"{safe_principal_component(tenant_id, default='default')}:{safe_principal_component(user_id, default='')}"
         with self._lock:
             records, reservations = self._load_store_unlocked()
             rec = records.get(key)
             if rec is None:
-                return False
-            # 0089 guard: deleting an entity principal removes the name-
-            # collision guard (identity capture: a human user created under
-            # the slug is adopted by the next entity create) and invites a
-            # data purge on a plane named for a living entity.
-            if rec.principal_kind == "entity":
-                raise EntityPrincipalGuardError(
-                    f"this principal belongs to summoned entity '{rec.user_id}' — "
-                    "entity principals are never deleted through the users lane "
-                    "(the record is the name-collision guard for the entity's identity); "
-                    "manage the entity under /entities"
-                )
-            records.pop(key, None)
-            self._reserve_runtime_unlocked(reservations, record=rec, reason="deleted-user")
-            self._save_store_unlocked(records, reservations)
-            return True
-
-    def release_runtime_reservation(self, *, tenant_id: str = "default", runtime_id: str) -> bool:
-        tenant0 = safe_principal_component(tenant_id, default="default")
-        runtime0 = safe_principal_component(runtime_id, default="")
-        if not runtime0:
-            raise ValueError("runtime_id is required")
-        key = _runtime_reservation_key(tenant_id=tenant0, runtime_id=runtime0)
-        with self._lock:
-            records, reservations = self._load_store_unlocked()
-            if key not in reservations:
-                return False
-            for rec in records.values():
-                if rec.tenant_id == tenant0 and (rec.runtime_id or rec.user_id) == runtime0:
-                    raise ValueError(f"Gateway runtime is assigned to active user {rec.tenant_id}/{rec.user_id}")
-            reservations.pop(key, None)
-            self._save_store_unlocked(records, reservations)
-            return True
-
-    def mark_runtime_reservation_purging(
-        self,
-        *,
-        tenant_id: str = "default",
-        runtime_id: str,
-    ) -> GatewayRuntimeReservation:
-        tenant0 = safe_principal_component(tenant_id, default="default")
-        runtime0 = safe_principal_component(runtime_id, default="")
-        if not runtime0:
-            raise ValueError("runtime_id is required")
-        key = _runtime_reservation_key(tenant_id=tenant0, runtime_id=runtime0)
-        with self._lock:
-            records, reservations = self._load_store_unlocked()
-            reservation = reservations.get(key)
-            if reservation is None:
-                raise KeyError(f"Gateway runtime reservation not found: {tenant0}/{runtime0}")
-            for rec in records.values():
-                if rec.tenant_id == tenant0 and (rec.runtime_id or rec.user_id) == runtime0:
-                    raise ValueError(f"Gateway runtime is assigned to active user {rec.tenant_id}/{rec.user_id}")
+                raise KeyError(f"Gateway user not found: {tenant_id}/{user_id}")
             now = _now_utc_iso()
-            purging = GatewayRuntimeReservation(
-                tenant_id=reservation.tenant_id,
-                runtime_id=reservation.runtime_id,
-                owner_key=reservation.owner_key,
-                owner_user_id=reservation.owner_user_id,
-                reason="purging",
-                created_at=reservation.created_at,
-                updated_at=now,
-            )
-            reservations[key] = purging
+            if archived:
+                updated = dataclasses.replace(
+                    rec, enabled=False, archived=True, archived_at=now, archived_by=str(actor or ""), updated_at=now
+                )
+            else:
+                updated = dataclasses.replace(rec, enabled=False, archived=False, archived_at="", archived_by="", updated_at=now)
+            records[key] = updated
             self._save_store_unlocked(records, reservations)
-            return purging
+            return updated
 
     def transfer_runtime_reservation(
         self,
@@ -724,6 +711,9 @@ class GatewayUserRegistry:
                 token_fingerprint=target.token_fingerprint,
                 created_at=target.created_at,
                 updated_at=_now_utc_iso(),
+                archived=target.archived,
+                archived_at=target.archived_at,
+                archived_by=target.archived_by,
             )
             if previous_runtime_id != runtime0:
                 self._reserve_runtime_unlocked(reservations, record=target, reason="runtime-transferred")
@@ -739,7 +729,7 @@ class GatewayUserRegistry:
             records = self._load_unlocked()
         fp = token_fingerprint(token)
         for rec in records.values():
-            if not rec.enabled or not rec.token_hash:
+            if not rec.enabled or rec.archived or not rec.token_hash:
                 continue
             if verify_gateway_token(token, rec.token_hash):
                 return rec.to_principal(token_fingerprint_value=fp)

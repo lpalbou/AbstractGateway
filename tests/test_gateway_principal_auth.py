@@ -184,12 +184,13 @@ def test_admin_user_crud_and_user_principal_auth(tmp_path: Path, monkeypatch) ->
     alice_after_disable = client.get("/api/gateway/me", headers={"Authorization": f"Bearer {alice_token}"})
     assert alice_after_disable.status_code == 401
 
+    # Round 3: accounts are archived, never deleted (410, nothing changes).
     deleted = client.delete("/api/gateway/admin/users/alice?tenant_id=team-a", headers=admin_headers)
-    assert deleted.status_code == 200
-    assert deleted.json()["deleted"] is True
+    assert deleted.status_code == 410
+    assert "archived, never deleted" in deleted.json()["detail"]["message"]
 
-    missing = client.get("/api/gateway/admin/users/alice?tenant_id=team-a", headers=admin_headers)
-    assert missing.status_code == 404
+    kept = client.get("/api/gateway/admin/users/alice?tenant_id=team-a", headers=admin_headers)
+    assert kept.status_code == 200
 
 
 def test_registry_admin_user_can_manage_users(tmp_path: Path, monkeypatch) -> None:
@@ -233,8 +234,7 @@ def test_registry_admin_user_can_manage_users(tmp_path: Path, monkeypatch) -> No
     assert bob_disabled.json()["user"]["enabled"] is False
 
     deleted = client.delete("/api/gateway/admin/users/bob?tenant_id=default", headers=registry_admin_headers)
-    assert deleted.status_code == 200
-    assert deleted.json()["deleted"] is True
+    assert deleted.status_code == 410
 
 
 def test_gateway_user_runtime_ids_are_unique_per_tenant(tmp_path: Path, monkeypatch) -> None:
@@ -278,7 +278,7 @@ def test_gateway_user_runtime_ids_are_unique_per_tenant(tmp_path: Path, monkeypa
     assert "runtime already assigned" in duplicate_update.json()["detail"]
 
 
-def test_deleted_gateway_user_runtime_id_stays_reserved(tmp_path: Path, monkeypatch) -> None:
+def test_reassigned_gateway_user_runtime_id_stays_reserved(tmp_path: Path, monkeypatch) -> None:
     client = _client(tmp_path, monkeypatch)
     admin_headers = {"Authorization": "Bearer admin-token"}
 
@@ -289,8 +289,8 @@ def test_deleted_gateway_user_runtime_id_stays_reserved(tmp_path: Path, monkeypa
     )
     assert alice.status_code == 200, alice.text
 
-    deleted = client.delete("/api/gateway/admin/users/alice?tenant_id=default", headers=admin_headers)
-    assert deleted.status_code == 200, deleted.text
+    moved = client.patch("/api/gateway/admin/users/alice?tenant_id=default", headers=admin_headers, json={"runtime_id": "alice-2"})
+    assert moved.status_code == 200, moved.text
 
     bob_same_runtime = client.post(
         "/api/gateway/admin/users",
@@ -308,24 +308,24 @@ def test_deleted_gateway_user_runtime_id_stays_reserved(tmp_path: Path, monkeypa
             "created_at": reservations[0]["created_at"],
             "owner_key": "default:alice",
             "owner_user_id": "alice",
-            "reason": "deleted-user",
+            "reason": "runtime-reassigned",
             "runtime_id": "shared-runtime",
             "tenant_id": "default",
             "updated_at": reservations[0]["updated_at"],
         }
     ]
 
-    alice_recreated = client.post(
-        "/api/gateway/admin/users",
-        headers=admin_headers,
-        json={"user_id": "alice", "tenant_id": "default", "roles": ["user"], "runtime_id": "shared-runtime"},
+    alice_back = client.patch(
+        "/api/gateway/admin/users/alice?tenant_id=default", headers=admin_headers, json={"runtime_id": "shared-runtime"}
     )
-    assert alice_recreated.status_code == 200, alice_recreated.text
-    data_after_recreate = json.loads(users_file.read_text(encoding="utf-8"))
-    assert data_after_recreate.get("runtime_reservations") == []
+    assert alice_back.status_code == 200, alice_back.text
+    data_after_back = json.loads(users_file.read_text(encoding="utf-8"))
+    assert [r["runtime_id"] for r in data_after_back.get("runtime_reservations")] == ["alice-2"]
 
 
-def test_runtime_reservation_purge_deletes_data_before_runtime_reuse(tmp_path: Path, monkeypatch) -> None:
+def test_runtime_reservation_purge_is_gone_and_keeps_the_data(tmp_path: Path, monkeypatch) -> None:
+    """Round 3: purging a retained runtime is pure deletion: 410, the files and the
+    reservation stay; listing and transfer stay available."""
     client = _client(tmp_path, monkeypatch)
     admin_headers = {"Authorization": "Bearer admin-token"}
 
@@ -347,8 +347,8 @@ def test_runtime_reservation_purge_deletes_data_before_runtime_reuse(tmp_path: P
     (runtime_root / "runtime").mkdir(parents=True)
     (runtime_root / "runtime" / "artifact.txt").write_text("alice data", encoding="utf-8")
 
-    deleted = client.delete("/api/gateway/admin/users/alice?tenant_id=default", headers=admin_headers)
-    assert deleted.status_code == 200, deleted.text
+    moved = client.patch("/api/gateway/admin/users/alice?tenant_id=default", headers=admin_headers, json={"runtime_id": "alice-2"})
+    assert moved.status_code == 200, moved.text
 
     forbidden = client.get(
         "/api/gateway/admin/runtime-reservations",
@@ -363,13 +363,6 @@ def test_runtime_reservation_purge_deletes_data_before_runtime_reuse(tmp_path: P
         ("default", "shared-runtime", True)
     ]
 
-    bad_confirm = client.post(
-        "/api/gateway/admin/runtime-reservations/shared-runtime/purge",
-        headers=admin_headers,
-        json={"tenant_id": "default", "confirm_runtime_id": "other-runtime", "delete_data": True},
-    )
-    assert bad_confirm.status_code == 400
-
     forbidden_purge = client.post(
         "/api/gateway/admin/runtime-reservations/shared-runtime/purge",
         headers={"Authorization": f"Bearer {bob_token}"},
@@ -382,17 +375,11 @@ def test_runtime_reservation_purge_deletes_data_before_runtime_reuse(tmp_path: P
         headers=admin_headers,
         json={"tenant_id": "default", "confirm_runtime_id": "shared-runtime", "delete_data": True},
     )
-    assert purged.status_code == 200, purged.text
-    assert purged.json()["purged"] is True
-    assert purged.json()["deleted_data"] is True
-    assert not runtime_root.exists()
-
-    charlie = client.post(
-        "/api/gateway/admin/users",
-        headers=admin_headers,
-        json={"user_id": "charlie", "tenant_id": "default", "roles": ["user"], "runtime_id": "shared-runtime"},
-    )
-    assert charlie.status_code == 200, charlie.text
+    assert purged.status_code == 410, purged.text
+    assert "archived, never deleted" in purged.json()["detail"]["message"]
+    assert (runtime_root / "runtime" / "artifact.txt").read_text(encoding="utf-8") == "alice data"
+    again = client.get("/api/gateway/admin/runtime-reservations", headers=admin_headers).json()["runtime_reservations"]
+    assert [r["runtime_id"] for r in again] == ["shared-runtime"]
 
 
 def test_runtime_reservation_transfer_assigns_retained_runtime_to_existing_user(tmp_path: Path, monkeypatch) -> None:
@@ -413,8 +400,8 @@ def test_runtime_reservation_transfer_assigns_retained_runtime_to_existing_user(
     assert bob.status_code == 200, bob.text
     bob_token = bob.json()["token"]
 
-    deleted = client.delete("/api/gateway/admin/users/alice?tenant_id=default", headers=admin_headers)
-    assert deleted.status_code == 200, deleted.text
+    moved = client.patch("/api/gateway/admin/users/alice?tenant_id=default", headers=admin_headers, json={"runtime_id": "alice-2"})
+    assert moved.status_code == 200, moved.text
 
     forbidden_transfer = client.post(
         "/api/gateway/admin/runtime-reservations/shared-runtime/transfer",
@@ -443,13 +430,13 @@ def test_runtime_reservation_transfer_assigns_retained_runtime_to_existing_user(
         ("bob-runtime", "bob", "runtime-transferred")
     ]
 
-    alice_reuse_live_runtime = client.post(
+    dave_reuse_live_runtime = client.post(
         "/api/gateway/admin/users",
         headers=admin_headers,
-        json={"user_id": "alice", "tenant_id": "default", "roles": ["user"], "runtime_id": "shared-runtime"},
+        json={"user_id": "dave", "tenant_id": "default", "roles": ["user"], "runtime_id": "shared-runtime"},
     )
-    assert alice_reuse_live_runtime.status_code == 400
-    assert "runtime already assigned" in alice_reuse_live_runtime.json()["detail"]
+    assert dave_reuse_live_runtime.status_code == 400
+    assert "runtime already assigned" in dave_reuse_live_runtime.json()["detail"]
 
     charlie_reuse_previous_runtime = client.post(
         "/api/gateway/admin/users",
@@ -458,54 +445,6 @@ def test_runtime_reservation_transfer_assigns_retained_runtime_to_existing_user(
     )
     assert charlie_reuse_previous_runtime.status_code == 400
     assert "runtime already assigned or retained" in charlie_reuse_previous_runtime.json()["detail"]
-
-
-def test_runtime_reservation_purging_state_blocks_transfer_until_purge_finishes(tmp_path: Path, monkeypatch) -> None:
-    client = _client(tmp_path, monkeypatch)
-    admin_headers = {"Authorization": "Bearer admin-token"}
-
-    alice = client.post(
-        "/api/gateway/admin/users",
-        headers=admin_headers,
-        json={"user_id": "alice", "tenant_id": "default", "roles": ["user"], "runtime_id": "shared-runtime"},
-    )
-    assert alice.status_code == 200, alice.text
-    bob = client.post(
-        "/api/gateway/admin/users",
-        headers=admin_headers,
-        json={"user_id": "bob", "tenant_id": "default", "roles": ["user"], "runtime_id": "bob-runtime"},
-    )
-    assert bob.status_code == 200, bob.text
-    runtime_root = tmp_path / "runtime" / "users" / "default" / "shared-runtime"
-    runtime_root.mkdir(parents=True)
-
-    deleted = client.delete("/api/gateway/admin/users/alice?tenant_id=default", headers=admin_headers)
-    assert deleted.status_code == 200, deleted.text
-
-    from abstractgateway.users import GatewayUserRegistry
-
-    purging = GatewayUserRegistry().mark_runtime_reservation_purging(
-        tenant_id="default",
-        runtime_id="shared-runtime",
-    )
-    assert purging.reason == "purging"
-
-    transfer = client.post(
-        "/api/gateway/admin/runtime-reservations/shared-runtime/transfer",
-        headers=admin_headers,
-        json={"tenant_id": "default", "target_user_id": "bob", "confirm_runtime_id": "shared-runtime"},
-    )
-    assert transfer.status_code == 400
-    assert "purge is already in progress" in transfer.json()["detail"]
-
-    purge_retry = client.post(
-        "/api/gateway/admin/runtime-reservations/shared-runtime/purge",
-        headers=admin_headers,
-        json={"tenant_id": "default", "confirm_runtime_id": "shared-runtime", "delete_data": True},
-    )
-    assert purge_retry.status_code == 200, purge_retry.text
-    assert purge_retry.json()["purged"] is True
-    assert not runtime_root.exists()
 
 
 def test_gateway_user_token_exchanges_for_revocable_browser_session(tmp_path: Path, monkeypatch) -> None:

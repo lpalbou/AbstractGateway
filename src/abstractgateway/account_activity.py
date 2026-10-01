@@ -165,6 +165,9 @@ EMAIL_EVENTS: Dict[str, Tuple[str, str]] = {
     "email.recovery_code_issued": ("sign_in", "Sign-in code sent by email"),
     "email.recovery_code_refused": ("sign_in", "Sign-in code refused"),
     "email.address_changed": ("account", "Email address changed"),
+    # Archive (round 3): typed events written by the archive routes (routes/gateway.py).
+    "account.archived": ("account", "Archived"),
+    "account.unarchived": ("account", "Unarchived"),
 }
 
 
@@ -360,6 +363,9 @@ def _email_event(doc: Dict[str, Any], event: str, spec: Tuple[str, str]) -> Dict
     elif event == "email.message_unprocessable":
         ok = False
         detail = str(doc.get("cause") or "") or None
+    elif event in ("account.archived", "account.unarchived"):
+        actor = str(doc.get("actor") or "")
+        detail = f"By {actor}." if actor else None
     return {"ts": doc.get("ts"), "kind": kind, "title": title, "detail": detail, "run_id": None, "observer_path": None, "ok": ok}
 
 

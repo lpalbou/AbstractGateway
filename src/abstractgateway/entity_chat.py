@@ -470,6 +470,13 @@ class EntityChatHost:
         )
 
         manifest = self._registry.manifest_for(name)  # KeyError -> 404 at the route
+        # Wake entry point (round 3): an archived entity is never talked to (entity_access.py).
+        from .entity_access import EntityArchivedError, refuse_if_entity_archived, users_path_of
+
+        try:
+            refuse_if_entity_archived(manifest.slug, users_path=users_path_of(self._registry))
+        except EntityArchivedError as e:
+            raise ChatOpenRefused(409, e.message) from None
         slug = manifest.slug
         home_dir = self._registry.entities_dir / slug
 

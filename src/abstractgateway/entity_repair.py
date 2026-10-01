@@ -200,6 +200,10 @@ def _sweep_one(
     base: Dict[str, Any] = {"slug": slug, "kind": kind, "stopped_by": stopped_by or None}
 
     # --- guards: never fight the operator -------------------------------
+    from .entity_access import entity_archived, users_path_of
+
+    if entity_archived(slug, users_path=users_path_of(registry)):
+        return {**base, "action": "skipped", "reason": "archived — it never wakes until an admin unarchives it"}
     state = read_entity_state(home_dir)
     if str(state.get("state") or "") == "paused":
         return {**base, "action": "skipped", "reason": "paused (kill switch) — the operator's word stands"}
@@ -335,6 +339,11 @@ def _need_check_one(
 
     if bool(read_loop_status(home_dir).get("running")):
         return None  # a live loop owns its own need-check (one law, its host)
+
+    from .entity_access import entity_archived, users_path_of
+
+    if entity_archived(slug, users_path=users_path_of(registry)):
+        return None  # archived: never woken by a cadence (round 3)
 
     state = read_entity_state(home_dir)
     word = str(state.get("state") or "awake")

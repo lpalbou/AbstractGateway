@@ -747,6 +747,15 @@ class EntityVisitHost:
                 self._open_locks[slug] = lock
             return lock
 
+    def _refuse_if_archived(self, slug: str) -> None:
+        """Wake entry point (round 3): an archived entity is never visited or driven."""
+        from .entity_access import EntityArchivedError, refuse_if_entity_archived, users_path_of
+
+        try:
+            refuse_if_entity_archived(slug, users_path=users_path_of(self._registry))
+        except EntityArchivedError as e:
+            raise VisitRefused(409, e.message, code="entity_archived") from None
+
     def _refuse_if_paused(self, manifest: Any, *, verb: str) -> None:
         """Non-awake states gate an ALREADY-OPEN visit too: if the teardown
         failed (lease held, close raced) or a fresh open slipped into the
@@ -762,6 +771,7 @@ class EntityVisitHost:
         the visit's OWN sleep and stays open."""
         from abstractruntime.identity.life import read_entity_state
 
+        self._refuse_if_archived(manifest.slug)
         state = read_entity_state(self._registry.entities_dir / manifest.slug)
         word = str(state.get("state") or "")
         if word == "paused":
@@ -801,6 +811,7 @@ class EntityVisitHost:
         manifest = registry.manifest_for(name)  # naming pins fire here
         slug = manifest.slug
         home_dir = registry.entities_dir / slug
+        self._refuse_if_archived(slug)
 
         try:
             provider, model, thinking = resolve_substrate(None, None, home_dir=home_dir)

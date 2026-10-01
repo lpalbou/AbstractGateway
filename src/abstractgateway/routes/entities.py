@@ -1518,8 +1518,12 @@ def set_entity_state(name: str, req: SetEntityStateRequest) -> Dict[str, Any]:
     # survive the sleep. The teardown below then closes what was already
     # open; its terminal duty sees the operator's fresh state (not a
     # visit-authored one) and leaves it standing.
+    from ..entity_access import EntityArchivedError
+
     try:
         result = _registry().set_state(name=name, state=target, reason=stamped_reason, dream=bool(req.dream))
+    except EntityArchivedError as e:
+        raise HTTPException(status_code=409, detail={"reason_code": "entity_archived", "message": e.message}) from None
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e).strip("'\""))
     except ValueError as e:
@@ -3064,6 +3068,16 @@ def _summon_core(
     # the same wave that keeps the paused refusal, so there is never a gap
     # with neither protection). Work-completion ceremony (work→sleep) is
     # the work door's, when built.
+    # Wake entry point (round 3): an archived entity is never summoned (entity_access.py).
+    from ..entity_access import EntityArchivedError, refuse_if_entity_archived, users_path_of
+
+    try:
+        refuse_if_entity_archived(home.manifest.slug, users_path=users_path_of(registry))
+    except EntityArchivedError as e:
+        raise HTTPException(
+            status_code=409,
+            detail={"refused": True, "reason_code": "entity_archived", "message": e.message, "reasons": [e.message]},
+        ) from None
     entity_state = registry.state_of(name)
     state_word = str(entity_state.get("state") or "awake")
     if state_word == "paused":
@@ -5609,6 +5623,14 @@ def start_entity_loop(name: str, req: StartLoopRequest) -> Dict[str, Any]:
 
     principal = current_gateway_principal()
     actor = f"person:{principal.user_id}" if principal is not None else "person:operator"
+
+    # Wake entry point (round 3): an archived entity never runs its loop.
+    from ..entity_access import EntityArchivedError, refuse_if_entity_archived, users_path_of
+
+    try:
+        refuse_if_entity_archived(manifest.slug, users_path=users_path_of(registry))
+    except EntityArchivedError as e:
+        raise _loop_refuse(409, "entity_archived", e.message) from None
 
     # Paused refuses BEFORE the grant writes: a freeze is an emergency stop
     # and its Restore is the deliberate release — no act lands on a frozen

@@ -270,14 +270,6 @@ class GatewayRuntimeReservationTransferRequest(BaseModel):
     confirm_runtime_id: str = Field(..., min_length=1)
 
 
-class GatewayRuntimeReservationPurgeRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    tenant_id: str = Field(default="default", min_length=1)
-    confirm_runtime_id: str = Field(..., min_length=1)
-    delete_data: bool = Field(default=True, description="Must be true to delete retained runtime files before release.")
-
-
 class GatewaySessionLoginRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -721,7 +713,7 @@ async def gateway_admin_update_user(
     token_update: Optional[str] = payload.token
     if payload.rotate_token and token_update is None:
         token_update = ""
-    from ..users import EntityPrincipalGuardError
+    from ..users import AccountArchivedError, EntityPrincipalGuardError
 
     registry = GatewayUserRegistry()
     demoting = payload.roles is not None and not _roles_grant_admin(payload.roles)
@@ -750,6 +742,8 @@ async def gateway_admin_update_user(
         # 0089: the entities lane owns this principal — 403, not 400: the
         # request is well-formed, the authority boundary refuses it.
         raise HTTPException(status_code=403, detail=str(e)) from e
+    except AccountArchivedError as e:
+        raise HTTPException(status_code=409, detail={"reason_code": "archived", "message": str(e)}) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
     response: Dict[str, Any] = {"user": record.public_dict()}
@@ -787,24 +781,22 @@ def _audit_account_change(request: Request, *, user_id: str, tenant_id: str, cha
         pass
 
 
-@router.delete("/admin/users/{user_id}")
-async def gateway_admin_delete_user(
-    request: Request,
-    user_id: str,
-    tenant_id: str = Query(default="default"),
-) -> Dict[str, Any]:
-    _require_admin_principal(request)
-    from ..users import EntityPrincipalGuardError
+ARCHIVE_NOT_DELETE = (
+    "Accounts are archived, never deleted: use Archive (POST /api/gateway/admin/accounts/{id}/archive). "
+    "Runs and history are kept."
+)
 
-    registry = GatewayUserRegistry()
-    _refuse_removing_last_admin(registry, tenant_id=tenant_id, user_id=user_id, action="deleting")
-    try:
-        deleted = registry.delete_user(user_id=user_id, tenant_id=tenant_id)
-    except EntityPrincipalGuardError as e:
-        raise HTTPException(status_code=403, detail=str(e)) from e
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Gateway user not found")
-    return {"ok": True, "deleted": True, "user_id": user_id, "tenant_id": tenant_id}
+
+@router.delete(
+    "/admin/users/{user_id}",
+    status_code=410,
+    summary="Gone: accounts are archived, never deleted",
+    description="Always answers 410 `{message}`: accounts are archived, never deleted (use "
+    "`POST /admin/accounts/{id}/archive`). Nothing is changed, so a caller that expected a delete learns it did not happen.",
+)
+async def gateway_admin_delete_user(request: Request, user_id: str) -> Dict[str, Any]:
+    _require_admin_principal(request)
+    raise HTTPException(status_code=410, detail={"reason_code": "archive_not_delete", "message": ARCHIVE_NOT_DELETE})
 
 
 class AccountActiveRequest(BaseModel):
@@ -823,16 +815,17 @@ def _account_error(exc: Any) -> HTTPException:
     summary="Accounts: users and entities in one list",
     description="One row per account, sorted admins, users, entities, then id: `{id, tenant_id, kind: user | entity, "
     "role: admin | user | entity, own, email_address, mailbox {state: connected | not_connected | paused | unavailable, "
-    "address, provider, reason}, runtime_id, active, entity_state, actions {email, logs, workspace, rotate, manage, delete, "
-    "suspend: {available, reason}}}`. The email address and mailbox come from the same resolver as `GET /me/email`, so "
-    "your own row matches your own email settings. An action that can't apply carries a one-sentence `reason`. "
-    "`entities_warning` says why entities are missing when the entity list could not be read.",
+    "address, provider, reason}, runtime_id, active, entity_state, archived, archived_at, actions {email, logs, workspace, "
+    "rotate, manage, archive, unarchive, suspend: {available, reason}}}`. Archived accounts are left out unless "
+    "`include_archived=true`. The email address and mailbox come from the same resolver as `GET /me/email` (entities: "
+    "their own mailbox), so your own row matches your own email settings. An action that can't apply carries a "
+    "one-sentence `reason`. `entities_warning` says why entities are missing when the entity list could not be read.",
 )
-async def gateway_admin_list_accounts(request: Request) -> Dict[str, Any]:
+async def gateway_admin_list_accounts(request: Request, include_archived: bool = Query(default=False)) -> Dict[str, Any]:
     admin = _require_admin_principal(request)
     from ..admin_accounts import list_accounts
 
-    return await _off_the_event_loop(list_accounts, admin)
+    return await _off_the_event_loop(list_accounts, admin, include_archived=bool(include_archived))
 
 
 @router.put(
@@ -858,6 +851,73 @@ async def gateway_admin_set_account_active(
     if row.get("kind") == "entity":
         changes["entity_state"] = row.get("entity_state")
     _audit_account_change(request, user_id=str(row.get("id")), tenant_id=str(row.get("tenant_id") or "default"), changes=changes)
+    return row
+
+
+def _audit_archive(event: str, row: Dict[str, Any], actor: GatewayPrincipal) -> None:
+    from ..mail.audit import audit_email_event
+
+    audit_email_event(
+        event, tenant_id=str(row.get("tenant_id") or "default"), user_id=str(row.get("id")), actor=str(actor.user_id or "")
+    )
+
+
+_ARCHIVE_DESCRIPTION = (
+    "Accounts are archived, never deleted. An archived user can't sign in (their token answers 401, sessions end); "
+    "an archived entity is suspended and never wakes (summon, visits, talk, its loop and scheduled wakes refuse). "
+    "Records, runtime, runs and history are kept. Answers the updated account row (`archived: true`); `{message}` "
+    "on 404/409 (your own account, the last active admin, already archived)."
+)
+
+
+@router.post("/admin/accounts/{account_id}/archive", tags=["accounts"], summary="Archive an account (admin)", description=_ARCHIVE_DESCRIPTION)
+async def gateway_admin_archive_account(request: Request, account_id: str, tenant_id: str = Query(default="default")) -> Dict[str, Any]:
+    admin = _require_admin_principal(request)
+    from ..admin_accounts import AccountError, archive_account
+
+    try:
+        row = await _off_the_event_loop(archive_account, admin, account_id, tenant_id=tenant_id)
+    except AccountError as exc:
+        raise _account_error(exc) from None
+    _audit_archive("account.archived", row, admin)
+    return row
+
+
+@router.post(
+    "/me/accounts/{account_id}/archive",
+    tags=["accounts"],
+    summary="Archive an entity I created",
+    description=_ARCHIVE_DESCRIPTION + " For any signed-in account: only an entity YOU created (one of your "
+    "`GET /me/accounts` rows); anything else answers 404. Only an admin can unarchive.",
+)
+async def gateway_me_archive_account(request: Request, account_id: str) -> Dict[str, Any]:
+    principal = _principal_from_request(request)
+    from ..admin_accounts import AccountError, archive_account
+
+    try:
+        row = await _off_the_event_loop(archive_account, principal, account_id)
+    except AccountError as exc:
+        raise _account_error(exc) from None
+    _audit_archive("account.archived", row, principal)
+    return row
+
+
+@router.post(
+    "/admin/accounts/{account_id}/unarchive",
+    tags=["accounts"],
+    summary="Unarchive an account (admin)",
+    description="Brings an archived account back INACTIVE: a user stays deactivated, an entity stays suspended; turn "
+    "Active on to let it sign in / act. Answers the updated account row; `{message}` on 404/409 (not archived).",
+)
+async def gateway_admin_unarchive_account(request: Request, account_id: str, tenant_id: str = Query(default="default")) -> Dict[str, Any]:
+    admin = _require_admin_principal(request)
+    from ..admin_accounts import AccountError, unarchive_account
+
+    try:
+        row = await _off_the_event_loop(unarchive_account, admin, account_id, tenant_id=tenant_id)
+    except AccountError as exc:
+        raise _account_error(exc) from None
+    _audit_archive("account.unarchived", row, admin)
     return row
 
 
@@ -1381,45 +1441,16 @@ async def gateway_admin_transfer_runtime_reservation(
     }
 
 
-@router.post("/admin/runtime-reservations/{runtime_id}/purge")
-async def gateway_admin_purge_runtime_reservation(
-    request: Request,
-    runtime_id: str,
-    payload: GatewayRuntimeReservationPurgeRequest,
-) -> Dict[str, Any]:
+@router.post(
+    "/admin/runtime-reservations/{runtime_id}/purge",
+    status_code=410,
+    summary="Gone: a retained runtime is never purged",
+    description="Always answers 410 `{message}`: purging a retained runtime is pure deletion, and accounts are "
+    "archived, never deleted. Nothing is changed. Listing and transferring retained runtimes stay available.",
+)
+async def gateway_admin_purge_runtime_reservation(request: Request, runtime_id: str) -> Dict[str, Any]:
     _require_admin_principal(request)
-    runtime0 = safe_principal_component(runtime_id, default="")
-    if safe_principal_component(payload.confirm_runtime_id, default="") != runtime0:
-        raise HTTPException(status_code=400, detail="confirm_runtime_id must match the retained runtime id")
-    if not bool(payload.delete_data):
-        raise HTTPException(status_code=400, detail="delete_data must be true to purge a retained runtime")
-    registry = GatewayUserRegistry()
-    try:
-        reservation = registry.mark_runtime_reservation_purging(tenant_id=payload.tenant_id, runtime_id=runtime0)
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e).strip("'")) from e
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
-    root = _runtime_reservation_root(tenant_id=reservation.tenant_id, runtime_id=reservation.runtime_id)
-    deleted_data = False
-    if root.exists():
-        if not root.is_dir():
-            raise HTTPException(status_code=409, detail=f"Retained runtime path is not a directory: {root}")
-        shutil.rmtree(root)
-        deleted_data = True
-    try:
-        released = registry.release_runtime_reservation(tenant_id=reservation.tenant_id, runtime_id=reservation.runtime_id)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
-    invalidate_gateway_service_for_runtime(tenant_id=reservation.tenant_id, runtime_id=reservation.runtime_id)
-    return {
-        "ok": True,
-        "purged": bool(released),
-        "deleted_data": deleted_data,
-        "runtime_id": reservation.runtime_id,
-        "tenant_id": reservation.tenant_id,
-        "data_path": str(root),
-    }
+    raise HTTPException(status_code=410, detail={"reason_code": "archive_not_delete", "message": ARCHIVE_NOT_DELETE})
 
 
 def _catalog_actor(principal: GatewayPrincipal) -> str:
