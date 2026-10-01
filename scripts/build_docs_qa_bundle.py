@@ -17,7 +17,7 @@ ONE flow: {prompt, docs, app} -> grounded answer.
   input so replayed user turns are the questions, never the docs.
 - Transport = plain run-start + run poll over this bundle (no new endpoint).
 
-Usage: build_docs_qa_bundle.py [--version 0.1.1] [--out <dir>]
+Usage: build_docs_qa_bundle.py [--version 0.1.2] [--out <dir>]
 Writes docs-qa@<version>.flow (a zip: manifest.json + flows/<id>.json).
 """
 from __future__ import annotations
@@ -168,13 +168,13 @@ def build_flow() -> dict:
     now = datetime.now(timezone.utc).isoformat()
     return {
         "id": FLOW_ID,
-        "name": "docs-qa",
+        # Name and description: abstractflow scripts/workflow_labels.py (the one source of
+        # the shipped entrypoint labels). Grounding: the ASKING APP'S corpus (its llms.txt),
+        # {prompt, docs, app} -> cited answer; history from the run's session.
+        "name": "Docs Q&A",
         "description": (
-            "Documentation Q&A grounded on the ASKING APP'S corpus (its llms.txt): "
-            "{prompt, docs, app} -> cited answer; never invents behavior; says plainly "
-            "when the docs don't answer. Conversation history comes from the run's "
-            "session (use_session_history), never from the caller. The console "
-            "assistants' shared transport (uic c1648 slice a)."
+            "Answers a question about an app from that app's documentation (its llms.txt), "
+            "citing it, and says so when the docs do not cover it."
         ),
         "interfaces": [],
         "nodes": nodes,
@@ -194,7 +194,7 @@ def build_bundle(version: str, out_dir: Path) -> Path:
         "created_at": datetime.now(timezone.utc).isoformat(),
         "entrypoints": [{
             "flow_id": FLOW_ID,
-            "name": "docs-qa",
+            "name": flow["name"],
             "description": flow["description"],
             "interfaces": [],
         }],
@@ -222,7 +222,7 @@ def build_bundle(version: str, out_dir: Path) -> Path:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--version", default="0.1.1")
+    ap.add_argument("--version", default="0.1.2")
     ap.add_argument("--out", default=str(Path(__file__).resolve().parents[1] / "flows" / "bundles"))
     args = ap.parse_args()
     p = build_bundle(args.version, Path(args.out))

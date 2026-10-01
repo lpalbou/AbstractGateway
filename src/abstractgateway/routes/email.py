@@ -151,8 +151,10 @@ class ConnectBody(BaseModel):
 
     address: str = Field(..., description="The mailbox's address")
     password: str = Field(..., min_length=1, description="Password or app password; stored encrypted, never returned")
-    username: str = Field("", description="Sign-in user name; empty = the discovered form, else the address")
-    display_name: str = Field("", description="Name shown on sent mail (optional)")
+    username: str = Field("", description="Login, optional: empty = the discovered login form, else the address")
+    display_name: str = Field(
+        "", description="Name on sent mail, optional: empty = the stored name, else the address's local part"
+    )
     imap: Optional[ServerBody] = Field(None, description="Omit imap AND smtp to discover the servers from the address")
     smtp: Optional[ServerBody] = Field(None, description="Omit imap AND smtp to discover the servers from the address")
     test: bool = True
@@ -273,6 +275,11 @@ async def me_email_get(request: Request) -> Any:
 
     def run() -> Dict[str, Any]:
         out = mail_accounts.public_status(plane)
+        # The shared resolver (DESIGN-v2 §2.5): the admin's row in /admin/users and
+        # /admin/accounts reads exactly this.
+        view = mail_accounts.account_email_view(principal)
+        out["email_address"] = view["email_address"] or ""
+        out["mailbox"] = view["mailbox"]
         if principal.is_admin() and plane.is_default:
             out["notices"] = mail_accounts.boot_notices()
         return out
@@ -574,7 +581,9 @@ def _admin_plane(user_id: str, tenant_id: str) -> EmailPlane:
     try:
         return mail_accounts.plane_for_user(user_id, tenant_id=tenant_id)
     except KeyError:
-        raise HTTPException(status_code=404, detail="Gateway user not found") from None
+        raise HTTPException(
+            status_code=404, detail={"reason_code": "user_not_found", "message": f"There is no user named {user_id!r} on this gateway."}
+        ) from None
     except EmailPrincipalRefused as exc:
         raise HTTPException(status_code=400, detail={"reason_code": "email_principal_refused", "message": str(exc)}) from None
 

@@ -454,7 +454,9 @@ class NotificationOutbox:
             ).fetchone()
         finally:
             conn.close()
+        waiting = self._waiting_on_limit()
         return {
+            "rate_limited": waiting,
             "queued": counts.get("queued", 0) + counts.get("sending", 0),
             "sent": counts.get("sent", 0),
             "failed": counts.get("failed", 0),
@@ -465,6 +467,35 @@ class NotificationOutbox:
                 else None
             ),
         }
+
+    def _waiting_on_limit(self) -> Optional[Dict[str, Any]]:
+        """Queued notices held back by the send limit: {count, cause, resets_at} or None."""
+
+        if not self.path.exists():
+            return None
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n, MAX(next_attempt_ts) AS ts, MAX(error_cause) AS cause FROM notices"
+                " WHERE state='queued' AND error_code='email_rate_limited'"
+            ).fetchone()
+        finally:
+            conn.close()
+        if not row or not int(row["n"] or 0):
+            return None
+        return {"count": int(row["n"]), "cause": str(row["cause"] or ""), "resets_at": _iso_from_ts(float(row["ts"] or 0.0))}
+
+    def queued_before(self, key: str) -> int:
+        """Queued notices other than `key` (the ones a new notice waits behind)."""
+
+        if not self.path.exists():
+            return 0
+        conn = self._connect()
+        try:
+            row = conn.execute("SELECT COUNT(*) FROM notices WHERE state='queued' AND idempotency_key<>?", (key,)).fetchone()
+        finally:
+            conn.close()
+        return int(row[0] or 0) if row else 0
 
     # -- delivery --------------------------------------------------------------------------
 
@@ -530,12 +561,19 @@ class NotificationOutbox:
                 result = send(ctx, message)
             except EmailRateLimited as err:
                 retry = float((err.details or {}).get("retry_after_s") or 0.0) or RETRY_BASE_S
-                self._requeue(keys, delay=retry, coalesce=True)
+                # The rows keep WHY they wait (code + cause + fix) and WHEN they go
+                # (next_attempt_ts), so a later read can say "hourly limit reached - resets at 14:05".
+                self._requeue(keys, delay=retry, coalesce=True, err=err)
                 out["deferred"] += len(keys)
+                d = err.details or {}
+                out["rate_limited"] = {
+                    "window": d.get("window"), "limit": d.get("limit"), "used": d.get("used"),
+                    "resets_at_ts": self._clock() + max(1.0, retry),
+                }
                 # Everything else waits for the same window: stop here.
                 remaining = [r["idempotency_key"] for b in batches[batches.index(batch) + 1 :] for r in b]
                 if remaining:
-                    self._requeue(remaining, delay=retry, coalesce=True)
+                    self._requeue(remaining, delay=retry, coalesce=True, err=err)
                     out["deferred"] += len(remaining)
                 break
             except EmailError as err:
@@ -637,22 +675,127 @@ def queue_notice(plane: EmailPlane, kind: str, key: str, facts: Dict[str, Any]) 
     return NotificationOutbox(plane).enqueue(key, kind, subject, text, html_body)
 
 
-def send_test_notification(plane: EmailPlane) -> Dict[str, Any]:
-    """Queue and deliver one test notice now (the click is the request)."""
+def _iso_from_ts(ts: float) -> str:
+    return datetime.datetime.fromtimestamp(float(ts), tz=datetime.timezone.utc).replace(microsecond=0).isoformat()
 
+
+def _local_hhmm(ts: float, *, now: Optional[float] = None) -> str:
+    """The gateway's local time, "14:05" (today) / "tomorrow at 14:05" / "Oct 3 at 14:05"."""
+
+    at = datetime.datetime.fromtimestamp(float(ts))
+    today = datetime.datetime.fromtimestamp(float(now if now is not None else time.time())).date()
+    if at.date() == today:
+        return at.strftime("%H:%M")
+    if at.date() == today + datetime.timedelta(days=1):
+        return "tomorrow at " + at.strftime("%H:%M")
+    return at.strftime("%b %-d at %H:%M")
+
+
+_WINDOW_WORDS = {"hour": ("hourly", "this hour"), "day": ("daily", "today")}
+
+
+def _limit_sentence(limit: Dict[str, Any], resets_ts: float) -> str:
+    adjective, span = _WINDOW_WORDS.get(str(limit.get("window") or ""), ("send", "in this window"))
+    return f"{adjective} limit reached ({limit.get('used')} of {limit.get('limit')} {span}) \u2014 resets at {_local_hhmm(resets_ts)}"
+
+
+def _smtp_where(plane: EmailPlane) -> Tuple[str, str]:
+    try:
+        st = account_store(plane).settings()
+    except EmailError:
+        return "", ""
+    smtp = st.account.smtp if st.account is not None else None
+    if smtp is None:
+        return "", ""
+    host = str(getattr(smtp, "host", "") or "")
+    port = getattr(smtp, "port", None)
+    return host, (f"{host}:{port}" if port else host)
+
+
+def _send_failed_sentence(plane: EmailPlane, code: str, cause: str) -> str:
+    """"Not sent: <why>." for a failed send, from the error code (an explicit table)."""
+
+    host, where = _smtp_where(plane)
+    cause = str(cause or "").strip().rstrip(".")
+    if code == "email_no_recipient":
+        return "Not sent: there is no address to send it to \u2014 set your email address first."
+    if code == "email_auth_failed" and host:
+        return f"Not sent: {host} refused the sign-in \u2014 check the mailbox password ({cause})."
+    if code in ("email_unreachable", "email_transient") and where:
+        return f"Not sent: couldn't reach {where} ({cause})."
+    if code == "email_tls_failed" and where:
+        return f"Not sent: couldn't set up a secure connection to {where} ({cause})."
+    if code == "email_policy_refused":
+        return f"Not sent: your recipient rules refused it ({cause})."
+    if host:
+        return f"Not sent: {host} refused the message ({cause})." if cause else f"Not sent: {host} refused the message."
+    return f"Not sent: {cause}." if cause else "Not sent."
+
+
+def send_test_notification(plane: EmailPlane) -> Dict[str, Any]:
+    """Queue and deliver one test notice now (the click is the request). The answer always
+    carries a sentence (`message`) and a `reason_code` (null when sent): no_mailbox |
+    mailbox_paused | rate_limited | queued_behind | send_failed; `limit` {window, limit, used,
+    resets_at} when a send limit held it back. `state` / `error` / `delivery` stay as before."""
+
+    base: Dict[str, Any] = {"sent": False, "reason_code": None, "message": "", "limit": None}
     if not email_usable(plane):
         try:
             email_context(plane)  # raises the precise typed reason (not connected / turned off)
         except EmailError as err:
-            return {"ok": False, "state": "not sent", "error": {"code": err.code, "cause": err.cause, "fix": err.fix}}
+            from .accounts import admin_email_enabled
+
+            if err.code == "email_not_configured":
+                reason, msg = "no_mailbox", "Not sent: no mailbox connected."
+            elif err.code == "email_disabled" and not admin_email_enabled(plane):
+                reason, msg = "send_failed", "Not sent: your admin turned mailboxes off for your account."
+            elif err.code == "email_disabled":
+                reason, msg = "mailbox_paused", "Not sent: your mailbox is paused."
+            else:
+                reason, msg = "send_failed", _send_failed_sentence(plane, err.code, err.cause)
+            return {
+                **base, "ok": False, "state": "not sent", "reason_code": reason, "message": msg,
+                "error": {"code": err.code, "cause": err.cause, "fix": err.fix},
+            }
     key = idempotency_key("test", plane.key, time.time_ns())
     queue_notice(plane, "test", key, {"title": "Test"})
-    result = NotificationOutbox(plane).deliver()
-    row = next((r for r in NotificationOutbox(plane).rows(limit=50) if r["idempotency_key"] == key), None)
+    outbox = NotificationOutbox(plane)
+    result = outbox.deliver()
+    row = next((r for r in outbox.rows(limit=50) if r["idempotency_key"] == key), None)
     state = row["state"] if row else "unknown"
-    out: Dict[str, Any] = {"ok": state == "sent", "state": state, "delivery": result}
+    out: Dict[str, Any] = {**base, "ok": state == "sent", "state": state, "delivery": result}
     if row and state != "sent":
         out["error"] = {"code": row["error_code"], "cause": row["error_cause"], "fix": row["error_fix"]}
+    if state == "sent":
+        try:
+            ctx = email_context(plane)
+            to = str(ctx.registered_address or ctx.account.address or "").strip()
+        except EmailError:
+            to = ""
+        out.update(sent=True, message=f"Sent to {to}." if to else "Sent.")
+        return out
+    code = str((row or {}).get("error_code") or "")
+    if state == "queued" and code == "email_rate_limited":
+        rl = result.get("rate_limited") or {}
+        resets_ts = float(rl.get("resets_at_ts") or (row or {}).get("next_attempt_ts") or time.time())
+        limit = {"window": rl.get("window"), "limit": rl.get("limit"), "used": rl.get("used"), "resets_at": _iso_from_ts(resets_ts)}
+        out["limit"] = limit
+        behind = outbox.queued_before(key)
+        if behind:
+            noun = "notification" if behind == 1 else "notifications"
+            out.update(
+                reason_code="queued_behind", queued_behind=behind,
+                message=f"Queued behind {behind} earlier {noun}; they go out when the limit resets at {_local_hhmm(resets_ts)}.",
+            )
+        else:
+            out.update(reason_code="rate_limited", message=f"Not sent: {_limit_sentence(limit, resets_ts)}.")
+        return out
+    if state == "queued":
+        # A transient failure: retried automatically.
+        sentence = _send_failed_sentence(plane, code, str((row or {}).get("error_cause") or ""))
+        out.update(reason_code="send_failed", message=sentence[:-1] + "; it is retried automatically.")
+        return out
+    out.update(reason_code="send_failed", message=_send_failed_sentence(plane, code, str((row or {}).get("error_cause") or "")))
     return out
 
 
