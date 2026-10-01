@@ -180,10 +180,15 @@ fn logs_read_the_accounts_activity_and_filter() {
         Loadable::Ready(data),
     )));
     let s = h.turns(3);
+    // The time in the viewer's LOCAL zone (14:05 UTC is 16:05 in Paris).
+    let when = abstractgateway_console::store::accounts::activity_time(
+        "2026-09-30T14:05:00+00:00",
+        &abstractgateway_console::localtime::local_today(),
+    );
+    assert!(s.contains(&when), "{when:?}:\n{s}");
     for want in [
         "Activity — alice",
         "[All]",
-        "Sep 30 14:05",
         "Run started",
         "run-42 · Observer /runs/run-42",
         "From the gateway's audit log",

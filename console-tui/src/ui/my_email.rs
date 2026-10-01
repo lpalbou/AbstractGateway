@@ -4,7 +4,12 @@
 //! web console:
 //!
 //! 1. **Email address** — one field with its own inline Save (the only
-//!    Save on the page): where sign-in codes and notifications go.
+//!    Save on the page): where sign-in codes and notifications go. The
+//!    address is asked ONCE: with none saved and no mailbox, this field is
+//!    replaced by one sentence and the IMAP pane's Mailbox address is the
+//!    only address field (connecting makes it your email address); with one
+//!    saved, the IMAP pane says "Mailbox account: x@y — use a different
+//!    account (Ctrl+U)" and Ctrl+U reveals the Mailbox address field.
 //! 2. **Mailbox** — not connected: tabs IMAP (first, default) | Google |
 //!    Microsoft (DESIGN-v2 §3). IMAP shows every field: the mailbox
 //!    address, the password and both servers, pre-filled with the standard
@@ -44,6 +49,10 @@ pub const TABS: [&str; 3] = ["IMAP", "Google", "Microsoft"];
 const TAB_IMAP: usize = 0;
 
 pub const ADDRESS_HELP: &str = "Where sign-in codes and notifications go.";
+/// Shown instead of the Email address field while none is saved and no
+/// mailbox is connected (the mailbox address becomes it).
+pub const ADDRESS_FROM_MAILBOX: &str =
+    "Your email address is the mailbox you connect below: sign-in codes and notifications go there.";
 pub const MAILBOX_ADDRESS_HELP: &str =
     "The account your agents read and send from \u{2014} usually your own address.";
 /// The admin's own page opens with this sentence (DESIGN-v2 §2.3).
@@ -53,6 +62,17 @@ pub const LOGIN_HELP: &str =
     "The name your provider signs you in with, when it is not your address.";
 /// The key that reveals / hides the Login field (the only way: no button).
 pub const LOGIN_KEY_LABEL: &str = "Ctrl+O";
+/// The key that reveals the Mailbox address field when your email address
+/// is already set (the address is asked ONCE).
+pub const OTHER_ACCOUNT_KEY_LABEL: &str = "Ctrl+U";
+
+/// The IMAP pane's line when your email address is set: the mailbox signs
+/// in as that address unless you choose another account.
+pub fn mailbox_account_line(address: &str) -> String {
+    format!(
+        "Mailbox account: {address} \u{2014} use a different account ({OTHER_ACCOUNT_KEY_LABEL})"
+    )
+}
 pub const ACTIVE_HELP: &str =
     "Off pauses watching, sending and notifications; your settings are kept.";
 pub const PASSWORD_HELP: &str = "Use an app password if your provider needs one.";
@@ -80,6 +100,9 @@ struct Page {
     servers: ServerSignals,
     /// The Login field is shown (Ctrl+O).
     login_shown: Signal<bool>,
+    /// The Mailbox address field is shown although your email address is
+    /// set (Ctrl+U, "use a different account").
+    other_account: Signal<bool>,
     /// Bumped per address edit: only the newest arms the discovery call.
     addr_gen: Signal<u64>,
     /// The last "Send a test" sentence, shown under the button.
@@ -307,6 +330,7 @@ pub fn open(cx: Scope, ctx: &Ctx) {
             password: mcx.signal(String::new()),
             servers: ServerSignals::new(mcx),
             login_shown: mcx.signal(false),
+            other_account: mcx.signal(false),
             addr_gen: mcx.signal(0),
             test_result: mcx.signal(None),
             confirm_disconnect: mcx.signal(false),
@@ -443,6 +467,25 @@ pub fn open(cx: Scope, ctx: &Ctx) {
                             ectx.request_focus(id);
                         }
                     }
+                }
+            })
+            // "Use a different account": the Mailbox address field, only
+            // when your email address is set (else it is the one field).
+            .shortcut(KeyChord::new(Mods::CTRL, Key::Char('u')), move |_| {
+                let saved = store.op.my_email.with_untracked(|e| {
+                    e.ready()
+                        .filter(|e| !e.configured)
+                        .map(|e| e.email_address().trim().to_string())
+                        .unwrap_or_default()
+                });
+                if !saved.is_empty() && p.tab.get_untracked() == TAB_IMAP {
+                    let show = !p.other_account.get_untracked();
+                    if !show {
+                        // Back to your email address: the hidden field must
+                        // not keep a different account it no longer shows.
+                        p.other_address.set(saved);
+                    }
+                    p.other_account.set(show);
                 }
             })
             .child(line(vec![span_bold("My account — email", t0.accent)]))
@@ -620,6 +663,12 @@ fn page_body(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> View {
 fn address_card(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> View {
     let t0 = *t;
     let saved_value = e.email_address();
+    // The address is asked ONCE: with none saved and no mailbox yet, the
+    // IMAP pane's Mailbox address is the only address field, and connecting
+    // makes it your email address.
+    if saved_value.trim().is_empty() && !e.configured && !e.mailboxes_off() {
+        return helper(&t0, ADDRESS_FROM_MAILBOX, p.wrap_w);
+    }
     let save = {
         let ctx = ctx.clone();
         move || {
@@ -884,18 +933,39 @@ fn imap_tab(cx: Scope, ctx: &Ctx, t: &TokenSet, p: Page) -> View {
     let ctx_addr = ctx.clone();
     let ctx_disc = ctx.clone();
     let ctx_connect = ctx.clone();
+    let saved = store.op.my_email.with_untracked(|e| {
+        e.ready()
+            .map(|e| e.email_address().trim().to_string())
+            .unwrap_or_default()
+    });
     Element::new()
         .style(LayoutStyle::column().gap(0).shrink(0.0))
-        .child(field(
-            &t0,
-            "Mailbox address",
-            input(p.other_address, w, false)
-                .on_change(move |a| address_changed(&ctx_addr, p, a))
-                .on_submit(move |a| discover(&ctx_disc, a))
-                .element(cx, &t0)
-                .build(),
+        .child(dyn_view_scoped(
+            LayoutStyle::column().gap(0).shrink(0.0),
+            move |acx| {
+                let t = t0;
+                // Your email address is set: the mailbox signs in as it
+                // unless you ask for another account (Ctrl+U).
+                if !saved.is_empty() && !p.other_account.get() {
+                    return helper(&t, &mailbox_account_line(&saved), p.wrap_w);
+                }
+                let ctx_addr = ctx_addr.clone();
+                let ctx_disc = ctx_disc.clone();
+                Element::new()
+                    .style(LayoutStyle::column().gap(0).shrink(0.0))
+                    .child(field(
+                        &t,
+                        "Mailbox address",
+                        input(p.other_address, w, false)
+                            .on_change(move |a| address_changed(&ctx_addr, p, a))
+                            .on_submit(move |a| discover(&ctx_disc, a))
+                            .element(acx, &t)
+                            .build(),
+                    ))
+                    .child(helper(&t, MAILBOX_ADDRESS_HELP, p.wrap_w))
+                    .build()
+            },
         ))
-        .child(helper(&t0, MAILBOX_ADDRESS_HELP, p.wrap_w))
         .child(field(
             &t0,
             "Password",

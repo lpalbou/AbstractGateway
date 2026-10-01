@@ -18,6 +18,13 @@ gateway does not have fails with its error.
   email, `l` activity (`GET /admin/accounts/{id}/activity`, or `/me/activity` for your own; `f` changes the filter),
   `w` workspace policy, `t` rotate, `m` manage (entities), `d` delete. An action that can't apply shows the
   gateway's reason under the table and answers with it.
+- **Accounts for a non-admin**: the same table from `GET /me/accounts` — your own account and the entities you
+  created, with a line saying so; `l` on your entity reads `GET /me/accounts/{id}/activity`. The gateway enforces
+  the same rule on every entity route.
+- **My email asks the address once**: with no email address saved and no mailbox, the IMAP pane's Mailbox address
+  is the only address field (connecting makes it your email address); with one saved, the pane says "Mailbox
+  account: x@y — use a different account (Ctrl+U)" and Ctrl+U shows the field.
+- Activity times and send-limit reset times are shown in your local time zone (the gateway writes UTC).
 - **My email**: the mailbox tabs are **IMAP** (first, the default), **Google** and **Microsoft**. The IMAP pane
   always shows the server fields, filled with the standard values as soon as the address has a domain and then with
   what `POST /me/email/discover` returns (`defaults`), never over a field you edited. No User name and no Display

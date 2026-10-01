@@ -10399,6 +10399,29 @@ fn my_email_agent_tools_reason_follows_the_admin() {
     assert_eq!(e.notify_job_failed, None);
 }
 
+/// The address is asked ONCE: with no email address saved and no mailbox,
+/// the Email address field is not shown — the IMAP pane's Mailbox address
+/// is the only address field (connecting makes it your email address).
+#[test]
+fn my_email_asks_the_address_once_when_none_is_saved() {
+    let mut h = harness_sized(Size::new(140, 70));
+    let mut v = my_email_not_connected();
+    v["registered_address"] = json!("");
+    v["email_address"] = json!("");
+    let s = open_my_email(&mut h, &v);
+    assert!(
+        s.contains("Your email address is the mailbox you connect below"),
+        "{s}"
+    );
+    assert!(s.contains("Mailbox address"), "the one address field:\n{s}");
+    assert!(!s.contains("Mailbox account:"), "{s}");
+    assert_eq!(
+        s.matches("Email address").count(),
+        0,
+        "no separate Email address field:\n{s}"
+    );
+}
+
 /// DESIGN-v2 §3: IMAP is the first tab and the default; its server fields
 /// are always shown, filled with the standard values for the address's
 /// domain at once, then with discovery's `defaults` — never over an edit.
@@ -10421,8 +10444,25 @@ fn my_email_imap_tab_is_first_default_and_shows_prefilled_servers() {
         !s.contains("Sign in with Google"),
         "IMAP is the default pane:\n{s}"
     );
+    // The address is asked ONCE: your email address is set, so the mailbox
+    // signs in as it — one line, and Ctrl+U reveals the field for another
+    // account.
+    assert!(
+        s.contains("Mailbox account: me@fastmail.test — use a different account (Ctrl+U)"),
+        "{s}"
+    );
+    assert!(
+        !s.contains("Mailbox address"),
+        "no second address field:\n{s}"
+    );
+    h.key(b"\x15"); // Ctrl+U
+    let revealed = h.turns(2);
+    assert!(revealed.contains("Mailbox address"), "{revealed}");
+    assert!(!revealed.contains("Mailbox account:"), "{revealed}");
+    h.key(b"\x15");
+    let s = h.turns(2);
+    assert!(s.contains("Mailbox account: me@fastmail.test"), "{s}");
     // Every field visible, pre-filled with the standard values.
-    assert!(s.contains("Mailbox address"), "{s}");
     assert!(
         s.contains("Incoming mail (IMAP)") && s.contains("Outgoing mail (SMTP)"),
         "{s}"
