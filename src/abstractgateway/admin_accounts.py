@@ -34,8 +34,7 @@ CANNOT_DEACTIVATE_SELF = "You can't deactivate your own account."
 REASON_OWN_DELETE = "You can't delete your own account."
 REASON_ENTITY_DELETE = "An entity's name is kept for life; suspend it instead."
 REASON_ENTITY_ROTATE = (
-    "An entity has no token to rotate: its credential is discarded when it is created and a fresh one "
-    "is bound only while it is summoned."
+    "An entity has no token to rotate: its credential is discarded when it is created and no one holds it."
 )
 REASON_USER_MANAGE = "Only entities have a management page."
 REASON_ENTITY_NO_HOME = "This entity's home is not on this gateway's runtime, so it can't be managed here."
