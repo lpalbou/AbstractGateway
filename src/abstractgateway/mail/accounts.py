@@ -781,6 +781,9 @@ def public_status(plane: EmailPlane) -> Dict[str, Any]:
     # The shared mailbox shape (DESIGN-v2 §2.5): the same function /admin/users and
     # /admin/accounts read, so the admin's row and card never disagree.
     out["mailbox"] = mailbox_view(plane)
+    # A mailbox stored without its SMTP leg can read but never send (`mailbox.state` is then
+    # "receive_only"); connects store both legs since 0.10.1.
+    out["send_capable"] = bool(out.get("configured")) and isinstance(out.get("smtp"), dict)
     out["registered_address"] = str(out.get("registered_address") or "") or self_address(plane)
     out["oauth_providers"] = oauth_providers_for_users()
     from .notifications import read_preferences
@@ -857,6 +860,7 @@ REASON_SHARED_RUNTIME_NO_MAILBOX = (
 )
 REASON_MAILBOXES_OFF_FOR_USER = "Mailboxes are turned off for this account (Email for everyone)."
 REASON_MAILBOX_PAUSED = "The mailbox is paused: its owner switched Active off; the settings are kept."
+REASON_MAILBOX_RECEIVE_ONLY = "No outgoing server: this mailbox is receive only — connect it again to send."
 
 
 def mailbox_view(plane: EmailPlane) -> Dict[str, Any]:
@@ -875,6 +879,9 @@ def mailbox_view(plane: EmailPlane) -> Dict[str, Any]:
         return {"state": "not_connected", "address": None, "provider": None, "reason": None}
     if not pub.get("enabled"):
         return {"state": "paused", "address": address, "provider": provider, "reason": REASON_MAILBOX_PAUSED}
+    if not isinstance(pub.get("smtp"), dict):
+        # Stored before connects required both legs (gateway < 0.10.1): reads work, sends never.
+        return {"state": "receive_only", "address": address, "provider": provider, "reason": REASON_MAILBOX_RECEIVE_ONLY}
     return {"state": "connected", "address": address, "provider": provider, "reason": None}
 
 
@@ -1038,6 +1045,24 @@ def connect_password(
         smtp = dict(found["smtp"]) if isinstance(found.get("smtp"), dict) else None
         username = username or str(found.get("username") or "")
         discovery = {"source": found.get("source"), "provider": found.get("provider"), "tried": found.get("tried") or []}
+    else:
+        found = None
+    # BOTH legs, always (operator report 2026-10-01, Mac mini: a mailbox stored with IMAP only
+    # showed "Connected as …" and every send answered "no SMTP (send) settings"). A leg the
+    # form or the discovery left out is the domain's standard one (imap./smtp.<domain>, 993 /
+    # 465 SSL — `server_defaults`), and the test below signs in to both before anything is
+    # stored: a mailbox is never connected receive-only without saying so.
+    if _no_host(imap) or _no_host(smtp):
+        try:
+            std = server_defaults(str(address or "").strip(), discovered=found if isinstance(found, dict) else {"found": False})
+        except ValueError:
+            raise EmailInvalidSettings(
+                f"{str(address or '').strip()!r} is not a valid email address.", "Give the mailbox's address as name@example.com."
+            ) from None
+        if _no_host(imap):
+            imap = {**dict(std.get("imap") or {}), "folder": (imap or {}).get("folder") or "INBOX"}
+        if _no_host(smtp):
+            smtp = dict(std.get("smtp") or {})
     imap_s, smtp_s = build_servers(imap, smtp, allow_ca_file=allow_ca_file)
     store = account_store(plane)
     # Nobody is asked for a display name (DESIGN-v2 §3): an empty one keeps the stored name,
