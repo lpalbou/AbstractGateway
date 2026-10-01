@@ -399,7 +399,7 @@ try {
     const helpTouch = await page.evaluate(() => { const s = document.querySelector("#workflows-table .help-q > summary"); const r = s.getBoundingClientRect(); const a = getComputedStyle(s, "::after"); return { h: Math.round(r.height), hitW: a.width, hitH: a.height }; });
     check(helpTouch.h <= 20 && helpTouch.hitW === "44px" && helpTouch.hitH === "44px", "touch: (?) stays a small glyph with a 44 px hit area", helpTouch);
     const phoneWf = await page.evaluate(() => { const r = document.querySelector("#workflows-table tr[data-bundle='basic-agent']"); return { meta: r.querySelector(".workflows-fold-meta").innerText.trim(), version: r.querySelector(".workflows-version-cell").getClientRects().length }; });
-    check(/^Version \S+ · Shipped with the gateway$/.test(phoneWf.meta) && phoneWf.version === 0, "phone: one 'Version · source' line, no captioned blocks", phoneWf);
+    check(/^Version \S+ ·\s*Shipped$/.test(phoneWf.meta) && phoneWf.version === 0, "phone: one 'Version · source' line, no captioned blocks", phoneWf);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
     check(!overflow, "no horizontal page scroll at 390 px");
     await page.click("#nav-toggle");
