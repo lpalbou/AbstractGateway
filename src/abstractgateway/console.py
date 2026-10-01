@@ -2140,6 +2140,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .entity-manage-tabs { flex: 0 0 auto; padding: 0 20px; background: var(--bg-secondary); }
 	    .entity-manage-tabs .af-tabs__list { border-bottom: 0; }
 	    .entity-manage-tabs .af-tabs__tab { font-size: var(--font-size-base); font-weight: 500; }
+	    /* Opening focuses the title (no ring); a tab shows its ring for keyboard focus only, so a
+	       pointer-selected tab never looks like a second active tab. */
+	    .entity-manage .af-modal__title:focus { outline: none; }
+	    .entity-manage-tabs .af-tabs__tab:focus:not(:focus-visible) { outline: none; box-shadow: none; }
 	    .entity-manage-body .entity-subpanel { display: flex; flex-direction: column; gap: 16px; padding: 0; min-width: 0; }
 	    .entity-manage-body .entity-subpanel.hidden { display: none; }
 	    .entity-manage .af-card__desc, .entity-manage .af-switch__desc, .entity-manage .af-switch__reason,
@@ -3522,12 +3526,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
   <div id="entity-manage-backdrop" class="af-modal-backdrop" hidden>
     <div id="entity-manage-section" class="af-modal af-modal--wide entity-manage" role="dialog" aria-modal="true" aria-labelledby="entity-manage-title">
       <div class="af-modal__header">
-        <h2 id="entity-manage-title" class="af-modal__title">Manage — <span id="entity-manage-name">entity</span></h2>
+        <h2 id="entity-manage-title" class="af-modal__title" tabindex="-1" data-af-autofocus>Manage — <span id="entity-manage-name">entity</span></h2>
         <button id="entity-manage-close" class="af-modal__close" type="button" aria-label="Close">×</button>
       </div>
       <div class="af-tabs entity-manage-tabs">
         <div class="af-tabs__list" role="tablist" aria-label="Manage sections">
-          <button id="entity-subtab-overview" class="af-tabs__tab" data-af-autofocus role="tab" type="button" aria-controls="entity-subpanel-overview" aria-selected="true">Overview</button>
+          <button id="entity-subtab-overview" class="af-tabs__tab" role="tab" type="button" aria-controls="entity-subpanel-overview" aria-selected="true">Overview</button>
           <button id="entity-subtab-talk" class="af-tabs__tab" role="tab" type="button" aria-controls="entity-subpanel-talk" aria-selected="false" tabindex="-1">Talk</button>
           <button id="entity-subtab-lifecycle" class="af-tabs__tab" role="tab" type="button" aria-controls="entity-subpanel-lifecycle" aria-selected="false" tabindex="-1">Lifecycle</button>
           <button id="entity-subtab-substrate" class="af-tabs__tab" role="tab" type="button" aria-controls="entity-subpanel-substrate" aria-selected="false" tabindex="-1">Mind &amp; voice</button>
@@ -3609,7 +3613,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             </div>
             <p id="entity-loop-status" class="entity-line"></p>
             <details id="entity-schedule-box" class="entity-disclosure entity-admin-only">
-              <summary>Schedule</summary>
+              <summary id="entity-schedule-summary">Schedule: a step every 20 s, 8 steps a day, 30 min rest, until you switch it off</summary>
               <p class="af-form__help">Used the next time Personal time is switched on. Blank fields keep the defaults.</p>
               <div class="entity-grid">
                 <div class="af-form__field"><label class="af-form__label" for="entity-grant-hours">Hours allowed</label><input id="entity-grant-hours" type="number" min="0" max="720" inputmode="decimal" aria-describedby="entity-grant-hours-help"><p id="entity-grant-hours-help" class="af-form__help">How long personal time may last before it ends by itself; blank = until you switch it off.</p></div>
@@ -5818,7 +5822,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	            const at = document.createElement("span"); at.className = "entity-kv-key"; at.textContent = String(m.at || "").slice(0, 16).replace("T", " ");
 	            const what = document.createElement("span"); what.className = "entity-kv-val";
 	            const reason = m.details && m.details.reason ? ` — ${m.details.reason}` : "";
-	            what.textContent = `${m.kind || "?"}${reason}`;
+	            what.textContent = `${entityMomentWords(m.kind)}${reason}`;
 	            line.append(at); line.append(what); box.append(line);
 	          }
 	        }
@@ -5826,6 +5830,30 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        if (manageStale(token)) return;
 	        $("entity-overview").textContent = "overview unavailable: " + (e.message || e);
 	      }
+	    }
+	    // Recent moments in plain words: an explicit table of the host marker kinds the gateway
+	    // writes (entities.py / routes/entities.py); a kind not listed is shown as written.
+	    const ENTITY_MOMENT_WORDS = {
+	      summon: "Born", summon_refused: "Birth refused", wake: "Woke up", sleep: "Fell asleep", asleep: "Fell asleep",
+	      awake: "Woke up", paused: "Stopped", pause: "Stopped", close: "Visit closed", crashed: "Crashed",
+	      skills_selection_changed: "Skills changed", capability_map_changed: "Capabilities changed",
+	      tool_policy_changed: "Tools per phase changed", substrate_changed: "Mind changed", voice_changed: "Voice changed",
+	      prompt_overlay_changed: "Instructions changed", work_order_changed: "Work order changed", task_inbox_changed: "Tasks changed",
+	      reembed: "Memory index rebuilt", blueprint_edited: "Blueprint edited",
+	      personal_started: "Personal time started", personal_stop_requested: "Personal time asked to stop",
+	      personal_grant_revoked: "Personal time switched off", personal_grant_expired: "Personal time ran out",
+	      personal_frozen: "Frozen (emergency)", seat_preempted: "Visit took over its personal time",
+	      prelude_refused: "Visit refused", maintenance_window_open: "Maintenance started", maintenance_window_close: "Maintenance ended",
+	      night_voice: "Night voice", diary: "Diary entry", corrupt_marker: "Unreadable record",
+	    };
+	    function entityMomentWords(kind) {
+	      const k = String(kind || "");
+	      return Object.prototype.hasOwnProperty.call(ENTITY_MOMENT_WORDS, k) ? ENTITY_MOMENT_WORDS[k] : (k || "?");
+	    }
+	    function entityScheduleSummary() {
+	      const val = (id) => String($(id).value || "").trim();
+	      const tick = val("entity-loop-tick") || "20", ticks = val("entity-loop-ticks") || "8", rest = val("entity-loop-rest") || "30", hours = val("entity-grant-hours");
+	      $("entity-schedule-summary").textContent = `Schedule: a step every ${tick} s, ${ticks} steps a day, ${rest} min rest, ${hours ? `for ${hours} h` : "until you switch it off"}`;
 	    }
 	    async function loadEntitySubstrate(name, token) {
 	      try {
@@ -15602,6 +15630,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("entity-sleep-now").onclick = async () => { $("entity-sleep-confirm").hidden = true; await setEntityState("asleep"); };
 	    $("entity-sleep-cancel").onclick = () => { $("entity-sleep-confirm").hidden = true; $("entity-state-awake").focus(); };
 	    $("entity-owntime-toggle").onclick = entityOwntimeToggle;
+	    for (const id of ["entity-grant-hours", "entity-loop-tick", "entity-loop-ticks", "entity-loop-rest"]) $(id).oninput = entityScheduleSummary;
 	    $("entity-loop-freeze").onclick = () => entityConfirmShow("entity-freeze-confirm", "entity-freeze-cancel");
 	    $("entity-freeze-now").onclick = entityLoopFreeze;
 	    $("entity-freeze-cancel").onclick = () => { $("entity-freeze-confirm").hidden = true; $("entity-loop-freeze").focus(); };
@@ -15625,14 +15654,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("entity-manage-matrix").onchange = (ev) => { if (ev && ev.target && ev.target.type === "checkbox") entityToolsChanged(); };
 	    afSwitchBind($("entity-tools-denyall"), () => true);
 	    $("entity-verify").onclick = entityVerify;
-	    // A closed disclosure's content is inert: the modal's focus trap then never counts its
-	    // (invisible) controls, so Tab from the last summary wraps instead of leaving the dialog.
-	    for (const id of ["entity-candidates-box", "entity-schedule-box", "entity-reembed-box", "entity-workorder-history-box", "entity-prompt-preview-box"]) {
-	      const d = $(id);
-	      const sync = () => { for (const c of Array.from(d.children || [])) if (c.tagName !== "SUMMARY") c.inert = !d.open; };
-	      d.ontoggle = sync;
-	      sync();
-	    }
 	    $("runs-status").onchange = () => { state.runsOffset = 0; loadRuns(); };
 	    $("runs-root-only").onchange = () => { state.runsOffset = 0; loadRuns(); };
 	    {

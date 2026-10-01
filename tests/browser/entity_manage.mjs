@@ -58,7 +58,12 @@ async function signIn(page) {
   await page.waitForFunction(() => document.body.classList.contains("signed-in"), null, { timeout: 30000 });
   await page.keyboard.press("Escape").catch(() => {});
   await page.evaluate(() => document.getElementById("tab-button-users").click());
-  await page.waitForSelector(`#users-section tr[data-user="${ENTITY}"]`, { timeout: 20000 });
+  try {
+    await page.waitForSelector(`#users-section tr[data-user="${ENTITY}"]`, { timeout: 20000 });
+  } catch (e) {
+    const why = await page.evaluate(() => ({ users: (document.getElementById("users-message") || {}).textContent, rows: Array.from(document.querySelectorAll("#users-section tr[data-user]")).map((t) => t.getAttribute("data-user")), active: (document.querySelector(".tab-panel.active, section.active") || {}).id }));
+    throw new Error(`the Accounts table has no visible row ${ENTITY}: ${JSON.stringify(why)}`);
+  }
 }
 
 // The row's Manage action: the Accounts lane puts it in the row's "More actions" menu (§1.1).
@@ -101,7 +106,8 @@ try {
         modal: dlg.getAttribute("aria-modal"), classes: dlg.className, title: document.getElementById("entity-manage-title").textContent,
         backdropFixed: getComputedStyle(bd).position, usersShown: getComputedStyle(users).display !== "none" && !users.classList.contains("hidden"),
         rowRendered: Boolean(users.querySelector("tr[data-user]")) && users.querySelector("tr[data-user]").getClientRects().length > 0,
-        width: r.width, focusInside: dlg.contains(document.activeElement), filter: getComputedStyle(bd).backdropFilter || getComputedStyle(bd).webkitBackdropFilter || "",
+        width: r.width, focusInside: dlg.contains(document.activeElement), focusId: document.activeElement && document.activeElement.id,
+        rawMoments: /\b[a-z]+_[a-z_]*changed\b/.test(document.getElementById("entity-overview").textContent || ""), filter: getComputedStyle(bd).backdropFilter || getComputedStyle(bd).webkitBackdropFilter || "",
       };
     });
     check(shape.modal === "true", "Manage is role=dialog aria-modal=true", shape);
@@ -111,7 +117,8 @@ try {
     check(/blur/.test(shape.filter), "the backdrop is blurred", shape.filter);
     check(shape.usersShown && shape.rowRendered, "the Accounts table stays visible behind the modal", shape);
     check(shape.width >= 1000, "the modal is wide at 1440", shape.width);
-    check(shape.focusInside, "focus moves into the modal");
+    check(shape.focusInside && shape.focusId === "entity-manage-title", "focus moves into the modal, on its title", shape.focusId);
+    check(!shape.rawMoments, "recent moments are plain words, not event codes");
     check(page.url() === urlBefore, "opening Manage does not navigate", page.url());
     const hits = await page.evaluate(() => window.checkLabelScale(document.getElementById("entity-manage-section")));
     check(hits.length === 0, "labels in the modal keep the type scale (<= 15 px, <= 600)", hits);
@@ -222,6 +229,8 @@ try {
     }
     await ctx.close();
   }
+} catch (e) {
+  failures.push(`aborted: ${String((e && e.message) || e).split("\n")[0]}`);
 } finally {
   await browser.close();
 }
