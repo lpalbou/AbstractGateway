@@ -427,6 +427,7 @@ let ROW = null;
 const selectedSandboxRoute = () => ROW;
 const refreshSandboxSpeculationSupport = () => {};
 const sandboxRouteShortLabel = () => "";
+const renderSandboxChat = () => {};
 """
     out = _run(
         ["defaultRowConfigured", "defaultRowKey", "routeKey", "defaultRowParentKey", "findDefaultRow", "sandboxEffectiveRow",
