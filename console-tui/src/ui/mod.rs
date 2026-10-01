@@ -638,15 +638,12 @@ impl Ctx {
                 if !s.conn.with_untracked(ConnPhase::is_known_non_admin) {
                     s.users.set(Loadable::Loading);
                     self.send(Cmd::LoadUsers);
-                    // The one table (DESIGN-v2 §2): users + entities.
-                    s.accounts.set(Loadable::Loading);
-                    self.send(Cmd::LoadAccounts);
-                } else {
-                    // A non-admin's table: you + the entities you created
-                    // (`/me/accounts`, the gateway's RBAC).
-                    s.accounts.set(Loadable::Loading);
-                    self.send(Cmd::LoadMyAccounts);
                 }
+                // The one table (DESIGN-v2 §2): users + entities for an
+                // admin; you + the entities you created for a non-admin
+                // (`/me/accounts`, the gateway's RBAC).
+                s.accounts.set(Loadable::Loading);
+                self.send(Cmd::load_accounts_for(s));
                 s.entities.set(Loadable::Loading);
                 // The inspector's detail must honor `r`'s "refreshing
                 // live data" promise too (F17): NotAsked here → the

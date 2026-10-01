@@ -569,6 +569,21 @@ pub enum Cmd {
     },
 }
 
+impl Cmd {
+    /// The ONE Accounts read for the signed-in principal: a known non-admin
+    /// reads `GET /me/accounts` (you + the entities you created), everyone
+    /// else `GET /admin/accounts`. Every Accounts refresh path (screen load,
+    /// `r`, the health retry after a network failure) goes through here so
+    /// none can send a non-admin to the admin-only route.
+    pub fn load_accounts_for(store: &Store) -> Cmd {
+        if store.conn.with_untracked(ConnPhase::is_known_non_admin) {
+            Cmd::LoadMyAccounts
+        } else {
+            Cmd::LoadAccounts
+        }
+    }
+}
+
 /// A bearer/API secret: Debug prints «redacted» — a secret can never
 /// leak through a NEW Cmd variant (F7: redaction was per-variant
 /// vigilance in a 281-line manual Debug impl; now it is structural).
