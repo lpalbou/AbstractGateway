@@ -144,6 +144,43 @@ try {
     check((await ownReq) && (await page.textContent("#my-email-registered-title")).trim() === "Your email address", "closing restores the signed-in user's own base and voice");
     await ctx.close();
   }
+  // ---------------------------------------------------------------- receive only (A20): row + modal status
+  {
+    const REASON = "No outgoing server: this mailbox is receive only — connect it again to send.";
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await ctx.newPage();
+    page.on("pageerror", (e) => failures.push(`pageerror@receive-only: ${e.message}`));
+    await page.route(/\/api\/gateway\/admin\/accounts(\?.*)?$/, async (route) => {
+      let res, j;
+      try { res = await route.fetch(); j = await res.json(); } catch { return; }
+      for (const r of j.accounts) if (r.id === "alice") r.mailbox = { state: "receive_only", address: "alice@fastmail.com", provider: "imap", reason: REASON };
+      route.fulfill({ response: res, body: JSON.stringify(j) }).catch(() => {});
+    });
+    await page.route(/\/api\/gateway\/me\/email$/, async (route) => {
+      if (route.request().method() !== "GET") return route.continue().catch(() => {});
+      let res, j;
+      try { res = await route.fetch(); j = await res.json(); } catch { return; }
+      Object.assign(j, { configured: true, address: "admin@example.org", auth_kind: "password", imap: { host: "imap.example.org", port: 993, security: "ssl" }, smtp: null, send_capable: false, mailbox: { state: "receive_only", address: "admin@example.org", provider: "imap", reason: REASON } });
+      route.fulfill({ response: res, body: JSON.stringify(j) }).catch(() => {});
+    });
+    await page.goto(`${BASE}/console`);
+    await page.fill("#login-user", "admin");
+    await page.fill("#login-token", ADMIN);
+    await page.click("#login-button");
+    await page.waitForFunction(() => document.body.classList.contains("signed-in"), null, { timeout: 20000 });
+    await page.keyboard.press("Escape").catch(() => {});
+    await page.evaluate(() => { document.body.classList.remove("nav-open"); document.getElementById("tab-button-users").click(); });
+    await page.waitForSelector("tr[data-user='alice']");
+    const cell = (await page.textContent("tr[data-user='alice'] td.accounts-mailbox")).replace(/\s+/g, " ");
+    check(cell.includes("Receive only — no outgoing server") && cell.includes(REASON) && !cell.includes("Connected as"), "receive-only mailbox: 'Receive only' + the API's sentence in the row", cell);
+    await page.click("tr[data-user='admin'] button[data-action='email']");
+    await page.waitForSelector("#account-email-backdrop:not([hidden]) #my-email-section");
+    await page.waitForFunction(() => document.getElementById("my-email-status").textContent.length > 0, null, { timeout: 10000 }).catch(() => {});
+    const status = await page.evaluate(() => ({ s: document.getElementById("my-email-status").textContent, e: document.getElementById("my-email-status-error").textContent }));
+    check(status.s.startsWith("Receive only as admin@example.org") && status.e.includes(REASON), "receive-only modal status: 'Receive only' + the API's sentence", status);
+    await page.unrouteAll({ behavior: "ignoreErrors" });
+    await ctx.close();
+  }
 } catch (e) {
   failures.push(`exception: ${String((e && e.message) || e).split("\n")[0]}`);
 } finally {

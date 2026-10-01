@@ -2063,10 +2063,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    /* ---- Accounts (DESIGN-v3 §1): header row, ONE full-width table that never scrolls
 	       sideways: table-layout fixed + colgroup, cells that wrap (never truncate), Actions = Email · Logs · Workspace|Manage · the kit "⋯" menu (af-menu).
-	       Columns: Runtime 120 px, Active 84 px, Actions 280 px (fits Email · Logs · Workspace · ⋯),
-	       Name 22 %, Email address and Mailbox share the rest. Card list when the table would not
-	       fit: a CONTAINER query on the table's own width, computed from the column minimums
-	       (Email address and Mailbox >= 120 px each: (484 + 240) / 0.78 = 928 px), so the sidebar
+	       Columns: Name 22 %, Runtime 16 %, Active 84 px, Actions 280 px (fits Email · Logs ·
+	       Workspace · ⋯), Email address and Mailbox share the rest. Card list when the table would
+	       not fit: a CONTAINER query on the table's own width, computed from the column minimums
+	       (Email address and Mailbox >= 120 px each: (364 + 240) / 0.62 = 974 px), so the sidebar
 	       width never matters. Proven at 1024-2560 px by tests/browser/accounts.mjs. */
 	    #tab-users #account { display: none; }
 	    /* One subheading size on every round-2 page (= the card heading, h2 15 px / 600). */
@@ -2082,7 +2082,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .accounts-page .users-table-wrap { overflow: visible; container: accounts / inline-size; }
 	    .accounts-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
 	    .accounts-table col.accounts-c-name { width: 22%; }
-	    .accounts-table col.accounts-c-runtime { width: 120px; }
+	    .accounts-table col.accounts-c-runtime { width: 16%; }
 	    .accounts-table col.accounts-c-active { width: 84px; }
 	    .accounts-table col.accounts-c-actions { width: 280px; }
 	    .accounts-table th { text-align: left; white-space: normal; overflow-wrap: anywhere; }
@@ -2090,7 +2090,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .accounts-table td { vertical-align: middle; padding-top: 10px; padding-bottom: 10px; overflow: hidden; }
 	    /* Wrap, never truncate (operator rule): a long id or address breaks anywhere and the row grows. */
 	    .accounts-cell-text { display: block; min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; word-break: normal; }
-	    code.accounts-cell-text { display: inline; padding: 1px 4px; white-space: normal; overflow: visible; text-overflow: clip; max-width: none; overflow-wrap: anywhere; word-break: break-all; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+	    /* Runtime ids: plain mono text (no chip box) that wraps at its hyphens first. */
+	    code.accounts-cell-text { display: block; padding: 0; border: 0; background: transparent; box-shadow: none; color: inherit; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; word-break: normal; font-size: var(--font-size-md); }
+	    .accounts-mailbox__reason { margin-top: 2px; font-size: var(--af-helper-size, var(--font-size-md)); }
 	    /* The id keeps its line; the chips wrap under it when the column is narrow. */
 	    .accounts-name__line { display: flex; align-items: center; gap: 4px 8px; min-width: 0; flex-wrap: wrap; }
 	    .accounts-name__line > strong { flex: 0 1 auto; min-width: 0; max-width: 100%; font-weight: 600; }
@@ -2118,7 +2120,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    /* Card list (DESIGN-v3 §1.2): one flat block per account (no card in a card). Line 1 name +
 	       chip + Active (right); line 2 "Email address · Mailbox"; line 3 runtime (muted); line 4 actions. */
-	    @container accounts (max-width: 927.98px) {
+	    @container accounts (max-width: 973.98px) {
 	      .accounts-table, .accounts-table tbody, .accounts-table tr { display: block; width: 100%; }
 	      .accounts-table thead, .accounts-table colgroup { display: none; }
 	      .accounts-table tr.accounts-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 12px 12px 12px 14px; border-top: 1px solid var(--line-soft); }
@@ -7146,6 +7148,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     // through the current API base, /me/email (own) or /accounts/<id>/email (an entity's own
     // mailbox, admin or its creator); the payloads and responses are identical (accounts-api §3.1).
     const MY_EMAIL_BASE = "/api/gateway/me/email";
+    // A response that breaks a cross-lane contract: logged, then re-thrown outside the handler so
+    // browser tests (pageerror) and the console go red, while the screen keeps plain words.
+    function consoleSeamFailure(err) {
+      console.error("AbstractGateway console seam:", err);
+      if (typeof setTimeout === "function") setTimeout(() => { throw err; }, 0);
+    }
     const MY_EMAIL_TEXT_FIELDS = ["my-email-registered", "my-email-address", "my-email-oauth-address", "my-email-password", "my-email-username", "my-email-imap-host", "my-email-imap-port", "my-email-smtp-host", "my-email-smtp-port", "my-email-oauth-client-id", "my-email-oauth-client-secret", "my-email-oauth-tenant", "my-email-policy-add", "my-email-per-hour", "my-email-per-day", "my-email-imap-folder"];
     function myEmailApi(sub = "") { return `${myEmailUi.base || MY_EMAIL_BASE}${sub}`; }
     // The few sentences that address "you": an explicit table, swapped when the UI serves an entity.
@@ -7276,9 +7284,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         const how = d.auth_kind === "oauth2" || d.oauth ? ((d.oauth && d.oauth.provider) === "microsoft" ? "Microsoft" : ((d.oauth && d.oauth.provider) === "google" ? "Google" : "sign-in")) : "password";
         const checked = st.last_ok ? `checked ${emailAgo(st.last_ok)}` : (st.last_test ? `last check ${emailAgo(st.last_test)}` : "not checked yet");
         const paused = d.enabled === false ? " · paused" : "";
-        $("my-email-status").textContent = `Connected as ${d.address} · ${how === "password" ? "IMAP" : how} · ${checked}${paused}`;
+        // A mailbox stored without an outgoing server reads "Receive only" + the API's sentence, never "Connected" alone.
+        const receiveOnly = Boolean(d.mailbox && d.mailbox.state === "receive_only");
+        if (receiveOnly && !(d.mailbox.reason)) consoleSeamFailure(new Error("GET …/email: mailbox.state receive_only without a reason (gateway seam)."));
+        $("my-email-status").textContent = `${receiveOnly ? "Receive only" : "Connected"} as ${d.address} · ${how === "password" ? "IMAP" : how} · ${checked}${paused}`;
         const err = st.last_error;
-        myEmailShow("my-email-status-error", err ? `${err.cause || err.code}${err.fix ? ` ${err.fix}` : ""}` : "");
+        const errText = err ? `${err.cause || err.code}${err.fix ? ` ${err.fix}` : ""}` : "";
+        myEmailShow("my-email-status-error", [receiveOnly ? (d.mailbox.reason || "") : "", errText].filter(Boolean).join(" "));
       } else {
         const want = d.email_address || "";
         if (!myEmailVal("my-email-address")) myEmailSet("my-email-address", want);
@@ -7299,7 +7311,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // 5. Advanced.
       afSwitchSet($("my-email-enabled"), { checked: d.enabled !== false, reason: "" });
       // The recipients lane's ONE renderer, on the API base this UI serves (own or an entity's).
-      renderEmailRecipientRules(d.policy, myEmailApi());
+      // A missing field is a seam failure: loud for tests, not developer copy on screen.
+      try { renderEmailRecipientRules(d.policy, myEmailApi()); } catch (e) { consoleSeamFailure(e); }
       const lim = d.limits || {};
       if (document.activeElement !== $("my-email-per-hour")) myEmailSet("my-email-per-hour", lim.per_hour);
       if (document.activeElement !== $("my-email-per-day")) myEmailSet("my-email-per-day", lim.per_day);
@@ -7470,8 +7483,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       myEmailUi.discovered = out;
       const def = out && out.defaults;
       if (!def || !def.imap || !def.smtp || typeof def.message !== "string") {
-        console.error("AbstractGateway console: POST /me/email/discover answered without `defaults` (gateway-api seam, DESIGN-v2 §6).");
-        myEmailShow("my-email-servers-source", "The gateway's discovery answered without server defaults (gateway-api seam). The standard settings stay filled in.");
+        // A seam fails loudly for tests (an uncaught error), never as UI copy.
+        consoleSeamFailure(new Error("POST …/email/discover answered without `defaults` (gateway seam, DESIGN-v2 §6)."));
+        myEmailShow("my-email-servers-source", "Standard settings for this domain — change them if your provider differs.");
         return out;
       }
       myEmailApplyServers(def);
@@ -12468,6 +12482,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     function accountMailboxText(a) {
       const m = a.mailbox || {};
       if (m.state === "connected") return m.address ? `Connected as ${m.address}` : "Connected";
+      if (m.state === "receive_only") return "Receive only — no outgoing server";
       if (m.state === "paused") return "Paused";
       if (m.state === "not_connected") return "Not connected";
       if (m.state === "unavailable") return "Not available";
@@ -12655,6 +12670,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         tr.append(accountTextCell("accounts-col-email", "Email address", a.email_address || "No address", { muted: !a.email_address }));
         const mailboxTd = accountTextCell("accounts-mailbox", "Mailbox", mailbox, { muted: a.mailbox && a.mailbox.state !== "connected" });
         mailboxTd.firstChild.classList.add("accounts-mailbox__text");
+        if (a.mailbox && a.mailbox.state === "receive_only") {
+          // The API's sentence, visible (never a tooltip only): why it can't send and what to do.
+          if (!a.mailbox.reason) throw new Error(`GET /admin/accounts row ${a.id}: mailbox.state receive_only without a reason (gateway seam).`);
+          const why = document.createElement("span");
+          why.className = "accounts-cell-text accounts-mailbox__reason af-row__muted";
+          why.textContent = a.mailbox.reason;
+          mailboxTd.append(why);
+        }
         const phone = document.createElement("span");
         phone.className = "accounts-phone-line af-row__muted";
         phone.textContent = accountPhoneLine(a);
