@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   finished (minutes on a fresh checkout). Health now never waits for a build; it answers
   `"warming_up": true` (with `runner.building: true`) until the build is done, and `status` stays
   `healthy`.
+- **The console says when the gateway is warming up.** While `/api/health` reports `warming_up`, the
+  top bar shows a quiet "Warming up…" pill (tooltip: building the default model client; some pages wait
+  until it is ready). It disappears when the warm-up ends.
 
 ### Added
 - **Rotate your own token.** `POST /api/gateway/me/token/rotate` (any signed-in user) answers your new

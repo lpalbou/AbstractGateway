@@ -51,6 +51,10 @@ CONSOLE_UI_CSS = r"""
     .af-topbar-island .af-topbar { gap: 8px; }
     .af-topbar-island button { min-height: 0; font-weight: 600; gap: 7px; filter: none; }
     .af-topbar-island .af-topbar__btn { padding: 0; }
+    /* Warming up (GET /api/health `warming_up`): a quiet status pill, no action. */
+    #island-warming { display: inline-flex; align-items: center; min-height: 28px; padding: 3px 12px;
+      border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2); color: var(--muted, var(--text));
+      font-size: 14px; white-space: nowrap; }
     /* Kit dialogs rendered as islands keep the kit's own look: neutralise the
        console's global form rules inside them. */
     .af-appearance label, .af-appearance__label { display: block; margin: 0; text-transform: none; letter-spacing: 0; }
@@ -2982,7 +2986,7 @@ CONSOLE_UI_JS = r"""
     }
 
     // ---- The kit islands: AfTopBarActions + AfAppearanceDialog ----
-    const islands = { lib: null, topbar: null, appearance: null, appearanceOpen: false, phase: "loading", signingOut: false, identity: "", about: null };
+    const islands = { lib: null, topbar: null, appearance: null, appearanceOpen: false, phase: "loading", signingOut: false, identity: "", about: null, warming: false };
     function islandsLib() {
       try {
         const w = typeof window !== "undefined" ? window : null;
@@ -3025,6 +3029,7 @@ CONSOLE_UI_JS = r"""
         appearance: { onOpen: openAppearance, label: "Appearance" },
         about: islands.about,
         extras: [
+          warmingExtra(islands.warming),
           // The gateway's primary address (GET /network `copy_hint`: the
           // address other devices use), with a copy button beside it.
           { id: "island-address", label: `Gateway address: ${netPrimaryUrl()}`, text: netPrimaryUrl().replace(/^https?:\/\//, ""), hidden: !p || !netPrimaryUrl() },
@@ -3055,6 +3060,29 @@ CONSOLE_UI_JS = r"""
         note: "Saved in this browser for the gateway console.",
       };
     }
+    // Warming up (boot-time lane 2026-10-01): GET /api/health answers
+    // `warming_up: true` while the gateway builds a service (the default model
+    // client). A quiet top-bar pill says so, with the reason as its tooltip;
+    // it disappears when the flag is false. No toast, no modal.
+    const WARMING_REASON = "Building the default model client; some pages wait until it is ready.";
+    function warmingExtra(warming) {
+      return { id: "island-warming", label: WARMING_REASON, text: "Warming up…", hidden: !warming };
+    }
+    function applyHealthWarming(body) {
+      const next = !!(body && body.warming_up === true);
+      const changed = next !== islands.warming;
+      islands.warming = next;
+      if (changed) renderIslands();
+      return next;
+    }
+    async function pollWarming() {
+      let warming = islands.warming;
+      try {
+        const r = await fetch("/api/health", { cache: "no-store" });
+        if (r.ok) warming = applyHealthWarming(await r.json());
+      } catch (_) { /* unreachable gateway: the connection pill says so */ }
+      setTimeout(pollWarming, warming ? 3000 : 20000);
+    }
     function renderIslands() {
       if (islands.topbar) islands.topbar.update(topBarIslandProps());
       if (islands.appearance) islands.appearance.update(appearanceIslandProps());
@@ -3081,5 +3109,6 @@ CONSOLE_UI_JS = r"""
       host.classList.remove("hidden");
       legacy.classList.add("hidden");
       applyAppearanceSettings();
+      pollWarming();
     }
 """
