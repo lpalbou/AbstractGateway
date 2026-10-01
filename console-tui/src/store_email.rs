@@ -149,7 +149,7 @@ pub const REASON_CONNECT_MAILBOX: &str = "Connect a mailbox first.";
 pub const REASON_ADMIN_MAILBOXES_OFF: &str = "Your admin turned mailboxes off.";
 pub const REASON_ADMIN_AGENT_TOOLS_OFF: &str = "Your admin turned agent email tools off.";
 pub const REASON_MAILBOX_NOT_IN_USE: &str =
-    "Switch on \u{201c}Use this mailbox\u{201d} (Advanced) first.";
+    "Switch the mailbox\u{2019}s \u{201c}Active\u{201d} on first (Mailbox card).";
 
 fn leg_text(v: Option<&Value>) -> String {
     match v {
@@ -375,7 +375,7 @@ impl MyEmail {
     pub fn method_text(&self) -> String {
         match self.auth_kind.as_str() {
             "" => String::new(),
-            "password" => "Other (address + password)".into(),
+            "password" => "IMAP".into(),
             k if k.contains("google") => "Google".into(),
             k if k.contains("microsoft") => "Microsoft".into(),
             other => other.to_string(),
@@ -412,7 +412,7 @@ impl MyEmail {
     pub fn usage_text(&self) -> String {
         match (self.per_hour, self.per_day) {
             (Some(_), Some(_)) => format!(
-                "{} sent in the last hour, {} in the last day",
+                "{} sent this hour, {} today",
                 self.used_last_hour, self.used_last_day
             ),
             _ => String::new(),
@@ -543,6 +543,26 @@ pub struct MyNotifications {
     pub outbox_text: String,
 }
 
+/// " 3 held by your send limit until 14:05." from the outbox's
+/// `rate_limited {count, cause, resets_at}` (local time); "" when none.
+fn held_text(v: Option<&Value>) -> String {
+    let Some(r) = v.filter(|r| r.is_object()) else {
+        return String::new();
+    };
+    let count = r.get("count").and_then(Value::as_u64).unwrap_or(0);
+    if count == 0 {
+        return String::new();
+    }
+    match r
+        .get("resets_at")
+        .and_then(Value::as_str)
+        .and_then(crate::localtime::local_parts)
+    {
+        Some((_, hm)) => format!(" {count} held by your send limit until {hm}."),
+        None => format!(" {count} held by your send limit."),
+    }
+}
+
 impl MyNotifications {
     pub fn from_value(v: &Value) -> MyNotifications {
         let email = v
@@ -572,10 +592,11 @@ impl MyNotifications {
             to: s(&email, "to"),
             unavailable_reason: s(v, "unavailable_reason"),
             outbox_text: format!(
-                "{} sent, {} waiting, {} failed.{fail}",
+                "{} sent, {} waiting, {} failed.{fail}{held}",
                 n(&ob, "sent").unwrap_or(0),
                 n(&ob, "queued").unwrap_or(0),
-                n(&ob, "failed").unwrap_or(0)
+                n(&ob, "failed").unwrap_or(0),
+                held = held_text(ob.get("rate_limited")),
             ),
         }
     }
@@ -746,7 +767,70 @@ pub struct Discovery {
     pub imap: Option<MailServer>,
     pub smtp: Option<MailServer>,
     pub username: String,
+    /// `defaults` (DESIGN-v2 §6): the server fields the IMAP pane pre-fills.
+    /// `None` = the gateway sent no `defaults` (the page says so; there is
+    /// no fallback to the older top-level fields).
+    pub defaults: Option<ServerDefaults>,
 }
+
+/// `defaults` of `POST /me/email/discover` (DESIGN-v2 §6): core's
+/// `server_defaults(address)` — the discovered servers + login form, else
+/// the standard `imap./smtp.<domain>` 993/465 SSL, with one sentence.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ServerDefaults {
+    pub imap: MailServer,
+    pub smtp: MailServer,
+    pub login: String,
+    /// "discovered" | "standard".
+    pub source: String,
+    pub provider: String,
+    pub message: String,
+}
+
+impl ServerDefaults {
+    pub fn from_value(v: Option<&Value>) -> Option<ServerDefaults> {
+        let v = v.filter(|v| v.is_object())?;
+        Some(ServerDefaults {
+            imap: MailServer::from_value(v.get("imap"))?,
+            smtp: MailServer::from_value(v.get("smtp"))?,
+            login: s(v, "login"),
+            source: s(v, "source"),
+            provider: s(v, "provider"),
+            message: s(v, "message"),
+        })
+    }
+
+    /// The values the pane shows the moment the address has a domain,
+    /// before discovery answers: imap.<domain> 993 SSL, smtp.<domain> 465
+    /// SSL, the address as the login (core's standard fallback).
+    pub fn standard(address: &str) -> Option<ServerDefaults> {
+        let domain = address_domain(address)?;
+        Some(ServerDefaults {
+            imap: MailServer {
+                host: format!("imap.{domain}"),
+                port: Some(993),
+                security: "ssl".into(),
+                folder: String::new(),
+            },
+            smtp: MailServer {
+                host: format!("smtp.{domain}"),
+                port: Some(465),
+                security: "ssl".into(),
+                folder: String::new(),
+            },
+            login: address.trim().to_string(),
+            source: "standard".into(),
+            provider: String::new(),
+            message: format!(
+                "Standard settings for {domain} \u{2014} change them if your provider uses others."
+            ),
+        })
+    }
+}
+
+/// The line shown when a discovery answer carries no `defaults` (a gateway
+/// older than DESIGN-v2 §6): loud, never a silent fallback.
+pub const DISCOVERY_NO_DEFAULTS: &str = "The gateway's server lookup sent no settings to pre-fill (it predates this console). Check the servers below.";
 
 impl Discovery {
     pub fn from_value(v: &Value) -> Discovery {
@@ -759,6 +843,7 @@ impl Discovery {
             imap: MailServer::from_value(v.get("imap")),
             smtp: MailServer::from_value(v.get("smtp")),
             username: s(v, "username"),
+            defaults: ServerDefaults::from_value(v.get("defaults")),
         }
     }
 
@@ -821,7 +906,7 @@ pub fn address_domain(address: &str) -> Option<String> {
     Some(domain.to_lowercase())
 }
 
-/// Hand-entered Server settings (the folded block of the Other tab).
+/// The IMAP pane's server fields (always visible, pre-filled).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ServerSettings {
     pub imap_host: String,
@@ -830,18 +915,18 @@ pub struct ServerSettings {
     pub smtp_host: String,
     pub smtp_port: String,
     pub smtp_security: String,
-    pub username: String,
-    pub display_name: String,
-    pub folder: String,
 }
 
-/// The Other tab's ONE Connect (`PUT /me/email`, save + test): the address
-/// and the password; the servers only when the user entered them under
-/// Server settings (else the gateway discovers them, CONTRACT §5.4).
-pub fn other_connect_body(
+/// The IMAP pane's ONE Connect (`PUT /me/email`, save + test): the address,
+/// the password and the servers shown (an empty host leaves that leg to the
+/// gateway's discovery). `login` only when the person revealed "My provider
+/// uses a different login name" and changed it; never a display name (the
+/// gateway keeps a stored one or defaults it, DESIGN-v2 §3).
+pub fn imap_connect_body(
     address: &str,
     password: &str,
-    servers: Option<&ServerSettings>,
+    sv: &ServerSettings,
+    login: Option<&str>,
 ) -> Result<Value, String> {
     if address.trim().is_empty() {
         return Err("Type the email address of the mailbox.".into());
@@ -850,30 +935,75 @@ pub fn other_connect_body(
         return Err("Type the password (an app password if your provider needs one).".into());
     }
     let mut body = json!({"address": address.trim(), "password": password, "test": true});
-    if let Some(sv) = servers {
-        if !sv.imap_host.trim().is_empty() {
-            body["imap"] = json!({
-                "host": sv.imap_host.trim(),
-                "port": port_value(&sv.imap_port, "IMAP")?,
-                "security": if sv.imap_security.is_empty() { "ssl" } else { sv.imap_security.as_str() },
-                "folder": if sv.folder.trim().is_empty() { "INBOX" } else { sv.folder.trim() },
-            });
-        }
-        if !sv.smtp_host.trim().is_empty() {
-            body["smtp"] = json!({
-                "host": sv.smtp_host.trim(),
-                "port": port_value(&sv.smtp_port, "SMTP")?,
-                "security": if sv.smtp_security.is_empty() { "ssl" } else { sv.smtp_security.as_str() },
-            });
-        }
-        if !sv.username.trim().is_empty() {
-            body["username"] = json!(sv.username.trim());
-        }
-        if !sv.display_name.trim().is_empty() {
-            body["display_name"] = json!(sv.display_name.trim());
-        }
+    if !sv.imap_host.trim().is_empty() {
+        body["imap"] = json!({
+            "host": sv.imap_host.trim(),
+            "port": port_value(&sv.imap_port, "IMAP")?,
+            "security": if sv.imap_security.is_empty() { "ssl" } else { sv.imap_security.as_str() },
+        });
+    }
+    if !sv.smtp_host.trim().is_empty() {
+        body["smtp"] = json!({
+            "host": sv.smtp_host.trim(),
+            "port": port_value(&sv.smtp_port, "SMTP")?,
+            "security": if sv.smtp_security.is_empty() { "ssl" } else { sv.smtp_security.as_str() },
+        });
+    }
+    if let Some(l) = login.map(str::trim).filter(|l| !l.is_empty()) {
+        body["username"] = json!(l);
     }
     Ok(body)
+}
+
+/// The sentence "Send a test" shows (DESIGN-v2 §3/§6
+/// `POST /me/notifications/test`): the API's `message`, always — `Ok` when
+/// it was sent, `Err` (the reason) when not. Never a bare state name.
+pub fn test_notification_outcome(
+    write: &Result<Value, crate::api::ApiError>,
+) -> Result<String, String> {
+    match write {
+        Ok(v) => {
+            let sent = b(v, "sent").unwrap_or(false);
+            // A send-limit refusal is said from its typed fields so the reset
+            // time is the VIEWER's local time (the gateway's sentence carries
+            // the gateway machine's clock).
+            if !sent && s(v, "reason_code") == "rate_limited" {
+                if let Some(text) = rate_limited_text(v.get("limit")) {
+                    return Err(text);
+                }
+            }
+            let message = s(v, "message");
+            match (sent, message.is_empty()) {
+                (true, false) => Ok(message),
+                (true, true) => Ok("Sent.".into()),
+                (false, false) => Err(message),
+                (false, true) => Err(
+                    "Not sent, and the gateway gave no reason (it predates this console).".into(),
+                ),
+            }
+        }
+        Err(e) => Err(email_error_text(e)),
+    }
+}
+
+/// "Not sent: hourly limit reached (20 of 20 this hour) — resets at 14:05."
+/// from `limit {window, limit, used, resets_at}`, the reset in local time.
+/// None when the gateway sent no usable `limit` (its own sentence is used).
+pub fn rate_limited_text(limit: Option<&Value>) -> Option<String> {
+    let l = limit?;
+    let window = l.get("window").and_then(Value::as_str)?;
+    let adj = match window {
+        "hour" => "hourly",
+        "day" => "daily",
+        _ => return None,
+    };
+    let max = l.get("limit").and_then(Value::as_u64)?;
+    let used = l.get("used").and_then(Value::as_u64)?;
+    let resets = l.get("resets_at").and_then(Value::as_str)?;
+    let hm = crate::localtime::local_parts(resets)?.1;
+    Some(format!(
+        "Not sent: {adj} limit reached ({used} of {max} this {window}) \u{2014} resets at {hm}."
+    ))
 }
 
 /// `PUT /me/email/notifications` — one switch at a time.
@@ -1063,7 +1193,7 @@ mod tests {
             "rejected Fix: update it"
         );
         assert_eq!(e.policy_entries, vec!["me@example.test".to_string()]);
-        assert_eq!(e.usage_text(), "1 sent in the last hour, 3 in the last day");
+        assert_eq!(e.usage_text(), "1 sent this hour, 3 today");
         assert_eq!(e.credentials_text(), "encrypted, key in the OS keychain");
         let off = MyEmail::from_value(
             &json!({"configured": true, "enabled": true, "admin_enabled": false}),
@@ -1225,12 +1355,13 @@ mod tests {
         );
         assert_eq!(address_domain("me@x.io").as_deref(), Some("x.io"));
         assert_eq!(address_domain("me@x"), None);
-        let body = other_connect_body(" me@x.io ", "pw", None).unwrap();
+        let empty = ServerSettings::default();
+        let body = imap_connect_body(" me@x.io ", "pw", &empty, None).unwrap();
         assert_eq!(
             body,
             json!({"address": "me@x.io", "password": "pw", "test": true})
         );
-        assert!(other_connect_body("me@x.io", "", None).is_err());
+        assert!(imap_connect_body("me@x.io", "", &empty, None).is_err());
         let sv = ServerSettings {
             imap_host: "imap.x.io".into(),
             imap_port: "993".into(),
@@ -1238,9 +1369,13 @@ mod tests {
             smtp_port: "465".into(),
             ..ServerSettings::default()
         };
-        let body = other_connect_body("me@x.io", "pw", Some(&sv)).unwrap();
-        assert_eq!(body["imap"]["folder"], json!("INBOX"));
+        let body = imap_connect_body("me@x.io", "pw", &sv, None).unwrap();
+        assert_eq!(body["imap"]["host"], json!("imap.x.io"));
         assert_eq!(body["smtp"]["port"], json!(465));
+        assert!(body.get("username").is_none());
+        assert!(body.get("display_name").is_none());
+        let body = imap_connect_body("me@x.io", "pw", &sv, Some(" me ")).unwrap();
+        assert_eq!(body["username"], json!("me"));
         assert_eq!(
             notification_switch_body("job_failed", false),
             json!({"job_failed": false})
@@ -1288,5 +1423,88 @@ mod tests {
             email_error_text(&e),
             "Sign-in refused by imap.x.com — check the password."
         );
+    }
+
+    #[test]
+    fn discovery_defaults_are_read_and_the_standard_ones_fill_first() {
+        let d = Discovery::from_value(&json!({
+            "address": "me@fastmail.test", "found": true,
+            "defaults": {
+                "imap": {"host": "imap.fastmail.com", "port": 993, "security": "ssl"},
+                "smtp": {"host": "smtp.fastmail.com", "port": 587, "security": "starttls"},
+                "login": "me@fastmail.test", "source": "discovered", "provider": "Fastmail",
+                "message": "Settings found for fastmail.test."
+            }
+        }));
+        let def = d.defaults.expect("defaults");
+        assert_eq!(def.smtp.port, Some(587));
+        assert_eq!(def.smtp.security, "starttls");
+        assert_eq!(def.message, "Settings found for fastmail.test.");
+        // A reply without `defaults` reads None: the page says so.
+        let old = Discovery::from_value(&json!({"address": "me@x.io", "found": true,
+            "imap": {"host": "imap.x.io", "port": 993, "security": "ssl"}}));
+        assert_eq!(old.defaults, None);
+        let st = ServerDefaults::standard("me@example.com").expect("standard");
+        assert_eq!(
+            (
+                st.imap.host.as_str(),
+                st.imap.port,
+                st.imap.security.as_str()
+            ),
+            ("imap.example.com", Some(993), "ssl")
+        );
+        assert_eq!(
+            (
+                st.smtp.host.as_str(),
+                st.smtp.port,
+                st.smtp.security.as_str()
+            ),
+            ("smtp.example.com", Some(465), "ssl")
+        );
+        assert_eq!(st.login, "me@example.com");
+        assert!(ServerDefaults::standard("me@example").is_none());
+    }
+
+    #[test]
+    fn a_test_notification_says_the_apis_sentence() {
+        let limited = json!({"ok": true, "sent": false, "reason_code": "rate_limited",
+            "message": "Not sent: hourly limit reached (20 of 20 this hour) \u{2014} resets at 14:05.",
+            "limit": {"window": "hour", "limit": 20, "used": 20, "resets_at": "2026-10-01T14:05:00Z"}});
+        // The reset time is the VIEWER's local time, from the typed fields.
+        let local = crate::localtime::local_hm("2026-10-01T14:05:00Z");
+        assert_eq!(
+            test_notification_outcome(&Ok(limited)),
+            Err(format!(
+                "Not sent: hourly limit reached (20 of 20 this hour) \u{2014} resets at {local}."
+            ))
+        );
+        // Without a usable `limit`, the gateway's own sentence.
+        let bare_limit = json!({"ok": true, "sent": false, "reason_code": "rate_limited",
+            "message": "Not sent: limit reached.", "limit": null});
+        assert_eq!(
+            test_notification_outcome(&Ok(bare_limit)),
+            Err("Not sent: limit reached.".into())
+        );
+        // The outbox's held rows say when they go, in local time.
+        let n = MyNotifications::from_value(
+            &json!({"outbox": {"sent": 1, "queued": 3, "failed": 0,
+            "rate_limited": {"count": 3, "cause": "hourly limit", "resets_at": "2026-10-01T14:05:00Z"}}}),
+        );
+        assert!(
+            n.outbox_text
+                .ends_with(&format!(" 3 held by your send limit until {local}.")),
+            "{}",
+            n.outbox_text
+        );
+        let sent =
+            json!({"ok": true, "sent": true, "reason_code": null, "message": "Sent to a@b.test."});
+        assert_eq!(
+            test_notification_outcome(&Ok(sent)),
+            Ok("Sent to a@b.test.".into())
+        );
+        // No message: a sentence, never the state name.
+        let bare = json!({"ok": true, "sent": false, "state": "queued"});
+        let out = test_notification_outcome(&Ok(bare)).unwrap_err();
+        assert!(!out.contains("queued"), "{out}");
     }
 }

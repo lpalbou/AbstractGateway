@@ -10,11 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Email settings follow one model across the consoles: your **email address** (where sign-in codes and
 notifications go) and your **mailbox** (the connection your agents and automations use) are named
 apart, the administrator has one switch, notifications are two switches, and the sign-in page says
-what happened to a code request. The consoles work behind Tailscale or another https proxy, and the
-server file helpers never serve the gateway's data folder (see Security).
+what happened to a code request. Users and entities share one **Accounts** table with an Active
+switch, activity logs and role-based visibility (a user sees only themself and the entities they
+created; admins see all). The web console's sidebar is grouped, with a **Setup** button. Email send
+limits default to 100 per hour and 1000 per day. The consoles work behind Tailscale or another https
+proxy, and the server file helpers never serve the gateway's data folder (see Security).
 
-Needs AbstractCore 2.22.0 (mailbox server discovery, `abstractcore.comms.email.discover_servers`)
-and AbstractRuntime 0.8.2; the floors are raised in the base install and in the `apple`, `gpu` and
+Needs AbstractCore 2.22.0 (mailbox server discovery `abstractcore.comms.email.discover_servers`,
+the form defaults `server_defaults` and the 100/1000 send-limit defaults) and AbstractRuntime 0.8.2; the floors are raised in the base install and in the `apple`, `gpu` and
 `embeddings` extras. The terminal console is `abstractgateway-console` 0.13.0.
 
 ### Migration notes
@@ -26,8 +29,42 @@ and AbstractRuntime 0.8.2; the floors are raised in the base install and in the 
 - `POST /api/gateway/session/recovery/request` says what happened (`sent: false` with a
   `reason_code`: `no_email_address`, `no_mailbox`, `send_failed` or `too_many_requests`) instead of
   always answering that a code is on its way; show its `message` to the person signing in.
+- **Send limits.** Defaults are 100 per hour and 1000 per day. A stored 20 / 100 without a marker
+  (the old defaults) follows the new defaults; limits a user set are kept.
+- **Entity visibility.** Entities created before this release have no creator and are visible to
+  admins only; nothing is rewritten.
 
 ### Added
+- Entity visibility by role: an admin sees every user and entity; anyone else sees only themself and
+  the entities they created. `POST /entities` records `created_by` (`{tenant_id, user_id}`) in the
+  new home's manifest; `GET /entities` is filtered and every `/entities/{name}/…` route answers 404
+  (the same as a missing entity) for an entity the caller may not see. Entities created before this
+  release have no creator and are visible to admins only (nothing is rewritten).
+- `GET /api/gateway/me/accounts` (your own row plus the entities you created, the `/admin/accounts`
+  row shape) and `GET /api/gateway/me/accounts/{id}/activity`; `/admin/accounts` entity rows carry
+  `created_by`.
+- `GET /api/gateway/admin/accounts`: users and entities in one list (role, email address, mailbox
+  state, runtime, Active, entity state) with each row's actions and, when one cannot apply, the
+  reason (an entity has no mailbox, no token to rotate and no delete).
+- `PUT /api/gateway/admin/accounts/{id}/active {"active"}`: the Active switch for users and entities.
+  Suspending an entity pauses it and switches its door credential off; resuming restores the state
+  it had before (kept in the new file `<data_dir>/auth/entity_suspended.json`).
+- `GET /api/gateway/admin/accounts/{id}/activity` and `GET /api/gateway/me/activity`: sign-ins,
+  token rotations, runs started, automation commands, account changes and email events from the
+  audit log (and its rotated files), newest first, read backwards within a fixed budget (well under
+  a second on a 13 MB log). The answer says what the log does not record.
+- Audit log lines now name who signed in (`signed_in`), the run a start created (`run`), the
+  automation and command (`automation`) and the account an administrator changed
+  (`account_change`).
+- `POST /api/gateway/me/email/discover` also returns `defaults`, the server fields a mailbox form
+  pre-fills (AbstractCore `server_defaults`).
+- `GET /api/gateway/bundles` items carry `source` (`shipped`, `published`, `imported`) and
+  `description` (the default entrypoint's).
+- `GET /api/gateway/admin/runtime-config`: every default-agent-workflow row carries `interface`,
+  `label`, `app`, `help`, `group` and `state` (`clients_choose`, `builtin`, `set`, `broken`) from
+  one interface table; `reason` is only set for a broken saved value.
+- docs-qa 0.1.2 ships ("Docs Q&A" with a plain description; otherwise the same as 0.1.1, which
+  stays installed); the native-loop and docs-qa build scripts write the shipped entrypoint names.
 - `POST /api/gateway/me/email/discover {"address"}` finds a mailbox's IMAP and SMTP servers from its
   address (known providers, the domain's autoconfig file, the Thunderbird ISPDB, DNS SRV, MX) and
   lists every step it tried.
@@ -61,6 +98,16 @@ and AbstractRuntime 0.8.2; the floors are raised in the base install and in the 
   before is the old default and follows the new defaults; any other unmarked value is kept
   (`limits.source` is `legacy`). The one-time
   import of AbstractCore's local account copies its limits only when someone set them.
+- `POST /api/gateway/me/notifications/test` answers with `sent`, `reason_code` (`no_mailbox`,
+  `mailbox_paused`, `rate_limited`, `queued_behind`, `send_failed`), a ready sentence in `message`
+  ("Not sent: hourly limit reached (100 of 100 this hour) — resets at 14:05.") and `limit`. Notices
+  held back by a send limit keep the reason and the retry time (`outbox.rate_limited` in
+  `GET /me/notifications`). `POST /me/email/test` carries a `message` too.
+- `/admin/users` rows and `GET /me/email` carry `email_address` and `mailbox` from one resolver, so
+  an administrator's own row matches their email card (it showed "—" / "not connected" when the
+  address lived in the gateway's operator setting).
+- Connecting a mailbox sets your email address when it is empty; the user name and display name
+  are optional (the discovered login or the address; the stored name or the address's local part).
 - The administrator's one switch is **Mailboxes for users** (capability `email`, on by default).
   **Agent email tools for users** (`email_agent_tools`) is now on by default, next to **Sign-in by
   email** under Advanced; each user still switches their own agent email tools on. On the first
@@ -85,24 +132,55 @@ and AbstractRuntime 0.8.2; the floors are raised in the base install and in the 
   turned agent email tools off.").
 
 ### Web console
+- Accounts: your email address and mailbox settings open only from your own row's **Email**
+  button (the copy under the table is gone); the address card says "Not set yet — connecting a
+  mailbox below sets it." with **Set it now** until an address is set. A user's page is titled
+  "Your account". The workspace policy disclosure reads **Workspace policy** with one helper line.
+- Logs: the footer says what is recorded in plain words; a mailbox connection reads
+  "IMAP · password sign-in", "Google sign-in" or "Microsoft sign-in".
+- Workflows: a bundle no app uses says "No app"; a manifest version 0.0.0 reads "unversioned";
+  deleting a bundle that ships with the gateway says it does not come back at restart (only a
+  reinstall restores it); every bundle the repository keeps in `flows/bundles/` (map-reduce,
+  structured-extract, adversarial-review, the meta-* agents) counts as shipped on a checkout deploy.
+- Setup guide and Multimodal: a model AbstractCore could not look for (no Hugging Face cache yet on
+  a fresh install) shows "Download needed" with the reason and a Download button, not "Unknown".
+- The sidebar is grouped: Accounts; Work (Workflows, Runtimes, Apps); Models (Providers, Models,
+  Engines, Multimodal); System (Resources, Sandbox, Network). A Setup button at the bottom of the
+  sidebar (administrators) opens the setup guide; the flag button in the top bar is gone.
+- Accounts (was "Users & Entities") is one table of users and entities, tinted by kind, with an
+  Active switch on every row (suspend / resume for entities) and the actions Email, Logs, Workspace,
+  Rotate, Manage (entities) and Delete; an action that cannot apply says why in the row. Email opens
+  a dialog (your own row: the full email settings; another user's row: their address only; an
+  entity: why it has no mailbox). Logs opens the account's activity from the audit log, filtered by
+  sign-ins, runs, automations or email.
+- Email settings: the mailbox tabs are IMAP (first and default), Google, Microsoft. The IMAP servers
+  are always visible and filled in as soon as the address has a domain, then replaced by what
+  discovery finds unless you edited them. No user name or display name field (a small link reveals a
+  login field for providers that need one). One editable address field at a time. The mailbox's
+  Active switch sits with its status; "Send a test" sits under Notifications and always answers with
+  a sentence, reset times in your local time. Advanced reads as three sentences.
+- Workflows says what workflows are, lists one row per bundle with its name, what it does, version,
+  source and the apps that use it (expand a row for its versions), and has Show drafts / Show older
+  versions switches. "Default workflow per app" uses plain names with a (?) explanation, applies a
+  choice at once, and warns only about a broken default.
+- The setup guide's model cards name the engine that runs a route ("faster-whisper · base"), with
+  the download as the small detail.
+- On touch screens reading text is never below 14 px: the console's small type steps have a floor
+  there (they were 11-13 px).
 - The sign-in card has one column, one status ("Not signed in", "Signed in as admin", "Token
   refused") and errors under the field that failed ("This token was refused.", "Can't reach the
   gateway at …"). Sign-in by email is one link, **Forgot your token? Email me a sign-in code**: it
   shows "Sending…", then the code step in its place with what happened, a code field (Use code is
   available at 8 digits), **Send a new code** after 30 seconds and **Back to token**.
-- Users & Entities: the administrator's **Mailboxes for users** switch sits above the users table,
-  with **Agent email tools for users** and **Sign-in by email** under Advanced. The table shows
-  User, Role, Email address, Mailbox, Runtime, an **Active** switch and Workspace / Rotate / Delete.
-  Deactivating and deleting ask in a row under the user. Your own row cannot be deactivated. The
-  per-user Email on/off and Agent tools buttons are gone.
+- Accounts: **Email for everyone** holds the administrator's **Mailboxes for users** switch, with
+  **Agent email tools for users** and **Sign-in by email** under Advanced. Deactivating and deleting
+  ask in a row under the account. Your own row cannot be deactivated. The per-user Email on/off and
+  Agent tools buttons are gone.
 - Create user asks for the **Email address** next to the user ID and role; Advanced keeps Runtime
   and Tenant, each with a sentence saying what it is for.
-- **My email address and mailbox** is a page of cards: Email address (the only Save), Mailbox (tabs
-  Google / Microsoft / Other; Other asks for the address and password, finds the servers and shows
-  them on one line, and opens Server settings itself only when they are not found; one **Connect**;
-  once connected, one status line with Test and Disconnect), Notifications (**Job failed**,
-  **Approval needed**), **Agent email tools**, and Advanced (recipient rules, send limits, folder,
-  **Use this mailbox**, Send a test notification). Switches and limits apply on change.
+- Your email settings are cards: Email address, Mailbox, Notifications (**Job failed**, **Approval
+  needed**), **Agent email tools**, and Advanced (recipient rules, send limits, folder). Switches and
+  limits apply on change.
 - **Workflows paused** and **Start at login** are switches instead of Pause/Resume and Turn on/Turn
   off buttons.
 - The Runtimes page says what a runtime is: a user's own data plane (runs, flows, sessions and
@@ -168,6 +246,12 @@ and AbstractRuntime 0.8.2; the floors are raised in the base install and in the 
   working directory, which is the data folder under the OS service and contains it after a launch
   from a parent folder: an administrator could read another user's received mail and run ledgers
   through `/files/read`. Administrators never read mail.
+- `POST /entities` refuses a name the gateway already holds (409 "That name is taken") when the
+  caller's runtime has no home under that name: an entity created by another user in another
+  runtime, or a user account's name. Entity names belong to the whole gateway while homes belong to
+  a runtime, so such a create used to take over the existing account as the new entity's identity.
+  Re-creating your own entity still answers as before. `POST /entities/{name}/validate` reports the
+  same refusal.
 
 ### Tests
 - Two CI timing flakes are now deterministic. The automations test `test_d2_waiting_only_on_a_person`

@@ -1381,25 +1381,31 @@ fn email_write(
         }
 
         EmailAction::TestNotification => {
-            let write = with_busy(store, wake, "sending a test notification", || {
+            let raw = with_busy(store, wake, "sending a test notification", || {
                 require_client(client).and_then(|c| c.test_my_notifications())
             })
-            .map_err(email_err)
-            .map(email_outcome);
-            let verified = write
-                .as_ref()
-                .ok()
-                .filter(|v| v.get("ok").and_then(Value::as_bool) == Some(true))
-                .map(|_| Ok("the gateway sent it (state: sent)".to_string()));
+            .map_err(email_err);
+            // The page shows the API's sentence (DESIGN-v2 §3): "Sent to
+            // x@y." / "Not sent: hourly limit reached …" — never a state.
+            let outcome = crate::store::email::test_notification_outcome(&raw);
+            let journal = match (&raw, &outcome) {
+                (Err(e), _) => Err(e.clone()),
+                (Ok(_), Ok(_)) => Ok(serde_json::json!({"ok": true})),
+                (Ok(_), Err(m)) => Ok(serde_json::json!({"ok": false, "error": m})),
+            };
+            let verified = outcome.clone().ok().map(Ok);
             finish_write(
                 store,
                 wake,
                 "SEND test notification".into(),
-                write,
+                journal,
                 verified,
-                form_id,
+                None,
                 on_done,
             );
+            if let Some(fid) = form_id {
+                on_done(fid, outcome);
+            }
             if let Ok(v) = require_client(client).and_then(|c| c.my_notifications()) {
                 publish_ready(wake, op.my_notifications, MyNotifications::from_value(&v));
             }
@@ -1626,12 +1632,12 @@ fn email_write(
                     ),
                 ),
                 EmailAction::Enabled(true) => (
-                    "switching Use this mailbox",
-                    "“Use this mailbox” is on.".into(),
+                    "switching the mailbox Active",
+                    "Mailbox Active: on.".into(),
                 ),
                 EmailAction::Enabled(false) => (
-                    "switching Use this mailbox",
-                    "“Use this mailbox” is off: no watching, sending or notifications.".into(),
+                    "switching the mailbox Active",
+                    "Mailbox Active: off — no watching, sending or notifications; your settings are kept.".into(),
                 ),
                 EmailAction::AgentTools(true) => (
                     "switching Agent email tools",
@@ -1711,31 +1717,6 @@ fn email_write(
                     Err(format!("GET /me/email says {}", got.state_label()))
                 }
             });
-            // A connect whose servers could not be discovered (400
-            // `email_discovery_failed`): record "nothing found" for that
-            // address, so the page opens Server settings with the reason.
-            if let (EmailAction::Connect(body), Err(e)) = (&other, &write) {
-                let refused = e
-                    .body
-                    .as_ref()
-                    .and_then(|b| b.get("reason_code"))
-                    .and_then(Value::as_str)
-                    == Some("email_discovery_failed");
-                if refused {
-                    let address = body
-                        .get("address")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_string();
-                    let found = Discovery::from_value(&serde_json::json!({
-                        "address": address, "found": false,
-                    }));
-                    wake.post(move || {
-                        op.email_discovery
-                            .set(Some((address.clone(), Loadable::Ready(found.clone()))))
-                    });
-                }
-            }
             let wrote = write
                 .as_ref()
                 .map(|v| v.get("ok").and_then(Value::as_bool) != Some(false))

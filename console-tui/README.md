@@ -36,7 +36,7 @@ otherwise. `Ctrl+G` reopens the guide from browse; in the guide it opens
 the guide menu, like the web guide's step list: go to any step directly,
 leave (not recorded, it opens again next start) or skip (recorded).
 
-1. **Connection** — base URL + token (masked; or launch with
+- **1 Connection** — base URL + token (masked; or launch with
    `--token <token>`), probe via `/ping` +
    `/me`, honest states: unreachable ≠ sign-in needed (no token sent) ≠
    token rejected ≠ connected — both 401s name where the admin token
@@ -44,12 +44,12 @@ leave (not recorded, it opens again next start) or skip (recorded).
    with identity badges
    (admin, auth mode, routing mode), and the network panel (including
    the web console's "Look up my public address").
-2. **Providers** — provider endpoint profiles (create/edit/delete,
+- **6 Providers** (MODELS) — provider endpoint profiles (create/edit/delete,
    write-only API keys with fingerprint display, model allowlists fed
    by live discovery, scope moves on edit, test-connection via live
    model discovery of the FORM's values) over the read-only
    discovered-provider inventory.
-3. **Routes** — the multimodal capability table (`input.text`,
+- **9 Multimodal** (MODELS; the former Routes screen) — the multimodal capability table (`input.text`,
    `output.voice`, …) with explicit default-vs-override editing:
    placeholder pickers, "Applies now:" resolution lines, model pickers
    that reset on provider switch — never a fabricated pair. The
@@ -58,7 +58,14 @@ leave (not recorded, it opens again next start) or skip (recorded).
    every editor has a **Test** verb — a real generation through the
    production lane (voice → `/runs/{…}/voice/tts`, everything else →
    `/sandbox/generate` with the route's own capability key).
-4. **Users & Entities** — gateway user CRUD (create shows the token
+- **2 Accounts** (ACCOUNTS) — one table of users and entities
+   (`GET /admin/accounts`): kind, email address, mailbox, runtime and the
+   **Active** switch (Space: deactivate a user, suspend an entity; your own
+   row says why it can't). Per row: `@` email (your row: My email; another
+   user: their address only and their mailbox status; an entity: why it has
+   none), `l` activity (sign-ins, changes, runs, automations, email; `f`
+   filters), `w` workspace policy, `t` rotate, `m` manage (entities), `d`
+   delete; an action that can't apply says why. Also gateway user CRUD (create shows the token
    exactly once, with clipboard copy; the email address at the top level,
    runtime and tenant under Advanced; user/admin/readonly roles; the
    **Active** switch on the table, Space), the **Mailboxes for users**
@@ -82,14 +89,18 @@ leave (not recorded, it opens again next start) or skip (recorded).
    from selected — saving is admin-only), and **talk** with an entity
    (`c`: open a hosted visit, send turns, close with the reflection
    pass; one visit at a time).
-5. **Runtimes** — the data-plane inventory (default / per-user /
+- **4 Runtimes** (WORK) — the data-plane inventory (default / per-user /
    per-entity) with owners, sizes, liveness, the runtime-knobs
    surface (per-knob value + provenance; API-writable, no UI edits
    yet) with the Continuum backlog settings editor and the curated
    skills-shelf reseed (admin), recent root runs with **cancel** (`c`) and **steer** (`s`)
    via durable gateway commands, and the data-homes browser (`h`)
    with dry-run-gated purge.
-6. **Workflows** — every workflow registered on the gateway, with
+- **3 Workflows** (WORK) — plain names, what each workflow does, the
+   version, where it comes from (shipped with the gateway, imported,
+   published from AbstractFlow) and the apps that use it; a second section,
+   **Default workflow per app** (Tab to it, Enter picks, saved at once).
+   Every workflow registered on the gateway, with
    published/draft version counts, per-version entrypoints and
    interfaces, and a `Not loaded` block naming versions the gateway is
    not serving and why. `e` exports a version to a local `.flow` file (the destination is shown
@@ -98,11 +109,11 @@ leave (not recorded, it opens again next start) or skip (recorded).
    visibility, `i` imports a `.flow` bundle from this machine, `L`
    reloads the registry from disk; import and the other writes follow
    the registry ownership rule (admin on the shared registry).
-7. **Review & Test** — the session's change journal (every write +
+- **R Review & Test** (SYSTEM) — the session's change journal (every write +
    its verify-via-GET result) and the web console's sandbox workspace:
    every output mode (text, image, voice, music, SFX, video), file
    attachments, speak-this-reply, and the guide's Finish / Skip setup.
-8. **Resources** — live host residency: RAM/device/GPU gauges with
+- **0 Resources** (SYSTEM) — live host residency: RAM/device/GPU gauges with
    degradation notes, the resident-model table (modality, tri-state
    residency, lock marker, context facts with calibration), and
    session prompt caches on sub-tabs, polled from
@@ -112,7 +123,7 @@ leave (not recorded, it opens again next start) or skip (recorded).
    answers HTTP 409 and the screen offers a force unload), `e` asks
    for a context estimate, `c` clears the selected session's prompt
    caches.
-9. **Models** (AbstractCore's shared screen, page id `catalog`) — the
+- **7 Models** (MODELS; AbstractCore's shared screen, page id `catalog`) — the
    model catalog for the GATEWAY host: each model's artifacts per engine
    (Ollama, LM Studio, MLX, Hugging Face…), size, whether it fits the
    host's memory (`fits` / `tight` / `too large` / `partial offload`),
@@ -121,7 +132,7 @@ leave (not recorded, it opens again next start) or skip (recorded).
    blockers (loaded, shared cache), `/` filters, `f` fits only, `e`
    cycles the engine, `v` flips to what is installed, `c` cancels the
    running job.
-0. **Engines** (AbstractCore's shared screen, page id `engines`) — the
+- **8 Engines** (MODELS; AbstractCore's shared screen, page id `engines`) — the
    local engines on the gateway host: installed or not, version,
    running and reachable. `i` installs after a confirm showing the
    exact command and "runs on gateway host …" (dry run available),
@@ -129,12 +140,12 @@ leave (not recorded, it opens again next start) or skip (recorded).
    servers, `c` cancels. With a gateway that serves them, the screen
    also starts/stops engine servers, continues paused installs and
    shows the install location (abstractcore-console 0.4 verbs).
-- **A Apps** — the web console's Apps tab: browser apps (Flow, Code,
+- **5 Apps** (WORK) — the web console's Apps tab: browser apps (Flow, Code,
   Observer…), the desktop Assistant and Node.js. `Enter`/`o` opens an
   app signed in (a one-time link), `i`/`u` install/update, `s`/`x`
   start/stop, `l` log, `c` cancel, `t`/`T` terminal apps, `n` Node.js,
   `y` copy, `r` check again (admin-only writes).
-- **Setup** (no jump key; `Ctrl+G`) — the guide's welcome step: computer,
+- **S Setup** (also `Ctrl+G`) — the guide's welcome step: computer,
   memory, graphics, data folder (and why), sign-in mode, whether the
   gateway starts at login, the first-run state, and the guide's steps.
 

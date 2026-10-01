@@ -151,8 +151,10 @@ class ConnectBody(BaseModel):
 
     address: str = Field(..., description="The mailbox's address")
     password: str = Field(..., min_length=1, description="Password or app password; stored encrypted, never returned")
-    username: str = Field("", description="Sign-in user name; empty = the discovered form, else the address")
-    display_name: str = Field("", description="Name shown on sent mail (optional)")
+    username: str = Field("", description="Login, optional: empty = the discovered login form, else the address")
+    display_name: str = Field(
+        "", description="Name on sent mail, optional: empty = the stored name, else the address's local part"
+    )
     imap: Optional[ServerBody] = Field(None, description="Omit imap AND smtp to discover the servers from the address")
     smtp: Optional[ServerBody] = Field(None, description="Omit imap AND smtp to discover the servers from the address")
     test: bool = True
@@ -273,6 +275,11 @@ async def me_email_get(request: Request) -> Any:
 
     def run() -> Dict[str, Any]:
         out = mail_accounts.public_status(plane)
+        # The shared resolver (DESIGN-v2 §2.5): the admin's row in /admin/users and
+        # /admin/accounts reads exactly this.
+        view = mail_accounts.account_email_view(principal)
+        out["email_address"] = view["email_address"] or ""
+        out["mailbox"] = view["mailbox"]
         if principal.is_admin() and plane.is_default:
             out["notices"] = mail_accounts.boot_notices()
         return out
@@ -285,7 +292,9 @@ async def me_email_get(request: Request) -> Any:
     summary="Find my mailbox's IMAP and SMTP servers from its address",
     description="Known providers, the domain's autoconfig file, the Thunderbird ISPDB, DNS SRV, then MX "
     "(AbstractCore's deterministic discovery). 200 for a valid address: `found` says whether both servers were "
-    "found, `tried` lists every step; 400 `email_invalid_settings` for a non-address.",
+    "found, `tried` lists every step, and `defaults` is what the mailbox form pre-fills: {imap, smtp: {host, port, "
+    "security}, login, source: discovered | standard, provider, message} (the discovered servers, else imap.<domain> "
+    "993 SSL and smtp.<domain> 465 SSL). 400 `email_invalid_settings` for a non-address.",
 )
 async def me_email_discover(request: Request, body: DiscoverBody) -> Any:
     _self_plane(request)
@@ -297,7 +306,9 @@ async def me_email_discover(request: Request, body: DiscoverBody) -> Any:
     summary="Connect my mailbox (test, then store)",
     description="Saves and tests in one call. Without `imap` and `smtp` the servers are discovered from the "
     "address (the answer then carries `discovery` {source, provider, tried}); none found = 400 "
-    "`email_discovery_failed` with `tried`. `username` defaults to the discovered form, else the address. A failed "
+    "`email_discovery_failed` with `tried`. `username` (optional) defaults to the discovered login, else the address; "
+    "`display_name` (optional) to the stored name, else the address's local part. Connecting sets your email address "
+    "when it is empty. A failed "
     "test stores nothing and names its step: `detail.step` (imap | smtp) and `detail.message` "
     "(\"Sign-in refused by imap.x.com \u2014 check the password.\" / \"Couldn't reach smtp.x.com:465.\").",
 )
@@ -368,7 +379,12 @@ async def me_email_notifications(request: Request, body: MyNotificationsBody) ->
     return await _call(run)
 
 
-@router.post("/me/email/test", summary="Test my connected mailbox")
+@router.post(
+    "/me/email/test",
+    summary="Test my connected mailbox",
+    description="Signs in to IMAP and SMTP with the stored mailbox: `{imap, smtp, ok, message}`; `message` says "
+    "\"Test passed: signed in to imap.x and smtp.x.\" or which step failed and why.",
+)
 async def me_email_test(request: Request) -> Any:
     principal, plane = _self_plane(request)
     return await _call(mail_accounts.test_account, plane, actor=_actor(principal))
@@ -557,7 +573,14 @@ async def me_notifications_put(request: Request, body: NotificationsBody) -> Any
     return await _call(run)
 
 
-@router.post("/me/notifications/test", summary="Send me a test notification now")
+@router.post(
+    "/me/notifications/test",
+    summary="Send me a test notification now",
+    description="Always a sentence in `message` (\"Sent to x@y.\", \"Not sent: hourly limit reached (20 of 20 this hour) "
+    "\u2014 resets at 14:05.\", gateway local time) and `reason_code`: null (sent) | no_mailbox | mailbox_paused | "
+    "rate_limited | queued_behind (+ `queued_behind`: how many) | send_failed; `limit` {window: hour | day, limit, used, "
+    "resets_at} when a send limit held it back.",
+)
 async def me_notifications_test(request: Request) -> Any:
     _principal, plane = _self_plane(request)
     from ..mail.notifications import send_test_notification
@@ -574,7 +597,9 @@ def _admin_plane(user_id: str, tenant_id: str) -> EmailPlane:
     try:
         return mail_accounts.plane_for_user(user_id, tenant_id=tenant_id)
     except KeyError:
-        raise HTTPException(status_code=404, detail="Gateway user not found") from None
+        raise HTTPException(
+            status_code=404, detail={"reason_code": "user_not_found", "message": f"There is no user named {user_id!r} on this gateway."}
+        ) from None
     except EmailPrincipalRefused as exc:
         raise HTTPException(status_code=400, detail={"reason_code": "email_principal_refused", "message": str(exc)}) from None
 

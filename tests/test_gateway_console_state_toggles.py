@@ -79,7 +79,7 @@ def test_switches_replace_the_verb_buttons() -> None:
     ):
         assert re.search(rf'<button type="button" role="switch" id="{sid}" class="af-switch', html), sid
         assert f'id="{sid}-reason" class="af-switch__reason" hidden' in html, sid
-    for label in ("Mailboxes for users", "Agent email tools for users", "Sign-in by email", "Job failed", "Approval needed", "Use this mailbox"):
+    for label in ("Mailboxes for users", "Agent email tools for users", "Sign-in by email", "Job failed", "Approval needed", "Active"):
         assert f'<span class="af-switch__label">{label}</span>' in html, label
     assert 'role="switch" class="af-switch af-switch--sm hidden" aria-checked="false"' in html  # Workflows paused
     assert html.count('aria-label="Start at login"') == 2
@@ -95,11 +95,13 @@ def test_switches_replace_the_verb_buttons() -> None:
 
 def test_users_table_and_create_user_follow_design() -> None:
     html = _html()
-    assert "<th>User</th><th>Role</th><th>Email address</th><th>Mailbox</th><th>Runtime</th><th>Active</th><th>Actions</th>" in html
-    assert "<th>State</th>" not in _slice(html, '<section id="users-section"', "</section>")
-    # The admin's one switch sits ABOVE the table; the other two under Advanced.
-    users = _slice(html, '<section id="users-section"', "</section>")
-    assert users.index('id="email-cap-email"') < users.index('<table class="users-table">')
+    # DESIGN-v2 §2.1: one Accounts table (users + entities); "Email for everyone" BELOW it.
+    # Round-2 polish: no Role column (the kind chip says Admin / User / Entity, its title the role).
+    assert "<th>Name</th><th>Email address</th><th>Mailbox</th><th>Runtime</th><th>Active</th><th>Actions</th>" in html
+    users = html[html.index('<section id="users-section"'):html.index('<details id="my-workspace-policy-section"')]
+    assert "<th>State</th>" not in users
+    assert users.index('<table class="users-table accounts-table" data-ui-no-stack>') < users.index('id="email-cap-email"')
+    assert users.index('id="open-create-user"') < users.index('id="accounts-create-entity"') < users.index("<table")
     adv = _slice(users, '<details id="email-caps-advanced"', "</details>")
     assert 'id="email-cap-agent-tools"' in adv and 'id="email-cap-recovery"' in adv and 'id="email-cap-email"' not in adv
     form = _slice(html, '<div id="user-create-form"', '<div id="user-create-done"')
@@ -122,12 +124,17 @@ def test_account_page_order_and_single_save() -> None:
     assert order == sorted(order)
     # Exactly one Save: the Email address field's inline one.
     assert re.findall(r">Save<", page) == [">Save<"]
-    for tab in ("Google", "Microsoft", "Other"):
-        assert f'role="tab" type="button" data-email-tab="{tab.lower()}"' in page, tab
+    # DESIGN-v2 §3: IMAP first (and the default), then Google, Microsoft.
+    tabs = re.findall(r'role="tab" type="button" data-email-tab="([a-z]+)"', page)
+    assert tabs == ["imap", "google", "microsoft"], tabs
+    assert re.search(r'id="my-email-tab-imap"[^>]*aria-selected="true"', page)
     assert ">Connect</button>" in page and page.count('id="my-email-connect-go"') == 1
     assert "Use an app password if your provider needs one." in page
     assert "Disconnect this mailbox? Your agents lose email until you connect again. Policy and limits are kept." in page
-    assert '<details id="my-email-servers" class="plain-disclosure">' in page  # folded until discovery fails
+    # Servers always visible (no disclosure); no User name / Display name fields; a Login only behind a small link.
+    assert 'id="my-email-servers"' not in page and "Display name" not in page
+    assert re.search(r'id="my-email-login-field" class="af-form__field" hidden', page)
+    assert "My provider uses a different login name" in page
 
 
 def test_runtimes_note_says_what_a_runtime_is() -> None:

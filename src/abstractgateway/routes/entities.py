@@ -21,11 +21,18 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from ..config import entity_iterations_ceiling
 from ..entities import EntityRegistry, entity_slug
+from ..entity_access import (
+    creator_of,
+    entity_name_guard,
+    entity_visible_to,
+    name_taken_detail,
+    require_entity_visible,
+)
 from ..entity_seat import (
     cancel_run_tree,
     door_decision,
@@ -46,7 +53,9 @@ def _now_iso() -> str:
 # imports are all function-level, so no import cycle forms).
 from .gateway import VoiceTTSRequest as GatewayVoiceTTSRequest
 
-router = APIRouter(prefix="/gateway/entities", tags=["entities"])
+# RBAC (operator ruling 2026-10-01, entity_access.py): every `{name}` route checks that the
+# caller may see that entity BEFORE its handler runs (hidden answers like missing: 404).
+router = APIRouter(prefix="/gateway/entities", tags=["entities"], dependencies=[Depends(entity_name_guard)])
 
 
 def _registry() -> EntityRegistry:
@@ -154,14 +163,29 @@ def create_entity(req: CreateEntityRequest) -> Dict[str, Any]:
     except ValueError as e:
         raise HTTPException(status_code=400, detail=f"skills selection invalid: {e}")
 
+    from ..security.principal import current_gateway_principal
+
+    caller = current_gateway_principal()
+    registry0 = _registry()
     try:
-        result = _registry().create(
+        slug0 = entity_slug(req.name)
+    except Exception:  # noqa: BLE001 - the registry answers an invalid name below
+        slug0 = None
+    if slug0 is not None:
+        # Re-creating someone else's entity would hand its manifest back (idempotent create);
+        # creating a name the door already holds in ANOTHER plane would adopt its principal.
+        taken = name_taken_detail(caller, registry0, slug0)
+        if taken is not None:
+            raise HTTPException(status_code=409, detail=taken)
+    try:
+        result = registry0.create(
             name=req.name,
             spark=req.spark,
             spark_text=req.spark_text,
             framework=bool(req.framework),
             embedding_model=req.embedding_model,
             embedding_dimension=req.embedding_dimension,
+            created_by=creator_of(caller),
         )
     except EntityQuotaExceeded as e:
         # F2: entities are permanent + door-global; the per-root quota bounds
@@ -282,6 +306,14 @@ def validate_entity(name: str, req: CreateEntityRequest) -> Dict[str, Any]:
         spark_text=req.spark_text,
         framework=bool(req.framework),
     )
+    # "green = create will not refuse": the create route's name-taken 409 is checked here too.
+    from ..security.principal import current_gateway_principal
+
+    taken = name_taken_detail(current_gateway_principal(), _registry(), entity_slug(name))
+    if taken is not None and isinstance(result, dict):
+        result = dict(result)
+        result["ok"] = False
+        result["errors"] = list(result.get("errors") or []) + [taken]
     # EMBEDDING BIRTH-CHOICE mismatch (adversary P0): _birth_embedding_pin
     # REFUSES a birth embedder the door cannot serve — but it fires AFTER
     # the spark + manifest are written, so a bad choice would burn the
@@ -1238,7 +1270,13 @@ async def entity_capability_matrix() -> Dict[str, Any]:
 
 @router.get("")
 def list_entities() -> Dict[str, Any]:
-    return {"entities": _registry().list_entities()}
+    """The entities the caller may see: all for an admin; for anyone else only the ones they
+    created (`created_by`; homes without one are admin-only)."""
+    from ..security.principal import current_gateway_principal
+
+    caller = current_gateway_principal()
+    rows = _registry().list_entities()
+    return {"entities": [r for r in rows if entity_visible_to(caller, str(r.get("slug") or ""), r.get("created_by"))]}
 
 
 @router.get("/{name}")
@@ -1868,6 +1906,9 @@ def open_meet(req: OpenMeetRequest) -> Dict[str, Any]:
     from ..entity_meets import VisitRefused
     from ..security.principal import current_gateway_principal
 
+    # RBAC: both entities must be visible to the convener (hidden answers like missing).
+    require_entity_visible(req.entity_a)
+    require_entity_visible(req.entity_b)
     principal = current_gateway_principal()
     convener = f"person:{principal.user_id}" if principal is not None else "person:operator"
     try:
@@ -1880,9 +1921,28 @@ def open_meet(req: OpenMeetRequest) -> Dict[str, Any]:
         raise HTTPException(status_code=e.status, detail=e.detail)
 
 
+def _require_meet_visible(meet_id: str) -> None:
+    """RBAC: a meet is reachable only when both of its entities are visible to the caller; a
+    hidden meet answers like a missing one."""
+    from ..entity_meets import VisitRefused
+
+    host = _meet_host()
+    try:
+        meet = host._meet(meet_id)
+    except VisitRefused as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+    try:
+        for leg in ("a", "b"):
+            require_entity_visible(str(meet[leg]["name"]))
+    except HTTPException:
+        raise HTTPException(status_code=404, detail=f"no meet {meet_id!r} (open one with two entity names)") from None
+
+
 @router.post("/meets/{meet_id}/relay")
 def relay_meet(meet_id: str, req: MeetRelayRequest) -> Dict[str, Any]:
     from ..entity_meets import VisitRefused
+
+    _require_meet_visible(meet_id)
 
     try:
         return _meet_host().relay(meet_id, opener=req.opener, text=req.text)
@@ -1894,6 +1954,8 @@ def relay_meet(meet_id: str, req: MeetRelayRequest) -> Dict[str, Any]:
 def close_meet(meet_id: str, req: MeetCloseRequest) -> Dict[str, Any]:
     from ..entity_meets import VisitRefused
 
+    _require_meet_visible(meet_id)
+
     try:
         return _meet_host().close(meet_id, reason=req.reason)
     except VisitRefused as e:
@@ -1903,6 +1965,8 @@ def close_meet(meet_id: str, req: MeetCloseRequest) -> Dict[str, Any]:
 @router.get("/meets/{meet_id}")
 def meet_status(meet_id: str) -> Dict[str, Any]:
     from ..entity_meets import VisitRefused
+
+    _require_meet_visible(meet_id)
 
     try:
         return _meet_host().status(meet_id)

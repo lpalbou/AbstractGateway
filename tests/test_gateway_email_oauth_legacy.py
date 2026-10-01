@@ -294,10 +294,33 @@ def test_core_import_copies_limits_someone_set_and_keeps_a_legacy_value(gateway,
     )
     core = EmailAccountStore(config_file=core_file)
     core.connect(account, EmailSecret(PASSWORDS[ADMIN_ADDR]), test=False)
-    # What AbstractCore 2.21 left after a connect: the then-defaults, without a set_by marker.
+    # An unmarked value other than AbstractCore 2.21's old defaults: legacy, kept and copied.
+    doc = json.loads(core_file.read_text())
+    doc["email"]["limits"] = {"per_hour": 30, "per_day": 300}
+    core_file.write_text(json.dumps(doc))
+    import_core_account_once()
+    pub = public_status(admin_plane())
+    assert (pub["limits"]["per_hour"], pub["limits"]["per_day"]) == (30, 300)
+
+
+def test_core_import_of_the_old_unmarked_defaults_follows_the_new_defaults(gateway, imap, smtp, tmp_path, monkeypatch) -> None:
+    """What AbstractCore 2.21 left after a connect (20 / 100, no set_by marker) is the old default
+    (core a8db58e): nothing is copied and the gateway copy follows the defaults."""
+    from abstractcore.comms.email import EmailAccount, EmailAccountStore, EmailSecret, ImapSettings, SmtpSettings
+
+    from abstractgateway.mail.accounts import admin_plane, import_core_account_once, public_status
+
+    core_file = tmp_path / "core" / "abstractcore.json"
+    monkeypatch.setenv("ABSTRACTCORE_CONFIG_FILE", str(core_file))
+    account = EmailAccount.build(
+        address=ADMIN_ADDR,
+        imap=ImapSettings.build("localhost", port=imap.port, security="ssl"),
+        smtp=SmtpSettings.build("localhost", port=smtp.port, security="starttls"),
+    )
+    EmailAccountStore(config_file=core_file).connect(account, EmailSecret(PASSWORDS[ADMIN_ADDR]), test=False)
     doc = json.loads(core_file.read_text())
     doc["email"]["limits"] = {"per_hour": 20, "per_day": 100}
     core_file.write_text(json.dumps(doc))
     import_core_account_once()
     pub = public_status(admin_plane())
-    assert (pub["limits"]["per_hour"], pub["limits"]["per_day"]) == (20, 100)
+    assert (pub["limits"]["per_hour"], pub["limits"]["per_day"], pub["limits"]["source"]) == (100, 1000, "default")

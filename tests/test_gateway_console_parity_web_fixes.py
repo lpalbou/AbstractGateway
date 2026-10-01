@@ -614,7 +614,7 @@ const dlGroupMarkup = () => "";
 const downloadJobKey = (p, a) => `${p}:${a}`;
 """
     return _run(
-        _ROUTE_HELPERS + ["firstRunUnavailableCards", "firstRunRouteUnavailableAlert", "firstRunCap", "renderFirstRunModel"],
+        _ROUTE_HELPERS + ["weightView", "weightReason", "firstRunUnavailableCards", "firstRunRouteUnavailableAlert", "firstRunCap", "renderFirstRunModel"],
         f"state.defaults = {json.dumps(defaults)}; state.downloadJobs = new Map();"
         f"state.availabilityPlan = {{ recommended: {json.dumps(recommended)} }};"
         "renderFirstRunModel(); return $('first-run-model-recommended').innerHTML;",
@@ -629,6 +629,24 @@ def test_first_run_model_step_renders_unavailable_cards_without_any_download() -
     assert '<div class="ui-card-grid is-fit is-aligned">' in html, html
     assert "Cannot run here" in html
     assert "This gateway reported no recommended downloads." not in html
+
+
+def test_first_run_transcription_card_on_a_fresh_install_never_says_unknown() -> None:
+    """Adversary pass 2 (F2): on a fresh install AbstractCore's probe answers `unknown` ("no Hugging
+    Face cache directory exists on this machine yet"). The card says "Download needed", shows that
+    reason, and offers Download (core marks the row downloadable)."""
+    rec = [{"route": "input.voice", "provider": "huggingface", "artifact": "Systran/faster-whisper-base", "status": "unknown",
+            "downloadable": True, "evidence": "hf cache scan", "detail": "no Hugging Face cache directory exists on this machine yet",
+            "route_provider": "faster-whisper", "route_model": "base"}]
+    html = _render_first_run_model([], rec)
+    assert "Unknown" not in html and ">unknown<" not in html, html
+    assert "Download needed" in html, html
+    assert "No Hugging Face cache directory exists on this machine yet." in html
+    assert 'class="ui-btn is-primary first-run-download" data-provider="huggingface" data-artifact="Systran/faster-whisper-base"' in html
+    # Without a download verb it is "Not checked", with the reason, and no button.
+    rec[0]["downloadable"] = False
+    html = _render_first_run_model([], rec)
+    assert "Not checked" in html and "first-run-download" not in html and "Unknown" not in html
 
 
 def test_first_run_recommended_card_carries_the_route_warning() -> None:

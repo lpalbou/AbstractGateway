@@ -2475,6 +2475,44 @@ fn user_policy_entry(d: &RuntimeConfigData, key: &str) -> serde_json::Map<String
         .unwrap_or_default()
 }
 
+/// The Accounts screen's Workspace action for a user (admin): the same
+/// per-user policy form as `w` here, loading the runtime config first
+/// when it was never read (one more keypress, said so).
+pub fn open_user_policy(cx: Scope, ctx: &Ctx, tenant: String, user: String) {
+    let config = match ctx.store.runtime_config.get_untracked() {
+        Loadable::Ready(d) => d,
+        Loadable::Failed(e) => {
+            ctx.store.runtime_config.set(Loadable::Loading);
+            ctx.send(Cmd::LoadRuntimeConfig);
+            ctx.store.notice.set(Some(format!(
+                "couldn't read the workspace config ({e}) — reading again; press w in a moment"
+            )));
+            return;
+        }
+        Loadable::NotAsked => {
+            ctx.store.runtime_config.set(Loadable::Loading);
+            ctx.send(Cmd::LoadRuntimeConfig);
+            ctx.store.notice.set(Some(
+                "loading workspace config — press w again in a moment".into(),
+            ));
+            return;
+        }
+        Loadable::Loading => {
+            ctx.store.notice.set(Some(
+                "workspace config still loading — try again in a moment".into(),
+            ));
+            return;
+        }
+    };
+    if !config.writable {
+        ctx.store
+            .notice
+            .set(Some("this needs an admin token".into()));
+        return;
+    }
+    open_user_policy_form(cx, ctx, &config, tenant, user);
+}
+
 /// `w` on the highlighted INVENTORY row (users.rs `e/t/d` idiom): open the
 /// per-user workspace policy form. Refuses, with a notice naming why, on
 /// rows that resolve to no single principal.
@@ -2500,7 +2538,7 @@ fn open_user_policy_for_selected(cx: Scope, ctx: &Ctx) {
         ctx.store.notice.set(Some(if row.owners.is_empty() {
             "no live user binds this plane — there is no principal to configure".to_string()
         } else {
-            "several users bind this plane — configure each user from screen 4 (Users & Entities)"
+            "several users bind this plane — configure each user from screen 2 (Accounts, w)"
                 .to_string()
         }));
         return;

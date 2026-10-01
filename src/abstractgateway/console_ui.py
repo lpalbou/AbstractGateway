@@ -2650,7 +2650,7 @@ CONSOLE_UI_JS = r"""
     // {"default_workflow": {interface: value | ""}}} with the changed rows
     // only; "" goes back to the built-in default. The gateway validates and
     // its sentence is shown verbatim on refusal.
-    const agentDefStore = { data: null, error: "", saving: false, saved: null, draft: {}, views: new Map(), streamSaving: false, streamSaved: null };
+    const agentDefStore = { data: null, error: "", saving: false, saved: null, draft: {}, views: new Map(), streamSaving: false, streamSaved: null, rowSaved: {} };
     function agentDefaultsBody(block, draft) {
       const body = {};
       for (const [iface, r] of Object.entries((block && block.default_workflow) || {})) {
@@ -2661,41 +2661,61 @@ CONSOLE_UI_JS = r"""
       }
       return Object.keys(body).length ? { agents: { default_workflow: body } } : null;
     }
+    // DESIGN-v2 §4.2: one row per interface with the gateway's PLAIN name (the
+    // interface table in agent_defaults.py, read from the API: label, app, help,
+    // group, state, value, reason), the interface id small, a (?) with the help,
+    // and a select that applies at once ("Saved"). States: "Clients choose" and
+    // "Built in: x" are neutral; a warning appears ONLY when the row is broken.
+    // Interfaces no app asks for fold under "Other workflow types".
+    function agentDefaultRowMarkup(iface, r, admin, st) {
+      for (const k of ["label", "help", "group", "state"]) {
+        if (typeof r[k] !== "string" || !r[k]) throw new Error(`GET /admin/runtime-config agent-default row ${iface} has no ${k} (gateway-api seam, DESIGN-v2 §6).`);
+      }
+      const stored = r.source === "stored" ? String(r.value || "") : "";
+      const val = Object.prototype.hasOwnProperty.call(st.draft, iface) ? st.draft[iface] : stored;
+      const eligible = Array.isArray(r.eligible) ? r.eligible : [];
+      let options = `<option value="">${esc(r.default ? `Built in: ${r.default.split(":")[0]}` : "Clients choose")}</option>`;
+      const values = new Set(eligible.map((e) => String(e.value)));
+      if (stored && !values.has(stored)) options += `<option value="${esc(stored)}" selected>${esc(stored)} (not installed)</option>`;
+      for (const e of eligible) {
+        const v = String(e.value);
+        options += `<option value="${esc(v)}"${v === val ? " selected" : ""}>${esc(`${e.name || e.flow_id} ${e.bundle_version || ""}`.trim())}</option>`;
+      }
+      let now;
+      if (r.state === "broken") now = `<p class="ui-field-msg tone-warn agent-default__state" data-agent-default-now>${esc(r.reason || "")}</p>`;
+      else if (r.state === "set" && r.resolved) now = `<p class="agent-default__state" data-agent-default-now>Runs ${esc(`${r.resolved.name || r.resolved.flow_id} ${r.resolved.bundle_version || ""}`.trim())}</p>`;
+      // "Clients choose" / "Built in: x" already read in the select: no second line, never a warning.
+      else now = "";
+      const saved = st.rowSaved && st.rowSaved[iface];
+      const savedLine = saved ? `<span class="inline-state${saved.tone === "ok" ? " ok" : " error"}" role="status" data-agent-default-saved="${esc(iface)}">${esc(saved.text)}</span>` : "";
+      return `<div class="agent-default" data-agent-default="${esc(iface)}">`
+        + `<div class="agent-default__head"><label class="agent-default__name" for="agent-def-${esc(iface)}">${esc(r.label)}</label>`
+        + `<details class="help-q"><summary aria-label="What is “${esc(r.label)}”?">?</summary><p class="help-q__text">${esc(r.help)}</p></details>`
+        + `<code class="agent-default__iface">${esc(iface)}</code></div>`
+        + `<div class="agent-default__control"><select id="agent-def-${esc(iface)}" data-agent-default-select="${esc(iface)}"${admin && !st.saving ? "" : " disabled"}>${options}</select>${savedLine}</div>`
+        + now + `</div>`;
+    }
     function agentDefaultsMarkup() {
       const st = agentDefStore;
-      if (st.error && !st.data) return `<div class="ui-alert tone-err" role="alert"><strong>Could not read the default agent workflows.</strong><span>${esc(st.error)}</span></div>`;
-      if (!st.data) return `<div class="ui-empty">Reading the default agent workflows...</div>`;
+      if (st.error && !st.data) return `<div class="ui-alert tone-err" role="alert"><strong>Could not read the default workflows.</strong><span>${esc(st.error)}</span></div>`;
+      if (!st.data) return `<div class="ui-empty">Reading the default workflows...</div>`;
       const block = st.data.agents || {};
-      if (block.error) return `<div class="ui-alert tone-err" role="alert"><strong>Could not read the default agent workflows.</strong><span>${esc(block.error)}</span></div>`;
+      if (block.error) return `<div class="ui-alert tone-err" role="alert"><strong>Could not read the default workflows.</strong><span>${esc(block.error)}</span></div>`;
       const rows = Object.entries(block.default_workflow || {});
       const admin = !!st.data.writable;
-      let out = `<div class="ui-agent-defaults" data-agent-defaults><div class="ui-apps-setting__head"><strong>${esc(block.label || "Default agent workflow")}</strong></div>`
-        + `<p class="ui-net-proxy__text">${esc(block.help || "")}</p><div class="ui-apps-settings__rows">`;
-      for (const [iface, r] of rows) {
-        const stored = r.source === "stored" ? String(r.value || "") : "";
-        const val = Object.prototype.hasOwnProperty.call(st.draft, iface) ? st.draft[iface] : stored;
-        const pill = r.source === "stored" ? uiPill("Saved setting", "info") : r.source === "env" ? uiPill("Environment (legacy)", "warn") : uiPill("Default", "muted");
-        const eligible = Array.isArray(r.eligible) ? r.eligible : [];
-        let options = `<option value="">${esc(r.default ? `Built-in default (${r.default})` : "No default (clients choose)")}</option>`;
-        const values = new Set(eligible.map((e) => String(e.value)));
-        if (stored && !values.has(stored)) options += `<option value="${esc(stored)}" selected>${esc(stored)} (saved, not available)</option>`;
-        for (const e of eligible) {
-          const v = String(e.value);
-          options += `<option value="${esc(v)}"${v === val ? " selected" : ""}>${esc(`${e.name || e.flow_id} — ${v} (now ${e.bundle_version})`)}</option>`;
+      let apps = ""; let other = ""; let nOther = 0;
+      try {
+        for (const [iface, r] of rows) {
+          const html = agentDefaultRowMarkup(iface, r, admin, st);
+          if (r.group === "other") { other += html; nOther += 1; } else apps += html;
         }
-        const now = r.available && r.resolved
-          ? `<p class="ui-net-proxy__text" data-agent-default-now>Runs ${esc(r.resolved.name || r.resolved.flow_id)} <code>${esc(r.resolved.workflow_id)}</code></p>`
-          : `<p class="ui-field-msg tone-warn" data-agent-default-now>Not available: ${esc(r.reason || "")}</p>`;
-        out += `<div class="ui-apps-setting" data-agent-default="${esc(iface)}"><div class="ui-apps-setting__head"><label for="agent-def-${esc(iface)}">${esc(iface)}</label>${pill}</div>`
-          + `<select id="agent-def-${esc(iface)}" data-agent-default-select="${esc(iface)}"${admin && !st.saving ? "" : " disabled"}>${options}</select>`
-          + now
-          + (eligible.length ? "" : `<p class="ui-net-proxy__text">No workflow on this gateway declares this interface.</p>`)
-          + `<span class="ui-advanced ui-sub"><code>abstractgateway config set ${esc(r.key || `agents.default_workflow.${iface}`)} …</code></span></div>`;
+      } catch (err) {
+        console.error(`AbstractGateway console: ${err.message}`);
+        return `<div class="ui-alert tone-err" role="alert"><strong>Could not show the default workflows.</strong><span>${esc(err.message)}</span></div>`;
       }
-      out += `</div>`;
-      if (admin) out += `<div class="ui-card__actions"><button type="button" class="ui-btn is-primary" data-agent-defaults-save${st.saving ? ' disabled aria-busy="true"' : ""}>${st.saving ? "Saving..." : "Save default agent workflows"}</button></div>`;
-      if (st.saved) out += `<p class="ui-net-proxy__saved tone-${esc(st.saved.tone)}" role="status" data-agent-defaults-saved><b>${esc(st.saved.head)}</b><span>${esc(st.saved.text)}</span></p>`;
-      else out += `<p class="ui-net-proxy__saved" role="status"><span>${admin ? "Clients that choose \"Gateway default\" run this from their next new turn." : "Only an admin can change these."}</span></p>`;
+      let out = `<div class="agent-defaults" data-agent-defaults>${apps}`;
+      if (nOther) out += `<details class="plain-disclosure agent-defaults__other"><summary>Other workflow types (${nOther})</summary>${other}</details>`;
+      if (!admin) out += `<p class="section-note">Only an admin can change these.</p>`;
       return out + `</div>`;
     }
     // ---- Stream replies by default (agents.streaming_default) ----
@@ -2704,22 +2724,26 @@ CONSOLE_UI_JS = r"""
     // The switch POSTs {"agents": {"streaming_default": true|false}} at once
     // (the gateway answers with the new read). A gateway whose read lacks the
     // key says so -- the switch is never silently hidden.
+    // A gateway-wide runtime setting, so it sits under a small "Settings" subheading after the
+    // per-app defaults, as a kit af-switch row labelled by the feature (never a verb) with one
+    // sentence; it applies at once.
+    const STREAMING_DEFAULT_LABEL = "Streamed replies";
+    const STREAMING_DEFAULT_DESC = "New interactive runs show the model's reply as it is written, unless the app asks for it whole; scheduled runs, bridges and entities always get whole replies.";
     function streamingDefaultMarkup(data, st) {
       const block = (data && data.agents) || {};
       const r = block.streaming_default;
-      const head = `<div class="ui-apps-setting" data-streaming-default-row><div class="ui-apps-setting__head"><label for="agent-streaming-default">${esc((r && r.label) || "Stream replies by default")}</label>`;
+      const head = `<div class="workflows-settings" data-streaming-default-row><h3 class="section-subtitle">Settings</h3>`;
       if (!r || typeof r !== "object" || typeof r.value !== "boolean") {
-        return head + `${uiPill("Not available", "muted")}</div><p class="ui-field-msg tone-warn" data-streaming-default-missing>Not available on this gateway: its settings read has no agents.streaming_default.</p></div>`;
+        return head + `<p class="ui-field-msg tone-warn" data-streaming-default-missing>${esc(STREAMING_DEFAULT_LABEL)}: not available on this gateway — its settings read has no agents.streaming_default.</p></div>`;
       }
       const admin = !!(data && data.writable);
-      const pill = r.source === "stored" ? uiPill("Saved setting", "info") : uiPill("Default", "muted");
       const busy = !!(st && st.streamSaving);
-      let out = head + `${pill}</div>`
-        + `<label class="entity-checkbox"><input type="checkbox" id="agent-streaming-default" data-streaming-default${r.value ? " checked" : ""}${admin && !busy ? "" : " disabled"}> ${r.value ? "On" : "Off"} — ${r.value ? "interactive replies stream live" : "replies arrive whole"}</label>`
-        + `<p class="ui-net-proxy__text">${esc(r.help || "")}</p>`
+      const why = admin ? "" : "Only an admin can change this.";
+      let out = head
+        + `<button type="button" role="switch" id="agent-streaming-default" class="af-switch af-switch--row" data-streaming-default aria-checked="${r.value ? "true" : "false"}"${busy ? ` aria-busy="true"` : ""}${why ? ` aria-disabled="true" title="${esc(why)}"` : ""} aria-describedby="agent-streaming-default-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">${esc(STREAMING_DEFAULT_LABEL)}</span><span class="af-switch__desc" id="agent-streaming-default-desc">${esc(STREAMING_DEFAULT_DESC)}</span></span></button>`
+        + (why ? `<span class="af-switch__reason">${esc(why)}</span>` : "")
         + `<span class="ui-advanced ui-sub"><code>abstractgateway config set ${esc(r.key || "agents.streaming_default")} true|false</code></span>`;
-      if (st && st.streamSaved) out += `<p class="ui-net-proxy__saved tone-${esc(st.streamSaved.tone)}" role="status" data-streaming-default-saved><b>${esc(st.streamSaved.head)}</b><span>${esc(st.streamSaved.text)}</span></p>`;
-      else if (!admin) out += `<p class="ui-net-proxy__saved" role="status"><span>Only an admin can change this.</span></p>`;
+      if (st && st.streamSaved) out += `<p class="inline-state${st.streamSaved.tone === "ok" ? " ok" : " error"}" role="status" data-streaming-default-saved>${esc(st.streamSaved.head)}: ${esc(st.streamSaved.text)}</p>`;
       return out + `</div>`;
     }
     function streamingDefaultBody(on) { return { agents: { streaming_default: !!on } }; }
@@ -2748,6 +2772,8 @@ CONSOLE_UI_JS = r"""
       // from the same settings read (it shows even when the workflow rows
       // cannot be read: the switch is a separate setting).
       for (const el of agentDefStore.views.values()) if (el) el.innerHTML = agentDefaultsMarkup() + (agentDefStore.data ? streamingDefaultMarkup(agentDefStore.data, agentDefStore) : "");
+      // The Workflows table's "Used by" names come from the same interface table.
+      if (agentDefStore.data && state.workflows && state.workflows.length && typeof renderWorkflows === "function") renderWorkflows();
     }
     async function agentDefaultsRefresh() {
       try {
@@ -2786,18 +2812,33 @@ CONSOLE_UI_JS = r"""
       const body = { agents: { default_workflow: { [iface]: value } } };
       return agentDefaultsPost(body, `${value} is now the gateway default for ${iface}.`);
     }
+    async function agentDefaultApply(iface, value) {
+      // A select change IS the save (§4.2): one row, "Saved" beside it, the API's sentence on refusal.
+      const st = agentDefStore;
+      st.draft[iface] = value;
+      const ok = await agentDefaultsPost({ agents: { default_workflow: { [iface]: value } } }, "Saved");
+      st.rowSaved = { [iface]: ok ? { tone: "ok", text: "Saved" } : { tone: "err", text: (st.saved && st.saved.text) || "Not saved." } };
+      st.saved = null;
+      agentDefaultsRender();
+      if (typeof setTimeout === "function" && ok) setTimeout(() => { if (st.rowSaved[iface] && st.rowSaved[iface].tone === "ok") { st.rowSaved = {}; agentDefaultsRender(); } }, 2500);
+    }
     function mountAgentDefaults(key, el) {
       if (!el) return;
       agentDefStore.views.set(key, el);
       el.onclick = (event) => {
+        const sw = event && event.target && event.target.closest ? event.target.closest("[data-streaming-default]") : null;
+        if (sw) {
+          if (sw.getAttribute("aria-disabled") === "true" || sw.getAttribute("aria-busy") === "true") return;
+          streamingDefaultSave(sw.getAttribute("aria-checked") !== "true");
+          return;
+        }
         const b = event && event.target && event.target.closest ? event.target.closest("[data-agent-defaults-save]") : null;
         if (b && !b.disabled) agentDefaultsSave();
       };
       el.onchange = (event) => {
         const t = event && event.target && event.target.matches ? event.target : null;
-        if (t && t.matches("[data-streaming-default]")) { streamingDefaultSave(!!t.checked); return; }
         const i = t && t.matches("[data-agent-default-select]") ? t : null;
-        if (i) agentDefStore.draft[i.dataset.agentDefaultSelect] = i.value;
+        if (i) agentDefaultApply(i.dataset.agentDefaultSelect, i.value);
       };
       agentDefaultsRender();
       agentDefaultsRefresh();
@@ -2972,7 +3013,7 @@ CONSOLE_UI_JS = r"""
           // address other devices use), with a copy button beside it.
           { id: "island-address", label: `Gateway address: ${netPrimaryUrl()}`, text: netPrimaryUrl().replace(/^https?:\/\//, ""), hidden: !p || !netPrimaryUrl() },
           { id: "island-address-copy", label: "Copy the gateway address", icon: "copy", hidden: !p || !netPrimaryUrl(), onClick: () => uiCopy(netPrimaryUrl()) },
-          { id: "island-open-setup", label: "Setup guide", icon: "settings", hidden: !(p && p.admin), onClick: () => openFirstRunWizard(firstRun.step || "welcome") },
+          // Setup lives at the bottom of the sidebar (#open-setup, DESIGN-v2 §1): one labelled entry point.
           { id: "island-identity", label: "Signed in as", text: islands.identity, hidden: !p || !islands.identity },
         ],
         connection: {

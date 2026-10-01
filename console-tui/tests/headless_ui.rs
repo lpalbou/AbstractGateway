@@ -9,6 +9,8 @@
 //! entity-manage sub-forms and the runtimes/reservations actions are
 //! proven live by scripts/pty_smoke.py rather than headless.
 
+mod accounts_fixture;
+
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -73,6 +75,10 @@ fn harness_sized(size: Size) -> Harness {
     let screens_out = screens_slot.clone();
     app.mount(move |cx| {
         let store = Store::create(cx);
+        // DESIGN-v2 §2: the Accounts table reads `/admin/accounts`. These
+        // suites seed the users registry and the entity roster; derive
+        // the §6 accounts reply from them (tests/accounts_fixture).
+        accounts_fixture::mirror(cx, store);
         *store_out.borrow_mut() = Some(store);
         let ui_state = UiState::create(cx, "http://127.0.0.1:8080".to_string(), String::new());
         *ui_out.borrow_mut() = Some(ui_state);
@@ -208,6 +214,19 @@ impl Harness {
     fn connect_as_admin(&mut self) {
         self.store.conn.set(ConnPhase::Connected(admin_identity()));
         self.turn();
+    }
+
+    /// Select the Accounts row `id` (DESIGN-v2 §2: entity keys act on
+    /// the selected row of the one table).
+    fn select_account(&mut self, id: &str) {
+        self.turns(1);
+        let idx = self
+            .store
+            .accounts
+            .with_untracked(|d| d.ready().and_then(|r| r.iter().position(|a| a.id == id)))
+            .unwrap_or_else(|| panic!("no account {id:?}"));
+        self.ui.account_sel.set(idx);
+        self.turns(2);
     }
 
     fn goto_screen(&mut self, n: usize) {
@@ -523,11 +542,13 @@ fn boots_to_connection_wizard_step() {
     );
     // PageHost bar: numbered titles, engine-drawn active underline.
     assert!(screen.contains("1 Connection"), "page bar:\n{screen}");
-    // 6 Workflows sits between Runtimes and Review; the bar's tail moved.
-    assert!(screen.contains("6 Workflows"), "page bar:\n{screen}");
+    // DESIGN-v2 §1: the shown order is the web sidebar's groups —
+    // Accounts second, then the WORK screens.
+    assert!(screen.contains("2 Accounts"), "page bar:\n{screen}");
+    assert!(screen.contains("3 Workflows"), "page bar:\n{screen}");
     assert!(
-        screen.contains("7 Review & Test"),
-        "page bar tail:\n{screen}"
+        screen.contains("ACCOUNTS 2 · WORK 3-5 · MODELS 6-9 · SYSTEM 0 N R · S Setup"),
+        "group line:\n{screen}"
     );
     assert!(screen.contains("Gateway URL"), "url field:\n{screen}");
     assert!(screen.contains("Admin token"), "token field:\n{screen}");
@@ -549,34 +570,50 @@ fn pagehost_browse_navigation_digits_and_chords() {
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.store.providers.set(Loadable::Ready(providers_fixture()));
     h.turns(2);
-    // Browse digits ride PageHost's number_jump: 4 jumps straight to
-    // Users & Entities through the id bridge…
-    h.type_text("4");
+    // Browse digits follow the SHOWN order (DESIGN-v2 §1): 2 jumps
+    // straight to Accounts through the id bridge…
+    h.type_text("2");
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 3, "digit 4 → screen index 3");
-    // …and Ctrl+N advances by EXACTLY one (the host's capture chord
-    // consumes the key before the root wizard_next fallback — a double
-    // advance here would mean both fired).
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_USERS,
+        "digit 2 → Accounts"
+    );
+    // …and Ctrl+N advances by EXACTLY one in the shown order (the host's
+    // capture chord consumes the key before the root wizard_next
+    // fallback — a double advance here would mean both fired).
     h.key(b"\x0e");
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 4, "Ctrl+N advances one step");
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_WORKFLOWS,
+        "Ctrl+N advances one step"
+    );
     // Ctrl+P walks back one.
     h.key(b"\x10");
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 3, "Ctrl+P retreats one step");
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_USERS,
+        "Ctrl+P retreats one step"
+    );
     // Wizard mode disarms the free-navigation surface: digits refuse
     // with the reason instead of jumping.
     h.ui.wizard.set(true);
     h.turns(2);
     h.type_text("2");
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 3, "wizard digit does not jump");
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_USERS,
+        "wizard digit does not jump"
+    );
     assert!(
         h.store
             .notice
             .get_untracked()
             .unwrap_or_default()
-            .contains("screen jumps (1-9, 0, A, N) work in browse mode"),
+            .contains("screen jumps (1-9, 0, N, R, S) work in browse mode"),
         "wizard digit refusal carries its reason"
     );
 }
@@ -2086,39 +2123,30 @@ fn users_and_entities_render_with_admin_gate() {
         .entities
         .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
     let s = h.turns(2);
+    // DESIGN-v2 §2: ONE table — users and entities, a kind per row.
     assert!(s.contains("alice"), "user row:\n{s}");
-    assert!(s.contains("admin, user"), "roles cell:\n{s}");
-    // The partition (operator complaint 2026-07-25): entity principals
-    // NEVER render as user rows — they are counted in the teaching
-    // line and managed through the entities lane (rotate/delete cannot
-    // target what is not rendered).
+    assert!(s.contains("Admin"), "kind chip of the admin:\n{s}");
+    assert!(
+        s.contains("testor") && s.contains("Entity"),
+        "entity row:\n{s}"
+    );
+    // Entity principals of the registry are never shown as USERS: the
+    // gateway lists each entity once, as an entity.
     assert!(
         !s.contains("castorp") && !s.contains("hypnosp"),
-        "entity principals hidden from the users table:\n{s}"
+        "no registry entity principal as a user row:\n{s}"
     );
-    assert!(
-        s.contains("2 entities also hold their own access tokens"),
-        "partition teaching line with count:\n{s}"
-    );
-    assert!(s.contains("Testor"), "entity row:\n{s}");
-    assert!(s.contains("asleep"), "entity state:\n{s}");
-    assert!(s.contains("q:3 p:0 i:7"), "drives summary:\n{s}");
-    // Entities are summoned, talked to and managed here (web parity) —
-    // the title teaches the keys.
-    assert!(s.contains("m = manage"), "manage affordance:\n{s}");
-    assert!(s.contains("n = summon"), "summon affordance:\n{s}");
-    assert!(s.contains("c = talk"), "talk affordance:\n{s}");
-    // Selecting a row keeps its manage snapshot warm; the inline strip
-    // became the right Drawer — `i` teaches and toggles it.
+    assert!(s.contains("kind:"), "kind legend:\n{s}");
+    // Selecting the entity row keeps its manage snapshot warm; `i`
+    // toggles the inspector drawer.
+    h.select_account("testor");
+    let s = h.turns(2);
     assert!(
         h.find_cmd(|c| matches!(c, Cmd::LoadEntityDetail { .. }))
             .is_some(),
         "selection-driven detail load fired"
     );
-    assert!(
-        s.contains("i inspects the selected entity"),
-        "drawer teaching line:\n{s}"
-    );
+    assert!(s.contains("m manage"), "the entity row's keys:\n{s}");
     h.type_text("i");
     let s = h.turns(3);
     assert!(s.contains("Entity inspector"), "drawer open:\n{s}");
@@ -2145,7 +2173,7 @@ fn forbidden_users_render_admin_hint() {
     h.connect_as_admin();
     h.goto_screen(3);
     h.store
-        .users
+        .accounts
         .set(Loadable::Failed(abstractgateway_console::api::ApiError {
             kind: abstractgateway_console::api::ApiErrorKind::Forbidden,
             message: "admin role required".into(),
@@ -2268,6 +2296,7 @@ fn entity_manage_menu_state_flow_sends_post() {
         .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
     h.turns(2);
 
+    h.select_account("testor");
     // m over the selected entity opens the manage menu.
     h.type_text("m");
     let s = h.turns(2);
@@ -2322,6 +2351,8 @@ fn entity_screen(h: &mut Harness) {
         .entities
         .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
     h.turns(2);
+    // The one Accounts table: entity keys act on the selected row.
+    h.select_account("testor");
 }
 
 /// Recorded `/entities/templates` + `/creation-defaults` shapes.
@@ -2549,7 +2580,7 @@ fn talk_opens_a_visit_sends_turns_and_renders_replies() {
     h.press_escape();
     let s = h.turns(2);
     assert!(!s.contains("Talk — Testor"), "Esc hides the panel:\n{s}");
-    assert!(s.contains("n = summon"), "still on Users & Entities:\n{s}");
+    assert!(s.contains("Accounts — people"), "still on Accounts:\n{s}");
     assert_eq!(
         h.store.entity_chat.get_untracked().chat_id.as_deref(),
         Some("chat_42"),
@@ -2616,6 +2647,7 @@ fn manage_menu_opens_the_identity_card() {
 fn voice_audition_sends_the_unsaved_selection_and_shows_the_file() {
     let mut h = harness_sized(Size::new(110, 40));
     entity_screen(&mut h);
+    h.select_account("testor");
     h.type_text("m");
     h.turns(2);
     // state → substrate → voice.
@@ -2688,6 +2720,7 @@ fn own_time_start_with_blank_fields_sends_the_web_body() {
         .entities
         .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
     h.turns(2);
+    h.select_account("testor");
     h.type_text("m");
     h.turns(2);
     for _ in 0..4 {
@@ -2728,6 +2761,7 @@ fn entity_tool_policy_editor_saves_changed_phases_only() {
     h.turns(2);
 
     // Open the manage menu, walk down to "Tool policy", Enter.
+    h.select_account("testor");
     h.type_text("m");
     h.turns(2);
     for _ in 0..5 {
@@ -3233,12 +3267,12 @@ fn browse_mode_number_keys_jump_screens() {
     h.goto_screen(1);
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.turns(2);
+    h.type_text("2");
+    h.turns(2);
+    assert_eq!(h.ui.screen.get_untracked(), 3, "2 → accounts screen");
     h.type_text("4");
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 3, "4 → users screen");
-    h.type_text("5");
-    h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 4, "5 → runtimes screen");
+    assert_eq!(h.ui.screen.get_untracked(), 4, "4 → runtimes screen");
     // In wizard mode the number keys must NOT jump (gating).
     h.ui.wizard.set(true);
     h.ui.screen.set(2);
@@ -3776,9 +3810,11 @@ fn title_bar_and_separator_survive_content_pressure() {
                 lines[0].contains("AbstractGateway Console"),
                 "title bar at row 0 (wizard={wizard} screen={screen}):\n{scr}"
             );
+            // Row 1 separates the title from the tabs: the screen
+            // list's group line (DESIGN-v2 §1), never a component.
             assert!(
-                lines[1].trim().is_empty(),
-                "separator line under the title (wizard={wizard} screen={screen}):\n{scr}"
+                lines[1].contains("ACCOUNTS 2 · WORK 3-5"),
+                "group line under the title (wizard={wizard} screen={screen}):\n{scr}"
             );
             // With 8 tabs the bar OVERFLOWS at 110 cols and windows
             // (sticky around the active tab) — so the chrome check is
@@ -3803,9 +3839,9 @@ fn footer_leads_with_the_screen_keys_at_80x24() {
     for (screen, lead) in [
         (1usize, "a add connection"),
         (2, "Enter/e edit route"),
-        (3, "a add user"),
+        (3, "space Active"),
         (4, "Enter inspect runtime"),
-        (5, "t show/hide drafts"),
+        (5, "Tab workflows ⇄ defaults"),
         (7, "u unload"),
     ] {
         h.ui.screen.set(screen);
@@ -4072,8 +4108,8 @@ fn first_run_screens_survive_tight_height() {
     h.goto_screen(3);
     let s = h.turns(3);
     assert!(
-        s.contains("no entities yet — n summons the first one"),
-        "entities empty-state renders (not crushed):\n{s}"
+        s.contains("alice") && s.contains("kind:"),
+        "the accounts table and its legend render (not crushed):\n{s}"
     );
 
     // Review with one journal entry (the operator who did the wizard
@@ -4135,9 +4171,9 @@ fn wizard_steps_carry_a_goal_line() {
         (2, "Step 5/8", "a applies the recommended set"),
         (ui::SCREEN_APPS, "Step 7/8", "i installs a browser app"),
         (6, "Step 8/8", "run one real test"),
-        (3, "Step goal:", "mint a token"),
+        (3, "Step goal:", "a creates a user"),
         (4, "Step goal:", "storage inventory"),
-        (5, "Step goal:", "the registered workflows"),
+        (5, "Step goal:", "per-app defaults"),
         (7, "Step goal:", "live models"),
     ] {
         h.ui.screen.set(screen);
@@ -4229,34 +4265,9 @@ fn connection_screen_fits_at_macos_default_80x24() {
 }
 
 /// REG-2 (cycle-3): the entity-partition line is grammatical at n>=2.
-#[test]
-fn entity_partition_line_plural_grammar() {
-    let mut h = harness();
-    h.connect_as_admin();
-    h.goto_screen(3);
-    h.store
-        .users
-        .set(Loadable::Ready(users_from_payload(&json!({
-            "users": [
-                {"user_id": "a", "roles": ["entity"], "principal_kind": "entity"},
-                {"user_id": "b", "roles": ["entity"], "principal_kind": "entity"},
-            ]
-        }))));
-    let s = h.turns(2);
-    assert!(
-        s.contains("2 entities also hold their own access tokens"),
-        "plural grammar:\n{s}"
-    );
-    assert!(
-        !s.contains("hold its own"),
-        "no singular-possessive at n>=2:\n{s}"
-    );
-}
-
 // =======================================================================
 // Double-click-to-edit (COMPLAINT A) + runtime→runs follow (COMPLAINT B)
 // =======================================================================
-
 use abstractgateway_console::store::{RunScope, RunsData};
 
 /// SGR mouse press+release at 1-based cell (x, y).
@@ -4685,7 +4696,7 @@ fn double_click_opens_user_editor() {
         "double-click selects then opens the editor:\n{s}"
     );
     assert_eq!(
-        h.ui.user_sel.get_untracked(),
+        h.ui.account_sel.get_untracked(),
         1,
         "first press moved the selection to the clicked row"
     );
@@ -4705,7 +4716,8 @@ fn double_click_opens_entity_manage_menu() {
         .entities
         .set(Loadable::Ready(entities_from_payload(&entities_fixture())));
     let s = h.turns(2);
-    let y = find_row(&s, "Testor");
+    // The Accounts row names the entity by its id (the slug).
+    let y = find_row(&s, "testor");
     double_click_at(&mut h, 4, y);
     let s = h.turns(3);
     assert!(
@@ -7280,9 +7292,13 @@ fn digit_8_jumps_to_the_models_tab() {
     h.store.profiles.set(Loadable::Ready(profiles_fixture()));
     h.store.providers.set(Loadable::Ready(providers_fixture()));
     h.turns(2);
-    h.type_text("8");
+    h.type_text("0");
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 7, "digit 8 → screen index 7");
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        7,
+        "digit 0 → Resources (screen index 7)"
+    );
     // Entering the tab arms the generation-gated poll chain: exactly
     // one first poll, under the CURRENT generation.
     let gen_now = h.store.host_poll_gen.get_untracked();
@@ -7300,9 +7316,9 @@ fn digit_8_jumps_to_the_models_tab() {
     }
     // Leaving the tab bumps the generation — the chain's next result
     // (and its reschedule) dies on the worker's UI-thread gate.
-    h.type_text("4");
+    h.type_text("2");
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 3, "digit 4 still → users");
+    assert_eq!(h.ui.screen.get_untracked(), 3, "digit 2 → accounts");
     assert!(
         h.store.host_poll_gen.get_untracked() > gen_now,
         "tab exit bumps the poll generation"
@@ -7322,7 +7338,7 @@ fn footer_hints_stay_in_lockstep_with_screens() {
     for (screen, needle) in [
         (1usize, "add connection"),
         (2, "edit route"),
-        (3, "rotate token"),
+        (3, "l logs"),
         (4, "inspect runtime"),
         (5, "drafts"),
         (6, "run the test"),
@@ -7615,14 +7631,14 @@ impl Harness {
     }
 
     fn open_models(&mut self) -> String {
-        self.key(b"9");
+        self.key(b"7");
         self.settle_until("the catalog rows", |s| {
             s.contains("Qwen3 8B") && s.contains("Apple M5 Max")
         })
     }
 
     fn open_engines(&mut self) -> String {
-        self.key(b"0");
+        self.key(b"8");
         self.settle_until("the engines table", |s| {
             s.contains("Ollama") && s.contains("llama.cpp")
         })
@@ -7656,11 +7672,11 @@ impl Harness {
 }
 
 #[test]
-fn models_tab_9_renders_the_shared_catalog_once() {
+fn models_tab_7_renders_the_shared_catalog_once() {
     let mut h = harness_sized(Size::new(150, 40));
     h.browse_connected();
     let s = h.open_models();
-    assert!(s.contains("9 Models"), "tab 9 is Models:\n{s}");
+    assert!(s.contains("7 Models"), "tab 7 is Models:\n{s}");
     assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_CATALOG);
     // Contract G vocabulary, rendered by the shared screen.
     for word in ["fits", "too large", "not downloaded", "installed"] {
@@ -7682,7 +7698,7 @@ fn models_tab_9_renders_the_shared_catalog_once() {
     // Leave and come back: no re-read. `r` re-reads.
     h.key(b"6");
     h.turns(3);
-    h.key(b"9");
+    h.key(b"7");
     h.turns(3);
     assert_eq!(h.mock.count("catalog"), 1);
     h.key(b"r");
@@ -7700,12 +7716,12 @@ fn models_tab_9_renders_the_shared_catalog_once() {
 }
 
 #[test]
-fn zero_jumps_to_engines_in_browse_and_is_refused_in_the_wizard() {
+fn eight_jumps_to_engines_in_browse_and_is_refused_in_the_wizard() {
     let mut h = harness_sized(Size::new(150, 40));
     h.browse_connected();
     let s = h.open_engines();
     assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_ENGINES);
-    assert!(s.contains("0 Engines"), "{s}");
+    assert!(s.contains("8 Engines"), "{s}");
     assert!(
         s.contains("gateway host studio"),
         "the engines screen names the gateway host:\n{s}"
@@ -7716,11 +7732,11 @@ fn zero_jumps_to_engines_in_browse_and_is_refused_in_the_wizard() {
     h.ui.wizard.set(true);
     h.ui.screen.set(1);
     h.turns(2);
-    h.key(b"0");
+    h.key(b"8");
     let s = h.turns(2);
     assert_eq!(h.ui.screen.get_untracked(), 1, "wizard does not jump");
     assert!(
-        s.contains("screen jumps (1-9, 0, A, N) work in browse mode"),
+        s.contains("screen jumps (1-9, 0, N, R, S) work in browse mode"),
         "{s}"
     );
 }
@@ -9546,7 +9562,7 @@ fn a_choice_dialog_covers_the_screen_while_open() {
     h.goto_screen(2);
     h.store.routes.set(Loadable::Ready(routes_fixture()));
     let s = h.turns(3);
-    assert!(s.contains("Routes — which provider"), "{s}");
+    assert!(s.contains("Multimodal — which provider"), "{s}");
     h.key(b"a");
     let s = h.turns(3);
     assert!(
@@ -9554,13 +9570,13 @@ fn a_choice_dialog_covers_the_screen_while_open() {
         "the dialog:\n{s}"
     );
     assert!(
-        !s.contains("Routes — which provider") && !s.contains("input.video"),
+        !s.contains("Multimodal — which provider") && !s.contains("input.video"),
         "the screen does not show around/through the dialog:\n{s}"
     );
     h.press_escape();
     let s = h.turns(3);
     assert!(
-        s.contains("Routes — which provider"),
+        s.contains("Multimodal — which provider"),
         "the screen is back:\n{s}"
     );
 }
@@ -9596,14 +9612,14 @@ fn the_current_screen_key_keeps_the_screen_keys_live() {
     let mut h = harness_sized(Size::new(80, 24));
     h.connect_as_admin();
     h.goto_screen(1);
-    h.key(b"8");
+    h.key(b"0");
     h.turns(2);
     h.store
         .host_state
         .set(Loadable::Ready(host_state_fixture()));
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 7, "8 jumps to Resources");
-    h.key(b"8");
+    assert_eq!(h.ui.screen.get_untracked(), 7, "0 jumps to Resources");
+    h.key(b"0");
     h.turns(2);
     h.type_text("w");
     let s = h.turns(3);
@@ -9925,26 +9941,34 @@ const LEFT: &[u8] = b"\x1b[D";
 fn arrows_switch_the_global_tab_and_wrap() {
     let mut h = harness();
     h.connect_as_admin();
-    h.goto_screen(ui::SCREEN_PROVIDERS);
-    h.store.profiles.set(Loadable::Ready(profiles_fixture()));
-    h.store.providers.set(Loadable::Ready(providers_fixture()));
+    // The walk follows the SHOWN order (DESIGN-v2 §1): Connection,
+    // Accounts, Workflows, … Setup.
+    h.goto_screen(ui::SCREEN_USERS);
     h.turns(2);
     h.key(RIGHT);
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 2, "Right → the next screen");
-    h.key(LEFT);
-    h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 1, "Left → the previous screen");
-    h.key(LEFT);
-    h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), 0, "Left → Connection");
-    // Connected: the URL field does not hold the caret, so the arrow is
-    // the root's — Left on the first screen wraps to the last.
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_WORKFLOWS,
+        "Right → the next screen"
+    );
     h.key(LEFT);
     h.turns(2);
     assert_eq!(
         h.ui.screen.get_untracked(),
-        ui::SCREENS.len() - 1,
+        ui::SCREEN_USERS,
+        "Left → the previous screen"
+    );
+    h.key(LEFT);
+    h.turns(2);
+    assert_eq!(h.ui.screen.get_untracked(), 0, "Left → Connection");
+    // Connected: the URL field does not hold the caret, so the arrow is
+    // the root's — Left on the first screen wraps to the last (Setup).
+    h.key(LEFT);
+    h.turns(2);
+    assert_eq!(
+        h.ui.screen.get_untracked(),
+        ui::SCREEN_WELCOME,
         "Left on the first screen wraps to the last"
     );
     h.key(RIGHT);
@@ -9964,24 +9988,25 @@ fn right_walks_every_screen_in_order() {
     let mut h = harness();
     h.connect_as_admin();
     h.goto_screen(0);
-    for step in 1..=ui::SCREENS.len() {
+    let order = ui::NAV_ORDER;
+    for step in 1..=order.len() {
         h.key(RIGHT);
         h.turns(3);
         assert_eq!(
             h.ui.screen.get_untracked(),
-            step % ui::SCREENS.len(),
+            order[step % order.len()],
             "Right from {} must reach the next screen",
-            ui::SCREENS[step - 1]
+            ui::SCREENS[order[step - 1]]
         );
     }
-    for step in (0..ui::SCREENS.len()).rev() {
+    for step in (0..order.len()).rev() {
         h.key(LEFT);
         h.turns(3);
         assert_eq!(
             h.ui.screen.get_untracked(),
-            step,
+            order[step],
             "Left walks back through {}",
-            ui::SCREENS[step]
+            ui::SCREENS[order[step]]
         );
     }
 }
@@ -10019,7 +10044,7 @@ fn arrows_move_the_caret_in_a_focused_text_field() {
     h.turns(2);
     assert_eq!(
         h.ui.screen.get_untracked(),
-        1,
+        ui::SCREEN_USERS,
         "with no field focused, Right switches the tab"
     );
 }
@@ -10081,7 +10106,7 @@ fn arrows_stay_with_a_focused_tabs_bar() {
     h.turns(2);
     assert_eq!(
         h.ui.screen.get_untracked(),
-        ui::SCREEN_WORKFLOWS,
+        ui::SCREEN_APPS,
         "off the tabs bar, Right switches the global tab"
     );
 }
@@ -10130,7 +10155,7 @@ fn arrows_do_not_switch_the_screen_behind_a_modal() {
     h.press_escape();
     h.key(RIGHT);
     h.turns(2);
-    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_ROUTES);
+    assert_eq!(h.ui.screen.get_untracked(), ui::SCREEN_CATALOG);
 }
 
 /// The footer teaches the arrows beside Ctrl+P/N in browse mode.
@@ -10248,18 +10273,13 @@ fn my_email_page_reads_in_the_design_order_with_the_design_words() {
     assert!(at("│Email address") < at("│Mailbox"), "{s}");
     assert!(at("│Mailbox") < at("│Notifications"), "{s}");
     assert!(at("│Notifications") < at("[ ] Agent email tools"), "{s}");
-    assert!(
-        at("[ ] Agent email tools") < at("│ Advanced ▸  recipient"),
-        "{s}"
-    );
+    assert!(at("[ ] Agent email tools") < at("│ Advanced ▸  who"), "{s}");
     assert!(
         s.contains("Where sign-in codes and notifications go"),
         "{s}"
     );
     assert!(
-        s.contains(
-            "Connected as me@example.test · Other (address + password) · checked 2026-09-30 00:00"
-        ),
+        s.contains("Connected as me@example.test · IMAP · checked 2026-09-30 00:00"),
         "the connected status line:\n{s}"
     );
     assert!(s.contains("Test") && s.contains("Disconnect"), "{s}");
@@ -10379,65 +10399,143 @@ fn my_email_agent_tools_reason_follows_the_admin() {
     assert_eq!(e.notify_job_failed, None);
 }
 
+/// The address is asked ONCE: with no email address saved and no mailbox,
+/// the Email address field is not shown — the IMAP pane's Mailbox address
+/// is the only address field (connecting makes it your email address).
 #[test]
-fn my_email_other_tab_asks_address_and_password_and_discovers_the_servers() {
+fn my_email_asks_the_address_once_when_none_is_saved() {
+    let mut h = harness_sized(Size::new(140, 70));
+    let mut v = my_email_not_connected();
+    v["registered_address"] = json!("");
+    v["email_address"] = json!("");
+    let s = open_my_email(&mut h, &v);
+    assert!(
+        s.contains("Your email address is the mailbox you connect below"),
+        "{s}"
+    );
+    assert!(s.contains("Mailbox address"), "the one address field:\n{s}");
+    assert!(!s.contains("Mailbox account:"), "{s}");
+    assert_eq!(
+        s.matches("Email address").count(),
+        0,
+        "no separate Email address field:\n{s}"
+    );
+}
+
+/// DESIGN-v2 §3: IMAP is the first tab and the default; its server fields
+/// are always shown, filled with the standard values for the address's
+/// domain at once, then with discovery's `defaults` — never over an edit.
+#[test]
+fn my_email_imap_tab_is_first_default_and_shows_prefilled_servers() {
     use abstractgateway_console::store::email::Discovery;
     use abstractgateway_console::worker::operator::EmailAction;
-    let mut h = harness_sized(Size::new(140, 60));
+    let mut h = harness_sized(Size::new(140, 70));
     let s = open_my_email(&mut h, &my_email_not_connected());
+    let tabs = s
+        .lines()
+        .find(|l| l.contains("IMAP") && l.contains("Google") && l.contains("Microsoft"))
+        .unwrap_or_else(|| panic!("the three tabs on one line:\n{s}"));
     assert!(
-        s.contains("Google") && s.contains("Microsoft") && s.contains("Other"),
-        "the three tabs:\n{s}"
+        tabs.find("IMAP") < tabs.find("Google") && tabs.find("Google") < tabs.find("Microsoft"),
+        "IMAP first: {tabs}"
     );
-    assert!(s.contains("Sign in with Google"), "{s}");
-    let _ = h.drain_cmds();
-    click_text(&mut h, &s, "Other");
-    let s = h.turns(3);
-    match email_action(&mut h) {
-        Some(EmailAction::Discover(a)) => assert_eq!(a, "me@fastmail.test"),
-        other => panic!("the Other tab looks the servers up, got {other:?}"),
-    }
-    assert!(s.contains("Password"), "{s}");
+    assert!(!s.contains("Other"), "no Other tab:\n{s}");
     assert!(
-        s.contains("Use an app password if your provider needs one."),
+        !s.contains("Sign in with Google"),
+        "IMAP is the default pane:\n{s}"
+    );
+    // The address is asked ONCE: your email address is set, so the mailbox
+    // signs in as it — one line, and Ctrl+U reveals the field for another
+    // account.
+    assert!(
+        s.contains("Mailbox account: me@fastmail.test — use a different account (Ctrl+U)"),
         "{s}"
     );
     assert!(
-        !s.contains("IMAP server"),
-        "Server settings stay folded:\n{s}"
+        !s.contains("Mailbox address"),
+        "no second address field:\n{s}"
     );
+    h.key(b"\x15"); // Ctrl+U
+    let revealed = h.turns(2);
+    assert!(revealed.contains("Mailbox address"), "{revealed}");
+    assert!(!revealed.contains("Mailbox account:"), "{revealed}");
+    h.key(b"\x15");
+    let s = h.turns(2);
+    assert!(s.contains("Mailbox account: me@fastmail.test"), "{s}");
+    // Every field visible, pre-filled with the standard values.
+    assert!(
+        s.contains("Incoming mail (IMAP)") && s.contains("Outgoing mail (SMTP)"),
+        "{s}"
+    );
+    assert!(
+        s.contains("imap.fastmail.test") && s.contains("smtp.fastmail.test"),
+        "{s}"
+    );
+    assert!(s.contains("993") && s.contains("465"), "{s}");
+    assert!(
+        s.contains(
+            "Standard settings for fastmail.test — change them if your provider uses others."
+        ),
+        "{s}"
+    );
+    // Never a user name, a display name, or an Edit/Hide disclosure.
+    for banned in [
+        "User name",
+        "Display name",
+        "Server settings",
+        " Edit ",
+        "Hide",
+    ] {
+        assert!(!s.contains(banned), "{banned:?} is gone:\n{s}");
+    }
+    assert!(
+        s.contains("Ctrl+O  My provider uses a different login name"),
+        "{s}"
+    );
+    use abstractgateway_console::worker::operator::OpCmd;
+    match h.find_cmd(|c| {
+        is_op(c, |o| {
+            matches!(
+                o,
+                OpCmd::Email {
+                    action: EmailAction::Discover(_),
+                    ..
+                }
+            )
+        })
+    }) {
+        Some(Cmd::Operator(OpCmd::Email {
+            action: EmailAction::Discover(a),
+            ..
+        })) => {
+            assert_eq!(a, "me@fastmail.test")
+        }
+        other => panic!("the IMAP pane looks the servers up, got {other:?}"),
+    }
+    // Discovery's defaults replace the standard values; its sentence shows.
     h.store.op.email_discovery.set(Some((
         "me@fastmail.test".into(),
         Loadable::Ready(Discovery::from_value(&json!({
-            "address": "me@fastmail.test", "domain": "fastmail.test", "found": true, "source": "known",
-            "imap": {"host": "imap.fastmail.com", "port": 993, "security": "ssl"},
-            "smtp": {"host": "smtp.fastmail.com", "port": 465, "security": "ssl"},
-            "username": "me@fastmail.test"
+            "address": "me@fastmail.test", "found": true,
+            "defaults": {
+                "imap": {"host": "imap.fastmail.com", "port": 993, "security": "ssl"},
+                "smtp": {"host": "smtp.fastmail.com", "port": 587, "security": "starttls"},
+                "login": "me@fastmail.test", "source": "discovered", "provider": "Fastmail",
+                "message": "Settings found for fastmail.test."
+            }
         }))),
     )));
     let s = h.turns(3);
-    assert!(
-        s.contains("imap.fastmail.com · 993 · SSL  ·  smtp.fastmail.com · 465 · SSL"),
-        "the discovery summary:\n{s}"
-    );
-    assert!(s.contains("Edit"), "{s}");
-    // ONE Connect: refused without a password, before anything is sent.
-    click_text(&mut h, &s, "│ Connect ");
-    let s = h.turns(2);
-    assert!(s.contains("Type the password"), "{s}");
-    assert!(email_action(&mut h).is_none());
-    // With the password: address + password only (the gateway discovers).
+    assert!(s.contains("Settings found for fastmail.test."), "{s}");
+    assert!(s.contains("smtp.fastmail.com") && s.contains("587"), "{s}");
+    assert!(s.contains("STARTTLS"), "{s}");
+    // Connect sends the servers shown; no username, no display name.
     let pw_row = s
         .lines()
-        .position(|l| l.contains("Password"))
+        .position(|l| l.contains("Password") && l.contains('▐'))
         .expect("password row");
-    let pw_col = s
-        .lines()
-        .nth(pw_row)
-        .unwrap()
-        .find('▐')
-        .map(|c| s.lines().nth(pw_row).unwrap()[..c].chars().count())
-        .unwrap();
+    let pw_line = s.lines().nth(pw_row).unwrap();
+    let pw_col = pw_line[..pw_line.find('▐').unwrap()].chars().count();
     h.key(
         format!(
             "\x1b[<0;{};{}M\x1b[<0;{};{}m",
@@ -10451,48 +10549,219 @@ fn my_email_other_tab_asks_address_and_password_and_discovers_the_servers() {
     h.turns(1);
     h.type_text("app-pw");
     let s = h.turns(2);
+    let _ = h.drain_cmds();
     click_text(&mut h, &s, "│ Connect ");
     h.turns(2);
     match email_action(&mut h) {
         Some(EmailAction::Connect(body)) => {
             assert_eq!(body.0["address"], json!("me@fastmail.test"));
-            assert_eq!(body.0["password"], json!("app-pw"));
-            assert!(
-                body.0.get("imap").is_none() && body.0.get("smtp").is_none(),
-                "{:?}",
-                body.0.get("imap")
-            );
+            assert_eq!(body.0["imap"]["host"], json!("imap.fastmail.com"));
+            assert_eq!(body.0["smtp"]["port"], json!(587));
+            assert_eq!(body.0["smtp"]["security"], json!("starttls"));
+            assert!(body.0.get("username").is_none(), "{:?}", body.0);
+            assert!(body.0.get("display_name").is_none(), "{:?}", body.0);
         }
         other => panic!("PUT /me/email, got {other:?}"),
     }
 }
 
+/// An edited server field survives discovery's answer; a reply without
+/// `defaults` says so (no silent fallback to older fields).
 #[test]
-fn my_email_server_settings_open_by_themselves_when_discovery_finds_nothing() {
-    use abstractgateway_console::store::email::Discovery;
-    let mut h = harness_sized(Size::new(140, 60));
-    let mut v = my_email_not_connected();
-    v["auth_kind"] = json!("password");
-    open_my_email(&mut h, &v);
+fn my_email_discovery_never_overwrites_an_edit_and_missing_defaults_are_said() {
+    use abstractgateway_console::store::email::{Discovery, DISCOVERY_NO_DEFAULTS};
+    let mut h = harness_sized(Size::new(140, 70));
+    let s = open_my_email(&mut h, &my_email_not_connected());
+    // Edit the IMAP server: click it, clear, type.
+    let (row, l) = s
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("imap.fastmail.test"))
+        .expect("imap host field");
+    let col = l[..l.find("imap.fastmail.test").unwrap()].chars().count();
+    h.key(
+        format!(
+            "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+            col + 3,
+            row + 1,
+            col + 3,
+            row + 1
+        )
+        .as_bytes(),
+    );
+    h.turns(1);
+    for _ in 0..30 {
+        h.key(b"\x7f");
+    }
+    h.key(b"\x1b[F");
+    for _ in 0..30 {
+        h.key(b"\x7f");
+    }
+    h.type_text("mail.mine.test");
+    h.turns(2);
     h.store.op.email_discovery.set(Some((
         "me@fastmail.test".into(),
         Loadable::Ready(Discovery::from_value(&json!({
-            "address": "me@fastmail.test", "domain": "fastmail.test", "found": false, "tried": []
+            "address": "me@fastmail.test", "found": true,
+            "defaults": {
+                "imap": {"host": "imap.fastmail.com", "port": 993, "security": "ssl"},
+                "smtp": {"host": "smtp.fastmail.com", "port": 465, "security": "ssl"},
+                "login": "me@fastmail.test", "source": "discovered", "message": "Settings found for fastmail.test."
+            }
         }))),
     )));
     let s = h.turns(3);
+    assert!(s.contains("mail.mine.test"), "the edit stays:\n{s}");
+    assert!(!s.contains("imap.fastmail.com"), "{s}");
     assert!(
-        s.contains("Couldn't find the mail servers for fastmail.test. Enter them here."),
+        s.contains("smtp.fastmail.com"),
+        "unedited fields fill:\n{s}"
+    );
+    h.store.op.email_discovery.set(Some((
+        "me@fastmail.test".into(),
+        Loadable::Ready(Discovery::from_value(
+            &json!({"address": "me@fastmail.test", "found": false}),
+        )),
+    )));
+    let s = h.turns(3);
+    assert!(s.contains(&DISCOVERY_NO_DEFAULTS[..60]), "{s}");
+}
+
+/// Ctrl+O reveals ONE Login field (never shown by default); Connect sends
+/// `username` only when it was changed there.
+#[test]
+fn my_email_different_login_is_a_key_and_sends_username_only_when_edited() {
+    use abstractgateway_console::worker::operator::EmailAction;
+    let mut h = harness_sized(Size::new(140, 70));
+    let s = open_my_email(&mut h, &my_email_not_connected());
+    assert!(!s.contains("Login "), "{s}");
+    h.key(b"\x0f"); // Ctrl+O
+    let s = h.turns(2);
+    let (row, l) = s
+        .lines()
+        .enumerate()
+        .find(|(_, l)| l.contains("Login") && l.contains('▐'))
+        .unwrap_or_else(|| panic!("the Login field:\n{s}"));
+    assert!(l.contains("me@fastmail.test"), "prefilled: {l}");
+    let _ = row;
+    // Ctrl+O again hides it; once more shows it (the caret in it).
+    h.key(b"\x0f");
+    let s = h.turns(2);
+    assert!(
+        s.contains("Ctrl+O  My provider uses a different login name"),
+        "{s}"
+    );
+    h.key(b"\x0f");
+    h.turns(2);
+    // The Login field has the caret (autofocus): type a different login.
+    h.key(b"\x1b[F");
+    for _ in 0..40 {
+        h.key(b"\x7f");
+    }
+    h.type_text("me");
+    h.turns(1);
+    let s = h.turns(2);
+    let pw_row = s
+        .lines()
+        .position(|l| l.contains("Password") && l.contains('▐'))
+        .expect("password row");
+    let pw_line = s.lines().nth(pw_row).unwrap();
+    let pw_col = pw_line[..pw_line.find('▐').unwrap()].chars().count();
+    h.key(
+        format!(
+            "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+            pw_col + 3,
+            pw_row + 1,
+            pw_col + 3,
+            pw_row + 1
+        )
+        .as_bytes(),
+    );
+    h.turns(1);
+    h.type_text("pw");
+    let s = h.turns(2);
+    let _ = h.drain_cmds();
+    click_text(&mut h, &s, "│ Connect ");
+    h.turns(2);
+    match email_action(&mut h) {
+        Some(EmailAction::Connect(body)) => {
+            assert_eq!(body.0["username"], json!("me"), "{:?}\n{s}", body.0)
+        }
+        other => panic!("PUT /me/email, got {other:?}"),
+    }
+}
+
+/// Active sits in the Mailbox card (not Advanced); "Send a test" shows the
+/// gateway's sentence; a different mailbox account is said under the
+/// address; the admin reads the one sentence at the top.
+#[test]
+fn my_email_active_in_the_mailbox_card_and_test_says_the_api_sentence() {
+    use abstractgateway_console::worker::operator::EmailAction;
+    let mut h = harness_sized(Size::new(140, 90));
+    let mut v = my_email_fixture();
+    v["email_address"] = json!("owner@example.test");
+    let s = open_my_email(&mut h, &v);
+    let at = |needle: &str| {
+        s.find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} missing:\n{s}"))
+    };
+    assert!(s.contains("You are also a user of this gateway"), "{s}");
+    assert!(
+        s.contains("Your mailbox is a different account: me@example.test."),
+        "{s}"
+    );
+    assert!(at("│Mailbox") < at("[x] Active"), "{s}");
+    assert!(at("[x] Active") < at("│Notifications"), "{s}");
+    assert!(
+        s.contains("Off pauses watching, sending and notifications"),
+        "{s}"
+    );
+    assert!(!s.contains("Use this mailbox"), "{s}");
+    let _ = h.drain_cmds();
+    click_text(&mut h, &s, "│ Send a test");
+    h.turns(2);
+    let fid = match h.find_cmd(|c| {
+        is_op(c, |o| {
+            matches!(
+                o,
+                abstractgateway_console::worker::operator::OpCmd::Email {
+                    action: EmailAction::TestNotification,
+                    ..
+                }
+            )
+        })
+    }) {
+        Some(Cmd::Operator(abstractgateway_console::worker::operator::OpCmd::Email {
+            form_id,
+            ..
+        })) => form_id.expect("form id"),
+        other => panic!("POST /me/notifications/test, got {other:?}"),
+    };
+    let msg = "Not sent: hourly limit reached (20 of 20 this hour) — resets at 14:05.";
+    h.ui.write_done.set(Some((fid, Err(msg.into()))));
+    let s = h.turns(3);
+    assert!(
+        s.contains("Not sent: hourly limit reached (20 of 20 this hour)"),
+        "{s}"
+    );
+    assert!(!s.contains("rate_limited") && !s.contains("queued"), "{s}");
+    // Advanced: compact sentences, no Use this mailbox, no test button.
+    click_text(&mut h, &s, "│ Advanced ▸  who");
+    let s = h.turns(3);
+    assert!(
+        s.contains("Your agents may send to: only these recipients"),
         "{s}"
     );
     assert!(
-        s.contains("IMAP server") && s.contains("SMTP server"),
-        "opened:\n{s}"
+        s.contains("At most") && s.contains("per hour and") && s.contains("per day."),
+        "{s}"
     );
+    assert!(s.contains("0 sent this hour, 2 today."), "{s}");
+    assert!(s.contains("Watch folder"), "{s}");
 }
 
 #[test]
-fn users_table_has_the_design_columns_and_the_active_switch() {
+fn accounts_table_has_the_design_columns_and_the_active_switch() {
     use abstractgateway_console::worker::operator::{EmailAction, OpCmd};
     let mut h = harness_sized(Size::new(160, 44));
     h.connect_as_admin();
@@ -10507,8 +10776,8 @@ fn users_table_has_the_design_columns_and_the_active_switch() {
         .set(Loadable::Ready(users_from_payload(&users)));
     let s = h.turns(3);
     for col in [
-        "user",
-        "role",
+        "name",
+        "kind",
         "email address",
         "mailbox",
         "runtime",
@@ -10517,12 +10786,11 @@ fn users_table_has_the_design_columns_and_the_active_switch() {
         assert!(s.contains(col), "column {col:?}:\n{s}");
     }
     assert!(!s.contains("enabled"), "no State/enabled column:\n{s}");
-    assert!(s.contains("connected as a@x.io"), "{s}");
+    assert!(s.contains("Connected as a@x.io"), "{s}");
     assert!(
-        s.contains("not allowed for this user"),
-        "the old override:\n{s}"
+        s.contains("[-] You can't deactivate your own account."),
+        "own row unavailable, with the reason:\n{s}"
     );
-    assert!(s.contains("[-] (you)"), "own row unavailable:\n{s}");
     // Own row (admin, selected first): space says why, sends nothing.
     let _ = h.drain_cmds();
     h.type_text(" ");
@@ -10531,7 +10799,9 @@ fn users_table_has_the_design_columns_and_the_active_switch() {
         h.store.notice.get_untracked().as_deref(),
         Some("You can't deactivate your own account.")
     );
-    assert!(h.find_cmd(|c| matches!(c, Cmd::PatchUser { .. })).is_none());
+    assert!(h
+        .find_cmd(|c| matches!(c, Cmd::SetAccountActive { .. }))
+        .is_none());
     // x resets the old override (a one-shot action).
     h.type_text("x");
     h.turns(2);
@@ -10555,17 +10825,22 @@ fn users_table_has_the_design_columns_and_the_active_switch() {
         s.contains("Deactivate alice? They are signed out until you turn"),
         "confirm:\n{s}"
     );
-    assert!(h.find_cmd(|c| matches!(c, Cmd::PatchUser { .. })).is_none());
+    assert!(h
+        .find_cmd(|c| matches!(c, Cmd::SetAccountActive { .. }))
+        .is_none());
     h.key(b"\x1b[A"); // up to "Deactivate" (Cancel is the default)
     h.turns(1);
     h.key(b"\r");
     h.turns(2);
-    match h.find_cmd(|c| matches!(c, Cmd::PatchUser { .. })) {
-        Some(Cmd::PatchUser { user_id, body, .. }) => {
-            assert_eq!(user_id, "alice");
-            assert_eq!(body.0, json!({"enabled": false}));
+    match h.find_cmd(|c| matches!(c, Cmd::SetAccountActive { .. })) {
+        Some(Cmd::SetAccountActive {
+            id, entity, active, ..
+        }) => {
+            assert_eq!(id, "alice");
+            assert!(!entity);
+            assert!(!active);
         }
-        other => panic!("PATCH user, got {other:?}"),
+        other => panic!("PUT /admin/accounts/alice/active, got {other:?}"),
     }
 }
 
@@ -10883,12 +11158,12 @@ fn my_email_advanced_folder_saves_on_enter_and_is_unavailable_without_a_mailbox(
     use abstractgateway_console::worker::operator::EmailAction;
     let mut h = harness_sized(Size::new(140, 90));
     let s = open_my_email(&mut h, &my_email_fixture());
-    click_text(&mut h, &s, "│ Advanced ▸  recipient");
+    click_text(&mut h, &s, "│ Advanced ▸  who");
     let s = h.turns(3);
     let (row, line_txt) = s
         .lines()
         .enumerate()
-        .find(|(_, l)| l.contains("Folder ") && l.contains('▐'))
+        .find(|(_, l)| l.contains("Watch folder ") && l.contains('▐'))
         .unwrap_or_else(|| panic!("an editable Folder field:\n{s}"));
     let field_col = line_txt[..line_txt.find('▐').unwrap()].chars().count();
     let _ = h.drain_cmds();
@@ -10911,7 +11186,11 @@ fn my_email_advanced_folder_saves_on_enter_and_is_unavailable_without_a_mailbox(
     }
     let mut h = harness_sized(Size::new(140, 90));
     let s = open_my_email(&mut h, &my_email_not_connected());
-    click_text(&mut h, &s, "│ Advanced ▸  recipient");
+    click_text(&mut h, &s, "│ Advanced ▸  who");
+    h.turns(2);
+    for _ in 0..30 {
+        h.key(b"\x1b[<65;70;30M");
+    }
     let s = h.turns(3);
-    assert!(s.contains("[-] Folder — Connect a mailbox first."), "{s}");
+    assert!(s.contains("Watch folder — Connect a mailbox first."), "{s}");
 }

@@ -53,8 +53,11 @@ use util::{hints, line, span, span_bold};
 pub const SCREENS: [&str; 13] = [
     "Connection",
     "Providers",
-    "Routes",
-    "Users & Entities",
+    // The Routes screen, renamed (DESIGN-v2 §1): which model serves
+    // which modality.
+    "Multimodal",
+    // Users and entities in one table (DESIGN-v2 §2).
+    "Accounts",
     "Runtimes",
     "Workflows",
     "Review & Test",
@@ -96,8 +99,62 @@ pub const SCREEN_APPS: usize = 10;
 pub const SCREEN_WELCOME: usize = 11;
 /// The Network screen (who can reach the gateway), key `N`.
 pub const SCREEN_NETWORK: usize = 12;
-/// Screens reachable by a digit key (1-9, then 0).
-pub const DIGIT_SCREENS: usize = 10;
+/// The screen list in the order it is SHOWN (DESIGN-v2 §1): Connection
+/// (the terminal's sign-in) above the groups, then ACCOUNTS, WORK, MODELS,
+/// SYSTEM, and Setup at the bottom — the web console's sidebar order.
+/// The `SCREEN_*` indexes stay stable ids (the wizard, tests and the
+/// refresh table key on them); this is only the display/jump order.
+pub const NAV_ORDER: [usize; 13] = [
+    SCREEN_CONNECTION,
+    SCREEN_USERS,
+    SCREEN_WORKFLOWS,
+    SCREEN_RUNTIMES,
+    SCREEN_APPS,
+    SCREEN_PROVIDERS,
+    SCREEN_CATALOG,
+    SCREEN_ENGINES,
+    SCREEN_ROUTES,
+    SCREEN_MODELS,
+    SCREEN_NETWORK,
+    SCREEN_REVIEW,
+    SCREEN_WELCOME,
+];
+
+/// The Runtimes screen (execution planes), key `4`.
+pub const SCREEN_RUNTIMES: usize = 4;
+
+/// The sidebar groups (DESIGN-v2 §1), each with its screens in order.
+/// Connection sits above them and Setup below them (no group).
+pub const NAV_GROUPS: [(&str, &[usize]); 4] = [
+    ("ACCOUNTS", &[SCREEN_USERS]),
+    ("WORK", &[SCREEN_WORKFLOWS, SCREEN_RUNTIMES, SCREEN_APPS]),
+    (
+        "MODELS",
+        &[
+            SCREEN_PROVIDERS,
+            SCREEN_CATALOG,
+            SCREEN_ENGINES,
+            SCREEN_ROUTES,
+        ],
+    ),
+    ("SYSTEM", &[SCREEN_MODELS, SCREEN_NETWORK, SCREEN_REVIEW]),
+];
+
+/// The group caption of screen `i` (None: Connection and Setup).
+pub fn nav_group(i: usize) -> Option<&'static str> {
+    NAV_GROUPS
+        .iter()
+        .find(|(_, members)| members.contains(&i))
+        .map(|(name, _)| *name)
+}
+
+/// Position of screen `i` in [`NAV_ORDER`].
+pub fn nav_pos(i: usize) -> usize {
+    NAV_ORDER.iter().position(|s| *s == i).unwrap_or(0)
+}
+
+/// The keys listed in the footer for the screen jumps.
+pub const SCREEN_KEYS_HINT: &str = "1-9,0,N,R,S";
 
 /// The first-run wizard, in the web guide's order (`console.py`
 /// `FIRST_RUN_STEPS` = welcome → engines → model → apps → done), mapped
@@ -121,17 +178,28 @@ pub const WIZARD_STEPS: [usize; 8] = [
     SCREEN_REVIEW,
 ];
 
-/// The key that jumps to screen `i` in browse mode: 1-9, then 0 for the
-/// tenth (PageHost's own number jump covers 1-9 only), then LETTERS once
-/// the digits are spent — shifted, so no screen's own lowercase verb ever
-/// collides: `A` Apps, `N` Network. None: no jump key (Setup).
+/// The key that jumps to screen `i` in browse mode, following the shown
+/// order (DESIGN-v2 §1): 1-9 then 0 down the list, then LETTERS once the
+/// digits are spent — shifted, so no screen's own lowercase verb ever
+/// collides: `N` Network, `R` Review & Test, `S` Setup.
 pub fn screen_key(i: usize) -> Option<char> {
     match i {
-        SCREEN_APPS => Some('A'),
         SCREEN_NETWORK => Some('N'),
-        9 => Some('0'),
-        0..=8 => char::from_digit(i as u32 + 1, 10),
-        _ => None,
+        SCREEN_REVIEW => Some('R'),
+        SCREEN_WELCOME => Some('S'),
+        _ => match nav_pos(i) {
+            9 => Some('0'),
+            p @ 0..=8 => char::from_digit(p as u32 + 1, 10),
+            _ => None,
+        },
+    }
+}
+
+/// The tab title of screen `i`: its jump key and its name.
+pub fn screen_title(i: usize) -> String {
+    match screen_key(i) {
+        Some(k) => format!("{k} {}", SCREENS[i]),
+        None => SCREENS[i].to_string(),
     }
 }
 
@@ -199,6 +267,10 @@ pub struct UiState {
     pub provider_sel: Signal<usize>,
     pub route_sel: Signal<usize>,
     pub user_sel: Signal<usize>,
+    /// The Accounts table's selection (users + entities, DESIGN-v2 §2).
+    pub account_sel: Signal<usize>,
+    /// The Logs view's filter chip (index into ACTIVITY_FILTERS).
+    pub activity_filter: Signal<usize>,
     pub entity_sel: Signal<usize>,
     pub runtime_sel: Signal<usize>,
     pub workflow_sel: Signal<usize>,
@@ -305,6 +377,8 @@ impl UiState {
             provider_sel: cx.signal(0),
             route_sel: cx.signal(0),
             user_sel: cx.signal(0),
+            account_sel: cx.signal(0),
+            activity_filter: cx.signal(0),
             entity_sel: cx.signal(0),
             runtime_sel: cx.signal(0),
             workflow_sel: cx.signal(0),
@@ -565,6 +639,11 @@ impl Ctx {
                     s.users.set(Loadable::Loading);
                     self.send(Cmd::LoadUsers);
                 }
+                // The one table (DESIGN-v2 §2): users + entities for an
+                // admin; you + the entities you created for a non-admin
+                // (`/me/accounts`, the gateway's RBAC).
+                s.accounts.set(Loadable::Loading);
+                self.send(Cmd::load_accounts_for(s));
                 s.entities.set(Loadable::Loading);
                 // The inspector's detail must honor `r`'s "refreshing
                 // live data" promise too (F17): NotAsked here → the
@@ -597,6 +676,12 @@ impl Ctx {
                 self.send(Cmd::LoadWorkflows {
                     include_drafts: self.ui.workflow_drafts.get_untracked(),
                 });
+                // The "Default workflow per app" section reads the
+                // runtime config's agent-default rows (admin).
+                if s.conn.with_untracked(ConnPhase::is_admin) {
+                    s.runtime_config.set(Loadable::Loading);
+                    self.send(Cmd::LoadRuntimeConfig);
+                }
             }
             6 => {
                 // The inline sandbox feeds its provider picker from
@@ -1156,7 +1241,7 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         .shortcut(KeyChord::plain(Key::F(2)), move |_| {
             docs::open(&ctx_docs, cx)
         });
-    // Screen keys (1-9, 0, A, N) at the root — the ONE jump surface. Wizard:
+    // Screen keys (1-9, 0, N, R, S) at the root — the ONE jump surface. Wizard:
     // a REFUSAL with a reason, so a swallowed digit never reads as a dead
     // app (F3). Browse: the jump. PageHost's own number_jump is off: it
     // re-anchors focus on the host root even when the digit names the
@@ -1169,7 +1254,7 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         root_el = root_el.shortcut(KeyChord::plain(Key::Char(key)), move |_| {
             if ctx_i.ui.wizard.get_untracked() {
                 ctx_i.store.notice.set(Some(
-                    "screen jumps (1-9, 0, A, N) work in browse mode — in the guide Ctrl+N walks, Ctrl+G jumps to a step or leaves"
+                    "screen jumps (1-9, 0, N, R, S) work in browse mode — in the guide Ctrl+N walks, Ctrl+G jumps to a step or leaves"
                         .into(),
                 ));
             } else if ctx_i.ui.screen.get_untracked() != i {
@@ -1217,61 +1302,14 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
                 vec![KeyChord::new(Mods::CTRL, Key::Char('n'))],
             )
         };
-        let c0 = host_ctx.clone();
-        let c1 = host_ctx.clone();
-        let c2 = host_ctx.clone();
-        let c3 = host_ctx.clone();
-        let c4 = host_ctx.clone();
-        let c5 = host_ctx.clone();
-        let c6 = host_ctx.clone();
-        let c7 = host_ctx.clone();
-        let c8 = host_ctx.clone();
-        let c9 = host_ctx.clone();
-        let c10 = host_ctx.clone();
-        let c11 = host_ctx.clone();
-        let c12 = host_ctx.clone();
-        PageHost::new()
-            .page(SCREEN_IDS[0], "1 Connection", move |gcx| {
-                connection::view(gcx, &c0, &theme.get().tokens)
-            })
-            .page(SCREEN_IDS[1], "2 Providers", move |gcx| {
-                providers::view(gcx, &c1, &theme.get().tokens)
-            })
-            .page(SCREEN_IDS[2], "3 Routes", move |gcx| {
-                routes::view(gcx, &c2, &theme.get().tokens)
-            })
-            .page(SCREEN_IDS[3], "4 Users & Entities", move |gcx| {
-                users::view(gcx, &c3, &theme.get().tokens)
-            })
-            .page(SCREEN_IDS[4], "5 Runtimes", move |gcx| {
-                runtimes::view(gcx, &c4, &theme.get().tokens)
-            })
-            .page(SCREEN_IDS[5], "6 Workflows", move |gcx| {
-                workflows::view(gcx, &c5, &theme.get().tokens)
-            })
-            .page(SCREEN_IDS[6], "7 Review & Test", move |gcx| {
-                review::view(gcx, &c6, &theme.get().tokens)
-            })
-            .page(SCREEN_IDS[7], "8 Resources", move |gcx| {
-                models::view(gcx, &c7, &theme.get().tokens)
-            })
-            // AbstractCore's screens, inherited — not re-implemented.
-            .page(SCREEN_IDS[8], "9 Models", move |gcx| {
-                abstractcore_console::screens::catalog(gcx, &c8.screens_for_page())
-            })
-            .page(SCREEN_IDS[9], "0 Engines", move |gcx| {
-                abstractcore_console::screens::engines(gcx, &c9.screens_for_page())
-            })
-            .page(SCREEN_IDS[SCREEN_APPS], "A Apps", move |gcx| {
-                apps::view(gcx, &c10, &theme.get().tokens)
-            })
-            .page(SCREEN_IDS[SCREEN_WELCOME], "Setup", move |gcx| {
-                welcome::view(gcx, &c11, &theme.get().tokens)
-            })
-            .page(SCREEN_IDS[SCREEN_NETWORK], "N Network", move |gcx| {
-                network::view(gcx, &c12, &theme.get().tokens)
-            })
-            .active(active)
+        let mut host = PageHost::new();
+        for i in NAV_ORDER {
+            let c = host_ctx.clone();
+            host = host.page(SCREEN_IDS[i], screen_title(i), move |gcx| {
+                screen_view(gcx, &c, i, &theme.get().tokens)
+            });
+        }
+        host.active(active)
             .number_jump(false)
             .chords(&prev_chords, &next_chords)
             .view(hcx)
@@ -1320,8 +1358,12 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         // (operator ask 2026-07-24: the header must never butt directly
         // against the components below). Pinned like the header — a
         // separator that vanishes under pressure separates nothing.
+        // The row is the screen list's GROUP line (DESIGN-v2 §1): the
+        // captions ACCOUNTS / WORK / MODELS / SYSTEM with their keys, the
+        // current screen's group lit — the web sidebar's groups, on the
+        // one row that already separated the header from the tabs.
         .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
-            line(vec![span(String::new(), theme.get().tokens.text)])
+            group_line(&theme.get().tokens, ui.screen.get())
         }))
         .child(host)
         // Per-step GOAL line (P1-B, cycle-1 UX): the wizard GATED but
@@ -1363,6 +1405,64 @@ pub fn root(cx: Scope, ctx: Ctx) -> View {
         .build()
 }
 
+/// The builder of screen `i`'s page (the PageHost pages, in any order).
+fn screen_view(gcx: Scope, c: &Ctx, i: usize, t: &TokenSet) -> View {
+    match i {
+        SCREEN_CONNECTION => connection::view(gcx, c, t),
+        SCREEN_PROVIDERS => providers::view(gcx, c, t),
+        SCREEN_ROUTES => routes::view(gcx, c, t),
+        SCREEN_USERS => users::view(gcx, c, t),
+        SCREEN_RUNTIMES => runtimes::view(gcx, c, t),
+        SCREEN_WORKFLOWS => workflows::view(gcx, c, t),
+        SCREEN_REVIEW => review::view(gcx, c, t),
+        SCREEN_MODELS => models::view(gcx, c, t),
+        // AbstractCore's screens, inherited — not re-implemented.
+        SCREEN_CATALOG => abstractcore_console::screens::catalog(gcx, &c.screens_for_page()),
+        SCREEN_ENGINES => abstractcore_console::screens::engines(gcx, &c.screens_for_page()),
+        SCREEN_APPS => apps::view(gcx, c, t),
+        SCREEN_WELCOME => welcome::view(gcx, c, t),
+        SCREEN_NETWORK => network::view(gcx, c, t),
+        _ => unreachable!("screen {i} has no page"),
+    }
+}
+
+/// The group line above the tabs: each group caption with its keys
+/// (`ACCOUNTS 2 · WORK 3-5 · MODELS 6-9 · SYSTEM 0 N R · S Setup`), the
+/// current screen's group in the accent colour, the rest muted.
+pub fn group_line(t: &TokenSet, screen: usize) -> View {
+    let current = nav_group(screen);
+    let mut spans = vec![span(" ".to_string(), t.text_faint)];
+    for (gi, (name, members)) in NAV_GROUPS.iter().enumerate() {
+        if gi > 0 {
+            spans.push(span(" · ".to_string(), t.text_faint));
+        }
+        let keys: Vec<char> = members.iter().filter_map(|m| screen_key(*m)).collect();
+        let digits = keys.iter().all(|k| k.is_ascii_digit() && *k != '0');
+        let keys = if digits && keys.len() > 2 {
+            format!("{}-{}", keys[0], keys[keys.len() - 1])
+        } else {
+            keys.iter()
+                .map(char::to_string)
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        if current == Some(*name) {
+            spans.push(span_bold(name.to_string(), t.accent));
+        } else {
+            spans.push(span(name.to_string(), t.text_muted));
+        }
+        spans.push(span(format!(" {keys}"), t.text_faint));
+    }
+    spans.push(span(" · ".to_string(), t.text_faint));
+    let setup = format!("S {}", SCREENS[SCREEN_WELCOME]);
+    if screen == SCREEN_WELCOME {
+        spans.push(span_bold(setup, t.accent));
+    } else {
+        spans.push(span(setup, t.text_muted));
+    }
+    line(spans)
+}
+
 /// The one-line first-run goal for each wizard step (P1-B): what THIS
 /// step is for, and — crucially — when it can be skipped. Kept ≤ ~85
 /// chars (NEW-3) so the operative tail survives at 80-100 cols. The
@@ -1373,11 +1473,11 @@ fn wizard_goal(screen: usize) -> &'static str {
         1 => "optional — cloud providers only need a key: a adds one; e edits; t tests.",
         2 => "your default model — a applies the recommended set; D downloads all of it.",
         SCREEN_USERS => {
-            "mint a token per app/person that connects (a); skip if the admin token is enough."
+            "a creates a user (their token is shown once); skip if the admin token is enough."
         }
         4 => "nothing to configure — storage inventory; glance and continue.",
         SCREEN_WORKFLOWS => {
-            "nothing to configure — the registered workflows; e exports, d/D delete."
+            "optional — Tab to the per-app defaults, Enter picks one; e exports, d/D delete."
         }
         SCREEN_REVIEW => "optionally run one real test (Tab to the prompt, Enter), then Finish.",
         SCREEN_WELCOME => "this computer at a glance — every step is optional; Ctrl+G jumps to a step or leaves.",
@@ -1438,8 +1538,11 @@ fn install_effects(cx: Scope, ctx: &Ctx) {
                 }
                 2 => matches!(store.routes.get(), Loadable::NotAsked),
                 3 => {
+                    // The accounts table loads for everyone (a non-admin's
+                    // is `/me/accounts`); the users registry is admin-only.
                     (matches!(store.users.get(), Loadable::NotAsked)
                         && !store.conn.with(ConnPhase::is_known_non_admin))
+                        || matches!(store.accounts.get(), Loadable::NotAsked)
                         || matches!(store.entities.get(), Loadable::NotAsked)
                 }
                 4 if store.conn.with(ConnPhase::is_known_non_admin) => false,
@@ -1630,23 +1733,24 @@ fn arrow_tab(ctx: &Ctx, dir: isize) {
         ));
         return;
     }
-    let n = SCREENS.len() as isize;
-    let cur = ctx.ui.screen.get_untracked().min(SCREENS.len() - 1) as isize;
-    ctx.ui.screen.set((cur + dir).rem_euclid(n) as usize);
+    let n = NAV_ORDER.len() as isize;
+    let cur = nav_pos(ctx.ui.screen.get_untracked()) as isize;
+    ctx.ui
+        .screen
+        .set(NAV_ORDER[(cur + dir).rem_euclid(n) as usize]);
 }
 
 fn wizard_next(ctx: &Ctx, cx: Scope) {
     if !ctx.ui.wizard.get_untracked() {
         // Browse: ] is simply next tab — a refused step SAYS why (F3).
-        if ctx.ui.screen.get_untracked() + 1 >= SCREENS.len() {
+        let pos = nav_pos(ctx.ui.screen.get_untracked());
+        if pos + 1 >= NAV_ORDER.len() {
             ctx.store
                 .notice
                 .set(Some("already on the last screen".into()));
             return;
         }
-        ctx.ui
-            .screen
-            .update(|s| *s = (*s + 1).min(SCREENS.len() - 1));
+        ctx.ui.screen.set(NAV_ORDER[pos + 1]);
         return;
     }
     let screen = ctx.ui.screen.get_untracked();
@@ -1711,7 +1815,7 @@ fn wizard_back(ctx: &Ctx) {
     let prev = if ctx.ui.wizard.get_untracked() {
         wizard_step_before(screen)
     } else {
-        screen.checked_sub(1)
+        nav_pos(screen).checked_sub(1).map(|p| NAV_ORDER[p])
     };
     match prev {
         Some(p) => ctx.ui.screen.set(p),
@@ -1899,7 +2003,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 globals.push(("Ctrl+P/Esc", "back"));
             } else {
                 globals.push(("q/Ctrl+C", "quit"));
-                globals.push(("1-9,0,A,N", "screens"));
+                globals.push((SCREEN_KEYS_HINT, "screens"));
                 globals.push(("←/→ Ctrl+P/N", "prev/next"));
             }
             globals.push(("Tab", "focus"));
@@ -1928,19 +2032,22 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                     pairs.push(("r", "refresh"));
                 }
                 3 => {
-                    pairs.push(("a", "add user"));
-                    pairs.push(switch::KEY_HINT);
-                    pairs.push(("e", "edit"));
-                    pairs.push(("t", "rotate token"));
-                    pairs.push(("d", "delete"));
+                    // DESIGN-v2 §2: the row's actions, then the header's
+                    // Create user / Create entity.
+                    pairs.push(("space", "Active"));
+                    pairs.push(("@", "email"));
+                    pairs.push(("l", "logs"));
+                    pairs.push(("w", "workspace"));
+                    pairs.push(("t", "rotate"));
                     pairs.push(("m", "manage entity"));
-                    pairs.push(("n", "summon entity"));
+                    pairs.push(("d", "delete"));
+                    pairs.push(("e", "edit user"));
+                    pairs.push(("a", "create user"));
+                    pairs.push(("n", "create entity"));
                     pairs.push(("c", "talk"));
-                    pairs.push(("s", "spark templates"));
                     pairs.push(("i", "inspect"));
+                    pairs.push(("s", "spark templates"));
                     pairs.push(("v", "kept data of deleted users"));
-                    pairs.push(("w", "my workspace policy"));
-                    pairs.push(("@", "my email"));
                     pairs.push(("x", "reset mailbox override"));
                     pairs.push(("r", "refresh"));
                 }
@@ -1966,6 +2073,9 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                 // screen and Review showed none. Pinned by
                 // footer_hints_stay_in_lockstep_with_screens.
                 SCREEN_WORKFLOWS => {
+                    pairs.push(("Tab", "workflows ⇄ defaults"));
+                    pairs.push(("Enter", "pick a default"));
+                    pairs.push(("o", "other workflow types"));
                     pairs.push(("t", "show/hide drafts"));
                     pairs.push(("e", "export .flow"));
                     pairs.push(("d", "delete version"));
@@ -2094,5 +2204,60 @@ pub fn normalize_url(raw: &str) -> String {
         u.to_string()
     } else {
         format!("http://{u}")
+    }
+}
+
+#[cfg(test)]
+mod nav_tests {
+    use super::*;
+
+    /// DESIGN-v2 §1: the keys follow the shown order — 1 Connection,
+    /// 2 Accounts, 3 Workflows, 4 Runtimes, 5 Apps, 6 Providers, 7 Models,
+    /// 8 Engines, 9 Multimodal, 0 Resources, N Network, R Review & Test,
+    /// S Setup — and every screen appears exactly once.
+    #[test]
+    fn screen_list_order_keys_and_groups() {
+        let shown: Vec<String> = NAV_ORDER.iter().map(|i| screen_title(*i)).collect();
+        assert_eq!(
+            shown,
+            [
+                "1 Connection",
+                "2 Accounts",
+                "3 Workflows",
+                "4 Runtimes",
+                "5 Apps",
+                "6 Providers",
+                "7 Models",
+                "8 Engines",
+                "9 Multimodal",
+                "0 Resources",
+                "N Network",
+                "R Review & Test",
+                "S Setup",
+            ]
+        );
+        let mut all = NAV_ORDER.to_vec();
+        all.sort_unstable();
+        assert_eq!(all, (0..SCREENS.len()).collect::<Vec<_>>());
+        assert_eq!(nav_group(SCREEN_USERS), Some("ACCOUNTS"));
+        assert_eq!(nav_group(SCREEN_APPS), Some("WORK"));
+        assert_eq!(nav_group(SCREEN_ROUTES), Some("MODELS"));
+        assert_eq!(nav_group(SCREEN_REVIEW), Some("SYSTEM"));
+        assert_eq!(nav_group(SCREEN_CONNECTION), None);
+        assert_eq!(nav_group(SCREEN_WELCOME), None);
+        // The wizard order is unchanged by the new list.
+        assert_eq!(
+            WIZARD_STEPS,
+            [
+                SCREEN_CONNECTION,
+                SCREEN_WELCOME,
+                SCREEN_ENGINES,
+                SCREEN_PROVIDERS,
+                SCREEN_ROUTES,
+                SCREEN_CATALOG,
+                SCREEN_APPS,
+                SCREEN_REVIEW,
+            ]
+        );
     }
 }

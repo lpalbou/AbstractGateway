@@ -19,6 +19,7 @@ pub mod audio;
 pub mod health;
 /// The About facts: the vendored AbstractFramework identity descriptor.
 pub mod identity;
+pub mod localtime;
 /// Where is the gateway: flag > ABSTRACTGATEWAY_URL > the local gateway
 /// pointer (~/.abstractframework/gateway.json) > http://127.0.0.1:8080.
 pub mod pointer;
@@ -72,7 +73,7 @@ OPTIONS:
 KEYS: Tab focus · Enter activate · Ctrl+N next step · Ctrl+P / Esc back
       (in a text field Esc first releases the caret) ·
       ] / [ next/back (outside text fields) ·
-      1-9,0 screens, A Apps, N Network (browse) ·
+      1-9,0 N R S screens (browse) ·
       Ctrl+G setup guide (browse: reopen; guide: go to any step, leave,
       or Skip setup) ·
       r refresh · F1 / ? About · F2 docs assistant (signed in) ·
@@ -80,19 +81,22 @@ KEYS: Tab focus · Enter activate · Ctrl+N next step · Ctrl+P / Esc back
       restart, quit, update) ·
       Ctrl+L repaint · q / Ctrl+C quit
 
-SCREENS: 1 Connection · 2 Providers · 3 Routes · 4 Users & Entities ·
-         5 Runtimes · 6 Workflows · 7 Review & Test · 8 Resources ·
-         9 Models (browse, download, delete models on the gateway host) ·
-         0 Engines (detect and install Ollama, LM Studio, MLX, llama.cpp) ·
-         A Apps (browser apps, the desktop Assistant, Node.js) ·
-         N Network (who can reach the gateway: saved vs running, the
-         addresses to copy) ·
-         Setup (the guide's welcome step: this computer at a glance)
+SCREENS: 1 Connection (sign in to the gateway)
+  ACCOUNTS  2 Accounts (users and entities in one table)
+  WORK      3 Workflows · 4 Runtimes · 5 Apps (browser apps, the
+            desktop Assistant, Node.js)
+  MODELS    6 Providers · 7 Models (browse, download, delete models on
+            the gateway host) · 8 Engines (detect and install Ollama,
+            LM Studio, MLX, llama.cpp) · 9 Multimodal (which model
+            serves which modality)
+  SYSTEM    0 Resources · N Network (who can reach the gateway) ·
+            R Review & Test
+  S Setup (runs the setup guide again: this computer at a glance)
 
 SCREEN KEYS (the footer lists each screen's keys):
-  Routes     a apply recommended · D download all · C cancel it · p plan
-  Users      n summon entity · c talk · s spark templates ·
-             w my workspace policy
+  Multimodal a apply recommended · D download all · C cancel it · p plan
+  Accounts   space Active · @ email · l activity · m manage entity ·
+             n summon entity · w my workspace policy
   Workflows  i import .flow · L reload from disk
   Apps       Enter/o open · i/u install/update · s/x start/stop · l log ·
              c cancel · t/T terminal · n Node.js · y copy

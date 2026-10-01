@@ -45,7 +45,9 @@ struct Slot {
     name: &'static str,
     failed_unreachable: fn(&Store) -> bool,
     set_loading: fn(&Store),
-    cmd: Option<fn() -> Cmd>,
+    /// The retry read; it gets the store so a role-dependent read
+    /// (Accounts: admin vs `/me`) is chosen exactly like the screen's.
+    cmd: Option<fn(&Store) -> Cmd>,
 }
 
 fn unreachable_failed<T>(l: &Loadable<T>) -> bool {
@@ -70,13 +72,14 @@ fn slots() -> Vec<Slot> {
         };
     }
     vec![
-        domain!(providers, Some(|| Cmd::LoadProviders)),
-        domain!(profiles, Some(|| Cmd::LoadProfiles)),
-        domain!(routes, Some(|| Cmd::LoadRoutes)),
-        domain!(users, Some(|| Cmd::LoadUsers)),
-        domain!(entities, Some(|| Cmd::LoadEntities)),
-        domain!(runtimes, Some(|| Cmd::LoadRuntimes)),
-        domain!(runtime_config, Some(|| Cmd::LoadRuntimeConfig)),
+        domain!(providers, Some(|_| Cmd::LoadProviders)),
+        domain!(profiles, Some(|_| Cmd::LoadProfiles)),
+        domain!(routes, Some(|_| Cmd::LoadRoutes)),
+        domain!(users, Some(|_| Cmd::LoadUsers)),
+        domain!(accounts, Some(Cmd::load_accounts_for)),
+        domain!(entities, Some(|_| Cmd::LoadEntities)),
+        domain!(runtimes, Some(|_| Cmd::LoadRuntimes)),
+        domain!(runtime_config, Some(|_| Cmd::LoadRuntimeConfig)),
         // The runs slot is plane-scoped (it follows the CHOSEN runtime
         // on the Runtimes screen; nothing loads before a choice —
         // operator directive 2026-07-26). This static table cannot
@@ -85,13 +88,13 @@ fn slots() -> Vec<Slot> {
         // the Sessions panel's own effect reloads the chosen plane on
         // the next look, and `r` recovers explicitly.
         domain!(runs, None),
-        domain!(data_homes, Some(|| Cmd::LoadDataHomes { sizes: false })),
+        domain!(data_homes, Some(|_| Cmd::LoadDataHomes { sizes: false })),
         // Artifacts/logs are PARAMETERIZED loads (page + filters), so their
         // retry is not parameter-free — tracked for health, no blind retry
         // command (the runs slot sets the same precedent).
         domain!(artifacts, None),
         domain!(logs, None),
-        domain!(reservations, Some(|| Cmd::LoadReservations)),
+        domain!(reservations, Some(|_| Cmd::LoadReservations)),
         // Action slots: verify + budget-mark, never auto-retry.
         domain!(discover, None),
         domain!(sandbox, None),
@@ -113,6 +116,7 @@ fn track_all(store: &Store) {
     store.profiles.with(|_| ());
     store.routes.with(|_| ());
     store.users.with(|_| ());
+    store.accounts.with(|_| ());
     store.entities.with(|_| ());
     store.runtimes.with(|_| ());
     store.runtime_config.with(|_| ());
@@ -203,7 +207,7 @@ pub fn settle(store: Store, tx: &Sender<Cmd>, gen: u64, outcome: Result<(), ApiE
                 newly_spent.push(slot.name);
                 if let Some(cmd) = slot.cmd {
                     (slot.set_loading)(&store);
-                    let _ = tx.send(cmd());
+                    let _ = tx.send(cmd(&store));
                     retried += 1;
                 }
             }
