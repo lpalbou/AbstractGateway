@@ -237,3 +237,18 @@ def test_a_users_import_lands_in_mine_with_an_owner_stamp(gw, tmp_path):
     assert row["owner"] == {"kind": "user", "user_id": "alice"}
     assert row["metadata"]["owner"]["user_id"] == "alice"
     assert row["source"] == "imported"
+
+
+def test_the_bundle_read_route_says_shipped_and_owner_for_flows_deep_link(gw):
+    """AbstractFlow's `?bundle=<id>&version=<v>` loader reads GET /bundles/{id} (manifest +
+    governance facts) and GET /bundles/{id}/flows/{flow_id} (the VisualFlow)."""
+    c, alice = gw["c"], gw["alice"]
+    shipped = c.get("/api/gateway/bundles/basic-agent", headers=alice)
+    assert shipped.status_code == 200, shipped.text
+    assert shipped.json()["shipped"] is True and shipped.json()["owner"]["kind"] == "gateway"
+    mine = c.get("/api/gateway/bundles/alice-wf?bundle_version=1.0.0", headers=alice)
+    assert mine.status_code == 200, mine.text
+    assert mine.json()["shipped"] is False and mine.json()["owner"] == {"kind": "user", "user_id": "alice"}
+    flow = c.get("/api/gateway/bundles/alice-wf/flows/root?bundle_version=1.0.0", headers=alice)
+    assert flow.status_code == 200 and flow.json()["flow"]["id"] == "root"
+    assert c.get("/api/gateway/bundles/alice-wf", headers=gw["bob"]).status_code == 404, "another user's bundle is not on bob's gateway view"

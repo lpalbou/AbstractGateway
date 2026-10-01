@@ -972,18 +972,22 @@ impl GatewayClient {
         )
     }
 
-    /// Remove one version, or every version when `version` is empty.
-    pub fn delete_bundle(&self, bundle_id: &str, version: &str) -> ApiResult<Value> {
-        let path = if version.is_empty() {
-            format!("/bundles/{}?reload=true", urlencode(bundle_id))
+    /// Archive one version, or every version when `version` is empty
+    /// (`POST /bundles/{id}/archive`, DESIGN-v3 §5.3). Workflows are never
+    /// deleted: `DELETE /bundles/{id}` answers 410. The file and every past
+    /// run stay; the bundle leaves the lists and refuses new runs.
+    pub fn archive_bundle(&self, bundle_id: &str, version: &str) -> ApiResult<Value> {
+        let body = if version.is_empty() {
+            json!({})
         } else {
-            format!(
-                "/bundles/{}?bundle_version={}&reload=true",
-                urlencode(bundle_id),
-                urlencode(version)
-            )
+            json!({ "bundle_version": version })
         };
-        self.delete(&path)
+        self.send(
+            "POST",
+            &format!("/bundles/{}/archive", urlencode(bundle_id)),
+            &body,
+            false,
+        )
     }
 
     /// The ORIGINAL `.flow` bytes for one version.

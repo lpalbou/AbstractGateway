@@ -8329,10 +8329,17 @@ async def get_bundle(request: Request, bundle_id: str, bundle_version: Optional[
         )
 
     flow_ids = sorted([str(k) for k in (man.flows or {}).keys() if isinstance(k, str) and k.strip()])
+    source_meta = _bundle_source_meta(host, bid_base, str(selected_ver))
+    source_kind = bundle_source(source_meta.get("path"), dict(getattr(man, "metadata", None) or {}))
     return {
         "bundle_id": str(bid_base),
         "bundle_version": str(selected_ver),
         "bundle_ref": f"{bid_base}@{selected_ver}",
+        # The same governance facts as the /bundles row (DESIGN-v3 §5): AbstractFlow's deep
+        # link reads `shipped` to say a shipped workflow opens as a read-only copy.
+        "source": source_kind,
+        "shipped": source_kind == "shipped",
+        "owner": _bundle_owner(host, _principal_from_request(request), source_meta) if source_meta else None,
         "created_at": str(man.created_at or ""),
         "default_entrypoint": str(getattr(man, "default_entrypoint", "") or "") or None,
         "entrypoints": entrypoints_out,
