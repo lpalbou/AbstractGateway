@@ -2195,7 +2195,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <div>
 	                  <h2 class="section-title"><span class="section-icon" aria-hidden="true">⚠</span><span>Broken workflows</span></h2>
 	                  <p id="workflows-skipped-count" class="section-note"></p>
-	                  <p class="section-note">These bundle files are on disk but the gateway cannot run them, so they do not appear in the list. Nothing was deleted — fix the cause and reload, or remove them deliberately.</p>
+	                  <p class="section-note">These bundle files are on disk but the gateway cannot run them, so they do not appear in the list. Nothing was deleted — fix the cause and reload, or archive them.</p>
 	                </div>
 	              </div>
 	              <div class="table-scroll">
