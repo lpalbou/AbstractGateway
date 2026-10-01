@@ -68,7 +68,7 @@ SKILLS_MCP_CSS = r"""
 .skmcp-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px 18px; }
 .skmcp-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .skmcp-field--wide { grid-column: 1 / -1; }
-.skmcp-field > label, .skmcp-field > .skmcp-label { font-size: var(--font-size-base); font-weight: 600; }
+.skmcp-field > label, .skmcp-field > .skmcp-label { font-size: var(--font-size-base); font-weight: 600; text-transform: none; letter-spacing: normal; color: var(--text); }
 .skmcp-field input, .skmcp-field textarea { width: 100%; box-sizing: border-box; }
 .skmcp-help { margin: 0; color: var(--muted); font-size: var(--af-helper-size, var(--font-size-md)); line-height: 1.4; }
 .skmcp-editor { font-family: var(--font-mono); font-size: var(--font-size-md); line-height: 1.5; min-height: 22rem; resize: vertical; tab-size: 2; white-space: pre; overflow-wrap: normal; overflow-x: auto; }

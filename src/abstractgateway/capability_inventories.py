@@ -161,9 +161,11 @@ def skills_inventory(*, data_dir: Path, include_archived: bool = False) -> Dict[
             "description": meta.description,
             "origin": "imported" if imported else "curated",
             "source_label": "Imported" if imported else curated_label,
+            # DESIGN-v3 §6.1: an imported skill shows its own metadata.version ("—" when none);
+            # a curated one the registry version it shipped in.
             "version": (
-                str(own_version) if own_version is not None
-                else (None if imported else out["registry_version"])
+                (str(own_version) if own_version is not None else None)
+                if imported else out["registry_version"]
             ),
             "editable": bool(imported),
             "archived": False,

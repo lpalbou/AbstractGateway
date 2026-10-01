@@ -17,7 +17,7 @@ pytestmark = pytest.mark.basic
 pytest.importorskip("abstractskill")
 
 ADMIN = {"Authorization": "Bearer admin-token"}
-CURATED_MD = "---\nname: demo-skill\ndescription: A curated demo teaching.\n---\n\n# Demo\nBody.\n"
+CURATED_MD = "---\nname: demo-skill\ndescription: A curated demo teaching.\nmetadata:\n  version: \"7\"\n---\n\n# Demo\nBody.\n"
 IMPORTED_MD = (
     "---\nname: field-notes\ndescription: Write field notes from a site visit.\nlicense: MIT\n"
     "metadata:\n  version: 1.4.0\n---\n\n# Field notes\n\nSteps.\r\nKeep CRLF bytes too.\n"
