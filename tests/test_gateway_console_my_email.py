@@ -45,14 +45,21 @@ def test_account_page_carries_the_fields_and_words() -> None:
 
 def test_console_calls_only_the_callers_own_routes() -> None:
     html = _html()
-    for route in (
-        "/api/gateway/me/email", "/api/gateway/me/email/test", "/api/gateway/me/email/policy",
-        "/api/gateway/me/email/limits", "/api/gateway/me/email/enabled", "/api/gateway/me/email/agent-tools",
-        "/api/gateway/me/email/address", "/api/gateway/me/email/discover", "/api/gateway/me/email/notifications",
-        "/api/gateway/me/email/folder", "/api/gateway/me/email/oauth/start", "/api/gateway/me/email/oauth/finish",
-        "/api/gateway/me/email/oauth/cancel", "/api/gateway/me/notifications/test",
+    # ONE email UI for the signed-in user and an entity (DESIGN-v3 §3.2): every call goes through
+    # the current base, /me/email by default or /accounts/<id>/email for an entity's own mailbox.
+    assert 'const MY_EMAIL_BASE = "/api/gateway/me/email";' in html
+    assert "function myEmailApi(sub = \"\") { return `${myEmailUi.base || MY_EMAIL_BASE}${sub}`; }" in html
+    assert "mountEmailUi(`/api/gateway/accounts/${encodeURIComponent(a.id)}/email`);" in html
+    assert "mountEmailUi(MY_EMAIL_BASE);" in html and "myEmailUseBase(MY_EMAIL_BASE);" in html
+    assert 'api(myEmailApi()' in html
+    for sub in (
+        "/test", "/policy", "/limits", "/enabled", "/agent-tools", "/address", "/discover", "/notifications",
+        "/folder", "/oauth/start", "/oauth/finish", "/oauth/cancel",
     ):
-        assert route in html, route
+        assert f'api(myEmailApi("{sub}")' in html, sub
+    # No email call bypasses the base (it would hit the signed-in user's mailbox from an entity's modal).
+    assert 'api("/api/gateway/me/email' not in html
+    assert '"/api/gateway/me/notifications/test"' in html and 'myEmailApi("/notifications/test")' in html
     # The only per-user admin call left is Reset (clears an old override).
     assert "/api/gateway/admin/users/${encodeURIComponent(u.user_id)}/email" in html
     assert 'JSON.stringify({ inherit: ["email", "email_agent_tools"] })' in html
