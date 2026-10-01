@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `to`, `cc` and `bcc` (and the older `addresses`, read as To) and each verdict says which rule
   decided (`source`: `self`, `always_deny`, `always_allow`, `mode`).
 - The terminal console shows and edits both lists under Advanced.
+- `GET /me/email` policy carries `self_addresses`: the own addresses, shown as a fixed chip ("(your
+  address)", never removable) because they are always allowed.
+- Advanced reads "Send at most [100] per hour and [1000] per day." on one line with two small number
+  fields (wrapping on phones), and "Watch folder" is a sentence-case label like the others.
 
 ### Changed
 - Sends to To, Cc and Bcc, from agent tools and notifications alike, follow the precedence: your own

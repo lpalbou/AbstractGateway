@@ -2033,8 +2033,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .advanced-sentences { gap: 10px; }
 	    .advanced-sentence { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: var(--font-size-base); color: var(--text); }
 	    .advanced-sentence select { width: auto; }
-	    .advanced-sentence input.advanced-num { width: 5.5em; text-align: right; }
-	    .advanced-sentence input.advanced-folder { width: 12em; max-width: 100%; }
+	    /* #my-email-section: outranks the kit's `.af-form input { width: 100% }` so the limits read as one
+	       sentence with two small number fields (wrapping on phones) and the folder label is a sentence label. */
+	    #my-email-section .advanced-sentence input.advanced-num { width: 6em; flex: 0 0 auto; text-align: right; }
+	    #my-email-section .advanced-sentence input.advanced-folder { width: 14em; max-width: 100%; flex: 0 1 auto; }
+	    #my-email-section .advanced-sentence label { display: inline; margin: 0; text-transform: none; letter-spacing: normal; font-size: inherit; font-weight: inherit; color: inherit; }
+	    .chip.chip--fixed { padding-right: 10px; }
 	    .advanced-sentences .af-form__help { margin: -4px 0 4px; }
 	    .advanced-add { max-width: 520px; }
 	    .recipient-rules { display: grid; gap: 12px; }
@@ -2971,7 +2975,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                     <p id="my-email-policy-help" class="af-form__help">Denied always wins. Your own address is always allowed. A domain also covers its subdomains. To, Cc and Bcc are all checked: a message with any refused recipient is not sent.</p>
                   </div>
                   <div class="advanced-sentence">
-                    <span>At most</span>
+                    <span>Send at most</span>
                     <input id="my-email-per-hour" class="advanced-num" type="number" min="0" inputmode="numeric" aria-label="Most emails per hour">
                     <span>per hour and</span>
                     <input id="my-email-per-day" class="advanced-num" type="number" min="0" inputmode="numeric" aria-label="Most emails per day">
@@ -7170,11 +7174,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         inlineState("my-email-policy-state", "", "");
       }
       recipientRulesUi.base = base;
-      const pol = policy || { mode: "allowlist", always_allow: [], always_deny: [] };
-      if (!Array.isArray(pol.always_allow) || !Array.isArray(pol.always_deny)) {
-        throw new Error("The email policy has no always_allow / always_deny lists (gateway older than this console?)");
+      const pol = policy || { mode: "allowlist", always_allow: [], always_deny: [], self_addresses: [] };
+      if (!Array.isArray(pol.always_allow) || !Array.isArray(pol.always_deny) || !Array.isArray(pol.self_addresses)) {
+        throw new Error("The email policy has no always_allow / always_deny / self_addresses (gateway older than this console?)");
       }
-      recipientRulesUi.policy = { mode: pol.mode === "denylist" ? "denylist" : "allowlist", always_allow: pol.always_allow.slice(), always_deny: pol.always_deny.slice() };
+      recipientRulesUi.policy = { mode: pol.mode === "denylist" ? "denylist" : "allowlist", always_allow: pol.always_allow.slice(), always_deny: pol.always_deny.slice(), self_addresses: pol.self_addresses.slice() };
       $("my-email-policy-mode").value = recipientRulesUi.policy.mode;
       for (const which of Object.keys(RECIPIENT_RULE_LISTS)) renderRecipientRuleList(which);
     }
@@ -7188,6 +7192,14 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         li.className = "chip";
         const t = document.createElement("span");
         t.textContent = entry;
+        if (recipientRulesUi.policy.self_addresses.includes(entry)) {
+          // The own address is always allowed: a fixed chip, never removable.
+          li.className = "chip chip--fixed";
+          t.textContent = `${entry} (your address)`;
+          li.append(t);
+          ul.append(li);
+          continue;
+        }
         const x = document.createElement("button");
         x.type = "button";
         x.className = "chip__remove";

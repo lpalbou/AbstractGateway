@@ -1492,6 +1492,7 @@ fn advanced_body(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> Vi
     let t0 = *t;
     let allow = e.always_allow.clone();
     let deny = e.always_deny.clone();
+    let selves = e.self_addresses.clone();
     let mode_sig = cx.signal(e.policy_mode.clone());
     let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
     // "Your agents may send to [only the Allowed list]" + "Always allowed" + "Always denied";
@@ -1546,6 +1547,14 @@ fn advanced_body(cx: Scope, ctx: &Ctx, t: &TokenSet, e: &MyEmail, p: Page) -> Vi
             }
         };
         for (i, entry) in entries.iter().enumerate() {
+            if selves.contains(entry) {
+                // The own address is always allowed: shown fixed, never removable.
+                col = col.child(line(vec![span(
+                    format!("    {} (your address)", ellipsize(entry, 40)),
+                    t0.text,
+                )]));
+                continue;
+            }
             let entries = entries.clone();
             let with_list = with_list.clone();
             let entry_txt = entry.clone();

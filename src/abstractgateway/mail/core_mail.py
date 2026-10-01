@@ -42,6 +42,7 @@ from abstractruntime.integrations.abstractcore.email_facade import (  # noqa: F4
     evaluate,
     guarded_send,
     legacy,
+    normalize_address,
     parse_recipients,
     provider_preset,
     require_servers,
