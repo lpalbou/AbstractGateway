@@ -709,7 +709,14 @@ Import and export use the same Gateway workspace policy as file helpers:
 workspace roots, mounted roots, ignored paths, and size limits are enforced on
 the server. Browser-local files should be uploaded through
 `POST /api/gateway/attachments/upload`; browser-local file paths are not
-interpreted as Gateway workspace paths. In hosted user-auth mode, server
+interpreted as Gateway workspace paths. An upload belongs to the conversation
+it was uploaded in: a run of another session that references it (any shape —
+`context.attachments`, `context.media`, `attachments`, `media`, a bare id or one naming its
+owner `run_id`) is refused at the start door with 400 `artifact_not_in_session` (and by the
+host for in-process callers), so one conversation's attachment can never reach another's
+model, whatever a client sends. Artifacts a run produced keep the hand-off below: a later
+run, in any session of the same user, may name them by `run_id`. An artifact tagged
+`shared: user` is visible to every session of its owner. In hosted user-auth mode, server
 workspace import/export and `/files/*` helpers require an admin principal. They
 never list, read or write the gateway data folder or the account's credential
 folders (`.ssh`, `.aws`, `Library/Keychains`, ...), even when the workspace root

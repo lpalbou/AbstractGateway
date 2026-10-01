@@ -586,6 +586,9 @@ def test_gateway_artifact_import_session_list_export_and_run_start_validation(
         )
         assert explicit_prior_artifact_run_ref.status_code == 200, explicit_prior_artifact_run_ref.text
 
+        # Session isolation (2026-10-01): an upload belongs to its conversation. A reference that
+        # names the owner session-memory run grants nothing to ANOTHER session (that is how one
+        # conversation's screenshot reached a new conversation); the start is refused, typed.
         explicit_session_memory_ref = client.post(
             "/api/gateway/runs/start",
             json={
@@ -596,7 +599,8 @@ def test_gateway_artifact_import_session_list_export_and_run_start_validation(
             },
             headers=headers,
         )
-        assert explicit_session_memory_ref.status_code == 200, explicit_session_memory_ref.text
+        assert explicit_session_memory_ref.status_code == 400, explicit_session_memory_ref.text
+        assert explicit_session_memory_ref.json()["detail"]["reason_code"] == "artifact_not_in_session"
 
         rejected = client.post(
             "/api/gateway/runs/start",
@@ -608,8 +612,9 @@ def test_gateway_artifact_import_session_list_export_and_run_start_validation(
             },
             headers=headers,
         )
-        assert rejected.status_code == 404, rejected.text
-        assert "not visible to session" in rejected.json().get("detail", "")
+        assert rejected.status_code == 400, rejected.text
+        assert rejected.json()["detail"]["reason_code"] == "artifact_not_in_session"
+        assert "not visible to session" in rejected.json()["detail"]["message"]
 
         exported = client.post(
             f"/api/gateway/runs/session_memory_s-artifacts/artifacts/{artifact_id}/export",

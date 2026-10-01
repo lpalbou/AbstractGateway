@@ -6661,19 +6661,11 @@ def _normalize_client_source_path(raw: Optional[str], fallback_filename: str) ->
     return f"client:{'/'.join(parts)}"
 
 
-def _artifact_visible_to_session(meta: Any, session_id: str) -> bool:
-    sid = str(session_id or "").strip()
-    if not sid:
-        return False
-    meta_run_id = str(getattr(meta, "run_id", "") or "").strip()
-    try:
-        if meta_run_id == _session_memory_run_id(sid):
-            return True
-    except Exception:
-        pass
-    tags = getattr(meta, "tags", None)
-    tagged_session = str(tags.get("session_id") or "").strip() if isinstance(tags, dict) else ""
-    return bool(tagged_session and tagged_session == sid)
+def _artifact_visible_to_session(meta: Any, session_id: str, *, run_store: Any = None) -> bool:
+    """One rule for every door (artifact_scope.artifact_visible_to_session)."""
+    from ..artifact_scope import artifact_visible_to_session
+
+    return artifact_visible_to_session(meta, session_id, run_store=run_store)
 
 
 def _iter_artifact_refs(value: Any, *, path: str = "$") -> list[tuple[str, Dict[str, Any]]]:
@@ -6690,7 +6682,17 @@ def _iter_artifact_refs(value: Any, *, path: str = "$") -> list[tuple[str, Dict[
     return found
 
 
-def _validate_run_start_artifact_refs(*, store: Any, input_data: Dict[str, Any], session_id: Optional[str]) -> None:
+def _validate_run_start_artifact_refs(
+    *, store: Any, input_data: Dict[str, Any], session_id: Optional[str], run_store: Any = None
+) -> None:
+    """Every artifact a run start references must exist and be the run's to attach.
+
+    Session isolation (artifact_scope.py; operator report 2026-10-01): in a session, a reference
+    is accepted only when the artifact is visible to THAT session — its upload (the session's
+    memory run), its tag, a run of the session, or an explicit `shared: user` tag. A reference
+    naming its owner `run_id` grants nothing across sessions (that is how another conversation's
+    screenshot reached a new conversation); it is still checked for a mismatch.
+    """
     refs = _iter_artifact_refs(input_data)
     if not refs:
         return
@@ -6702,13 +6704,18 @@ def _validate_run_start_artifact_refs(*, store: Any, input_data: Dict[str, Any],
         if ref_run_id and meta_run_id and ref_run_id != meta_run_id:
             raise HTTPException(status_code=400, detail=f"Artifact ref at {path} has mismatched run_id")
         if session_id:
-            if _artifact_visible_to_session(meta, session_id):
-                continue
-            if ref_run_id and meta_run_id and ref_run_id == meta_run_id:
-                continue
-            raise HTTPException(status_code=404, detail=f"Artifact ref at {path} is not visible to session")
+            continue
         if not ref_run_id:
             raise HTTPException(status_code=400, detail=f"Artifact ref at {path} requires run_id or a run session_id")
+    if session_id:
+        from ..artifact_scope import ForeignSessionArtifact, refuse_foreign_session_artifacts
+
+        try:
+            refuse_foreign_session_artifacts(
+                input_data=input_data, session_id=session_id, artifact_store=store, run_store=run_store
+            )
+        except ForeignSessionArtifact as exc:
+            raise HTTPException(status_code=400, detail=exc.detail()) from None
 
 
 def _clamp_text(text: str, *, max_len: int) -> str:
@@ -8922,7 +8929,9 @@ async def start_run(req: StartRunRequest, request: Request) -> StartRunResponse:
 
         if _iter_artifact_refs(input_data):
             store = _artifact_store_or_500(svc)
-            _validate_run_start_artifact_refs(store=store, input_data=input_data, session_id=session_id)
+            _validate_run_start_artifact_refs(
+                store=store, input_data=input_data, session_id=session_id, run_store=svc.host.run_store
+            )
 
         if catalog_selection is None:
             # Governance (DESIGN-v3 §5.2/§5.3): an unavailable gateway workflow (non-admins;

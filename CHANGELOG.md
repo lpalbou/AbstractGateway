@@ -107,7 +107,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Runs now use the base URL set on the text-generation default (`output.text`, stored as `input.text`). Released 0.10.0 saved and showed it, but runs, run summaries, Ask and the sandbox called the provider's built-in address instead (for example LM Studio on `localhost:1234`). The base URL applies to the route's own provider only; an endpoint profile (`endpoint:<id>`) keeps its own address, and nothing changes when the field is empty. Affects 0.10.0; ships in the next release.
-
+- **An attachment never crosses conversations.** A reference to another session's upload — even one
+  naming its owner `run_id`, which the start door used to accept — is refused with a typed 400
+  `artifact_not_in_session` by `POST /runs/start` and by the host for every in-process caller
+  (bridges, entities, automations), so a client bug can no longer send one conversation's screenshot
+  to another conversation's model (Mac mini, 2026-10-01: the Code web form resent the previous
+  conversation's attachment; fixed there too in code web). Uploads (session-memory-owned or tagged
+  `kind: attachment`) are a conversation's own; a run's produced artifacts keep the documented
+  `run_id` hand-off; `shared: user` opens an upload to every session of its owner.
+  `src/abstractgateway/artifact_scope.py`; tests red on removal.
 - **Agents get the email tools the client lists.** The agents' tool lists are built with a user's
   host; only the "Agent email tools" switch rebuilt it, so a mailbox connected, paused or
   disconnected afterwards — or an administrator's capability change — left a run without
