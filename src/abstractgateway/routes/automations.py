@@ -589,7 +589,21 @@ async def create_automation_route(request: Request, body: CreateAutomationBody) 
     """Create an automation (same `request_id` + same request -> the same automation)."""
     principal = _principal_from_request(request)
     svc = get_gateway_service()
-    return await _off_the_event_loop(_create, svc, principal, body)
+    out = await _off_the_event_loop(_create, svc, principal, body)
+    _audit_automation(request, automation_id=str((out or {}).get("automation_id") or ""), command="automation.create")
+    return out
+
+
+def _audit_automation(request: Request, *, automation_id: str, command: str) -> None:
+    """Name the automation and command on this request's audit line (`automation`
+    {automation_id, command}): the account Logs read it (account_activity.py)."""
+    try:
+        detail = getattr(request.state, "audit_detail", None)
+        detail = dict(detail) if isinstance(detail, dict) else {}
+        detail["automation"] = {"automation_id": automation_id, "command": command}
+        request.state.audit_detail = detail
+    except Exception:  # noqa: BLE001 - auditing never breaks the request
+        pass
 
 
 def _list(svc: Any, principal: Any, status: Optional[str], cursor: Optional[str], limit: int) -> Dict[str, Any]:
@@ -803,6 +817,7 @@ async def patch_automation_route(request: Request, automation_id: str, body: Pat
     payload: Dict[str, Any] = {"changes": body.changes}
     if body.expected_revision is not None:
         payload["expected_revision"] = body.expected_revision
+    _audit_automation(request, automation_id=automation_id, command="automation.revise")
     return await _off_the_event_loop(_command, svc, principal, automation_id, body.command_id, "automation.revise", payload)
 
 
@@ -812,6 +827,7 @@ async def automation_command_route(request: Request, automation_id: str, body: A
     the automation's ledger records whether it was applied or rejected."""
     principal = _principal_from_request(request)
     svc = get_gateway_service()
+    _audit_automation(request, automation_id=automation_id, command=str(body.type))
     return await _off_the_event_loop(_command, svc, principal, automation_id, body.command_id, body.type, body.payload)
 
 

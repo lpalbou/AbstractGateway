@@ -203,7 +203,7 @@ def test_fresh_install_serves_coder_deep_research_and_co_scientist(tmp_path: Pat
     [
         ("coding-agent", "0.2.6", "0.2.8", "coder"),
         ("co-scientist", "0.2.0", "0.2.1", "co-scientist"),
-        ("docs-qa", "0.1.0", "0.1.1", "docsqa001"),
+        ("docs-qa", "0.1.0", "0.1.2", "docsqa001"),
     ],
 )
 def test_an_upgrade_keeps_runs_pinned_to_a_version_0_6_0_shipped(

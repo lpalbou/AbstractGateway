@@ -7,7 +7,8 @@ tests/test_gateway_import_boundary.py). Gateway modules import these names from 
 
 `discover_servers` / `require_servers` / `EmailDiscoveryFailed` (mailbox server auto-discovery)
 arrived in AbstractCore with the state-toggles work (abstractcore feat/state-toggles-api d9faa97);
-the facade re-exports core's `__all__`, so an older core fails this import loudly.
+the facade re-exports core's `__all__`, so an older core fails this import loudly. `server_defaults`
+(the mailbox form's pre-filled servers, DESIGN-v2 round 2) arrived with abstractcore round2 fd71d04.
 """
 
 from __future__ import annotations
@@ -45,5 +46,6 @@ from abstractruntime.integrations.abstractcore.email_facade import (  # noqa: F4
     provider_preset,
     require_servers,
     resolve_oauth_client,
+    server_defaults,
     tls_context,
 )
