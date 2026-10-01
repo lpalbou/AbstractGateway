@@ -1,5 +1,5 @@
 """The web console shows a cloud voice provider's `needs_key` state in the
-voice pickers (route editor + entity voice), never in the global provider
+voice pickers (route editor), never in the global provider
 labels where "openai" also names the TEXT provider (wave 2, 2026-09-28)."""
 
 from __future__ import annotations
@@ -37,7 +37,6 @@ def test_state_labels_are_scoped_to_the_voice_pickers() -> None:
     html = _html()
     assert "labelMap: state.providerStateLabels.get(catalog.scope) || null," in html
     assert "state.providerStateLabels.set(catalog.scope, catalogProviderStateLabels(payload));" in html
-    assert "labelMap: catalogProviderStateLabels(payload) });" in html  # entity voice provider picker
     fns = "\n".join(_function(html, n) for n in ("textValue", "arrayValue", "objectValue", "catalogProviderFromItem", "catalogLabelFromItem", "catalogProviderStateLabels"))
     payload = {"items": [
         {"id": "supertonic", "provider": "supertonic", "label": "supertonic"},
@@ -54,10 +53,10 @@ def test_state_labels_are_scoped_to_the_voice_pickers() -> None:
 
 def test_voice_pickers_show_why_no_voices_are_listed() -> None:
     html = _html()
-    # Both voice selects (route editor + entity voice) say the reason.
-    assert html.count('"No voices — see why below"') == 2
+    # The route editor's voice select says the reason (the entity's voice is
+    # the kit's shared VoiceSettings since round 3; it shows the catalog error).
+    assert html.count('"No voices — see why below"') == 1
     assert "state.voiceReasons.set(cacheKey, voiceUnavailableReason(payload));" in html
-    assert 'if (reason) _entOut("entity-voice-out", reason);' in html
     fns = "\n".join(_function(html, n) for n in ("textValue", "voiceUnavailableReason"))
     cases = [
         {"items": [], "unavailable_reason": "Supertonic is not installed: onnxruntime is missing"},

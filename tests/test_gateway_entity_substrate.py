@@ -275,8 +275,17 @@ def test_console_carries_the_reasoning_selectors() -> None:
     from abstractgateway.console import gateway_console_html
 
     html = gateway_console_html()
-    for select_id in ("sandbox-reasoning", "entity-substrate-thinking", "entity-new-thinking"):
+    for select_id in ("sandbox-reasoning", "entity-new-thinking"):
         assert f'id="{select_id}"' in html, select_id
     # Each select carries the six contract values.
     for value in ("none", "minimal", "low", "medium", "high", "xhigh"):
-        assert html.count(f'<option value="{value}">') >= 3, f"{value} missing from a select"
+        assert html.count(f'<option value="{value}">') >= 2, f"{value} missing from a select"
+    # Round 3: the entity's Mind is the kit's shared picker (reasoning + MTP from
+    # the model's capabilities), "Gateway default" first, options only with a pinned model.
+    assert 'id="entity-mind-picker"' in html
+    assert 'id="entity-substrate-thinking"' not in html and 'id="entity-substrate-provider"' not in html
+    assert "lib.mountProviderModelPicker($(\"entity-mind-picker\")" in html
+    for prop in ('inheritLabel: "Gateway default"', "optionsInDefaultMode: false", "enableSpeculation: true",
+                 "/api/gateway/discovery/models/capabilities"):
+        assert prop in html, prop
+    assert "body = { clear: true };" in html

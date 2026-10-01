@@ -128,26 +128,23 @@ def test_voice_put_is_marker_first_and_admin_gated(monkeypatch: pytest.MonkeyPat
 
 
 def test_console_carries_the_voice_picker() -> None:
-    """The entity-personal-voice room's console half (laurent: 'i do not see
-    it at the level of the gateway'): the Substrate panel carries the voice
-    picker with cascading provider/model/voice selects, a sample of the chosen
-    triple, clear, and admin gating. Round 3 §12: no Save button — choosing the
-    voice saves the whole triple (never a bare voice id)."""
+    """Round 3: the entity's voice in the console's Manage modal is the kit's
+    shared voice picker (islands mountVoiceSettings), "Gateway default" first;
+    a change saves itself (provider + model + voice together, never a bare
+    voice id), Gateway default clears; the sample speaks through the ENTITY'S
+    OWN lane; mutations are admin-gated in the UI as at the server."""
     from abstractgateway.console import gateway_console_html
 
     html = gateway_console_html()
-    for el in ("entity-voice-provider", "entity-voice-model", "entity-voice-voice",
-               "entity-voice-audition", "entity-voice-clear"):
+    for el in ("entity-voice-picker", "entity-voice-audition"):
         assert f'id="{el}"' in html, f"missing {el}"
-    assert 'id="entity-voice-save"' not in html
-    assert '$("entity-voice-voice").onchange = entityVoiceSave;' in html
-    assert "if (!provider || !model || !voice) return;" in html
-    # The audition speaks through the ENTITY'S OWN lane (anti-mixing:
-    # explicit fields win) — never the generic run route.
+    for gone in ("entity-voice-provider", "entity-voice-model", "entity-voice-voice", "entity-voice-clear", "entity-voice-save"):
+        assert f'id="{gone}"' not in html, gone
+    assert 'lib.mountVoiceSettings($("entity-voice-picker")' in html
+    assert 'voiceDefaultLabel: "Gateway default voice"' in html
+    assert "body = { provider, model, voice };" in html
     assert "/voice/tts" in html and "entityVoiceAudition" in html
-    # Mutations are admin-gated in the UI as at the server.
-    assert 'id="entity-voice-clear" class="secondary entity-admin-only' in html
-    assert "if (!name || !(state.principal && state.principal.admin)) return;" in html
+    assert 'id="entity-voice-picker" class="entity-picker entity-admin-only"' in html
 
 
 def test_unset_entity_serves_the_resolved_effective_default(monkeypatch) -> None:

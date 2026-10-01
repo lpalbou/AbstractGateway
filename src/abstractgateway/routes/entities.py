@@ -5022,7 +5022,9 @@ def _put_entity_substrate_locked(name: str, req: PutSubstrateRequest, *, registr
     # closed set the gateway itself advertises — a stored typo would fail
     # one lane loudly and silently do nothing in another. This validates
     # VOCABULARY, never model capability (that stays core's).
-    _THINKING_VOCAB = {"none", "minimal", "low", "medium", "high", "xhigh", "auto", "on"}
+    # "off" is the kit picker's spelling for a model whose only control is
+    # thinking on/off (capability thinking_control), like "auto".
+    _THINKING_VOCAB = {"none", "minimal", "low", "medium", "high", "xhigh", "auto", "on", "off"}
     if "thinking" in req.model_fields_set:
         thinking_in = str(req.thinking or "").strip() or None
         if thinking_in is not None and thinking_in.lower() not in _THINKING_VOCAB:

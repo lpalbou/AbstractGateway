@@ -1931,6 +1931,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .entity-manage .af-form__inline > textarea { flex: 1 1 auto; }
 	    .entity-line { margin: 0; color: var(--text-secondary, var(--text)); font-size: var(--font-size-base); line-height: 1.45; overflow-wrap: anywhere; }
 	    .entity-line:empty { display: none; }
+	    .entity-picker { min-width: 0; }
+	    .entity-picker .af-voice-settings { gap: 16px; }
 	    .entity-line-muted { color: var(--muted); font-size: var(--af-helper-size, 13px); }
 	    .entity-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; min-width: 0; }
 	    .entity-actions > .inline-state { flex: 1 1 200px; }
@@ -3418,35 +3420,21 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
               <p class="af-card__desc">The model it thinks with. Changes save by themselves.</p>
             </div>
             <p id="entity-substrate-current" class="entity-line"></p>
-            <div class="entity-grid entity-admin-only">
-              <div class="af-form__field"><label class="af-form__label" for="entity-substrate-provider">Provider</label><input id="entity-substrate-provider" type="text" autocomplete="off" spellcheck="false" aria-describedby="entity-substrate-provider-help"><p id="entity-substrate-provider-help" class="af-form__help">The provider that runs its model, for example lmstudio or openai.</p></div>
-              <div class="af-form__field"><label class="af-form__label" for="entity-substrate-model">Model</label><input id="entity-substrate-model" type="text" autocomplete="off" spellcheck="false" aria-describedby="entity-substrate-model-help"><p id="entity-substrate-model-help" class="af-form__help">The model id at that provider.</p></div>
-              <div class="af-form__field"><label class="af-form__label" for="entity-substrate-thinking">Reasoning</label><select id="entity-substrate-thinking" aria-describedby="entity-substrate-thinking-help">
-                <option value="">Not set</option>
-                <option value="none">none</option>
-                <option value="minimal">minimal</option>
-                <option value="low">low</option>
-                <option value="medium">medium</option>
-                <option value="high">high</option>
-                <option value="xhigh">xhigh</option>
-              </select><p id="entity-substrate-thinking-help" class="af-form__help">How hard a reasoning model thinks; Not set sends nothing.</p></div>
-            </div>
+            <!-- The kit's shared provider + model picker (islands mountProviderModelPicker):
+                 "Gateway default" (the text route) or its own choice, with reasoning and MTP. -->
+            <div id="entity-mind-picker" class="entity-picker entity-admin-only"></div>
             <p id="entity-substrate-out" class="inline-state" role="status" aria-live="polite"></p>
           </section>
           <section class="af-card entity-card" aria-labelledby="entity-voice-title">
             <div class="af-card__header">
               <h3 id="entity-voice-title" class="af-card__title">Voice</h3>
-              <p class="af-card__desc">How it sounds when it speaks. Choosing a voice saves it; without one it uses the gateway's default voice.</p>
+              <p class="af-card__desc">How it sounds when it speaks. Changes save by themselves.</p>
             </div>
             <p id="entity-voice-current" class="entity-line"></p>
-            <div class="entity-grid">
-              <div class="af-form__field"><label class="af-form__label" for="entity-voice-provider">Provider</label><select id="entity-voice-provider" aria-describedby="entity-voice-provider-help"><option value="">Choose a provider…</option></select><p id="entity-voice-provider-help" class="af-form__help">The speech engine.</p></div>
-              <div class="af-form__field"><label class="af-form__label" for="entity-voice-model">Model</label><select id="entity-voice-model" disabled aria-describedby="entity-voice-model-help"><option value="">Select provider first</option></select><p id="entity-voice-model-help" class="af-form__help">The speech model of that engine.</p></div>
-              <div class="af-form__field"><label class="af-form__label" for="entity-voice-voice">Voice</label><select id="entity-voice-voice" disabled aria-describedby="entity-voice-voice-help"><option value="">Select model first</option></select><p id="entity-voice-voice-help" class="af-form__help">The voice it speaks with.</p></div>
-            </div>
+            <!-- The kit's shared voice picker (islands mountVoiceSettings). -->
+            <div id="entity-voice-picker" class="entity-picker entity-admin-only"></div>
             <div class="entity-actions">
               <button id="entity-voice-audition" class="secondary" type="button">Hear a sample</button>
-              <button id="entity-voice-clear" class="secondary entity-admin-only hidden" type="button">Use the gateway default</button>
             </div>
             <div id="entity-voice-out" class="entity-voice-out" role="status" aria-live="polite"></div>
           </section>
@@ -5713,38 +5701,97 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const tick = val("entity-loop-tick") || "20", ticks = val("entity-loop-ticks") || "8", rest = val("entity-loop-rest") || "30", hours = val("entity-grant-hours");
 	      $("entity-schedule-summary").textContent = `Schedule: a step every ${tick} s, ${ticks} steps a day, ${rest} min rest, ${hours ? `for ${hours} h` : "until you switch it off"}`;
 	    }
+	    // ---- Entity mind + voice: the kit's SHARED pickers (islands
+	    // mountProviderModelPicker / mountVoiceSettings), the ones the apps
+	    // render. "Gateway default" = the entity has no mind/voice of its own
+	    // and uses the gateway's text route / default voice; a choice is the
+	    // override. Every change saves itself (PUT, or {clear:true} back to
+	    // the default).
+	    function entityPickerLib(fn, outId, what) {
+	      const lib = islandsLib();
+	      if (lib && typeof lib[fn] === "function") return lib;
+	      const why = lib ? `the abstractuic islands bundle has no ${fn} (kit round 3 route pickers required)` : "the abstractuic islands bundle did not load";
+	      if (typeof window !== "undefined" && window.document && window.document.getElementById("af-console-islands")) {
+	        console.error(`AbstractGateway console: ${why}; the ${what} picker is unavailable.`);
+	        inlineState(outId, `The ${what} picker is unavailable: ${why}.`, "error", 0);
+	      }
+	      return null;
+	    }
+	    function entityMindLine(s) {
+	      if (s.source === "entity") return `Now: its own mind, ${s.provider} · ${s.model}${s.thinking ? ` · reasoning ${s.thinking}` : ""}.`;
+	      if (s.gateway_default) return `Now: Gateway default, ${s.gateway_default.provider} · ${s.gateway_default.model}.`;
+	      return s.note || "";
+	    }
+	    function entityMindPickerProps(name) {
+	      const s = state._entityMind || {};
+	      const gd = s.gateway_default;
+	      return {
+	        value: state._entityMindValue || { provider: "", model: "" },
+	        onChange: (next) => entityMindChanged(name, next),
+	        inheritLabel: "Gateway default",
+	        optionsInDefaultMode: false,
+	        enableSpeculation: true,
+	        effectiveDefault: gd ? { provider: gd.provider, model: gd.model } : undefined,
+	        defaultHint: gd ? `Gateway default: ${gd.provider} · ${gd.model}.` : (s.note || "This gateway has no text model yet."),
+	        fetchProviders: async () => {
+	          const d = await api("/api/gateway/discovery/providers");
+	          const items = Array.isArray(d.providers) ? d.providers : (Array.isArray(d.items) ? d.items : []);
+	          return items.map((it) => (typeof it === "string" ? { name: it } : it)).filter((it) => it && it.name);
+	        },
+	        fetchModels: async (provider) => {
+	          const d = await api(`/api/gateway/discovery/providers/${encodeURIComponent(provider)}/models`);
+	          const items = Array.isArray(d.models) ? d.models : (Array.isArray(d.items) ? d.items : []);
+	          return items.map((m) => (typeof m === "string" ? m : (m.id || m.name))).filter(Boolean);
+	        },
+	        fetchModelCapabilities: (model, provider) =>
+	          api(withQuery("/api/gateway/discovery/models/capabilities", provider ? { model_name: model, provider } : { model_name: model })),
+	      };
+	    }
+	    function renderEntityMindPicker(name) {
+	      const props = entityMindPickerProps(name);
+	      if (state.entityMindIsland) { state.entityMindIsland.update(props); return; }
+	      const lib = entityPickerLib("mountProviderModelPicker", "entity-substrate-out", "Mind");
+	      if (lib) state.entityMindIsland = lib.mountProviderModelPicker($("entity-mind-picker"), props);
+	    }
 	    async function loadEntitySubstrate(name, token) {
 	      try {
 	        const s = await api(`/api/gateway/entities/${encodeURIComponent(name)}/substrate`);
 	        if (manageStale(token)) return;
-	        const thinkingNote = s.thinking ? ` / reasoning ${s.thinking}` : "";
-	        _entOut("entity-substrate-current", (s.provider || s.model)
-	          ? `Now: ${s.provider || "?"} / ${s.model || "?"}${thinkingNote}${s.source && s.source !== "home" ? ` (from ${s.source})` : ""}`
-	          : "Now: the gateway's default model.");
-	        $("entity-substrate-provider").value = s.provider || "";
-	        $("entity-substrate-model").value = s.model || "";
-	        const thinkSel = $("entity-substrate-thinking");
-	        if (thinkSel) {
-	          // A stored value outside the known options must not show as
-	          // "not set" (assigning a missing value no-ops on a select, and
-	          // the next save would then CLEAR it). Inject it as an option so
-	          // it displays and round-trips. Previously injected options are
-	          // removed first — one entity's stored value must not appear as
-	          // a choice on another entity's dropdown.
-	          Array.from(thinkSel.querySelectorAll("option[data-injected]")).forEach((o) => o.remove());
-	          const want = s.thinking || "";
-	          if (want && !Array.from(thinkSel.options).some((o) => o.value === want)) {
-	            const opt = document.createElement("option");
-	            opt.value = want;
-	            opt.textContent = want + " (stored)";
-	            opt.setAttribute("data-injected", "1");
-	            thinkSel.appendChild(opt);
-	          }
-	          thinkSel.value = want;
-	        }
+	        state._entityMind = s;
+	        state._entityMindValue = s.source === "entity"
+	          ? { provider: s.provider || "", model: s.model || "", reasoning: s.thinking || "", ...(s.speculation !== null && s.speculation !== undefined ? { speculation: s.speculation } : {}) }
+	          : { provider: "", model: "" };
+	        // Admins see the state in the picker itself; the line is for read-only viewers.
+	        _entOut("entity-substrate-current", state.principal && state.principal.admin ? "" : entityMindLine(s));
+	        renderEntityMindPicker(name);
 	      } catch (e) {
 	        if (manageStale(token)) return;
-	        _entOut("entity-substrate-current", "substrate unavailable: " + (e.message || e));
+	        _entOut("entity-substrate-current", "Mind unavailable: " + (e.message || e));
+	      }
+	    }
+	    async function entityMindChanged(name, next) {
+	      state._entityMindValue = next;
+	      renderEntityMindPicker(name);
+	      const provider = String(next.provider || "").trim();
+	      const model = String(next.model || "").trim();
+	      const own = state._entityMind && state._entityMind.source === "entity";
+	      let body;
+	      if (!provider && !model) {
+	        if (!own) return; // already the Gateway default
+	        body = { clear: true };
+	      } else if (!provider || !model) {
+	        return; // waiting for the second half of the pair
+	      } else {
+	        body = { provider, model, thinking: next.reasoning ? next.reasoning : null, speculation: next.speculation === undefined ? null : next.speculation };
+	      }
+	      inlineState("entity-substrate-out", "Saving…", "", 0);
+	      try {
+	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/substrate`, { method: "PUT", body: JSON.stringify(body) });
+	        if (state.manageName !== name) return;
+	        inlineState("entity-substrate-out", body.clear ? "Saved: it uses the Gateway default." : "Saved", "ok", 3000);
+	        await loadEntitySubstrate(name, state.manageToken);
+	      } catch (e) {
+	        inlineState("entity-substrate-out", "Not saved: " + String(e.message || e), "error");
 	      }
 	    }
 	    // ---- Entity voice (entity-personal-voice room; the server half is
@@ -5755,113 +5802,81 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // (anti-mixing: explicit fields win over the home triple), so what
 	    // you hear is what saving would produce — never a fabricated
 	    // selection presented as configuration.
+	    function entityVoicePickerProps(name) {
+	      const v = state._entityVoice || {};
+	      const eff = v.effective && v.effective.provider ? v.effective : null;
+	      const hint = !v.provider && eff
+	        ? `Gateway default: ${eff.provider} · ${eff.voice || "the provider's default voice"}.`
+	        : (!v.provider ? (v.note || "No gateway default voice is set, so the speech engine decides.") : undefined);
+	      return {
+	        value: state._entityVoiceValue || {},
+	        onChange: (next) => entityVoiceChanged(name, next),
+	        fetchCatalog: (provider, model) => api(withQuery("/api/gateway/voice/voices", { compact: true, ...(provider ? { provider } : {}), ...(model ? { model } : {}) })),
+	        intro: null,
+	        delivery: false,
+	        showReset: false,
+	        defaultHint: hint,
+	        voiceDefaultLabel: "Gateway default voice",
+	      };
+	    }
+	    function renderEntityVoicePicker(name) {
+	      const props = entityVoicePickerProps(name);
+	      if (state.entityVoiceIsland) { state.entityVoiceIsland.update(props); return; }
+	      const lib = entityPickerLib("mountVoiceSettings", "entity-voice-out", "Voice");
+	      if (lib) state.entityVoiceIsland = lib.mountVoiceSettings($("entity-voice-picker"), props);
+	    }
 	    async function loadEntityVoice(name, token) {
 	      try {
 	        const v = await api(`/api/gateway/entities/${encodeURIComponent(name)}/voice`);
 	        if (manageStale(token)) return;
 	        state._entityVoice = v;
-	        // Inheritance render: unset names the RESOLVED
-	        // triple he would actually speak with, or the honest engine-decides
-	        // note — never a bare "unset" the operator must decode.
-	        let line;
-	        if (v.provider) {
-	          line = `Now: ${v.provider} / ${v.model || "?"} / ${v.voice || "?"}, its own voice.`;
-	        } else if (v.effective && v.effective.provider) {
-	          line = `Now: the gateway default, ${v.effective.provider} / ${v.effective.model || "?"} / ${v.effective.voice || "the provider's default voice"}.`;
-	        } else {
-	          line = `Now: ${v.note || "no gateway default voice is set, so the speech engine decides."}`;
+	        state._entityVoiceValue = v.provider ? { provider: v.provider || "", model: v.model || "", voice: v.voice || "" } : {};
+	        let line = "";
+	        if (!(state.principal && state.principal.admin)) {
+	          if (v.provider) line = `Now: its own voice, ${v.provider} · ${v.voice || "?"}.`;
+	          else if (v.effective && v.effective.provider) line = `Now: Gateway default, ${v.effective.provider} · ${v.effective.voice || "the provider's default voice"}.`;
+	          else line = `Now: ${v.note || "no gateway default voice is set, so the speech engine decides."}`;
 	        }
 	        _entOut("entity-voice-current", line);
-	        $("entity-voice-clear").classList.toggle("hidden", !v.provider);
-	        await loadEntityVoiceProviders(v.provider || "", v.model || "", v.voice || "");
+	        renderEntityVoicePicker(name);
 	      } catch (e) {
 	        if (manageStale(token)) return;
-	        _entOut("entity-voice-current", "voice unavailable: " + (e.message || e));
+	        _entOut("entity-voice-current", "Voice unavailable: " + (e.message || e));
 	      }
 	    }
-	    async function loadEntityVoiceProviders(selProvider, selModel, selVoice) {
-	      const provSel = $("entity-voice-provider");
-	      try {
-	        const payload = await api(withQuery("/api/gateway/voice/voices", { providers_only: true, compact: true }));
-	        const providers = providerOptionsFromCatalog(payload, ["tts_providers", "providers", "available_providers"]);
-	        setSelectOptions(provSel, providers, { emptyLabel: "Choose a provider…", disabled: !providers.length, selected: selProvider, labelMap: catalogProviderStateLabels(payload) });
-	        if (selProvider && providers.includes(selProvider)) {
-	          await loadEntityVoiceModels(selProvider, selModel, selVoice);
-	        }
-	      } catch (e) {
-	        setSelectOptions(provSel, [], { emptyLabel: "voice providers unavailable", disabled: true });
-	        _entOut("entity-voice-out", "provider discovery failed: " + (e.message || e));
-	      }
+	    // The voice door stores provider + model + voice together; a voice picked
+	    // without a model takes its provider's first speech model from the catalog.
+	    async function entityVoiceModelFor(provider) {
+	      const d = await api(withQuery("/api/gateway/voice/voices", { provider, compact: true }));
+	      const byProvider = d && d.tts_models_by_provider && d.tts_models_by_provider[provider];
+	      const list = Array.isArray(byProvider) ? byProvider : (Array.isArray(d && d.tts_models) ? d.tts_models : []);
+	      const first = list.map((m) => (typeof m === "string" ? m : (m && (m.id || m.name)))).find(Boolean);
+	      return first || "";
 	    }
-	    async function loadEntityVoiceModels(provider, selModel, selVoice) {
-	      const modelSel = $("entity-voice-model");
-	      if (!provider) {
-	        setSelectOptions(modelSel, [], { emptyLabel: "Select provider first", disabled: true });
-	        setSelectOptions($("entity-voice-voice"), [], { emptyLabel: "Select model first", disabled: true });
-	        return;
+	    async function entityVoiceChanged(name, next) {
+	      state._entityVoiceValue = next;
+	      renderEntityVoicePicker(name);
+	      const provider = String(next.provider || "").trim();
+	      const voice = String(next.voice || next.profile || "").trim();
+	      const own = Boolean(state._entityVoice && state._entityVoice.provider);
+	      let body;
+	      if (!provider && !voice) {
+	        if (!own) return; // already the Gateway default
+	        body = { clear: true };
+	      } else if (!provider || !voice) {
+	        return; // a provider alone is not a voice yet
+	      } else {
+	        const model = String(next.model || "").trim() || await entityVoiceModelFor(provider);
+	        if (!model) { _entOut("entity-voice-out", `Not saved: ${provider} lists no speech model to speak this voice with.`); return; }
+	        body = { provider, model, voice };
 	      }
-	      setSelectOptions(modelSel, [], { emptyLabel: "Loading models...", disabled: true });
 	      try {
-	        const payload = await api(withQuery("/api/gateway/audio/speech/models", { provider }));
-	        const models = modelOptionsFromCatalog(payload, provider, ["tts_models", "models", "data", "provider_models"], ["models_by_provider", "tts_models_by_provider"]);
-	        setSelectOptions(modelSel, models, { emptyLabel: models.length ? "Select model..." : "No models discovered", disabled: !models.length, selected: selModel });
-	        if (selModel && models.includes(selModel)) {
-	          await loadEntityVoiceVoices(provider, selModel, selVoice);
-	        } else {
-	          setSelectOptions($("entity-voice-voice"), [], { emptyLabel: "Select model first", disabled: true });
-	        }
-	      } catch (e) {
-	        setSelectOptions(modelSel, [], { emptyLabel: "models unavailable", disabled: true });
-	        _entOut("entity-voice-out", "model discovery failed: " + (e.message || e));
-	      }
-	    }
-	    async function loadEntityVoiceVoices(provider, model, selVoice) {
-	      const voiceSel = $("entity-voice-voice");
-	      setSelectOptions(voiceSel, [], { emptyLabel: "Loading voices...", disabled: true, labelMap: state.voiceLabels });
-	      try {
-	        const payload = await api(withQuery("/api/gateway/voice/voices", { provider, model, compact: true }));
-	        const voices = voiceOptionsFromCatalog(payload, provider, model);
-	        const reason = voices.length ? "" : voiceUnavailableReason(payload);
-	        setSelectOptions(voiceSel, voices, {
-	          emptyLabel: voices.length ? "Use provider default voice" : (reason ? "No voices — see why below" : "No voices discovered"),
-	          disabled: !voices.length,
-	          selected: selVoice,
-	          labelMap: state.voiceLabels,
-	        });
-	        if (reason) _entOut("entity-voice-out", reason);
-	      } catch (e) {
-	        setSelectOptions(voiceSel, [], { emptyLabel: "voices unavailable", disabled: true });
-	        _entOut("entity-voice-out", "voice discovery failed: " + (e.message || e));
-	      }
-	    }
-	    async function entityVoiceSave() {
-	      // Choosing the voice saves the whole triple (round 3: no Save button). A bare
-	      // voice id never saves alone: it would leak across providers.
-	      const name = state.manageName;
-	      if (!name || !(state.principal && state.principal.admin)) return;
-	      const provider = $("entity-voice-provider").value;
-	      const model = $("entity-voice-model").value;
-	      const voice = $("entity-voice-voice").value;
-	      if (!provider || !model || !voice) return;
-	      try {
-	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/voice`, { method: "PUT", body: JSON.stringify({ provider, model, voice }) });
+	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/voice`, { method: "PUT", body: JSON.stringify(body) });
 	        if (state.manageName !== name) return;
-	        _entOut("entity-voice-out", `Saved: it speaks with ${provider} / ${model} / ${voice}.`);
+	        _entOut("entity-voice-out", body.clear ? "Saved: it uses the Gateway default voice." : `Saved: it speaks with ${body.provider} · ${body.voice}.`);
 	        await loadEntityVoice(name, state.manageToken);
 	      } catch (e) {
 	        _entOut("entity-voice-out", "Not saved: " + String(e.message || e));
-	      }
-	    }
-	    async function entityVoiceClear() {
-	      const name = state.manageName;
-	      if (!name) return;
-	      try {
-	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/voice`, { method: "PUT", body: JSON.stringify({ clear: true }) });
-	        if (state.manageName !== name) return;
-	        _entOut("entity-voice-out", "Saved: it speaks with the gateway's default voice.");
-	        await loadEntityVoice(name, state.manageToken);
-	      } catch (e) {
-	        _entOut("entity-voice-out", "Not changed: " + String(e.message || e));
 	      }
 	    }
 	    async function entityVoiceAudition() {
@@ -5869,30 +5884,32 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      if (!name) return;
 	      const btn = $("entity-voice-audition");
 	      if (btn.disabled) return;
-	      const provider = $("entity-voice-provider").value;
-	      const model = $("entity-voice-model").value;
-	      const voice = $("entity-voice-voice").value;
+	      // The sample speaks the picker's CURRENT choice; on Gateway default
+	      // the entity's own TTS route resolves the default voice.
+	      const pick = state._entityVoiceValue || {};
+	      const provider = String(pick.provider || "").trim();
+	      const voice = String(pick.voice || pick.profile || "").trim();
+	      const model = provider ? (String(pick.model || "").trim() || await entityVoiceModelFor(provider)) : "";
 	      const out = $("entity-voice-out");
-	      if (!provider || !model) {
-	        _entOut("entity-voice-out", "select at least a provider and model to audition.");
-	        return;
-	      }
 	      btn.disabled = true;
 	      _entOut("entity-voice-out", "Synthesizing… (up to 25s)");
 	      const started = Date.now();
 	      try {
 	        const body = {
 	          text: `Hello — I am ${name}, and this is how I would sound.`,
-	          provider, model,
 	          timeout_s: 25,
 	        };
+	        if (provider) body.provider = provider;
+	        if (model) body.model = model;
 	        if (voice) body.voice = voice;
 	        const res = await api(`/api/gateway/entities/${encodeURIComponent(name)}/voice/tts`, { slow: true, method: "POST", body: JSON.stringify(body) });
 	        const sec = ((Date.now() - started) / 1000).toFixed(1);
 	        out.textContent = "";
 	        const line = document.createElement("div");
 	        line.className = "message ok";
-	        line.textContent = `Sample made in ${sec}s with ${provider} / ${model}${voice ? " / " + voice : " (the provider's default voice)"}.`;
+	        line.textContent = provider
+	          ? `Sample made in ${sec}s with ${provider} · ${voice || "the provider's default voice"}.`
+	          : `Sample made in ${sec}s with the Gateway default voice.`;
 	        out.append(line);
 	        renderSandboxArtifact(out, { runId: res.run_id, ref: res.audio_artifact, mode: "audio", label: "Audition audio" });
 	      } catch (e) {
@@ -6430,28 +6447,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        inlineState("entity-state-out", "Not frozen: " + String(e.message || e), "error");
 	      } finally {
 	        btn.disabled = false;
-	      }
-	    }
-	    async function entitySubstrateSave() {
-	      // Auto-save (round 3): any change of provider, model or reasoning saves once both
-	      // provider and model are filled.
-	      const name = state.manageName; if (!name) return;
-	      const provider = ($("entity-substrate-provider").value || "").trim();
-	      const model = ($("entity-substrate-model").value || "").trim();
-	      if (!provider || !model) { inlineState("entity-substrate-out", "Not saved yet: fill both provider and model.", "error"); return; }
-	      // Reasoning effort: the select's "not set" sends an explicit null
-	      // (clear) — the editor shows the stored value, so an untouched
-	      // select round-trips it and a deliberate reset truly clears.
-	      const thinkingSel = $("entity-substrate-thinking");
-	      const body = { provider, model, thinking: thinkingSel && thinkingSel.value ? thinkingSel.value : null };
-	      inlineState("entity-substrate-out", "Saving…", "", 0);
-	      try {
-	        await api(`/api/gateway/entities/${encodeURIComponent(name)}/substrate`, { method: "PUT", body: JSON.stringify(body) });
-	        if (state.manageName !== name) return;
-	        inlineState("entity-substrate-out", "Saved", "ok", 3000);
-	        await loadEntitySubstrate(name);
-	      } catch (e) {
-	        inlineState("entity-substrate-out", "Not saved: " + String(e.message || e), "error");
 	      }
 	    }
 	    async function entityToolsSave() {
@@ -15557,17 +15552,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("entity-loop-freeze").onclick = () => entityConfirmShow("entity-freeze-confirm", "entity-freeze-cancel");
 	    $("entity-freeze-now").onclick = entityLoopFreeze;
 	    $("entity-freeze-cancel").onclick = () => { $("entity-freeze-confirm").hidden = true; $("entity-loop-freeze").focus(); };
-	    // Mind & voice: changes save themselves.
-	    for (const id of ["entity-substrate-provider", "entity-substrate-model", "entity-substrate-thinking"]) $(id).onchange = entitySubstrateSave;
-	    $("entity-voice-clear").onclick = entityVoiceClear;
+	    // Mind & voice: the shared pickers save their own changes (entityMindChanged /
+	    // entityVoiceChanged); only the sample is a button.
 	    $("entity-voice-audition").onclick = entityVoiceAudition;
-	    $("entity-voice-provider").onchange = () => loadEntityVoiceModels($("entity-voice-provider").value, "", "");
-	    $("entity-voice-model").onchange = () => {
-	      const p = $("entity-voice-provider").value;
-	      const m = $("entity-voice-model").value;
-	      if (p && m) loadEntityVoiceVoices(p, m, "");
-	    };
-	    $("entity-voice-voice").onchange = entityVoiceSave;
 	    $("entity-reembed").onclick = entityReembedAsk;
 	    $("entity-reembed-now").onclick = entityReembed;
 	    $("entity-reembed-cancel").onclick = () => { $("entity-reembed-confirm").hidden = true; $("entity-reembed").focus(); };
