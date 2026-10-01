@@ -78,6 +78,8 @@ console.log(JSON.stringify(out));
     assert 'data-skill-view="coredoc"' in curated and 'data-skill-export="coredoc"' in curated
     assert "data-skill-archive" not in curated  # curated: never archivable
     assert ">First party<" in curated and "2026.09.25" in curated
+    # The description cell is the clamped, expandable block (full text in the DOM, never cut).
+    assert '<td class="sk-what"><div class="skmcp-more" role="button" tabindex="0" aria-expanded="false" data-skmcp-more>Docs</div></td>' in curated
     imported = admin[admin.index('data-skill-row="field-notes"') : admin.index('data-skill-row="old-notes"')]
     assert 'data-skill-archive="field-notes"' in imported
     assert ">Unverified<" in imported and 'title="no validation record\nhas scripts"' in imported
@@ -117,6 +119,7 @@ console.log(JSON.stringify(out));
         assert f'data-mcp-{action}="docs"' in admin
         assert f"data-mcp-{action}=" not in r["user"]
     assert "npx -y calc-mcp" in admin and "https://example.com/mcp" in admin
+    assert 'data-skmcp-more>npx -y calc-mcp</div></td>' in admin  # the transport cell clamps + expands
     assert "ab12cd34ef56" not in admin  # fingerprints are for the edit modal, not the list
     assert "<summary>3 tools</summary>" in admin
     assert "Connected to fake-docs 2.1.0 · 3 tools." in r["result"] and "<code>a</code> — A" in r["result"]
