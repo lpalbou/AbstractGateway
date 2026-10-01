@@ -146,7 +146,7 @@ def test_me_accounts_is_self_plus_own_entities(world) -> None:
     assert [(a["kind"], a["id"]) for a in rows["accounts"]] == [("user", "alice"), ("entity", "aster")]
     me, ent = rows["accounts"]
     assert me["own"] is True and me["actions"]["suspend"]["available"] is False
-    assert me["actions"]["rotate"] == {"available": False, "reason": "Only an admin can rotate your token."}
+    assert me["actions"]["rotate"] == {"available": True, "reason": None}  # your own token: POST /me/token/rotate
     assert me["actions"]["workspace"]["available"] is True  # your own workspace policy
     assert ent["created_by"] == {"tenant_id": "default", "user_id": "alice"}
     assert ent["actions"]["suspend"] == {"available": False, "reason": "Only an admin can suspend an entity."}

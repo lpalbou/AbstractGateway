@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Rotate your own token.** `POST /api/gateway/me/token/rotate` (any signed-in user) answers your new
+  token once; the old one stops working as soon as it answers, a browser session moves to the new
+  token, and your Logs show "Token rotated". Your own Accounts row offers Rotate token (the web
+  console uses this route for your row; admins keep `PATCH /admin/users/{id}` for other users).
 - Recipient rules in the Email settings (Advanced): "Your agents may send to [Only the Allowed list |
   Anyone not on the Denied list]", an **Always allowed** and an **Always denied** list (addresses
   such as `name@example.com` or domains such as `example.com`, which also cover their subdomains),

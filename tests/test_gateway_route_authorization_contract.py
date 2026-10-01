@@ -166,6 +166,9 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # caller's own entities (anything else answers 404 like a missing account);
     # only an admin unarchives (/admin/accounts/{id}/unarchive, admin-gated).
     ("POST", "/api/gateway/me/accounts/{account_id}/archive"),
+    # Rotating YOUR OWN token (round 3): the handler acts only on the caller's own
+    # registry record (resolved from the principal, never from a path or body id).
+    ("POST", "/api/gateway/me/token/rotate"),
     # Account recovery by email (framework backlog 0992): the public writes
     # below — single-use HMAC-stored codes, 10-minute expiry, rate-limited
     # per account and client address, a constant answer (no enumeration);
