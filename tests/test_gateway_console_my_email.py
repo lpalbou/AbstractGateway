@@ -49,7 +49,7 @@ def test_console_calls_only_the_callers_own_routes() -> None:
     # the current base, /me/email by default or /accounts/<id>/email for an entity's own mailbox.
     assert 'const MY_EMAIL_BASE = "/api/gateway/me/email";' in html
     assert "function myEmailApi(sub = \"\") { return `${myEmailUi.base || MY_EMAIL_BASE}${sub}`; }" in html
-    assert "mountEmailUi(`/api/gateway/accounts/${encodeURIComponent(a.id)}/email`);" in html
+    assert "mountEmailUi(`/api/gateway/accounts/${encodeURIComponent(a.id)}/email`, `/api/gateway/accounts/${encodeURIComponent(a.id)}/notifications/test`);" in html
     assert "mountEmailUi(MY_EMAIL_BASE);" in html and "myEmailUseBase(MY_EMAIL_BASE);" in html
     assert 'api(myEmailApi()' in html
     for sub in (
@@ -59,7 +59,7 @@ def test_console_calls_only_the_callers_own_routes() -> None:
         assert f'api(myEmailApi("{sub}")' in html, sub
     # No email call bypasses the base (it would hit the signed-in user's mailbox from an entity's modal).
     assert 'api("/api/gateway/me/email' not in html
-    assert '"/api/gateway/me/notifications/test"' in html and 'myEmailApi("/notifications/test")' in html
+    assert 'api(myEmailUi.notifyTest || "/api/gateway/me/notifications/test"' in html
     # The only per-user admin call left is Reset (clears an old override).
     assert "/api/gateway/admin/users/${encodeURIComponent(u.user_id)}/email" in html
     assert 'JSON.stringify({ inherit: ["email", "email_agent_tools"] })' in html

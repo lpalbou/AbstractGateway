@@ -7007,7 +7007,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     // Mailbox tabs (DESIGN-v2 §3): IMAP first and the default, then Google, Microsoft.
     const MY_EMAIL_TABS = ["imap", "google", "microsoft"];
     const MY_EMAIL_SERVER_FIELDS = ["my-email-imap-host", "my-email-imap-port", "my-email-imap-security", "my-email-smtp-host", "my-email-smtp-port", "my-email-smtp-security", "my-email-username"];
-    const myEmailUi = { tab: "", discovered: null, discoveredFor: "", oauth: null, edited: new Set(), timer: null, prefilledFor: "", editReg: false, editMailbox: false, base: "" };
+    const myEmailUi = { tab: "", discovered: null, discoveredFor: "", oauth: null, edited: new Set(), timer: null, prefilledFor: "", editReg: false, editMailbox: false, base: "", notifyTest: "" };
     // ONE account email UI for the signed-in user AND an entity (DESIGN-v3 §3.2): every call goes
     // through the current API base, /me/email (own) or /accounts/<id>/email (an entity's own
     // mailbox, admin or its creator); the payloads and responses are identical (accounts-api §3.1).
@@ -7028,8 +7028,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         el.textContent = entity ? text : el.__ownText;
       }
     }
-    function myEmailUseBase(base) {
+    function myEmailUseBase(base, notifyTest = "") {
       const next = base || MY_EMAIL_BASE;
+      myEmailUi.notifyTest = next === MY_EMAIL_BASE ? "" : notifyTest;
       if ((myEmailUi.base || MY_EMAIL_BASE) === next) return;
       myEmailUi.base = next === MY_EMAIL_BASE ? "" : next;
       myEmailApplyVoice(Boolean(myEmailUi.base));
@@ -7425,8 +7426,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       btn.setAttribute("aria-busy", "true");
       inlineState("my-email-notify-test-state", "Sending…", "");
       try {
-        // Own: POST /me/notifications/test; an entity: the mirror under its email base (accounts-api §3.1).
-        const out = await api(myEmailUi.base ? myEmailApi("/notifications/test") : "/api/gateway/me/notifications/test", { method: "POST", slow: true });
+        // Own: POST /me/notifications/test; an entity: POST /accounts/<id>/notifications/test (accounts-api mirror).
+        const out = await api(myEmailUi.notifyTest || "/api/gateway/me/notifications/test", { method: "POST", slow: true });
         if (!out || typeof out.message !== "string" || !out.message) {
           throw new Error("The test answer carries no message (gateway-api seam, DESIGN-v2 §6).");
         }
@@ -12551,13 +12552,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       body.textContent = "";
       $("account-email-title").textContent = `Email — ${a.id}`;
       // The signed-in user's own email UI, moved into the modal and pointed at `base`.
-      const mountEmailUi = (base) => {
+      const mountEmailUi = (base, notifyTest = "") => {
         const section = $("my-email-section");
         if (!accountsUi.emailHome) {
           accountsUi.emailHome = document.createComment("my-email-section home");
           section.parentNode.insertBefore(accountsUi.emailHome, section);
         }
-        myEmailUseBase(base);
+        myEmailUseBase(base, notifyTest);
         section.classList.remove("hidden");
         section.classList.add("in-modal");
         body.append(section);
@@ -12570,7 +12571,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         p.className = "account-modal-lead";
         p.textContent = `${a.id} is an AI user: this mailbox is its own. Its agents read and send from it; notifications about its runs go to its address.`;
         body.append(p);
-        mountEmailUi(`/api/gateway/accounts/${encodeURIComponent(a.id)}/email`);
+        mountEmailUi(`/api/gateway/accounts/${encodeURIComponent(a.id)}/email`, `/api/gateway/accounts/${encodeURIComponent(a.id)}/notifications/test`);
       } else if (accountIsOwn(a)) {
         if (a.role === "admin") {
           const p = document.createElement("p");

@@ -1,0 +1,149 @@
+// Browser checks of the Accounts page (DESIGN-v3 §1, §2, §3.2), run by
+// tests/test_gateway_console_browser_accounts.py against a hermetic scratch gateway
+// (admin, alice, bob, a long-id user, dave archived, the entity castor).
+//
+//   node accounts.mjs <base-url> <admin-token> <playwright-node-modules> <long-user-id>
+//
+// Prints one JSON line: {"failures": [...], "checks": N}.
+import { createRequire } from "node:module";
+import path from "node:path";
+
+const [BASE, ADMIN, PW, LONG_ID] = process.argv.slice(2);
+const require = createRequire(path.join(PW, "/"));
+const { chromium } = require("playwright-core");
+
+const failures = [];
+let checks = 0;
+function check(ok, what, detail) {
+  checks += 1;
+  if (!ok) failures.push(detail === undefined ? what : `${what}: ${JSON.stringify(detail)}`);
+}
+
+async function open(browser, width, height, { touch = false, showArchived = false } = {}) {
+  const ctx = await browser.newContext({ viewport: { width, height }, hasTouch: touch, isMobile: touch });
+  await ctx.addInitScript((on) => { try { localStorage.setItem("abstractgateway.console.accounts.show_archived", on ? "1" : "0"); } catch {} }, showArchived);
+  const page = await ctx.newPage();
+  page.on("pageerror", (e) => failures.push(`pageerror@${width}: ${e.message}`));
+  await page.goto(`${BASE}/console`);
+  await page.waitForSelector("#login-form");
+  await page.fill("#login-user", "admin");
+  await page.fill("#login-token", ADMIN);
+  await page.click("#login-button");
+  await page.waitForFunction(() => document.body.classList.contains("signed-in"), null, { timeout: 20000 });
+  await page.keyboard.press("Escape").catch(() => {});
+  await page.evaluate(() => { document.body.classList.remove("nav-open"); document.getElementById("tab-button-users").click(); });
+  await page.waitForSelector("#users-table tr[data-user='castor']", { timeout: 15000 });
+  await page.waitForTimeout(300);
+  return { ctx, page };
+}
+
+// A1: no page overflow, no inner horizontal scroller around the table, Actions inside the table.
+const LAYOUT = () => {
+  const de = document.documentElement;
+  const table = document.querySelector(".accounts-table");
+  const tr = table.getBoundingClientRect();
+  const cards = getComputedStyle(table.querySelector("thead")).display === "none";
+  let over = -1e9;
+  for (const td of table.querySelectorAll("td.accounts-actions")) {
+    const cell = td.getBoundingClientRect();
+    for (const b of td.querySelectorAll(".accounts-actions__buttons > button, .af-menu__button")) {
+      const r = b.getBoundingClientRect();
+      over = Math.max(over, r.right - tr.right, r.right - cell.right);
+    }
+  }
+  const scrollers = [];
+  for (let el = table.parentElement; el && el !== document.body; el = el.parentElement) {
+    const ox = getComputedStyle(el).overflowX;
+    if ((ox === "auto" || ox === "scroll") && el.scrollWidth > el.clientWidth + 1) scrollers.push(el.id || el.className);
+  }
+  const wrap = table.closest(".users-table-wrap").getBoundingClientRect();
+  return { sw: de.scrollWidth, iw: innerWidth, cards, over: Math.round(over), scrollers, tableOverWrap: Math.round(tr.right - wrap.right) };
+};
+
+const browser = await chromium.launch({ headless: true });
+try {
+  // ---------------------------------------------------------------- widths (A1)
+  for (const [w, h, expectCards] of [[1024, 800, true], [1100, 800, true], [1180, 800, true], [1280, 900, false], [1440, 900, false], [1680, 1000, false], [2000, 1000, false], [2560, 1200, false]]) {
+    const { ctx, page } = await open(browser, w, h, { showArchived: true });
+    const m = await page.evaluate(LAYOUT);
+    check(m.sw <= m.iw, `${w}: the page does not scroll sideways`, m);
+    check(m.scrollers.length === 0, `${w}: no inner horizontal scroller holds the table`, m);
+    check(m.over <= 0.5 && m.tableOverWrap <= 0.5, `${w}: the Actions cell's right edge stays inside the table`, m);
+    check(m.cards === expectCards, `${w}: ${expectCards ? "card list" : "table"} (breakpoint computed from the column minimums)`, m);
+    await ctx.close();
+  }
+  for (const [w, h] of [[834, 1194], [390, 844]]) {
+    const { ctx, page } = await open(browser, w, h, { touch: true });
+    const m = await page.evaluate(LAYOUT);
+    const row = await page.evaluate(() => { const tr = document.querySelector("tr[data-user='alice']"); return { display: getComputedStyle(tr).display, btnH: Math.min(...Array.from(tr.querySelectorAll(".accounts-actions button")).filter((b) => b.getClientRects().length).map((b) => b.getBoundingClientRect().height)) }; });
+    check(m.cards && m.sw <= m.iw && row.display === "grid" && row.btnH >= 44, `${w}: flat card rows, 44 px actions, no sideways scroll`, { m, row });
+    await ctx.close();
+  }
+  // ---------------------------------------------------------------- actions per kind (A2), archive (A3), entity email (A5)
+  {
+    const { ctx, page } = await open(browser, 1440, 900);
+    const rows = await page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll("#users-table tr.accounts-row")).map((tr) => [tr.dataset.user, {
+      vis: Array.from(tr.querySelectorAll(".accounts-actions__buttons > button")).map((b) => b.dataset.action),
+      menu: Array.from(tr.querySelectorAll(".af-menu__item")).map((b) => b.dataset.action),
+      more: (tr.querySelector(".af-menu__button") || {}).title || "",
+      disabled: tr.querySelectorAll("button[disabled]").length,
+    }])));
+    check(!rows.dave, "archived accounts are hidden while Show archived is off", Object.keys(rows));
+    check(Object.values(rows).every((r) => r.disabled === 0), "no disabled button in any account row", rows);
+    check((await page.locator("#users-section .accounts-reasons").count()) === 0, "no reasons paragraph");
+    check((await page.locator("#users-table [data-action='delete']").count()) === 0 && !(await page.textContent("#users-table")).includes("Delete"), "no Delete anywhere in the table");
+    check(JSON.stringify([rows.alice.vis, rows.alice.menu]) === JSON.stringify([["email", "logs", "workspace"], ["rotate", "archive"]]), "user: Email · Logs · Workspace, menu Rotate token · Archive", rows.alice);
+    check(JSON.stringify([rows.castor.vis, rows.castor.menu]) === JSON.stringify([["email", "logs", "manage"], ["workspace", "archive"]]), "entity: Email · Logs · Manage, menu Workspace · Archive", rows.castor);
+    check(rows.castor.more.includes("no token to rotate"), "entity '⋯' says why Rotate is absent", rows.castor.more);
+    check(JSON.stringify([rows.admin.vis, rows.admin.menu]) === JSON.stringify([["email", "logs", "workspace"], ["rotate"]]), "own row: no Archive", rows.admin);
+    const ell = await page.evaluate((id) => { const s = document.querySelector(`tr[data-user='${id}'] .accounts-col-email .accounts-ellipsis`); const cs = getComputedStyle(s); return { title: s.title, ellipsis: cs.textOverflow, nowrap: cs.whiteSpace, clipped: s.scrollWidth > s.clientWidth }; }, LONG_ID);
+    check(ell.ellipsis === "ellipsis" && ell.nowrap === "nowrap" && ell.clipped && ell.title.startsWith("alexandra.konstantinopoulou@"), "a long address is one line with an ellipsis and its full value in title", ell);
+    // The kit menu: ARIA, keyboard, Escape returns focus.
+    const more = page.locator("tr[data-user='castor'] .af-menu__button");
+    check((await more.getAttribute("aria-haspopup")) === "menu" && (await more.getAttribute("aria-label")) === "More actions for castor", "the '⋯' button is a labelled menu button");
+    await more.click();
+    check((await more.getAttribute("aria-expanded")) === "true" && (await page.evaluate(() => document.activeElement.dataset.action)) === "workspace", "opening focuses the first item");
+    await page.keyboard.press("ArrowDown");
+    check((await page.evaluate(() => document.activeElement.dataset.action)) === "archive", "ArrowDown moves to Archive");
+    await page.keyboard.press("Escape");
+    check((await more.getAttribute("aria-expanded")) === "false" && (await page.evaluate(() => document.activeElement.getAttribute("aria-label"))) === "More actions for castor", "Escape closes and returns focus to '⋯'");
+    // Archive bob: inline confirmation, then the row leaves the list (Show archived off).
+    await page.click("tr[data-user='bob'] .af-menu__button");
+    await page.click("tr[data-user='bob'] .af-menu__item[data-action='archive']");
+    await page.waitForSelector("#users-table .row-confirm");
+    check((await page.textContent("#users-table .row-confirm")).includes("Archive bob? They can't sign in any more. Their runtime, runs and history are kept; you can unarchive later."), "user archive confirmation sentence");
+    await page.click("#users-table .row-confirm button.danger");
+    await page.waitForFunction(() => !document.querySelector("tr[data-user='bob']"), null, { timeout: 10000 });
+    check((await page.textContent("#users-message")).includes("bob is archived."), "archived message", await page.textContent("#users-message"));
+    // Show archived (kit switch, admins): archived rows with the chip, no switch, Logs + Unarchive.
+    const sw = page.locator("#accounts-show-archived");
+    check((await sw.getAttribute("role")) === "switch" && (await sw.getAttribute("aria-checked")) === "false" && (await page.textContent("#accounts-archived-slot")).includes("Show archived"), "Show archived is a feature-labelled switch, off by default");
+    await sw.click();
+    await page.waitForSelector("tr[data-user='dave'][data-archived='true']", { timeout: 10000 });
+    const dave = await page.evaluate(() => { const tr = document.querySelector("tr[data-user='dave']"); return { chip: !!tr.querySelector(".accounts-archived-chip"), active: tr.querySelector(".accounts-active").textContent.trim(), sw: !!tr.querySelector("[role=switch]"), vis: Array.from(tr.querySelectorAll(".accounts-actions__buttons > button")).map((b) => b.dataset.action), menu: Array.from(tr.querySelectorAll(".af-menu__item")).map((b) => b.dataset.action) }; });
+    check(JSON.stringify(dave) === JSON.stringify({ chip: true, active: "Archived", sw: false, vis: ["logs"], menu: ["unarchive"] }), "archived row: chip, 'Archived' instead of the switch, Logs + menu Unarchive", dave);
+    check(await page.evaluate(() => { try { return localStorage.getItem("abstractgateway.console.accounts.show_archived") === "1"; } catch { return false; } }), "Show archived is remembered for this viewer");
+    await page.click("tr[data-user='bob'] .af-menu__button");
+    await page.click("tr[data-user='bob'] .af-menu__item[data-action='unarchive']");
+    await page.waitForFunction(() => document.getElementById("users-message").textContent.includes("bob is back, inactive"), null, { timeout: 10000 }).catch(() => {});
+    check((await page.textContent("#users-message")).includes("bob is back, inactive: turn Active on to let it sign in."), "unarchive message", await page.textContent("#users-message"));
+    check((await page.getAttribute("tr[data-user='bob'] .users-active [role=switch]", "aria-checked")) === "false", "an unarchived account comes back inactive");
+    // Entity Email (§3.2): the same account email UI, on /accounts/castor/email.
+    const req = page.waitForRequest((r) => r.url().includes("/api/gateway/accounts/castor/email"), { timeout: 10000 }).then(() => true, () => false);
+    await page.click("tr[data-user='castor'] button[data-action='email']");
+    await page.waitForSelector("#account-email-backdrop:not([hidden]) #my-email-section");
+    const lead = (await page.textContent("#account-email-body .account-modal-lead")).trim();
+    check(lead === "castor is an AI user: this mailbox is its own. Its agents read and send from it; notifications about its runs go to its address." && (await req), "entity Email = the account email UI on its own base", lead);
+    check((await page.textContent("#my-email-registered-title")).trim() === "Email address" && !(await page.textContent("#account-email-body")).includes("can't have their own mailbox"), "entity voice: no 'Your email address', no 'no mailbox yet'");
+    await page.keyboard.press("Escape");
+    await page.waitForSelector("#account-email-backdrop[hidden]", { state: "attached" });
+    const ownReq = page.waitForRequest((r) => r.url().endsWith("/api/gateway/me/email"), { timeout: 10000 }).then(() => true, () => false);
+    await page.click("tr[data-user='admin'] button[data-action='email']");
+    await page.waitForSelector("#account-email-backdrop:not([hidden]) #my-email-section");
+    check((await ownReq) && (await page.textContent("#my-email-registered-title")).trim() === "Your email address", "closing restores the signed-in user's own base and voice");
+    await ctx.close();
+  }
+} finally {
+  await browser.close();
+}
+console.log(JSON.stringify({ failures, checks }));
