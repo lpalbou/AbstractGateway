@@ -45,7 +45,7 @@ def test_engine_missing_text_and_markup() -> None:
     row = json.dumps({"key": "input.text", "engine_missing": MISSING})
     assert _run(f"engineMissingText({row})") == f"engine missing: {MISSING['reason']} — install: pip install mlx-lm"
     markup = _run(f"engineMissingMarkup({row})")
-    assert "Engine missing:" in markup and "<code>pip install mlx-lm</code>" in markup and "Engines tab" in markup
+    assert "Engine missing:" in markup and "<code>pip install mlx-lm</code>" in markup and "Providers tab, Local providers: Install" in markup
     assert _run('engineMissingText({"key": "input.text"})') == ""
     assert _run('engineMissingMarkup({"engine_missing": {"reason": ""}})') == ""
 

@@ -68,7 +68,11 @@ from ..core_config import (
     save_gateway_capability_default,
     text_route_provider_warnings,
 )
-from ..provider_defaults import ProviderModelConfigError, resolve_gateway_provider_model
+from ..provider_defaults import (
+    ProviderModelConfigError,
+    default_text_route_connection_kwargs,
+    resolve_gateway_provider_model,
+)
 from ..provider_endpoint_profiles import (
     ProviderEndpointProfileError,
     ProviderEndpointProfileStore,
@@ -26513,6 +26517,8 @@ def _gateway_provider_resolution(provider: str) -> tuple[str, Dict[str, Any], Op
         current_base_dir=current_base,
         root_base_dir=root_base,
     )
+    # The text route's own endpoint, for the route's provider (as runs do).
+    kwargs.update(default_text_route_connection_kwargs(provider, base_dir=current_base))
     return str(provider or "").strip(), kwargs, None
 
 

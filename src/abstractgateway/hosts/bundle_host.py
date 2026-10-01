@@ -23,7 +23,11 @@ from ..core_config import (
 from ..memory_store import build_gateway_memory_embedder, open_gateway_memory_store
 from ..provider_endpoint_profiles import ProviderEndpointProfileError, resolve_effective_endpoint_profile
 from ..provider_connections import configured_provider_request_kwargs, providers_screen_api_key
-from ..provider_defaults import ProviderModelConfigError, resolve_gateway_provider_model
+from ..provider_defaults import (
+    ProviderModelConfigError,
+    default_text_route_connection_kwargs,
+    resolve_gateway_provider_model,
+)
 from ..workflow_deprecations import WorkflowDeprecatedError, WorkflowDeprecationStore
 from ..workflow_catalog import (
     CATALOG_SCOPE_TENANT,
@@ -177,11 +181,16 @@ def _resolve_gateway_default_endpoint_profile(
             raise WorkflowBundleError(
                 reason or f"Gateway provider endpoint profile {provider_s!r} is not configured or is disabled."
             )
-        return provider_s, configured_provider_request_kwargs(
+        kwargs = configured_provider_request_kwargs(
             provider_s,
             current_base_dir=data_root,
             root_base_dir=catalog_root,
-        ), None
+        )
+        # The text route's own endpoint wins over the provider connection's:
+        # it is the more specific setting, made for this default (backlog 0994
+        # item 64 -- runs ignored it). Absent -> unchanged.
+        kwargs.update(default_text_route_connection_kwargs(provider_s, base_dir=data_root))
+        return provider_s, kwargs, None
 
     llm_kwargs: Dict[str, Any] = {}
     if profile.base_url:

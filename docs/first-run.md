@@ -80,8 +80,8 @@ A typical path from a fresh install to a working local model:
 3. When the download finishes, the row reads *Downloaded*. Click **Use as
    default**: the gateway's text route uses it from then on.
 
-The same steps are available later in the **Engines** and **Models** tabs (see
-[console.md](./console.md#models-and-engines-tabs)) and from the command line
+The same steps are available later in the **Providers** (Local providers) and **Models** tabs (see
+[console.md](./console.md#models-and-local-providers)) and from the command line
 (`abstractgateway engines install ollama`, `abstractgateway models download
 ollama qwen3:8b`). Installing an engine needs an admin and the
 [`allow_engine_install`](./configuration.md#allow_engine_install) setting, which

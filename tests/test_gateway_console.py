@@ -99,7 +99,7 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert 'id="endpoint-capabilities"' not in console.text
     assert 'id="endpoint-profiles-table"' in console.text
     assert "virtual provider" in console.text
-    assert "Pick a provider type to configure" in console.text
+    assert "Remote providers" in console.text and "Local providers" in console.text
     assert "Use Test to preview discovery" in console.text
     assert "Confirm" in console.text
     assert "provider-modal" in console.text
@@ -2561,19 +2561,20 @@ console.log(JSON.stringify(results));
 
 
 def test_models_and_engines_tabs_do_not_reuse_existing_ids() -> None:
-    """"Models" is id `catalog` and "Engines" is id `engines`; "Resources"
+    """"Models" is id `catalog` (the Engines tab merged into Providers, DESIGN-v3 §7); "Resources"
     keeps id `models` and "Runtimes" keeps `runtimes` (naming rule of the
     install mission: the new tabs never take over an existing id)."""
     html = gateway_console_html()
     assert re.search(r'id="tab-button-models"[^>]*>.*?Resources</span>', html)
     assert re.search(r'id="tab-button-runtimes"[^>]*>.*?Runtimes</span>', html)
     assert re.search(r'id="tab-button-catalog"[^>]*>.*?Models</span>', html)
-    assert re.search(r'id="tab-button-engines"[^>]*>.*?Engines</span>', html)
+    assert 'id="tab-button-engines"' not in html
     assert '$("tab-button-catalog").onclick = () => { setActiveTab("catalog"); openCoreTab("catalog"); };' in html
-    assert '$("tab-button-engines").onclick = () => { setActiveTab("engines"); openCoreTab("engines"); };' in html
-    # A `#catalog` / `#engines` deep link and a restored landing tab mount too.
-    assert 'if (wantedTab === "catalog" || wantedTab === "engines" || wantedTab === "apps" || wantedTab === "network") openCoreTab(wantedTab);' in html
-    assert 'if (state.activeTab === "catalog" || state.activeTab === "engines" || state.activeTab === "apps" || state.activeTab === "network") openCoreTab(state.activeTab);' in html
+    assert '$("tab-button-providers").onclick = () => { setActiveTab("providers"); openCoreTab("providers"); };' in html
+    # A `#catalog` / `#providers` (or legacy `#engines`) deep link and a restored landing tab mount too.
+    assert 'const wantedTab = TAB_FOLDS[hashTab] || hashTab;' in html
+    assert 'if (wantedTab === "catalog" || wantedTab === "providers" || wantedTab === "apps" || wantedTab === "network") openCoreTab(wantedTab);' in html
+    assert 'if (state.activeTab === "catalog" || state.activeTab === "providers" || state.activeTab === "apps" || state.activeTab === "network") openCoreTab(state.activeTab);' in html
 
 
 def test_held_basis_words_and_meter_name_the_field_actually_used() -> None:
