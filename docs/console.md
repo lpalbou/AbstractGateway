@@ -63,7 +63,7 @@ the apps keep answering. A banner on every tab says so while it is on.
 Every persistent on/off setting in the console is a switch labelled by the
 feature (highlighted when on). It applies at once, shows the new state, and an
 unavailable switch stays visible with its reason ("Connect a mailbox first.").
-One-shot actions (Rotate, Delete, Test, Disconnect) stay buttons.
+One-shot actions (Rotate token, Archive, Test, Disconnect) stay buttons.
 
 The **sign-in page** asks for the gateway user and the token, with one status
 ("Not signed in", "Signed in as admin", "Token refused") and errors under the
@@ -120,17 +120,21 @@ from a spark template (its name is permanent, [entities.md](./entities.md)).
 |---|---|
 | **Name** | the account id and a kind chip: **Admin**, **User** or **Entity** (hover it for the role) |
 | **Email address** | where the account's sign-in codes and notifications go: the registered email address, else the account's own connected mailbox address; "No address" when it has neither |
-| **Mailbox** | "Connected as x@y", "Not connected", "Paused", or "Not available" for an entity |
-| **Runtime** | the account's runtime, or "None" |
-| **Active** | the switch described below |
-| **Actions** | **Email**, **Logs**, **Workspace**, **Rotate**, **Manage** (entities) and **Delete** |
+| **Mailbox** | "Connected as x@y", "Not connected" or "Paused" (users and entities alike: an entity has its own mailbox) |
+| **Runtime** | the account's runtime, or "No runtime" |
+| **Active** | the switch described below; "Archived" on an archived row |
+| **Actions** | users: **Email**, **Logs**, **Workspace** and a "⋯" menu (**Rotate token**, **Archive**); entities: **Email**, **Logs**, **Manage** and a "⋯" menu (**Workspace**, **Archive**); archived rows: **Logs** and a "⋯" menu (**Unarchive**) |
 
 Rows are tinted by kind (a legend under the table reads "Tint: admin · user ·
-entity"). An action that cannot apply to a row is shown disabled, and one line
-under the buttons says why: for an entity, "Rotate and Delete don't apply to
-entities: no credential is kept, and an entity's name is kept for life —
-suspend it instead."; for your own row, "You can't deactivate or delete your
-own account."
+entity"). Only the actions that apply to a row are shown: your own row has no
+**Archive**, and an entity has no **Rotate token** (hover the "⋯" button for
+why). The table never scrolls sideways: long names and addresses wrap, and when
+the table does not fit (narrow windows, tablets, phones) each account becomes
+one flat block: name, kind chip and Active, then the address and mailbox, then
+the runtime, then the actions.
+
+**Show archived** (administrators, above the table) lists archived accounts too;
+it is off by default and your browser remembers it.
 
 - **Active** for a user: off signs them out and refuses their sign-in until you
   turn it back on. Turning it off asks first ("Deactivate alice? They are
@@ -147,8 +151,10 @@ own account."
   administrator's own agents. On another user's row it holds only that user's
   **Email address** (with Save) and a read-only mailbox line ("Mailbox: not
   connected — only alice can connect a mailbox. You never see anyone's mail.").
-  On an entity's row it says "Entities can't have their own mailbox yet:
-  mailboxes belong to a user's runtime."
+  On an entity's row it holds the same email settings as your own, for the
+  entity's own mailbox (an entity is an AI user: its agents read and send from
+  it, and notifications about its runs go to its address); the administrator
+  and the entity's creator can open it.
 - **Logs** opens "Activity — <id>": the account's sign-ins, token rotations,
   runs started, automation commands, account changes and email events from the
   gateway's audit log, newest first, in your local time. The chips **All**,
@@ -162,13 +168,15 @@ own account."
   email tools).
 - **Workspace** opens the account's workspace policy (which folders its agents
   may read and write); for an entity it opens the entity's management page.
-- **Rotate** issues a new token for a user (the old one stops working at once;
-  the new one is shown once). Entities have no token to rotate.
+- **Rotate token** issues a new token for a user (the old one stops working at
+  once; the new one is shown once). Entities have no token to rotate.
 - **Manage** (entities) opens the entity's lifecycle, substrate, capabilities
   and prompt; **Talk** is there too.
-- **Delete** asks in a row under the account. The account and its token are
-  removed; its runtime and data are kept. Entities cannot be deleted: suspend
-  them instead.
+- **Archive** asks in a row under the account ("Archive alice? They can't sign
+  in any more. Their runtime, runs and history are kept; you can unarchive
+  later." / for an entity: "It stops acting and never wakes. Its memory, runs
+  and history are kept"). Nothing is deleted. **Unarchive** brings the account
+  back inactive: turn **Active** on to let it sign in (or act).
 
 Under the table, **Email for everyone** (administrators) holds the switch
 **Mailboxes for users**, with **Agent email tools for users** and **Sign-in by
@@ -178,12 +186,11 @@ email** under Advanced ([email.md](./email.md#administrators)). Below the page,
 Someone who is not an administrator sees the page as **Your account** ("Your
 account and the entities you created."): the same table with their own row and
 one row per entity they created (`GET /api/gateway/me/accounts`). There is no
-Create user and no Email for everyone; their own Rotate says "Only an admin can
-rotate your token." and an entity's Active switch "Only an admin can suspend an
-entity." See [security.md](./security.md#who-sees-which-account).
+Create user and no Email for everyone; their own row has no **Rotate token**
+(only an admin rotates tokens), they can archive an entity they created but not
+unarchive it, and an entity's Active switch says "Only an admin can suspend an
+entity." Archived accounts are not listed for them. See [security.md](./security.md#who-sees-which-account).
 
-On phones each account is one flat block: name, kind chip and Active, then the
-address and mailbox, then the runtime and the actions.
 
 ### Workflows
 
