@@ -13,7 +13,7 @@ use abstractgateway_console::store::{entities_from_payload, users_from_payload, 
 use abstractgateway_console::ui;
 use abstractgateway_console::worker::Cmd;
 use abstracttui::prelude::*;
-use accounts_fixture::{entity_row, user_row, ENTITY_DELETE_REASON, ENTITY_EMAIL_REASON};
+use accounts_fixture::{entity_row, user_row, OWN_ARCHIVE_REASON};
 use r2shots::{harness, Harness, SIZES};
 use serde_json::json;
 
@@ -84,28 +84,40 @@ fn one_table_lists_users_and_entities_with_kind_and_active() {
 }
 
 #[test]
-fn an_entity_row_shows_its_unavailable_actions_with_reasons() {
+fn d_archives_an_entity_after_the_confirm_never_deletes() {
     let mut h = accounts((120, 40));
     select(&mut h, "castor");
     let s = h.turns(2);
-    assert!(s.contains("Unavailable —"), "{s}");
+    assert!(!s.contains("Delete"), "no Delete anywhere on the row:\n{s}");
+    assert!(s.contains("d archive"), "{s}");
+    let s = h.key(b"d");
+    // The confirm wraps; the sentence itself is DESIGN-v3 §1.3's, word for word.
+    let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        s.contains("Delete: An entity's name is kept for life"),
+        flat.contains("Archive castor? It stops acting and never wakes. Its memory, runs and history are kept; you can unarchive later."),
         "{s}"
     );
-    // d says why and sends nothing.
+    assert!(h.sent().is_empty(), "nothing sent before the confirm");
+    h.key(b"\x1b[A"); // up to "Archive" (Keep is the default)
+    h.key(b"\r");
+    let sent = h.sent();
+    assert!(
+        sent.iter().any(|c| matches!(c,
+            Cmd::ArchiveAccount { id, unarchive: false, admin: true, .. } if id == "castor")),
+        "{sent:?}"
+    );
+}
+
+#[test]
+fn d_on_your_own_row_says_why() {
+    let mut h = accounts((120, 40));
+    select(&mut h, "admin");
     h.key(b"d");
     assert_eq!(
         h.store.notice.get_untracked().as_deref(),
-        Some(ENTITY_DELETE_REASON)
+        Some(OWN_ARCHIVE_REASON)
     );
     assert!(h.sent().is_empty());
-    // @ on an entity: the reason, no mailbox form.
-    h.key(b"@");
-    assert_eq!(
-        h.store.notice.get_untracked().as_deref(),
-        Some(ENTITY_EMAIL_REASON)
-    );
 }
 
 #[test]

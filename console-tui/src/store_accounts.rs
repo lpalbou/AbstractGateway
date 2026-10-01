@@ -20,14 +20,16 @@ pub struct Action {
     pub reason: Option<String>,
 }
 
-/// The row actions §6 lists, in the order the screen shows them.
-pub const ACTIONS: [&str; 7] = [
+/// The row actions §6 lists, in the order the screen shows them. Accounts
+/// are archived, never deleted (round 3): `archive` / `unarchive`.
+pub const ACTIONS: [&str; 8] = [
     "email",
     "logs",
     "workspace",
     "rotate",
     "manage",
-    "delete",
+    "archive",
+    "unarchive",
     "suspend",
 ];
 
@@ -53,6 +55,8 @@ pub struct AccountRow {
     pub runtime_id: Option<String>,
     pub active: bool,
     pub entity_state: Option<String>,
+    /// Archived: can't sign in or act; records kept (round 3).
+    pub archived: bool,
     /// (name, availability) for every name in [`ACTIONS`].
     pub actions: Vec<(String, Action)>,
 }
@@ -67,6 +71,10 @@ impl AccountRow {
             .get("active")
             .and_then(Value::as_bool)
             .ok_or_else(|| need("active"))?;
+        let archived = v
+            .get("archived")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| need("archived"))?;
         let mb = v.get("mailbox").ok_or_else(|| need("mailbox"))?;
         let mailbox = Mailbox {
             state: s(mb, "state").ok_or_else(|| need("mailbox.state"))?,
@@ -100,6 +108,7 @@ impl AccountRow {
             kind,
             role,
             active,
+            archived,
             mailbox,
             actions,
         })
@@ -157,8 +166,11 @@ impl AccountRow {
         }
     }
 
-    /// The Active cell: `[x]` / `[ ]` / `[-] <reason>`.
+    /// The Active cell: `Archived` / `[x]` / `[ ]` / `[-] <reason>`.
     pub fn active_cell(&self) -> String {
+        if self.archived {
+            return "Archived".into();
+        }
         match self.refusal("suspend") {
             Some(why) => format!("[-] {why}"),
             None if self.active => "[x]".into(),
@@ -281,27 +293,44 @@ mod tests {
         json!({"id": id, "tenant_id": "default", "kind": kind, "role": role,
                "email_address": null,
                "mailbox": {"state": "not_connected", "address": null, "provider": null, "reason": null},
-               "runtime_id": id, "active": true, "entity_state": null,
+               "runtime_id": id, "active": true, "entity_state": null, "archived": false,
                "actions": {"email": ok, "logs": ok, "workspace": ok, "rotate": ok,
-                           "manage": ok, "delete": ok, "suspend": ok}})
+                           "manage": ok, "archive": ok, "unarchive": ok, "suspend": ok}})
     }
 
     #[test]
     fn parses_the_contract_row_and_its_cells() {
         let mut v = row("castor", "entity", "entity");
-        v["actions"]["delete"] = json!({"available": false,
-            "reason": "An entity's name is kept for life; suspend it instead."});
+        v["actions"]["unarchive"] =
+            json!({"available": false, "reason": "This account isn't archived."});
         v["mailbox"] = json!({"state": "unavailable", "address": null, "provider": null,
-            "reason": "Entities can't have their own mailbox yet."});
+            "reason": "Mailboxes are turned off for this account (Email for everyone)."});
         let r = AccountRow::from_value(&v).unwrap();
         assert_eq!(r.kind_label(), "Entity");
         assert_eq!(r.mailbox_cell(), "—");
         assert_eq!(r.active_cell(), "[x]");
         assert_eq!(
-            r.refusal("delete").as_deref(),
-            Some("An entity's name is kept for life; suspend it instead.")
+            r.refusal("unarchive").as_deref(),
+            Some("This account isn't archived.")
         );
+        assert_eq!(r.refusal("archive"), None);
         assert_eq!(r.refusal("manage"), None);
+    }
+
+    #[test]
+    fn an_archived_row_says_archived_and_has_no_delete() {
+        let mut v = row("alice", "user", "user");
+        v["archived"] = json!(true);
+        v["active"] = json!(false);
+        let r = AccountRow::from_value(&v).unwrap();
+        assert!(r.archived);
+        assert_eq!(r.active_cell(), "Archived");
+        assert!(!ACTIONS.contains(&"delete"));
+        // A row from a gateway that still sends `delete` and no `archive` is refused by name.
+        let mut old = row("bob", "user", "user");
+        old["actions"].as_object_mut().unwrap().remove("archive");
+        let e = accounts_from_payload(&json!({"accounts": [old]})).unwrap_err();
+        assert!(e.contains("actions.archive"), "{e}");
     }
 
     #[test]

@@ -766,23 +766,42 @@ impl GatewayClient {
         self.send("PATCH", &path, body, false)
     }
 
-    pub fn delete_user(&self, user_id: &str, tenant_id: &str) -> ApiResult<Value> {
-        self.delete(&format!(
-            "/admin/users/{}?tenant_id={}",
-            urlencode(user_id),
-            urlencode(tenant_id)
-        ))
-    }
-
     pub fn entities(&self) -> ApiResult<Value> {
         self.get("/entities", false)
     }
 
     // ---- accounts (DESIGN-v2 §6) ------------------------------------------
 
-    /// Users and entities in one list (admin).
+    /// Users and entities in one list (admin), archived accounts included
+    /// (shown as "Archived"; `d` unarchives them).
     pub fn accounts(&self) -> ApiResult<Value> {
-        self.get("/admin/accounts", false)
+        self.get("/admin/accounts?include_archived=true", false)
+    }
+
+    /// Archive an account (round 3: accounts are archived, never deleted).
+    /// An admin archives any account (`/admin/accounts/{id}/archive`); a
+    /// non-admin only an entity they created (`/me/accounts/{id}/archive`).
+    pub fn archive_account(&self, id: &str, tenant_id: &str, admin: bool) -> ApiResult<Value> {
+        let path = if admin {
+            format!(
+                "/admin/accounts/{}/archive?tenant_id={}",
+                urlencode(id),
+                urlencode(tenant_id)
+            )
+        } else {
+            format!("/me/accounts/{}/archive", urlencode(id))
+        };
+        self.send("POST", &path, &json!({}), false)
+    }
+
+    /// Unarchive an account (admin): it comes back inactive.
+    pub fn unarchive_account(&self, id: &str, tenant_id: &str) -> ApiResult<Value> {
+        let path = format!(
+            "/admin/accounts/{}/unarchive?tenant_id={}",
+            urlencode(id),
+            urlencode(tenant_id)
+        );
+        self.send("POST", &path, &json!({}), false)
     }
 
     /// `GET /me/accounts`: for a NON-admin, your own row plus the entities
@@ -801,17 +820,6 @@ impl GatewayClient {
             urlencode(tenant_id)
         );
         self.send("PUT", &path, &json!({ "active": active }), false)
-    }
-
-    /// Rotate an account's token (the gateway offers it only where
-    /// `actions.rotate.available`).
-    pub fn rotate_account(&self, id: &str, tenant_id: &str) -> ApiResult<Value> {
-        let path = format!(
-            "/admin/accounts/{}/rotate?tenant_id={}",
-            urlencode(id),
-            urlencode(tenant_id)
-        );
-        self.send("POST", &path, &json!({}), false)
     }
 
     /// One account's activity (admin), or the caller's own (`None`).
@@ -1116,18 +1124,6 @@ impl GatewayClient {
             ),
             body,
             false,
-        )
-    }
-
-    pub fn reservation_purge(&self, runtime_id: &str, body: &Value) -> ApiResult<Value> {
-        self.send(
-            "POST",
-            &format!(
-                "/admin/runtime-reservations/{}/purge",
-                urlencode(runtime_id)
-            ),
-            body,
-            true,
         )
     }
 

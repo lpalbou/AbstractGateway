@@ -8,11 +8,10 @@ use abstractgateway_console::store::{EntityRow, UsersData};
 use serde_json::{json, Value};
 
 pub const OWN_REASON: &str = "You can't deactivate your own account.";
-pub const ENTITY_DELETE_REASON: &str = "An entity's name is kept for life; suspend it instead.";
+pub const OWN_ARCHIVE_REASON: &str = "You can't archive your own account.";
+pub const NOT_ARCHIVED_REASON: &str = "This account isn't archived.";
 pub const ENTITY_ROTATE_REASON: &str =
     "An entity's token is never shown; it has no token to rotate here.";
-pub const ENTITY_EMAIL_REASON: &str =
-    "Entities can't have their own mailbox yet: mailboxes belong to a user's runtime.";
 
 fn ok() -> Value {
     json!({"available": true, "reason": null})
@@ -37,22 +36,22 @@ pub fn user_row(
            "role": if admin { "admin" } else { "user" },
            "email_address": if email.is_empty() { Value::Null } else { Value::String(email.into()) },
            "mailbox": {"state": state, "address": address, "provider": null, "reason": null},
-           "runtime_id": id, "active": active, "entity_state": null,
+           "runtime_id": id, "active": active, "entity_state": null, "archived": false,
            "actions": {"email": ok(), "logs": ok(), "workspace": ok(), "rotate": ok(),
                        "manage": no("Manage is for entities."),
-                       "delete": if own { no("You can't delete your own account.") } else { ok() },
+                       "archive": if own { no(OWN_ARCHIVE_REASON) } else { ok() },
+                       "unarchive": no(NOT_ARCHIVED_REASON),
                        "suspend": if own { no(OWN_REASON) } else { ok() }}})
 }
 
 pub fn entity_row(id: &str, state: &str, active: bool) -> Value {
     json!({"id": id, "tenant_id": "default", "kind": "entity", "role": "entity",
            "email_address": null,
-           "mailbox": {"state": "unavailable", "address": null, "provider": null,
-                       "reason": ENTITY_EMAIL_REASON},
-           "runtime_id": id, "active": active, "entity_state": state,
-           "actions": {"email": no(ENTITY_EMAIL_REASON), "logs": ok(), "workspace": ok(),
+           "mailbox": {"state": "not_connected", "address": null, "provider": null, "reason": null},
+           "runtime_id": id, "active": active, "entity_state": state, "archived": false,
+           "actions": {"email": ok(), "logs": ok(), "workspace": ok(),
                        "rotate": no(ENTITY_ROTATE_REASON), "manage": ok(),
-                       "delete": no(ENTITY_DELETE_REASON), "suspend": ok()}})
+                       "archive": ok(), "unarchive": no(NOT_ARCHIVED_REASON), "suspend": ok()}})
 }
 
 /// Admins, users, entities (the gateway's order); `own` is the signed-in
