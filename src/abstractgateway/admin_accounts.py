@@ -51,7 +51,6 @@ REASON_USER_MANAGE = "Only entities have a management page."
 REASON_ENTITY_NO_HOME = "This entity's home is not on this gateway's runtime, so it can't be managed here."
 REASON_LAST_ADMIN = "This is the last active admin account; make another account admin first."
 # Non-admin rows (GET /me/accounts): what only an admin can do, said once per action.
-REASON_ADMIN_ROTATE = "Only an admin can rotate your token."
 REASON_ADMIN_SUSPEND_ENTITY = "Only an admin can suspend an entity."
 
 _ROLE_ORDER = {"admin": 0, "user": 1, "entity": 2}
@@ -324,10 +323,9 @@ def list_my_accounts(caller: GatewayPrincipal) -> Dict[str, Any]:
     rows: List[Dict[str, Any]] = []
     me = next((r for r in records if _same(caller, r.user_id, r.tenant_id)), None)
     if me is not None and me.principal_kind != "entity" and not me.archived:
-        row = _user_row(me, caller, records)
-        if not caller.is_admin():
-            row["actions"]["rotate"] = _act(False, REASON_ADMIN_ROTATE)
-        rows.append(row)
+        # Rotate stays available on your own row: anyone rotates their own token
+        # (POST /me/token/rotate); only an admin rotates another user's.
+        rows.append(_user_row(me, caller, records))
     homes, warning = _entity_homes()  # the caller's own runtime: where its entities live
     by_id = {r.user_id: r for r in records if r.principal_kind == "entity"}
     for slug, home in homes.items():

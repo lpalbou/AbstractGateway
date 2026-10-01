@@ -247,3 +247,54 @@ def test_archived_entity_never_wakes(world, monkeypatch) -> None:
     r = c.put("/api/gateway/admin/accounts/aster/active", headers=world["admin"], json={"active": True})
     assert r.status_code == 200 and r.json()["active"] is True
     assert registry.state_of("aster")["state"] != "paused"
+
+
+# ---------------------------------------------------------------------------------------
+# Rotate your own token (round 3, parent ruling)
+# ---------------------------------------------------------------------------------------
+
+
+def test_a_user_rotates_their_own_token_and_the_old_one_stops(gateway) -> None:
+    c = gateway["client"]
+    rows = c.get("/api/gateway/me/accounts", headers=gateway["alice"]).json()["accounts"]
+    own = next(r for r in rows if r["id"] == "alice")
+    assert own["actions"]["rotate"] == {"available": True, "reason": None}
+
+    r = c.post("/api/gateway/me/token/rotate", headers=gateway["alice"])
+    assert r.status_code == 200, r.text
+    new = r.json()["token"]
+    assert new and new != gateway["alice_token"] and r.json()["user"]["user_id"] == "alice"
+    # The old token is invalid after the answer; the new one works.
+    assert c.get("/api/gateway/me", headers=gateway["alice"]).status_code == 401
+    assert c.get("/api/gateway/me", headers={"Authorization": f"Bearer {new}"}).status_code == 200
+    # Bob's token is untouched.
+    assert c.get("/api/gateway/me", headers=gateway["bob"]).status_code == 200
+    # Logs: "Token rotated" by alice herself.
+    events = c.get("/api/gateway/admin/accounts/alice/activity?kind=token", headers=ADMIN).json()["events"]
+    assert events and events[0]["title"] == "Token rotated" and events[0]["detail"] == "By alice."
+
+
+def test_rotate_is_self_only(gateway) -> None:
+    c = gateway["client"]
+    # A non-admin can't rotate another user's token (the admin route is admin-only) ...
+    r = c.patch("/api/gateway/admin/users/bob", headers=gateway["alice"], json={"rotate_token": True})
+    assert r.status_code in (401, 403)
+    assert c.get("/api/gateway/me", headers=gateway["bob"]).status_code == 200
+    # ... and the self route takes no target: it only ever rotates the caller.
+    r = c.post("/api/gateway/me/token/rotate", headers=gateway["alice"], json={"user_id": "bob"})
+    assert r.status_code == 200 and r.json()["user"]["user_id"] == "alice"
+    assert c.get("/api/gateway/me", headers=gateway["bob"]).status_code == 200
+    # The operator's static admin token has no registry record: nothing to rotate.
+    r = c.post("/api/gateway/me/token/rotate", headers=ADMIN)
+    assert r.status_code == 404 and "no token of its own" in r.json()["detail"]["message"]
+
+
+def test_rotating_from_a_browser_session_keeps_you_signed_in(gateway) -> None:
+    c = gateway["client"]
+    r = c.post("/api/gateway/session/login", json={"user_id": "alice", "token": gateway["alice_token"]})
+    assert r.status_code == 200, r.text
+    csrf = c.cookies.get("abstractgateway_csrf") or next((v for k, v in c.cookies.items() if "csrf" in k), "")
+    r = c.post("/api/gateway/me/token/rotate", headers={"X-CSRF-Token": csrf, "X-AbstractGateway-CSRF": csrf})
+    assert r.status_code == 200, r.text
+    assert r.json().get("session"), r.json()
+    assert c.get("/api/gateway/me").status_code == 200  # the new session cookie

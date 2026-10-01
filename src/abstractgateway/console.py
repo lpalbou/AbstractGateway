@@ -12821,7 +12821,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             absent.unshift(accountAction(a, "rotate").reason || "Entities have no token to rotate.");
           } else {
             visible("workspace", "Workspace", { aria: `Workspace policy for ${a.id}`, title: "Where this account's agents may read and write" }, userWorkspace);
-            offer("rotate", "Rotate token", () => rotateUser({ user_id: a.id, tenant_id: a.tenant_id || "default" }));
+            offer("rotate", "Rotate token", () => rotateUser({ user_id: a.id, tenant_id: a.tenant_id || "default", own: !!a.own }));
           }
           offer("archive", "Archive", () => askArchiveAccount(tr, a), true);
         }
@@ -15155,7 +15155,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         confirmLabel: "Rotate token",
       });
       if (!ok) return;
-      const res = await api(`/api/gateway/admin/users/${encodeURIComponent(u.user_id)}?tenant_id=${encodeURIComponent(u.tenant_id)}`, { method: "PATCH", body: JSON.stringify({ rotate_token: true }) });
+      // Your own row: the self route (any signed-in user; the session moves to the new token).
+      // Another user's row: the admin route.
+      const res = u.own
+        ? await api("/api/gateway/me/token/rotate", { method: "POST", body: "{}" })
+        : await api(`/api/gateway/admin/users/${encodeURIComponent(u.user_id)}?tenant_id=${encodeURIComponent(u.tenant_id)}`, { method: "PATCH", body: JSON.stringify({ rotate_token: true }) });
       renderIssuedToken($("issued-token"), `${res.user.tenant_id}/${res.user.user_id}`, res.token);
       await refresh();
     }

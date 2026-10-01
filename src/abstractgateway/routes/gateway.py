@@ -1011,6 +1011,47 @@ async def gateway_me_accounts(request: Request) -> Dict[str, Any]:
     return await _off_the_event_loop(list_my_accounts, principal)
 
 
+NO_OWN_TOKEN = (
+    "This account has no token of its own to rotate: it signs in with the gateway's admin token, "
+    "which the operator sets when starting the gateway."
+)
+
+
+@router.post(
+    "/me/token/rotate",
+    tags=["accounts"],
+    summary="Rotate my own token",
+    description="For any signed-in user: mints a new token for YOUR account and answers it once "
+    "(`{user, token, token_note}`); the old token stops working as soon as this answers. Signed in "
+    "from a browser, your session moves to the new token, so you stay signed in. Recorded in your Logs as "
+    "\"Token rotated\". 404 `{message}` for an account without a token of its own (the operator's admin token); "
+    "entities have no token. Admins rotate other users' tokens with `PATCH /admin/users/{id}` "
+    "`{rotate_token: true}`.",
+)
+async def gateway_me_rotate_token(request: Request, response: Response) -> Dict[str, Any]:
+    principal = _principal_from_request(request)
+    registry = GatewayUserRegistry()
+    rec = registry.get_user(str(principal.user_id), tenant_id=str(principal.tenant_id or "default"))
+    if rec is None or rec.principal_kind == "entity" or principal.source != "user-registry":
+        raise HTTPException(status_code=404, detail={"reason_code": "no_own_token", "message": NO_OWN_TOKEN})
+    record, issued = await _off_the_event_loop(
+        lambda: registry.update_user(user_id=rec.user_id, tenant_id=rec.tenant_id, token="")
+    )
+    from ..mail.audit import audit_email_event
+
+    audit_email_event("token.rotated", tenant_id=record.tenant_id, user_id=record.user_id, actor=record.user_id)
+    out: Dict[str, Any] = {
+        "user": record.public_dict(),
+        "token": issued,
+        "token_note": "Your new gateway token. It is shown once; your old token no longer works.",
+    }
+    if gateway_session_id_from_cookie_header(request.headers.get("cookie")):
+        # The old browser session was bound to the old credential (sessions.py drops it); a new one
+        # for the new credential keeps the caller signed in to read the token.
+        out["session"] = _issue_gateway_browser_session(request, response, record.to_principal(), remember=False)
+    return out
+
+
 @router.get(
     "/me/accounts/{account_id}/activity",
     tags=["accounts"],
