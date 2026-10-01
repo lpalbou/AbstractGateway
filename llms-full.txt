@@ -5350,6 +5350,34 @@ The Accounts page (admin): users and entities in one list.
 | `PUT /admin/accounts/{id}/active` | `{active}` → the updated row. Users: `false` = deactivated (signed out, cannot sign in); 409 `{message}` for your own account ("You can't deactivate your own account.") or the last active admin. Entities: `false` = suspended (entity state `paused`, its door credential off, an open visit closed); `true` = resumed (the state it had before is restored, stored in `<data_dir>/auth/entity_suspended.json`) |
 | `GET /admin/accounts/{id}/activity` | `?limit=100&kind=sign_in,run,…` (admin) |
 | `GET /me/activity` | the same for the signed-in account |
+| `GET /me/accounts` | any signed-in account: `{accounts: [rows], scope: "own"}`, the same row shape — your own row plus one row per entity **you** created; actions only an admin can take are unavailable with the reason |
+| `GET /me/accounts/{id}/activity` | the activity of your own account or of an entity you created; any other id answers 404 |
+
+### Who sees which account
+
+An admin sees every user and every entity (`GET /admin/accounts`; non-admins get 403 there). Anyone
+else sees only themself and the entities they created. Entity rows carry `created_by`
+(`{tenant_id, user_id}` of the account whose `POST /entities` created it, or `null`).
+
+This is enforced on every entity route, not only on the Accounts page:
+
+- `POST /entities` writes `created_by` into the new home's `manifest.json`. Entities created before
+  this field existed have none and are visible to admins only: no creator is guessed and no existing
+  manifest is rewritten.
+- `GET /entities` lists only the entities the caller may see.
+- Every `/entities/{name}/…` route (inspect, card, state, chat, visit, summon, workspace,
+  tool policy, replay, …) checks first. An entity you may not see answers exactly like one that does
+  not exist: 404 with the same sentence, so names cannot be probed this way.
+- `POST /entities/meets/open` needs both entities visible; `/entities/meets/{id}` answers 404 for a
+  meet with an entity you may not see.
+- Creating an entity under a name another account already holds answers 409 ("That name is taken
+  …"): entity names are unique per gateway, so this is the one place a name's existence shows. This
+  holds across runtimes: an entity living in another user's runtime, or a user account with that
+  name, also answers 409 (`POST /entities/{name}/validate` reports the same error).
+- Visibility is not management: entity writes that are admin-only (state, tool policy, prompt,
+  substrate, …) stay admin-only for the entities you created.
+
+Without user accounts (the single-operator gateway) every entity is visible, as before.
 
 The email address and mailbox of a row come from the resolver `GET /me/email` uses. An action that
 cannot apply says why in `reason`: an entity has no mailbox ("Entities can't have their own mailbox
@@ -6974,7 +7002,13 @@ code — goes through the same checks, in this order:
    written as its own entry. The policy applies to To, Cc and Bcc, and a message with any refused
    recipient is refused whole, naming the refused addresses. A new account starts with an allowlist
    holding your registered address;
-3. the **send limits**: 20 messages per rolling hour and 100 per day by default, editable by you.
+3. the **send limits**: 100 messages per rolling hour and 1000 per day by default, editable by you.
+   Limits you set are kept across upgrades; a mailbox where nobody set them follows the defaults.
+   Until AbstractCore 2.21 the defaults were 20 and 100 and connecting a mailbox stored them
+   unmarked; an upgrade treats exactly that pair as the old defaults, so the mailbox follows the new
+   ones. Any other unmarked value is kept (the limits document's `source` is `legacy`; `default`
+   and `user` are the other values). Set new
+   values in **Settings → My email** to move on.
 
 On top of the policy, the approval gate still decides whether an agent's send runs unattended: a
 send to anyone but you (or an automation's pre-authorised recipients) waits for your approval, and
@@ -6984,7 +7018,7 @@ address for the operator), else the connected mailbox's own address.
 ```bash
 curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/policy" \
   -d '{"mode": "allowlist", "entries": ["me@example.com", "mycompany.com"]}'
-curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/limits" -d '{"per_hour": 20, "per_day": 100}'
+curl -sS -X PUT -H "$AUTH" "$BASE_URL/api/gateway/me/email/limits" -d '{"per_hour": 100, "per_day": 1000}'
 ```
 
 ## Automations on new mail
@@ -8727,6 +8761,14 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
 (`abstractcore.comms.email.discovery.server_defaults`).
 
 ### Added
+- Entity visibility by role: an admin sees every user and entity; anyone else sees only themself and
+  the entities they created. `POST /entities` records `created_by` (`{tenant_id, user_id}`) in the
+  new home's manifest; `GET /entities` is filtered and every `/entities/{name}/…` route answers 404
+  (the same as a missing entity) for an entity the caller may not see. Entities created before this
+  release have no creator and are visible to admins only (nothing is rewritten).
+- `GET /api/gateway/me/accounts` (your own row plus the entities you created, the `/admin/accounts`
+  row shape) and `GET /api/gateway/me/accounts/{id}/activity`; `/admin/accounts` entity rows carry
+  `created_by`.
 - `GET /api/gateway/admin/accounts`: users and entities in one list (role, email address, mailbox
   state, runtime, Active, entity state) with each row's actions and, when one cannot apply, the
   reason (an entity has no mailbox, no token to rotate and no delete).
@@ -8776,9 +8818,15 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
   https same-origin rule in security.md.
 
 ### Changed
+- Email send limits default to 100 per hour and 1000 per day (were 20 and 100; AbstractCore's
+  defaults). A new mailbox no longer stores the defaults, so it follows them; limits a user sets
+  (`PUT /me/email/limits`, Settings → My email) are kept across upgrades. An unmarked 20 / 100 stored
+  before is the old default and follows the new defaults; any other unmarked value is kept
+  (`limits.source` is `legacy`). The one-time
+  import of AbstractCore's local account copies its limits only when someone set them.
 - `POST /api/gateway/me/notifications/test` answers with `sent`, `reason_code` (`no_mailbox`,
   `mailbox_paused`, `rate_limited`, `queued_behind`, `send_failed`), a ready sentence in `message`
-  ("Not sent: hourly limit reached (20 of 20 this hour) — resets at 14:05.") and `limit`. Notices
+  ("Not sent: hourly limit reached (100 of 100 this hour) — resets at 14:05.") and `limit`. Notices
   held back by a send limit keep the reason and the retry time (`outbox.rate_limited` in
   `GET /me/notifications`). `POST /me/email/test` carries a `message` too.
 - `/admin/users` rows and `GET /me/email` carry `email_address` and `mailbox` from one resolver, so
@@ -8810,6 +8858,41 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
   turned agent email tools off.").
 
 ### Web console
+- Accounts: your email address and mailbox settings open only from your own row's **Email**
+  button (the copy under the table is gone); the address card says "Not set yet — connecting a
+  mailbox below sets it." with **Set it now** until an address is set. A user's page is titled
+  "Your account". The workspace policy disclosure reads **Workspace policy** with one helper line.
+- Logs: the footer says what is recorded in plain words; a mailbox connection reads
+  "IMAP · password sign-in", "Google sign-in" or "Microsoft sign-in".
+- Workflows: a bundle no app uses says "No app"; a manifest version 0.0.0 reads "unversioned";
+  deleting a bundle that ships with the gateway says it does not come back at restart (only a
+  reinstall restores it); every bundle the repository keeps in `flows/bundles/` (map-reduce,
+  structured-extract, adversarial-review, the meta-* agents) counts as shipped on a checkout deploy.
+- Setup guide and Multimodal: a model AbstractCore could not look for (no Hugging Face cache yet on
+  a fresh install) shows "Download needed" with the reason and a Download button, not "Unknown".
+- The sidebar is grouped: Accounts; Work (Workflows, Runtimes, Apps); Models (Providers, Models,
+  Engines, Multimodal); System (Resources, Sandbox, Network). A Setup button at the bottom of the
+  sidebar (administrators) opens the setup guide; the flag button in the top bar is gone.
+- Accounts (was "Users & Entities") is one table of users and entities, tinted by kind, with an
+  Active switch on every row (suspend / resume for entities) and the actions Email, Logs, Workspace,
+  Rotate, Manage (entities) and Delete; an action that cannot apply says why in the row. Email opens
+  a dialog (your own row: the full email settings; another user's row: their address only; an
+  entity: why it has no mailbox). Logs opens the account's activity from the audit log, filtered by
+  sign-ins, runs, automations or email.
+- Email settings: the mailbox tabs are IMAP (first and default), Google, Microsoft. The IMAP servers
+  are always visible and filled in as soon as the address has a domain, then replaced by what
+  discovery finds unless you edited them. No user name or display name field (a small link reveals a
+  login field for providers that need one). One editable address field at a time. The mailbox's
+  Active switch sits with its status; "Send a test" sits under Notifications and always answers with
+  a sentence, reset times in your local time. Advanced reads as three sentences.
+- Workflows says what workflows are, lists one row per bundle with its name, what it does, version,
+  source and the apps that use it (expand a row for its versions), and has Show drafts / Show older
+  versions switches. "Default workflow per app" uses plain names with a (?) explanation, applies a
+  choice at once, and warns only about a broken default.
+- The setup guide's model cards name the engine that runs a route ("faster-whisper · base"), with
+  the download as the small detail.
+- On touch screens reading text is never below 14 px: the console's small type steps have a floor
+  there (they were 11-13 px).
 - The sign-in card has one column, one status ("Not signed in", "Signed in as admin", "Token
   refused") and errors under the field that failed ("This token was refused.", "Can't reach the
   gateway at …"). Sign-in by email is one link, **Forgot your token? Email me a sign-in code**: it
@@ -8893,6 +8976,12 @@ what happened to a code request. Needs AbstractCore with mailbox server discover
   working directory, which is the data folder under the OS service and contains it after a launch
   from a parent folder: an administrator could read another user's received mail and run ledgers
   through `/files/read`. Administrators never read mail.
+- `POST /entities` refuses a name the gateway already holds (409 "That name is taken") when the
+  caller's runtime has no home under that name: an entity created by another user in another
+  runtime, or a user account's name. Entity names belong to the whole gateway while homes belong to
+  a runtime, so such a create used to take over the existing account as the new entity's identity.
+  Re-creating your own entity still answers as before. `POST /entities/{name}/validate` reports the
+  same refusal.
 
 ### Tests
 - Two CI timing flakes are now deterministic. The automations test `test_d2_waiting_only_on_a_person`
