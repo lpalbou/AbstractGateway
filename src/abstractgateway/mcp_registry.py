@@ -313,7 +313,7 @@ def _display_command(command: str, args: List[str]) -> str:
 
 
 def _sentence_for(exc: BaseException, *, transport: str, target: str, stage: str) -> str:
-    from abstractcore.mcp.client import McpHttpError, McpProtocolError, McpRpcError
+    from abstractruntime.integrations.abstractcore.mcp_facade import McpHttpError, McpProtocolError, McpRpcError
 
     text = str(exc).strip()
     first = text.splitlines()[0] if text else type(exc).__name__
@@ -347,7 +347,7 @@ def run_connection_test(config: Dict[str, Any], header_values: Dict[str, str], *
 
     Returns {ok, message, server_info, tools[{name, description}], at, duration_ms}.
     """
-    from abstractcore.mcp import McpClient, McpStdioClient
+    from abstractruntime.integrations.abstractcore.mcp_facade import open_mcp_client
 
     transport = config["transport"]
     started = time.monotonic()
@@ -366,16 +366,10 @@ def run_connection_test(config: Dict[str, Any], header_values: Dict[str, str], *
     def work() -> None:
         try:
             if transport == "stdio":
-                client = McpStdioClient(
-                    command=_shell_words(config["command"], config.get("args") or []),
-                    cwd=config.get("cwd") or scratch,
-                    env=_minimal_env(),
-                    inherit_env=False,
-                    timeout_s=timeout_s,
-                    client_name="abstractgateway",
-                )
+                client = open_mcp_client(transport="stdio", command=config["command"], args=config.get("args") or [],
+                                         cwd=config.get("cwd") or scratch, env=_minimal_env(), timeout_s=timeout_s)
             else:
-                client = McpClient(url=config["url"], headers=dict(header_values), timeout_s=timeout_s, client_name="abstractgateway")
+                client = open_mcp_client(transport="http", url=config["url"], headers=dict(header_values), timeout_s=timeout_s)
             holder["client"] = client
             holder["stage"] = "initialize"
             info = client.initialize()
