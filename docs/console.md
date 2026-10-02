@@ -249,9 +249,12 @@ bundle file: the workflow, the versions affected and why it cannot run, with
 without naming a workflow, the gateway runs this one." One row per interface,
 with its plain name ("AbstractCode — chat agent", "Assistant", "Deep research",
 …), a (?) that says what it is for, and the interface id in small type. The
-list offers the workflows that declare that interface, plus "Clients choose"
-(nothing saved: each app picks its own workflow) or "Built in: basic-agent"
-when a built-in default exists. A choice applies at once ("Saved"). A row warns
+list offers the workflows that declare that interface, each once (the
+registry scope is shown only when the same workflow comes from two scopes),
+after "Gateway default: <workflow>" — what runs when nothing is saved. The
+gateway always resolves that default when at least one workflow declares the
+interface: the shipped bundle first (basic-agent, the Assistant orchestrator),
+else the newest available workflow. A choice applies at once ("Saved"). A row warns
 only when its saved workflow is broken (removed, deprecated, or no longer
 declaring the interface). Interfaces that no app asks for sit under **Other
 workflow types**. See

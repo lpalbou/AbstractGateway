@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-10-02
+
+### Changed
+
+- Default workflow per app: the gateway ALWAYS resolves a default for every app interface that has at least one available workflow — the shipped bundle first (basic-agent for `abstractcode.agent.v1`, the Assistant orchestrator for `abstractassistant.agent.v1`), else the newest available workflow declaring the interface. "Clients choose" is gone from the console; the first option reads "Gateway default: <workflow>". The Workflows page and the default-workflow endpoints report the resolved default.
+
+### Fixed
+
+- The default-workflow dropdown lists each workflow once: a bundle the tenant catalog also lists (same id, version and entrypoint) is offered under the private registry only, and the scope is shown only when it disambiguates (the console showed two identical "AbstractAssistant Orchestrator 0.0.1" entries).
+
 ## [0.11.1] - 2026-10-02
 
 ### Removed

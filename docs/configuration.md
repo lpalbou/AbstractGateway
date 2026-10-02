@@ -764,14 +764,18 @@ may itself contain `:` (the bundle part ends at the first `:`).
 
 | Interface | When nothing is saved |
 |---|---|
-| `abstractcode.agent.v1` | the default entrypoint of the shipped `basic-agent` workflow (unavailable when it is not on the gateway) |
-| `abstractassistant.agent.v1` | none: the Assistant runs its built-in orchestrator |
-| any other interface a workflow declares | none until an admin saves one |
+| `abstractcode.agent.v1` | the default entrypoint of the shipped `basic-agent` workflow (else the newest available workflow declaring it) |
+| `abstractassistant.agent.v1` | the shipped `abstractassistant-orchestrator` bundle's default entrypoint |
+| any other interface a workflow declares | the newest available workflow declaring it (private registry before the tenant catalog) |
+
+Without a saved value the gateway always resolves a default when at least one workflow declares the
+interface (0.11.2; there is no "clients choose" state). When the shipped bundle is missing, the newest
+available workflow declaring the interface runs.
 
 A saved value is checked when it is saved (it must exist on this gateway and
 declare that interface; 400 with the reason otherwise) and again at every
 run start: a value that no longer works is shown as broken with the reason
-("Broken: … — pick another workflow or choose “Clients choose”."), and runs that ask for the default are refused (409) until it is
+("Broken: … — pick another workflow or the gateway default."), and runs that ask for the default are refused (409) until it is
 changed. It never falls back to another workflow on its own.
 
 `GET /api/gateway/admin/runtime-config` returns
@@ -792,7 +796,7 @@ variable for this setting).
 | | Web console | Console TUI | CLI |
 |---|---|---|---|
 | Where | Workflows → *Default workflow per app* (one row per interface, with its plain name; interfaces no app asks for under *Other workflow types*) | Workflows → *Default workflow per app* (`Tab`), or Runtimes → *Runtime knobs* → *Edit default agent workflows* | `abstractgateway config get agents.default_workflow.<interface>` |
-| Change | choose in the row's list; it applies at once ("Clients choose" or "Built in: …" = nothing saved) | `Enter` on a row picks and saves at once; on Runtimes, type the value (the choices are listed under the field; empty = the built-in default) | `abstractgateway config set agents.default_workflow.<interface> bundle[@version]:flow`, `config unset …` |
+| Change | choose in the row's list; it applies at once ("Gateway default: …" = nothing saved) | `Enter` on a row picks and saves at once; on Runtimes, type the value (the choices are listed under the field; empty = the built-in default) | `abstractgateway config set agents.default_workflow.<interface> bundle[@version]:flow`, `config unset …` |
 
 Writes are admin-only and audit-logged like every other setting. A write that
 names a setting the gateway does not know is refused as a whole (400) and

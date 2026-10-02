@@ -172,9 +172,9 @@ table in `agent_defaults.py` (`INTERFACE_TABLE`):
 |---|---|
 | `interface`, `label`, `app`, `help` | the interface id, its plain name ("AbstractCode — chat agent"), the app that asks for it (`null` when none does) and one sentence of help |
 | `group` | `apps` (an app asks the gateway for it as its default agent) or `other` (declared by a workflow; no app asks for it by default) |
-| `state` | `clients_choose` (nothing saved and no built-in: each client picks its own workflow — normal, not a warning), `builtin` (nothing saved; the built-in default runs), `set` (a saved value that runs) or `broken` (a saved value that no longer resolves) |
-| `value` | the saved value, else the built-in default, else `null` |
-| `reason` | only for `broken`: "Broken: workflow bundle 'coding-agent' is not on this gateway — pick another workflow or choose “Clients choose”." |
+| `state` | `builtin` (nothing saved; the gateway default runs: the shipped bundle, else the newest available workflow), `none` (nothing saved and no workflow declares the interface; `reason` says so), `set` (a saved value that runs) or `broken` (a saved value that no longer resolves) |
+| `value` | the saved value, else the gateway default, else `null` |
+| `reason` | for `broken`: "Broken: workflow bundle 'coding-agent' is not on this gateway — pick another workflow or the gateway default."; for `none`: "no workflow on this gateway declares <interface>" |
 
 For VisualFlow bundles, Gateway runs the packed JSON through AbstractRuntime.
 Structured LLM/Agent schemas are Runtime/Core-owned: `response` remains textual,
