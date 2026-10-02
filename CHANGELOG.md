@@ -24,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release's version before the apps start; the file is removed, and a failed update is logged as an
   error and reported in the boot outcome.
 
+### Fixed
+
+- AbstractCode runs never offered `send_email` when Agent email tools were on: the run input schema
+  (bundle and workflow-catalog `input_schema` routes) now serves the effective `tools` default, the
+  start-node list plus the email tools when the principal's agent email tools are active.
+
 ## [0.11.0] - 2026-10-01
 
 
