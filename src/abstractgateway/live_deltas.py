@@ -93,7 +93,8 @@ _role_lock = threading.Lock()
 # them) and the feeder's own-automatic-mail guard (`EmailInboxFeeder(is_own_sent=...)`).
 # 0.8.2: pausing an automation also stops its retries (an occurrence in retry backoff is cancelled).
 # 0.8.3: registered MCP servers run through integrations.abstractcore.mcp_facade.
-ABSTRACTRUNTIME_FLOOR = "0.8.3"
+# 0.8.4: configurable automation history and completed result delivery.
+ABSTRACTRUNTIME_FLOOR = "0.8.4"
 
 
 class LiveDeltaError(RuntimeError):

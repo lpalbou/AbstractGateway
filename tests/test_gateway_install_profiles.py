@@ -147,7 +147,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "docs" in extras
 
     apple = "\n".join(extras["apple"])
-    assert "AbstractRuntime[apple]>=0.8.3" in apple
+    assert "AbstractRuntime[apple]>=0.8.4" in apple
     assert "abstractagent[apple]>=0.3.17" in apple
     assert "abstractagent[all-apple]" not in apple
     assert "AbstractMemory[all-apple]>=0.3.0" in apple
@@ -156,7 +156,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "abstractvoice" not in apple
     assert "abstractmusic" not in apple
     gpu = "\n".join(extras["gpu"])
-    assert "AbstractRuntime[gpu]>=0.8.3" in gpu
+    assert "AbstractRuntime[gpu]>=0.8.4" in gpu
     assert "abstractagent[gpu]>=0.3.17" in gpu
     assert "AbstractMemory[all-gpu]>=0.3.0" in gpu
     assert "abstractcore[" not in gpu
