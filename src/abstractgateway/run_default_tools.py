@@ -138,3 +138,38 @@ def apply_default_email_tools(host: Any, *, workflow_id: str, vars0: Dict[str, A
     tools = with_email_tools(defaults, email_tool_names())
     vars0[TOOLS_PIN_ID] = tools
     return tools[len(defaults):]
+
+
+def advertise_default_email_tools(host: Any, *, visualflow: Any, schema: Dict[str, Any]) -> List[str]:
+    """Serve the run input schema's `tools` default as the list a start WITHOUT `tools`
+    actually gets (`apply_default_email_tools`): the start-node default plus the email
+    tools when this host's agent email tools are active.
+
+    Why (framework 0.9.0 Mac mini, Code "Basic agent @0.0.5" never offered send_email):
+    clients seed their run input from this schema's defaults (AbstractCode web
+    `schemaDefaults`), so they send the raw start-node list back as an EXPLICIT `tools`
+    value — the caller's ceiling, never widened — and the email tools never reached the
+    run although `/discovery/tools` showed them enabled. Mutates `schema` in place (the
+    `tools` pin default, `defaults.tools`, `input_data_schema.properties.tools.default`);
+    returns the email names added (empty = unchanged)."""
+
+    if not isinstance(visualflow, Mapping) or not isinstance(schema, dict):
+        return []
+    defaults = start_node_default_tools(visualflow)
+    if defaults is None or not host_email_tools_active(host):
+        return []
+    tools = with_email_tools(defaults, email_tool_names())
+    added = tools[len(defaults):]
+    if not added:
+        return []
+    for pin in schema.get("inputs") or []:
+        if isinstance(pin, dict) and pin.get("id") == TOOLS_PIN_ID and "default" in pin:
+            pin["default"] = list(tools)
+            if isinstance(pin.get("schema"), dict) and "default" in pin["schema"]:
+                pin["schema"]["default"] = list(tools)
+    if isinstance(schema.get("defaults"), dict) and TOOLS_PIN_ID in schema["defaults"]:
+        schema["defaults"][TOOLS_PIN_ID] = list(tools)
+    props = (schema.get("input_data_schema") or {}).get("properties") if isinstance(schema.get("input_data_schema"), dict) else None
+    if isinstance(props, dict) and isinstance(props.get(TOOLS_PIN_ID), dict) and "default" in props[TOOLS_PIN_ID]:
+        props[TOOLS_PIN_ID]["default"] = list(tools)
+    return added

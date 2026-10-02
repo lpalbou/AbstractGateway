@@ -1693,6 +1693,11 @@ async def get_workflow_catalog_flow_input_schema(
         tenant_id=tenant_id,
     )
     schema = _entrypoint_input_schema_from_visualflow(raw)
+    # The served `tools` default is what a start without `tools` gets (email tools included
+    # when active) — clients echo it back as an explicit list (run_default_tools.py).
+    from ..run_default_tools import advertise_default_email_tools
+
+    advertise_default_email_tools(_require_bundle_host(get_gateway_service()), visualflow=raw, schema=schema)
     return {
         "registry_scope": selection.scope,
         "tenant_id": selection.tenant_id,
@@ -8618,6 +8623,11 @@ async def get_bundle_flow_input_schema(
     if not isinstance(raw, dict):
         raise HTTPException(status_code=500, detail="Flow JSON is invalid")
     schema = _entrypoint_input_schema_from_visualflow(raw)
+    # The served `tools` default is what a start without `tools` gets (email tools included
+    # when active) — clients echo it back as an explicit list (run_default_tools.py).
+    from ..run_default_tools import advertise_default_email_tools
+
+    advertise_default_email_tools(host, visualflow=raw, schema=schema)
     return {
         "bundle_id": bid_base,
         "bundle_version": selected_ver,
