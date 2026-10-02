@@ -405,3 +405,90 @@ def test_outbox_exists_only_once_something_is_queued(gateway, imap, smtp) -> Non
     assert not (plane.email_dir / "outbox.sqlite3").exists()
     _connect(gateway, imap, smtp, notify=False)
     assert not (plane.email_dir / "outbox.sqlite3").exists()
+
+
+def test_explicit_result_on_first_collection_delivers_full_body_to_selected_recipients(gateway, imap, smtp, monkeypatch):
+    from abstractgateway.mail.notifications import NotificationCollector, NotificationOutbox
+
+    _connect(gateway, imap, smtp)
+    allowed = gateway["client"].put("/api/gateway/me/email/policy", headers=gateway["alice"],
+        json={"mode": "allowlist", "always_allow": ["recipient@example.test"]})
+    assert allowed.status_code == 200, allowed.text
+    plane = plane_of("alice")
+    full_result = "A complete paragraph of the result.\n" * 400
+    svc, data = _fake_svc(automations=[{"automation_id": "result", "title": "Report", "status": "active"}])
+    data["records"]["result"] = [
+        _completed(1, "notify", ["console", "email"], "Old notice must stay quiet"),
+        {**_completed(2, "notify", ["console", "email"], "Truncated excerpt"),
+         "email_result": full_result, "recipients": ["self", "recipient@example.test"]},
+    ]
+    _patch_runtime_sources(monkeypatch, data)
+    assert NotificationCollector(plane, svc).collect()["queued"] == 1
+    assert NotificationCollector(plane, svc).collect()["queued"] == 0
+    assert NotificationOutbox(plane).deliver()["sent"] == 1
+    [mail] = smtp_bodies(smtp)
+    assert set(mail["to"]) == {ALICE, "recipient@example.test"}
+    assert full_result.strip() in mail["text"].replace("\r\n", "\n")
+    assert "Old notice" not in mail["text"] and "Truncated excerpt" not in mail["text"]
+
+
+def test_outbox_migrates_existing_owner_only_notice(gateway, imap, smtp):
+    import sqlite3
+    from abstractgateway.mail.notifications import NotificationOutbox
+
+    _connect(gateway, imap, smtp)
+    box = NotificationOutbox(plane_of("alice"))
+    box.enqueue("old-notice", "job_finished", "Legacy result", "Saved before recipients existed")
+    # Recreate the actual old schema while retaining an already-queued notice.
+    with sqlite3.connect(box.path) as conn:
+        conn.execute("ALTER TABLE notices DROP COLUMN recipients_json")
+    assert NotificationOutbox(box.plane).deliver()["sent"] == 1
+    [mail] = smtp_bodies(smtp)
+    assert mail["to"] == [ALICE] and "Saved before" in mail["text"]
+    assert NotificationOutbox(box.plane).deliver()["sent"] == 0
+
+
+def test_rate_limited_digests_never_mix_recipient_groups(gateway, imap, smtp):
+    from abstractgateway.mail.accounts import account_store
+    from abstractgateway.mail.notifications import NotificationOutbox, queue_notice
+
+    _connect(gateway, imap, smtp)
+    allowed = gateway["client"].put("/api/gateway/me/email/policy", headers=gateway["alice"],
+        json={"mode": "allowlist", "always_allow": ["a@example.test", "b@example.test"]})
+    assert allowed.status_code == 200, allowed.text
+    plane = plane_of("alice")
+    account_store(plane).set_limits(per_hour=1, per_day=100)
+    queue_notice(plane, "test", "consume-limit", {"title": "Initial"})
+    assert NotificationOutbox(plane).deliver()["sent"] == 1
+    for i, recipient in enumerate(["a@example.test", "b@example.test", "a@example.test"]):
+        queue_notice(plane, "automation_result", f"group-{i}", {
+            "title": f"Report {i}", "model_body": f"Private result {i}", "recipients": [recipient]})
+    assert NotificationOutbox(plane).deliver()["deferred"] == 3
+    rows = NotificationOutbox(plane).rows(state="queued")
+    account_store(plane).set_limits(per_hour=20, per_day=100)
+    later = NotificationOutbox(plane, clock=lambda: max(r["next_attempt_ts"] for r in rows) + 1)
+    assert later.deliver()["sent"] == 3
+    mails = smtp_bodies(smtp)[1:]
+    assert len(mails) == 2
+    a = next(mail for mail in mails if mail["to"] == ["a@example.test"])
+    b = next(mail for mail in mails if mail["to"] == ["b@example.test"])
+    assert "Private result 0" in a["text"] and "Private result 2" in a["text"] and "Private result 1" not in a["text"]
+    assert "Private result 1" in b["text"] and "Private result 0" not in b["text"] and "Private result 2" not in b["text"]
+    assert later.deliver()["sent"] == 0
+
+
+def test_explicit_result_recipients_still_obey_mailbox_policy(gateway, imap, smtp):
+    from abstractgateway.mail.notifications import NotificationOutbox, queue_notice
+
+    _connect(gateway, imap, smtp)
+    blocked = gateway["client"].put("/api/gateway/me/email/policy", headers=gateway["alice"],
+        json={"mode": "denylist", "always_deny": ["denied@example.test"]})
+    assert blocked.status_code == 200, blocked.text
+    plane = plane_of("alice")
+    queue_notice(plane, "automation_result", "blocked-result", {
+        "title": "Result", "model_body": "Must stay private", "recipients": ["self", "denied@example.test"]})
+    box = NotificationOutbox(plane)
+    assert box.deliver()["failed"] == 1
+    [row] = box.rows()
+    assert row["state"] == "failed" and row["error_code"] == "email_policy_refused"
+    assert smtp.messages == []

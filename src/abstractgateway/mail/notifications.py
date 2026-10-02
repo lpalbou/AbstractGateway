@@ -215,7 +215,7 @@ def render_notice(kind: str, facts: Dict[str, Any]) -> Tuple[str, str, str]:
     subject = f"{SUBJECT_PREFIX} {title}: {status}"
     lines: List[str] = []
     if kind == "automation_result":
-        lines.append(f"The automation “{title}” finished an occurrence and asked to notify you.")
+        lines.append(f"The automation “{title}” finished an occurrence.")
     elif kind == "automation_failed":
         lines.append(f"The automation “{title}” failed after its retries. It is not paused: the next occurrence runs as scheduled.")
     elif kind == "approval_needed":
@@ -268,7 +268,7 @@ def render_notice(kind: str, facts: Dict[str, Any]) -> Tuple[str, str, str]:
 
 def _why_line(kind: str) -> str:
     if kind == "automation_result":
-        return "You receive this because this automation is set to \u201cEmail me the result\u201d."
+        return "You receive this because this automation is set to \u201cEmail result\u201d."
     if kind in ("job_finished", "job_failed"):
         return "You receive this because this run was started with \u201cemail me when done\u201d."
     if kind == "automation_failed":
@@ -337,6 +337,15 @@ class NotificationOutbox:
             " error_fix TEXT NOT NULL DEFAULT '',"
             " to_self INTEGER NOT NULL DEFAULT 1)"
         )
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(notices)")}
+        if "recipients_json" not in columns:
+            try:
+                conn.execute("ALTER TABLE notices ADD COLUMN recipients_json TEXT NOT NULL DEFAULT '[\"self\"]'")
+                conn.commit()
+            except sqlite3.OperationalError:
+                # Another connection may have completed the same migration.
+                if "recipients_json" not in {r[1] for r in conn.execute("PRAGMA table_info(notices)")}:
+                    raise
         conn.execute(
             "CREATE TABLE IF NOT EXISTS sent_messages ("
             " message_id TEXT PRIMARY KEY,"
@@ -352,16 +361,16 @@ class NotificationOutbox:
 
     # -- writes ----------------------------------------------------------------------------
 
-    def enqueue(self, key: str, kind: str, subject: str, text: str, html_body: str = "") -> bool:
+    def enqueue(self, key: str, kind: str, subject: str, text: str, html_body: str = "", *, recipients: Optional[List[str]] = None) -> bool:
         """Queue one notice. False when this idempotency key was queued before (any state)."""
 
         conn = self._connect()
         try:
             with conn:
                 cur = conn.execute(
-                    "INSERT OR IGNORE INTO notices(idempotency_key, kind, subject, text, html, created_at, state)"
-                    " VALUES (?,?,?,?,?,?, 'queued')",
-                    (str(key), str(kind), str(subject), str(text), str(html_body or ""), _now_iso()),
+                    "INSERT OR IGNORE INTO notices(idempotency_key, kind, subject, text, html, created_at, recipients_json, state)"
+                    " VALUES (?,?,?,?,?,?,?, 'queued')",
+                    (str(key), str(kind), str(subject), str(text), str(html_body or ""), _now_iso(), json.dumps(recipients or ["self"])),
                 )
                 return cur.rowcount == 1
         finally:
@@ -538,8 +547,14 @@ class NotificationOutbox:
             out["failed"] += len(ready)
             return out
 
-        coalesce = len(ready) > 1 and any(int(r.get("coalesce_flag") or 0) for r in ready)
-        batches: List[List[Dict[str, Any]]] = [ready] if coalesce else [[r] for r in ready]
+        groups: Dict[Tuple[str, ...], List[Dict[str, Any]]] = {}
+        for row in ready:
+            recipients = tuple(sorted(set(to if address == "self" else address for address in json.loads(row["recipients_json"]))))
+            groups.setdefault(recipients, []).append(row)
+        batches: List[List[Dict[str, Any]]] = []
+        for rows in groups.values():
+            coalesce = len(rows) > 1 and any(int(r.get("coalesce_flag") or 0) for r in rows)
+            batches.extend([rows] if coalesce else [[r] for r in rows])
         for batch in batches:
             keys = [r["idempotency_key"] for r in batch]
             if len(batch) == 1:
@@ -548,7 +563,7 @@ class NotificationOutbox:
                 subject, text, html_body = render_digest(batch)
             marker = f"notification:{keys[0]}" if len(keys) == 1 else f"notification-digest:{keys[0]}"
             message = OutgoingMessage(
-                to=(to,), subject=subject, text=text, html=html_body,
+                to=tuple(sorted(set(to if address == "self" else address for address in json.loads(batch[0]["recipients_json"])))), subject=subject, text=text, html=html_body,
                 auto_submitted="auto-generated", automation_marker=marker[:200],
             )
             conn = self._connect()
@@ -672,7 +687,7 @@ def _collector_path(plane: EmailPlane) -> Path:
 
 def queue_notice(plane: EmailPlane, kind: str, key: str, facts: Dict[str, Any]) -> bool:
     subject, text, html_body = render_notice(kind, facts)
-    return NotificationOutbox(plane).enqueue(key, kind, subject, text, html_body)
+    return NotificationOutbox(plane).enqueue(key, kind, subject, text, html_body, recipients=facts.get("recipients"))
 
 
 def _iso_from_ts(ts: float) -> str:
@@ -870,13 +885,13 @@ class NotificationCollector:
                     if floor is None and first:
                         # Baseline: never mail the history that existed before notifications were on.
                         att[aid] = max([int(i["seq"]) for i in items] or [0])
-                        continue
+                        items = [it for it in items if "email_result" in it]
                     for it in items:
                         seq = int(it["seq"])
                         att[aid] = max(att.get(aid, 0), seq)
                         kind = "automation_failed" if str(it.get("kind")) == "failure" else "automation_result"
                         if kind == "automation_result":
-                            # "Email me the result": the automation asks for email delivery
+                            # "Email result": the automation asks for email delivery
                             # (`notify.channels`, schema v2; the runtime stamps the channels on the
                             # attention item; v1 = console only). No global preference involved.
                             wanted = "email" in (it.get("channels") or [])
@@ -886,7 +901,8 @@ class NotificationCollector:
                         if usable and wanted:
                             facts = {"title": title, "model_title": it.get("title"), "ref": f"automation {aid}, occurrence {it.get('index')}"}
                             if kind == "automation_result":
-                                facts["model_body"] = it.get("body")
+                                facts["model_body"] = it.get("email_result", it.get("body"))
+                                facts["recipients"] = it.get("recipients", ["self"])
                             else:
                                 facts["cause"] = it.get("body")
                                 facts["fix"] = "Open the automation's last occurrence in the console to see what failed."

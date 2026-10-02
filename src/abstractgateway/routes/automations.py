@@ -309,6 +309,7 @@ def automation_summary_row(svc: Any, principal: Any, controller: Any) -> Dict[st
         "status": status,
         "trigger": base["trigger"],
         "context_mode": base["context_mode"],
+        "growing_max_tokens": base["growing_max_tokens"],
         # The automation's folder (= definition.workspace_root): apps open it
         # from the row without fetching the definition.
         "workspace_root": base["workspace_root"],

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "abstractgateway"
-version = "0.11.2"
+version = "0.11.3"
 description = "AbstractGateway: deployable Run Gateway host for AbstractRuntime (commands + ledger)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -32,7 +32,7 @@ dependencies = [
   # 0.8.0: per-user email (framework backlog 0992) — run binding + resolver `use`, durable event
   # inbox, email.received@1, the send-email action, the email facade, per-caller email toolsets.
   # 0.8.2: pausing an automation also stops its retries (the console's pause switch).
-  "AbstractRuntime>=0.8.3",
+  "AbstractRuntime>=0.8.4",
   # Floor only (no extras; Runtime chooses them). The gateway relies on
   # AbstractCore 2.16.1 (abstractcore.utils.identity for the About rows,
   # process-wide model residency and eject semantics, host-job download
@@ -110,7 +110,7 @@ tray = [
 # deployment entry point, Gateway's `apple` profile installs the full native
 # Apple stack and all relevant non-NVIDIA framework capabilities.
 apple = [
-  "AbstractRuntime[apple]>=0.8.3",
+  "AbstractRuntime[apple]>=0.8.4",
   "abstractagent[apple]>=0.3.17",
   "AbstractMemory[all-apple]>=0.3.0",
 ]
@@ -118,7 +118,7 @@ apple = [
 # Native/container GPU Gateway profile. This is the full local GPU aggregate for
 # Python installs and for the NVIDIA Docker image.
 gpu = [
-  "AbstractRuntime[gpu]>=0.8.3",
+  "AbstractRuntime[gpu]>=0.8.4",
   "abstractagent[gpu]>=0.3.17",
   "AbstractMemory[all-gpu]>=0.3.0",
 ]

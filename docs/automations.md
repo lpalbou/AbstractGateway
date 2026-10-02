@@ -142,10 +142,11 @@ Rare transport answers keep the same shape with `not_found` (unknown path),
   `content_trust: "untrusted"`. The gateway's mail watcher reads the mailbox
   only while such an automation is active.
 
-An automation delivers its attention items to email as well as the console
-when its definition carries `"notify": {"channels": ["console", "email"]}`
-and your notification preferences allow it; `policy.email_allowed_recipients`
-(`["self", "a@example.com"]`) names who its sends may reach without asking.
+An automation with `"notify": {"channels": ["console", "email"]}` emails every
+completed run’s full result, even when the model does not request a notification.
+`notify.recipients` selects the destinations (default `["self"]`). Mailbox notification
+preferences and recipient policy still apply. The separate
+`policy.email_allowed_recipients` controls email-tool consent.
 
 A source installed by another package that fails to load is listed with
 `"available": false` and an `unavailable_reason`. A missing built-in source is
@@ -220,7 +221,7 @@ server-owned keys at all: saving the workflow answers 422 with the `field`.
 | Mode | Each occurrence | Session |
 |---|---|---|
 | `independent` (default) | starts fresh, with no history | a new session per occurrence |
-| `growing` | receives the previous occurrences as conversation history: the most recent 50,000 tokens of whole turns, never a cut message, not summarized; the occurrence run records what was replayed and dropped in `_runtime.session_history` | the automation's session, `automation:<automation_id>` |
+| `growing` | receives the previous occurrences as conversation history: the most recent whole turns within the configured token budget (50,000 tokens by default), never a cut message, not summarized; the occurrence run records what was replayed and dropped in `_runtime.session_history` | the automation's session, `automation:<automation_id>` |
 
 **`policy`.** `tool_approval` is `"auto"` (default) or `"ask"`
 ([Tool approval](#tool-approval-and-consent)). `retry` sets how a failed
@@ -671,7 +672,7 @@ python scripts/accept_automations_v1.py --data-dir /tmp/automation-acceptance
   or event triggers.
 - Occurrences run one at a time, missed ticks coalesce, and a failed
   occurrence never stops the automation. These policies cannot be changed.
-- Growing history is the most recent 50,000 tokens of whole turns and is not
+- Growing history is the most recent whole turns within the configured token budget (50,000 tokens by default) and is not
   summarized; older turns drop out of the replay (they stay in the store).
 - Under `tool_approval: "auto"`, tools outside AbstractRuntime's
   classification, such as third-party MCP tools, still ask for approval, and
@@ -692,3 +693,14 @@ python scripts/accept_automations_v1.py --data-dir /tmp/automation-acceptance
 - [security.md](./security.md): sign-in, the workspace guard and the built-in deny list
 - [faq.md](./faq.md#automations) and [troubleshooting.md](./troubleshooting.md#automations)
 - AbstractRuntime `docs/automations.md`: the controller, triggers, retries, context modes and discussions
+
+## Growing context limit
+
+Choose **Growing** to set **Max growing context (tokens)** when creating or editing an
+automation. The default is 50,000; enter `30000` for a 30,000-token history budget.
+The limit is hidden for **Independent** runs. Changing it affects subsequent occurrences;
+already admitted occurrences retain their history for retries. History retains whole turns,
+including the newest turn even when that turn alone exceeds the budget.
+
+The API field is `context.growing.max_tokens`, a positive integer. Existing definitions
+that omit it retain the 50,000-token default.

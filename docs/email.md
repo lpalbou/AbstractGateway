@@ -257,7 +257,7 @@ Two options stand on their own, with no switch involved:
 
 | Option | Emails you when |
 |---|---|
-| an automation's **Email me the result** (`notify.channels` holds `email`) | an occurrence of that automation asked to notify |
+| an automation's **Email result** (`notify.channels` holds `email`) | every completed occurrence of that automation; full result to `notify.recipients` (default self) |
 | a run's **email me when done** (`_runtime.notify = {"on": ["finished", "failed"], "channels": ["email"]}`) | that run finished or failed, as asked |
 
 `GET/PUT /api/gateway/me/notifications` keep working: the earlier five-event body is accepted,
@@ -266,11 +266,11 @@ as preferences (the per-automation and per-run options above decide). Saved pref
 over the same way: `job_failed` is on when `job_failed` or `automation_failed` was on,
 `approval_needed` keeps its value, and preferences never saved take the new defaults.
 
-Notices go to your registered address (else your mailbox address), sent by your own account, from
-a durable outbox: each notice is queued once and sent once. If the gateway stops in the middle of a
+Notices go to your registered address (else your mailbox address), except automation results
+with explicit `notify.recipients`. They are sent by your own account from a durable outbox: each notice is queued once and sent once. If the gateway stops in the middle of a
 send, that notice is marked `unknown` and never resent automatically. Temporary SMTP refusals are
 retried with backoff; sign-in and permanent refusals are shown with their cause and fix. Over your
-send limits, the waiting notices go out as one digest when the window allows; the waiting notices
+send limits, the waiting notices for each recipient set go out as a digest when the window allows; the waiting notices
 keep why they wait and when they go (`GET /me/notifications` → `outbox.rate_limited {count, cause,
 resets_at}`). **Send a test** checks the whole path and always answers with a sentence: "Sent to
 x@y.", "Not sent: no mailbox connected.", "Not sent: your mailbox is paused.", "Not sent: hourly

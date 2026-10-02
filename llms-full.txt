@@ -6539,10 +6539,11 @@ Rare transport answers keep the same shape with `not_found` (unknown path),
   `content_trust: "untrusted"`. The gateway's mail watcher reads the mailbox
   only while such an automation is active.
 
-An automation delivers its attention items to email as well as the console
-when its definition carries `"notify": {"channels": ["console", "email"]}`
-and your notification preferences allow it; `policy.email_allowed_recipients`
-(`["self", "a@example.com"]`) names who its sends may reach without asking.
+An automation with `"notify": {"channels": ["console", "email"]}` emails every
+completed run’s full result, even when the model does not request a notification.
+`notify.recipients` selects the destinations (default `["self"]`). Mailbox notification
+preferences and recipient policy still apply. The separate
+`policy.email_allowed_recipients` controls email-tool consent.
 
 A source installed by another package that fails to load is listed with
 `"available": false` and an `unavailable_reason`. A missing built-in source is
@@ -6617,7 +6618,7 @@ server-owned keys at all: saving the workflow answers 422 with the `field`.
 | Mode | Each occurrence | Session |
 |---|---|---|
 | `independent` (default) | starts fresh, with no history | a new session per occurrence |
-| `growing` | receives the previous occurrences as conversation history: the most recent 50,000 tokens of whole turns, never a cut message, not summarized; the occurrence run records what was replayed and dropped in `_runtime.session_history` | the automation's session, `automation:<automation_id>` |
+| `growing` | receives the previous occurrences as conversation history: the most recent whole turns within the configured token budget (50,000 tokens by default), never a cut message, not summarized; the occurrence run records what was replayed and dropped in `_runtime.session_history` | the automation's session, `automation:<automation_id>` |
 
 **`policy`.** `tool_approval` is `"auto"` (default) or `"ask"`
 ([Tool approval](#tool-approval-and-consent)). `retry` sets how a failed
@@ -7068,7 +7069,7 @@ python scripts/accept_automations_v1.py --data-dir /tmp/automation-acceptance
   or event triggers.
 - Occurrences run one at a time, missed ticks coalesce, and a failed
   occurrence never stops the automation. These policies cannot be changed.
-- Growing history is the most recent 50,000 tokens of whole turns and is not
+- Growing history is the most recent whole turns within the configured token budget (50,000 tokens by default) and is not
   summarized; older turns drop out of the replay (they stay in the store).
 - Under `tool_approval: "auto"`, tools outside AbstractRuntime's
   classification, such as third-party MCP tools, still ask for approval, and
@@ -7089,6 +7090,17 @@ python scripts/accept_automations_v1.py --data-dir /tmp/automation-acceptance
 - [security.md](docs/security.md): sign-in, the workspace guard and the built-in deny list
 - [faq.md](docs/faq.md#automations) and [troubleshooting.md](docs/troubleshooting.md#automations)
 - AbstractRuntime `docs/automations.md`: the controller, triggers, retries, context modes and discussions
+
+## Growing context limit
+
+Choose **Growing** to set **Max growing context (tokens)** when creating or editing an
+automation. The default is 50,000; enter `30000` for a 30,000-token history budget.
+The limit is hidden for **Independent** runs. Changing it affects subsequent occurrences;
+already admitted occurrences retain their history for retries. History retains whole turns,
+including the newest turn even when that turn alone exceeds the budget.
+
+The API field is `context.growing.max_tokens`, a positive integer. Existing definitions
+that omit it retain the 50,000-token default.
 
 ---
 
@@ -7353,7 +7365,7 @@ Two options stand on their own, with no switch involved:
 
 | Option | Emails you when |
 |---|---|
-| an automation's **Email me the result** (`notify.channels` holds `email`) | an occurrence of that automation asked to notify |
+| an automation's **Email result** (`notify.channels` holds `email`) | every completed occurrence of that automation; full result to `notify.recipients` (default self) |
 | a run's **email me when done** (`_runtime.notify = {"on": ["finished", "failed"], "channels": ["email"]}`) | that run finished or failed, as asked |
 
 `GET/PUT /api/gateway/me/notifications` keep working: the earlier five-event body is accepted,
@@ -7362,11 +7374,11 @@ as preferences (the per-automation and per-run options above decide). Saved pref
 over the same way: `job_failed` is on when `job_failed` or `automation_failed` was on,
 `approval_needed` keeps its value, and preferences never saved take the new defaults.
 
-Notices go to your registered address (else your mailbox address), sent by your own account, from
-a durable outbox: each notice is queued once and sent once. If the gateway stops in the middle of a
+Notices go to your registered address (else your mailbox address), except automation results
+with explicit `notify.recipients`. They are sent by your own account from a durable outbox: each notice is queued once and sent once. If the gateway stops in the middle of a
 send, that notice is marked `unknown` and never resent automatically. Temporary SMTP refusals are
 retried with backoff; sign-in and permanent refusals are shown with their cause and fix. Over your
-send limits, the waiting notices go out as one digest when the window allows; the waiting notices
+send limits, the waiting notices for each recipient set go out as a digest when the window allows; the waiting notices
 keep why they wait and when they go (`GET /me/notifications` → `outbox.rate_limited {count, cause,
 resets_at}`). **Send a test** checks the whole path and always answers with a sentence: "Sent to
 x@y.", "Not sent: no mailbox connected.", "Not sent: your mailbox is paused.", "Not sent: hourly
@@ -9039,6 +9051,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.11.3] - 2026-10-02
+
+- Expose configurable growing-context budgets in automation summaries.
+- Deliver full completed automation results to configured recipients, preserving outbox deduplication and separating digests by recipient set. Existing outboxes migrate automatically.
 
 ## [0.11.2] - 2026-10-02
 

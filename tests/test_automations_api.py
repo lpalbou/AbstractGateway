@@ -983,3 +983,32 @@ def test_create_accepts_email_notify_policy_and_the_email_trigger(live: TestClie
 
     bad = live.post("/api/gateway/automations", headers=HEADERS, json={**body, "request_id": "email-2", "notify": {"channels": ["pager"]}})
     assert bad.status_code == 422, bad.text
+
+
+def test_growing_budget_round_trip_in_create_list_detail_and_revise(live: TestClient):
+    body = {
+        "request_id": "custom-growing-budget", "title": "Budget test",
+        "target": {"bundle_ref": live.bundle_ref, "flow_id": ECHO_FLOW_ID, "input_data": {"prompt": "hello"}},
+        "trigger": {"source_id": "manual", "source_version": 1, "config": {}},
+        "context": {"mode": "growing", "growing": {"max_tokens": 30000}},
+    }
+    created = live.post("/api/gateway/automations", headers=HEADERS, json=body)
+    assert created.status_code == 200, created.text
+    assert created.json()["summary"]["growing_max_tokens"] == 30000
+    aid = created.json()["automation_id"]
+    path = f"/api/gateway/automations/{aid}"
+    detail = live.get(path, headers=HEADERS).json()
+    assert detail["definition"]["context"]["growing"]["max_tokens"] == 30000
+    assert detail["summary"]["growing_max_tokens"] == 30000
+    rows = live.get("/api/gateway/automations", headers=HEADERS).json()["items"]
+    assert next(row for row in rows if row["automation_id"] == aid)["growing_max_tokens"] == 30000
+    patched = live.patch(path, headers=HEADERS, json={"command_id": "budget-edit", "expected_revision": 1,
+        "changes": {"context": {"mode": "growing", "growing": {"max_tokens": 20000}}}})
+    assert patched.status_code == 200, patched.text
+    wait_until(lambda: live.get(path, headers=HEADERS).json()["summary"]["growing_max_tokens"] == 20000)
+    assert live.get(path, headers=HEADERS).json()["definition"]["context"]["growing"]["max_tokens"] == 20000
+    for bad in (0, -1, True, "30000", 1.5):
+        rejected = live.patch(path, headers=HEADERS, json={"command_id": f"bad-budget-{bad}", "expected_revision": 2,
+            "changes": {"context": {"mode": "growing", "growing": {"max_tokens": bad}}}})
+        assert rejected.status_code == 422, rejected.text
+        assert _envelope(rejected)["field"] == "context.growing.max_tokens"
