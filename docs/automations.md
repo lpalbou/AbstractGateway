@@ -144,8 +144,7 @@ Rare transport answers keep the same shape with `not_found` (unknown path),
 
 An automation with `"notify": {"channels": ["console", "email"]}` emails every
 completed run’s full result, even when the model does not request a notification.
-`notify.recipients` selects the destinations (default `["self"]`). Mailbox notification
-preferences and recipient policy still apply. The separate
+`notify.recipients` selects the destinations (default `["self"]`). Mailbox availability, recipient policy and send limits still apply. The separate
 `policy.email_allowed_recipients` controls email-tool consent.
 
 A source installed by another package that fails to load is listed with
