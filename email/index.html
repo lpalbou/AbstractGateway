@@ -1428,8 +1428,8 @@ Set them on your account page or with <code>PUT /api/gateway/me/email/notificati
 </thead>
 <tbody>
 <tr>
-<td>an automation's <strong>Email me the result</strong> (<code>notify.channels</code> holds <code>email</code>)</td>
-<td>an occurrence of that automation asked to notify</td>
+<td>an automation's <strong>Email result</strong> (<code>notify.channels</code> holds <code>email</code>)</td>
+<td>every completed occurrence of that automation; full result to <code>notify.recipients</code> (default self)</td>
 </tr>
 <tr>
 <td>a run's <strong>email me when done</strong> (<code>_runtime.notify = {"on": ["finished", "failed"], "channels": ["email"]}</code>)</td>
@@ -1442,11 +1442,11 @@ Set them on your account page or with <code>PUT /api/gateway/me/email/notificati
 as preferences (the per-automation and per-run options above decide). Saved preferences carry
 over the same way: <code>job_failed</code> is on when <code>job_failed</code> or <code>automation_failed</code> was on,
 <code>approval_needed</code> keeps its value, and preferences never saved take the new defaults.</p>
-<p>Notices go to your registered address (else your mailbox address), sent by your own account, from
-a durable outbox: each notice is queued once and sent once. If the gateway stops in the middle of a
+<p>Notices go to your registered address (else your mailbox address), except automation results
+with explicit <code>notify.recipients</code>. They are sent by your own account from a durable outbox: each notice is queued once and sent once. If the gateway stops in the middle of a
 send, that notice is marked <code>unknown</code> and never resent automatically. Temporary SMTP refusals are
 retried with backoff; sign-in and permanent refusals are shown with their cause and fix. Over your
-send limits, the waiting notices go out as one digest when the window allows; the waiting notices
+send limits, the waiting notices for each recipient set go out as a digest when the window allows; the waiting notices
 keep why they wait and when they go (<code>GET /me/notifications</code> → <code>outbox.rate_limited {count, cause,
 resets_at}</code>). <strong>Send a test</strong> checks the whole path and always answers with a sentence: "Sent to
 x@y.", "Not sent: no mailbox connected.", "Not sent: your mailbox is paused.", "Not sent: hourly
