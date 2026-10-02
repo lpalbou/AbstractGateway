@@ -1,6 +1,6 @@
 """Workflows page backend (DESIGN-v2 §4, §6, item 2): every agent-default row carries the plain
 interface name, the app, one sentence of help, its group and a state that is never a warning
-when nothing is set ("clients_choose"); "broken" only when a saved value no longer resolves.
+when nothing is set (the gateway default runs; "none" only when no workflow declares it); "broken" only when a saved value no longer resolves.
 `GET /bundles` items carry `source` (shipped / published / imported) and `description`."""
 
 from __future__ import annotations
@@ -31,17 +31,20 @@ def _payload(tmp_path: Path, stored: dict | None = None, *, drop_coder: bool = F
     return default_workflows_payload(disk_entrypoint_index([bundles]), data_dir)["default_workflow"]
 
 
-def test_unset_rows_are_builtin_or_clients_choose_never_a_warning(tmp_path: Path) -> None:
+def test_unset_rows_always_resolve_a_gateway_default_never_a_warning(tmp_path: Path) -> None:
     rows = _payload(tmp_path)
     code = rows[CODE]
     assert code["state"] == "builtin" and code["value"] == "basic-agent:ba" and code["reason"] is None
     assert (code["interface"], code["label"], code["app"], code["group"]) == (CODE, "AbstractCode — chat agent", "AbstractCode", "apps")
     assert code["help"].endswith("a prompt in, a reply out.")
     assist = rows[ASSIST]
-    assert assist["state"] == "clients_choose" and assist["reason"] is None and assist["value"] is None
+    assert assist["state"] == "none" and assist["value"] is None
+    assert assist["reason"] == "no workflow on this gateway declares abstractassistant.agent.v1"
     assert (assist["label"], assist["group"]) == ("Assistant", "apps")
     custom = rows["acme.custom.v1"]
-    assert custom["state"] == "clients_choose" and custom["group"] == "other" and custom["label"] == "acme.custom.v1"
+    # Only one workflow declares it: the gateway resolves that one (no "Clients choose").
+    assert custom["state"] == "builtin" and custom["value"] == "custom:c" and custom["reason"] is None
+    assert custom["group"] == "other" and custom["label"] == "acme.custom.v1"
     assert custom["help"] == "Declared by the custom workflow; no app asks for it by default."
 
 
@@ -51,7 +54,7 @@ def test_saved_rows_are_set_and_turn_broken_when_the_workflow_goes(tmp_path: Pat
     broken = _payload(tmp_path / "again", {CODE: "coder:code"}, drop_coder=True)[CODE]
     assert broken["state"] == "broken" and broken["value"] == "coder:code"
     assert broken["reason"] == (
-        "Broken: workflow bundle 'coder' is not on this gateway — pick another workflow or choose “Clients choose”."
+        "Broken: workflow bundle 'coder' is not on this gateway — pick another workflow or the gateway default."
     )
 
 

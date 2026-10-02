@@ -2681,8 +2681,8 @@ CONSOLE_UI_JS = r"""
     // DESIGN-v2 §4.2: one row per interface with the gateway's PLAIN name (the
     // interface table in agent_defaults.py, read from the API: label, app, help,
     // group, state, value, reason), the interface id small, a (?) with the help,
-    // and a select that applies at once ("Saved"). States: "Clients choose" and
-    // "Built in: x" are neutral; a warning appears ONLY when the row is broken.
+    // and a select that applies at once ("Saved"). "Gateway default: x" is
+    // neutral; a warning appears ONLY when the row is broken.
     // Interfaces no app asks for fold under "Other workflow types".
     function agentDefaultRowMarkup(iface, r, admin, st) {
       for (const k of ["label", "help", "group", "state"]) {
@@ -2691,17 +2691,21 @@ CONSOLE_UI_JS = r"""
       const stored = r.source === "stored" ? String(r.value || "") : "";
       const val = Object.prototype.hasOwnProperty.call(st.draft, iface) ? st.draft[iface] : stored;
       const eligible = Array.isArray(r.eligible) ? r.eligible : [];
-      let options = `<option value="">${esc(r.default ? `Built in: ${r.default.split(":")[0]}` : "Clients choose")}</option>`;
+      // The gateway ALWAYS resolves a default when a workflow declares the interface
+      // (0.11.2: no "Clients choose"): the empty value follows that default.
+      const label = (e) => `${e.name || e.flow_id} ${e.bundle_version || ""}`.trim() + (e.show_scope ? ` (${e.registry_scope === "private" ? "this gateway" : "catalog"})` : "");
+      const def = r.default ? eligible.find((e) => String(e.value) === String(r.default)) : null;
+      let options = `<option value="">${esc(r.default ? `Gateway default: ${def ? label(def) : r.default.split(":")[0]}` : "No workflow available")}</option>`;
       const values = new Set(eligible.map((e) => String(e.value)));
       if (stored && !values.has(stored)) options += `<option value="${esc(stored)}" selected>${esc(stored)} (not installed)</option>`;
       for (const e of eligible) {
         const v = String(e.value);
-        options += `<option value="${esc(v)}"${v === val ? " selected" : ""}>${esc(`${e.name || e.flow_id} ${e.bundle_version || ""}`.trim())}</option>`;
+        options += `<option value="${esc(v)}"${v === val ? " selected" : ""}>${esc(label(e))}</option>`;
       }
       let now;
       if (r.state === "broken") now = `<p class="ui-field-msg tone-warn agent-default__state" data-agent-default-now>${esc(r.reason || "")}</p>`;
       else if (r.state === "set" && r.resolved) now = `<p class="agent-default__state" data-agent-default-now>Runs ${esc(`${r.resolved.name || r.resolved.flow_id} ${r.resolved.bundle_version || ""}`.trim())}</p>`;
-      // "Clients choose" / "Built in: x" already read in the select: no second line, never a warning.
+      // "Gateway default: x" already reads in the select: no second line, never a warning.
       else now = "";
       const saved = st.rowSaved && st.rowSaved[iface];
       const savedLine = saved ? `<span class="inline-state${saved.tone === "ok" ? " ok" : " error"}" role="status" data-agent-default-saved="${esc(iface)}">${esc(saved.text)}</span>` : "";

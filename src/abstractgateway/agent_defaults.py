@@ -56,14 +56,17 @@ ASSISTANT_AGENT_INTERFACE = "abstractassistant.agent.v1"
 # Interfaces always listed (with their built-in default), whatever is loaded.
 ALWAYS_LISTED_INTERFACES = (CODE_AGENT_INTERFACE, ASSISTANT_AGENT_INTERFACE)
 # interface -> bundle whose default entrypoint is the built-in default.
+# With no saved value the gateway ALWAYS resolves a default for an interface that has at
+# least one available workflow (0.11.2: "Clients choose" is gone -- the gateway defines
+# defaults, clients may override): the shipped bundle below first (basic-agent, the Assistant orchestrator), else the newest
+# available workflow declaring the interface (`_builtin_value`).
 BUILTIN_DEFAULT_BUNDLES: Dict[str, str] = {
     CODE_AGENT_INTERFACE: "basic-agent",
+    ASSISTANT_AGENT_INTERFACE: "abstractassistant-orchestrator",
 }
-# interface -> the sentence an unset value reports when there is no built-in.
+# interface -> the sentence an unset value reports when NO workflow declares it.
 UNSET_REASONS: Dict[str, str] = {
-    ASSISTANT_AGENT_INTERFACE: (
-        "no host workflow declares abstractassistant.agent.v1; the Assistant uses its built-in orchestrator"
-    ),
+    ASSISTANT_AGENT_INTERFACE: "no workflow on this gateway declares abstractassistant.agent.v1",
 }
 SCOPE_WORDS = {"private": "private", "catalog": "tenant_catalog"}
 
@@ -485,9 +488,18 @@ def eligible_entrypoints(index: List[Dict[str, Any]], interface: str) -> List[Di
     what a settings picker offers. Each carries the version-less `value`
     (follows new versions) and the exact `workflow_id`."""
     out = []
-    for r in index:
+    seen: set = set()
+    # Private rows first, so a bundle the tenant catalog ALSO lists (same id, version and
+    # entrypoint) is offered once, under the private registry (0.11.2: the console showed two
+    # identical "AbstractAssistant Orchestrator 0.0.1" entries).
+    ordered = sorted(index, key=lambda r: r.get("registry_scope") != REGISTRY_PRIVATE)
+    for r in ordered:
         if not r.get("is_latest") or r.get("deprecated") or interface not in (r.get("interfaces") or []):
             continue
+        ident = (r["bundle_id"], r["bundle_version"], r["flow_id"])
+        if ident in seen:
+            continue
+        seen.add(ident)
         out.append(
             {
                 "value": format_workflow_ref(r["bundle_id"], None, r["flow_id"], r["registry_scope"]),
@@ -500,24 +512,39 @@ def eligible_entrypoints(index: List[Dict[str, Any]], interface: str) -> List[Di
             }
         )
     out.sort(key=lambda e: (e["registry_scope"] != REGISTRY_PRIVATE, e["bundle_id"], e["flow_id"]))
+    # The scope is shown only where it disambiguates: the same bundle entrypoint listed
+    # from more than one scope (at different versions, since identical ones are deduped).
+    scopes: Dict[tuple, set] = {}
+    for e in out:
+        scopes.setdefault((e["bundle_id"], e["flow_id"]), set()).add(e["registry_scope"])
+    for e in out:
+        e["show_scope"] = len(scopes[(e["bundle_id"], e["flow_id"])]) > 1
     return out
 
 
 def _builtin_value(index: List[Dict[str, Any]], interface: str) -> tuple[Optional[str], Optional[str]]:
     """(value, reason-when-none) of the built-in default for `interface`."""
+    eligible = eligible_entrypoints(index, interface)
     bid = BUILTIN_DEFAULT_BUNDLES.get(interface)
-    if not bid:
-        reason = UNSET_REASONS.get(interface) or (
-            f"no default workflow is set for {interface} (an admin sets {SETTING_KEY}.{interface})"
-        )
-        return None, reason
-    latest = [r for r in index if r["bundle_id"] == bid and r["registry_scope"] == REGISTRY_PRIVATE and r.get("is_latest")]
-    if not latest:
-        return None, f"not set, and the built-in default bundle '{bid}' is not on this gateway"
-    default_ep = latest[0].get("default_entrypoint") or ""
-    if not default_ep:
-        return None, f"not set, and the built-in default bundle '{bid}' names no default entrypoint"
-    return format_workflow_ref(bid, None, default_ep), None
+    if bid:
+        shipped = [e for e in eligible if e["bundle_id"] == bid]
+        if shipped:
+            row = next(
+                (r for r in index if r["bundle_id"] == bid and r["registry_scope"] == shipped[0]["registry_scope"] and r.get("is_latest")),
+                None,
+            )
+            default_ep = str((row or {}).get("default_entrypoint") or "")
+            pick = next((e for e in shipped if e["flow_id"] == default_ep), shipped[0])
+            return pick["value"], None
+    if eligible:
+        # No shipped bundle: the newest available workflow declaring the interface
+        # (private registry before the tenant catalog).
+        newest = sorted(eligible, key=lambda e: (e["bundle_id"], e["flow_id"]))
+        newest = sorted(newest, key=lambda e: _semver_key(e["bundle_version"]), reverse=True)
+        pick = sorted(newest, key=lambda e: e["registry_scope"] != REGISTRY_PRIVATE)[0]
+        return pick["value"], None
+    reason = UNSET_REASONS.get(interface) or f"no workflow on this gateway declares {interface}"
+    return None, reason
 
 
 def resolve_ref(index: List[Dict[str, Any]], interface: str, value: str, *, source: str) -> Resolution:
@@ -583,14 +610,6 @@ def resolve_default_agent_workflow(
         return resolve_ref(index, iface, saved, source="stored")
     value, reason = _builtin_value(index, iface)
     if value is None:
-        declaring = eligible_entrypoints(index, iface)
-        if iface in UNSET_REASONS and declaring:
-            # The contract sentence says no host workflow declares it; on a
-            # gateway where some do, say that none is chosen instead.
-            reason = (
-                f"no default is set for {iface} ({len(declaring)} workflow(s) on this gateway declare it; an admin "
-                f"chooses one with {SETTING_KEY}.{iface}); the Assistant uses its built-in orchestrator"
-            )
         return Unavailable(iface, None, "default", str(reason))
     return resolve_ref(index, iface, value, source="default")
 
@@ -640,8 +659,9 @@ def _row_state(iface: str, row: Dict[str, Any], stored: Dict[str, str], index: L
     help, group, state, value, reason}. state: "set" (a saved value that runs), "broken" (a
     saved value that no longer resolves: missing, deprecated, or no longer declaring the
     interface; `reason` says which and what to do), "builtin" (nothing saved, the built-in
-    default runs) or "clients_choose" (nothing saved, no built-in: each client picks its own
-    workflow; this is normal, never a warning, `reason` null)."""
+    default runs: the shipped bundle, else the newest available workflow) or "none" (nothing
+    saved and no workflow on this gateway declares the interface; `reason` says so). There is
+    no "clients choose" state: the gateway always defines the default, clients may override."""
     info = interface_info(iface, index)
     saved = stored.get(iface)
     if saved:
@@ -649,12 +669,12 @@ def _row_state(iface: str, row: Dict[str, Any], stored: Dict[str, str], index: L
             state, reason = "set", None
         else:
             state = "broken"
-            reason = f"Broken: {row.get('reason')} \u2014 pick another workflow or choose \u201cClients choose\u201d."
+            reason = f"Broken: {row.get('reason')} \u2014 pick another workflow or the gateway default."
         value: Optional[str] = saved
     elif row.get("available"):
         state, reason, value = "builtin", None, row.get("value")
     else:
-        state, reason, value = "clients_choose", None, None
+        state, reason, value = "none", row.get("reason"), None
     return {"interface": iface, **info, "state": state, "value": value, "reason": reason}
 
 

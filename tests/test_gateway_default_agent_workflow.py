@@ -126,28 +126,41 @@ def test_builtin_defaults_and_saved_precedence(tmp_path: Path) -> None:
     assert isinstance(code, Resolved) and code.source == "default"
     assert code.workflow_id == "basic-agent@0.0.1:ba" and code.name == "Basic agent"
 
-    # The Assistant has no host default: unset = unavailable, in these words.
+    # No workflow declares the Assistant interface: unavailable, in these words.
     assist = resolve_default_agent_workflow(ASSIST, index=idx, stored={})
     assert isinstance(assist, Unavailable) and assist.source == "default"
-    assert assist.reason == (
-        "no host workflow declares abstractassistant.agent.v1; the Assistant uses its built-in orchestrator"
-    )
+    assert assist.reason == "no workflow on this gateway declares abstractassistant.agent.v1"
 
-    # When a host workflow declares the Assistant interface, the reason says a
-    # choice exists (still no automatic default).
-    from abstractgateway.agent_defaults import _row
+    # 0.11.2: the gateway ALWAYS resolves a default once a workflow declares the
+    # interface ("Clients choose" is gone): the shipped orchestrator first, else
+    # the newest available one, private registry before the tenant catalog.
+    from abstractgateway.agent_defaults import _row, eligible_entrypoints
 
-    with_assist = idx + [dict(_row(bundle_id="orch", bundle_version="1.0.0", ep={"flow_id": "m", "interfaces": [ASSIST]},
-                                   default_entrypoint="m", registry_scope="private", deprecated=False, deprecated_reason=None),
-                              is_latest=True)]
+    def row(bid, ver, scope="private"):
+        return dict(_row(bundle_id=bid, bundle_version=ver, ep={"flow_id": "m", "name": bid, "interfaces": [ASSIST]},
+                         default_entrypoint="m", registry_scope=scope, deprecated=False, deprecated_reason=None), is_latest=True)
+
+    with_assist = idx + [row("orch", "1.0.0"), row("orch-new", "2.0.0")]
     a2 = resolve_default_agent_workflow(ASSIST, index=with_assist, stored={})
-    assert isinstance(a2, Unavailable) and a2.reason.startswith("no default is set for abstractassistant.agent.v1 (1 workflow(s)")
-    assert "built-in orchestrator" in a2.reason
+    assert isinstance(a2, Resolved) and a2.bundle_id == "orch-new" and a2.source == "default"
+    shipped = with_assist + [row("abstractassistant-orchestrator", "0.0.1", "tenant_catalog"),
+                             row("abstractassistant-orchestrator", "0.0.1")]
+    a3 = resolve_default_agent_workflow(ASSIST, index=shipped, stored={})
+    assert isinstance(a3, Resolved) and a3.bundle_id == "abstractassistant-orchestrator" and a3.registry_scope == "private"
+    # The same bundle listed by two registry scopes is offered ONCE, scope shown only to disambiguate.
+    offered = eligible_entrypoints(shipped, ASSIST)
+    assert [e["bundle_id"] for e in offered].count("abstractassistant-orchestrator") == 1
+    assert not any(e["show_scope"] for e in offered)
+    split = with_assist + [row("orch", "1.1.0", "tenant_catalog")]
+    assert sorted((e["registry_scope"], e["show_scope"]) for e in eligible_entrypoints(split, ASSIST) if e["bundle_id"] == "orch") == [
+        ("private", True), ("tenant_catalog", True)]
 
-    # No basic-agent on the host: the code default is unavailable, never guessed.
+    # No basic-agent on the host: the newest workflow declaring the interface runs.
     no_basic = [r for r in idx if r["bundle_id"] != "basic-agent"]
     gone = resolve_default_agent_workflow(CODE, index=no_basic, stored={})
-    assert isinstance(gone, Unavailable) and "'basic-agent' is not on this gateway" in gone.reason
+    assert isinstance(gone, Resolved) and gone.bundle_id != "basic-agent"
+    none = resolve_default_agent_workflow(CODE, index=[r for r in idx if CODE not in (r.get("interfaces") or [])], stored={})
+    assert isinstance(none, Unavailable) and none.reason == "no workflow on this gateway declares abstractcode.agent.v1"
 
     # Saved beats built-in; version-less follows the latest PUBLISHED (drafts never).
     saved = resolve_default_agent_workflow(CODE, index=idx, stored={CODE: "coder:code"})
@@ -426,8 +439,8 @@ def test_concurrent_writers_never_lose_a_change(tmp_path: Path) -> None:
 def test_console_default_agent_block_renders_plain_names_and_neutral_states() -> None:
     """DESIGN-v2 §4.2, on the SHIPPED source: one row per interface with the
     gateway's plain name, the interface id small, a (?) with the help, a select
-    that applies at once (no Save button), neutral "Clients choose" / "Built in"
-    states, a warning ONLY for a broken row, and interfaces no app asks for
+    that applies at once (no Save button), a neutral "Gateway default: x" first
+    option (never "Clients choose"), a warning ONLY for a broken row, and interfaces no app asks for
     folded under "Other workflow types". Never "Not available: ..." walls."""
     from abstractgateway.console import gateway_console_html
     from test_gateway_console_offline import _console_script, _node, _slice_function
@@ -448,11 +461,12 @@ const block = {{
   default_workflow: {{
     "abstractcode.agent.v1": row({{ label: "AbstractCode — chat agent", state: "builtin", default: "basic-agent:ba",
       eligible: [{{ value: "basic-agent:ba", name: "basic-agent", bundle_version: "0.0.5", flow_id: "ba" }}] }}),
-    "abstractassistant.agent.v1": row({{ label: "Assistant", state: "clients_choose", available: false,
-      reason: "no default is set", eligible: [{{ value: "orch:o", name: "Orchestrator", bundle_version: "0.0.0", flow_id: "o" }}] }}),
+    "abstractassistant.agent.v1": row({{ label: "Assistant", state: "builtin", default: "orch:o",
+      eligible: [{{ value: "orch:o", name: "Orchestrator", bundle_version: "0.0.1", flow_id: "o" }},
+                 {{ value: "catalog:orch:o", name: "Orchestrator", bundle_version: "0.0.2", flow_id: "o", registry_scope: "tenant_catalog", show_scope: true }}] }}),
     "abstractcode.coding.v1": row({{ label: "AbstractCode — coding agent", state: "broken", source: "stored", value: "coding-agent:c",
-      reason: "Broken: coding-agent 0.2.8 is no longer installed — pick another or choose Clients choose" }}),
-    "abstractreview.adversarial.v1": row({{ label: "Adversarial review", state: "clients_choose", group: "other", help: "Declared by the adversarial-review workflow; no app asks for it by default." }}),
+      reason: "Broken: coding-agent 0.2.8 is no longer installed — pick another workflow or the gateway default." }}),
+    "abstractreview.adversarial.v1": row({{ label: "Adversarial review", state: "none", available: false, group: "other", help: "Declared by the adversarial-review workflow; no app asks for it by default." }}),
   }},
 }};
 agentDefStore.data = {{ writable: true, agents: block }};
@@ -463,8 +477,11 @@ const out = {{
   names: ["AbstractCode — chat agent", "Assistant", "AbstractCode — coding agent"].every((n) => html.includes(n)),
   ids: html.includes('<code class="agent-default__iface">abstractcode.agent.v1</code>'),
   help: (html.match(/class="help-q"/g) || []).length,
-  builtin: html.includes("Built in: basic-agent"),
-  clients: html.includes('<option value="">Clients choose</option>'),
+  builtin: html.includes('<option value="">Gateway default: basic-agent 0.0.5</option>')
+    && html.includes('<option value="">Gateway default: Orchestrator 0.0.1</option>'),
+  clients: html.includes("Clients choose"),
+  scope: html.includes("Orchestrator 0.0.2 (catalog)") && !html.includes("Orchestrator 0.0.1 ("),
+  none: html.includes('<option value="">No workflow available</option>'),
   warns, broken: html.includes("Broken: coding-agent 0.2.8 is no longer installed"),
   notAvailable: html.includes("Not available"),
   save: html.includes("data-agent-defaults-save") || html.includes(">Save"),
@@ -482,7 +499,8 @@ console.log(JSON.stringify([out]));
 """
     out = _node(harness)[0]
     assert out == {
-        "names": True, "ids": True, "help": 4, "builtin": True, "clients": True, "warns": 1, "broken": True,
+        "names": True, "ids": True, "help": 4, "builtin": True, "clients": False, "scope": True, "none": True,
+        "warns": 1, "broken": True,
         "notAvailable": False, "save": False, "otherFolded": True, "readonly": True, "missingLabel": True,
     }, out
 
