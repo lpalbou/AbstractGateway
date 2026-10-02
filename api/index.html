@@ -2230,15 +2230,15 @@ table in <code>agent_defaults.py</code> (<code>INTERFACE_TABLE</code>):</p>
 </tr>
 <tr>
 <td><code>state</code></td>
-<td><code>clients_choose</code> (nothing saved and no built-in: each client picks its own workflow — normal, not a warning), <code>builtin</code> (nothing saved; the built-in default runs), <code>set</code> (a saved value that runs) or <code>broken</code> (a saved value that no longer resolves)</td>
+<td><code>builtin</code> (nothing saved; the gateway default runs: the shipped bundle, else the newest available workflow), <code>none</code> (nothing saved and no workflow declares the interface; <code>reason</code> says so), <code>set</code> (a saved value that runs) or <code>broken</code> (a saved value that no longer resolves)</td>
 </tr>
 <tr>
 <td><code>value</code></td>
-<td>the saved value, else the built-in default, else <code>null</code></td>
+<td>the saved value, else the gateway default, else <code>null</code></td>
 </tr>
 <tr>
 <td><code>reason</code></td>
-<td>only for <code>broken</code>: "Broken: workflow bundle 'coding-agent' is not on this gateway — pick another workflow or choose “Clients choose”."</td>
+<td>for <code>broken</code>: "Broken: workflow bundle 'coding-agent' is not on this gateway — pick another workflow or the gateway default."; for <code>none</code>: "no workflow on this gateway declares <interface>"</td>
 </tr>
 </tbody>
 </table>

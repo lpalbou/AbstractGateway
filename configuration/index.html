@@ -2767,22 +2767,25 @@ may itself contain <code>:</code> (the bundle part ends at the first <code>:</co
 <tbody>
 <tr>
 <td><code>abstractcode.agent.v1</code></td>
-<td>the default entrypoint of the shipped <code>basic-agent</code> workflow (unavailable when it is not on the gateway)</td>
+<td>the default entrypoint of the shipped <code>basic-agent</code> workflow (else the newest available workflow declaring it)</td>
 </tr>
 <tr>
 <td><code>abstractassistant.agent.v1</code></td>
-<td>none: the Assistant runs its built-in orchestrator</td>
+<td>the shipped <code>abstractassistant-orchestrator</code> bundle's default entrypoint</td>
 </tr>
 <tr>
 <td>any other interface a workflow declares</td>
-<td>none until an admin saves one</td>
+<td>the newest available workflow declaring it (private registry before the tenant catalog)</td>
 </tr>
 </tbody>
 </table>
+<p>Without a saved value the gateway always resolves a default when at least one workflow declares the
+interface (0.11.2; there is no "clients choose" state). When the shipped bundle is missing, the newest
+available workflow declaring the interface runs.</p>
 <p>A saved value is checked when it is saved (it must exist on this gateway and
 declare that interface; 400 with the reason otherwise) and again at every
 run start: a value that no longer works is shown as broken with the reason
-("Broken: … — pick another workflow or choose “Clients choose”."), and runs that ask for the default are refused (409) until it is
+("Broken: … — pick another workflow or the gateway default."), and runs that ask for the default are refused (409) until it is
 changed. It never falls back to another workflow on its own.</p>
 <p><code>GET /api/gateway/admin/runtime-config</code> returns</p>
 <div class="highlight"><pre><span></span><code><span class="nt">"agents"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"default_workflow"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"abstractcode.agent.v1"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
@@ -2813,7 +2816,7 @@ variable for this setting).</p>
 </tr>
 <tr>
 <td>Change</td>
-<td>choose in the row's list; it applies at once ("Clients choose" or "Built in: …" = nothing saved)</td>
+<td>choose in the row's list; it applies at once ("Gateway default: …" = nothing saved)</td>
 <td><code>Enter</code> on a row picks and saves at once; on Runtimes, type the value (the choices are listed under the field; empty = the built-in default)</td>
 <td><code>abstractgateway config set agents.default_workflow.&lt;interface&gt; bundle[@version]:flow</code>, <code>config unset …</code></td>
 </tr>
