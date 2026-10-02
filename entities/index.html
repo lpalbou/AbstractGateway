@@ -1286,7 +1286,7 @@ abstractgateway<span class="w"> </span>entity<span class="w"> </span>verify<span
 <tr>
 <td>POST</td>
 <td><code>/api/gateway/entities/{name}/chat/open</code></td>
-<td>Open a hosted conversation (the web chat backend; same turn loop as <code>entity chat</code>). Auto-yields the entity's own-time loop like <code>--pause-loop</code>; one live session per home; a refused prelude aborts verbatim.</td>
+<td>Open a hosted conversation (the web chat backend; same turn loop as <code>entity chat</code>). Auto-yields the entity's own-time loop like <code>--pause-loop</code>; one live session per home; a refused prelude aborts verbatim. The gateway never caps the entity's output: the model works at its full capacity (the former <code>max_output_tokens</code> field is ignored and the response then carries a one-line <code>deprecation</code>).</td>
 </tr>
 <tr>
 <td>POST</td>
