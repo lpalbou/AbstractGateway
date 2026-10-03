@@ -219,7 +219,10 @@ runtime-config key (`network`); there is no environment variable for it.
   port a restart binds (the saved one, else the running one).
 - **`serve --host/--port` win** over a saved value that differs and are then
   reported as `effective.overridden_by_cli: true` (a flag that shadows nothing
-  saved overrides nothing). A restart replays the same command
+  saved overrides nothing). `effective.pinned_by_cli: true` says that `--host`
+  decides the listening address even with nothing saved (the default mode
+  differs from where it listens); the console's Network page then names the
+  flag above the choices. A restart replays the same command
   line, so it cannot apply the setting: the status says so
   (`restart.applies: false` + `restart.reason`) and the restart route refuses.
 - **The login service lets the setting apply.** The LaunchAgent,

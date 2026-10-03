@@ -2245,6 +2245,11 @@ CONSOLE_UI_JS = r"""
       let out = `<div class="ui-section-title"><h3>Who can reach this gateway</h3><span class="ui-sub">Running now: <b>${esc(eff.label || "unknown")}</b>${eff.port ? ` · port ${esc(eff.port)}` : ""}</span></div>`
         + `<div class="ui-seg" role="radiogroup" aria-label="Who can reach this gateway">${opts}</div>`;
       if (!admin) out += `<p class="ui-card__note">Only an admin can change who can reach this gateway.</p>`;
+      if ((eff.overridden_by_cli || eff.pinned_by_cli) && eff.bind_host) {
+        // The saved (or default) choice above does not apply: a launch flag decides.
+        out += `<div class="ui-alert tone-warn" role="status" data-net-pinned><strong>${esc(conf.source === "stored" ? "Saved" : "Default")}: ${esc(conf.label || conf.mode)}. This gateway listens on ${esc(eff.label || eff.bind_host)} because it was started with <code>--host ${esc(eff.bind_host)}</code>.</strong>`
+          + `<span>It keeps that address until it is started without the flag; a restart from here keeps it too.</span></div>`;
+      }
       if (netStore.refused) {
         const r = netStore.refused;
         out += `<div class="ui-alert tone-warn" role="alert"><strong>${esc(r.reason || "This mode is not available right now.")}</strong>`
@@ -2487,7 +2492,8 @@ CONSOLE_UI_JS = r"""
         netStore.confirm = null;
         // Pending a restart, the restart box below says it (with the button
         // or the reason); otherwise the change is already live.
-        netStore.notice = res && res.restart_required ? null : { tone: "ok", text: `Saved: ${conf.label || mode}. The gateway already runs this way.` };
+        const pinned = !!(res && res.effective && (res.effective.pinned_by_cli || res.effective.overridden_by_cli));
+        netStore.notice = res && (res.restart_required || pinned) ? null : { tone: "ok", text: `Saved: ${conf.label || mode}. The gateway already runs this way.` };
       } catch (err) {
         const data = (err && err.data) || {};
         if (err && err.status === 409 && data.reason_code === "acknowledgement_required") {

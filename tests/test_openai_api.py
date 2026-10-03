@@ -206,6 +206,23 @@ def test_anywhere_needs_the_internet_acknowledgement_and_a_key(gw):
     assert tailnet["shown"] is True
 
 
+def test_snippet_model_is_one_that_v1_models_lists(gw):
+    assert gw.admin.get("/api/gateway/openai-api", headers=ADMIN).json()["example_model"] is None  # stopped
+    status = _set(gw, enabled=True)
+    assert status["example_model"] == "ollama/qwen3:4b"  # the stub's only listed model
+
+
+def test_network_says_when_a_launch_flag_pins_the_address(tmp_path, monkeypatch):
+    monkeypatch.setattr(ne, "effective_bind", lambda d, **kw: {"known": True, "running": True, "bind_host": "127.0.0.1",
+                                                                "port": 18641, "host_source": "cli", "port_source": "cli"})
+    from abstractgateway import runtime_config
+    monkeypatch.setattr(runtime_config, "resolve_network_setting", lambda d, **kw: {"mode": "lan", "source": "default", "port": 8080,
+                                                                                     "port_source": "default", "default_bind_host": "0.0.0.0"})
+    d = ne.network_status(tmp_path, discover=_discover, hostname_fn=lambda: None)
+    assert d["effective"]["pinned_by_cli"] is True
+    assert d["warnings"][0].startswith("This gateway was started with --host 127.0.0.1")
+
+
 def test_open_mode_warning_names_who_can_use_it(gw):
     status = _set(gw, enabled=True, reach="network", access="open")
     texts = [w["text"] for w in status["warnings"]]
@@ -228,6 +245,7 @@ def test_requests_are_logged_from_the_audit_file_newest_first(gw):
     assert [x["openai_api"].get("prompt_tokens") for x in lines[-3:]] == [11, 7, 11]
     rows = gw.admin.get("/api/gateway/openai-api/logs", headers=ADMIN).json()["rows"]
     assert [r["client"] for r in rows[:3]] == ["admin", "alice", "alice"]
+    assert rows[1]["user_id"] == "alice" and rows[1]["ts"] and isinstance(rows[1]["duration_ms"], int)
     s = rows[1]
     assert (s["model"], s["prompt_tokens"], s["completion_tokens"], s["stream"], s["status"]) == ("ollama/qwen3:4b", 7, 3, True, 200)
     assert s["run_id"] == "run-42" and s["observer_path"].endswith("#run/run-42")

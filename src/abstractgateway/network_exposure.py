@@ -1538,6 +1538,15 @@ def network_status(
         "bind_host": eff_host,
         "port": effective.get("port"),
         "overridden_by_cli": bool(effective.get("overridden_by_cli")),
+        # `serve --host` decides the listening address whatever is saved or
+        # defaulted: the console must say so instead of showing the saved choice
+        # as if it applied (a restart replays the same flag).
+        "pinned_by_cli": bool(
+            effective.get("known") and effective.get("host_source") == "cli" and eff_host
+            and not ((is_loopback_host(eff_host) and is_loopback_host(configured["bind_host"]))
+                     or str(eff_host) == str(configured["bind_host"])
+                     or (is_wildcard_host(eff_host) and is_wildcard_host(configured["bind_host"])))
+        ),
         "host_source": effective.get("host_source"),
         "port_source": effective.get("port_source"),
         "running": effective.get("running"),
@@ -1601,6 +1610,8 @@ def network_status(
         warnings.append(w)
     if effective_out["overridden_by_cli"]:
         warnings.insert(0, "The command line (--host/--port) overrides this setting; see restart.reason.")
+    elif effective_out["pinned_by_cli"]:
+        warnings.insert(0, f"This gateway was started with --host {eff_host}: it listens there until it starts without that flag.")
     if effective.get("blocked_reason"):
         warnings.insert(0, f"The configured mode could not be applied at start: {effective['blocked_reason']}")
     if restart_required and not effective_out["overridden_by_cli"]:

@@ -82,7 +82,8 @@ def _warnings(settings: ce.EndpointSettings, network: Dict[str, Any]) -> List[Di
     return out
 
 
-def _status(request: Request, settings: ce.EndpointSettings, data_dir, *, admin: bool) -> Dict[str, Any]:
+def _status(request: Request, settings: ce.EndpointSettings, data_dir, *, admin: bool,
+            listed: Optional[List[str]] = None) -> Dict[str, Any]:
     principal = _principal_from_request(request)
     network = _network(data_dir)
     tailscale = network.get("tailscale")
@@ -110,16 +111,30 @@ def _status(request: Request, settings: ce.EndpointSettings, data_dir, *, admin:
         # tested: checked with the official openai SDK; served: AbstractCore answers when an engine
         # for it is set up; not_yet: refused with a standard 400 or not served (404).
         "support": ce.SUPPORT,
-        # The gateway's default text model (provider/model) for the snippets, or null.
-        "example_model": _example_model(),
+        # The model the snippets use: the gateway's default text model when
+        # /v1/models lists it, else the first listed text model; null when the
+        # API is stopped or lists none.
+        "example_model": _example_model(listed),
     }
 
 
-def _example_model() -> Optional[str]:
+def _example_model(listed: Optional[List[str]]) -> Optional[str]:
     from ..provider_defaults import _gateway_capability_text_default
 
+    if not listed:
+        return None
     provider, model, _source = _gateway_capability_text_default()
-    return f"{provider}/{model}" if provider and model else None
+    default = f"{provider}/{model}" if provider and model else None
+    return default if default in listed else listed[0]
+
+
+async def _listed(settings: ce.EndpointSettings) -> List[str]:
+    if not settings.enabled:
+        return []
+    try:
+        return await asyncio.wait_for(ce.listed_text_models(settings), timeout=10)
+    except Exception:  # noqa: BLE001 - the snippet then shows provider/model
+        return []
 
 
 def _response(body):
@@ -131,7 +146,8 @@ async def openai_api_status(request: Request):
     principal = _principal_from_request(request)
     data_dir = gateway_data_dir_from_env()
     settings = await asyncio.to_thread(ce.read_settings, data_dir)
-    body = await asyncio.to_thread(_status, request, settings, data_dir, admin=bool(principal.is_admin()))
+    body = await asyncio.to_thread(_status, request, settings, data_dir, admin=bool(principal.is_admin()),
+                                   listed=await _listed(settings))
     return _response(body)
 
 
@@ -149,7 +165,7 @@ async def status(request: Request):
     _require_admin_principal(request)
     data_dir = gateway_data_dir_from_env()
     settings = await asyncio.to_thread(ce.read_settings, data_dir)
-    return _response(await asyncio.to_thread(_status, request, settings, data_dir, admin=True))
+    return _response(await asyncio.to_thread(_status, request, settings, data_dir, admin=True, listed=await _listed(settings)))
 
 
 @router.post("")
@@ -164,7 +180,7 @@ async def change(request: Request, body: EndpointChange):
     ended = ce.end_inflight_requests() if body.enabled is False else 0
     request.state.audit_detail = {"setting_change": {"setting": "core_endpoint", "enabled": settings.enabled,
                                                      "access": settings.access, "reach": settings.reach}}
-    out = await asyncio.to_thread(_status, request, settings, data_dir, admin=True)
+    out = await asyncio.to_thread(_status, request, settings, data_dir, admin=True, listed=await _listed(settings))
     out["ended_requests"] = ended
     return _response(out)
 
@@ -178,7 +194,7 @@ async def restart(request: Request):
         raise HTTPException(status_code=409, detail="The OpenAI API is stopped: turn on Endpoint first.")
     ended = ce.end_inflight_requests()
     request.state.audit_detail = {"core_endpoint_action": "restart", "ended_requests": ended}
-    out = await asyncio.to_thread(_status, request, settings, data_dir, admin=True)
+    out = await asyncio.to_thread(_status, request, settings, data_dir, admin=True, listed=await _listed(settings))
     out["ended_requests"] = ended
     return _response(out)
 

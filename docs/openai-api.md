@@ -164,8 +164,8 @@ with the audit log off, the card stays empty.
 
 | Method | Route | Who | Result |
 | --- | --- | --- | --- |
-| GET | `/api/gateway/openai-api` | any account | status `gateway_openai_api_v1`: `enabled`, `access`, `reach`, `base_url`, `reach_options[]`, `warnings[]`, `listener`, `tailscale`, `key`, `support`, `example_model`, `writable` |
-| GET | `/api/gateway/openai-api/logs?limit=` | any account | `{rows[], scope}`: every request for an admin, the caller's own otherwise |
+| GET | `/api/gateway/openai-api` | any account | status `gateway_openai_api_v1`: `enabled`, `access`, `reach`, `base_url`, `reach_options[]`, `warnings[]`, `listener`, `tailscale`, `key`, `support`, `example_model` (a text model `/v1/models` lists, the default one when listed; null when stopped), `writable` |
+| GET | `/api/gateway/openai-api/logs?limit=` | any account | `{rows[{ts, client, user_id, ip, method, path, model, prompt_tokens, completion_tokens, stream, duration_ms, status, run_id, observer_path}], scope}`: every request for an admin, the caller's own otherwise |
 | POST | `/api/gateway/admin/core-endpoint` | admin | `{enabled?, access?: token\|open, reach?: machine\|network\|tailnet\|anywhere}`; `409` with the reason when refused |
 | POST | `/api/gateway/admin/core-endpoint/restart` | admin | ends open requests; `{ended_requests}` |
 | POST | `/api/gateway/admin/core-endpoint/check` | admin | `{checks[{id, ok, text}], ok}` |

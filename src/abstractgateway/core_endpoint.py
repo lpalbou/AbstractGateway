@@ -552,7 +552,8 @@ def _standardize_send(send, note: Dict[str, Any], *, chat_stream: Optional[ChatS
     return wrapped
 
 
-async def _core_models(scope, settings: EndpointSettings, *, authenticated: bool, allow_open: bool) -> Tuple[int, Any]:
+async def _core_models(scope, settings: EndpointSettings, *, authenticated: bool, allow_open: bool,
+                       query: bytes = b"") -> Tuple[int, Any]:
     """GET /v1/models through Core for this caller: (status, parsed body)."""
     body = bytearray()
     status = {"code": 0}
@@ -569,7 +570,7 @@ async def _core_models(scope, settings: EndpointSettings, *, authenticated: bool
     headers = [(k, v) for k, v in scope.get("headers") or [] if k.lower() != b"authorization"]
     if authenticated:
         headers.append((b"authorization", f"Bearer {settings.token}".encode()))
-    sub = dict(scope, method="GET", path="/v1/models", raw_path=b"/v1/models", root_path="", query_string=b"", headers=headers)
+    sub = dict(scope, method="GET", path="/v1/models", raw_path=b"/v1/models", root_path="", query_string=query, headers=headers)
     await serve_core_request(sub, receive, send, token=settings.token, allow_unauthenticated=allow_open and not authenticated)
     try:
         return status["code"], json.loads(bytes(body))
@@ -819,6 +820,16 @@ class UsageCapture:
         return out
 
 
+async def listed_text_models(settings: EndpointSettings) -> List[str]:
+    """The text model ids `/v1/models?output_type=text` lists (authenticated, as the gateway)."""
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "scheme": "http",
+             "client": ("127.0.0.1", 0), "server": ("127.0.0.1", 0), "headers": []}
+    status, doc = await _core_models(scope, settings, authenticated=True, allow_open=False, query=b"output_type=text")
+    if status != 200 or not isinstance(doc, dict):
+        return []
+    return [str(r["id"]) for r in doc.get("data") or [] if isinstance(r, dict) and r.get("id")]
+
+
 # ---- Reading the log back (audit files, newest first) --------------------
 
 LOG_MARK = b'"openai_api"'
@@ -851,6 +862,7 @@ def recent_requests(*, limit: int = 50, user_id: Optional[str] = None, tenant_id
                 rows.append({
                     "ts": doc.get("ts"),
                     "client": api.get("client") or "unknown",
+                    "user_id": doc.get("principal_user_id"),
                     "ip": doc.get("ip"),
                     "method": doc.get("method"),
                     "path": doc.get("path"),
