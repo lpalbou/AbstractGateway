@@ -350,16 +350,19 @@ def test_every_route_is_behind_the_security_middleware_or_explicitly_public() ->
     for method, path in sorted(_live_route_table()):
         if path.startswith("/api/gateway"):
             continue
-        if path == "/core":
-            # Independently authenticated ASGI serving mount, disabled by
-            # default. It uses the Core token, never a Gateway user/session.
-            # test_core_endpoint pins auth, route allowlist and open-peer rules.
+        if path in ("/v1", "/core"):
+            # The OpenAI-compatible API (/v1): an ASGI serving mount, stopped
+            # by default, whose callers authenticate with their own gateway
+            # token resolved by the security middleware's /v1 branch;
+            # /core answers 308 to /v1 (deprecated alias).
+            # test_core_endpoint / test_openai_api pin auth, reach and routes.
             from abstractgateway.app import app
-            from abstractgateway.core_endpoint import CoreEndpoint
+            from abstractgateway.core_endpoint import CoreEndpoint, LegacyCoreRedirect
             from starlette.routing import Mount
 
-            mounts = [r for r in app.routes if isinstance(r, Mount) and r.path == "/core"]
-            assert len(mounts) == 1 and isinstance(mounts[0].app, CoreEndpoint)
+            want = CoreEndpoint if path == "/v1" else LegacyCoreRedirect
+            mounts = [r for r in app.routes if isinstance(r, Mount) and r.path == path]
+            assert len(mounts) == 1 and isinstance(mounts[0].app, want)
             continue
         assert (method, path) in PUBLIC_ROUTES, (
             f"{method} {path} is served OUTSIDE the /api/gateway security boundary "

@@ -526,6 +526,9 @@ def reverse_proxy_status(setting: Mapping[str, Any], facts: Mapping[str, Any]) -
         "overridden_by_env": resolved["source"] == "env",
         "effective": bool(resolved["value"]),
         "applies": "live",
+        # X-Forwarded-For from a proxy on THIS machine (loopback peer) is always
+        # believed; `trust_proxy` extends that to proxies on other machines.
+        "loopback": True,
     }
     if tenv:
         trust["env_name"] = tenv["name"]
@@ -542,9 +545,9 @@ def reverse_proxy_status(setting: Mapping[str, Any], facts: Mapping[str, Any]) -
             )
     if trust["effective"]:
         trust["warning"] = (
-            "Trust proxy is on: the gateway takes the client address from X-Forwarded-For. That is right only when "
-            "every request comes through your own proxy; otherwise any client can choose the address that sign-in "
-            "lockouts and the audit log see."
+            "Proxies on other machines are trusted: the gateway takes the client address from X-Forwarded-For from "
+            "any peer. That is right only when every request comes through your own proxy; otherwise any client can "
+            "choose the address that sign-in lockouts and the audit log see."
         )
     return {"allowed_origins": origins, "trust_proxy": trust}
 
@@ -815,6 +818,132 @@ def lookup_public_ip(timeout_s: float = 4.0) -> Dict[str, Any]:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "service": PUBLIC_IP_URL}
 
 
+_TAILSCALE_CACHE: Dict[str, Any] = {"at": 0.0, "value": None}
+_TAILSCALE_TTL_S = 60.0
+_TAILSCALE_MAC_APP = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+
+
+def tailscale_binary() -> Optional[str]:
+    """The `tailscale` CLI when installed (PATH, or the macOS app's bundled CLI), else None."""
+    import shutil
+
+    exe = shutil.which("tailscale")
+    if exe:
+        return exe
+    if sys.platform == "darwin" and os.path.isfile(_TAILSCALE_MAC_APP):
+        return _TAILSCALE_MAC_APP
+    return None
+
+
+def parse_tailscale_status(text: str) -> Optional[Dict[str, Any]]:
+    """`tailscale status --json` -> {dns_name, ips[], tailnet} for THIS device
+    when Tailscale is running, else None. Never raises."""
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("BackendState") != "Running":
+        return None
+    me = data.get("Self") if isinstance(data.get("Self"), dict) else {}
+    name = str(me.get("DNSName") or "").strip().rstrip(".").lower() or None
+    ips: List[str] = []
+    for raw in me.get("TailscaleIPs") or []:
+        try:
+            ips.append(str(ipaddress.ip_address(str(raw))))
+        except ValueError:
+            continue
+    if not name and not ips:
+        return None
+    tailnet = data.get("CurrentTailnet") if isinstance(data.get("CurrentTailnet"), dict) else {}
+    return {"dns_name": name, "ips": ips, "tailnet": str(tailnet.get("Name") or data.get("MagicDNSSuffix") or "") or None}
+
+
+def tailscale_status() -> Optional[Dict[str, Any]]:
+    """This device on its tailnet (cached 60 s); None without the binary or
+    when Tailscale is not running. Never fails."""
+    now = time.monotonic()
+    if _TAILSCALE_CACHE.get("at") and now - float(_TAILSCALE_CACHE["at"]) < _TAILSCALE_TTL_S:
+        return _TAILSCALE_CACHE.get("value")
+    exe = tailscale_binary()
+    value = parse_tailscale_status(_run([exe, "status", "--json"], timeout=3.0) or "") if exe else None
+    _TAILSCALE_CACHE.update({"at": now, "value": value})
+    return value
+
+
+# ---------------------------------------------------------------------------
+# Detected hosts: the origins a browser may use without a manual entry
+# ---------------------------------------------------------------------------
+
+_DETECTED_LOCK = threading.Lock()
+_DETECTED: Dict[str, Any] = {"at": 0.0, "value": None, "busy": False}
+_DETECTED_TTL_S = 60.0
+_EMPTY_DETECTED = {"hosts": frozenset(), "https_hosts": frozenset()}
+
+
+def compute_detected_hosts(
+    *,
+    discover: Optional[Callable[[], Tuple[List[IfaceAddr], str]]] = None,
+    hostname_fn: Optional[Callable[[], Optional[str]]] = None,
+    tailscale_fn: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
+) -> Dict[str, frozenset]:
+    """Every host name or address this machine answers on: interface addresses
+    (loopback, LAN, VPN), the Bonjour name, the Tailscale name and IPs.
+    `https_hosts`: names a TLS proxy here serves on 443 (`tailscale serve`)."""
+    hosts = {"localhost", "127.0.0.1", "::1"}
+    ifaces, _method = (discover or discover_interfaces)()
+    for ia in ifaces:
+        if not ia.up:
+            continue
+        try:
+            ip = ipaddress.ip_address(ia.address)
+        except ValueError:
+            continue
+        if ip.is_multicast or ip.is_unspecified:
+            continue
+        hosts.add(str(ip).lower())
+    hn = (hostname_fn or bonjour_hostname)()
+    if hn:
+        hosts.add(hn.lower())
+    https = set()
+    ts = (tailscale_fn or tailscale_status)()
+    if ts:
+        hosts.update(str(x).lower() for x in ts.get("ips") or [])
+        if ts.get("dns_name"):
+            hosts.add(str(ts["dns_name"]).lower())
+            https.add(str(ts["dns_name"]).lower())
+    return {"hosts": frozenset(hosts), "https_hosts": frozenset(https)}
+
+
+def _refresh_detected() -> None:
+    try:
+        value = compute_detected_hosts()
+    except Exception:  # noqa: BLE001 - discovery must never break the gateway
+        value = None
+    with _DETECTED_LOCK:
+        if value is not None:
+            _DETECTED.update({"at": time.monotonic(), "value": value})
+        _DETECTED["busy"] = False
+
+
+def detected_hosts(*, wait: bool = False) -> Dict[str, frozenset]:
+    """The cached detected hosts; never blocks a request (a stale cache
+    refreshes on a background thread). `wait=True` computes it now when
+    nothing is cached yet (startup priming, tests)."""
+    with _DETECTED_LOCK:
+        value = _DETECTED.get("value")
+        stale = value is None or time.monotonic() - float(_DETECTED.get("at") or 0.0) >= _DETECTED_TTL_S
+        start = stale and not _DETECTED.get("busy") and not (wait and value is None)
+        if start:
+            _DETECTED["busy"] = True
+    if wait and value is None:
+        _refresh_detected()
+        with _DETECTED_LOCK:
+            return _DETECTED.get("value") or _EMPTY_DETECTED
+    if start:
+        threading.Thread(target=_refresh_detected, daemon=True, name="network-detected-hosts").start()
+    return value or _EMPTY_DETECTED
+
+
 def _reachable(bind_host: Optional[str], family: str, address: str) -> bool:
     b = str(bind_host or "").strip().strip("[]")
     if not b:
@@ -836,9 +965,12 @@ def build_addresses(
     labels: Mapping[str, str],
     hostname: Optional[str],
     public: Optional[Dict[str, Any]] = None,
+    tailscale: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """The address list: loopback first, then interface addresses (private
-    IPv4 of labelled hardware first), the Bonjour name, the WAN address."""
+    IPv4 of labelled hardware first), the Bonjour name, the Tailscale name,
+    the WAN address."""
+    ts_ips = {str(x) for x in ((tailscale or {}).get("ips") or [])}
     loop_host = "::1" if str(bind_host or "").strip("[]") == "::1" else "127.0.0.1"
     out: List[Dict[str, Any]] = [
         {
@@ -864,7 +996,7 @@ def build_addresses(
         if scope is None or (ia.family, ia.address) in seen:
             continue
         seen.add((ia.family, ia.address))
-        label = _iface_label(ia.interface, labels, scope)
+        label = "Tailscale" if ia.address in ts_ips else _iface_label(ia.interface, labels, scope)
         reachable = _reachable(bind_host, ia.family, ia.address)
         row: Dict[str, Any] = {
             "kind": "lan",
@@ -905,6 +1037,19 @@ def build_addresses(
                 "family": "name",
                 "reachable": is_wildcard_host(bind_host),
                 "note": "Bonjour/mDNS name: resolves on macOS, iOS, Windows 10+ and most Linux desktops of the same network",
+            }
+        )
+    if tailscale and tailscale.get("dns_name"):
+        out.append(
+            {
+                "kind": "tailscale",
+                "host": tailscale["dns_name"],
+                "port": int(port),
+                "url": url_for(tailscale["dns_name"], port),
+                "family": "name",
+                "reachable": is_wildcard_host(bind_host),
+                "https_url": f"https://{tailscale['dns_name']}",
+                "note": "Tailscale name: devices on your tailnet",
             }
         )
     if public is not None:
@@ -1296,6 +1441,7 @@ def network_status(
     discover: Optional[Callable[[], Tuple[List[IfaceAddr], str]]] = None,
     hostname_fn: Optional[Callable[[], Optional[str]]] = None,
     public_fn: Optional[Callable[[], Dict[str, Any]]] = None,
+    tailscale_fn: Optional[Callable[[], Optional[Dict[str, Any]]]] = None,
 ) -> Dict[str, Any]:
     """The whole `gateway_network_v1` payload (GET /api/gateway/network)."""
     from .runtime_config import resolve_network_setting
@@ -1431,8 +1577,11 @@ def network_status(
         else:
             public = (public_fn or lookup_public_ip)()
     addr_host = eff_host if effective.get("known") else None
+    # A caller that stubs discovery stubs Tailscale too (hermetic tests): no subprocess.
+    tailscale = (tailscale_fn or (tailscale_status if discover is None else (lambda: None)))()
     addresses = build_addresses(
-        bind_host=addr_host, port=int(eff_port), interfaces=ifaces, labels=labels, hostname=hostname, public=public
+        bind_host=addr_host, port=int(eff_port), interfaces=ifaces, labels=labels, hostname=hostname, public=public,
+        tailscale=tailscale,
     )
     lan_urls = [a["url"] for a in addresses if a["kind"] == "lan" and a.get("family") == "ipv4"]
     reachable = [a for a in addresses if a.get("reachable")]
@@ -1477,6 +1626,8 @@ def network_status(
         "warnings": warnings,
         "discovery": {"method": method, "interfaces": len({i.interface for i in ifaces}), "hostname": hostname,
                       "public_lookup": bool(public is not None)},
+        # This device on its tailnet (`tailscale status --json`), or null.
+        "tailscale": tailscale,
         "checked_at": _now_iso(),
     }
     if public_note:

@@ -92,6 +92,19 @@ def _is_loopback_ip(host: str) -> bool:
         return False
 
 
+def _is_loopback_address(host: str) -> bool:
+    """A real loopback IP address (never a name): the peer of a proxy on this machine."""
+    h = str(host or "").strip().lower()
+    if h.startswith("::ffff:"):
+        h = h[len("::ffff:"):]
+    try:
+        import ipaddress
+
+        return bool(ipaddress.ip_address(h).is_loopback)
+    except ValueError:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Ephemeral loopback-only admin tokens (desktop tray helper, 2026-09-05)
 #
@@ -650,12 +663,14 @@ class GatewaySecurityMiddleware:
         return bool(live.trust_proxy)
 
     def _client_ip(self, scope: dict) -> str:
-        if self._effective_trust_proxy():
-            xff = self._header(scope, "x-forwarded-for")
-            if xff:
-                first = xff.split(",")[0].strip()
-                if first:
-                    return first
+        # X-Forwarded-For is believed from a proxy on THIS machine (loopback
+        # peer: `tailscale serve`, a local nginx) by default; from any peer
+        # only when the admin trusts proxies elsewhere (`trust_proxy`).
+        xff = self._header(scope, "x-forwarded-for")
+        if xff and (_is_loopback_address(self._socket_peer_ip(scope)) or self._effective_trust_proxy()):
+            first = xff.split(",")[0].strip()
+            if first:
+                return first
         client = scope.get("client")
         if isinstance(client, (list, tuple)) and client and isinstance(client[0], str):
             return client[0]
@@ -723,6 +738,118 @@ class GatewaySecurityMiddleware:
             return n[: -len(":443")] if n.endswith(":443") else n
 
         return norm(o.netloc) == norm(host)
+
+    def _detected_origin(self, scope: dict, origin: str) -> bool:
+        """A page served by this gateway at one of the addresses it detects
+        on this machine (LAN IPs, `<name>.local`, the Tailscale name and IPs):
+        `http://<detected host>:<this listener's port>`, or `https://<Tailscale
+        name>` (`tailscale serve`). No manual origin entry is needed for them.
+        DNS rebinding cannot produce it: a rebound page keeps its own name."""
+        from urllib.parse import urlsplit
+
+        try:
+            o = urlsplit(str(origin).strip())
+            port = o.port
+        except ValueError:
+            return False
+        host = (o.hostname or "").lower()
+        if not host or o.path or o.query or o.fragment:
+            return False
+        try:
+            from ..network_exposure import detected_hosts
+
+            known = detected_hosts()
+        except Exception:  # noqa: BLE001 - discovery must never break a request
+            return False
+        if o.scheme == "http":
+            server = scope.get("server")
+            listen = server[1] if isinstance(server, (list, tuple)) and len(server) > 1 else None
+            return host in known["hosts"] and listen is not None and (port or 80) == int(listen)
+        if o.scheme == "https":
+            return host in known["https_hosts"] and (port or 443) == 443
+        return False
+
+    def _origin_accepted(self, scope: dict, origin: str) -> bool:
+        return (self._origin_allowed(origin) or self._https_same_origin(scope, origin)
+                or self._detected_origin(scope, origin))
+
+    async def _serve_openai_api(self, scope, receive, send, path: str) -> None:
+        """`/v1/*`: resolve the caller's gateway token (their API key) into
+        `state.gateway_principal`, count refused keys toward the lockout,
+        and write one audit line per request (the OpenAI API page's logs)."""
+        from ..core_endpoint import UsageCapture
+
+        ip = self._client_ip(scope)
+        started = time.time()
+        request_id = (self._header(scope, "x-request-id") or "").strip() or uuid.uuid4().hex
+        auth = self._header(scope, "authorization") or ""
+        token = auth.split(" ", 1)[1].strip() if auth.lower().startswith("bearer ") else ""
+        principal = self._authenticate_token(token, peer_ip=self._socket_peer_ip(scope)) if token else None
+        if token and principal is None:
+            wait = self._lockouts.check_locked(ip)
+            if wait:
+                await self._reject(send, status=429, detail="Too Many Requests (auth lockout)",
+                                   headers=[(b"retry-after", str(int(wait)).encode("utf-8"))])
+                return
+        state = scope.setdefault("state", {})
+        if isinstance(state, dict):
+            state["gateway_principal"] = principal
+        capture = UsageCapture()
+        status = {"code": 0}
+
+        async def _receive():
+            message = await receive()
+            if message.get("type") == "http.request":
+                capture.request_chunk(message.get("body") or b"")
+            return message
+
+        async def _send(message):
+            if message.get("type") == "http.response.start":
+                status["code"] = int(message.get("status") or 0)
+                capture.response_start(message)
+                headers = list(message.get("headers") or [])
+                if not any(bytes(k).lower() == b"x-request-id" for k, _ in headers):
+                    headers.append((b"x-request-id", request_id.encode("utf-8")))
+                message = dict(message, headers=headers)
+            elif message.get("type") == "http.response.body":
+                capture.response_chunk(message.get("body") or b"")
+            await send(message)
+
+        try:
+            await self._app(scope, _receive, _send)
+        finally:
+            if token and principal is None and status["code"] == 401:
+                self._lockouts.record_failure(ip)
+            elif principal is not None:
+                self._lockouts.record_success(ip)
+            note = state.get("openai_api") if isinstance(state, dict) else None
+            note = note if isinstance(note, dict) else {}
+            api: Dict[str, Any] = {"client": note.get("client") or ("refused" if status["code"] in (401, 403) else "unknown")}
+            api.update(capture.summary())
+            run_id = (self._header(scope, "x-abstractcore-run-id") or "").strip()
+            if run_id:
+                api["run_id"] = run_id[:200]
+            if note.get("client_class"):
+                api["client_class"] = note["client_class"]
+            if note.get("ended"):
+                api["ended"] = note["ended"]
+            entry: Dict[str, Any] = {
+                "ts": _now_utc_iso(),
+                "request_id": request_id,
+                "ip": str(ip),
+                "method": str(scope.get("method") or "GET").upper(),
+                "path": path,
+                "status": int(status["code"] or 0),
+                "duration_ms": int(max(0.0, time.time() - started) * 1000.0),
+                "openai_api": api,
+            }
+            if principal is not None:
+                entry["principal_user_id"] = str(principal.user_id)
+                entry["principal_tenant_id"] = str(principal.tenant_id)
+            ua = self._header(scope, "user-agent")
+            if ua:
+                entry["user_agent"] = str(ua)[:300]
+            self._audit_append(entry)
 
     def _token_valid(self, token: str) -> bool:
         # Constant-time compare against any configured token.
@@ -912,14 +1039,17 @@ class GatewaySecurityMiddleware:
             return await self._app(scope, receive, send)
 
         path = str(scope.get("path") or "")
-        if path.startswith("/core/"):
-            # Core owns its separate serving token. Browser access follows
-            # the same live Network origin policy as the Gateway API.
+        if path.startswith("/core/") or path == "/v1" or path.startswith("/v1/"):
+            # The OpenAI-compatible API (core_endpoint.py) and its deprecated
+            # /core/v1 alias. Browser access follows the same live Network
+            # origin policy as the Gateway API.
             origin = self._header(scope, "origin")
-            if origin is not None and not self._origin_allowed(origin) and not self._https_same_origin(scope, origin):
+            if origin is not None and not self._origin_accepted(scope, origin):
                 await self._reject(send, status=403, detail="Forbidden (origin not allowed)")
                 return
-            return await self._app(scope, receive, send)
+            if path.startswith("/core/"):
+                return await self._app(scope, receive, send)
+            return await self._serve_openai_api(scope, receive, send, path)
         if not path.startswith("/api/gateway"):
             return await self._app(scope, receive, send)
 
@@ -1040,7 +1170,7 @@ class GatewaySecurityMiddleware:
         try:
             # Origin checks (only when Origin is present).
             origin = self._header(scope, "origin")
-            if origin is not None and not self._origin_allowed(origin) and not self._https_same_origin(scope, origin):
+            if origin is not None and not self._origin_accepted(scope, origin):
                 await self._reject(_send_wrapped, status=403, detail="Forbidden (origin not allowed)")
                 return
 

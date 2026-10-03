@@ -35,6 +35,14 @@ async def _lifespan(_app: FastAPI):
         start_apps_on_boot()
     except Exception:
         pass
+    # The addresses this machine answers on (LAN, Bonjour, Tailscale): their
+    # origins are accepted without a manual entry. Discovered off the loop.
+    try:
+        from .network_exposure import detected_hosts
+
+        detected_hosts()
+    except Exception:
+        pass
     try:
         yield
     finally:
@@ -169,11 +177,16 @@ app.include_router(app_proxy_router)
 from .routes.network import router as network_router  # noqa: E402
 
 app.include_router(network_router, prefix="/api")
-from .core_endpoint import CoreEndpoint  # noqa: E402
+from .core_endpoint import CoreEndpoint, LegacyCoreRedirect  # noqa: E402
 from .routes.core_endpoint import router as core_endpoint_router  # noqa: E402
+from .routes.core_endpoint import user_router as openai_api_router  # noqa: E402
 
 app.include_router(core_endpoint_router, prefix="/api")
-app.mount("/core", CoreEndpoint(), name="core-endpoint")
+app.include_router(openai_api_router, prefix="/api")
+# The OpenAI-compatible API (standard layout: /v1/models, /v1/chat/completions, ...);
+# /core/v1 answers 308 to it for one release (deprecated).
+app.mount("/v1", CoreEndpoint(), name="openai-api")
+app.mount("/core", LegacyCoreRedirect(), name="core-endpoint-legacy")
 # Start at login (routes/start_at_login.py): literal /gateway/host/start-at-login
 # (gateway_start_at_login_v1), admin-only; the tray's and CLI's same switch.
 from .routes.start_at_login import router as start_at_login_router  # noqa: E402

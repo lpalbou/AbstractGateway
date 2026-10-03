@@ -22,11 +22,12 @@ def host(tmp_path, monkeypatch):
     monkeypatch.setattr(ce, "gateway_data_dir_from_env", lambda: tmp_path)
     monkeypatch.setattr(ce, "resolve_network_setting", lambda path: {"mode": "lan"})
     monkeypatch.setattr(ce.ne, "live_reverse_proxy", lambda path: SimpleNamespace(trust_proxy=False))
-    monkeypatch.setattr(ce.ne, "effective_bind", lambda path: {})
+    monkeypatch.setattr(ce.ne, "effective_bind", lambda path, **kw: {})
+    monkeypatch.setattr(ce.ne, "tailscale_status", lambda: None)
     for key in ["OPENAI_API_KEY", "ABSTRACTCORE_AUTH_TOKEN", "ABSTRACTCORE_SERVER_ALLOW_UNAUTHENTICATED"]:
         monkeypatch.delenv(key, raising=False)
     app = FastAPI()
-    app.mount("/core", ce.CoreEndpoint())
+    app.mount("/v1", ce.CoreEndpoint())
     return tmp_path, app
 
 
@@ -40,8 +41,8 @@ def body():
 
 def test_defaults_disable_and_secret_persistence_rotation_restart(host):
     data_dir, app = host
-    assert client(app).post("/core/v1/chat/completions", json=body()).status_code == 404
-    enabled = ce.change_settings(data_dir, enabled=True)
+    assert client(app).post("/v1/chat/completions", json=body()).status_code == 404
+    enabled = ce.change_settings(data_dir, enabled=True, reach="network")
     path = data_dir / "config/core_endpoint.json"
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert ce.read_settings(data_dir).token == enabled.token
@@ -49,21 +50,21 @@ def test_defaults_disable_and_secret_persistence_rotation_restart(host):
     rotated = ce.change_settings(data_dir, rotate=True)
     assert rotated.token != enabled.token
     assert ce.read_settings(data_dir).token == rotated.token
-    assert client(app).post("/core/v1/chat/completions", headers={"Authorization": f"Bearer {enabled.token}"}, json=body()).status_code == 401
+    assert client(app).post("/v1/chat/completions", headers={"Authorization": f"Bearer {enabled.token}"}, json=body()).status_code == 401
     ce.change_settings(data_dir, enabled=False)
-    assert client(app).post("/core/v1/chat/completions", headers={"Authorization": f"Bearer {rotated.token}"}, json=body()).status_code == 404
+    assert client(app).post("/v1/chat/completions", headers={"Authorization": f"Bearer {rotated.token}"}, json=body()).status_code == 404
 
 
 def test_allowlist_and_token_rejection_happen_before_core_import(host, monkeypatch):
     data_dir, app = host
-    ce.change_settings(data_dir, enabled=True)
+    ce.change_settings(data_dir, enabled=True, reach="network")
     monkeypatch.setattr(server_facade.importlib, "import_module", lambda name: pytest.fail("Unauthorized traffic must not import Core"))
     http = client(app)
-    assert http.post("/core/v1/chat/completions", json=body()).status_code == 401
-    assert http.get("/core/v1/models", headers={"Authorization": "Bearer gateway-user-token"}).status_code == 401
-    assert http.put("/core/v1/config/capability-defaults/vision/default", json={}).status_code == 404
-    assert http.get("/core/docs").status_code == 404
-    assert http.get("/core/v1/chat/completions").status_code == 404
+    assert http.post("/v1/chat/completions", json=body()).status_code == 401
+    assert http.get("/v1/models", headers={"Authorization": "Bearer gateway-user-token"}).status_code == 401
+    assert http.put("/v1/config/capability-defaults/vision/default", json={}).status_code == 404
+    assert http.get("/v1/docs").status_code == 404
+    assert http.get("/v1/chat/completions").status_code == 404
 
 
 def test_real_core_route_token_auth_and_open_cloud_key_guard(host, monkeypatch):
@@ -80,23 +81,23 @@ def test_real_core_route_token_auth_and_open_cloud_key_guard(host, monkeypatch):
     monkeypatch.setattr(core, "create_llm", create)
     monkeypatch.setenv("ABSTRACTCORE_AUTH_TOKEN", "different-standalone-token")
     monkeypatch.setenv("OPENAI_API_KEY", "stored-cloud-secret")
-    settings = ce.change_settings(data_dir, enabled=True)
+    settings = ce.change_settings(data_dir, enabled=True, reach="network")
     http = client(app)
-    result = http.post("/core/v1/chat/completions", json=body(), headers={"Authorization": f"Bearer {settings.token}"})
+    result = http.post("/v1/chat/completions", json=body(), headers={"Authorization": f"Bearer {settings.token}"})
     assert result.status_code == 200, result.text
-    assert http.post("/core/v1/chat/completions", json=body(), headers={"Authorization": f"bearer {settings.token}"}).status_code == 200
+    assert http.post("/v1/chat/completions", json=body(), headers={"Authorization": f"bearer {settings.token}"}).status_code == 200
     assert result.json()["choices"][0]["message"]["content"] == "mounted answer"
-    response = http.post("/core/v1/responses", json={"model": "openai/gpt-4", "input": "hi"}, headers={"Authorization": f"Bearer {settings.token}"})
+    response = http.post("/v1/responses", json={"model": "openai/gpt-4", "input": "hi"}, headers={"Authorization": f"Bearer {settings.token}"})
     assert response.status_code == 200, response.text
     ce.change_settings(data_dir, access="open")
     calls.clear()
-    blocked = http.post("/core/v1/chat/completions", json=body())
+    blocked = http.post("/v1/chat/completions", json=body())
     assert blocked.status_code == 401, blocked.text
     assert calls == []
-    explicit = http.post("/core/v1/chat/completions", json=body(), headers={"X-AbstractCore-Provider-API-Key": "client-owned-key"})
+    explicit = http.post("/v1/chat/completions", json=body(), headers={"X-AbstractCore-Provider-API-Key": "client-owned-key"})
     assert explicit.status_code == 200, explicit.text
     assert any(call.get("api_key") == "client-owned-key" for call in calls)
-    assert http.post("/core/v1/chat/completions", json=body(), headers={"Authorization": "Bearer different-standalone-token"}).status_code == 401
+    assert http.post("/v1/chat/completions", json=body(), headers={"Authorization": "Bearer different-standalone-token"}).status_code == 401
 
 
 @pytest.mark.parametrize("peer,headers,want", [
@@ -113,7 +114,7 @@ def test_open_denied_by_internet_or_trusted_proxy(host, monkeypatch):
     scope = {"client": ("192.168.1.2", 123), "headers": []}
     monkeypatch.setattr(ce, "resolve_network_setting", lambda path: {"mode": "internet"})
     assert not ce.open_access_allowed(scope, data_dir)
-    with pytest.raises(ValueError): ce.change_settings(data_dir, enabled=True, access="open")
+    with pytest.raises(ValueError): ce.change_settings(data_dir, enabled=True, access="open", reach="network")
     monkeypatch.setattr(ce, "resolve_network_setting", lambda path: {"mode": "lan"})
     monkeypatch.setattr(ce.ne, "live_reverse_proxy", lambda path: SimpleNamespace(trust_proxy=True))
     assert not ce.open_access_allowed(scope, data_dir)
@@ -123,8 +124,8 @@ def test_browser_origins_checked_before_core_dispatch(host, monkeypatch):
     _, app = host
     app.add_middleware(GatewaySecurityMiddleware, policy=GatewayAuthPolicy(enabled=True, allowed_origins=("https://allowed.test",)))
     http = client(app)
-    assert http.get("/core/v1/models", headers={"Origin": "https://evil.test"}).status_code == 403
-    assert http.get("/core/v1/models", headers={"Origin": "https://allowed.test"}).status_code == 404
+    assert http.get("/v1/models", headers={"Origin": "https://evil.test"}).status_code == 403
+    assert http.get("/v1/models", headers={"Origin": "https://allowed.test"}).status_code == 404
 
 
 def test_admin_controls_reject_user_and_never_disclose_token_in_status(host, monkeypatch):
@@ -147,7 +148,7 @@ def test_admin_controls_reject_user_and_never_disclose_token_in_status(host, mon
     status = http.get("/api/gateway/admin/core-endpoint", headers=headers)
     assert token not in status.text
     assert status.headers["cache-control"] == "no-store"
-    assert status.json()["base_url"].endswith("/core/v1")
+    assert status.json()["base_url"].endswith("/v1") and not status.json()["base_url"].endswith("/core/v1")
     reveal = http.post("/api/gateway/admin/core-endpoint/token/reveal", headers=headers)
     assert reveal.json()["token"] == token
     assert reveal.headers["cache-control"] == "no-store"
@@ -158,7 +159,7 @@ def test_direct_asgi_stream_preserves_chunks_and_policy_until_stream_finishes(ho
     import asyncio
     from abstractcore.server.auth_policy import current_server_auth_policy, server_auth_token
     data_dir, _ = host
-    settings = ce.change_settings(data_dir, enabled=True)
+    settings = ce.change_settings(data_dir, enabled=True, reach="network")
     messages = []
     async def serving(scope, receive, send):
         assert scope["path"] == "/v1/chat/completions"
@@ -173,7 +174,7 @@ def test_direct_asgi_stream_preserves_chunks_and_policy_until_stream_finishes(ho
     async def receive(): return {"type": "http.request", "body": b"", "more_body": False}
     async def send(message): messages.append(message)
     async def run():
-        await ce.CoreEndpoint()({"type": "http", "method": "POST", "path": "/core/v1/chat/completions", "root_path": "/core", "raw_path": b"/core/v1/chat/completions", "headers": [(b"authorization", f"Bearer {settings.token}".encode())], "client": ("192.168.1.2", 123)}, receive, send)
+        await ce.CoreEndpoint()({"type": "http", "method": "POST", "path": "/v1/chat/completions", "root_path": "/core", "raw_path": b"/v1/chat/completions", "headers": [(b"authorization", f"Bearer {settings.token}".encode())], "client": ("192.168.1.2", 123)}, receive, send)
         assert current_server_auth_policy() is None
     asyncio.run(run())
     assert [item.get("body") for item in messages[1:]] == [b"data: first\n\n", b"data: [DONE]\n\n"]
@@ -184,7 +185,7 @@ def test_malformed_config_fails_closed(host):
     path = data_dir / "config/core_endpoint.json"
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps({"enabled": "false", "access": "open", "token": "key"}))
-    assert client(app).get("/core/v1/models").status_code == 503
+    assert client(app).get("/v1/models").status_code == 503
 
 
 def test_pending_internet_downgrade_and_public_explicit_bind_keep_open_access_denied(host, monkeypatch):
@@ -200,7 +201,7 @@ def test_pending_internet_downgrade_and_public_explicit_bind_keep_open_access_de
 
 def test_persisted_open_settings_can_disable_or_rotate_after_internet_change(host, monkeypatch):
     data_dir, _ = host
-    initial = ce.change_settings(data_dir, enabled=True, access="open")
+    initial = ce.change_settings(data_dir, enabled=True, access="open", reach="network")
     monkeypatch.setattr(ce, "resolve_network_setting", lambda path: {"mode": "internet"})
     rotated = ce.change_settings(data_dir, rotate=True)
     assert rotated.token != initial.token
