@@ -303,6 +303,9 @@ CONSOLE_UI_CSS = r"""
     .oai-checks, .oai-links { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
     .oai-check { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: var(--font-size-sm); color: var(--text-secondary); }
     .oai-links a { font-weight: 600; }
+    .oai-supports { display: grid; gap: 4px; }
+    .oai-support { margin: 0; font-size: var(--font-size-sm); line-height: 1.5; color: var(--text-secondary); }
+    .oai-support b { color: var(--text-primary); font-weight: 650; }
     .ui-log.oai-snippet { margin: 0; max-height: none; color: var(--text-primary); }
     .oai-table { min-width: 0; }
     .oai-table table { width: 100%; }
@@ -2708,10 +2711,17 @@ CONSOLE_UI_JS = r"""
         + `<p class="ui-card__note">What is supported, and a first request with your base URL.</p></div></div>`
         + `<ul class="oai-links"><li><a href="${esc(docs.openai_api || "#")}" target="_blank" rel="noopener">OpenAI API compatibility</a> <span class="ui-card__note">endpoints and parameters this gateway supports</span></li>`
         + `<li><a href="${esc(docs.abstractcore || "#")}" target="_blank" rel="noopener">AbstractCore server</a> <span class="ui-card__note">the engine behind it</span></li></ul>`
+        + oaiSupportMarkup(d.support)
         + `<div class="ui-toolbar oai-tabs" role="tablist" aria-label="Example">${tabs}</div>`
         + `<pre class="ui-log oai-snippet" data-oai-code>${esc(code)}</pre>`
         + `<div class="ui-toolbar"><button type="button" class="ui-btn is-ghost" data-oai-copy-snippet>Copy example</button>`
         + (d.access === "open" ? "" : `<span class="ui-card__note">Replace YOUR_GATEWAY_TOKEN with your token.</span>`) + `</div></article>`;
+    }
+    function oaiSupportMarkup(sp) {
+      if (!sp) return "";
+      const row = (label, items, cls) => (Array.isArray(items) && items.length
+        ? `<p class="oai-support ${cls}"><b>${esc(label)}</b> ${items.map((x) => esc(x)).join(" · ")}</p>` : "");
+      return `<div class="oai-supports" data-oai-support>${row("Supported:", sp.tested, "is-ok")}${row("Also served, with an engine set up:", sp.served, "")}${row("Not yet:", sp.not_yet, "is-muted")}</div>`;
     }
     function oaiTime(ts) {
       try { const t = new Date(ts); return isNaN(t.getTime()) ? String(ts || "") : t.toLocaleTimeString(); } catch { return String(ts || ""); }

@@ -230,6 +230,19 @@ SERVING_ROUTES = {
 }
 
 
+# What this API supports, in the words the console's Docs card and the docs page use.
+SUPPORT = {
+    "tested": ["GET /v1/models", "GET /v1/models/{id}",
+               "POST /v1/chat/completions: streaming, tools and tool_choice, stream_options.include_usage, max_completion_tokens",
+               "POST /v1/embeddings: float and base64"],
+    "served": ["POST /v1/responses", "POST /v1/audio/speech", "POST /v1/audio/transcriptions",
+               "POST /v1/audio/translations", "POST /v1/images/generations", "POST /v1/images/edits",
+               "POST /v1/images/variations"],
+    "not_yet": ["response_format (JSON mode, structured outputs)", "n > 1", "logprobs", "logit_bias",
+                "files, batches, assistants, fine-tuning, moderations, realtime"],
+}
+
+
 # ---- In-flight requests: Stop and Restart end them -----------------------
 
 class EndpointStopped(Exception):
@@ -277,10 +290,12 @@ _IGNORED_FIELDS = ("user", "store", "metadata", "service_tier", "parallel_tool_c
 
 
 class RequestRefused(Exception):
-    def __init__(self, message: str, param: Optional[str] = None, code: Optional[str] = "unsupported_parameter"):
+    def __init__(self, message: str, param: Optional[str] = None, code: Optional[str] = "unsupported_parameter",
+                 status: int = 400):
         super().__init__(message)
         self.param = param
         self.code = code
+        self.status = status
 
 
 def normalize_chat_request(doc: Dict[str, Any]) -> Dict[str, Any]:
@@ -289,6 +304,10 @@ def normalize_chat_request(doc: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(doc, dict):
         raise RequestRefused("The request body must be a JSON object.", None, None)
     facts = {"include_usage": bool(isinstance(doc.get("stream_options"), dict) and doc["stream_options"].get("include_usage"))}
+    model = doc.get("model")
+    if not isinstance(model, str) or "/" not in model.strip("/"):
+        raise RequestRefused(f"The model {model!r} does not exist: use provider/model, as listed at /v1/models.",
+                             "model", "model_not_found", 404)
     if "max_completion_tokens" in doc:
         value = doc.pop("max_completion_tokens")
         if doc.get("max_tokens") is None:
@@ -644,7 +663,7 @@ class CoreEndpoint:
                 else:
                     facts = normalize_chat_request(doc)
             except RequestRefused as exc:
-                return await openai_error(413 if exc.code == "request_too_large" else 400, str(exc),
+                return await openai_error(413 if exc.code == "request_too_large" else exc.status, str(exc),
                                           param=exc.param, code=exc.code)(scope, receive, send)
             except ValueError:
                 return await openai_error(400, "The request body is not valid JSON.")(scope, receive, send)

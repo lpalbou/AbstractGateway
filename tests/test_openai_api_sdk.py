@@ -210,6 +210,9 @@ def test_errors_use_the_standard_envelope(sdk):
             await c.chat.completions.create(model="ollama/qwen3:4b", messages=[{"role": "wizard", "content": "hi"}])
         assert set(err.value.body) == {"message", "type", "param", "code"}
         with pytest.raises(openai.NotFoundError) as err:
+            await c.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": "hi"}])
+        assert err.value.body["code"] == "model_not_found" and err.value.body["param"] == "model"
+        with pytest.raises(openai.NotFoundError) as err:
             await c.post("/files", cast_to=object, body={})
         assert err.value.body["type"] == "invalid_request_error"
     run(go())
