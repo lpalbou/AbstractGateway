@@ -2578,8 +2578,8 @@ def test_models_and_engines_tabs_do_not_reuse_existing_ids() -> None:
     assert '$("tab-button-providers").onclick = () => { setActiveTab("providers"); openCoreTab("providers"); };' in html
     # A `#catalog` / `#providers` (or legacy `#engines`) deep link and a restored landing tab mount too.
     assert 'const wantedTab = TAB_FOLDS[hashTab] || hashTab;' in html
-    assert 'if (wantedTab === "catalog" || wantedTab === "providers" || wantedTab === "apps" || wantedTab === "network") openCoreTab(wantedTab);' in html
-    assert 'if (state.activeTab === "catalog" || state.activeTab === "providers" || state.activeTab === "apps" || state.activeTab === "network") openCoreTab(state.activeTab);' in html
+    assert 'if (wantedTab === "catalog" || wantedTab === "providers" || wantedTab === "apps" || wantedTab === "network" || wantedTab === "openai") openCoreTab(wantedTab);' in html
+    assert 'if (state.activeTab === "catalog" || state.activeTab === "providers" || state.activeTab === "apps" || state.activeTab === "network" || state.activeTab === "openai") openCoreTab(state.activeTab);' in html
 
 
 def test_held_basis_words_and_meter_name_the_field_actually_used() -> None:

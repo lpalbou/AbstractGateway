@@ -107,7 +107,16 @@ def _status(request: Request, settings: ce.EndpointSettings, data_dir, *, admin:
         # only when the account has a token of its own (not the operator token).
         "key": {"own_token": principal.source == "user-registry", "user_id": principal.user_id},
         "docs": {"openai_api": DOCS_URL, "abstractcore": CORE_DOCS_URL},
+        # The gateway's default text model (provider/model) for the snippets, or null.
+        "example_model": _example_model(),
     }
+
+
+def _example_model() -> Optional[str]:
+    from ..provider_defaults import _gateway_capability_text_default
+
+    provider, model, _source = _gateway_capability_text_default()
+    return f"{provider}/{model}" if provider and model else None
 
 
 def _response(body):

@@ -2055,6 +2055,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <div class="shell_nav_group af-nav-group" role="group" aria-labelledby="nav-group-models">
 	        <div id="nav-group-models" class="shell_nav_caption af-nav-group__caption">Models</div>
 	        <button id="tab-button-providers" class="tab-button shell_nav_item" type="button" title="Local engines (Ollama, LM Studio, MLX...) and remote provider connections"><span class="shell_nav_icon" aria-hidden="true">◇</span><span class="shell_nav_label">Providers</span></button>
+	        <button id="tab-button-openai" class="tab-button shell_nav_item" type="button" title="Let apps use your models through one OpenAI-compatible address"><span class="shell_nav_icon" aria-hidden="true">⇄</span><span class="shell_nav_label">OpenAI API</span></button>
 	        <button id="tab-button-catalog" class="tab-button shell_nav_item" type="button" title="Browse, download and delete models that fit this machine"><span class="shell_nav_icon" aria-hidden="true">▤</span><span class="shell_nav_label">Models</span></button>
 	        <button id="tab-button-defaults" class="tab-button shell_nav_item" type="button" title="Which provider/model serves each capability (vision, audio, image...)"><span class="shell_nav_icon" aria-hidden="true">◆</span><span class="shell_nav_label">Multimodal</span></button>
 	      </div>
@@ -2656,6 +2657,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      </div>
 	      <div id="tab-network" class="tab-panel">
 	        <div id="network-root" class="core-console-root"></div>
+	      </div>
+	      <div id="tab-openai" class="tab-panel">
+	        <div id="openai-root" class="core-console-root"></div>
 	      </div>
 	      <div id="tab-users" class="tab-panel">
 	        <div id="account" class="session-summary">No active session.</div>
@@ -3945,7 +3949,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // door (users & entities), where they run, then setup (providers,
 	    // capability defaults), then validation (sandbox). A stale persisted
 	    // "entities" value folds into "users" below.
-	    const TABS = ["users", "runtimes", "workflows", "skills", "providers", "defaults", "sandbox", "models", "catalog", "apps", "network"];
+	    const TABS = ["users", "runtimes", "workflows", "skills", "providers", "openai", "defaults", "sandbox", "models", "catalog", "apps", "network"];
 	    // Retired tab ids and their new homes: a persisted value or a `#<id>` link
 	    // still lands there (entities merged into users; DESIGN-v3 §7: the Engines
 	    // tab merged into Providers).
@@ -4237,6 +4241,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       workflows: ["Workflows", "Bundles, versions, import and export"],
       skills: ["Skills & MCP", "Skills agents can load, and MCP tool servers"],
 	      providers: ["Providers", "Local engines and remote provider connections"],
+	      openai: ["OpenAI API", "Let apps use your models through one OpenAI-compatible address"],
 	      defaults: ["Multimodal Capabilities", "Which provider/model serves each capability route"],
 	      sandbox: ["Sandbox", "Try any provider/model directly — text, image, audio, video"],
 	      models: ["Resources", "Host resources: loaded models, memory and GPU, session caches"],
@@ -12466,7 +12471,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        setActiveTab(wantedTab);
 	        if (wantedTab === "models") { loadHostState(); startHostStatePoll(); }
 	        if (wantedTab === "users") loadMyEmail();
-	        if (wantedTab === "catalog" || wantedTab === "providers" || wantedTab === "apps" || wantedTab === "network") openCoreTab(wantedTab);
+	        if (wantedTab === "catalog" || wantedTab === "providers" || wantedTab === "apps" || wantedTab === "network" || wantedTab === "openai") openCoreTab(wantedTab);
 	        // `#apps?open=<id>&path=<p>` (app_proxy.py sends a signed-out page
 	        // load of /apps/<id>/... here): open that app, signed in.
 	        if (wantedTab === "apps") {
@@ -14250,6 +14255,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         mountNetworkPanel("tab", $("network-root"));
         return;
       }
+      if (tab === "openai") {
+        // The OpenAI-compatible API at /v1 (console_ui.py, contract gateway_openai_api_v1).
+        mountOpenAIPanel("tab", $("openai-root"));
+        return;
+      }
       if (tab === "providers") {
         // Local providers are the engine CARDS (console_ui.py), not
         // AbstractCore's table: one card per engine, one primary action per
@@ -14931,7 +14941,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (state.activeTab === "users") loadEntities();
       if (state.activeTab === "runtimes") loadRuntimes();  // data homes ride along inside loadRuntimes (cached)
       if (state.activeTab === "models") { loadHostState(); startHostStatePoll(); }
-      if (state.activeTab === "catalog" || state.activeTab === "providers" || state.activeTab === "apps" || state.activeTab === "network") openCoreTab(state.activeTab);
+      if (state.activeTab === "catalog" || state.activeTab === "providers" || state.activeTab === "apps" || state.activeTab === "network" || state.activeTab === "openai") openCoreTab(state.activeTab);
       try {
         await loadEndpointProfiles();
       } catch (err) {
@@ -15523,6 +15533,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("tab-button-catalog").onclick = () => { setActiveTab("catalog"); openCoreTab("catalog"); };
 	    $("tab-button-apps").onclick = () => { setActiveTab("apps"); openCoreTab("apps"); };
 	    $("tab-button-network").onclick = () => { setActiveTab("network"); openCoreTab("network"); };
+	    $("tab-button-openai").onclick = () => { setActiveTab("openai"); openCoreTab("openai"); };
 	    $("models-refresh").onclick = () => { loadHostState(); startHostStatePoll(); };
 	    $("gateway-host-pause").onclick = toggleGatewayPause;
 	    $("gateway-host-restart").onclick = restartGateway;

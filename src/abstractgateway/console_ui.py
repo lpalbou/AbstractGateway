@@ -291,6 +291,21 @@ CONSOLE_UI_CSS = r"""
     .ui-runtime-row__text .ui-card__titles { min-height: 0; }
     .ui-runtime-row__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
     #network-root, .ui-net-root { display: grid; gap: 18px; min-width: 0; }
+    .ui-net-other { display: grid; gap: 8px; min-width: 0; }
+    .first-run-network [data-net-openai-pointer] { display: none; }
+    /* ---- OpenAI API page ---- */
+    #openai-root { display: grid; gap: 18px; min-width: 0; }
+    .oai-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 18px; min-width: 0; }
+    .oai-card { display: grid; align-content: start; gap: 12px; min-width: 0; }
+    .oai-field { display: grid; gap: 8px; min-width: 0; }
+    .oai-field__title { margin: 0; font-size: var(--font-size-sm); font-weight: 650; color: var(--text-primary); }
+    .oai-controls { align-items: center; }
+    .oai-checks, .oai-links { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+    .oai-check { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: var(--font-size-sm); color: var(--text-secondary); }
+    .oai-links a { font-weight: 600; }
+    .ui-log.oai-snippet { margin: 0; max-height: none; color: var(--text-primary); }
+    .oai-table { min-width: 0; }
+    .oai-table table { width: 100%; }
     .first-run-network { display: grid; gap: 18px; min-width: 0; padding-top: 6px; border-top: 1px solid var(--ui-border-1); }
     .ui-seg { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 4px; padding: 4px; border: 1px solid var(--ui-border-2); border-radius: var(--radius-lg); background: var(--ui-surface-1); }
     .ui-seg__opt { display: grid; align-content: start; gap: 6px; min-width: 0; min-height: 0; padding: 12px 14px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-secondary); text-align: left; font-weight: 500; white-space: normal; box-shadow: none; cursor: pointer; }
@@ -2167,7 +2182,7 @@ CONSOLE_UI_JS = r"""
       lan: "Phones, tablets and other computers on the same Wi-Fi or office network can connect. Everyone signs in with their own account.",
       internet: "Reachable from anywhere, through a secure proxy or tunnel that you set up. The gateway itself speaks plain HTTP and never touches your router.",
     };
-    const NET_KIND_LABEL = { loopback: "This computer", lan: "Local network", hostname: "Network name", public: "Public address" };
+    const NET_KIND_LABEL = { loopback: "This computer", lan: "Local network", hostname: "Network name", tailscale: "Tailscale", public: "Public address" };
     const netStore = { data: null, error: "", loading: false, views: new Map(), busy: "", confirm: null, refused: null, notice: null, restarting: false, publicLoading: false,
       // Advanced: reverse proxy: the origin being typed, its
       // validation message, which field is saving, the last save's result
@@ -2222,7 +2237,6 @@ CONSOLE_UI_JS = r"""
       let out = `<div class="ui-section-title"><h3>Who can reach this gateway</h3><span class="ui-sub">Running now: <b>${esc(eff.label || "unknown")}</b>${eff.port ? ` · port ${esc(eff.port)}` : ""}</span></div>`
         + `<div class="ui-seg" role="radiogroup" aria-label="Who can reach this gateway">${opts}</div>`;
       if (!admin) out += `<p class="ui-card__note">Only an admin can change who can reach this gateway.</p>`;
-      out += `<p class="ui-card__note" data-net-tailscale-hint>Reached through Tailscale? On the gateway machine run <code>tailscale serve --bg http://127.0.0.1:${esc(eff.port || 8080)}</code> and open https://&lt;host&gt;.&lt;tailnet&gt;.ts.net/ — <code>tailscale serve reset</code> undoes it; voice and camera in the browser need this https address.</p>`;
       if (netStore.refused) {
         const r = netStore.refused;
         out += `<div class="ui-alert tone-warn" role="alert"><strong>${esc(r.reason || "This mode is not available right now.")}</strong>`
@@ -2276,55 +2290,28 @@ CONSOLE_UI_JS = r"""
         out += `<details class="ui-details ui-net-warnings"${d.restart_required || conf.mode === "internet" ? " open" : ""}><summary>What to know about ${esc(conf.label || "this mode")} (${warnings.length})</summary>`
           + `<ul class="ui-warn-list">${warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></details>`;
       }
-      if (admin) out += coreEndpointMarkup();
+      out += netOtherAddressMarkup(d);
+      out += `<p class="ui-card__note" data-net-openai-pointer>The OpenAI-compatible API has its own page: <button type="button" class="ui-btn is-quiet" data-net-action="goto-openai">OpenAI API</button></p>`;
       out += netProxyMarkup(d);
       return out;
     }
-    // ---- OpenAI-compatible endpoint (admin only) ----
-    const coreEndpointStore = { data: null, token: "", busy: false, error: "", confirmRotate: false };
-    function coreEndpointMarkup() {
-      const s = coreEndpointStore, d = s.data;
-      let out = `<article class="ui-card" data-core-endpoint><div class="ui-card__head"><div class="ui-card__titles"><h3 class="ui-card__title">OpenAI-compatible endpoint</h3><p class="ui-card__note">Connect apps to AbstractCore providers and models through this gateway.</p></div>${uiPill(d && d.enabled ? "Enabled" : "Disabled", d && d.enabled ? "ok" : "muted")}</div>`;
-      if (s.error) out += `<div class="ui-alert tone-err" role="alert"><strong>${esc(s.error)}</strong></div>`;
-      if (!d) return out + `<button class="ui-btn is-ghost" data-core-action="refresh">Try again</button></article>`;
-      const disabled = s.busy ? " disabled" : "";
-      out += `<label class="ui-switch"><input type="checkbox" role="switch" data-core-enabled${d.enabled ? " checked" : ""}${disabled}><span>Enable endpoint</span></label>`
-        + `<label class="ui-toolbar">Access <select data-core-access aria-label="Core endpoint access"${disabled}><option value="token"${d.access === "token" ? " selected" : ""}>Requires token</option><option value="open"${d.access === "open" ? " selected" : ""}>Open on local network</option></select></label>`
-        + `<p class="ui-card__note">Uses the Network settings above. Changes here apply immediately. Public and reverse-proxy connections always require a token.</p>`;
-      if (d.access === "open") out += `<p class="ui-card__note">Direct local-network clients can use local providers without a token. Using stored cloud-provider credentials requires the endpoint token.</p>`;
-      const urls = [d.base_url, ...((netStore.data && netStore.data.addresses) || []).filter(a => a.url && a.reachable === true).map(a => a.url.replace(/\/$/, "") + "/core/v1")];
-      out += `<ul class="ui-addr-list">${[...new Set(urls)].map((url, i) => `<li class="ui-addr"><div class="ui-addr__text"><span class="ui-addr__label">${i ? "Alternative base URL" : "Base URL"}</span><code style="overflow-wrap:anywhere">${esc(url)}</code></div><button class="ui-btn is-ghost" data-net-copy="${esc(url)}" aria-label="Copy base URL ${esc(url)}">Copy</button></li>`).join("")}</ul>`;
-      out += `<div class="ui-addr"><div class="ui-addr__text"><span class="ui-addr__label">Endpoint token · admin only</span><code data-core-token style="overflow-wrap:anywhere">${esc(s.token || (d.token_present ? "••••••••••••••••••••••••" : "No token generated"))}</code></div><div class="ui-toolbar">`
-        + (d.token_present ? `<button class="ui-btn is-ghost" data-core-action="${s.token ? "hide" : "show"}"${disabled}>${s.token ? "Hide" : "Show"}</button><button class="ui-btn is-ghost" data-core-action="copy"${disabled}>Copy token</button>` : "")
-        + `<button class="ui-btn is-ghost" data-core-action="${d.token_present ? "confirm-rotate" : "rotate"}"${disabled}>${d.token_present ? "Regenerate token" : "Generate token"}</button></div></div>`;
-      if (s.confirmRotate) out += `<div class="ui-confirm" role="alertdialog" aria-label="Regenerate endpoint token"><p>Replace the token? Apps using the previous token will need the new one.</p><div class="ui-toolbar"><button class="ui-btn is-primary" data-core-action="rotate"${disabled}>Regenerate</button><button class="ui-btn is-ghost" data-core-action="cancel"${disabled}>Cancel</button></div></div>`;
-      return out + `<p class="ui-card__note" role="status">${s.busy ? "Saving…" : "Use provider/model as the model name. This token is separate from Gateway sign-in and provider API keys."}</p></article>`;
+    // ---- Reached through another address? (Tailscale, a reverse proxy) ----
+    // gateway_network_v1 `tailscale` ({dns_name, ips[], tailnet} | null, from
+    // `tailscale status --json`) and the addresses list: the gateway accepts
+    // the origins of every address it detects (network_exposure.detected_hosts)
+    // and believes a proxy on THIS computer for the client address, so LAN and
+    // Tailscale need no manual origin and no nginx.
+    function netOtherAddressMarkup(d) {
+      const ts = d.tailscale;
+      const port = (d.effective && d.effective.port) || (d.configured && d.configured.port) || 8080;
+      let out = `<section class="ui-net-other" data-net-other aria-labelledby="net-other-h"><div class="ui-section-title"><h3 id="net-other-h">Reached through another address?</h3><span class="ui-sub">Tailscale, a reverse proxy</span></div>`
+        + `<p class="ui-card__note">Nothing to set up: the gateway accepts every address above${ts && ts.dns_name ? ", including its Tailscale name" : ""}, and a proxy on this computer passes the real client address.</p>`;
+      if (ts && ts.dns_name) {
+        out += `<p class="ui-card__note" data-net-tailscale-https>Voice and camera need https: on this computer run <code>tailscale serve --bg http://127.0.0.1:${esc(port)}</code>, then open <code>https://${esc(ts.dns_name)}</code>. <code>tailscale serve reset</code> undoes it.</p>`;
+      }
+      return out + `</section>`;
     }
-    async function coreEndpointRefresh() {
-      try { coreEndpointStore.data = await api("/api/gateway/admin/core-endpoint"); coreEndpointStore.error = ""; }
-      catch (err) { coreEndpointStore.error = String((err && err.message) || err); }
-    }
-    async function coreEndpointAction(action, body) {
-      const s = coreEndpointStore;
-      if (s.busy) return;
-      if (action === "hide") { s.token = ""; netRender(); return; }
-      if (action === "confirm-rotate" || action === "cancel") { s.confirmRotate = action === "confirm-rotate"; netRender(); return; }
-      s.busy = true; s.error = ""; netRender();
-      try {
-        if (action === "change") {
-          s.data = await api("/api/gateway/admin/core-endpoint", { method: "POST", body: JSON.stringify(body) });
-        } else if (action === "refresh") {
-          await coreEndpointRefresh();
-        } else {
-          const result = await api(`/api/gateway/admin/core-endpoint/token/${action === "rotate" ? "rotate" : "reveal"}`, { method: "POST" });
-          if (action === "copy") await uiCopy(result.token);
-          else if (netStore.views.size) s.token = result.token;
-          if (action === "rotate") { s.confirmRotate = false; await coreEndpointRefresh(); }
-        }
-      } catch (err) { s.error = String((err && err.message) || err); }
-      s.busy = false; netRender();
-    }
-    // ---- Advanced: reverse proxy ----
+    // ---- Advanced: manual origins + proxies on other machines ----
     // gateway_network_v1 `reverse_proxy`: {allowed_origins: {value[],
     // source: setting|env|default, overridden_by_env, env_name?, env_value?,
     // effective[], builtin[], self_origins[], applies: "live", warnings[],
@@ -2352,15 +2339,15 @@ CONSOLE_UI_JS = r"""
       const auto = conf.mode === "internet" || value.length > 0 || !!t.value || !!o.overridden_by_env || !!t.overridden_by_env;
       const open = p.open === null ? auto : p.open;
       const busy = !!p.saving || !admin;
-      const sum = [`${value.length ? `${value.length} origin${value.length === 1 ? "" : "s"}` : "no extra origin"}`, `trust proxy ${t.effective ? "on" : "off"}`];
+      const sum = [`${value.length ? `${value.length} origin${value.length === 1 ? "" : "s"}` : "no manual origin"}`, t.effective ? "proxies elsewhere trusted" : "local proxy only"];
       const chipWarn = (x) => x === "*" || x.includes("://*.") || /:\*$/.test(x) || (/^http:\/\//.test(x) && !/^http:\/\/(localhost|127\.|\[::1\])/.test(x));
       let out = `<details class="ui-details ui-net-proxy" data-net-proxy${open ? " open" : ""}>`
-        + `<summary><span class="ui-net-proxy__title">Advanced: reverse proxy</span><span class="ui-net-proxy__sum">${esc(sum.join(" · "))}</span>`
+        + `<summary><span class="ui-net-proxy__title">Advanced</span><span class="ui-net-proxy__sum">${esc(sum.join(" · "))}</span>`
         + (o.overridden_by_env || t.overridden_by_env ? uiPill("Environment override", "warn") : "") + `</summary>`
         + `<div class="ui-net-proxy__body"><div class="ui-net-proxy__grid">`;
       // Browser origins.
-      out += `<section class="ui-net-proxy__field" aria-labelledby="net-origins-h"><div class="ui-net-proxy__head"><h4 id="net-origins-h">Browser origins</h4>${netProxySourceText(o)}</div>`
-        + `<p class="ui-net-proxy__text">Web addresses whose pages may use this gateway from a browser, besides this computer's own. Add the https address your proxy or tunnel serves, for example <code>https://gateway.example.com</code>.</p>`;
+      out += `<section class="ui-net-proxy__field" aria-labelledby="net-origins-h"><div class="ui-net-proxy__head"><h4 id="net-origins-h">Allowed origins</h4>${netProxySourceText(o)}</div>`
+        + `<p class="ui-net-proxy__text">Other web addresses whose pages may use this gateway: a proxy or tunnel with its own name, for example <code>https://gateway.example.com</code>. The addresses above need no entry.</p>`;
       if (o.overridden_by_env) {
         out += `<div class="ui-alert tone-warn" role="status" data-net-proxy-env="origins"><strong>This gateway was started with ${esc(o.env_name || "an origins list")} in its environment, so that list decides:</strong>`
           + `<span>${esc((o.env_value || []).join(", ") || "none")}. The origins below are saved and apply once the gateway is started without it.</span></div>`;
@@ -2381,9 +2368,9 @@ CONSOLE_UI_JS = r"""
       out += `</section>`;
       // Trust proxy.
       out += `<section class="ui-net-proxy__field" aria-labelledby="net-trust-h"><div class="ui-net-proxy__head"><h4 id="net-trust-h">Client address</h4>${netProxySourceText(t)}</div>`
-        + `<label class="ui-switch ui-net-proxy__switch"><input type="checkbox" role="switch" data-net-trust${t.value ? " checked" : ""}${busy ? " disabled" : ""} aria-describedby="net-trust-text net-trust-danger"><span>${p.saving === "trust_proxy" ? "Saving..." : "Trust the proxy's client address"}</span></label>`
-        + `<p class="ui-net-proxy__text" id="net-trust-text">Behind a reverse proxy every request seems to come from the proxy itself. On: the gateway reads the real client address from the X-Forwarded-For header the proxy adds, for sign-in lockouts and the audit log.</p>`
-        + `<p class="ui-net-proxy__danger" id="net-trust-danger">Only when your own proxy sits in front of every request: otherwise anyone can choose the address the gateway sees.</p>`;
+        + `<label class="ui-switch ui-net-proxy__switch"><input type="checkbox" role="switch" data-net-trust${t.value ? " checked" : ""}${busy ? " disabled" : ""} aria-describedby="net-trust-text net-trust-danger"><span>${p.saving === "trust_proxy" ? "Saving..." : "Trust proxies on other machines"}</span></label>`
+        + `<p class="ui-net-proxy__text" id="net-trust-text">A proxy on this computer always names the real client (X-Forwarded-For), for sign-in lockouts and the audit log. On: a proxy on another machine may too.</p>`
+        + `<p class="ui-net-proxy__danger" id="net-trust-danger">Only when your own proxy on that machine sits in front of every request: otherwise anyone can choose the address the gateway sees.</p>`;
       if (t.overridden_by_env) {
         out += `<div class="ui-alert tone-warn" role="status" data-net-proxy-env="trust"><strong>This gateway was started with ${esc(t.env_name || "a proxy setting")} in its environment: trust is ${t.effective ? "on" : "off"}.</strong>`
           + `<span>The switch is saved and applies once the gateway is started without it.</span></div>`;
@@ -2457,8 +2444,6 @@ CONSOLE_UI_JS = r"""
         const data = await api(`/api/gateway/network${o.lookupPublic ? "?lookup_public=1" : ""}`, { slow: !!o.lookupPublic });
         if (!data || data.schema !== "gateway_network_v1") throw new Error(`unexpected network payload (schema ${String((data && data.schema) || "none")}, expected gateway_network_v1)`);
         netStore.data = data;
-        if (data.writable) await coreEndpointRefresh();
-        else { coreEndpointStore.data = null; coreEndpointStore.token = ""; }
         netStore.error = "";
       } catch (err) {
         netStore.error = err && err.status === 404
@@ -2547,6 +2532,7 @@ CONSOLE_UI_JS = r"""
       if (action === "ack-internet") { const m = (netStore.confirm && netStore.confirm.mode) || "internet"; await netPost({ mode: m, acknowledge_internet: true }, m); return; }
       if (action === "restart") { await netRestart(); return; }
       if (action === "origin-add") { await netOriginAdd(); return; }
+      if (action === "goto-openai") { setActiveTab("openai"); openCoreTab("openai"); return; }
       if (action === "lookup-public") { netStore.publicLoading = true; netRender(); await netRefresh({ lookupPublic: true }); netStore.publicLoading = false; netRender(); }
     }
     function mountNetworkPanel(key, el) {
@@ -2555,8 +2541,6 @@ CONSOLE_UI_JS = r"""
       el.onclick = (event) => {
         const t = event && event.target && event.target.closest ? event.target : null;
         if (!t) return;
-        const core = t.closest("[data-core-action]");
-        if (core && !core.disabled) { coreEndpointAction(core.dataset.coreAction); return; }
         const copy = t.closest("[data-net-copy]");
         if (copy) { uiCopy(copy.dataset.netCopy); return; }
         const mode = t.closest("[data-net-mode]");
@@ -2580,9 +2564,6 @@ CONSOLE_UI_JS = r"""
         }
       };
       el.onchange = (event) => {
-        const target = event && event.target;
-        if (target && !target.disabled && target.matches("[data-core-enabled]")) { coreEndpointAction("change", { enabled: !!target.checked }); return; }
-        if (target && !target.disabled && target.matches("[data-core-access]")) { coreEndpointAction("change", { access: target.value }); return; }
         const c = event && event.target && event.target.matches && event.target.matches("[data-net-trust]") ? event.target : null;
         if (!c || c.disabled) return;
         netProxySave("trust_proxy", { trust_proxy: !!c.checked });
@@ -2609,7 +2590,272 @@ CONSOLE_UI_JS = r"""
       netRender();
       netRefresh();
     }
-    function unmountNetworkPanel(key) { netStore.views.delete(key); if (!netStore.views.size) { coreEndpointStore.token = ""; coreEndpointStore.confirmRotate = false; } }
+    function unmountNetworkPanel(key) { netStore.views.delete(key); }
+    // ---- OpenAI API page (sidebar MODELS, after Providers) ----
+    // Contract gateway_openai_api_v1 (routes/core_endpoint.py): GET
+    // /openai-api -> {writable, enabled, running, access: token|open, reach:
+    // machine|network|tailnet|anywhere, base_url, legacy_base_url,
+    // reach_options[{id,label,selected,available,reason?,shown?}],
+    // warnings[{id,tone,text}], listener{mode,label}, tailscale, key{own_token,
+    // user_id}, docs{openai_api, abstractcore}, example_model}; GET
+    // /openai-api/logs -> {rows[], scope: all|own}. Admin: POST
+    // /admin/core-endpoint {enabled?|access?|reach?} applies immediately; POST
+    // /admin/core-endpoint/restart; POST /admin/core-endpoint/check ->
+    // {checks[{id, ok: true|false|null, text}]}. Every sentence about access
+    // comes from the gateway (warnings, reasons); the page only lays it out.
+    const OAI_AUTH = [
+      { id: "token", label: "Protected (API key)", text: "Apps send a gateway token as their API key." },
+      { id: "open", label: "Open (no key)", text: "Apps connect without a key. Cloud providers still need one." },
+    ];
+    const OAI_REACH_TEXT = {
+      machine: "Apps on this computer.",
+      network: "Also phones and computers on your Wi-Fi or office network.",
+      tailnet: "Also your devices on Tailscale.",
+      anywhere: "Also the internet, through your proxy or tunnel.",
+    };
+    const OAI_SNIPPETS = [["curl", "curl"], ["python", "Python"], ["js", "JavaScript"]];
+    const OAI_LOG_REFRESH_MS = 5000;
+    const oaiStore = { data: null, error: "", loading: false, busy: "", notice: null, checks: null, logs: null, logsScope: "", logsError: "",
+      snippet: "curl", views: new Map(), confirmKey: false, newKey: "", timer: null };
+    function oaiSnippet(kind, d) {
+      const base = String(d.base_url || "");
+      const key = d.access === "open" ? "not-needed" : (oaiStore.newKey || "YOUR_GATEWAY_TOKEN");
+      const model = d.example_model || "provider/model";
+      if (kind === "python") {
+        return `from openai import OpenAI\n\nclient = OpenAI(base_url="${base}", api_key="${key}")\nreply = client.chat.completions.create(\n    model="${model}",\n    messages=[{"role": "user", "content": "Hello"}],\n)\nprint(reply.choices[0].message.content)`;
+      }
+      if (kind === "js") {
+        return `import OpenAI from "openai";\n\nconst client = new OpenAI({ baseURL: "${base}", apiKey: "${key}" });\nconst reply = await client.chat.completions.create({\n  model: "${model}",\n  messages: [{ role: "user", content: "Hello" }],\n});\nconsole.log(reply.choices[0].message.content);`;
+      }
+      return `curl ${base}/chat/completions \\\n  -H "Authorization: Bearer ${key}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "${model}", "messages": [{"role": "user", "content": "Hello"}]}'`;
+    }
+    function oaiSeg(name, label, options, current, opts) {
+      return `<div class="ui-seg oai-seg" role="radiogroup" aria-label="${esc(label)}">` + options.map((o) => {
+        const on = o.id === current;
+        const busy = oaiStore.busy === `${name}:${o.id}`;
+        const locked = o.available === false;
+        const off = !opts.writable || !!oaiStore.busy || (locked && !on);
+        return `<button type="button" role="radio" class="ui-seg__opt${on ? " is-on" : ""}${locked ? " is-locked" : ""}" data-oai-${name}="${esc(o.id)}" aria-checked="${on ? "true" : "false"}" tabindex="${on ? "0" : "-1"}"${off ? " disabled" : ""}${busy ? ' aria-busy="true"' : ""}${locked && o.reason ? ` title="${esc(o.reason)}"` : ""}>`
+          + `<span class="ui-seg__title">${esc(busy ? "Saving..." : o.label)}</span>`
+          + `<span class="ui-seg__text">${esc(locked && o.reason ? o.reason : (o.text || ""))}</span></button>`;
+      }).join("") + `</div>`;
+    }
+    function oaiStatusCard(d) {
+      const admin = !!d.writable;
+      const off = !admin || !!oaiStore.busy;
+      let out = `<article class="ui-card oai-card" data-oai-card="status"><div class="ui-card__head"><div class="ui-card__titles"><h3 class="ui-card__title">Status</h3>`
+        + `<p class="ui-card__note">One address for every OpenAI-compatible app.</p></div>${uiPill(d.running ? "Running" : "Stopped", d.running ? "ok" : "muted")}</div>`
+        + `<ul class="ui-addr-list"><li class="ui-addr"><div class="ui-addr__text"><span class="ui-addr__label">Base URL</span><code class="ui-ellip is-block" data-oai-base title="${esc(d.base_url)}">${esc(d.base_url)}</code></div>`
+        + `<div class="ui-addr__side"><button type="button" class="ui-btn is-ghost ui-addr__copy" data-oai-copy="${esc(d.base_url)}" aria-label="Copy base URL">Copy</button></div></li></ul>`
+        + `<div class="ui-toolbar oai-controls"><label class="ui-switch" title="Answer OpenAI API requests at the base URL"><input type="checkbox" role="switch" data-oai-enabled aria-describedby="oai-enabled-help"${d.enabled ? " checked" : ""}${off ? " disabled" : ""}><span>${oaiStore.busy === "enabled" ? "Saving..." : "Endpoint"}</span></label>`;
+      if (admin) {
+        out += `<button type="button" class="ui-btn is-ghost" data-oai-action="restart" title="End open requests and keep serving"${off || !d.enabled ? " disabled" : ""}${oaiStore.busy === "restart" ? ' aria-busy="true"' : ""}>${oaiStore.busy === "restart" ? "Restarting..." : "Restart"}</button>`
+          + `<button type="button" class="ui-btn is-ghost" data-oai-action="check" title="Check settings, Core and models"${oaiStore.busy ? " disabled" : ""}${oaiStore.busy === "check" ? ' aria-busy="true"' : ""}>${oaiStore.busy === "check" ? "Checking..." : "Check setup"}</button>`;
+      }
+      out += `</div><p class="ui-card__note" id="oai-enabled-help">Endpoint: answers apps at this address.${admin ? " Restart ends open requests." : " Only an admin can change it."}</p>`;
+      if (Array.isArray(oaiStore.checks)) {
+        out += `<ul class="oai-checks" data-oai-checks>${oaiStore.checks.map((c) => `<li class="oai-check tone-${c.ok === true ? "ok" : c.ok === false ? "err" : "warn"}">${uiPill(c.ok === true ? "OK" : c.ok === false ? "Fix" : "Note", c.ok === true ? "ok" : c.ok === false ? "err" : "warn")}<span>${esc(c.text)}</span></li>`).join("")}</ul>`;
+      }
+      return out + `</article>`;
+    }
+    function oaiConnectCard(d) {
+      const k = d.key || {};
+      let out = `<article class="ui-card oai-card" data-oai-card="connect"><div class="ui-card__head"><div class="ui-card__titles"><h3 class="ui-card__title">Connect your app</h3>`
+        + `<p class="ui-card__note">Paste these two values into any OpenAI SDK or app.</p></div></div><ul class="ui-addr-list">`
+        + `<li class="ui-addr"><div class="ui-addr__text"><span class="ui-addr__label">Base URL</span><code class="ui-ellip is-block" title="${esc(d.base_url)}">${esc(d.base_url)}</code></div>`
+        + `<div class="ui-addr__side"><button type="button" class="ui-btn is-ghost ui-addr__copy" data-oai-copy="${esc(d.base_url)}" aria-label="Copy base URL">Copy</button></div></li>`
+        + `<li class="ui-addr" data-oai-key><div class="ui-addr__text"><span class="ui-addr__label">API key</span>`;
+      if (oaiStore.newKey) {
+        out += `<code class="ui-ellip is-block" data-oai-newkey>${esc(oaiStore.newKey)}</code><span class="ui-addr__note">Your new gateway token, shown once. Your old one stopped working.</span></div>`
+          + `<div class="ui-addr__side"><button type="button" class="ui-btn is-primary ui-addr__copy" data-oai-copy="${esc(oaiStore.newKey)}" aria-label="Copy API key">Copy</button></div></li>`;
+      } else if (k.own_token) {
+        out += `<span>Your gateway token</span><span class="ui-addr__note">The token you sign in with. Lost it? Get a new one.</span></div>`
+          + `<div class="ui-addr__side"><button type="button" class="ui-btn is-ghost" data-oai-action="new-key"${oaiStore.busy ? " disabled" : ""}>New key</button></div></li>`;
+      } else {
+        out += `<span>The gateway admin token</span><span class="ui-addr__note">The token you signed in with.</span></div></li>`;
+      }
+      out += `</ul>`;
+      if (oaiStore.confirmKey) {
+        out += `<div class="ui-confirm" role="alertdialog" aria-label="Replace your gateway token"><p>Replace your gateway token? Apps and devices using the old one must use the new one.</p>`
+          + `<div class="ui-toolbar"><button type="button" class="ui-btn is-primary" data-oai-action="new-key-yes"${oaiStore.busy ? " disabled" : ""}>${oaiStore.busy === "new-key" ? "Replacing..." : "Replace"}</button><button type="button" class="ui-btn is-ghost" data-oai-action="new-key-no">Cancel</button></div></div>`;
+      }
+      if (d.access === "open") out += `<p class="ui-card__note" data-oai-open-note>Open mode: SDKs still ask for a key; any text works, for example <code>not-needed</code>.</p>`;
+      return out + `<p class="ui-card__note">Model names are <code>provider/model</code>, as listed at <code>/v1/models</code>.</p></article>`;
+    }
+    function oaiAccessCard(d) {
+      const admin = !!d.writable;
+      const reach = (Array.isArray(d.reach_options) ? d.reach_options : []).filter((o) => o.shown !== false)
+        .map((o) => ({ ...o, text: OAI_REACH_TEXT[o.id] || "" }));
+      let out = `<article class="ui-card oai-card oai-card--wide" data-oai-card="access"><div class="ui-card__head"><div class="ui-card__titles"><h3 class="ui-card__title">Access</h3>`
+        + `<p class="ui-card__note">Changes apply immediately.${admin ? "" : " Only an admin can change them."}</p></div></div>`
+        + `<div class="oai-field"><h4 class="oai-field__title" id="oai-auth-h">Authentication</h4>${oaiSeg("access", "Authentication", OAI_AUTH, d.access, { writable: admin })}</div>`
+        + `<div class="oai-field"><h4 class="oai-field__title" id="oai-reach-h">Who can connect</h4>${oaiSeg("reach", "Who can connect", reach, d.reach, { writable: admin })}</div>`;
+      for (const w of (Array.isArray(d.warnings) ? d.warnings : [])) {
+        out += `<div class="ui-alert tone-${esc(w.tone === "warn" ? "warn" : "info")}" role="status" data-oai-warning="${esc(w.id)}"><strong>${esc(w.text)}</strong>`
+          + (w.id === "listener" ? `<div class="ui-card__actions"><button type="button" class="ui-btn is-ghost" data-oai-action="goto-network">Network</button></div>` : "") + `</div>`;
+      }
+      if (oaiStore.notice) {
+        const n = oaiStore.notice;
+        out += `<div class="ui-alert tone-${esc(n.tone)}" role="${n.tone === "err" ? "alert" : "status"}" data-oai-notice><strong>${esc(n.text)}</strong></div>`;
+      }
+      return out + `</article>`;
+    }
+    function oaiDocsCard(d) {
+      const docs = d.docs || {};
+      const tabs = OAI_SNIPPETS.map(([id, label]) => `<button type="button" role="tab" class="ui-btn ${oaiStore.snippet === id ? "is-primary" : "is-ghost"}" data-oai-snippet="${id}" aria-selected="${oaiStore.snippet === id ? "true" : "false"}">${label}</button>`).join("");
+      const code = oaiSnippet(oaiStore.snippet, d);
+      return `<article class="ui-card oai-card" data-oai-card="docs"><div class="ui-card__head"><div class="ui-card__titles"><h3 class="ui-card__title">Docs</h3>`
+        + `<p class="ui-card__note">What is supported, and a first request with your base URL.</p></div></div>`
+        + `<ul class="oai-links"><li><a href="${esc(docs.openai_api || "#")}" target="_blank" rel="noopener">OpenAI API compatibility</a> <span class="ui-card__note">endpoints and parameters this gateway supports</span></li>`
+        + `<li><a href="${esc(docs.abstractcore || "#")}" target="_blank" rel="noopener">AbstractCore server</a> <span class="ui-card__note">the engine behind it</span></li></ul>`
+        + `<div class="ui-toolbar oai-tabs" role="tablist" aria-label="Example">${tabs}</div>`
+        + `<pre class="ui-log oai-snippet" data-oai-code>${esc(code)}</pre>`
+        + `<div class="ui-toolbar"><button type="button" class="ui-btn is-ghost" data-oai-copy-snippet>Copy example</button>`
+        + (d.access === "open" ? "" : `<span class="ui-card__note">Replace YOUR_GATEWAY_TOKEN with your token.</span>`) + `</div></article>`;
+    }
+    function oaiTime(ts) {
+      try { const t = new Date(ts); return isNaN(t.getTime()) ? String(ts || "") : t.toLocaleTimeString(); } catch { return String(ts || ""); }
+    }
+    function oaiLogsCard() {
+      const rows = Array.isArray(oaiStore.logs) ? oaiStore.logs : null;
+      let out = `<article class="ui-card oai-card oai-card--wide" data-oai-card="logs"><div class="ui-card__head"><div class="ui-card__titles"><h3 class="ui-card__title">Recent requests</h3>`
+        + `<p class="ui-card__note">${oaiStore.logsScope === "own" ? "Your requests, newest first." : "Newest first."} Refreshes every 5 s; kept as long as the audit log.</p></div></div>`;
+      if (oaiStore.logsError) out += `<div class="ui-alert tone-err" role="alert"><strong>Could not read the request log.</strong><span>${esc(oaiStore.logsError)}</span></div>`;
+      if (!rows) return out + `<div class="ui-empty">Reading the log...</div></article>`;
+      if (!rows.length) return out + `<div class="ui-empty" data-oai-logs-empty>No requests yet.</div></article>`;
+      out += `<div class="oai-table"><table data-oai-logs><thead><tr><th>Time</th><th>Client</th><th>Model</th><th>Tokens</th><th>Latency</th><th>Status</th><th>Run</th></tr></thead><tbody>`;
+      for (const r of rows) {
+        const tokens = r.prompt_tokens == null && r.completion_tokens == null ? "—" : `${r.prompt_tokens == null ? "?" : r.prompt_tokens} in · ${r.completion_tokens == null ? "?" : r.completion_tokens} out`;
+        const ok = Number(r.status) >= 200 && Number(r.status) < 300;
+        out += `<tr><td title="${esc(r.ts || "")}">${esc(oaiTime(r.ts))}</td><td><span>${esc(r.client || "")}</span><div class="ui-card__note">${esc(r.ip || "")}</div></td>`
+          + `<td>${esc(r.model || "—")}</td><td>${esc(tokens)}</td><td>${r.duration_ms == null ? "—" : `${esc(r.duration_ms)} ms`}</td>`
+          + `<td>${uiPill(String(r.status || "—"), ok ? "ok" : "err")}</td>`
+          + `<td>${r.observer_path ? `<a class="ui-btn is-ghost" href="${esc(r.observer_path)}" target="_blank" rel="noopener" title="Open in Observer">Open</a>` : ""}</td></tr>`;
+      }
+      return out + `</tbody></table></div></article>`;
+    }
+    function oaiViewMarkup() {
+      if (oaiStore.error && !oaiStore.data) {
+        return `<div class="ui-alert tone-err" role="alert"><strong>Could not read the OpenAI API settings.</strong><span>${esc(oaiStore.error)}</span></div>`
+          + `<div class="ui-toolbar"><button type="button" class="ui-btn is-ghost" data-oai-action="refresh">Try again</button></div>`;
+      }
+      const d = oaiStore.data;
+      if (!d) return `<div class="ui-empty">Reading the OpenAI API settings...</div>`;
+      return `<div class="oai-grid">${oaiStatusCard(d)}${oaiConnectCard(d)}</div>${oaiAccessCard(d)}<div class="oai-grid">${oaiDocsCard(d)}</div>${oaiLogsCard()}`;
+    }
+    function oaiRender() {
+      for (const el of oaiStore.views.values()) if (el) el.innerHTML = oaiViewMarkup();
+    }
+    async function oaiRefresh() {
+      oaiStore.loading = true;
+      try { oaiStore.data = await api("/api/gateway/openai-api"); oaiStore.error = ""; }
+      catch (err) { oaiStore.error = String((err && err.message) || err); }
+      oaiStore.loading = false;
+      oaiRender();
+    }
+    async function oaiLogsRefresh() {
+      try {
+        const res = await api("/api/gateway/openai-api/logs?limit=50");
+        oaiStore.logs = Array.isArray(res && res.rows) ? res.rows : [];
+        oaiStore.logsScope = String((res && res.scope) || "");
+        oaiStore.logsError = "";
+      } catch (err) { oaiStore.logsError = String((err && err.message) || err); }
+      // Only the log card is redrawn: a poll never resets a choice or a confirmation in progress.
+      for (const el of oaiStore.views.values()) {
+        const card = el && el.querySelector ? el.querySelector('[data-oai-card="logs"]') : null;
+        if (card) card.outerHTML = oaiLogsCard(); else if (el) el.innerHTML = oaiViewMarkup();
+      }
+    }
+    const OAI_SAVED = {
+      enabled: (d) => d.enabled ? "Running: apps can connect now." : "Stopped: open requests ended.",
+      access: (d) => `Saved: ${d.access === "open" ? "Open (no key)" : "Protected (API key)"}. Applies now.`,
+      reach: (d) => `Saved: ${((d.reach_options || []).find((o) => o.id === d.reach) || {}).label || d.reach}. Applies now.`,
+    };
+    async function oaiChange(field, value) {
+      if (oaiStore.busy) return;
+      oaiStore.busy = field === "enabled" ? "enabled" : `${field}:${value}`;
+      oaiStore.notice = null;
+      oaiRender();
+      try {
+        oaiStore.data = await api("/api/gateway/admin/core-endpoint", { method: "POST", body: JSON.stringify({ [field]: value }) });
+        oaiStore.notice = { tone: "ok", text: OAI_SAVED[field](oaiStore.data) };
+      } catch (err) {
+        oaiStore.notice = { tone: "err", text: `Not saved: ${String((err && err.message) || err)}` };
+      }
+      oaiStore.busy = "";
+      oaiRender();
+    }
+    async function oaiAction(action) {
+      if (action === "goto-network") { setActiveTab("network"); openCoreTab("network"); return; }
+      if (action === "refresh") { await oaiRefresh(); return; }
+      if (action === "new-key" || action === "new-key-no") { oaiStore.confirmKey = action === "new-key"; oaiRender(); return; }
+      if (oaiStore.busy) return;
+      oaiStore.busy = action === "new-key-yes" ? "new-key" : action;
+      oaiStore.notice = null;
+      oaiRender();
+      try {
+        if (action === "restart") {
+          const res = await api("/api/gateway/admin/core-endpoint/restart", { method: "POST" });
+          oaiStore.data = res;
+          const n = Number(res.ended_requests || 0);
+          oaiStore.notice = { tone: "ok", text: `Restarted: ${n ? `${n} open request${n === 1 ? "" : "s"} ended` : "no request was open"}.` };
+        } else if (action === "check") {
+          const res = await api("/api/gateway/admin/core-endpoint/check", { method: "POST", slow: true });
+          oaiStore.checks = Array.isArray(res.checks) ? res.checks : [];
+        } else if (action === "new-key-yes") {
+          const res = await api("/api/gateway/me/token/rotate", { method: "POST", body: "{}" });
+          oaiStore.newKey = String(res.token || "");
+          oaiStore.confirmKey = false;
+        }
+      } catch (err) {
+        const text = String((err && err.message) || err);
+        if (action === "check") oaiStore.checks = [{ id: "error", ok: false, text }];
+        else oaiStore.notice = { tone: "err", text: action === "restart" ? `Not restarted: ${text}` : `No new key: ${text}` };
+        oaiStore.confirmKey = false;
+      }
+      oaiStore.busy = "";
+      oaiRender();
+    }
+    function oaiWire(el) {
+      el.onclick = (event) => {
+        const t = event && event.target && event.target.closest ? event.target : null;
+        if (!t) return;
+        const copy = t.closest("[data-oai-copy]");
+        if (copy) { uiCopy(copy.dataset.oaiCopy); return; }
+        if (t.closest("[data-oai-copy-snippet]") && oaiStore.data) { uiCopy(oaiSnippet(oaiStore.snippet, oaiStore.data)); return; }
+        const tab = t.closest("[data-oai-snippet]");
+        if (tab) { oaiStore.snippet = tab.dataset.oaiSnippet; oaiRender(); return; }
+        const act = t.closest("[data-oai-action]");
+        if (act && !act.disabled) { oaiAction(act.dataset.oaiAction); return; }
+        const access = t.closest("[data-oai-access]");
+        if (access && !access.disabled && access.getAttribute("aria-checked") !== "true") { oaiChange("access", access.dataset.oaiAccess); return; }
+        const reach = t.closest("[data-oai-reach]");
+        if (reach && !reach.disabled && reach.getAttribute("aria-checked") !== "true") { oaiChange("reach", reach.dataset.oaiReach); return; }
+      };
+      el.onchange = (event) => {
+        const target = event && event.target;
+        if (target && !target.disabled && target.matches && target.matches("[data-oai-enabled]")) oaiChange("enabled", !!target.checked);
+      };
+    }
+    function mountOpenAIPanel(key, el) {
+      if (!el) return;
+      oaiStore.views.set(key, el);
+      oaiWire(el);
+      oaiRender();
+      oaiRefresh();
+      oaiLogsRefresh();
+      if (oaiStore.timer) clearInterval(oaiStore.timer);
+      // The log refreshes while this page is the active tab; leaving it stops the poll.
+      oaiStore.timer = setInterval(() => {
+        if (state.activeTab !== "openai" || !state.principal) { clearInterval(oaiStore.timer); oaiStore.timer = null; return; }
+        oaiLogsRefresh();
+      }, OAI_LOG_REFRESH_MS);
+    }
+    function unmountOpenAIPanel(key) {
+      oaiStore.views.delete(key);
+      if (!oaiStore.views.size) { oaiStore.newKey = ""; oaiStore.confirmKey = false; if (oaiStore.timer) { clearInterval(oaiStore.timer); oaiStore.timer = null; } }
+    }
+
 
     // ---- Apps settings: the apps.* runtime-config keys ----
     // GET /api/gateway/admin/runtime-config -> apps{name: {key, label, help,
