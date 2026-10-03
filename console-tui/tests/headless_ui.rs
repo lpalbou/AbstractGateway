@@ -8415,7 +8415,7 @@ fn network_reverse_proxy_shows_values_and_where_they_come_from() {
         "trust proxy: off [default]",
         "applies to the next request",
         "Enter saves · empty clears",
-        "[ ] Trust the proxy's client address (X-Forwarded-For)",
+        "[ ] Trust proxies on other machines (X-Forwarded-For)",
         "only when your own proxy sits in front of every request",
     ] {
         assert!(s.contains(needle), "missing {needle:?}:\n{s}");

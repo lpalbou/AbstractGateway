@@ -94,6 +94,15 @@ structured outputs), `n` greater than 1, `logprobs`, `logit_bias` (each answers
 `400 unsupported_parameter` with the parameter named), and files, batches,
 assistants, fine-tuning, moderations and realtime (`404`).
 
+Refused with `400 unsupported_parameter` (the field named in `param`), in a JSON
+body, a form body or the query string: fields that would point a provider
+somewhere else or carry a credential: `base_url`, `api_base`, `api_key`,
+`provider`, `provider_hint`, `provider_kwargs`, `headers`, `extra_headers`,
+`default_headers`, `endpoint`, `upstream`, `upstream_base_url`, `base_url_key`,
+`organization`, `project`. The model is chosen by `model` alone, through this
+gateway's providers and their stored settings. To use your own key for a cloud
+provider, send it in the `X-AbstractCore-Provider-API-Key` header.
+
 Accepted and ignored: `user`, `store`, `metadata`, `service_tier`,
 `parallel_tool_calls` and the `OpenAI-Organization` / `OpenAI-Project` headers.
 

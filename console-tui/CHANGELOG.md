@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Changed
+- **Connection: "Trust proxies on other machines".** The proxy-trust switch carries the gateway's wording: a proxy on the gateway machine is always believed; the switch extends that to proxies elsewhere.
 - **Accounts: archive instead of delete.** `d` archives the selected account after a confirmation ("Archive
   <id>? They can't sign in any more. ..." / "Archive <name>? It stops acting and never wakes. ...") and
   unarchives an archived one (it comes back inactive). A non-admin archives an entity they created. Archived

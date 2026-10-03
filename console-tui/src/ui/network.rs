@@ -534,7 +534,7 @@ fn proxy_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &NetworkData) -> View {
     let ctx_t = ctx.clone();
     col = col
         .child(
-            super::switch::Switch::new("Trust the proxy's client address (X-Forwarded-For)", trust)
+            super::switch::Switch::new("Trust proxies on other machines (X-Forwarded-For)", trust)
                 .notice(ctx.store.notice)
                 .on_request(move |on| {
                     ctx_t.send(Cmd::SetNetworkProxy {

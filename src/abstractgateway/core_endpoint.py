@@ -387,6 +387,46 @@ def standard_error_body(status: int, raw: bytes) -> Tuple[int, bytes]:
     return out_status, json.dumps(body).encode("utf-8")
 
 
+# Request fields Core would honour to re-route a provider or carry a credential.
+# At /v1 the model is chosen by `model` alone, through the gateway's own routes
+# and stored credentials; a caller never points the gateway somewhere else.
+# (A caller's OWN provider key stays possible through the
+# X-AbstractCore-Provider-API-Key header: a credential, never a destination.)
+ROUTING_FIELDS = frozenset({
+    "base_url", "api_base", "api_key", "provider", "provider_hint", "provider_kwargs", "headers",
+    "extra_headers", "default_headers", "endpoint", "upstream", "upstream_base_url", "base_url_key",
+    "organization", "project",
+})
+
+
+def refuse_routing_fields(names) -> None:
+    for name in names:
+        if str(name).lower() in ROUTING_FIELDS:
+            raise RequestRefused(
+                f"{name} is not accepted here: the model is chosen by the `model` field only, through this "
+                "gateway's providers.", str(name), "unsupported_parameter")
+
+
+async def _form_field_names(scope, raw: bytes) -> List[str]:
+    """The field names of a form body (multipart or urlencoded), parsed by Starlette."""
+    sent = {"done": False}
+
+    async def receive():
+        if sent["done"]:
+            return {"type": "http.disconnect"}
+        sent["done"] = True
+        return {"type": "http.request", "body": raw, "more_body": False}
+
+    try:
+        form = await Request(dict(scope, type="http"), receive).form(max_files=1000, max_fields=10000)
+    except Exception:  # noqa: BLE001 - a malformed form is Core's 400 to give
+        return []
+    try:
+        return list(form.keys())
+    finally:
+        await form.close()
+
+
 def normalize_embeddings_request(doc: Dict[str, Any]) -> Dict[str, Any]:
     """Core computes floats; base64 (the OpenAI SDK's default) is encoded here."""
     if not isinstance(doc, dict):
@@ -595,6 +635,13 @@ class CoreEndpoint:
         retrieve = method == "GET" and path.startswith("/v1/models/") and len(path) > len("/v1/models/")
         if SERVING_ROUTES.get(path) != method and not retrieve:
             return await openai_error(404, f"Invalid URL ({method} {path})")(scope, receive, send)
+        try:
+            from urllib.parse import parse_qsl
+
+            refuse_routing_fields(k for k, _ in parse_qsl((scope.get("query_string") or b"").decode("latin-1"),
+                                                          keep_blank_values=True))
+        except RequestRefused as exc:
+            return await openai_error(400, str(exc), param=exc.param, code=exc.code)(scope, receive, send)
         data_dir = gateway_data_dir_from_env()
         try:
             settings = await asyncio.to_thread(read_settings, data_dir)
@@ -654,25 +701,30 @@ class CoreEndpoint:
         downstream_receive = receive
         ctype = (_header(scope, b"content-type") or "").lower()
         base64_embeddings = False
-        if path in ("/v1/chat/completions", "/v1/embeddings") and "application/json" in ctype:
+        if method == "POST":
             try:
                 raw, gone = await _read_body(receive)
-                doc = json.loads(raw) if raw else None
-                if path == "/v1/embeddings":
-                    base64_embeddings = normalize_embeddings_request(doc)["base64"]
-                    facts = {"include_usage": False}
-                else:
-                    facts = normalize_chat_request(doc)
+                if gone:
+                    return
+                if "application/json" in ctype:
+                    try:
+                        doc = json.loads(raw) if raw else None
+                    except ValueError:
+                        return await openai_error(400, "The request body is not valid JSON.")(scope, receive, send)
+                    refuse_routing_fields(doc.keys() if isinstance(doc, dict) else ())
+                    if path == "/v1/embeddings":
+                        base64_embeddings = normalize_embeddings_request(doc)["base64"]
+                    elif path == "/v1/chat/completions":
+                        facts = normalize_chat_request(doc)
+                        if doc.get("stream"):
+                            chat_stream = ChatStreamNormalizer(facts["include_usage"], note)
+                    raw = json.dumps(doc).encode("utf-8")
+                elif "multipart/form-data" in ctype or "application/x-www-form-urlencoded" in ctype:
+                    refuse_routing_fields(await _form_field_names(scope, raw))
             except RequestRefused as exc:
                 return await openai_error(413 if exc.code == "request_too_large" else exc.status, str(exc),
                                           param=exc.param, code=exc.code)(scope, receive, send)
-            except ValueError:
-                return await openai_error(400, "The request body is not valid JSON.")(scope, receive, send)
-            if gone:
-                return
-            if path == "/v1/chat/completions" and doc.get("stream"):
-                chat_stream = ChatStreamNormalizer(facts["include_usage"], note)
-            body = json.dumps(doc).encode("utf-8")
+            body = raw
             headers = [(k, v) for k, v in headers if k.lower() != b"content-length"]
             headers.append((b"content-length", str(len(body)).encode()))
             replayed = {"done": False}

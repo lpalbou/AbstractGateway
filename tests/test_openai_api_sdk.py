@@ -67,7 +67,18 @@ def sdk(tmp_path, monkeypatch):
                              GenerateResponse(content="there.", model="qwen3:4b", finish_reason="stop", usage=usage)])
             return GenerateResponse(content=text, model="qwen3:4b", finish_reason="stop", usage=usage)
 
-    monkeypatch.setattr(core, "create_llm", lambda *a, **kw: LLM())
+    def create_llm(*a, **kw):
+        # A real provider would connect to a caller-supplied base_url: do it, so a
+        # leak of the field through the boundary is observable on the listener.
+        if kw.get("base_url"):
+            import urllib.request
+            try:
+                urllib.request.urlopen(str(kw["base_url"]).rstrip("/") + "/models", timeout=2).read()
+            except Exception:
+                pass
+        return LLM()
+
+    monkeypatch.setattr(core, "create_llm", create_llm)
     registry = importlib.import_module("abstractcore.providers.registry")
     monkeypatch.setattr(registry, "list_available_providers", lambda: ["ollama"])
     monkeypatch.setattr(core, "get_models_from_provider", lambda prov, **kw: ["qwen3:4b"] if prov == "ollama" else [])
@@ -233,3 +244,54 @@ def test_core_v1_alias_redirects_and_sdk_follows(sdk):
 def test_embeddings_base64_encoding_is_float32_little_endian():
     out = json.loads(ce.embeddings_to_base64(json.dumps({"data": [{"embedding": [1.0, 2.5]}]}).encode()))
     assert struct.unpack("<2f", base64.b64decode(out["data"][0]["embedding"])) == (1.0, 2.5)
+
+
+def test_request_fields_that_reroute_or_carry_credentials_are_refused(sdk):
+    import socket
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    hits = []
+
+    class Trap(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            hits.append(self.path)
+            self.send_response(200)
+            self.end_headers()
+
+        do_POST = do_GET
+
+    srv = HTTPServer(("127.0.0.1", 0), Trap)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    trap = f"http://127.0.0.1:{port}/v1"
+
+    async def go():
+        c = sdk.client()
+        for extra in ({"base_url": trap}, {"api_key": "sk-other"}, {"provider": "openai"},
+                      {"headers": {"x": "y"}}, {"provider_kwargs": {"base_url": trap}}):
+            with pytest.raises(openai.BadRequestError) as err:
+                await c.chat.completions.create(model="ollama/qwen3:4b", messages=[{"role": "user", "content": "hi"}],
+                                                extra_body=extra)
+            assert err.value.body["param"] == next(iter(extra)) and err.value.body["code"] == "unsupported_parameter"
+        with pytest.raises(openai.BadRequestError) as err:
+            await c.embeddings.create(model="huggingface/stub-embed", input="a", extra_body={"base_url": trap})
+        assert err.value.body["param"] == "base_url"
+        http = httpx.AsyncClient(transport=httpx.ASGITransport(app=sdk.app, client=("127.0.0.1", 1)), base_url="http://127.0.0.1:8080")
+        auth = {"Authorization": f"Bearer {ADMIN_TOKEN}"}
+        form = await http.post("/v1/audio/transcriptions", headers=auth, data={"model": "x/y", "base_url": trap},
+                               files={"file": ("a.wav", b"RIFF0000", "audio/wav")})
+        assert form.status_code == 400 and form.json()["error"]["param"] == "base_url"
+        query = await http.post(f"/v1/chat/completions?base_url={trap}", headers=auth,
+                                json={"model": "ollama/qwen3:4b", "messages": [{"role": "user", "content": "hi"}]})
+        assert query.status_code == 400 and query.json()["error"]["param"] == "base_url"
+        resp = await http.post("/v1/responses", headers=auth, json={"model": "ollama/qwen3:4b", "input": "hi", "api_key": "sk-x"})
+        assert resp.status_code == 400 and resp.json()["error"]["param"] == "api_key"
+    try:
+        run(go())
+    finally:
+        srv.shutdown()
+    assert hits == []  # the caller-supplied listener was never contacted

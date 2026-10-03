@@ -2122,7 +2122,7 @@ fn handle(
             // The switch's status line names the NEW state first.
             if let (Some(on), Ok(_)) = (trust_proxy, &write) {
                 note = format!(
-                    "“Trust the proxy's client address” is {} — {note}",
+                    "“Trust proxies on other machines” is {} — {note}",
                     if on { "on" } else { "off" }
                 );
             }
