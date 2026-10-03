@@ -1,9 +1,10 @@
-"""Models page: "Delete download" on every downloaded artifact row (round 4 §2).
+"""Models page: Delete (trash-bin icon, tooltip "Delete") on every downloaded row (round 4 §2).
 
 Drives the REAL view code (``console_ui.CONSOLE_UI_JS`` +
 ``console_catalog.CATALOG_JS``) in a node VM with a recording `api`:
 
-- every downloaded row, and only those, carries "Delete download" (trash + label);
+- every downloaded row, and only those, carries the trash-bin icon button
+  (tooltip and accessible name "Delete", no text label: the row names the model);
 - the first click asks the gateway (dry run) and shows the inline confirmation
   with the size it answered and "Files only — nothing in your runs is touched.";
 - a double click is not an answer; Keep closes the question, nothing sent;
@@ -84,7 +85,7 @@ vm.runInContext(`mountModelCatalog("tab", ROOT, { syncHash: false })`, Object.as
 await settle();
 const html = root.innerHTML;
 out.buttons = (html.match(/data-mc-action="delete-ask"/g) || []).length;
-out.trash = (html.match(/data-mc-action="delete-ask"[^>]*>(<span class="button-icon" aria-hidden="true"><svg data-icon="trash"><\/svg><\/span>)<span>Delete download<\/span>/g) || []).length;
+out.trash = (html.match(/data-mc-action="delete-ask"[^>]*aria-label="Delete" title="Delete">(<span class="button-icon" aria-hidden="true"><svg data-icon="trash"><\/svg><\/span>)<\/button>/g) || []).length;
 out.disabledButtons = (html.match(/data-mc-action="delete-ask"[^>]*disabled/g) || []).length;
 const A = __TARGET__;
 const L = __LMS__;
@@ -137,7 +138,7 @@ def _fixture() -> tuple[dict, dict, dict]:
     return cat, {"provider": target["provider"], "artifact": target["artifact"]}, {"provider": lms["provider"], "artifact": lms["artifact"]}
 
 
-def test_every_downloaded_row_has_delete_download_and_only_those() -> None:
+def test_every_downloaded_row_has_the_trash_icon_button_and_only_those() -> None:
     cat, target, lms = _fixture()
     installed = sum(1 for r in cat["rows"] for a in r["artifacts"] if a["presence"]["status"] == "installed")
     out = _run(cat, target, lms)

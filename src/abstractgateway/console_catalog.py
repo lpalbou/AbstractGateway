@@ -128,8 +128,11 @@ CATALOG_CSS = r"""
     .mc-art__fit { grid-area: fit; min-width: 0; }
     .mc-art__fit .ui-pill[title] { cursor: help; }
     .mc-art__action { grid-area: action; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; min-width: 0; }
-    .mc-art__action .mc-del { display: inline-flex; align-items: center; gap: 6px; }
+    .mc-art__action .ui-btn.mc-del { display: inline-flex; align-items: center; justify-content: center; width: 44px; min-width: 44px; min-height: 44px; padding: 0; }
     .mc-del .button-icon { display: inline-flex; }
+    .mc-del .button-icon svg { width: 18px; height: 18px; }
+    .mc-del[aria-busy="true"] .button-icon { animation: mc-del-busy 1s ease-in-out infinite alternate; }
+    @keyframes mc-del-busy { from { opacity: 1; } to { opacity: .3; } }
     .mc-del-confirm { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 10px 12px; border-radius: var(--radius-md); background: var(--ui-surface-2); box-shadow: inset 0 0 0 1px var(--ui-border-2); }
     .mc-del-confirm__q { flex: 1 1 260px; min-width: 0; color: var(--text-primary); font-size: var(--font-size-sm); line-height: 1.45; }
     .mc-del-confirm__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
@@ -461,16 +464,18 @@ CATALOG_JS = r"""
       const tone = a.recommended ? "is-primary" : "is-ghost";
       return `<button type="button" class="ui-btn ${tone}" data-mc-action="download" ${attrs}${admin ? "" : ' disabled title="Only an admin can download models"'}>${label}</button>`;
     }
-    // "Delete download" (trash + label) on every downloaded row. The first
-    // click asks the gateway what a delete would free (dry run, same
-    // refusals); the confirmation below the row states that size.
+    // Delete (a trash-bin icon button, tooltip "Delete"; the row already
+    // names the model) on every downloaded row. The first click asks the
+    // gateway what a delete would free (dry run, same refusals); the
+    // confirmation below the row states that size.
     function mcDeleteButton(a, attrs, admin) {
       const cur = mcStore.del.get(mcKey(a));
       const icon = `<span class="button-icon" aria-hidden="true">${ICONS.trash}</span>`;
-      if (cur && cur.phase === "checking") return `<button type="button" class="ui-btn is-ghost mc-del" disabled aria-busy="true">${icon}<span>Checking...</span></button>`;
-      if (cur && cur.phase === "deleting") return `<button type="button" class="ui-btn is-ghost mc-del" disabled aria-busy="true">${icon}<span>Deleting...</span></button>`;
+      if (cur && cur.phase === "checking") return `<button type="button" class="ui-btn is-ghost mc-del" disabled aria-busy="true" aria-label="Checking" title="Checking...">${icon}</button>`;
+      if (cur && cur.phase === "deleting") return `<button type="button" class="ui-btn is-ghost mc-del" disabled aria-busy="true" aria-label="Deleting" title="Deleting...">${icon}</button>`;
       if (cur && cur.phase === "confirm") return "";
-      return `<button type="button" class="ui-btn is-ghost mc-del" data-mc-action="delete-ask" ${attrs}${admin ? "" : ' disabled title="Only an admin can delete downloaded models"'}>${icon}<span>Delete download</span></button>`;
+      const title = admin ? "Delete" : "Only an admin can delete downloaded models";
+      return `<button type="button" class="ui-btn is-ghost mc-del" data-mc-action="delete-ask" ${attrs} aria-label="Delete" title="${title}"${admin ? "" : " disabled"}>${icon}</button>`;
     }
     function mcDeleteConfirmMarkup(a) {
       const cur = mcStore.del.get(mcKey(a));
