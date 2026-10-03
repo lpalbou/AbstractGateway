@@ -646,6 +646,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#managed-openai-compatible-serving" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managed OpenAI-compatible serving
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#auth" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1449,6 +1460,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#managed-openai-compatible-serving" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Managed OpenAI-compatible serving
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#auth" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2110,6 +2132,10 @@ serve:</p>
 </tr>
 </tbody>
 </table>
+<h2 id="managed-openai-compatible-serving">Managed OpenAI-compatible serving<a class="headerlink" href="#managed-openai-compatible-serving" title="Permanent link">&para;</a></h2>
+<p>The optional <code>/core/v1</code> endpoint serves Core inference on this Gateway listener.
+Admins manage enablement and the separate serving token through
+<code>/api/gateway/admin/core-endpoint</code>; see <a href="../configuration/#openai-compatible-endpoint">endpoint configuration</a> for access modes and routes.</p>
 <h2 id="auth">Auth<a class="headerlink" href="#auth" title="Permanent link">&para;</a></h2>
 <p>By default, <code>/api/gateway/*</code> is protected by <code>GatewaySecurityMiddleware</code> (bearer token + origin allowlist).<br />
 See: <a href="../security/">security.md</a>.</p>

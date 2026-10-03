@@ -498,6 +498,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#openai-compatible-endpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenAI-compatible endpoint
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#two-entry-points-one-store" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1461,6 +1472,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#openai-compatible-endpoint" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenAI-compatible endpoint
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#two-entry-points-one-store" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1825,8 +1847,8 @@ sentence-transformer embeddings on the Gateway host.</p>
 - <code>abstractgateway[docs]</code>: MkDocs site tooling
 - <code>abstractgateway[dev]</code>: local dev/test deps</p>
 <p>Default dependency floors (see <code>pyproject.toml</code>):
-- <code>AbstractRuntime&gt;=0.8.2</code> (per-user email: run binding, event inbox, <code>email.received@1</code>, the email facade; the automatic-mail loop guard, in-process media children, and pause stopping an automation's retries)
-- <code>abstractcore&gt;=2.22.0</code> (the mail library behind per-user email, mailbox server discovery and defaults, automatic-mail marking, the media-only capability host)
+- <code>AbstractRuntime&gt;=0.8.5</code> (per-user email: run binding, event inbox, <code>email.received@1</code>, the email facade; the automatic-mail loop guard, in-process media children, and pause stopping an automation's retries)
+- <code>abstractcore&gt;=2.24.0</code> (mail, media capabilities, and request-scoped authentication for the managed OpenAI-compatible endpoint)
 - <code>abstractvoice&gt;=0.13.0</code> (the voice listings import <code>abstractvoice.engine_runtime</code>)
 - <code>abstractagent&gt;=0.3.17</code>
 - <code>AbstractMemory[lancedb]&gt;=0.3.0</code></p>
@@ -2266,6 +2288,81 @@ abstractgateway<span class="w"> </span>network<span class="w"> </span>restart<sp
 gateway's bind and auth posture are read from <code>&lt;data&gt;/run/gateway-network.json</code>);
 <code>restart</code> asks the running gateway. See <a href="../security/#network-exposure">security.md</a>
 for what each mode changes for someone on your network.</p>
+<h2 id="openai-compatible-endpoint">OpenAI-compatible endpoint<a class="headerlink" href="#openai-compatible-endpoint" title="Permanent link">&para;</a></h2>
+<p>In the web console, open <strong>Network → OpenAI-compatible endpoint</strong> as an admin.
+Turn on <strong>Enable endpoint</strong>, then copy a <strong>Base URL</strong> into your OpenAI-compatible
+client. The endpoint is disabled by default. It shares the Gateway listener,
+port and Network exposure; there is no separate Core process or port to open.
+The default URL is <code>http://127.0.0.1:8080/core/v1</code>. Other reachable addresses
+appear in the same card. A Network bind/port change still requires its normal
+restart; endpoint enablement and token changes apply to subsequent requests
+immediately. Requests already running may finish.</p>
+<p>Choose <strong>Requires token</strong> to protect every serving request. Enabling the
+endpoint generates a token if none exists. Admins can <strong>Show</strong>, <strong>Copy token</strong>,
+or <strong>Regenerate token</strong>. Regeneration immediately invalidates the old token for
+new requests; update connected apps. The serving token is separate from
+Gateway sign-in, cloud provider API keys, and any outbound remote-Core token.
+It is stored in <code>&lt;data dir&gt;/config/core_endpoint.json</code> with owner-only permissions
+and atomic replacement. Status responses never include the token; explicit
+admin reveal/rotation responses use <code>Cache-Control: no-store</code>.</p>
+<p><strong>Open on local network</strong> permits direct loopback, private LAN and private VPN
+clients without a token. It follows the same listener: choose <strong>Local network</strong>
+above if other devices should connect. Public peers, Internet mode and
+reverse-proxy connections require the token even when Open is selected. An
+Internet-to-LAN change keeps token protection until the running Internet bind
+is restarted. Configure proxies to supply forwarded headers, and enable
+Network's proxy trust only for your own proxy. Keep public deployments behind
+TLS and proxy request limits, as with the standalone Core server.</p>
+<p>Open clients may use local providers or supply their own provider key in
+<code>X-AbstractCore-Provider-API-Key</code>. Using server-held cloud provider credentials
+requires the endpoint token. A supplied invalid bearer token is rejected,
+even in Open mode. Gateway sessions and Gateway user tokens do not authorize
+Core serving. Browser requests also follow Network's allowed-origin policy.</p>
+<p>Use <code>provider/model</code> as the model name. For example:</p>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>http://127.0.0.1:8080/core/v1/chat/completions<span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s2">"Authorization: Bearer </span><span class="nv">$ABSTRACTCORE_ENDPOINT_TOKEN</span><span class="s2">"</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-H<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
+<span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"model":"ollama/your-installed-model","messages":[{"role":"user","content":"Hello"}],"stream":true}'</span>
+</code></pre></div>
+<p>The mount exposes <code>GET /v1/models</code> and <code>POST /v1/chat/completions</code>, <code>/v1/responses</code>,
+<code>/v1/embeddings</code>, <code>/v1/audio/speech</code>, <code>/v1/audio/transcriptions</code>,
+<code>/v1/audio/translations</code>, <code>/v1/images/generations</code>, <code>/v1/images/edits</code>, and
+<code>/v1/images/variations</code>, all below <code>/core</code>. Capability availability and supported
+operations follow Core and its installed plugins (unsupported operations retain
+Core's errors). Core configuration and model-management routes are not exposed.
+Streaming passes through Runtime's server facade directly to Core's ASGI server.</p>
+<p>Admin API (Gateway authentication):</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Route</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/api/gateway/admin/core-endpoint</code></td>
+<td>Enabled state, access mode, token presence and base URL</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/gateway/admin/core-endpoint</code></td>
+<td>Save optional <code>enabled</code> boolean and <code>access</code> (<code>token</code> or <code>open</code>)</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/gateway/admin/core-endpoint/token/reveal</code></td>
+<td>Return the existing serving token</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/gateway/admin/core-endpoint/token/rotate</code></td>
+<td>Generate/replace and return the serving token</td>
+</tr>
+</tbody>
+</table>
 <h2 id="two-entry-points-one-store">Two entry points, one store<a class="headerlink" href="#two-entry-points-one-store" title="Permanent link">&para;</a></h2>
 <p>AbstractCore (low level) and AbstractGateway (high level) are the two entry
 points to the framework, and they share configuration. Where AbstractCore holds
