@@ -309,6 +309,8 @@ CONSOLE_UI_CSS = r"""
     .ui-log.oai-snippet { margin: 0; max-height: none; color: var(--text-primary); }
     .oai-table { min-width: 0; }
     .oai-table table { width: 100%; }
+    .oai-client, .oai-ip { display: block; }
+    .oai-ip { font-size: var(--font-size-xs); color: var(--text-muted); }
     .first-run-network { display: grid; gap: 18px; min-width: 0; padding-top: 6px; border-top: 1px solid var(--ui-border-1); }
     .ui-seg { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 4px; padding: 4px; border: 1px solid var(--ui-border-2); border-radius: var(--radius-lg); background: var(--ui-surface-1); }
     .ui-seg__opt { display: grid; align-content: start; gap: 6px; min-width: 0; min-height: 0; padding: 12px 14px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-secondary); text-align: left; font-weight: 500; white-space: normal; box-shadow: none; cursor: pointer; }
@@ -2299,7 +2301,7 @@ CONSOLE_UI_JS = r"""
       return out;
     }
     // ---- Reached through another address? (Tailscale, a reverse proxy) ----
-    // gateway_network_v1 `tailscale` ({dns_name, ips[], tailnet} | null, from
+    // gateway_network_v1 `tailscale` ({dns_name, ips[]} | null, from
     // `tailscale status --json`) and the addresses list: the gateway accepts
     // the origins of every address it detects (network_exposure.detected_hosts)
     // and believes a proxy on THIS computer for the client address, so LAN and
@@ -2735,9 +2737,9 @@ CONSOLE_UI_JS = r"""
       if (!rows.length) return out + `<div class="ui-empty" data-oai-logs-empty>No requests yet.</div></article>`;
       out += `<div class="oai-table"><table data-oai-logs><thead><tr><th>Time</th><th>Client</th><th>Model</th><th>Tokens</th><th>Latency</th><th>Status</th><th>Run</th></tr></thead><tbody>`;
       for (const r of rows) {
-        const tokens = r.prompt_tokens == null && r.completion_tokens == null ? "—" : `${r.prompt_tokens == null ? "?" : r.prompt_tokens} in · ${r.completion_tokens == null ? "?" : r.completion_tokens} out`;
+        const tokens = [r.prompt_tokens == null ? "" : `${r.prompt_tokens} in`, r.completion_tokens == null ? "" : `${r.completion_tokens} out`].filter(Boolean).join(" · ") || "—";
         const ok = Number(r.status) >= 200 && Number(r.status) < 300;
-        out += `<tr><td title="${esc(r.ts || "")}">${esc(oaiTime(r.ts))}</td><td><span>${esc(r.client || "")}</span><div class="ui-card__note">${esc(r.ip || "")}</div></td>`
+        out += `<tr><td title="${esc(r.ts || "")}">${esc(oaiTime(r.ts))}</td><td><span class="oai-client">${esc(r.client || "")}</span><span class="oai-ip">${esc(r.ip || "")}</span></td>`
           + `<td>${esc(r.model || "—")}</td><td>${esc(tokens)}</td><td>${r.duration_ms == null ? "—" : `${esc(r.duration_ms)} ms`}</td>`
           + `<td>${uiPill(String(r.status || "—"), ok ? "ok" : "err")}</td>`
           + `<td>${r.observer_path ? `<a class="ui-btn is-ghost" href="${esc(r.observer_path)}" target="_blank" rel="noopener" title="Open in Observer">Open</a>` : ""}</td></tr>`;
@@ -2765,7 +2767,7 @@ CONSOLE_UI_JS = r"""
     }
     async function oaiLogsRefresh() {
       try {
-        const res = await api("/api/gateway/openai-api/logs?limit=50");
+        const res = await api("/api/gateway/openai-api/logs?limit=25");
         oaiStore.logs = Array.isArray(res && res.rows) ? res.rows : [];
         oaiStore.logsScope = String((res && res.scope) || "");
         oaiStore.logsError = "";

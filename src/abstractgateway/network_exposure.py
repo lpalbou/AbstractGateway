@@ -820,23 +820,28 @@ def lookup_public_ip(timeout_s: float = 4.0) -> Dict[str, Any]:
 
 _TAILSCALE_CACHE: Dict[str, Any] = {"at": 0.0, "value": None}
 _TAILSCALE_TTL_S = 60.0
-_TAILSCALE_MAC_APP = "/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+# The macOS app's CLI: the bundle binary acts as the CLI only when invoked by its
+# lowercase name (the capitalised name starts the GUI instead).
+_TAILSCALE_CANDIDATES = ("/usr/local/bin/tailscale", "/opt/homebrew/bin/tailscale",
+                         "/Applications/Tailscale.app/Contents/MacOS/tailscale")
 
 
 def tailscale_binary() -> Optional[str]:
-    """The `tailscale` CLI when installed (PATH, or the macOS app's bundled CLI), else None."""
+    """The `tailscale` CLI when installed (PATH, the usual install paths, or the
+    macOS app's bundled CLI), else None. A service's PATH often lacks them."""
     import shutil
 
     exe = shutil.which("tailscale")
     if exe:
         return exe
-    if sys.platform == "darwin" and os.path.isfile(_TAILSCALE_MAC_APP):
-        return _TAILSCALE_MAC_APP
+    for cand in _TAILSCALE_CANDIDATES:
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return cand
     return None
 
 
 def parse_tailscale_status(text: str) -> Optional[Dict[str, Any]]:
-    """`tailscale status --json` -> {dns_name, ips[], tailnet} for THIS device
+    """`tailscale status --json` -> {dns_name, ips[]} for THIS device
     when Tailscale is running, else None. Never raises."""
     try:
         data = json.loads(text)
@@ -854,8 +859,8 @@ def parse_tailscale_status(text: str) -> Optional[Dict[str, Any]]:
             continue
     if not name and not ips:
         return None
-    tailnet = data.get("CurrentTailnet") if isinstance(data.get("CurrentTailnet"), dict) else {}
-    return {"dns_name": name, "ips": ips, "tailnet": str(tailnet.get("Name") or data.get("MagicDNSSuffix") or "") or None}
+    # The tailnet's own name is left out: it is often the owner's email address.
+    return {"dns_name": name, "ips": ips}
 
 
 def tailscale_status() -> Optional[Dict[str, Any]]:

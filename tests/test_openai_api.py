@@ -30,7 +30,7 @@ def _discover():
     return [ne.IfaceAddr("en0", "192.168.1.50", "ipv4", True), ne.IfaceAddr("utun4", "100.101.102.103", "ipv4", True)], "stub"
 
 
-TS = {"dns_name": "studio.tail1234.ts.net", "ips": ["100.101.102.103"], "tailnet": "example.github"}
+TS = {"dns_name": "studio.tail1234.ts.net", "ips": ["100.101.102.103"]}
 
 
 class CoreStub:
@@ -348,7 +348,7 @@ def test_tailscale_status_parse_and_absent_binary(monkeypatch):
     text = json.dumps({"BackendState": "Running", "Self": {"DNSName": "Studio.tail1234.ts.net.",
                        "TailscaleIPs": ["100.101.102.103", "fd7a:115c:a1e0::1"]}, "MagicDNSSuffix": "tail1234.ts.net"})
     assert ne.parse_tailscale_status(text) == {"dns_name": "studio.tail1234.ts.net",
-                                              "ips": ["100.101.102.103", "fd7a:115c:a1e0::1"], "tailnet": "tail1234.ts.net"}
+                                              "ips": ["100.101.102.103", "fd7a:115c:a1e0::1"]}
     stopped = json.loads(text)
     stopped["BackendState"] = "Stopped"
     assert ne.parse_tailscale_status(json.dumps(stopped)) is None
@@ -356,6 +356,8 @@ def test_tailscale_status_parse_and_absent_binary(monkeypatch):
     monkeypatch.setattr(ne, "_TAILSCALE_CACHE", {"at": 0.0, "value": None})
     monkeypatch.setattr(ne, "tailscale_binary", lambda: None)
     assert ne.tailscale_status() is None
+    # The macOS app's bundle binary is the CLI only under its lowercase name.
+    assert "/Applications/Tailscale.app/Contents/MacOS/tailscale" in ne._TAILSCALE_CANDIDATES
 
 
 def test_network_lists_the_tailscale_name(gw):
