@@ -26,7 +26,7 @@ from pathlib import Path
 import secrets
 import tempfile
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -254,8 +254,308 @@ def inflight_count() -> int:
         return len(_INFLIGHT)
 
 
-def _json(status: int, detail: str, headers: Optional[dict] = None) -> JSONResponse:
-    return JSONResponse({"detail": detail}, status_code=status, headers=headers)
+def openai_error(status: int, message: str, *, type_: str = "invalid_request_error", param: Optional[str] = None,
+                 code: Optional[str] = None, headers: Optional[dict] = None) -> JSONResponse:
+    """The OpenAI error envelope: {"error": {"message", "type", "param", "code"}}."""
+    return JSONResponse({"error": {"message": message, "type": type_, "param": param, "code": code}},
+                        status_code=status, headers=headers)
+
+
+# ---- OpenAI conformance at the boundary ----------------------------------
+#
+# Core serves the routes; the gateway keeps the public surface standard:
+# request fields Core does not take are mapped or refused (never silently
+# ignored when they change the answer), error bodies use the standard
+# envelope, and chat streams follow the chunk rules (role on the first
+# delta, finish_reason only on the last chunk, usage in its own chunk only
+# with stream_options.include_usage).
+
+_BODY_MAX = 64 * 1024 * 1024
+# Accepted and ignored: they only label or route the request at OpenAI.
+_IGNORED_FIELDS = ("user", "store", "metadata", "service_tier", "parallel_tool_calls", "stream_options",
+                   "prediction", "modalities", "safety_identifier", "prompt_cache_key_openai")
+
+
+class RequestRefused(Exception):
+    def __init__(self, message: str, param: Optional[str] = None, code: Optional[str] = "unsupported_parameter"):
+        super().__init__(message)
+        self.param = param
+        self.code = code
+
+
+def normalize_chat_request(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """A /v1/chat/completions body made fit for Core; raises RequestRefused
+    for a parameter whose effect Core cannot honour. Returns {include_usage}."""
+    if not isinstance(doc, dict):
+        raise RequestRefused("The request body must be a JSON object.", None, None)
+    facts = {"include_usage": bool(isinstance(doc.get("stream_options"), dict) and doc["stream_options"].get("include_usage"))}
+    if "max_completion_tokens" in doc:
+        value = doc.pop("max_completion_tokens")
+        if doc.get("max_tokens") is None:
+            doc["max_tokens"] = value
+    rf = doc.get("response_format")
+    if rf is not None:
+        if isinstance(rf, dict) and rf.get("type") == "text":
+            doc.pop("response_format")
+        else:
+            raise RequestRefused("response_format is not supported yet: only {\"type\": \"text\"}.", "response_format")
+    n = doc.get("n")
+    if n is not None:
+        if n != 1:
+            raise RequestRefused("n must be 1: one choice per request.", "n")
+        doc.pop("n")
+    if doc.get("logprobs"):
+        raise RequestRefused("logprobs is not supported yet.", "logprobs")
+    doc.pop("logprobs", None)
+    doc.pop("top_logprobs", None)
+    if doc.get("logit_bias"):
+        raise RequestRefused("logit_bias is not supported yet.", "logit_bias")
+    doc.pop("logit_bias", None)
+    if isinstance(doc.get("stop"), str):
+        doc["stop"] = [doc["stop"]]
+    # The OpenAI layout: tool calls as structured `tool_calls`, never as a
+    # model family's text tags (Core picks tags from the model name otherwise).
+    doc.setdefault("agent_format", "openai")
+    for key in _IGNORED_FIELDS:
+        doc.pop(key, None)
+    return facts
+
+
+_ERROR_TYPES = {400: "invalid_request_error", 401: "invalid_request_error", 403: "invalid_request_error",
+                404: "invalid_request_error", 409: "invalid_request_error", 413: "invalid_request_error",
+                422: "invalid_request_error", 429: "rate_limit_error"}
+
+
+def standard_error_body(status: int, raw: bytes) -> Tuple[int, bytes]:
+    """Core's error body -> (status, the OpenAI envelope). 422 becomes 400."""
+    try:
+        doc = json.loads(raw) if raw else {}
+    except ValueError:
+        doc = {}
+    err = doc.get("error") if isinstance(doc, dict) else None
+    message, param, code, etype = None, None, None, None
+    if isinstance(err, dict):
+        message, param, code, etype = err.get("message"), err.get("param"), err.get("code"), err.get("type")
+        details = err.get("details")
+        if isinstance(details, list) and details and isinstance(details[0], dict):
+            first = details[0]
+            field = str(first.get("field") or "")
+            param = param or (field.split(" -> ")[-1] if field else None)
+            message = f"{first.get('message') or message} ({field})" if field else (first.get("message") or message)
+    elif isinstance(doc, dict) and "detail" in doc:
+        detail = doc["detail"]
+        message = detail.get("message") if isinstance(detail, dict) else detail
+        code = detail.get("reason_code") if isinstance(detail, dict) else None
+    if isinstance(message, str) and message.startswith("{'error'"):
+        # Core stringifies an HTTPException whose detail is itself an envelope.
+        import ast
+
+        try:
+            inner = ast.literal_eval(message).get("error") or {}
+            message = inner.get("message") or message
+            etype = etype if etype not in (None, "http_error") else inner.get("type")
+            code = code or (inner.get("type") if inner.get("type") not in (None, "invalid_request") else None)
+        except (ValueError, SyntaxError, AttributeError):
+            pass
+    if not isinstance(message, str) or not message:
+        message = raw.decode("utf-8", "replace")[:2000] if raw else f"HTTP {status}"
+    out_status = 400 if status == 422 else status
+    known = {"invalid_request_error", "authentication_error", "permission_error", "not_found_error",
+             "rate_limit_error", "server_error", "api_error"}
+    etype = etype if etype in known else _ERROR_TYPES.get(out_status, "server_error" if out_status >= 500 else "invalid_request_error")
+    body = {"error": {"message": message, "type": etype, "param": param if isinstance(param, str) else None,
+                      "code": code if isinstance(code, str) else None}}
+    return out_status, json.dumps(body).encode("utf-8")
+
+
+def normalize_embeddings_request(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Core computes floats; base64 (the OpenAI SDK's default) is encoded here."""
+    if not isinstance(doc, dict):
+        raise RequestRefused("The request body must be a JSON object.", None, None)
+    fmt = str(doc.get("encoding_format") or "float").lower()
+    if fmt not in ("float", "base64"):
+        raise RequestRefused("encoding_format must be float or base64.", "encoding_format", None)
+    doc["encoding_format"] = "float"
+    doc.pop("user", None)
+    return {"base64": fmt == "base64"}
+
+
+def embeddings_to_base64(raw: bytes) -> bytes:
+    import base64
+    import struct
+
+    try:
+        doc = json.loads(raw)
+    except ValueError:
+        return raw
+    for row in doc.get("data") or [] if isinstance(doc, dict) else []:
+        vec = row.get("embedding") if isinstance(row, dict) else None
+        if isinstance(vec, list) and all(isinstance(x, (int, float)) for x in vec):
+            row["embedding"] = base64.b64encode(struct.pack(f"<{len(vec)}f", *vec)).decode("ascii")
+    return json.dumps(doc).encode("utf-8")
+
+
+class ChatStreamNormalizer:
+    """Rewrites a chat completion SSE stream event by event (see above)."""
+
+    def __init__(self, include_usage: bool, note: Dict[str, Any]):
+        self.include_usage = include_usage
+        self.note = note
+        self.buf = b""
+        self.first = True
+        self.usage: Optional[Dict[str, Any]] = None
+        self.last: Dict[str, Any] = {}
+
+    def _event(self, event: bytes) -> bytes:
+        lines = event.split(b"\n")
+        data = [ln[5:].strip() for ln in lines if ln.startswith(b"data:")]
+        if len(data) != 1:
+            return event + b"\n\n"
+        payload = data[0]
+        if payload == b"[DONE]":
+            out = b""
+            if self.include_usage and self.usage is not None:
+                tail = {"id": self.last.get("id"), "object": "chat.completion.chunk", "created": self.last.get("created"),
+                        "model": self.last.get("model"), "choices": [], "usage": self.usage}
+                out += b"data: " + json.dumps(tail).encode("utf-8") + b"\n\n"
+            return out + b"data: [DONE]\n\n"
+        try:
+            chunk = json.loads(payload)
+        except ValueError:
+            return event + b"\n\n"
+        if not isinstance(chunk, dict) or chunk.get("object") != "chat.completion.chunk":
+            return event + b"\n\n"
+        self.last = {k: chunk.get(k) for k in ("id", "created", "model")}
+        usage = chunk.pop("usage", None)
+        if isinstance(usage, dict):
+            self.usage = usage
+            self.note["usage"] = usage
+        for choice in chunk.get("choices") or []:
+            delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else None
+            if delta is None:
+                continue
+            if self.first:
+                delta.setdefault("role", "assistant")
+            # finish_reason belongs to the last chunk only (Core marks every tool delta).
+            if delta.get("tool_calls") and choice.get("finish_reason") is not None:
+                choice["finish_reason"] = None
+        if chunk.get("choices"):
+            self.first = False
+        return b"data: " + json.dumps(chunk).encode("utf-8") + b"\n\n"
+
+    def feed(self, body: bytes) -> bytes:
+        self.buf += body.replace(b"\r\n", b"\n")
+        out = b""
+        while b"\n\n" in self.buf:
+            event, self.buf = self.buf.split(b"\n\n", 1)
+            if event.strip():
+                out += self._event(event)
+        return out
+
+    def flush(self) -> bytes:
+        rest, self.buf = self.buf, b""
+        return self._event(rest) if rest.strip() else b""
+
+
+async def _read_body(receive) -> Tuple[bytes, bool]:
+    chunks, size = [], 0
+    while True:
+        message = await receive()
+        if message.get("type") == "http.disconnect":
+            return b"".join(chunks), True
+        body = message.get("body") or b""
+        size += len(body)
+        if size > _BODY_MAX:
+            raise RequestRefused(f"The request body is larger than {_BODY_MAX // (1024 * 1024)} MB.", None, "request_too_large")
+        chunks.append(body)
+        if not message.get("more_body"):
+            return b"".join(chunks), False
+
+
+def _standardize_send(send, note: Dict[str, Any], *, chat_stream: Optional[ChatStreamNormalizer], base64_embeddings: bool = False):
+    """Wraps `send`: error bodies -> the standard envelope; chat SSE -> normalized
+    chunks; embeddings -> base64 when the caller asked for it."""
+    st: Dict[str, Any] = {"start": None, "error": False, "sse": False, "buf": b"", "b64": False}
+
+    async def wrapped(message):
+        kind = message.get("type")
+        if kind == "http.response.start":
+            status = int(message.get("status") or 0)
+            ctype = b""
+            for k, v in message.get("headers") or []:
+                if bytes(k).lower() == b"content-type":
+                    ctype = bytes(v).lower()
+            if status >= 400 and b"text/event-stream" not in ctype:
+                st.update(start=message, error=True)
+                return
+            st["sse"] = b"text/event-stream" in ctype and chat_stream is not None
+            if base64_embeddings and b"application/json" in ctype:
+                st.update(start=message, b64=True)
+                return
+            if st["sse"]:
+                headers = [(k, v) for k, v in message.get("headers") or [] if bytes(k).lower() != b"content-length"]
+                message = dict(message, headers=headers)
+            await send(message)
+            return
+        if kind == "http.response.body":
+            body = message.get("body") or b""
+            more = bool(message.get("more_body"))
+            if st["error"]:
+                st["buf"] += body
+                if more:
+                    return
+                status, out = standard_error_body(int(st["start"].get("status") or 500), st["buf"])
+                headers = [(k, v) for k, v in st["start"].get("headers") or []
+                           if bytes(k).lower() not in (b"content-length", b"content-type")]
+                headers += [(b"content-type", b"application/json"), (b"content-length", str(len(out)).encode())]
+                await send(dict(st["start"], status=status, headers=headers))
+                await send({"type": "http.response.body", "body": out})
+                return
+            if st["b64"]:
+                st["buf"] += body
+                if more:
+                    return
+                out = embeddings_to_base64(st["buf"])
+                headers = [(k, v) for k, v in st["start"].get("headers") or [] if bytes(k).lower() != b"content-length"]
+                headers.append((b"content-length", str(len(out)).encode()))
+                await send(dict(st["start"], headers=headers))
+                await send({"type": "http.response.body", "body": out})
+                return
+            if st["sse"]:
+                out = chat_stream.feed(body)
+                if not more:
+                    out += chat_stream.flush()
+                if out or not more:
+                    await send({"type": "http.response.body", "body": out, "more_body": more})
+                return
+        await send(message)
+
+    return wrapped
+
+
+async def _core_models(scope, settings: EndpointSettings, *, authenticated: bool, allow_open: bool) -> Tuple[int, Any]:
+    """GET /v1/models through Core for this caller: (status, parsed body)."""
+    body = bytearray()
+    status = {"code": 0}
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message):
+        if message["type"] == "http.response.start":
+            status["code"] = int(message.get("status") or 0)
+        elif message["type"] == "http.response.body":
+            body.extend(message.get("body") or b"")
+
+    headers = [(k, v) for k, v in scope.get("headers") or [] if k.lower() != b"authorization"]
+    if authenticated:
+        headers.append((b"authorization", f"Bearer {settings.token}".encode()))
+    sub = dict(scope, method="GET", path="/v1/models", raw_path=b"/v1/models", root_path="", query_string=b"", headers=headers)
+    await serve_core_request(sub, receive, send, token=settings.token, allow_unauthenticated=allow_open and not authenticated)
+    try:
+        return status["code"], json.loads(bytes(body))
+    except ValueError:
+        return status["code"], None
 
 
 class CoreEndpoint:
@@ -271,23 +571,27 @@ class CoreEndpoint:
             path = BASE_PATH + path
         state = scope.setdefault("state", {})
         note = state.setdefault("openai_api", {}) if isinstance(state, dict) else {}
-        if SERVING_ROUTES.get(path) != scope.get("method"):
-            return await _json(404, "Not found")(scope, receive, send)
+        method = scope.get("method")
+        retrieve = method == "GET" and path.startswith("/v1/models/") and len(path) > len("/v1/models/")
+        if SERVING_ROUTES.get(path) != method and not retrieve:
+            return await openai_error(404, f"Invalid URL ({method} {path})")(scope, receive, send)
         data_dir = gateway_data_dir_from_env()
         try:
             settings = await asyncio.to_thread(read_settings, data_dir)
             if not settings.enabled:
-                return await _json(404, "The OpenAI API is stopped")(scope, receive, send)
+                return await openai_error(404, "The OpenAI API is stopped on this gateway.", code="endpoint_stopped")(scope, receive, send)
             trust = bool(ne.live_reverse_proxy(data_dir).trust_proxy)
             kind = classify_client(scope, trust_proxy=trust)
             note["client_class"] = kind
             if kind not in REACH_ADMITS[settings.reach]:
                 note["client"] = "refused"
-                return await _json(403, f"This API accepts {REACH_LABELS[settings.reach].lower()}. "
-                                        "An admin can change Who can connect on the OpenAI API page.")(scope, receive, send)
+                return await openai_error(
+                    403, f"This API accepts {REACH_LABELS[settings.reach].lower()}. "
+                         "An admin can change Who can connect on the OpenAI API page.",
+                    type_="permission_error", code="client_not_allowed")(scope, receive, send)
             allow_open = settings.access == "open" and await asyncio.to_thread(open_access_allowed, scope, data_dir)
         except (OSError, ValueError):
-            return await _json(503, "OpenAI API settings are unavailable")(scope, receive, send)
+            return await openai_error(503, "OpenAI API settings are unavailable.", type_="server_error")(scope, receive, send)
         principal = state.get("gateway_principal") if isinstance(state, dict) else None
         authorization = Request(scope).headers.get("authorization")
         scheme, _, credential = (authorization or "").partition(" ")
@@ -301,29 +605,79 @@ class CoreEndpoint:
             note["client"] = "anonymous"
         else:
             note["client"] = "refused"
-            return await _json(401, "API key required: use your gateway token",
-                               {"WWW-Authenticate": "Bearer"})(scope, receive, send)
+            message = ("Incorrect API key provided: use your gateway token." if authorization
+                       else "You didn't provide an API key: send your gateway token as Authorization: Bearer <token>.")
+            return await openai_error(401, message, code="invalid_api_key",
+                                      headers={"WWW-Authenticate": "Bearer"})(scope, receive, send)
         authenticated = principal is not None or legacy
+        if retrieve:
+            from urllib.parse import unquote
+
+            wanted = unquote(path[len("/v1/models/"):])
+            status, doc = await _core_models(scope, settings, authenticated=authenticated, allow_open=allow_open)
+            if status != 200 or not isinstance(doc, dict):
+                return await openai_error(502, "Could not list models.", type_="server_error")(scope, receive, send)
+            for row in doc.get("data") or []:
+                if isinstance(row, dict) and row.get("id") == wanted:
+                    out = {"id": row["id"], "object": "model", "created": row.get("created"), "owned_by": row.get("owned_by")}
+                    return await JSONResponse(out)(scope, receive, send)
+            return await openai_error(404, f"The model '{wanted}' does not exist.", param="model",
+                                      code="model_not_found")(scope, receive, send)
         # Core's security middleware inspects /v1 paths. The caller's own key
         # never reaches Core: an authenticated caller is forwarded with the
         # gateway's credential, an anonymous one with none.
-        headers = [(k, v) for k, v in scope.get("headers") or [] if k.lower() != b"authorization"]
+        headers = [(k, v) for k, v in scope.get("headers") or []
+                   if k.lower() not in (b"authorization", b"openai-organization", b"openai-project")]
         if authenticated:
             headers.append((b"authorization", f"Bearer {settings.token}".encode()))
+        chat_stream = None
+        downstream_receive = receive
+        ctype = (_header(scope, b"content-type") or "").lower()
+        base64_embeddings = False
+        if path in ("/v1/chat/completions", "/v1/embeddings") and "application/json" in ctype:
+            try:
+                raw, gone = await _read_body(receive)
+                doc = json.loads(raw) if raw else None
+                if path == "/v1/embeddings":
+                    base64_embeddings = normalize_embeddings_request(doc)["base64"]
+                    facts = {"include_usage": False}
+                else:
+                    facts = normalize_chat_request(doc)
+            except RequestRefused as exc:
+                return await openai_error(413 if exc.code == "request_too_large" else 400, str(exc),
+                                          param=exc.param, code=exc.code)(scope, receive, send)
+            except ValueError:
+                return await openai_error(400, "The request body is not valid JSON.")(scope, receive, send)
+            if gone:
+                return
+            if path == "/v1/chat/completions" and doc.get("stream"):
+                chat_stream = ChatStreamNormalizer(facts["include_usage"], note)
+            body = json.dumps(doc).encode("utf-8")
+            headers = [(k, v) for k, v in headers if k.lower() != b"content-length"]
+            headers.append((b"content-length", str(len(body)).encode()))
+            replayed = {"done": False}
+
+            async def downstream_receive():
+                if replayed["done"]:
+                    return await receive()
+                replayed["done"] = True
+                return {"type": "http.request", "body": body, "more_body": False}
+
         core_scope = dict(scope, path=path, raw_path=path.encode(), root_path="", headers=headers)
         stop = asyncio.Event()
         with _INFLIGHT_LOCK:
             _INFLIGHT.add(stop)
+        standard_send = _standardize_send(send, note, chat_stream=chat_stream, base64_embeddings=base64_embeddings)
 
         async def guarded_send(message):
             if stop.is_set():
                 raise EndpointStopped("The OpenAI API was stopped or restarted")
-            await send(message)
+            await standard_send(message)
 
         async def guarded_receive():
             if stop.is_set():
                 return {"type": "http.disconnect"}
-            return await receive()
+            return await downstream_receive()
 
         try:
             await serve_core_request(core_scope, guarded_receive, guarded_send, token=settings.token,
@@ -341,11 +695,10 @@ class LegacyCoreRedirect:
     async def __call__(self, scope, receive, send):
         path = str(scope.get("path", ""))
         root = str(scope.get("root_path", ""))
+        # Mounted at /core: Starlette leaves the mount prefix in root_path.
         rest = path[len(root):] if root and path.startswith(root) else path
-        if rest.startswith(LEGACY_PREFIX + "/"):
-            rest = rest[len(LEGACY_PREFIX):]
         if not rest.startswith(BASE_PATH + "/"):
-            return await _json(404, "Not found")(scope, receive, send)
+            return await openai_error(404, f"Invalid URL ({scope.get('method')} {path})")(scope, receive, send)
         prefix = root[: -len(LEGACY_PREFIX)] if root.endswith(LEGACY_PREFIX) else ""
         location = prefix + rest
         qs = scope.get("query_string") or b""

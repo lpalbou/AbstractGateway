@@ -788,8 +788,10 @@ class GatewaySecurityMiddleware:
         if token and principal is None:
             wait = self._lockouts.check_locked(ip)
             if wait:
-                await self._reject(send, status=429, detail="Too Many Requests (auth lockout)",
-                                   headers=[(b"retry-after", str(int(wait)).encode("utf-8"))])
+                await self._send_json(send, status=429, payload={"error": {
+                    "message": "Too many refused keys from this address: try again later.",
+                    "type": "rate_limit_error", "param": None, "code": "auth_lockout"}},
+                    headers=[(b"retry-after", str(int(wait)).encode("utf-8"))])
                 return
         state = scope.setdefault("state", {})
         if isinstance(state, dict):
@@ -826,6 +828,14 @@ class GatewaySecurityMiddleware:
             note = note if isinstance(note, dict) else {}
             api: Dict[str, Any] = {"client": note.get("client") or ("refused" if status["code"] in (401, 403) else "unknown")}
             api.update(capture.summary())
+            # A stream without stream_options.include_usage hides usage from the
+            # client; the boundary still noted it for this log.
+            if isinstance(note.get("usage"), dict):
+                usage = note["usage"]
+                for key, alt in (("prompt_tokens", "input_tokens"), ("completion_tokens", "output_tokens")):
+                    value = usage.get(key, usage.get(alt))
+                    if key not in api and isinstance(value, int):
+                        api[key] = value
             run_id = (self._header(scope, "x-abstractcore-run-id") or "").strip()
             if run_id:
                 api["run_id"] = run_id[:200]
@@ -1044,8 +1054,17 @@ class GatewaySecurityMiddleware:
             # /core/v1 alias. Browser access follows the same live Network
             # origin policy as the Gateway API.
             origin = self._header(scope, "origin")
-            if origin is not None and not self._origin_accepted(scope, origin):
-                await self._reject(send, status=403, detail="Forbidden (origin not allowed)")
+            # A browser SDK that sends a key may call from any page (the key is
+            # the credential; no cookie rides along). Without a key, only the
+            # accepted origins (Open mode from this gateway's own pages).
+            keyed = (self._header(scope, "authorization") or "").lower().startswith("bearer ")
+            if origin is not None and not keyed and not self._origin_accepted(scope, origin):
+                if path.startswith("/core/"):
+                    await self._reject(send, status=403, detail="Forbidden (origin not allowed)")
+                else:
+                    await self._send_json(send, status=403, payload={"error": {
+                        "message": "This web page's origin may not use the API without a key.",
+                        "type": "permission_error", "param": None, "code": "origin_not_allowed"}})
                 return
             if path.startswith("/core/"):
                 return await self._app(scope, receive, send)

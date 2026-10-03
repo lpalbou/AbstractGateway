@@ -303,6 +303,27 @@ def test_restart_route_needs_a_running_api(gw):
     assert r.status_code == 200 and r.json()["ended_requests"] == 0
 
 
+def test_turning_the_endpoint_off_ends_open_requests(gw):
+    _set(gw, enabled=True)
+    ev = asyncio.Event()
+    with ce._INFLIGHT_LOCK:
+        ce._INFLIGHT.add(ev)
+    try:
+        assert _set(gw, enabled=False)["ended_requests"] == 1 and ev.is_set()
+    finally:
+        with ce._INFLIGHT_LOCK:
+            ce._INFLIGHT.discard(ev)
+
+
+def test_browser_origin_rules_for_the_api(gw):
+    _set(gw, enabled=True)
+    evil = "https://some-web-app.example"
+    keyed = gw.admin.get("/v1/models", headers={"Origin": evil, "Authorization": f"Bearer {USER_TOKEN}"})
+    assert keyed.status_code == 200, keyed.text  # a browser SDK with a key
+    bare = gw.admin.get("/v1/models", headers={"Origin": evil})
+    assert bare.status_code == 403 and bare.json()["error"]["code"] == "origin_not_allowed"
+
+
 def test_check_setup_lists_models_through_core(gw):
     _set(gw, enabled=True)
     r = gw.admin.post("/api/gateway/admin/core-endpoint/check", headers=ADMIN)
@@ -328,7 +349,9 @@ def test_tailscale_status_parse_and_absent_binary(monkeypatch):
                        "TailscaleIPs": ["100.101.102.103", "fd7a:115c:a1e0::1"]}, "MagicDNSSuffix": "tail1234.ts.net"})
     assert ne.parse_tailscale_status(text) == {"dns_name": "studio.tail1234.ts.net",
                                               "ips": ["100.101.102.103", "fd7a:115c:a1e0::1"], "tailnet": "tail1234.ts.net"}
-    assert ne.parse_tailscale_status(json.dumps({"BackendState": "Stopped"})) is None
+    stopped = json.loads(text)
+    stopped["BackendState"] = "Stopped"
+    assert ne.parse_tailscale_status(json.dumps(stopped)) is None
     assert ne.parse_tailscale_status("not json") is None
     monkeypatch.setattr(ne, "_TAILSCALE_CACHE", {"at": 0.0, "value": None})
     monkeypatch.setattr(ne, "tailscale_binary", lambda: None)
