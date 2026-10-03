@@ -47,7 +47,7 @@ def test_base_install_is_remote_light_server() -> None:
     from abstractgateway.live_deltas import ABSTRACTRUNTIME_FLOOR
 
     assert f"AbstractRuntime>={ABSTRACTRUNTIME_FLOOR}" in deps
-    assert "abstractcore>=2.23.0" in deps
+    assert "abstractcore>=2.24.0" in deps
     assert "abstractvoice>=0.13.0" in deps
     assert "abstractagent>=0.3.17" in deps
     assert "AbstractMemory[lancedb]>=0.3.0" in deps
@@ -138,7 +138,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
 
     assert "embeddings" in extras
     embeddings = "\n".join(extras["embeddings"])
-    assert "abstractcore[embeddings]>=2.23.0" in embeddings
+    assert "abstractcore[embeddings]>=2.24.0" in embeddings
 
     assert "apple" in extras
     assert "gpu" in extras
@@ -147,7 +147,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "docs" in extras
 
     apple = "\n".join(extras["apple"])
-    assert "AbstractRuntime[apple]>=0.8.4" in apple
+    assert "AbstractRuntime[apple]>=0.8.5" in apple
     assert "abstractagent[apple]>=0.3.17" in apple
     assert "abstractagent[all-apple]" not in apple
     assert "AbstractMemory[all-apple]>=0.3.0" in apple
@@ -156,7 +156,7 @@ def test_entrypoint_profiles_cascade_lower_package_extras() -> None:
     assert "abstractvoice" not in apple
     assert "abstractmusic" not in apple
     gpu = "\n".join(extras["gpu"])
-    assert "AbstractRuntime[gpu]>=0.8.4" in gpu
+    assert "AbstractRuntime[gpu]>=0.8.5" in gpu
     assert "abstractagent[gpu]>=0.3.17" in gpu
     assert "AbstractMemory[all-gpu]>=0.3.0" in gpu
     assert "abstractcore[" not in gpu

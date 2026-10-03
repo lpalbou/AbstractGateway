@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from abstractgateway import core_endpoint as ce
+from abstractruntime.integrations.abstractcore import server_facade
 from abstractgateway.security.gateway_security import GatewayAuthPolicy, GatewaySecurityMiddleware
 from abstractgateway.security.principal import GatewayPrincipal
 
@@ -56,7 +57,7 @@ def test_defaults_disable_and_secret_persistence_rotation_restart(host):
 def test_allowlist_and_token_rejection_happen_before_core_import(host, monkeypatch):
     data_dir, app = host
     ce.change_settings(data_dir, enabled=True)
-    monkeypatch.setattr(ce.importlib, "import_module", lambda name: pytest.fail("Unauthorized traffic must not import Core"))
+    monkeypatch.setattr(server_facade.importlib, "import_module", lambda name: pytest.fail("Unauthorized traffic must not import Core"))
     http = client(app)
     assert http.post("/core/v1/chat/completions", json=body()).status_code == 401
     assert http.get("/core/v1/models", headers={"Authorization": "Bearer gateway-user-token"}).status_code == 401
@@ -168,7 +169,7 @@ def test_direct_asgi_stream_preserves_chunks_and_policy_until_stream_finishes(ho
         await asyncio.sleep(0)
         assert server_auth_token() == settings.token
         await send({"type": "http.response.body", "body": b"data: [DONE]\n\n", "more_body": False})
-    monkeypatch.setattr(ce.importlib, "import_module", lambda name: SimpleNamespace(app=serving))
+    monkeypatch.setattr(server_facade.importlib, "import_module", lambda name: SimpleNamespace(app=serving))
     async def receive(): return {"type": "http.request", "body": b"", "more_body": False}
     async def send(message): messages.append(message)
     async def run():

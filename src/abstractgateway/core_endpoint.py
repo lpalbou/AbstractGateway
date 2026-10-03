@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict, dataclass, field, replace
 import hmac
-import importlib
 import ipaddress
 import json
 import os
@@ -18,6 +17,8 @@ import tempfile
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
+
+from abstractruntime.integrations.abstractcore.server_facade import serve_core_request
 
 from . import network_exposure as ne
 from .runtime_config import resolve_network_setting, store_lock
@@ -141,12 +142,6 @@ class CoreEndpoint:
         if (authorization is not None and not valid_token) or (authorization is None and not allow_open):
             return await JSONResponse({"detail": "Core endpoint token required"}, status_code=401,
                                       headers={"WWW-Authenticate": "Bearer"})(scope, receive, send)
-        try:
-            from abstractcore.server.auth_policy import ServerAuthPolicy, use_server_auth_policy
-            core = await asyncio.to_thread(importlib.import_module, "abstractcore.server.app")
-        except ImportError:
-            return await JSONResponse({"detail": "Upgrade AbstractCore to use the managed Core endpoint"}, status_code=503)(scope, receive, send)
         # Core's security middleware inspects /v1 paths; strip the mount prefix.
         core_scope = dict(scope, path=path, raw_path=path.encode(), root_path="")
-        with use_server_auth_policy(ServerAuthPolicy(settings.token, allow_unauthenticated=allow_open)):
-            await core.app(core_scope, receive, send)
+        await serve_core_request(core_scope, receive, send, token=settings.token, allow_unauthenticated=allow_open)

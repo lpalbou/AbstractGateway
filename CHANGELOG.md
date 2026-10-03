@@ -12,7 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Admin controls in Network for the OpenAI-compatible AbstractCore endpoint: enable/disable, copy base URLs, require a dedicated token or allow direct local-network access, and reveal/copy/regenerate the token. Changes apply immediately on the Gateway listener.
-- Direct streaming of Core serving routes with request-scoped authentication, admin-only credential access, private token persistence and preserved cloud-provider credential protections. Requires AbstractCore 2.24.0.
+- Direct streaming of Core serving routes with request-scoped authentication, admin-only credential access, private token persistence and preserved cloud-provider credential protections. Uses the Runtime serving facade; requires AbstractRuntime 0.8.5 and AbstractCore 2.24.0.
 
 ## [0.11.3] - 2026-10-02
 

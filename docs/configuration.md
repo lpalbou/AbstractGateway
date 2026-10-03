@@ -39,7 +39,7 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.8.4` (per-user email: run binding, event inbox, `email.received@1`, the email facade; the automatic-mail loop guard, in-process media children, and pause stopping an automation's retries)
+- `AbstractRuntime>=0.8.5` (per-user email: run binding, event inbox, `email.received@1`, the email facade; the automatic-mail loop guard, in-process media children, and pause stopping an automation's retries)
 - `abstractcore>=2.24.0` (mail, media capabilities, and request-scoped authentication for the managed OpenAI-compatible endpoint)
 - `abstractvoice>=0.13.0` (the voice listings import `abstractvoice.engine_runtime`)
 - `abstractagent>=0.3.17`
@@ -499,7 +499,7 @@ The mount exposes `GET /v1/models` and `POST /v1/chat/completions`, `/v1/respons
 `/v1/images/variations`, all below `/core`. Capability availability and supported
 operations follow Core and its installed plugins (unsupported operations retain
 Core's errors). Core configuration and model-management routes are not exposed.
-Streaming passes directly through Core's ASGI server.
+Streaming passes through Runtime's server facade directly to Core's ASGI server.
 
 Admin API (Gateway authentication):
 

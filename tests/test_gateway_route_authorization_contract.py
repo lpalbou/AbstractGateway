@@ -350,6 +350,17 @@ def test_every_route_is_behind_the_security_middleware_or_explicitly_public() ->
     for method, path in sorted(_live_route_table()):
         if path.startswith("/api/gateway"):
             continue
+        if path == "/core":
+            # Independently authenticated ASGI serving mount, disabled by
+            # default. It uses the Core token, never a Gateway user/session.
+            # test_core_endpoint pins auth, route allowlist and open-peer rules.
+            from abstractgateway.app import app
+            from abstractgateway.core_endpoint import CoreEndpoint
+            from starlette.routing import Mount
+
+            mounts = [r for r in app.routes if isinstance(r, Mount) and r.path == "/core"]
+            assert len(mounts) == 1 and isinstance(mounts[0].app, CoreEndpoint)
+            continue
         assert (method, path) in PUBLIC_ROUTES, (
             f"{method} {path} is served OUTSIDE the /api/gateway security boundary "
             "and is not on the explicit public allowlist — it bypasses auth entirely. "
