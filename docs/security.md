@@ -660,3 +660,7 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
 - Configuration overview: [configuration.md](./configuration.md)
 - API overview: [api.md](./api.md)
 - FAQ: [faq.md](./faq.md)
+
+## Managed Core serving
+
+The optional `/core/v1` endpoint has a dedicated serving token and an explicit local-network open mode. Gateway user sessions do not grant serving access. Only admins can manage or reveal the token; Core retains its cloud-provider credential protections. See [endpoint access and credential rules](./configuration.md#openai-compatible-endpoint).

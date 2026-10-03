@@ -39,8 +39,8 @@ Optional extras (see `pyproject.toml`):
 - `abstractgateway[dev]`: local dev/test deps
 
 Default dependency floors (see `pyproject.toml`):
-- `AbstractRuntime>=0.8.2` (per-user email: run binding, event inbox, `email.received@1`, the email facade; the automatic-mail loop guard, in-process media children, and pause stopping an automation's retries)
-- `abstractcore>=2.22.0` (the mail library behind per-user email, mailbox server discovery and defaults, automatic-mail marking, the media-only capability host)
+- `AbstractRuntime>=0.8.4` (per-user email: run binding, event inbox, `email.received@1`, the email facade; the automatic-mail loop guard, in-process media children, and pause stopping an automation's retries)
+- `abstractcore>=2.24.0` (mail, media capabilities, and request-scoped authentication for the managed OpenAI-compatible endpoint)
 - `abstractvoice>=0.13.0` (the voice listings import `abstractvoice.engine_runtime`)
 - `abstractagent>=0.3.17`
 - `AbstractMemory[lancedb]>=0.3.0`
@@ -448,6 +448,67 @@ abstractgateway network restart [--url URL] [--token T] [--force]
 gateway's bind and auth posture are read from `<data>/run/gateway-network.json`);
 `restart` asks the running gateway. See [security.md](./security.md#network-exposure)
 for what each mode changes for someone on your network.
+
+## OpenAI-compatible endpoint
+
+In the web console, open **Network → OpenAI-compatible endpoint** as an admin.
+Turn on **Enable endpoint**, then copy a **Base URL** into your OpenAI-compatible
+client. The endpoint is disabled by default. It shares the Gateway listener,
+port and Network exposure; there is no separate Core process or port to open.
+The default URL is `http://127.0.0.1:8080/core/v1`. Other reachable addresses
+appear in the same card. A Network bind/port change still requires its normal
+restart; endpoint enablement and token changes apply to subsequent requests
+immediately. Requests already running may finish.
+
+Choose **Requires token** to protect every serving request. Enabling the
+endpoint generates a token if none exists. Admins can **Show**, **Copy token**,
+or **Regenerate token**. Regeneration immediately invalidates the old token for
+new requests; update connected apps. The serving token is separate from
+Gateway sign-in, cloud provider API keys, and any outbound remote-Core token.
+It is stored in `<data dir>/config/core_endpoint.json` with owner-only permissions
+and atomic replacement. Status responses never include the token; explicit
+admin reveal/rotation responses use `Cache-Control: no-store`.
+
+**Open on local network** permits direct loopback, private LAN and private VPN
+clients without a token. It follows the same listener: choose **Local network**
+above if other devices should connect. Public peers, Internet mode and
+reverse-proxy connections require the token even when Open is selected. An
+Internet-to-LAN change keeps token protection until the running Internet bind
+is restarted. Configure proxies to supply forwarded headers, and enable
+Network's proxy trust only for your own proxy. Keep public deployments behind
+TLS and proxy request limits, as with the standalone Core server.
+
+Open clients may use local providers or supply their own provider key in
+`X-AbstractCore-Provider-API-Key`. Using server-held cloud provider credentials
+requires the endpoint token. A supplied invalid bearer token is rejected,
+even in Open mode. Gateway sessions and Gateway user tokens do not authorize
+Core serving. Browser requests also follow Network's allowed-origin policy.
+
+Use `provider/model` as the model name. For example:
+
+```bash
+curl http://127.0.0.1:8080/core/v1/chat/completions \
+  -H "Authorization: Bearer $ABSTRACTCORE_ENDPOINT_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"ollama/your-installed-model","messages":[{"role":"user","content":"Hello"}],"stream":true}'
+```
+
+The mount exposes `GET /v1/models` and `POST /v1/chat/completions`, `/v1/responses`,
+`/v1/embeddings`, `/v1/audio/speech`, `/v1/audio/transcriptions`,
+`/v1/audio/translations`, `/v1/images/generations`, `/v1/images/edits`, and
+`/v1/images/variations`, all below `/core`. Capability availability and supported
+operations follow Core and its installed plugins (unsupported operations retain
+Core's errors). Core configuration and model-management routes are not exposed.
+Streaming passes directly through Core's ASGI server.
+
+Admin API (Gateway authentication):
+
+| Method | Route | Result |
+| --- | --- | --- |
+| GET | `/api/gateway/admin/core-endpoint` | Enabled state, access mode, token presence and base URL |
+| POST | `/api/gateway/admin/core-endpoint` | Save optional `enabled` boolean and `access` (`token` or `open`) |
+| POST | `/api/gateway/admin/core-endpoint/token/reveal` | Return the existing serving token |
+| POST | `/api/gateway/admin/core-endpoint/token/rotate` | Generate/replace and return the serving token |
 
 ## Two entry points, one store
 

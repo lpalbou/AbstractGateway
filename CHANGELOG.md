@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-03
+
+### Added
+
+- Admin controls in Network for the OpenAI-compatible AbstractCore endpoint: enable/disable, copy base URLs, require a dedicated token or allow direct local-network access, and reveal/copy/regenerate the token. Changes apply immediately on the Gateway listener.
+- Direct streaming of Core serving routes with request-scoped authentication, admin-only credential access, private token persistence and preserved cloud-provider credential protections. Requires AbstractCore 2.24.0.
+
 ## [0.11.3] - 2026-10-02
 
 - Expose configurable growing-context budgets in automation summaries.

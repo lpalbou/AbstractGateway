@@ -82,7 +82,7 @@ async def _lifespan(_app: FastAPI):
 app = FastAPI(
     title="AbstractGateway",
     description="Durable Run Gateway for AbstractRuntime (commands + ledger replay/stream).",
-    version="0.11.3",
+    version="0.12.0",
     lifespan=_lifespan,
     docs_url=None,
     redoc_url=None,
@@ -165,6 +165,11 @@ app.include_router(app_proxy_router)
 from .routes.network import router as network_router  # noqa: E402
 
 app.include_router(network_router, prefix="/api")
+from .core_endpoint import CoreEndpoint  # noqa: E402
+from .routes.core_endpoint import router as core_endpoint_router  # noqa: E402
+
+app.include_router(core_endpoint_router, prefix="/api")
+app.mount("/core", CoreEndpoint(), name="core-endpoint")
 # Start at login (routes/start_at_login.py): literal /gateway/host/start-at-login
 # (gateway_start_at_login_v1), admin-only; the tray's and CLI's same switch.
 from .routes.start_at_login import router as start_at_login_router  # noqa: E402

@@ -1,0 +1,53 @@
+import { createRequire } from 'node:module';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+const [base, admin, modules, output] = process.argv.slice(2);
+const { chromium } = createRequire(path.join(modules, '/'))('playwright-core');
+const browser = await chromium.launch({ headless: true });
+const errors = [];
+try {
+  for (const [width, height] of [[1440, 1000], [768, 1024], [390, 844]]) {
+    const context = await browser.newContext({ viewport: {width, height} });
+    const page = await context.newPage();
+    page.on('pageerror', error => errors.push(error.message));
+    await page.goto(`${base}/console`);
+    await page.fill('#login-user', 'admin');
+    await page.fill('#login-token', admin);
+    await page.click('#login-button');
+    await page.waitForFunction(() => document.body.classList.contains('signed-in'));
+    await page.evaluate(() => document.getElementById('tab-button-network').click());
+    const card = page.locator('[data-core-endpoint]:visible');
+    await card.locator('[data-core-enabled]').waitFor();
+    await card.locator('[data-core-enabled]').check();
+    await page.waitForFunction(() => {const i=document.querySelector('[data-core-enabled]'); return i.checked && !i.disabled;});
+    await card.getByRole('button', {name:'Show', exact:true}).click();
+    await page.waitForFunction(() => document.querySelector('[data-core-token]').textContent.startsWith('ac_'));
+    const previous = await card.locator('[data-core-token]').textContent();
+    await card.getByRole('button', {name:'Regenerate token', exact:true}).click();
+    await card.getByRole('button', {name:'Regenerate', exact:true}).click();
+    await page.waitForFunction(old => {const e=document.querySelector('[data-core-token]'); return e.textContent.startsWith('ac_') && e.textContent !== old;}, previous);
+    await card.getByRole('button', {name:'Hide', exact:true}).click();
+    await card.locator('[data-core-access]').selectOption('open');
+    await page.waitForFunction(() => {const s=document.querySelector('[data-core-access]'); return s.value==='open' && !s.disabled;});
+    await card.scrollIntoViewIfNeeded();
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `overflow at ${width}`);
+    const bounds = await card.boundingBox();
+    assert(bounds.x >= 0 && bounds.x + bounds.width <= width + 1, `card bounds at ${width}`);
+    await page.screenshot({path: path.join(output, `core-endpoint-${width}.png`), fullPage:true});
+    await card.locator('[data-core-enabled]').uncheck();
+    await page.waitForFunction(() => {const i=document.querySelector('[data-core-enabled]'); return !i.checked && !i.disabled;});
+    assert.equal((await page.request.get(`${base}/core/v1/models`)).status(),404);
+    await context.close();
+  }
+  const page = await browser.newPage();
+  await page.goto(`${base}/console`);
+  await page.fill('#login-user', 'alice');
+  await page.fill('#login-token', 'endpoint-browser-user-001');
+  await page.click('#login-button');
+  await page.waitForFunction(() => document.body.classList.contains('signed-in'));
+  await page.evaluate(() => document.getElementById('tab-button-network').click());
+  await page.waitForSelector('[data-net-action="refresh"]');
+  assert.equal(await page.locator('[data-core-endpoint]').count(), 0);
+  assert.deepEqual(errors, []);
+  console.log(JSON.stringify({ok:true, screens:3}));
+} finally { await browser.close(); }

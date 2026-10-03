@@ -912,6 +912,14 @@ class GatewaySecurityMiddleware:
             return await self._app(scope, receive, send)
 
         path = str(scope.get("path") or "")
+        if path.startswith("/core/"):
+            # Core owns its separate serving token. Browser access follows
+            # the same live Network origin policy as the Gateway API.
+            origin = self._header(scope, "origin")
+            if origin is not None and not self._origin_allowed(origin) and not self._https_same_origin(scope, origin):
+                await self._reject(send, status=403, detail="Forbidden (origin not allowed)")
+                return
+            return await self._app(scope, receive, send)
         if not path.startswith("/api/gateway"):
             return await self._app(scope, receive, send)
 

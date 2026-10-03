@@ -1118,6 +1118,7 @@ def record_serve_bind(data_dir: Path, bind: ServeBind) -> None:
                 "port": int(bind.port),
                 "host_source": bind.host_source,
                 "port_source": bind.port_source,
+                "mode": bind.mode,
                 "blocked_reason": bind.blocked_reason,
                 "posture": dict(bind.posture),
                 "exports": sorted(bind.exports),
@@ -1180,6 +1181,8 @@ def effective_bind(data_dir: Path, *, env: Optional[Mapping[str, str]] = None, i
                 "note": ("this process was not started by `abstractgateway serve` (no bind recorded)" if in_process
                          else "no running gateway recorded for this data dir")}
     out["running"] = True
+    if rec and rec.get("pid") == out.get("pid"):
+        out["mode"] = rec.get("mode")
     out["overridden_by_cli"] = out["host_source"] == "cli" or out["port_source"] == "cli"
     if blocked:
         out["blocked_reason"] = blocked

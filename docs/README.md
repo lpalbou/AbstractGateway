@@ -31,7 +31,7 @@ Related repos:
 | [getting-started.md](./getting-started.md) | explicit setup: bundles, starting and scheduling runs, split API/runner, file vs SQLite stores |
 | [architecture.md](./architecture.md) | components, diagrams, the replay-first durable contract, live replies, the workspace guard, the desktop hand-over, deployment shapes |
 | [api.md](./api.md) | the client contract with curl examples: the gateway default workflow (`@default`), live replies, a run's workspace folder, durable commands, the automation routes, discovery, media, models, host state, `/about`; map of every route family |
-| [configuration.md](./configuration.md) | every setting: runtime settings, network exposure, apps, default agent workflows, stream replies, skills shelf, backlog, workspace policy, capability defaults, environment variables, CLI flags |
+| [configuration.md](./configuration.md) | every setting: runtime settings, network exposure, the OpenAI-compatible endpoint, apps, default agent workflows, stream replies, skills shelf, backlog, workspace policy, capability defaults, environment variables, CLI flags |
 | [faq.md](./faq.md) | recurring questions and limits |
 | [troubleshooting.md](./troubleshooting.md) | symptoms, causes and fixes: sign-in, network modes, runs, installs, downloads, tray, login service |
 

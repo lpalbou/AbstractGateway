@@ -36,6 +36,12 @@ serve:
 | `/api/gateway/entities/*` | summoned entities | [entities.md](./entities.md) |
 | `/api/gateway/automations*`, `/api/gateway/trigger-sources` | automations: recurring workflows, their occurrences and attention | [automations.md](./automations.md) |
 
+## Managed OpenAI-compatible serving
+
+The optional `/core/v1` endpoint serves Core inference on this Gateway listener.
+Admins manage enablement and the separate serving token through
+`/api/gateway/admin/core-endpoint`; see [endpoint configuration](./configuration.md#openai-compatible-endpoint) for access modes and routes.
+
 ## Auth
 
 By default, `/api/gateway/*` is protected by `GatewaySecurityMiddleware` (bearer token + origin allowlist).  

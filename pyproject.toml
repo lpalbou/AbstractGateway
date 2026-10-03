@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "abstractgateway"
-version = "0.11.3"
+version = "0.12.0"
 description = "AbstractGateway: deployable Run Gateway host for AbstractRuntime (commands + ledger)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -50,7 +50,8 @@ dependencies = [
   # recipient policy and send limits) behind the runtime's email facade.
   # 2.22.0: mailbox server discovery (abstractcore.comms.email discover_servers /
   # server_defaults) and the account store's set_folder, which mail/core_mail.py imports.
-  "abstractcore>=2.23.0",
+  # 2.24.0: request-scoped Core server auth for the managed /core/v1 endpoint.
+  "abstractcore>=2.24.0",
   # Imported directly (routes/gateway.py voice listings):
   # abstractvoice.engine_runtime (0.13.0) decides which local voice engines
   # are available, and voice_openai_api_key (0.13.0) carries the Providers
@@ -92,7 +93,7 @@ dependencies = [
 # Tooling extras for contributors: `dev`, `docs`.
 
 embeddings = [
-  "abstractcore[embeddings]>=2.23.0",
+  "abstractcore[embeddings]>=2.24.0",
 ]
 
 # Desktop tray / menu-bar icon shown by `abstractgateway serve` (macOS, Windows,

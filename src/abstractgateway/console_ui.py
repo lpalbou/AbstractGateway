@@ -2276,8 +2276,53 @@ CONSOLE_UI_JS = r"""
         out += `<details class="ui-details ui-net-warnings"${d.restart_required || conf.mode === "internet" ? " open" : ""}><summary>What to know about ${esc(conf.label || "this mode")} (${warnings.length})</summary>`
           + `<ul class="ui-warn-list">${warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul></details>`;
       }
+      if (admin) out += coreEndpointMarkup();
       out += netProxyMarkup(d);
       return out;
+    }
+    // ---- OpenAI-compatible endpoint (admin only) ----
+    const coreEndpointStore = { data: null, token: "", busy: false, error: "", confirmRotate: false };
+    function coreEndpointMarkup() {
+      const s = coreEndpointStore, d = s.data;
+      let out = `<article class="ui-card" data-core-endpoint><div class="ui-card__head"><div class="ui-card__titles"><h3 class="ui-card__title">OpenAI-compatible endpoint</h3><p class="ui-card__note">Connect apps to AbstractCore providers and models through this gateway.</p></div>${uiPill(d && d.enabled ? "Enabled" : "Disabled", d && d.enabled ? "ok" : "muted")}</div>`;
+      if (s.error) out += `<div class="ui-alert tone-err" role="alert"><strong>${esc(s.error)}</strong></div>`;
+      if (!d) return out + `<button class="ui-btn is-ghost" data-core-action="refresh">Try again</button></article>`;
+      const disabled = s.busy ? " disabled" : "";
+      out += `<label class="ui-switch"><input type="checkbox" role="switch" data-core-enabled${d.enabled ? " checked" : ""}${disabled}><span>Enable endpoint</span></label>`
+        + `<label class="ui-toolbar">Access <select data-core-access aria-label="Core endpoint access"${disabled}><option value="token"${d.access === "token" ? " selected" : ""}>Requires token</option><option value="open"${d.access === "open" ? " selected" : ""}>Open on local network</option></select></label>`
+        + `<p class="ui-card__note">Uses the Network settings above. Changes here apply immediately. Public and reverse-proxy connections always require a token.</p>`;
+      if (d.access === "open") out += `<p class="ui-card__note">Direct local-network clients can use local providers without a token. Using stored cloud-provider credentials requires the endpoint token.</p>`;
+      const urls = [d.base_url, ...((netStore.data && netStore.data.addresses) || []).filter(a => a.url && a.reachable === true).map(a => a.url.replace(/\/$/, "") + "/core/v1")];
+      out += `<ul class="ui-addr-list">${[...new Set(urls)].map((url, i) => `<li class="ui-addr"><div class="ui-addr__text"><span class="ui-addr__label">${i ? "Alternative base URL" : "Base URL"}</span><code style="overflow-wrap:anywhere">${esc(url)}</code></div><button class="ui-btn is-ghost" data-net-copy="${esc(url)}" aria-label="Copy base URL ${esc(url)}">Copy</button></li>`).join("")}</ul>`;
+      out += `<div class="ui-addr"><div class="ui-addr__text"><span class="ui-addr__label">Endpoint token · admin only</span><code data-core-token style="overflow-wrap:anywhere">${esc(s.token || (d.token_present ? "••••••••••••••••••••••••" : "No token generated"))}</code></div><div class="ui-toolbar">`
+        + (d.token_present ? `<button class="ui-btn is-ghost" data-core-action="${s.token ? "hide" : "show"}"${disabled}>${s.token ? "Hide" : "Show"}</button><button class="ui-btn is-ghost" data-core-action="copy"${disabled}>Copy token</button>` : "")
+        + `<button class="ui-btn is-ghost" data-core-action="${d.token_present ? "confirm-rotate" : "rotate"}"${disabled}>${d.token_present ? "Regenerate token" : "Generate token"}</button></div></div>`;
+      if (s.confirmRotate) out += `<div class="ui-confirm" role="alertdialog" aria-label="Regenerate endpoint token"><p>Replace the token? Apps using the previous token will need the new one.</p><div class="ui-toolbar"><button class="ui-btn is-primary" data-core-action="rotate"${disabled}>Regenerate</button><button class="ui-btn is-ghost" data-core-action="cancel"${disabled}>Cancel</button></div></div>`;
+      return out + `<p class="ui-card__note" role="status">${s.busy ? "Saving…" : "Use provider/model as the model name. This token is separate from Gateway sign-in and provider API keys."}</p></article>`;
+    }
+    async function coreEndpointRefresh() {
+      try { coreEndpointStore.data = await api("/api/gateway/admin/core-endpoint"); coreEndpointStore.error = ""; }
+      catch (err) { coreEndpointStore.error = String((err && err.message) || err); }
+    }
+    async function coreEndpointAction(action, body) {
+      const s = coreEndpointStore;
+      if (s.busy) return;
+      if (action === "hide") { s.token = ""; netRender(); return; }
+      if (action === "confirm-rotate" || action === "cancel") { s.confirmRotate = action === "confirm-rotate"; netRender(); return; }
+      s.busy = true; s.error = ""; netRender();
+      try {
+        if (action === "change") {
+          s.data = await api("/api/gateway/admin/core-endpoint", { method: "POST", body: JSON.stringify(body) });
+        } else if (action === "refresh") {
+          await coreEndpointRefresh();
+        } else {
+          const result = await api(`/api/gateway/admin/core-endpoint/token/${action === "rotate" ? "rotate" : "reveal"}`, { method: "POST" });
+          if (action === "copy") await uiCopy(result.token);
+          else if (netStore.views.size) s.token = result.token;
+          if (action === "rotate") { s.confirmRotate = false; await coreEndpointRefresh(); }
+        }
+      } catch (err) { s.error = String((err && err.message) || err); }
+      s.busy = false; netRender();
     }
     // ---- Advanced: reverse proxy ----
     // gateway_network_v1 `reverse_proxy`: {allowed_origins: {value[],
@@ -2412,6 +2457,8 @@ CONSOLE_UI_JS = r"""
         const data = await api(`/api/gateway/network${o.lookupPublic ? "?lookup_public=1" : ""}`, { slow: !!o.lookupPublic });
         if (!data || data.schema !== "gateway_network_v1") throw new Error(`unexpected network payload (schema ${String((data && data.schema) || "none")}, expected gateway_network_v1)`);
         netStore.data = data;
+        if (data.writable) await coreEndpointRefresh();
+        else { coreEndpointStore.data = null; coreEndpointStore.token = ""; }
         netStore.error = "";
       } catch (err) {
         netStore.error = err && err.status === 404
@@ -2508,6 +2555,8 @@ CONSOLE_UI_JS = r"""
       el.onclick = (event) => {
         const t = event && event.target && event.target.closest ? event.target : null;
         if (!t) return;
+        const core = t.closest("[data-core-action]");
+        if (core && !core.disabled) { coreEndpointAction(core.dataset.coreAction); return; }
         const copy = t.closest("[data-net-copy]");
         if (copy) { uiCopy(copy.dataset.netCopy); return; }
         const mode = t.closest("[data-net-mode]");
@@ -2531,6 +2580,9 @@ CONSOLE_UI_JS = r"""
         }
       };
       el.onchange = (event) => {
+        const target = event && event.target;
+        if (target && !target.disabled && target.matches("[data-core-enabled]")) { coreEndpointAction("change", { enabled: !!target.checked }); return; }
+        if (target && !target.disabled && target.matches("[data-core-access]")) { coreEndpointAction("change", { access: target.value }); return; }
         const c = event && event.target && event.target.matches && event.target.matches("[data-net-trust]") ? event.target : null;
         if (!c || c.disabled) return;
         netProxySave("trust_proxy", { trust_proxy: !!c.checked });
@@ -2557,7 +2609,7 @@ CONSOLE_UI_JS = r"""
       netRender();
       netRefresh();
     }
-    function unmountNetworkPanel(key) { netStore.views.delete(key); }
+    function unmountNetworkPanel(key) { netStore.views.delete(key); if (!netStore.views.size) { coreEndpointStore.token = ""; coreEndpointStore.confirmRotate = false; } }
 
     // ---- Apps settings: the apps.* runtime-config keys ----
     // GET /api/gateway/admin/runtime-config -> apps{name: {key, label, help,

@@ -42,7 +42,7 @@ The sidebar groups the tabs in four sections, in this order:
 | Models | **Multimodal** | capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
 | System | **Resources** | memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the **Gateway** card (pause, update, restart, desktop icon, start at login) |
 | System | **Sandbox** | quick chat and media generation against the configured defaults |
-| System | **Network** | who can reach the gateway (localhost only, local network, internet), its addresses, and *Advanced: reverse proxy* ([configuration.md](./configuration.md#network-exposure-localhost--local-network--internet)) |
+| System | **Network** | who can reach the gateway (localhost only, local network, internet), its addresses, admin-only [OpenAI-compatible endpoint controls](./configuration.md#openai-compatible-endpoint), and *Advanced: reverse proxy* ([configuration.md](./configuration.md#network-exposure-localhost--local-network--internet)) |
 
 Below the groups, at the bottom of the sidebar, **Setup** (administrators)
 runs the setup guide again: engines, default models, apps, network. It keeps
