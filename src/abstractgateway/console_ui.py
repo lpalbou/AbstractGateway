@@ -301,7 +301,8 @@ CONSOLE_UI_CSS = r"""
     .oai-field__title { margin: 0; font-size: var(--font-size-sm); font-weight: 650; color: var(--text-primary); }
     .oai-controls { align-items: center; }
     .oai-checks, .oai-links { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-    .oai-check { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; font-size: var(--font-size-sm); color: var(--text-secondary); }
+    .oai-check { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: baseline; font-size: var(--font-size-sm); color: var(--text-secondary); }
+    .oai-seg .ui-seg__opt { justify-items: start; justify-content: stretch; text-align: left; }
     .oai-links a { font-weight: 600; }
     .oai-supports { display: grid; gap: 4px; }
     .oai-support { margin: 0; font-size: var(--font-size-sm); line-height: 1.5; color: var(--text-secondary); }
@@ -310,6 +311,8 @@ CONSOLE_UI_CSS = r"""
     .oai-table { min-width: 0; }
     .oai-table table { width: 100%; }
     .oai-client, .oai-ip { display: block; }
+    /* Stacked on a phone: two columns per request, not one cell per line. */
+    .oai-table table.ui-stacked:not(#ui-none) > tbody > tr { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; padding: 12px 4px; }
     .oai-ip { font-size: var(--font-size-xs); color: var(--text-muted); }
     .first-run-network { display: grid; gap: 18px; min-width: 0; padding-top: 6px; border-top: 1px solid var(--ui-border-1); }
     .ui-seg { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 4px; padding: 4px; border: 1px solid var(--ui-border-2); border-radius: var(--radius-lg); background: var(--ui-surface-1); }
