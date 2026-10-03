@@ -110,7 +110,7 @@ Every error uses the OpenAI envelope, so SDKs raise their usual exceptions:
 | 400 | invalid request or unsupported parameter | `unsupported_parameter` or none |
 | 401 | missing or wrong key | `invalid_api_key` |
 | 403 | the client is outside *Who can connect*, or a page without a key from an origin that is not accepted | `client_not_allowed`, `origin_not_allowed` |
-| 404 | unknown route, unknown model, or the API is stopped | `model_not_found`, `endpoint_stopped` |
+| 404 | unknown route, an unknown provider or model, or the API is stopped | `model_not_found`, `endpoint_stopped` |
 | 429 | too many refused keys from one address | `auth_lockout` |
 
 Each response carries `x-request-id`.
