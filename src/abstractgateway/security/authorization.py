@@ -156,6 +156,7 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
             # Deleting weights frees (or destroys) someone else's disk on the
             # shared host: the same operator class as download.
             "/api/gateway/models/delete",
+            "/api/gateway/models/delete-download",
         ),
     ),
     # Installing a local engine (Ollama, LM Studio's CLI, MLX, llama.cpp) runs

@@ -145,6 +145,10 @@ app.include_router(entity_replay_router, prefix="/api")
 # Local engines (status, user-level installs, needs_admin/needs_tools jobs,
 # start/stop): routes/engines.py, the only home of /gateway/engines/... routes.
 app.include_router(engines_router, prefix="/api")
+# "Delete download" on the Models page: routes/model_download_delete.py.
+from .routes.model_download_delete import router as model_download_delete_router  # noqa: E402
+
+app.include_router(model_download_delete_router, prefix="/api")
 # Browser apps (Node runtime, npm installs, supervised app servers): literal
 # /gateway/apps/... paths, included before the parametrized gateway router.
 # The handover route lives at /apps/handover/{code}, outside /api/gateway, so
