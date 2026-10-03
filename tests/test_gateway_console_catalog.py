@@ -104,6 +104,7 @@ const ctx = vm.createContext({
   state: { principal: { admin: true }, downloadJobs: new Map(), defaults: [], activeTab: "catalog", providerLabels: new Map() },
   esc: (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ESC[c]),
   $: () => null,
+  ICONS: { trash: "<svg data-icon=\"trash\"></svg>" },
   downloadJobKey: (p, a) => `${p || ""}/${a || ""}`,
   servedModelId: (p, a) => a,
   trackDownloadJob: (job) => { tracked.push(job); },

@@ -127,7 +127,13 @@ CATALOG_CSS = r"""
     .mc-art__weights { grid-area: weights; min-width: 0; }
     .mc-art__fit { grid-area: fit; min-width: 0; }
     .mc-art__fit .ui-pill[title] { cursor: help; }
-    .mc-art__action { grid-area: action; display: flex; justify-content: flex-end; align-items: center; gap: 8px; min-width: 0; }
+    .mc-art__action { grid-area: action; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; min-width: 0; }
+    .mc-art__action .mc-del { display: inline-flex; align-items: center; gap: 6px; }
+    .mc-del .button-icon { display: inline-flex; }
+    .mc-del-confirm { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 10px 12px; border-radius: var(--radius-md); background: var(--ui-surface-2); box-shadow: inset 0 0 0 1px var(--ui-border-2); }
+    .mc-del-confirm__q { flex: 1 1 260px; min-width: 0; color: var(--text-primary); font-size: var(--font-size-sm); line-height: 1.45; }
+    .mc-del-confirm__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
+    .mc-del-confirm__actions .ui-btn { min-height: 32px; padding: 6px 14px; }
     .mc-art__action .ui-btn { min-height: 32px; padding: 6px 14px; white-space: nowrap; }
     .mc-art__action .mc-muted { color: var(--text-muted); font-size: var(--font-size-xs); text-align: right; }
     .mc-art__job { grid-area: job; display: grid; gap: 8px; min-width: 0; }
@@ -176,6 +182,10 @@ CATALOG_JS = r"""
     const MC_FITS_FILTER_VERDICTS = ["fits", "tight", "needs_gpu_limit"];
     const MC_ENGINE_PROVIDER = { mlx: "mlx", ollama: "ollama", lmstudio: "lmstudio", huggingface: "huggingface", llamacpp: "huggingface" };
     const mcStore = { data: null, error: "", loading: false, seq: 0, views: new Map(), busy: new Set(), notices: new Map(), reloadFor: new Set(), reloadTimer: null,
+      // "Delete download": `del` = key -> {phase: checking|confirm|deleting, plan, at};
+      // `deleted` = keys whose files this page deleted (a finished download job
+      // in the shared feed must not draw them as Downloaded again).
+      del: new Map(), deleted: new Set(),
       hub: { q: null, data: null, error: "", loading: false, seq: 0 } };
     // `hf`: null = the curated catalog; a string = Hugging Face mode and its query.
     function mcDefaultFilters() { return { q: "", quant: "all", provider: "all", cap: "all", status: "all", fits: false, hf: null }; }
@@ -255,7 +265,10 @@ CATALOG_JS = r"""
     function mcKey(a) { return downloadJobKey(a.provider, a.artifact); }
     function mcJob(a) { return state.downloadJobs.get(mcKey(a)) || null; }
     function mcJobDone(job) { return !!job && (job.state === "done" || job.status === "completed"); }
-    function mcInstalled(a) { return ((a.presence || {}).status === "installed") || mcJobDone(mcJob(a)); }
+    function mcInstalled(a) {
+      if (mcStore.deleted.has(mcKey(a))) return false;
+      return ((a.presence || {}).status === "installed") || mcJobDone(mcJob(a));
+    }
     function mcFits(a) { return a.supported_on_host !== false && MC_FITS_FILTER_VERDICTS.includes(String((a.fit || {}).verdict || "")); }
     // needs_gpu_limit: AbstractCore's gpu_limit_instruction, with the command
     // to copy. Nothing when the verdict or the command is absent.
@@ -434,10 +447,11 @@ CATALOG_JS = r"""
       }
       if (mcStore.busy.has(key)) return `<button type="button" class="ui-btn is-ghost" disabled aria-busy="true">Starting...</button>`;
       if (mcInstalled(a)) {
-        if (!mcCanBeDefault(row)) return "";
+        const del = mcDeleteButton(a, attrs, admin);
+        if (!mcCanBeDefault(row)) return del;
         const cur = mcCurrentDefault();
-        if (cur && cur.provider === a.provider && cur.model === servedModelId(a.provider, a.artifact)) return uiPill("Default text model", "info");
-        return `<button type="button" class="ui-btn is-ghost" data-mc-action="default" ${attrs}${admin ? "" : ' disabled title="Only an admin can change the default model"'}>Use as default</button>`;
+        if (cur && cur.provider === a.provider && cur.model === servedModelId(a.provider, a.artifact)) return uiPill("Default text model", "info") + del;
+        return `<button type="button" class="ui-btn is-ghost" data-mc-action="default" ${attrs}${admin ? "" : ' disabled title="Only an admin can change the default model"'}>Use as default</button>` + del;
       }
       if (!a.downloadable) {
         const why = a.supported_on_host === false ? "Its engine does not run on this computer" : "This build cannot be downloaded from here";
@@ -447,10 +461,33 @@ CATALOG_JS = r"""
       const tone = a.recommended ? "is-primary" : "is-ghost";
       return `<button type="button" class="ui-btn ${tone}" data-mc-action="download" ${attrs}${admin ? "" : ' disabled title="Only an admin can download models"'}>${label}</button>`;
     }
+    // "Delete download" (trash + label) on every downloaded row. The first
+    // click asks the gateway what a delete would free (dry run, same
+    // refusals); the confirmation below the row states that size.
+    function mcDeleteButton(a, attrs, admin) {
+      const cur = mcStore.del.get(mcKey(a));
+      const icon = `<span class="button-icon" aria-hidden="true">${ICONS.trash}</span>`;
+      if (cur && cur.phase === "checking") return `<button type="button" class="ui-btn is-ghost mc-del" disabled aria-busy="true">${icon}<span>Checking...</span></button>`;
+      if (cur && cur.phase === "deleting") return `<button type="button" class="ui-btn is-ghost mc-del" disabled aria-busy="true">${icon}<span>Deleting...</span></button>`;
+      if (cur && cur.phase === "confirm") return "";
+      return `<button type="button" class="ui-btn is-ghost mc-del" data-mc-action="delete-ask" ${attrs}${admin ? "" : ' disabled title="Only an admin can delete downloaded models"'}>${icon}<span>Delete download</span></button>`;
+    }
+    function mcDeleteConfirmMarkup(a) {
+      const cur = mcStore.del.get(mcKey(a));
+      if (!cur || cur.phase !== "confirm") return "";
+      const plan = cur.plan || {};
+      const size = uiNum(plan.freed_bytes) ? `Deletes ${uiBytes(plan.freed_bytes)} from this computer.` : "Deletes this model's files from this computer.";
+      const also = Array.isArray(plan.also_used_by) && plan.also_used_by.length ? ` ${plan.also_used_by.join(" and ")} uses the same files.` : "";
+      const attrs = `data-provider="${esc(a.provider)}" data-artifact="${esc(a.artifact)}"`;
+      return `<div class="mc-del-confirm" role="group" aria-label="Delete this download?" data-mc-del-confirm="${esc(mcKey(a))}">`
+        + `<span class="mc-del-confirm__q">${esc(size)} Files only — nothing in your runs is touched.${esc(also)}</span>`
+        + `<span class="mc-del-confirm__actions"><button type="button" class="ui-btn is-ghost" data-mc-action="delete-keep" ${attrs}>Keep</button>`
+        + `<button type="button" class="ui-btn is-danger" data-mc-action="delete-confirm" ${attrs}>Delete</button></span></div>`;
+    }
     function mcJobMarkup(a, job) {
       const key = mcKey(a);
       const notice = mcStore.notices.get(key);
-      let out = "";
+      let out = mcDeleteConfirmMarkup(a);
       if (job && dlActive(job)) {
         const phase = uiJobPhase(job);
         out += uiProgressMarkup(job, job.parent_job ? `${UI_PHASE_LABELS[phase] || "Downloading"} · part of Download all` : (UI_PHASE_LABELS[phase] || "Downloading"));
@@ -469,8 +506,9 @@ CATALOG_JS = r"""
       const job = mcJob(a);
       const presence = a.presence || {};
       const installed = mcInstalled(a);
-      const [wLabel, wTone] = installed ? MC_WEIGHTS.installed : (MC_WEIGHTS[presence.status] || MC_WEIGHTS.unknown);
-      const wTitle = [presence.location, presence.evidence].filter(Boolean).join(" · ");
+      const gone = mcStore.deleted.has(mcKey(a));
+      const [wLabel, wTone] = installed ? MC_WEIGHTS.installed : gone ? MC_WEIGHTS.absent : (MC_WEIGHTS[presence.status] || MC_WEIGHTS.unknown);
+      const wTitle = gone ? "" : [presence.location, presence.evidence].filter(Boolean).join(" · ");
       const weights = job && dlActive(job) ? dlStatePill(job) : uiPill(wLabel, wTone, wTitle);
       const verdict = String((a.fit || {}).verdict || "unknown");
       const [fLabel, fTone] = a.supported_on_host === false ? ["Not for this computer", "muted"] : (MC_FIT[verdict] || MC_FIT.unknown);
@@ -692,6 +730,9 @@ CATALOG_JS = r"""
         }
         mcStore.data = data;
         mcStore.error = "";
+        // The engines' own answer wins: a row they still report installed is
+        // drawn installed again (the marker only outvotes a finished job).
+        for (const row of mcRowsOf(data)) for (const a of mcArts(row)) if ((a.presence || {}).status === "installed") mcStore.deleted.delete(mcKey(a));
       } catch (err) {
         if (seq !== mcStore.seq) return;
         mcStore.error = String((err && err.message) || err);
@@ -740,6 +781,7 @@ CATALOG_JS = r"""
       const art = row ? mcArts(row).find((a) => a.provider === provider && a.artifact === artifact) : null;
       mcStore.busy.add(key);
       mcStore.notices.delete(key);
+      mcStore.deleted.delete(key);
       mcRender();
       const body = { provider, artifact };
       if (art && uiNum(art.download_bytes) && ["catalog", "hf_api"].includes(String(art.size_source || ""))) body.expected_bytes = art.download_bytes;
@@ -774,6 +816,49 @@ CATALOG_JS = r"""
       }
       mcRender();
     }
+    const MC_DELETE_URL = "/api/gateway/models/delete-download";
+    function mcDeleteNotice(err) {
+      const d = (err && err.data) || {};
+      const text = [d.message || String((err && err.message) || err), d.fix].filter(Boolean).join(" ");
+      return { tone: d.status === "refused" ? "warn" : "err", text };
+    }
+    async function mcDeleteAsk(provider, artifact) {
+      const key = downloadJobKey(provider, artifact);
+      if (mcStore.del.has(key)) return;
+      mcStore.notices.delete(key);
+      mcStore.del.set(key, { phase: "checking" });
+      mcRender();
+      try {
+        const plan = await api(MC_DELETE_URL, { slow: true, method: "POST", body: JSON.stringify({ provider, artifact, dry_run: true }) });
+        mcStore.del.set(key, { phase: "confirm", plan: plan || {}, at: Date.now() });
+      } catch (err) {
+        mcStore.del.delete(key);
+        if (err && err.data && err.data.reason === "not_downloaded") mcStore.deleted.add(key);
+        mcStore.notices.set(key, mcDeleteNotice(err));
+      }
+      mcRender();
+    }
+    async function mcDeleteConfirm(provider, artifact) {
+      const key = downloadJobKey(provider, artifact);
+      const cur = mcStore.del.get(key);
+      if (!cur || cur.phase !== "confirm") return;
+      if (Date.now() - cur.at < DL_CONFIRM_MIN_MS) return;  // a double click is not an answer
+      mcStore.del.set(key, { phase: "deleting", plan: cur.plan });
+      mcRender();
+      try {
+        const res = await api(MC_DELETE_URL, { slow: true, method: "POST", body: JSON.stringify({ provider, artifact, dry_run: false }) });
+        mcStore.del.delete(key);
+        mcStore.deleted.add(key);
+        const freed = res && uiNum(res.freed_bytes) ? ` ${uiBytes(res.freed_bytes)} freed.` : "";
+        mcStore.notices.set(key, { tone: "ok", text: `Download deleted.${freed}` });
+        clearTimeout(mcStore.reloadTimer);
+        mcStore.reloadTimer = setTimeout(() => { mcLoad(); }, 300);
+      } catch (err) {
+        mcStore.del.delete(key);
+        mcStore.notices.set(key, mcDeleteNotice(err));
+      }
+      mcRender();
+    }
     function mcAction(view, action, b) {
       if (action === "refresh") { view.message = null; mcLoad(); if (mcHfMode(view.filters) && view.filters.hf) mcHubSearch(view, view.filters.hf); return; }
       if (action === "clear") { view.filters = Object.assign(mcDefaultFilters(), { hf: view.filters.hf }); mcWriteHash(view); mcRenderView(view); return; }
@@ -791,7 +876,10 @@ CATALOG_JS = r"""
       if (action === "open-tab") { const f = Object.assign({}, view.filters); closeFirstRunWizard(); openCatalogTab(f); return; }
       if (action === "download") { mcDownload(view, b.dataset.provider, b.dataset.artifact); return; }
       if (action === "cancel") { dlCancel(b.dataset.job, b, b.dataset.dlStep); return; }
-      if (action === "default") { mcUseDefault(view, b.dataset.provider, b.dataset.artifact, b); }
+      if (action === "default") { mcUseDefault(view, b.dataset.provider, b.dataset.artifact, b); return; }
+      if (action === "delete-ask") { mcDeleteAsk(b.dataset.provider, b.dataset.artifact); return; }
+      if (action === "delete-keep") { mcStore.del.delete(downloadJobKey(b.dataset.provider, b.dataset.artifact)); mcRender(); return; }
+      if (action === "delete-confirm") { mcDeleteConfirm(b.dataset.provider, b.dataset.artifact); }
     }
     function mountModelCatalog(key, el, opts) {
       if (!el) return;
