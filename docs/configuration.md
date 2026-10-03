@@ -281,8 +281,8 @@ change from the console, the TUI or the CLI (another process) is live at once.
 
 | Setting | Meaning | Default |
 |---|---|---|
-| `allowed_origins` | Browser origins whose pages may call the gateway, **added** to the always-allowed `http://localhost:*`, `http://127.0.0.1:*` (and, in a network mode, the gateway's own LAN origins). An https page calling its own address through a TLS proxy on the gateway machine that keeps the browser's `Host` (for example `tailscale serve`) needs no entry: see [Reached through Tailscale](#reached-through-tailscale-https). | none |
-| `trust_proxy` | Take the client address from `X-Forwarded-For` (sign-in lockouts, audit log). Only when your own proxy sits in front of every request: otherwise any client chooses the address the gateway sees. | off |
+| `allowed_origins` | Browser origins whose pages may call the gateway, **added** to the always-allowed `http://localhost:*`, `http://127.0.0.1:*` and to the [detected addresses](#detected-addresses-are-accepted-origins). Use it for a proxy or tunnel with its own name. An https page calling its own address through a TLS proxy on the gateway machine that keeps the browser's `Host` (for example `tailscale serve`) needs no entry: see [Reached through Tailscale](#reached-through-tailscale-https). | none |
+| `trust_proxy` | Take the client address from `X-Forwarded-For` sent by a proxy on **another machine** (sign-in lockouts, audit log, the OpenAI API's *Who can connect*). A proxy on the gateway machine (loopback peer) is always believed. Only when your own proxy sits in front of every request: otherwise any client chooses the address the gateway sees. | off |
 
 **Validation** (one place, the gateway; every door shows its sentence
 verbatim). An origin is `scheme://host[:port]`: `http` or `https`, no path, no
@@ -343,9 +343,9 @@ last two):
 
 | | Web console | Console TUI | CLI |
 |---|---|---|---|
-| Where | Network → *Advanced: reverse proxy* | Connection screen, below the addresses | `abstractgateway network …` |
+| Where | Network → *Advanced* | Connection screen, below the addresses | `abstractgateway network …` |
 | Add/replace origins | type an origin, *Add origin* (Enter); × on a chip removes it | *browser origins* line: comma-separated list, Enter saves, empty clears | `set --allowed-origins https://a,https://b` (`""` clears) |
-| Trust proxy | *Trust the proxy's client address* switch | checkbox (Space) | `set --trust-proxy on\|off` |
+| Trust proxy | *Trust proxies on other machines* switch | checkbox (Space) | `set --trust-proxy on\|off` |
 | See values + source | pills: *Saved setting* / *Default* / *Set by the environment* | `[saved setting]` / `[default]` / `[environment override]` + the override line | `network show` (`--json` = the payload) |
 | Refusal | the gateway's sentence under the input | notice `✗ reverse proxy refused: <sentence>` | `refused: <sentence>` on stderr, exit 1 |
 
@@ -359,8 +359,12 @@ reverse-proxy-only change (`mode` is optional).
 `GET /api/gateway/network` lists every address a client can use, discovered on
 each call: loopback; each up interface's IPv4/IPv6 (loopback, link-local and
 down interfaces skipped; macOS names from `networksetup`, e.g. "Wi-Fi"; VPN
-`utun`/CGNAT addresses labelled "VPN"); the Bonjour name `<LocalHostName>.local`
-when it resolves. Discovery uses `psutil` when importable, else `ifconfig -a`
+`utun`/CGNAT addresses labelled "VPN", or "Tailscale" for this device's
+tailnet IPs); the Bonjour name `<LocalHostName>.local` when it resolves; the
+Tailscale name (`kind: tailscale`, `https_url` for `tailscale serve`) when the
+`tailscale` CLI is installed and Tailscale is running (`tailscale status
+--json`, cached 60 s; nothing is listed and nothing fails without it). The
+payload's `tailscale` field is `{dns_name, ips[]}` or `null`. Discovery uses `psutil` when importable, else `ifconfig -a`
 (macOS/BSD) or `ip -o addr show up` (Linux), else the hostname's own
 resolution. Each row says whether the gateway listens there now
 (`reachable`). The WAN address (`kind: public`) is looked up only on request
@@ -412,6 +416,18 @@ A trimmed `GET` in `lan` mode, running and applied:
 }
 ```
 
+### Detected addresses are accepted origins
+
+A browser page served by this gateway at one of the addresses it detects is
+accepted without a manual origin: `http://<address>:<listening port>` for every
+interface address, the Bonjour name and the Tailscale name and IPs, plus
+`https://<tailscale name>` (`tailscale serve`). The list is refreshed in the
+background every 60 s, so an address that appears later (a new Wi-Fi network,
+Tailscale coming up) is accepted without a restart. A DNS-rebinding page keeps
+its own name in its Origin and is still refused. Use `allowed_origins` only
+for a proxy or tunnel with a name of its own. The console shows this under
+**Network → Reached through another address?**.
+
 ### Reached through Tailscale (https)
 
 Reached through Tailscale? On the gateway machine run
@@ -451,64 +467,9 @@ for what each mode changes for someone on your network.
 
 ## OpenAI-compatible endpoint
 
-In the web console, open **Network → OpenAI-compatible endpoint** as an admin.
-Turn on **Enable endpoint**, then copy a **Base URL** into your OpenAI-compatible
-client. The endpoint is disabled by default. It shares the Gateway listener,
-port and Network exposure; there is no separate Core process or port to open.
-The default URL is `http://127.0.0.1:8080/core/v1`. Other reachable addresses
-appear in the same card. A Network bind/port change still requires its normal
-restart; endpoint enablement and token changes apply to subsequent requests
-immediately. Requests already running may finish.
-
-Choose **Requires token** to protect every serving request. Enabling the
-endpoint generates a token if none exists. Admins can **Show**, **Copy token**,
-or **Regenerate token**. Regeneration immediately invalidates the old token for
-new requests; update connected apps. The serving token is separate from
-Gateway sign-in, cloud provider API keys, and any outbound remote-Core token.
-It is stored in `<data dir>/config/core_endpoint.json` with owner-only permissions
-and atomic replacement. Status responses never include the token; explicit
-admin reveal/rotation responses use `Cache-Control: no-store`.
-
-**Open on local network** permits direct loopback, private LAN and private VPN
-clients without a token. It follows the same listener: choose **Local network**
-above if other devices should connect. Public peers, Internet mode and
-reverse-proxy connections require the token even when Open is selected. An
-Internet-to-LAN change keeps token protection until the running Internet bind
-is restarted. Configure proxies to supply forwarded headers, and enable
-Network's proxy trust only for your own proxy. Keep public deployments behind
-TLS and proxy request limits, as with the standalone Core server.
-
-Open clients may use local providers or supply their own provider key in
-`X-AbstractCore-Provider-API-Key`. Using server-held cloud provider credentials
-requires the endpoint token. A supplied invalid bearer token is rejected,
-even in Open mode. Gateway sessions and Gateway user tokens do not authorize
-Core serving. Browser requests also follow Network's allowed-origin policy.
-
-Use `provider/model` as the model name. For example:
-
-```bash
-curl http://127.0.0.1:8080/core/v1/chat/completions \
-  -H "Authorization: Bearer $ABSTRACTCORE_ENDPOINT_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"ollama/your-installed-model","messages":[{"role":"user","content":"Hello"}],"stream":true}'
-```
-
-The mount exposes `GET /v1/models` and `POST /v1/chat/completions`, `/v1/responses`,
-`/v1/embeddings`, `/v1/audio/speech`, `/v1/audio/transcriptions`,
-`/v1/audio/translations`, `/v1/images/generations`, `/v1/images/edits`, and
-`/v1/images/variations`, all below `/core`. Capability availability and supported
-operations follow Core and its installed plugins (unsupported operations retain
-Core's errors). Core configuration and model-management routes are not exposed.
-Streaming passes through Runtime's server facade directly to Core's ASGI server.
-
-Admin API (Gateway authentication):
-
-| Method | Route | Result |
-| --- | --- | --- |
-| GET | `/api/gateway/admin/core-endpoint` | Enabled state, access mode, token presence and base URL |
-| POST | `/api/gateway/admin/core-endpoint` | Save optional `enabled` boolean and `access` (`token` or `open`) |
-| POST | `/api/gateway/admin/core-endpoint/token/reveal` | Return the existing serving token |
-| POST | `/api/gateway/admin/core-endpoint/token/rotate` | Generate/replace and return the serving token |
+The OpenAI-compatible API is served at `http://<gateway>/v1` and managed on the
+console's **OpenAI API** page. See [openai-api.md](./openai-api.md) for what it
+supports, the access settings, the request log and its admin API.
 
 ## Two entry points, one store
 

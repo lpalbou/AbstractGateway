@@ -554,8 +554,8 @@ change from the console, the TUI or the CLI (another process) is live at once.
 
 | Setting | Meaning | Default |
 |---|---|---|
-| `allowed_origins` | Browser origins whose pages may call the gateway, **added** to the always-allowed `http://localhost:*`, `http://127.0.0.1:*` (and, in a network mode, the gateway's own LAN origins). An https page calling its own address through a TLS proxy on the gateway machine that keeps the browser's `Host` (for example `tailscale serve`) needs no entry: see [Reached through Tailscale](#reached-through-tailscale-https). | none |
-| `trust_proxy` | Take the client address from `X-Forwarded-For` (sign-in lockouts, audit log). Only when your own proxy sits in front of every request: otherwise any client chooses the address the gateway sees. | off |
+| `allowed_origins` | Browser origins whose pages may call the gateway, **added** to the always-allowed `http://localhost:*`, `http://127.0.0.1:*` and to the [detected addresses](#detected-addresses-are-accepted-origins). Use it for a proxy or tunnel with its own name. An https page calling its own address through a TLS proxy on the gateway machine that keeps the browser's `Host` (for example `tailscale serve`) needs no entry: see [Reached through Tailscale](#reached-through-tailscale-https). | none |
+| `trust_proxy` | Take the client address from `X-Forwarded-For` sent by a proxy on **another machine** (sign-in lockouts, audit log, the OpenAI API's *Who can connect*). A proxy on the gateway machine (loopback peer) is always believed. Only when your own proxy sits in front of every request: otherwise any client chooses the address the gateway sees. | off |
 
 **Validation** (one place, the gateway; every door shows its sentence
 verbatim). An origin is `scheme://host[:port]`: `http` or `https`, no path, no
@@ -616,9 +616,9 @@ last two):
 
 | | Web console | Console TUI | CLI |
 |---|---|---|---|
-| Where | Network → *Advanced: reverse proxy* | Connection screen, below the addresses | `abstractgateway network …` |
+| Where | Network → *Advanced* | Connection screen, below the addresses | `abstractgateway network …` |
 | Add/replace origins | type an origin, *Add origin* (Enter); × on a chip removes it | *browser origins* line: comma-separated list, Enter saves, empty clears | `set --allowed-origins https://a,https://b` (`""` clears) |
-| Trust proxy | *Trust the proxy's client address* switch | checkbox (Space) | `set --trust-proxy on\|off` |
+| Trust proxy | *Trust proxies on other machines* switch | checkbox (Space) | `set --trust-proxy on\|off` |
 | See values + source | pills: *Saved setting* / *Default* / *Set by the environment* | `[saved setting]` / `[default]` / `[environment override]` + the override line | `network show` (`--json` = the payload) |
 | Refusal | the gateway's sentence under the input | notice `✗ reverse proxy refused: <sentence>` | `refused: <sentence>` on stderr, exit 1 |
 
@@ -632,8 +632,12 @@ reverse-proxy-only change (`mode` is optional).
 `GET /api/gateway/network` lists every address a client can use, discovered on
 each call: loopback; each up interface's IPv4/IPv6 (loopback, link-local and
 down interfaces skipped; macOS names from `networksetup`, e.g. "Wi-Fi"; VPN
-`utun`/CGNAT addresses labelled "VPN"); the Bonjour name `<LocalHostName>.local`
-when it resolves. Discovery uses `psutil` when importable, else `ifconfig -a`
+`utun`/CGNAT addresses labelled "VPN", or "Tailscale" for this device's
+tailnet IPs); the Bonjour name `<LocalHostName>.local` when it resolves; the
+Tailscale name (`kind: tailscale`, `https_url` for `tailscale serve`) when the
+`tailscale` CLI is installed and Tailscale is running (`tailscale status
+--json`, cached 60 s; nothing is listed and nothing fails without it). The
+payload's `tailscale` field is `{dns_name, ips[]}` or `null`. Discovery uses `psutil` when importable, else `ifconfig -a`
 (macOS/BSD) or `ip -o addr show up` (Linux), else the hostname's own
 resolution. Each row says whether the gateway listens there now
 (`reachable`). The WAN address (`kind: public`) is looked up only on request
@@ -685,6 +689,18 @@ A trimmed `GET` in `lan` mode, running and applied:
 }
 ```
 
+### Detected addresses are accepted origins
+
+A browser page served by this gateway at one of the addresses it detects is
+accepted without a manual origin: `http://<address>:<listening port>` for every
+interface address, the Bonjour name and the Tailscale name and IPs, plus
+`https://<tailscale name>` (`tailscale serve`). The list is refreshed in the
+background every 60 s, so an address that appears later (a new Wi-Fi network,
+Tailscale coming up) is accepted without a restart. A DNS-rebinding page keeps
+its own name in its Origin and is still refused. Use `allowed_origins` only
+for a proxy or tunnel with a name of its own. The console shows this under
+**Network → Reached through another address?**.
+
 ### Reached through Tailscale (https)
 
 Reached through Tailscale? On the gateway machine run
@@ -724,64 +740,9 @@ for what each mode changes for someone on your network.
 
 ## OpenAI-compatible endpoint
 
-In the web console, open **Network → OpenAI-compatible endpoint** as an admin.
-Turn on **Enable endpoint**, then copy a **Base URL** into your OpenAI-compatible
-client. The endpoint is disabled by default. It shares the Gateway listener,
-port and Network exposure; there is no separate Core process or port to open.
-The default URL is `http://127.0.0.1:8080/core/v1`. Other reachable addresses
-appear in the same card. A Network bind/port change still requires its normal
-restart; endpoint enablement and token changes apply to subsequent requests
-immediately. Requests already running may finish.
-
-Choose **Requires token** to protect every serving request. Enabling the
-endpoint generates a token if none exists. Admins can **Show**, **Copy token**,
-or **Regenerate token**. Regeneration immediately invalidates the old token for
-new requests; update connected apps. The serving token is separate from
-Gateway sign-in, cloud provider API keys, and any outbound remote-Core token.
-It is stored in `<data dir>/config/core_endpoint.json` with owner-only permissions
-and atomic replacement. Status responses never include the token; explicit
-admin reveal/rotation responses use `Cache-Control: no-store`.
-
-**Open on local network** permits direct loopback, private LAN and private VPN
-clients without a token. It follows the same listener: choose **Local network**
-above if other devices should connect. Public peers, Internet mode and
-reverse-proxy connections require the token even when Open is selected. An
-Internet-to-LAN change keeps token protection until the running Internet bind
-is restarted. Configure proxies to supply forwarded headers, and enable
-Network's proxy trust only for your own proxy. Keep public deployments behind
-TLS and proxy request limits, as with the standalone Core server.
-
-Open clients may use local providers or supply their own provider key in
-`X-AbstractCore-Provider-API-Key`. Using server-held cloud provider credentials
-requires the endpoint token. A supplied invalid bearer token is rejected,
-even in Open mode. Gateway sessions and Gateway user tokens do not authorize
-Core serving. Browser requests also follow Network's allowed-origin policy.
-
-Use `provider/model` as the model name. For example:
-
-```bash
-curl http://127.0.0.1:8080/core/v1/chat/completions \
-  -H "Authorization: Bearer $ABSTRACTCORE_ENDPOINT_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"model":"ollama/your-installed-model","messages":[{"role":"user","content":"Hello"}],"stream":true}'
-```
-
-The mount exposes `GET /v1/models` and `POST /v1/chat/completions`, `/v1/responses`,
-`/v1/embeddings`, `/v1/audio/speech`, `/v1/audio/transcriptions`,
-`/v1/audio/translations`, `/v1/images/generations`, `/v1/images/edits`, and
-`/v1/images/variations`, all below `/core`. Capability availability and supported
-operations follow Core and its installed plugins (unsupported operations retain
-Core's errors). Core configuration and model-management routes are not exposed.
-Streaming passes through Runtime's server facade directly to Core's ASGI server.
-
-Admin API (Gateway authentication):
-
-| Method | Route | Result |
-| --- | --- | --- |
-| GET | `/api/gateway/admin/core-endpoint` | Enabled state, access mode, token presence and base URL |
-| POST | `/api/gateway/admin/core-endpoint` | Save optional `enabled` boolean and `access` (`token` or `open`) |
-| POST | `/api/gateway/admin/core-endpoint/token/reveal` | Return the existing serving token |
-| POST | `/api/gateway/admin/core-endpoint/token/rotate` | Generate/replace and return the serving token |
+The OpenAI-compatible API is served at `http://<gateway>/v1` and managed on the
+console's **OpenAI API** page. See [openai-api.md](docs/openai-api.md) for what it
+supports, the access settings, the request log and its admin API.
 
 ## Two entry points, one store
 
@@ -2165,9 +2126,12 @@ available at `GET /api/gateway/workflow-catalog`.
 
 If the request includes an `Origin` header, the middleware allows it only when
 it matches the allowlist (glob-style patterns, fnmatch). The allowlist is
-`http://localhost:*` and `http://127.0.0.1:*`, the gateway's own LAN origins in
-a network mode, plus the **`allowed_origins` setting** (console: Network →
-*Advanced: reverse proxy*; TUI: Connection screen; CLI:
+`http://localhost:*` and `http://127.0.0.1:*`, the pages served at the
+addresses the gateway detects (`http://<interface address, Bonjour or Tailscale
+name>:<listening port>` and `https://<Tailscale name>`, refreshed every 60 s;
+see [configuration.md](docs/configuration.md#detected-addresses-are-accepted-origins)),
+plus the **`allowed_origins` setting** (console: Network → *Advanced*; TUI:
+Connection screen; CLI:
 `abstractgateway network set --allowed-origins https://gateway.example.com`).
 The setting is read per request: a change applies to the next request, no
 restart. Each origin is validated (`scheme://host[:port]`, no path, no trailing
@@ -2445,10 +2409,12 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
 
 ### Reverse proxies
 
-- The `trust_proxy` setting (console: Network → *Advanced: reverse proxy* →
-  *Trust the proxy's client address*; TUI: Connection screen checkbox; CLI:
-  `abstractgateway network set --trust-proxy on|off`). On: `X-Forwarded-For` is
-  used for IP attribution (audit log) and lockout tracking. Read per request:
+- `X-Forwarded-For` from a proxy on the gateway machine (loopback peer, such
+  as `tailscale serve`) is always used for IP attribution (audit log) and
+  lockout tracking. The `trust_proxy` setting (console: Network → *Advanced* →
+  *Trust proxies on other machines*; TUI: Connection screen checkbox; CLI:
+  `abstractgateway network set --trust-proxy on|off`) extends that to a proxy
+  on another machine. Read per request:
   it applies to the next request. Only when your own proxy sits in front of
   every request; otherwise any client chooses the address the gateway sees.
   The ephemeral tray token never honours it (raw socket peer only).
@@ -2471,9 +2437,198 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
 - API overview: [api.md](docs/api.md)
 - FAQ: [faq.md](docs/faq.md)
 
-## Managed Core serving
+## OpenAI API
 
-The optional `/core/v1` endpoint has a dedicated serving token and an explicit local-network open mode. Gateway user sessions do not grant serving access. Only admins can manage or reveal the token; Core retains its cloud-provider credential protections. See [endpoint access and credential rules](docs/configuration.md#openai-compatible-endpoint).
+The OpenAI-compatible API at `/v1` is stopped by default. In **Protected** mode a caller's API key is their own gateway token, resolved by the security middleware; the gateway forwards authenticated requests to Core with its own internal credential, so a caller's token never reaches Core, and refused keys count toward the per-address lockout. **Open** mode serves direct local, LAN and VPN clients without a key, never through a proxy or in Internet mode, and Core keeps stored cloud-provider credentials for authenticated callers. **Who can connect** filters on the client address (the socket peer, or `X-Forwarded-For` from a proxy on this machine or a trusted proxy); **Anywhere** requires Internet mode with its acknowledgement and Protected. Browser pages without a key are limited to the accepted origins. Every request is one audit-log line (no prompts or replies). See [openai-api.md](docs/openai-api.md).
+
+---
+
+## docs/openai-api.md
+
+# OpenAI API
+
+AbstractGateway serves an OpenAI-compatible API on its own listener, so any app,
+SDK or tool that speaks the OpenAI API can use the models this gateway reaches
+(local engines and connected providers) through one address:
+
+```
+http://<gateway host>:<port>/v1
+```
+
+The API key is the caller's own **gateway token**. There is no separate process
+or port: the API follows the gateway's [Network](docs/configuration.md#network-exposure-localhost--local-network--internet)
+setting, and AbstractCore answers each request behind it.
+
+## Turn it on
+
+Open the web console, **Models → OpenAI API**. The page has five cards:
+
+- **Status**: Running or Stopped, the base URL with **Copy**, the **Endpoint**
+  switch (on: apps can connect; off: apps get 404 and open requests end),
+  **Restart** (ends open requests, keeps serving) and **Check setup** (settings,
+  AbstractCore's server, whether the gateway listens where *Who can connect*
+  needs it, and how many models `/v1/models` lists).
+- **Connect your app**: the base URL and the API key. The key is the token you
+  sign in with; **New key** replaces your gateway token and shows the new one
+  once (your old token stops working everywhere). An admin signed in with the
+  operator token uses that token.
+- **Access**: *Authentication* and *Who can connect* (below). Changes apply to
+  the next request.
+- **Docs**: what is supported, links to this page and to AbstractCore's server
+  docs, and a first request (curl, Python, JavaScript) with your base URL.
+- **Recent requests**: time, client (account and address), model, tokens in and
+  out, latency and status, newest first, refreshed every 5 s. **Open** opens the
+  run in Observer when the request named one. An admin sees every request;
+  anyone else sees their own.
+
+Every signed-in account can open the page and copy the base URL; only an admin
+changes the settings.
+
+## Connect
+
+Use `provider/model` as the model name, as listed by `GET /v1/models`.
+
+```bash
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H "Authorization: Bearer YOUR_GATEWAY_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "ollama/qwen3:4b", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="YOUR_GATEWAY_TOKEN")
+reply = client.chat.completions.create(
+    model="ollama/qwen3:4b",
+    messages=[{"role": "user", "content": "Hello"}],
+)
+print(reply.choices[0].message.content)
+```
+
+```javascript
+import OpenAI from "openai";
+
+const client = new OpenAI({ baseURL: "http://127.0.0.1:8080/v1", apiKey: "YOUR_GATEWAY_TOKEN" });
+const reply = await client.chat.completions.create({
+  model: "ollama/qwen3:4b",
+  messages: [{ role: "user", content: "Hello" }],
+});
+console.log(reply.choices[0].message.content);
+```
+
+The console fills in your real base URL and the gateway's default text model.
+
+## What is supported
+
+Checked with the official `openai` Python SDK:
+
+| Endpoint | Notes |
+| --- | --- |
+| `GET /v1/models` | `{object: "list", data: [{id, object: "model", created, owned_by}]}` |
+| `GET /v1/models/{id}` | one model; `404 model_not_found` otherwise |
+| `POST /v1/chat/completions` | `id`, `object`, `created`, `model`, `choices[].message`, `finish_reason`, `usage.{prompt,completion,total}_tokens`; `tools` and `tool_choice` with structured `tool_calls` (`finish_reason: "tool_calls"`) and `role: "tool"` results; `stream: true` as SSE `data:` chunks (`chat.completion.chunk`, role on the first delta, `finish_reason` on the last chunk) ending with `data: [DONE]`; `stream_options.include_usage` adds a final chunk with `choices: []` and `usage`; `max_completion_tokens` (or `max_tokens`) |
+| `POST /v1/embeddings` | `encoding_format` `float` or `base64` (the SDK's default) |
+
+Also served when an engine for the capability is set up (AbstractCore answers;
+not part of the SDK checks): `POST /v1/responses`, `POST /v1/audio/speech`,
+`POST /v1/audio/transcriptions`, `POST /v1/audio/translations`,
+`POST /v1/images/generations`, `POST /v1/images/edits`,
+`POST /v1/images/variations`.
+
+Not yet: `response_format` other than `{"type": "text"}` (JSON mode,
+structured outputs), `n` greater than 1, `logprobs`, `logit_bias` (each answers
+`400 unsupported_parameter` with the parameter named), and files, batches,
+assistants, fine-tuning, moderations and realtime (`404`).
+
+Accepted and ignored: `user`, `store`, `metadata`, `service_tier`,
+`parallel_tool_calls` and the `OpenAI-Organization` / `OpenAI-Project` headers.
+
+### Errors
+
+Every error uses the OpenAI envelope, so SDKs raise their usual exceptions:
+
+```json
+{"error": {"message": "Incorrect API key provided: use your gateway token.", "type": "invalid_request_error", "param": null, "code": "invalid_api_key"}}
+```
+
+| Status | When | `code` |
+| --- | --- | --- |
+| 400 | invalid request or unsupported parameter | `unsupported_parameter` or none |
+| 401 | missing or wrong key | `invalid_api_key` |
+| 403 | the client is outside *Who can connect*, or a page without a key from an origin that is not accepted | `client_not_allowed`, `origin_not_allowed` |
+| 404 | unknown route, unknown model, or the API is stopped | `model_not_found`, `endpoint_stopped` |
+| 429 | too many refused keys from one address | `auth_lockout` |
+
+Each response carries `x-request-id`.
+
+## Access
+
+**Authentication**
+
+- **Protected (API key)** (default): every request sends a gateway token as
+  `Authorization: Bearer <token>`. The gateway resolves it to the account; the
+  token never reaches AbstractCore. Repeated wrong keys from one address are
+  locked out like sign-in attempts.
+- **Open (no key)**: requests without a key are served. SDKs still require some
+  key value; any text works, for example `not-needed` (a key that is not a gateway token is served as anonymous). Open applies only to
+  direct clients on this machine, your network or your VPN: a request through a
+  proxy, in Internet mode, or with proxies elsewhere trusted needs a key. Cloud
+  providers whose keys are stored on the gateway still need a key; open clients
+  can use local engines or send their own provider key in
+  `X-AbstractCore-Provider-API-Key`.
+
+**Who can connect** filters on the client address:
+
+| Choice | Admits |
+| --- | --- |
+| This machine only (default) | loopback |
+| Devices on my network | also private LAN and link-local addresses |
+| Tailnet (shown when this device is on Tailscale) | also Tailscale addresses (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`) |
+| Anywhere | every address; needs **Internet** on the Network page (with its confirmation) and Protected |
+
+The client address is the socket peer, or the first `X-Forwarded-For` hop when
+the peer is a proxy on this machine (`tailscale serve`, a local nginx) or when
+**Trust proxies on other machines** is on. A proxy on this machine that forwards
+without `X-Forwarded-For` counts as *Anywhere*. The gateway must also listen
+where you allow: the page says so when Network is set to this computer only.
+
+**Browsers.** A web page that sends a key may call the API from any origin (the
+key is the credential; no cookie is used). Without a key, only the gateway's
+[accepted origins](docs/configuration.md#detected-addresses-are-accepted-origins)
+may call it.
+
+## Request log
+
+Each `/v1` request writes one line to the gateway's audit log
+(`<data dir>/audit_log.jsonl`) with an `openai_api` object: client, model,
+`prompt_tokens`, `completion_tokens`, `stream`, and `run_id` when the request
+sent `X-AbstractCore-Run-Id`. Prompts and replies are never logged. The log
+shares the audit log's rotation and retention (`ABSTRACTGATEWAY_AUDIT_LOG_*`);
+with the audit log off, the card stays empty.
+
+## Admin API
+
+| Method | Route | Who | Result |
+| --- | --- | --- | --- |
+| GET | `/api/gateway/openai-api` | any account | status `gateway_openai_api_v1`: `enabled`, `access`, `reach`, `base_url`, `reach_options[]`, `warnings[]`, `listener`, `tailscale`, `key`, `support`, `example_model`, `writable` |
+| GET | `/api/gateway/openai-api/logs?limit=` | any account | `{rows[], scope}`: every request for an admin, the caller's own otherwise |
+| POST | `/api/gateway/admin/core-endpoint` | admin | `{enabled?, access?: token\|open, reach?: machine\|network\|tailnet\|anywhere}`; `409` with the reason when refused |
+| POST | `/api/gateway/admin/core-endpoint/restart` | admin | ends open requests; `{ended_requests}` |
+| POST | `/api/gateway/admin/core-endpoint/check` | admin | `{checks[{id, ok, text}], ok}` |
+| GET | `/api/gateway/admin/core-endpoint` | admin | the same status |
+
+Settings live in `<data dir>/config/core_endpoint.json` (owner-only, atomic
+writes).
+
+## Moving from `/core/v1`
+
+`/core/v1/...` answers `308 Permanent Redirect` to `/v1/...` (method and body
+kept) and is deprecated: point your apps at `/v1`. The dedicated endpoint token
+of gateway 0.12.0 is still accepted as a key, and its routes
+(`/api/gateway/admin/core-endpoint/token/reveal|rotate`) remain, both
+deprecated: use gateway tokens. A 0.12.0 settings file without *Who can
+connect* reads as **Devices on my network**.
 
 ---
 
@@ -3780,11 +3935,14 @@ serve:
 | `/api/gateway/entities/*` | summoned entities | [entities.md](docs/entities.md) |
 | `/api/gateway/automations*`, `/api/gateway/trigger-sources` | automations: recurring workflows, their occurrences and attention | [automations.md](docs/automations.md) |
 
-## Managed OpenAI-compatible serving
+## OpenAI API
 
-The optional `/core/v1` endpoint serves Core inference on this Gateway listener.
-Admins manage enablement and the separate serving token through
-`/api/gateway/admin/core-endpoint`; see [endpoint configuration](docs/configuration.md#openai-compatible-endpoint) for access modes and routes.
+The OpenAI-compatible API is served at `/v1` on this Gateway listener
+(`/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, ...); callers use their
+gateway token as the API key. `/core/v1` answers 308 to `/v1` (deprecated).
+Status and logs: `GET /api/gateway/openai-api[/logs]`; admin changes:
+`/api/gateway/admin/core-endpoint`. See [openai-api.md](docs/openai-api.md) for the
+supported surface, access settings and errors.
 
 ## Auth
 
@@ -5683,11 +5841,12 @@ The sidebar groups the tabs in four sections, in this order:
 | Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches |
 | Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), plus *Advanced: apps settings* and *Advanced: backlog settings (Continuum)* |
 | Models | **Providers** | **Local providers**: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, **Browse models** and its server connection; **Remote providers**: OpenAI, Anthropic, OpenRouter, Portkey and custom OpenAI-compatible connections with write-only keys (shown as fingerprints); then the **Available Providers** table ([below](#models-and-local-providers)) |
+| Models | **OpenAI API** | the OpenAI-compatible API at `/v1`: status with Endpoint switch, Restart and Check setup; the base URL and your API key (your gateway token); Authentication and Who can connect, applied at once; supported surface and snippets; recent requests ([openai-api.md](docs/openai-api.md)) |
 | Models | **Models** | browse models that fit this machine, download them, delete installed ones (below) |
 | Models | **Multimodal** | capability route defaults, the text reasoning effort, the MTP (speculative decoding) default, and model weights per route |
 | System | **Resources** | memory and GPU meters, resident models (warm up, lock, unload), session prompt caches, and the **Gateway** card (pause, update, restart, desktop icon, start at login) |
 | System | **Sandbox** | quick chat and media generation against the configured defaults |
-| System | **Network** | who can reach the gateway (localhost only, local network, internet), its addresses, admin-only [OpenAI-compatible endpoint controls](docs/configuration.md#openai-compatible-endpoint), and *Advanced: reverse proxy* ([configuration.md](docs/configuration.md#network-exposure-localhost--local-network--internet)) |
+| System | **Network** | who can reach the gateway (localhost only, local network, internet), its addresses (with the Tailscale name when Tailscale runs), *Reached through another address?* (Tailscale, a reverse proxy: detected addresses are accepted automatically), and *Advanced*: manual allowed origins and *Trust proxies on other machines* ([configuration.md](docs/configuration.md#network-exposure-localhost--local-network--internet)) |
 
 Below the groups, at the bottom of the sidebar, **Setup** (administrators)
 runs the setup guide again: engines, default models, apps, network. It keeps
@@ -8011,7 +8170,7 @@ the gateway machine whatever it listens on
 [docs/engines.md](docs/engines.md), [docs/model-downloads.md](docs/model-downloads.md)
 and [docs/console.md](docs/console.md).
 
-Admins can enable an [OpenAI-compatible endpoint](docs/configuration.md#openai-compatible-endpoint) in **Network** and manage its dedicated token or open local-network access. It serves AbstractCore providers and models at `/core/v1` on the Gateway listener.
+Admins can turn on the [OpenAI API](docs/openai-api.md) on the console's **OpenAI API** page: any OpenAI SDK or app then uses this gateway's models at `http://<gateway>/v1`, with the caller's gateway token as the API key.
 
 ### Browser apps, network access and the tray
 
@@ -8369,7 +8528,7 @@ Related repos:
 | [getting-started.md](docs/getting-started.md) | explicit setup: bundles, starting and scheduling runs, split API/runner, file vs SQLite stores |
 | [architecture.md](docs/architecture.md) | components, diagrams, the replay-first durable contract, live replies, the workspace guard, the desktop hand-over, deployment shapes |
 | [api.md](docs/api.md) | the client contract with curl examples: the gateway default workflow (`@default`), live replies, a run's workspace folder, durable commands, the automation routes, discovery, media, models, host state, `/about`; map of every route family |
-| [configuration.md](docs/configuration.md) | every setting: runtime settings, network exposure, the OpenAI-compatible endpoint, apps, default agent workflows, stream replies, skills shelf, backlog, workspace policy, capability defaults, environment variables, CLI flags |
+| [configuration.md](docs/configuration.md) | every setting: runtime settings, network exposure (detected addresses, Tailscale), apps, default agent workflows, stream replies, skills shelf, backlog, workspace policy, capability defaults, environment variables, CLI flags |
 | [faq.md](docs/faq.md) | recurring questions and limits |
 | [troubleshooting.md](docs/troubleshooting.md) | symptoms, causes and fixes: sign-in, network modes, runs, installs, downloads, tray, login service |
 
@@ -8379,6 +8538,7 @@ Related repos:
 |---|---|
 | [email.md](docs/email.md) | per-user email: connecting your own mailbox (password or OAuth2), recipient policy and send limits, automations on new mail, email notifications, account recovery by email, the administrator switch, migration from the retired environment variables |
 | [automations.md](docs/automations.md) | automations: a workflow run on a trigger as a durable controller run; every route with its shapes, the error envelope, tool approval, typed waits and how to answer them, attention and `/seen`, discussions, run lists, legacy schedules, operations (one writer process, restart recovery, boot warm-up, the acceptance script) and the limits of v1 |
+| [openai-api.md](docs/openai-api.md) | the OpenAI-compatible API at `/v1`: connecting apps and SDKs, what is supported, Protected/Open and Who can connect, errors, the request log, moving from `/core/v1` |
 | [console.md](docs/console.md) | the web console at `/console` (the grouped sidebar and every tab, including Accounts and Workflows; responsive layout on phones and tablets) and the `abstractgateway-console` terminal app (its screens and keys) |
 | [apps.md](docs/apps.md) | installing, starting and opening the browser apps (Flow, Code, Observer, Continuum, Entity), Code's terminal app and the desktop Assistant |
 | [engines.md](docs/engines.md) | installing local engines (Ollama, LM Studio, MLX, llama.cpp, vLLM, Hugging Face): what each Install does, when a password or the Apple tools are needed |
@@ -8837,8 +8997,8 @@ and set the mode again. See [security.md](docs/security.md#network-exposure).
   `internet`, applied (no restart pending).
 - Use an address from `abstractgateway network addresses`; the machine's
   firewall must allow the port.
-- The console accepts the gateway's own LAN origins discovered at start. An
-  address that appeared later (another Wi-Fi network) needs a restart.
+- The console accepts the gateway's own addresses (LAN, Bonjour, Tailscale)
+  automatically; one that appears later is accepted within a minute.
 - Behind a reverse proxy or tunnel, add its public origin with
   `abstractgateway network set --allowed-origins https://your.host`.
 
@@ -9168,7 +9328,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- OpenAI API at `/v1` (standard layout: `/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, ...) with its own console page, **Models → OpenAI API**: Running/Stopped status with the Endpoint switch, Restart (ends open requests) and Check setup; Connect your app (base URL, your gateway token as the API key, New key); Authentication (Protected or Open) and Who can connect (this machine, your network, your tailnet, anywhere), applied immediately with plain warnings; supported surface and curl/Python/JavaScript examples with the real base URL; recent requests from the audit log (client, model, tokens, latency, status, Open in Observer when a run is named). Status for every account at `GET /api/gateway/openai-api`, logs at `GET /api/gateway/openai-api/logs`; admin `POST /api/gateway/admin/core-endpoint {reach}`, `/restart` and `/check`. See [docs/openai-api.md](docs/openai-api.md).
+- OpenAI conformance at the `/v1` boundary, checked with the official `openai` Python SDK: the standard error envelope `{"error": {message, type, param, code}}` (validation errors answer 400), `GET /v1/models/{id}`, structured `tool_calls` for every model, chat stream chunks with the role on the first delta and `finish_reason` on the last, `stream_options.include_usage`, `max_completion_tokens`, base64 embeddings (the SDK default), `404 model_not_found` for an id that is not `provider/model`, and `400 unsupported_parameter` for `response_format` (other than text), `n > 1`, `logprobs` and `logit_bias`. `x-request-id` on every response; browser SDKs that send a key may call from any origin.
+- Network: the Tailscale name (`tailscale status --json`, when the CLI is installed and Tailscale runs) is listed with the addresses, and every detected address (LAN, Bonjour, Tailscale) is an accepted browser origin without a manual entry or a restart. **Reached through another address?** explains it; manual allowed origins and proxy trust sit under **Advanced**.
+
 - Models page: **Delete** (a trash-bin icon, tooltip "Delete") on every downloaded build. The confirmation states the size from the gateway ("Deletes 351 MB from this computer. Files only — nothing in your runs is touched."), the row shows a busy state, then "Not downloaded" and what was freed. New admin route `POST /api/gateway/models/delete-download` (`model_download_delete_v1`, `dry_run` measures): removes the files with the engine's own mechanism (Ollama delete, Hugging Face / MLX cache folder, one GGUF quant's files), refuses a model that is loaded or locked ("Unload it first"), still downloading, or managed by LM Studio, and writes `model.download_deleted` / `model.download_delete_refused` audit events. Needs AbstractCore with per-quant GGUF delete and the repo-scoped cache delete (branch `round4/2026-10-03`). The terminal console keeps its own delete for now.
+
+### Changed
+
+- The OpenAI-compatible endpoint moved from `/core/v1` to `/v1`; `/core/v1` answers 308 to `/v1` and is deprecated. API keys are gateway tokens; the 0.12.0 endpoint token is still accepted (deprecated). Its settings left the Network page (a pointer remains).
+- `X-Forwarded-For` from a proxy on the gateway machine is now always used for the client address; the switch, renamed **Trust proxies on other machines**, extends it to proxies elsewhere.
 
 ### Fixed
 

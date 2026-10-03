@@ -1,4 +1,4 @@
-"""Real browser coverage for the admin Core endpoint card at three screen sizes."""
+"""Real browser coverage for the OpenAI API page at three screen sizes, admin and user."""
 import json
 import os
 import re

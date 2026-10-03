@@ -69,7 +69,7 @@ the gateway machine whatever it listens on
 [docs/engines.md](docs/engines.md), [docs/model-downloads.md](docs/model-downloads.md)
 and [docs/console.md](docs/console.md).
 
-Admins can enable an [OpenAI-compatible endpoint](docs/configuration.md#openai-compatible-endpoint) in **Network** and manage its dedicated token or open local-network access. It serves AbstractCore providers and models at `/core/v1` on the Gateway listener.
+Admins can turn on the [OpenAI API](docs/openai-api.md) on the console's **OpenAI API** page: any OpenAI SDK or app then uses this gateway's models at `http://<gateway>/v1`, with the caller's gateway token as the API key.
 
 ### Browser apps, network access and the tray
 

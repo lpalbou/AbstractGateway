@@ -123,8 +123,8 @@ and set the mode again. See [security.md](./security.md#network-exposure).
   `internet`, applied (no restart pending).
 - Use an address from `abstractgateway network addresses`; the machine's
   firewall must allow the port.
-- The console accepts the gateway's own LAN origins discovered at start. An
-  address that appeared later (another Wi-Fi network) needs a restart.
+- The console accepts the gateway's own addresses (LAN, Bonjour, Tailscale)
+  automatically; one that appears later is accepted within a minute.
 - Behind a reverse proxy or tunnel, add its public origin with
   `abstractgateway network set --allowed-origins https://your.host`.
 

@@ -36,11 +36,14 @@ serve:
 | `/api/gateway/entities/*` | summoned entities | [entities.md](./entities.md) |
 | `/api/gateway/automations*`, `/api/gateway/trigger-sources` | automations: recurring workflows, their occurrences and attention | [automations.md](./automations.md) |
 
-## Managed OpenAI-compatible serving
+## OpenAI API
 
-The optional `/core/v1` endpoint serves Core inference on this Gateway listener.
-Admins manage enablement and the separate serving token through
-`/api/gateway/admin/core-endpoint`; see [endpoint configuration](./configuration.md#openai-compatible-endpoint) for access modes and routes.
+The OpenAI-compatible API is served at `/v1` on this Gateway listener
+(`/v1/models`, `/v1/chat/completions`, `/v1/embeddings`, ...); callers use their
+gateway token as the API key. `/core/v1` answers 308 to `/v1` (deprecated).
+Status and logs: `GET /api/gateway/openai-api[/logs]`; admin changes:
+`/api/gateway/admin/core-endpoint`. See [openai-api.md](./openai-api.md) for the
+supported surface, access settings and errors.
 
 ## Auth
 

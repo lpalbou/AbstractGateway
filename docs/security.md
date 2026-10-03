@@ -355,9 +355,12 @@ available at `GET /api/gateway/workflow-catalog`.
 
 If the request includes an `Origin` header, the middleware allows it only when
 it matches the allowlist (glob-style patterns, fnmatch). The allowlist is
-`http://localhost:*` and `http://127.0.0.1:*`, the gateway's own LAN origins in
-a network mode, plus the **`allowed_origins` setting** (console: Network →
-*Advanced: reverse proxy*; TUI: Connection screen; CLI:
+`http://localhost:*` and `http://127.0.0.1:*`, the pages served at the
+addresses the gateway detects (`http://<interface address, Bonjour or Tailscale
+name>:<listening port>` and `https://<Tailscale name>`, refreshed every 60 s;
+see [configuration.md](./configuration.md#detected-addresses-are-accepted-origins)),
+plus the **`allowed_origins` setting** (console: Network → *Advanced*; TUI:
+Connection screen; CLI:
 `abstractgateway network set --allowed-origins https://gateway.example.com`).
 The setting is read per request: a change applies to the next request, no
 restart. Each origin is validated (`scheme://host[:port]`, no path, no trailing
@@ -635,10 +638,12 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
 
 ### Reverse proxies
 
-- The `trust_proxy` setting (console: Network → *Advanced: reverse proxy* →
-  *Trust the proxy's client address*; TUI: Connection screen checkbox; CLI:
-  `abstractgateway network set --trust-proxy on|off`). On: `X-Forwarded-For` is
-  used for IP attribution (audit log) and lockout tracking. Read per request:
+- `X-Forwarded-For` from a proxy on the gateway machine (loopback peer, such
+  as `tailscale serve`) is always used for IP attribution (audit log) and
+  lockout tracking. The `trust_proxy` setting (console: Network → *Advanced* →
+  *Trust proxies on other machines*; TUI: Connection screen checkbox; CLI:
+  `abstractgateway network set --trust-proxy on|off`) extends that to a proxy
+  on another machine. Read per request:
   it applies to the next request. Only when your own proxy sits in front of
   every request; otherwise any client chooses the address the gateway sees.
   The ephemeral tray token never honours it (raw socket peer only).
@@ -661,6 +666,6 @@ All are loaded by `load_gateway_auth_policy_from_env()` (see `src/abstractgatewa
 - API overview: [api.md](./api.md)
 - FAQ: [faq.md](./faq.md)
 
-## Managed Core serving
+## OpenAI API
 
-The optional `/core/v1` endpoint has a dedicated serving token and an explicit local-network open mode. Gateway user sessions do not grant serving access. Only admins can manage or reveal the token; Core retains its cloud-provider credential protections. See [endpoint access and credential rules](./configuration.md#openai-compatible-endpoint).
+The OpenAI-compatible API at `/v1` is stopped by default. In **Protected** mode a caller's API key is their own gateway token, resolved by the security middleware; the gateway forwards authenticated requests to Core with its own internal credential, so a caller's token never reaches Core, and refused keys count toward the per-address lockout. **Open** mode serves direct local, LAN and VPN clients without a key, never through a proxy or in Internet mode, and Core keeps stored cloud-provider credentials for authenticated callers. **Who can connect** filters on the client address (the socket peer, or `X-Forwarded-For` from a proxy on this machine or a trusted proxy); **Anywhere** requires Internet mode with its acknowledgement and Protected. Browser pages without a key are limited to the accepted origins. Every request is one audit-log line (no prompts or replies). See [openai-api.md](./openai-api.md).
