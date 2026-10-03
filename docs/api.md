@@ -816,6 +816,11 @@ with the `resume` command above; the answer's shape depends on the wait's
 the run works in; absent on sub-runs), accept `session_kind=chat,discussion`, and
 `root_only=true` returns conversation turns, one per occurrence
 ([automations.md](./automations.md#automations-in-run-lists)).
+With `include_metrics=true` each row also carries `steps`, `llm_calls`,
+`tool_calls` and `tokens_total`: the totals of that run and every sub-run
+below it, read from the ledger on either store backend (null when the gateway
+has no ledger store). AbstractCode's conversation card shows the sum of its
+turns' `tool_calls`.
 
 ## Beyond the core
 

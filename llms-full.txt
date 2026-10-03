@@ -4560,6 +4560,11 @@ with the `resume` command above; the answer's shape depends on the wait's
 the run works in; absent on sub-runs), accept `session_kind=chat,discussion`, and
 `root_only=true` returns conversation turns, one per occurrence
 ([automations.md](docs/automations.md#automations-in-run-lists)).
+With `include_metrics=true` each row also carries `steps`, `llm_calls`,
+`tool_calls` and `tokens_total`: the totals of that run and every sub-run
+below it, read from the ledger on either store backend (null when the gateway
+has no ledger store). AbstractCode's conversation card shows the sum of its
+turns' `tool_calls`.
 
 ## Beyond the core
 
@@ -9168,6 +9173,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Models page: the filters-in-use label no longer overlaps the "N of M models" count on a narrow screen.
+
+### Changed
+
+- `GET /api/gateway/runs?include_metrics=true` returns each run's totals across its sub-runs (subworkflows, agent sub-runs) as documented, and on the default file store too: `steps`, `llm_calls`, `tool_calls` and `tokens_total` are read from the ledger. Terminal runs are cached by run id and update time.
 
 ## [0.12.0] - 2026-10-03
 

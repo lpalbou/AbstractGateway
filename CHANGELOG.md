@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Models page: the filters-in-use label no longer overlaps the "N of M models" count on a narrow screen.
 
+### Changed
+
+- `GET /api/gateway/runs?include_metrics=true` returns each run's totals across its sub-runs (subworkflows, agent sub-runs) as documented, and on the default file store too: `steps`, `llm_calls`, `tool_calls` and `tokens_total` are read from the ledger. Terminal runs are cached by run id and update time.
+
 ## [0.12.0] - 2026-10-03
 
 ### Added

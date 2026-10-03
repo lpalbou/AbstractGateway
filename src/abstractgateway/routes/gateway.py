@@ -9503,7 +9503,7 @@ async def list_runs(
     root_only: bool = Query(False, description="If true, return only TURN ROOTS: parent-less runs that are not automation controllers, plus automation occurrence runs (so an automation session reads as a chat)."),
     session_kind: Optional[str] = Query(None, description="Optional comma-separated session_kind filter: chat|automation|occurrence|discussion (e.g. `chat,discussion` = what a normal chat list shows)."),
     include_ledger_len: bool = Query(True, description="If true, include ledger_len (may be slow for file-backed ledgers)."),
-    include_metrics: bool = Query(False, description="If true, include best-effort llm/tool counts (aggregated across child runs)."),
+    include_metrics: bool = Query(False, description="If true, each listed run carries steps / llm_calls / tool_calls / tokens_total: the totals of that run and every sub-run below it, read from the ledger (null when the gateway has no ledger store)."),
     include_drafts: bool = Query(False, description="If true, include private draft-test runs in the response."),
 ) -> Dict[str, Any]:
     """List recent runs (summary only; never returns full run.vars)."""
@@ -9656,7 +9656,6 @@ async def list_runs(
         items: list[Dict[str, Any]] = []
         used_index = False
         scan_truncated = False
-        runs_all_for_metrics: Optional[List[Any]] = None
         if isinstance(rs, QueryableRunIndexStore):
             try:
                 # Overfetch a bit to account for filtering internal runs or malformed rows.
@@ -9758,7 +9757,6 @@ async def list_runs(
                 scan_limit = min(_RUNS_SCAN_CAP, scan_limit * 4)
 
             runs_all = list(runs or [])
-            runs_all_for_metrics = runs_all
             if sid:
                 runs_all = [r for r in runs_all if str(getattr(r, "session_id", "") or "").strip() == sid]
 
@@ -9789,112 +9787,10 @@ async def list_runs(
         items = items[int(offset): int(offset) + int(limit)]
 
         if bool(include_metrics):
-            run_ids = [str(it.get("run_id") or "").strip() for it in items if str(it.get("run_id") or "").strip()]
-            metrics_many = getattr(ledger_store, "metrics_many", None) if ledger_store is not None else None
-            metrics: Dict[str, Any] = {}
-            if callable(metrics_many):
-                try:
-                    raw = metrics_many(run_ids)
-                    metrics = raw if isinstance(raw, dict) else {}
-                except Exception:
-                    metrics = {}
-            if not metrics and runs_all_for_metrics is not None:
-                # Fallback: derive per-run metrics from runtime-owned traces when a ledger metrics API isn't available.
-                def _rid(run_obj: Any) -> str:
-                    return str(getattr(run_obj, "run_id", "") or "").strip()
+            # Totals of each listed run AND its sub-runs, from the ledger (run_metrics.py).
+            from ..run_metrics import attach_turn_metrics
 
-                def _parent_id(run_obj: Any) -> str:
-                    return str(getattr(run_obj, "parent_run_id", "") or "").strip()
-
-                def _extract_run_trace_metrics(run_obj: Any) -> tuple[int, int, int]:
-                    steps_done = 0
-                    llm_calls = 0
-                    tool_calls = 0
-                    try:
-                        vars_obj = getattr(run_obj, "vars", None)
-                        runtime_ns = vars_obj.get("_runtime") if isinstance(vars_obj, dict) else None
-                        traces = runtime_ns.get("node_traces") if isinstance(runtime_ns, dict) else None
-                        if not isinstance(traces, dict):
-                            return (0, 0, 0)
-                        for node_trace in traces.values():
-                            steps = node_trace.get("steps") if isinstance(node_trace, dict) else None
-                            if not isinstance(steps, list):
-                                continue
-                            for s in steps:
-                                if not isinstance(s, dict):
-                                    continue
-                                st = str(s.get("status") or "").strip()
-                                if st != "completed":
-                                    continue
-                                steps_done += 1
-                                eff = s.get("effect") if isinstance(s.get("effect"), dict) else None
-                                eff_type = str((eff or {}).get("type") or "").strip()
-                                if eff_type == "llm_call":
-                                    llm_calls += 1
-                                    continue
-                                if eff_type == "tool_calls":
-                                    payload = eff.get("payload") if isinstance(eff, dict) and isinstance(eff.get("payload"), dict) else None
-                                    calls = payload.get("tool_calls") if isinstance(payload, dict) else None
-                                    if isinstance(calls, list):
-                                        tool_calls += len([c for c in calls if c is not None])
-                    except Exception:
-                        return (0, 0, 0)
-                    return (int(steps_done), int(llm_calls), int(tool_calls))
-
-                metrics_self: Dict[str, tuple[int, int, int]] = {}
-                children_by_parent: Dict[str, list[str]] = {}
-                for r in runs_all_for_metrics:
-                    rid0 = _rid(r)
-                    if not rid0:
-                        continue
-                    metrics_self[rid0] = _extract_run_trace_metrics(r)
-                    pid = _parent_id(r)
-                    if pid:
-                        children_by_parent.setdefault(pid, []).append(rid0)
-
-                def _aggregate(root_id: str) -> tuple[int, int, int]:
-                    if not root_id:
-                        return (0, 0, 0)
-                    steps = 0
-                    llm = 0
-                    tools = 0
-                    from collections import deque
-
-                    queue = deque([root_id])
-                    seen: set[str] = set()
-                    while queue and len(seen) < 5000:
-                        rid0 = str(queue.popleft() or "").strip()
-                        if not rid0 or rid0 in seen:
-                            continue
-                        seen.add(rid0)
-                        s, l, t = metrics_self.get(rid0, (0, 0, 0))
-                        steps += int(s)
-                        llm += int(l)
-                        tools += int(t)
-                        for cid in children_by_parent.get(rid0, []):
-                            if cid not in seen:
-                                queue.append(cid)
-                    return (int(steps), int(llm), int(tools))
-
-                for item in items:
-                    rid = str(item.get("run_id") or "").strip()
-                    if not rid:
-                        continue
-                    s, l, t = _aggregate(rid)
-                    metrics[rid] = {"steps": s, "llm_calls": l, "tool_calls": t}
-            for item in items:
-                rid = str(item.get("run_id") or "").strip()
-                m = metrics.get(rid) if rid else None
-                if isinstance(m, dict):
-                    item["steps"] = m.get("steps")
-                    item["llm_calls"] = m.get("llm_calls")
-                    item["tool_calls"] = m.get("tool_calls")
-                    item["tokens_total"] = m.get("tokens_total")
-                else:
-                    item.setdefault("steps", None)
-                    item.setdefault("llm_calls", None)
-                    item.setdefault("tool_calls", None)
-                    item.setdefault("tokens_total", None)
+            attach_turn_metrics(items, rs, ledger_store)
 
         if bool(include_ledger_len) and ledger_store is not None:
             run_ids = [str(it.get("run_id") or "").strip() for it in items if str(it.get("run_id") or "").strip()]

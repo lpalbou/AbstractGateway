@@ -476,6 +476,83 @@ def test_list_runs_include_metrics_with_sqlite_backend(tmp_path: Path, monkeypat
         assert match.get("tokens_total") == 12
 
 
+def _completed(run_id: str, step_id: str, effect: dict, result: dict | None = None):
+    from abstractruntime.core.models import StepRecord, StepStatus
+
+    return StepRecord(run_id=run_id, step_id=step_id, node_id="n", status=StepStatus.COMPLETED, effect=effect, result=result or {})
+
+
+@pytest.mark.parametrize("backend", ["file", "sqlite"])
+def test_list_runs_include_metrics_totals_the_turn_subtree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: str) -> None:
+    """Round 4 (AbstractCode conversation card `2 turns · 7 tools`): a turn root's
+    tool_calls is the total of its own ledger AND its sub-runs', on the default
+    file store too (its JSONL ledger has no metrics query)."""
+    runtime_dir = tmp_path / "runtime"
+    bundles_dir = tmp_path / "bundles"
+    _write_min_bundle(bundles_dir=bundles_dir, bundle_id="bundle-tools", flow_id="root")
+
+    token = "t"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(runtime_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_FLOWS_DIR", str(bundles_dir))
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKFLOW_SOURCE", "bundle")
+    monkeypatch.setenv("ABSTRACTGATEWAY_AUTH_TOKEN", token)
+    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv("ABSTRACTGATEWAY_POLL_S", "0.05")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TICK_WORKERS", "1")
+    monkeypatch.setenv("ABSTRACTGATEWAY_STORE_BACKEND", backend)
+
+    from abstractgateway.app import app
+    from abstractgateway.run_metrics import clear_cache
+
+    clear_cache()
+    headers = {"Authorization": f"Bearer {token}"}
+    with TestClient(app) as client:
+        start = client.post("/api/gateway/runs/start", headers=headers, json={"bundle_id": "bundle-tools", "flow_id": "root", "input_data": {}})
+        assert start.status_code == 200, start.text
+        run_id = start.json()["run_id"]
+        _wait_until(lambda: client.get(f"/api/gateway/runs/{run_id}", headers=headers).json().get("status") == "completed")
+
+        from abstractgateway.service import get_gateway_service
+        from abstractruntime.core.models import RunState, RunStatus
+
+        svc = get_gateway_service()
+        rs = svc.host.run_store
+        ledger = svc.host.ledger_store
+        root = rs.load(run_id)
+        child = RunState(run_id=f"{run_id}-child", workflow_id="bundle-tools:root", status=RunStatus.COMPLETED,
+                         current_node="n", session_id=root.session_id, parent_run_id=run_id)
+        grandchild = RunState(run_id=f"{run_id}-grandchild", workflow_id="bundle-tools:root", status=RunStatus.COMPLETED,
+                              current_node="n", session_id=root.session_id, parent_run_id=child.run_id)
+        rs.save(child)
+        rs.save(grandchild)
+        ledger.append(_completed(run_id, "m1", {"type": "llm_call", "payload": {}}, {"usage": {"total_tokens": 12}}))
+        ledger.append(_completed(run_id, "t1", {"type": "tool_calls", "payload": {"tool_calls": [{"name": "a"}, {"name": "b"}]}}))
+        ledger.append(_completed(child.run_id, "t2", {"type": "tool_calls", "payload": {"tool_calls": [{"name": "c"}, {"name": "d"}, {"name": "e"}]}}))
+        ledger.append(_completed(grandchild.run_id, "t3", {"type": "tool_calls", "payload": {"tool_calls": [{"name": "f"}, {"name": "g"}]}}))
+
+        listed = client.get("/api/gateway/runs?root_only=true&limit=25&include_metrics=true&include_ledger_len=false", headers=headers)
+        assert listed.status_code == 200, listed.text
+        match = next(i for i in listed.json()["items"] if i.get("run_id") == run_id)
+        assert match["tool_calls"] == 7
+        assert match["llm_calls"] == 1
+        assert match["tokens_total"] == 12
+        # Without the flag the fields are not served (the list stays cheap).
+        plain = client.get("/api/gateway/runs?root_only=true&limit=25&include_ledger_len=false", headers=headers)
+        assert "tool_calls" not in next(i for i in plain.json()["items"] if i.get("run_id") == run_id)
+
+
+def test_metrics_from_records_counts_completed_steps_only() -> None:
+    from abstractgateway.run_metrics import metrics_from_records
+
+    records = [
+        {"status": "started", "effect": {"type": "tool_calls", "payload": {"tool_calls": [{"name": "x"}]}}},
+        {"status": "completed", "effect": {"type": "tool_calls", "payload": {"tool_calls": [{"name": "x"}, None]}}},
+        {"status": "completed", "effect": {"type": "llm_call"}, "result": {"usage": {"total_tokens": 5}}},
+        "garbage",
+    ]
+    assert metrics_from_records(records) == {"steps": 2, "llm_calls": 1, "tool_calls": 1, "tokens_total": 5}
+
+
 def test_list_runs_rejects_unknown_query_params(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """flow c5253 P1-2: an unknown/typo'd filter used to be silently IGNORED
     — ?parent_run_idd=... returned the whole global store while looking
