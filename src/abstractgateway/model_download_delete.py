@@ -21,7 +21,8 @@ What the Gateway adds before anything is touched:
   - a download of the same artifact still running is refused ("Cancel it first");
   - `dry_run` answers the exact bytes that would be freed, for the console's
     confirmation sentence, and runs the same refusals;
-  - every outcome is a typed audit event in `<data_dir>/audit_log.jsonl`
+  - every delete and every refusal (dry run included, with `dry_run`) is a
+    typed audit event in `<data_dir>/audit_log.jsonl`
     (`model.download_deleted` / `model.download_delete_refused`).
 
 The answer (`model_download_delete_v1`) carries `freed_bytes`, the engine's
@@ -219,11 +220,12 @@ def delete_download(
     try:
         return _delete(provider, artifact, dry_run, actor, resident_rows, active_job or active_job_for, core_delete or core_model_delete, HostActionRefused)
     except DownloadDeleteRefused as exc:
-        if not dry_run:
-            audit_event(
-                "model.download_delete_refused", provider=provider, artifact=artifact, actor=actor or None,
-                outcome=exc.body.get("status"), reason=exc.body.get("reason"),
-            )
+        # The console always measures first (dry run), so that is where its
+        # refusals happen: every refusal is recorded, with `dry_run`.
+        audit_event(
+            "model.download_delete_refused", provider=provider, artifact=artifact, actor=actor or None,
+            outcome=exc.body.get("status"), reason=exc.body.get("reason"), dry_run=bool(dry_run),
+        )
         raise
 
 

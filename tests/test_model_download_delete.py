@@ -200,6 +200,9 @@ def test_a_resident_model_is_refused_with_unload_it_first_and_nothing_is_deleted
     gw["resident"][0]["locked"] = True
     locked = gw["client"].post(URL, headers=gw["h"], json={"provider": "mlx", "artifact": "mlx-community/Qwen3-8B-4bit", "dry_run": True})
     assert locked.status_code == 409 and locked.json()["reason"] == "locked"
+    # The console's refusals happen on its measuring dry run: recorded too.
+    last = _events(gw["data"], "model.download_delete_refused")[-1]
+    assert last["reason"] == "locked" and last["dry_run"] is True
     assert "Unlock and unload it first" in locked.json()["fix"]
     assert folder.exists()
 

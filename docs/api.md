@@ -1309,8 +1309,8 @@ A build whose files AbstractCore files under the sibling engine of the shared
 Hugging Face cache (MLX vs Hugging Face) is deleted all the same, and
 `also_used_by` names that engine. Every real delete writes
 `model.download_deleted` (`provider`, `artifact`, `actor`, `freed_bytes`,
-`paths`) to `<data_dir>/audit_log.jsonl`; a refusal writes
-`model.download_delete_refused` with its `reason`.
+`paths`) to `<data_dir>/audit_log.jsonl`; every refusal (a dry run's too)
+writes `model.download_delete_refused` with its `reason` and `dry_run`.
 
 Example:
 
