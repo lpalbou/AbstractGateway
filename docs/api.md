@@ -1229,6 +1229,7 @@ are the same as AbstractCore's own `/acore/*` routes; `abstractcore` and
 | `POST /models/download/{job}/cancel` | admin | none | `{"ok": true, "job": {...}}`; stops the transfer within about a second; a `grp_...` id cancels every running child; 404 when unknown |
 | `GET /models/downloads/stream` | user | `job_id`, `until_idle=1` | Server-Sent Events of the same dicts, see [model-downloads.md](./model-downloads.md) |
 | `POST /models/delete` | admin | `{"provider", "artifact", "dry_run": bool, "force": bool}` | `host_job_v1` (kind `delete`) |
+| `POST /models/delete-download` | admin | `{"provider", "artifact", "dry_run": bool}` (the catalog's own names) | `model_download_delete_v1`, see "Delete a download" below |
 | `GET /jobs` | user | `kind`, `status` | `{"schema": "host_jobs_v1", "jobs": [...], "generated_at"}`, newest first |
 | `GET /jobs/{id}` | user | | `host_job_v1`; 404 when unknown |
 | `POST /jobs/{id}/cancel` | admin | none (an empty `{}` is accepted) | `host_job_v1`; 404 when unknown |
@@ -1288,6 +1289,28 @@ each source reports: [model-downloads.md](./model-downloads.md).
 | 409 `refused` | the engine is not supported here or has no install command (`install` is the plan), or a delete is blocked (`delete_blockers`: `loaded`, `shared_cache:…`, `unknown_location`, `engine_not_running`, `remote_engine`; `force: true` overrides the first two) |
 | 501 `unsupported` / `abstractcore_too_old` | the installed AbstractCore is too old for these routes; `required`, `installed` and `missing` name what to upgrade |
 | 503 `unavailable` | AbstractCore is not installed |
+
+**Delete a download** (`POST /models/delete-download`, the console's
+Models-page Delete). Synchronous; removes one downloaded artifact with its
+engine's own mechanism: Ollama's `DELETE /api/delete` (what `ollama rm` does),
+the Hugging Face / MLX cache folder of the repo, or, for `org/repo:QUANT`
+(a llama.cpp GGUF quant), only that quant's files (the repo goes when it was
+the last model file set). `dry_run: true` deletes nothing and answers the
+exact bytes for the confirmation. Answers:
+
+| Status | Body |
+|---|---|
+| 200 | `{"schema": "model_download_delete_v1", "ok": true, "status": "planned" \| "deleted", "provider", "artifact", "freed_bytes", "paths", "command", "also_used_by", "presence": "installed" \| "absent", "message"}` |
+| 409 `refused` | `reason`: `resident` (this gateway or the engine has it loaded: "Unload it first"), `locked` ("Unlock and unload it first"), `downloading` (its download is still running), `managed_elsewhere` (LM Studio: its CLI has no remove command, delete it in LM Studio), `engine_not_running`, `unknown_location`, `remote_engine`; `message` and `fix` are sentences to show as they are |
+| 404 `not_found` | `reason: "not_downloaded"` |
+| 502 `failed` | `reason: "engine_failed"`: the engine did not delete; `command` names what ran |
+
+A build whose files AbstractCore files under the sibling engine of the shared
+Hugging Face cache (MLX vs Hugging Face) is deleted all the same, and
+`also_used_by` names that engine. Every real delete writes
+`model.download_deleted` (`provider`, `artifact`, `actor`, `freed_bytes`,
+`paths`) to `<data_dir>/audit_log.jsonl`; a refusal writes
+`model.download_delete_refused` with its `reason`.
 
 Example:
 

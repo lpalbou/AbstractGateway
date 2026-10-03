@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Models page: **Delete** (a trash-bin icon, tooltip "Delete") on every downloaded build. The confirmation states the size from the gateway ("Deletes 351 MB from this computer. Files only — nothing in your runs is touched."), the row shows a busy state, then "Not downloaded" and what was freed. New admin route `POST /api/gateway/models/delete-download` (`model_download_delete_v1`, `dry_run` measures): removes the files with the engine's own mechanism (Ollama delete, Hugging Face / MLX cache folder, one GGUF quant's files), refuses a model that is loaded or locked ("Unload it first"), still downloading, or managed by LM Studio, and writes `model.download_deleted` / `model.download_delete_refused` audit events. Needs AbstractCore with per-quant GGUF delete and the repo-scoped cache delete (branch `round4/2026-10-03`). The terminal console keeps its own delete for now.
+
+### Fixed
+
+- Models page: the filters-in-use label no longer overlaps the "N of M models" count on a narrow screen.
+
 ## [0.12.0] - 2026-10-03
 
 ### Added

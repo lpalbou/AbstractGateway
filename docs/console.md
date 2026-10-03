@@ -365,6 +365,20 @@ The filter bar above the cards:
   (`downloaded`, `not_downloaded`), `fits=1` and `hf` (Hugging Face mode and
   its query).
 
+**Delete** (a trash-bin icon, tooltip "Delete") sits on every downloaded build's
+row. A click first asks the gateway what the delete would free, then shows one
+sentence under the row with that size, for example "Deletes 351 MB from this
+computer. Files only — nothing in your runs is touched.", with **Keep** and
+**Delete**. Only the downloaded files go (the Ollama model through Ollama's own
+delete, the MLX / Hugging Face cache folder, or one GGUF quant's files, leaving
+the repo's other quants); runs, conversations and settings are not touched. The
+row then says "Not downloaded" and offers **Download** again. The gateway
+refuses, and the row says why and what to do, when the model is loaded or
+locked in memory ("Unload it first"), while its download is still running
+("Cancel the download first"), or for LM Studio, which keeps its own library
+(delete it in LM Studio). Every delete and refusal is written to the audit log.
+The terminal console keeps its own delete for now.
+
 Below the cards, **On this computer** is AbstractCore's own list of the models
 the local engines hold (including models that are not in the catalog), with
 their size and location, and **Delete** (with a confirmation that names the

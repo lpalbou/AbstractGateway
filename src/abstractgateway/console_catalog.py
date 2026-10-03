@@ -64,10 +64,10 @@ CATALOG_CSS = r"""
     .mc-bar .mc-hf-go[hidden] { display: none; }
     .mc-bar input.mc-search { flex: 1 1 340px; min-width: min(100%, 260px); width: auto; margin: 0; }
     .mc-bar .ui-switch { flex: 0 0 auto; }
-    .mc-bar__end { display: flex; align-items: center; gap: 12px; margin-left: auto; min-width: 0; }
+    .mc-bar__end { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-left: auto; min-width: 0; }
     .mc-count { color: var(--text-secondary); font-size: var(--font-size-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
     .mc-count b { color: var(--text-primary); font-weight: 650; }
-    .mc-active { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; min-width: 0; color: var(--text-primary); font-size: var(--font-size-sm); font-weight: 600; }
+    .mc-active { display: inline-flex; flex: 0 1 auto; flex-wrap: wrap; gap: 4px 10px; min-width: min-content; color: var(--text-primary); font-size: var(--font-size-sm); font-weight: 600; }
     .mc-active:empty { display: none; }
     .mc-active span + span::before { content: "\00B7"; margin-right: 10px; color: var(--text-muted); font-weight: 400; }
     .mc-bar .mc-to-filters { visibility: hidden; }
