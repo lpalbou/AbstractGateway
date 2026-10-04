@@ -282,7 +282,11 @@ struct NetUi {
     scroll: Signal<i32>,
     /// Which control (in page order) held the keyboard: a rebuild (fresh
     /// data, a fold) gives it back, so a save never sends the caret home.
-    focus: Signal<usize>,
+    focus: Signal<&'static str>,
+    /// Where the focused control wants the page scrolled: re-applied when
+    /// the rebuilt page's extent is known (a fresh Scroll clamps its offset
+    /// to the content it has measured so far).
+    target: Signal<i32>,
     /// The last Ready read (shown while a refresh is in flight).
     last: Signal<Option<NetworkData>>,
 }
@@ -411,7 +415,8 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         warnings_open: cx.signal(None),
         advanced_open: cx.signal(None),
         scroll: cx.signal(0),
-        focus: cx.signal(0),
+        focus: cx.signal("modes"),
+        target: cx.signal(0),
         last: cx.signal(None),
     };
     // Keep the last read: a refresh never blanks the page.
@@ -663,8 +668,8 @@ struct Page {
     y: i32,
     w: usize,
     scroll: Signal<i32>,
-    focus: Signal<usize>,
-    next: usize,
+    target: Signal<i32>,
+    focus: Signal<&'static str>,
 }
 
 impl Page {
@@ -687,26 +692,38 @@ impl Page {
         }
     }
     /// A focusable control `h` rows tall: focusing it scrolls it in view.
-    fn control(&mut self, el: Element, h: i32) {
+    /// Give a FOCUSABLE element (the widget itself — FocusIn is delivered
+    /// to its target only) its place in the page's focus order: focusing it
+    /// scrolls the page to it, and a rebuild hands the keyboard back to it.
+    fn tracked(&mut self, key: &'static str, el: Element) -> Element {
         let y = self.y;
         let scroll = self.scroll;
+        let target = self.target;
         let focus = self.focus;
-        let idx = self.next;
-        self.next += 1;
+        let idx = key;
         let el = el.on(Phase::Target, move |_, ev| {
             if matches!(ev, UiEvent::FocusIn) {
                 focus.set(idx);
+                target.set((y - 2).max(0));
                 scroll.set((y - 2).max(0));
             }
         });
-        let el = if focus.get_untracked() == idx {
+        if focus.get_untracked() == idx {
             el.autofocus()
         } else {
             el
-        };
+        }
+    }
+    /// Place a row `h` lines tall (its focusables already `tracked`).
+    fn place(&mut self, el: Element, h: i32) {
         let c = std::mem::replace(&mut self.col, Element::new());
         self.col = c.child(el.build());
         self.y += h;
+    }
+    /// A single focusable widget `h` rows tall.
+    fn control(&mut self, key: &'static str, el: Element, h: i32) {
+        let el = self.tracked(key, el);
+        self.place(el, h);
     }
 }
 
@@ -724,8 +741,8 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
         y: 0,
         w,
         scroll: nu.scroll,
+        target: nu.target,
         focus: nu.focus,
-        next: 0,
     };
 
     // ---- Who can reach this gateway ----
@@ -756,6 +773,7 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
         .write_untracked(MODE_KEY)
         .is_some_and(|w| w.is_pending());
     p.control(
+        "modes",
         List::new(rows.clone())
             .selection(nu.mode_sel)
             .on_activate(move |i| {
@@ -904,19 +922,19 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
         }
         if can && admin {
             let ctx_r = ctx.clone();
-            p.control(
+            let btn = p.tracked("restart", 
+                Button::new("Restart now")
+                    .on_click(move || {
+                        ctx_r.send(Cmd::Operator(
+                            crate::worker::operator::OpCmd::RestartNetwork,
+                        ))
+                    })
+                    .element(cx, t),
+            );
+            p.place(
                 Element::new()
                     .style(LayoutStyle::row().h(1).shrink(0.0))
-                    .child(
-                        Button::new("Restart now")
-                            .on_click(move || {
-                                ctx_r.send(Cmd::Operator(
-                                    crate::worker::operator::OpCmd::RestartNetwork,
-                                ))
-                            })
-                            .element(cx, t)
-                            .build(),
-                    ),
+                    .child(btn.build()),
                 1,
             );
         }
@@ -979,6 +997,7 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
         p.wrap("The gateway found no address to show.", t.text_muted);
     } else {
         p.control(
+            "addresses",
             WrapTable::new(rules, rows, nu.addr_sel)
                 .expanded(nu.addr_open)
                 .layout(LayoutStyle::default().h(table_h).shrink(0.0))
@@ -998,25 +1017,25 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
     let mut bar = Element::new().style(LayoutStyle::row().gap(2).h(1).shrink(0.0));
     if crate::store::operator::offers_public_lookup(&d) {
         let ctx_l = ctx.clone();
-        bar = bar.child(
+        let b = p.tracked("lookup", 
             Button::new("Look up my public address")
                 .on_click(move || {
                     ctx_l.send(Cmd::Operator(crate::worker::operator::OpCmd::LookupPublic))
                 })
-                .element(cx, t)
-                .build(),
+                .element(cx, t),
         );
+        bar = bar.child(b.build());
     }
     let ctx_c = ctx.clone();
-    bar = bar.child(
+    let b = p.tracked("check", 
         Button::new("Check again")
             .on_click(move || {
                 ctx_c.store.network.set(Loadable::Loading);
                 ctx_c.send(Cmd::LoadNetwork);
             })
-            .element(cx, t)
-            .build(),
+            .element(cx, t),
     );
+    bar = bar.child(b.build());
     let checked = s(&raw, "checked_at");
     if checked.len() >= 19 {
         bar = bar.child(line(vec![span(
@@ -1024,7 +1043,7 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
             t.text_faint,
         )]));
     }
-    p.control(bar, 1);
+    p.place(bar, 1);
     if let Some(note) = &d.public_note {
         p.wrap(&format!("public address: {note}"), t.text_faint);
     }
@@ -1098,19 +1117,19 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
         );
     }
     let ui = ctx.ui;
-    p.control(
+    let b = p.tracked("openai", 
+        Button::new("OpenAI API")
+            .on_click(move || ui.screen.set(super::SCREEN_OPENAI))
+            .element(cx, t),
+    );
+    p.place(
         Element::new()
             .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
             .child(super::util::line_styled(
                 LayoutStyle::line(1).w(44).shrink(0.0),
                 vec![span("The OpenAI-compatible API has its own page:", t.text_muted)],
             ))
-            .child(
-                Button::new("OpenAI API")
-                    .on_click(move || ui.screen.set(super::SCREEN_OPENAI))
-                    .element(cx, t)
-                    .build(),
-            ),
+            .child(b.build()),
         1,
     );
 
@@ -1119,9 +1138,21 @@ fn ready_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: NetworkData, w: usize, nu: 
         proxy_view(cx, ctx, t, &d, &mut p, nu);
     }
     let scroll = nu.scroll;
+    let target = nu.target;
+    let extent = cx.signal((0, 0));
+    cx.effect(move || {
+        let (_, h) = extent.get();
+        if h > 0 {
+            let want = target.get_untracked();
+            if scroll.get_untracked() != want {
+                scroll.set(want);
+            }
+        }
+    });
     let content = p.col.build();
     Scroll::new(content)
         .offset_y(scroll)
+        .extent_signal(extent)
         .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
         .scrollbar_auto_hide(true)
         .view(cx)
@@ -1241,7 +1272,7 @@ fn proxy_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &NetworkData, p: &mut Page,
                 }
             });
         }
-        p.control(list, h);
+        p.control("origins", list, h);
         if admin {
             p.text(vec![span("x removes the selected origin", t.text_faint)]);
         }
@@ -1251,7 +1282,7 @@ fn proxy_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &NetworkData, p: &mut Page,
         let d_add = d.clone();
         let ctx_btn = ctx.clone();
         let d_btn = d.clone();
-        let input = super::util::esc_releases_focus(
+        let input = p.tracked("origin-input", super::util::esc_releases_focus(
             TextInput::new()
                 .value(nu.origin_draft)
                 .placeholder("https://gateway.example.com")
@@ -1263,27 +1294,26 @@ fn proxy_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &NetworkData, p: &mut Page,
                 })
                 .element(cx, t),
             ctx.store.notice,
-        )
-        .build();
+        ));
         let label = if pending && field == "allowed_origins" {
             "Saving..."
         } else {
             "Add origin"
         };
-        p.control(
+        let btn = p.tracked("origin-add", 
+            Button::new(label)
+                .on_click(move || {
+                    if !pending {
+                        origin_add(&ctx_btn, nu, &d_btn)
+                    }
+                })
+                .element(cx, t),
+        );
+        p.place(
             Element::new()
                 .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
-                .child(input)
-                .child(
-                    Button::new(label)
-                        .on_click(move || {
-                            if !pending {
-                                origin_add(&ctx_btn, nu, &d_btn)
-                            }
-                        })
-                        .element(cx, t)
-                        .build(),
-                ),
+                .child(input.build())
+                .child(btn.build()),
             1,
         );
     }
@@ -1324,6 +1354,7 @@ fn proxy_view(cx: Scope, ctx: &Ctx, t: &TokenSet, d: &NetworkData, p: &mut Page,
         "Trust proxies on other machines"
     };
     p.control(
+        "trust",
         super::switch::Switch::new(label, trust)
             .unavailable((!admin).then(|| "Only an admin can change these.".to_string()))
             .busy(pending)
