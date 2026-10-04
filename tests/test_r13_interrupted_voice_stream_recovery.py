@@ -68,7 +68,9 @@ def _seed(data_dir: Path, *, created_before_boot: bool = True) -> tuple[str, str
     rt.tick(workflow=child_wf, run_id=child)
     if created_before_boot:
         st = rs.load(child)
-        st.created_at = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=5)).isoformat()
+        # The incident's own timestamp (run a2abbf65): created by the process the watchdog killed,
+        # i.e. before this process (and its runner module) started.
+        st.created_at = "2026-10-04T19:23:22.399245+00:00"
         rs.save(st)
     assert rs.load(child).status == RunStatus.WAITING
     return parent, child
