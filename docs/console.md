@@ -129,6 +129,19 @@ Administrators also have **Eligible workspaces** first in that row: the
 workspaces accounts may choose from, and the most each one allows
 ([below](#workspaces)).
 
+Below that row, everyone signed in sees the host's **command sandbox** as a
+state line, with an explanation in its tooltip:
+
+- **Commands sandboxed: macOS sandbox-exec** (or Linux bubblewrap): every
+  command a run starts is confined by the operating system to that run's
+  workspaces.
+- **Commands refused: no sandbox on this host**.
+- **Unsandboxed commands allowed (flag)**: the gateway was started with
+  `serve --unsandboxed-commands`.
+
+It is a state, not a control. The terminal console shows the same line on its
+**Workspaces** page ([security.md](./security.md#command-sandbox)).
+
 | Column | Shows |
 |---|---|
 | **Name** | the account id and a kind chip: **Admin**, **User** or **Entity** (hover it for the role) |
@@ -235,6 +248,11 @@ workspaces a run may use, each inside the one above
 3. **One conversation's workspaces** — chosen in the apps (AbstractCode,
    Flow, Observer, the Assistant) for one conversation or one run, inside the
    account's.
+
+Rows may nest: **the most specific row wins**. Refusing `/Users/me` and
+allowing `/Users/me/projects` (Read & write) is valid; the child is usable and
+the rest of `/Users/me` is refused. A refused row inside an allowed one refuses
+that part. The chooser shows the gateway's answer; it has no rule of its own.
 
 Every run also has its own private workspace (`<data dir>/workspaces/session-…`):
 a file written without a full path lands there. It is always available, read &

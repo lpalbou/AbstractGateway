@@ -539,8 +539,20 @@ The levels:
 
 A run gets the first that applies: run > session > account > gateway. For every
 path its mode is the lower of the gateway's cap and that level's rule (refused
-< read-only < read & write). Within a list the most specific row wins, and
-nothing re-opens beneath a refused row. `GET
+< read-only < read & write). **Nesting: the most specific row wins** (the
+longest real-path prefix), refused rows included. Refusing `/Users/me` while
+allowing `/Users/me/projects` (read & write) is valid at every level: the
+child is reachable and the rest of `/Users/me` is refused. A refused row inside
+an allowed one refuses that subtree. Caps still bind: a row below the gateway
+never exceeds the gateway's cap at its path (the gateway's most specific row
+there), so a child of a read-only gateway row stays read-only, and a child of a
+refused gateway row is eligible only where the gateway lists it. The built-in
+refusals are absolute: a read-only or read & write row inside one is refused
+at every level with `'<path>' is inside the built-in refused workspace
+'<built-in>'.` (the one exception: a conversation folder of the account's own
+data plane, below). The effective set, its line, the dry run, the run's file
+tools, the server file routes, the workspace browser and the command sandbox
+all apply this one rule. `GET
 /api/gateway/workspace/effective/{account}[?session=]` returns the result and
 one line that every surface shows verbatim, for example
 `Deny everything, allow listed workspaces · /Users/me/Pictures (rw) · /Users/me/Documents (ro)`,
@@ -593,7 +605,10 @@ Enforcement reads only the effective set:
     `workspace_or_allowed` with the reachable workspaces.
   - "Allow everything, refuse listed workspaces" at both levels →
     `all_except_ignored`. Only the gateway sets this mode, never a client.
-  - Refused rows → `workspace_ignored_paths`.
+  - Refused rows → `workspace_ignored_paths`. AbstractRuntime resolves a path
+    by the longest prefix among the run's own folder, the allowed paths and the
+    refused paths (a tie is refused), so a refused parent with an allowed child
+    reaches the runtime exactly as the gateway computed it.
   - Read-only workspaces → `workspace_read_only_paths`.
   - A read-only default → every directory is read-only except the run's own
     folder and the read & write workspaces (`workspace_writable_paths`,
@@ -671,7 +686,7 @@ Evidence:
 - Client scope clamping: `src/abstractgateway/routes/gateway.py` (`_sanitize_run_workspace_policy`, `_files_scope`, `_browse_workspace_root`)
 - Browse and preview: `src/abstractgateway/workspace_browse.py`
 - Runtime tool scoping: `abstractruntime/integrations/abstractcore/workspace_scoped_tools.py`
-- Tests: `tests/test_gateway_workspace_policy_r11.py`, `tests/test_r11w1_levels.py`, `tests/test_r11w1_real_boot_migration.py`, `tests/test_gateway_workspace_policy_enforcement.py`
+- Tests: `tests/test_gateway_workspace_policy_r11.py`, `tests/test_r11w1_levels.py`, `tests/test_r11w1_real_boot_migration.py`, `tests/test_gateway_workspace_policy_enforcement.py`, `tests/test_r12w2_nesting.py` (the nesting rule)
 
 Canonical public server paths use `rel/path` for the base workspace and
 `mount_alias/rel/path` for the other folders. When two folders share the same
@@ -679,9 +694,68 @@ basename, Gateway emits deterministic digest-suffixed mount aliases so the
 public path string stays stable across discovery, import/export, and Runtime
 execution.
 
-### Important limitation (all modes)
+## Command sandbox
 
-`execute_command` is **not** an OS sandbox: even if the runtime sets the default working directory under `workspace_root`, the command itself can reference absolute paths or `cd ..`. The built-in deny list does not confine shell commands either.
+Every tool that starts a process (`execute_command`, `shell_exec`, the local
+helpers: AbstractRuntime's `SANDBOXED_TOOL_NAMES`) runs inside an
+**operating-system sandbox** built from the run's effective workspaces. These
+are the same keys the file tools read, so the two cannot disagree: the run's
+private workspace read & write, the allowed workspaces with their modes, the
+refused workspaces, the built-in refusals and the posture's default mode. The
+command string is never parsed. `cd`, `$(…)`, symlinks, scripts and
+interpreters are all confined by the kernel:
+
+- **macOS**: `/usr/bin/sandbox-exec` with a generated profile.
+- **Linux**: bubblewrap (`bwrap`) when installed; Landlock (kernel 5.13 or
+  later) for "Deny everything, allow listed workspaces" when bubblewrap is
+  missing.
+- **Anything else** (Windows, Linux without either): the command is
+  **refused** with one sentence and the run continues.
+
+Every command starts from the gateway's **scrubbed environment**. This is the
+same scrub the gateway applies to the apps it starts: nothing named
+`ABSTRACTGATEWAY_*` / `ABSTRACTCORE_*`, and no `*_TOKEN`, `*_SECRET`,
+`*_API_KEY`, `*_PASSWORD` or `*_KEY`. Each command also gets a private
+`TMPDIR` inside the run's workspace. The gateway sets this host policy once
+per process at boot (`command_sandbox.configure_at_boot`, from
+`start_gateway_runner`; AbstractCore's `configure_host`). From then on a
+spawning tool call that does not carry a run's sandbox is refused.
+
+**`abstractgateway serve --unsandboxed-commands`** (also on the split
+`abstractgateway runner`) re-enables commands on a host with **no** sandbox.
+They then run with the gateway's own file access, still with the scrubbed
+environment. The flag is off by default and has no environment variable. Where
+a sandbox exists it changes nothing. With `--reload` it is ignored (the app
+runs in uvicorn's reloader child). It is audited at boot as
+`command_sandbox_configured`
+`{source, kind, state, line, unsandboxed_commands_allowed, env_keys}`.
+
+**State, not a control.** `GET /api/gateway/workspace/policy` and `GET
+/api/gateway/discovery/tools` carry `command_sandbox` `{state:
+sandboxed|partial|unsandboxed|refused, kind, line, sentence,
+unsandboxed_commands_allowed, configured, flag}`. The console shows `line`
+under the Accounts head, with `sentence` as its tooltip, and the terminal
+console shows it on its Workspaces page:
+
+- `Commands sandboxed: macOS sandbox-exec` (or `Linux bubblewrap`)
+- `Commands refused: no sandbox on this host`
+- `Unsandboxed commands allowed (flag)`
+
+In `/discovery/tools`, each process-spawning tool row carries `sandboxed:
+true|false` and `sandbox` (for example "Sandboxed to this run's workspaces"),
+so the apps' tool cards can show the state.
+
+**Evidence per command.** The runtime stamps every spawning call with the
+paths it enforced (the hidden `_sandbox` argument, recorded with the tool call
+in the run ledger). The tool result carries `sandbox: {kind, label, posture,
+default_mode, private_workspace, tmpdir, allowed: [{path, mode}], refused: [...],
+builtin_refused: <count>}` and the line `Sandbox: macOS sandbox-exec`, or
+`Sandbox: none — commands refused on this host`.
+
+Evidence: `src/abstractgateway/command_sandbox.py`, `src/abstractgateway/cli.py`
+(`--unsandboxed-commands`), AbstractCore `abstractcore/tools/sandbox.py`,
+AbstractRuntime `workspace_scoped_tools.py` (`sandbox_stamp`). Tests:
+`tests/test_r12w2_command_sandbox.py`, `tests/test_r12w2_nesting.py`.
 
 ## Common security env vars
 

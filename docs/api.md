@@ -617,9 +617,13 @@ control is one request. Every path is checked like `POST
 /workspace/path-check` (absolute, existing). Every row states its mode. These
 are refused:
 
-- a row inside a refused row ("nothing re-opens under a refusal");
 - a duplicate row;
-- a read & write or read-only row on a credential directory;
+- a read & write or read-only row inside a built-in refusal (the data folder,
+  except a conversation folder `<data>/workspaces/<name>` or
+  `<data>/users/<tenant>/<runtime>/runtime/workspaces/<name>`, and the
+  credential directories): `Workspaces: '<path>' is inside the built-in
+  refused workspace '<built-in>'.` (the account, session and run levels and
+  the dry run answer the same sentence);
 - an unknown posture or mode;
 - `shared_workspace`: "shared_workspace no longer exists: list it as a
   workspace (folders: [{path, mode: "rw"}]). Nothing was saved.";
@@ -627,7 +631,17 @@ are refused:
   `allow_any_folder`, `launch_folder_trust`, `mode`,
   `client_workspace_scope_overrides`, … are all refused by name.
 
-The PUT answers like the GET.
+Rows may nest in any combination: **the most specific row wins** (the longest
+real-path prefix, refused rows included). A refused `/Users/me` with an
+allowed `/Users/me/projects` (rw) is valid, and so is a refused row inside an
+allowed one.
+
+The PUT answers like the GET. The GET also carries `command_sandbox` (round
+12), the host's command sandbox state: `{state:
+"sandboxed"|"partial"|"unsandboxed"|"refused", kind, line, sentence,
+unsandboxed_commands_allowed, configured, flag}`. `line` is shown verbatim
+(for example "Commands sandboxed: macOS sandbox-exec") and `sentence` is its
+tooltip; see [security.md](./security.md#command-sandbox).
 
 ### Account: the account's default subset
 
@@ -1017,7 +1031,11 @@ These exist to help thin clients adapt to the deployed gateway.
 
 - Capabilities (best-effort): `GET /api/gateway/discovery/capabilities`
 - Providers/models discovery (best-effort): `GET /api/gateway/discovery/providers`, `GET /api/gateway/discovery/providers/{provider}/models`
-- Tools (thin-client allowlist help): `GET /api/gateway/discovery/tools`
+- Tools (thin-client allowlist help): `GET /api/gateway/discovery/tools`. Round
+  12: each process-spawning tool row (`execute_command`, `shell_exec`,
+  `local_helper_start`) carries `sandboxed: true|false` and `sandbox` (the
+  state sentence, for example "Sandboxed to this run's workspaces"), and the
+  answer carries `command_sandbox` (as on `GET /workspace/policy`)
 - Skills inventory: `GET /api/gateway/skills` — the abstractskill shelf with
   trust verdicts (roster rows `{name, description, trust_level, blocked,
   requires_review, tree_hash, source, has_scripts, reasons}`); degradations

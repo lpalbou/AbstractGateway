@@ -1492,12 +1492,17 @@ Core catalog proxy settings:
 `abstractgateway --help` shows all subcommands (serve/runner/migrate/triage/…).
 
 Most-used:
-- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N]`
+- `abstractgateway serve [--host H] [--port P] [--data-dir DIR] [--no-runner] [--reload] [--no-tray] [--watchdog-seconds N] [--unsandboxed-commands]`
   (`--no-tray`: no menu bar / tray icon for this run, for a test or scratch
   gateway next to your usual one; `--watchdog-seconds N`, default 30, `0` = off:
   a gateway whose event loop stays blocked for N seconds writes the blocked
   stacks to its log and exits with code 75 so its service manager restarts it,
-  see [deployment.md](./deployment.md))
+  see [deployment.md](./deployment.md); `--unsandboxed-commands`, off by
+  default and with no environment variable: on a host with no command sandbox
+  (no macOS `sandbox-exec`, no Linux bubblewrap/Landlock), let commands run
+  unsandboxed instead of refusing them. It is audited at boot and shown on the
+  console. The split `abstractgateway runner` takes the same flag. See
+  [security.md](./security.md#command-sandbox))
   (host/port default to the [network exposure](#network-exposure-localhost--local-network--internet)
   setting; with none stored, `--host` defaults to `127.0.0.1` when no auth is
   configured, else `0.0.0.0`, and `--port` to `8080`. Explicit flags override the setting.)
