@@ -240,11 +240,16 @@ def test_the_count_is_unknown_when_the_registry_is_not_reachable(monkeypatch) ->
 # ---------------------------------------------------------------------------
 
 _CARD_SCENARIO = r"""
-const rowFor = (count, extra) => Object.assign({ id: "entity", name: "Entity", package: "@abstractframework/entity", installed: true, version: "0.1.0",
+// R11.3: every gateway row carries its status badge (apps_manager.status_control).
+const badgeOf = (r) => r.status === "running" ? { label: "Running", tone: "ok", busy: false, action: "stop", enabled: true, tip: "Running — click to stop" }
+      : r.status === "stopped" ? { label: "Stopped", tone: "muted", busy: false, action: "launch", enabled: true, tip: "Stopped — click to start" }
+      : { label: "Not installed", tone: "muted", busy: false, action: null, enabled: false, tip: null };
+const rowFor = (count, extra) => { const r = Object.assign({ id: "entity", name: "Entity", package: "@abstractframework/entity", installed: true, version: "0.1.0",
   running: true, status: "running", actions: ["open", "stop", "logs"], url: "http://127.0.0.1:18998/", interfaces: [{ kind: "web" }],
-  content_summary: count === undefined ? null : { entities_count: count } }, extra || {});
+  content_summary: count === undefined ? null : { entities_count: count } }, extra || {}); r.status_control = badgeOf(r); return r; };
 const neighbour = { id: "flow", name: "Flow", package: "@abstractframework/flow", installed: true, version: "0.1.0", running: true, status: "running",
   actions: ["open", "stop", "logs"], url: "http://127.0.0.1:18996/", interfaces: [{ kind: "web" }], content_summary: { entities_count: 0 } };
+neighbour.status_control = badgeOf(neighbour);
 let appsPayload = null;
 const posts = [];
 const assigned = [];

@@ -393,7 +393,7 @@ def test_the_tray_client_uses_the_handshake_url_not_the_network_address(tmp_path
 def test_console_card_says_started_outside_only_under_technical_details() -> None:
     """Mission GG's card, kept: an external app shows the Running pill and
     Open (its row's only action); Technical details adds "Started outside the
-    gateway on port N" where Stop would be. Rendered for real by
+    gateway on port N" (the status badge is disabled, R11.3). Rendered for real by
     untracked/missionHH/capture_apps.mjs (Playwright, dark 1440)."""
     from abstractgateway.console_ui import CONSOLE_UI_JS
 
@@ -402,8 +402,10 @@ def test_console_card_says_started_outside_only_under_technical_details() -> Non
     line = "Started outside the gateway on port ${esc(ext.port)}"
     assert line in tech and line not in plain
     assert 'app.source === "external" && app.external' in tech
-    # Stop is offered only when the row lists it; an external row never does.
-    assert 'if (app.running && actions.includes("stop") && admin) items.push(b("stop"' in tech
+    # R11.3: no Stop button at all — the status badge stops (the gateway's
+    # status_control); an external row's badge is disabled with its sentence.
+    assert 'b("stop"' not in card and 'b("launch"' not in card
+    assert "appBadgeMarkup(app, job, pend)" in card
 
 
 def test_cli_list_says_an_app_was_started_outside(monkeypatch, capsys) -> None:

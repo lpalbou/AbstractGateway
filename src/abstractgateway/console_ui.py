@@ -105,6 +105,12 @@ CONSOLE_UI_CSS = r"""
     .ui-card__title { font-size: var(--font-size-lg); font-weight: 650; line-height: 1.25; color: var(--text-primary); min-width: 0; overflow-wrap: normal; }
     .ui-card__blurb { color: var(--text-secondary); font-size: var(--font-size-md); line-height: 1.45; }
     .ui-card__status { flex: 0 0 auto; margin-left: auto; }
+    /* R11.3: the Apps card's status badge is the start/stop control (a pill-shaped button, state label). */
+    button.ui-pill.ui-app-badge { font-family: inherit; cursor: pointer; }
+    button.ui-pill.ui-app-badge:hover:not([aria-disabled="true"]):not(:disabled) { filter: brightness(1.12); box-shadow: 0 0 0 1px currentColor inset; }
+    button.ui-pill.ui-app-badge:focus-visible { outline: 2px solid var(--ui-focus, var(--accent-primary, currentColor)); outline-offset: 2px; }
+    button.ui-pill.ui-app-badge[aria-disabled="true"] { cursor: not-allowed; opacity: .8; }
+    button.ui-pill.ui-app-badge:disabled { cursor: progress; }
     .ui-facts { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0; padding: 0; list-style: none; color: var(--text-secondary); font-size: var(--font-size-sm); }
     .ui-facts li { display: inline-flex; gap: 5px; min-width: 0; max-width: 100%; }
     .ui-facts b { color: var(--text-primary); font-weight: 600; }
@@ -1549,7 +1555,7 @@ CONSOLE_UI_JS = r"""
       return f && f.when(app.content_summary || null) ? f : null;
     }
     const APP_STATUS = {
-      not_installed: ["Not installed", "muted"], stopped: ["Installed", "muted"], starting: ["Starting", "info tone-busy"],
+      not_installed: ["Not installed", "muted"], stopped: ["Stopped", "muted"], starting: ["Starting", "info tone-busy"],
       running: ["Running", "ok"], stopping: ["Stopping", "info tone-busy"], crashed: ["Stopped unexpectedly", "err"], crash_loop: ["Keeps crashing", "err"],
     };
     const appStore = { data: null, error: "", loading: false, views: new Map(), jobs: new Map(), polling: false, message: "", busy: new Set(), pending: new Map(), notices: new Map(), logs: new Map(), linkHandled: false };
@@ -1792,6 +1798,27 @@ CONSOLE_UI_JS = r"""
       if (!parts.length) return "";
       return `<ul class="ui-app-parts" data-app-parts>${parts.map((p) => `<li data-part="${esc(p.id)}" data-state="${esc(p.state)}"><span class="ui-ellip" title="${esc(p.label)}">${esc(p.label)}</span><span>${esc(APP_PART_WORDS[p.state] || p.state)}</span></li>`).join("")}</ul>`;
     }
+    // R11.3: the card's status badge IS the start/stop control, one click as
+    // Install is. The gateway sends it (row.status_control: label, tone,
+    // busy, action stop|launch, enabled, tip) so the terminal console says the
+    // same words: Running → POST /stop, Stopped → POST /launch (the Assistant:
+    // its Open); disabled (aria-disabled, still focusable, kit tooltip = the
+    // reason) for an app started outside the gateway or a non-admin. A plain
+    // pill when tip is null (not installed, starting, stopping).
+    const APP_BADGE_PENDING = { stop: "Stopping…", launch: "Starting…", open: "Starting…", "desktop-open": "Starting…" };
+    function appBadgeMarkup(app, job, pend) {
+      if (appJobActive(job)) return uiPill("Installing", "info tone-busy");
+      if (pend && APP_BADGE_PENDING[pend.action] && (pend.action !== "open" || !app.running)) {
+        return `<button type="button" class="ui-pill tone-info tone-busy ui-app-badge" data-app-badge="${esc(app.id)}" disabled aria-busy="true">${esc(APP_BADGE_PENDING[pend.action])}</button>`;
+      }
+      const sc = app.status_control;
+      if (!sc || typeof sc !== "object") throw new Error(`AbstractGateway console: the apps row "${app.id}" has no status_control (gateway older than the console?)`);
+      const tone = `${sc.tone || "muted"}${sc.busy ? " tone-busy" : ""}`;
+      if (!sc.tip) return uiPill(sc.label, tone);
+      const off = !sc.enabled;
+      return `<button type="button" class="ui-pill tone-${esc(tone)} ui-app-badge" data-app-action="badge" data-app="${esc(app.id)}" data-app-badge="${esc(app.id)}"`
+        + `${sc.action ? ` data-badge-action="${esc(sc.action)}"` : ""} data-af-tip="${esc(sc.tip)}" aria-label="${esc(sc.tip)}"${off ? ' aria-disabled="true"' : ""}>${esc(sc.label)}</button>`;
+    }
     function appCardMarkup(app) {
       const copy = APP_COPY[app.id] || { mark: String(app.name || app.id || "?").slice(0, 2), blurb: "" };
       const admin = !!(state.principal && state.principal.admin);
@@ -1800,7 +1827,6 @@ CONSOLE_UI_JS = r"""
       const actions = Array.isArray(app.actions) ? app.actions : [];
       const busy = appStore.busy.has(app.id);
       const name = app.name || app.id;
-      const [label, tone] = appJobActive(job) ? ["Installing", "info tone-busy"] : (APP_STATUS[app.status] || [String(app.status || "Unknown"), "muted"]);
       const crashed = (app.status === "crashed" || app.status === "crash_loop");
       // The body: only what the user must see now (progress, a failure, a
       // result they just caused). Never a box that restates the pill.
@@ -1901,11 +1927,11 @@ CONSOLE_UI_JS = r"""
       } else if (techOn) {
         const items = [];
         // Started outside the gateway (the dev stack, npx, a service): the
-        // row offers Open only; this line says why there is no Stop.
+        // row offers Open only; this line says where it runs (the badge's
+        // tooltip says why it does not stop from here).
         const ext = app.source === "external" && app.external ? app.external : null;
         if (ext) items.push(`<span data-app-external="${esc(app.id)}">Started outside the gateway on port ${esc(ext.port)}</span>`);
-        if (app.running && actions.includes("stop") && admin) items.push(b("stop", "Stop", "is-text", `Stop ${name}`));
-        if (app.installed && !app.running && actions.includes("launch") && admin && !appJobActive(job)) items.push(b("launch", "Start", "is-text", `Start ${name} without opening it`));
+        // R11.3: Stop / Start are the status badge (one control per action).
         const logOpen = !!(appStore.logs.get(app.id) || {}).open;
         if (actions.includes("logs") && admin) items.push(`<button type="button" class="ui-btn is-text" data-app-action="logs" data-app="${esc(app.id)}" aria-expanded="${logOpen ? "true" : "false"}">${logOpen ? "Hide log" : "Show log"}</button>`);
         if (app.version) items.push(`<span>Version ${esc(app.version)}</span>`);
@@ -1923,7 +1949,7 @@ CONSOLE_UI_JS = r"""
       const blurb = copy.blurb || app.description || "";
       const tint = appJobActive(job) ? " is-busy" : ((job && job.state === "failed") || app.status === "crash_loop" ? " is-attention" : "");
       return `<article class="ui-card ui-app-card${tint}" data-app-card="${esc(app.id)}"><div class="ui-card__head"><span class="ui-mark" aria-hidden="true">${esc(copy.mark)}</span>`
-        + `<div class="ui-card__titles"><div class="ui-card__title">${esc(name)}</div><span class="ui-card__status">${uiPill(label, tone)}</span></div></div>`
+        + `<div class="ui-card__titles"><div class="ui-card__title">${esc(name)}</div><span class="ui-card__status">${appBadgeMarkup(app, job, pend)}</span></div></div>`
         + `<div class="ui-card__blurb is-oneline" title="${esc(blurb)}">${esc(blurb)}</div>`
         + `<div class="ui-card__body">${body}</div>`
         + `<div class="ui-card__actions">${row}</div>`
@@ -2064,6 +2090,15 @@ CONSOLE_UI_JS = r"""
       if (action === "log-copy") { const L = appStore.logs.get(id) || {}; uiCopy((L.lines || []).join("\n")); return; }
       if (action === "tui-copy") { uiCopy((button && button.dataset && button.dataset.cmd) || ""); return; }
       if (action === "tui-open" || action === "tui-install" || action === "tui-cancel") { await appTuiAction(action, id); return; }
+      if (action === "badge") {
+        // R11.3: the status badge: stop (Running) / start (Stopped). The
+        // Assistant starts through its Open (POST /launch, signed in).
+        const verb = (button && button.dataset && button.dataset.badgeAction) || "";
+        if (!verb || (button && button.getAttribute && button.getAttribute("aria-disabled") === "true")) return;
+        const row = appRowById(id);
+        await appAction(row && row.kind === "desktop" && verb === "launch" ? "desktop-open" : verb, id, button);
+        return;
+      }
       if (action === "desktop-open") {
         // The Assistant (a desktop app): POST /launch opens it on the gateway
         // computer's screen (or brings it forward); no tab, no link.
@@ -2221,7 +2256,7 @@ CONSOLE_UI_JS = r"""
       appStore.views.set(key, el);
       el.onclick = (event) => {
         const b = event && event.target && event.target.closest ? event.target.closest("[data-app-action]") : null;
-        if (!b || b.disabled) return;
+        if (!b || b.disabled || b.getAttribute("aria-disabled") === "true") return;
         appAction(b.dataset.appAction, b.dataset.app || "", b);
       };
       appRender();

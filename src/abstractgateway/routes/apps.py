@@ -36,7 +36,10 @@ with a terminal version that has a prebuilt download for this computer (Code),
 the terminal app too (the job's two `parts`); it starts nothing. The desktop
 app (the Assistant, `kind: "desktop"`, apps_desktop.py) installs into the
 gateway's own Python through the same route, and `/launch` opens it on the
-gateway computer's screen for a caller at that computer only.
+gateway computer's screen for a caller at that computer only; `/stop` quits
+the copy this gateway started (any other copy: 409 `started_outside_gateway`).
+Every row carries `status_control`, the card's status badge as a control
+(R11.3: Running → POST /stop, Stopped → POST /launch, with its tooltip).
 
 Terminal apps: each app row carries `interfaces[]` (kind "web"
 and, for Code, kind "tui"). `POST /{id}/install-tui` installs a prebuilt
@@ -365,8 +368,17 @@ async def apps_launch(request: Request, app_id: str):
 
 @router.post("/{app_id}/stop")
 async def apps_stop(request: Request, app_id: str):
+    """Stop a browser app the gateway started; for a desktop app (the
+    Assistant), quit the copy THIS gateway started (R11.3: the card's
+    Running badge). A process started elsewhere is refused (409
+    `started_outside_gateway`)."""
     _admin(request)
     m = get_apps_manager()
+    if is_desktop_app(app_id):
+        try:
+            return await asyncio.to_thread(m.stop_desktop, str(app_id).strip().lower())
+        except AppsError as exc:
+            return _error(exc)
     try:
         row = await asyncio.to_thread(m.stop, app_id)
     except AppsError as exc:

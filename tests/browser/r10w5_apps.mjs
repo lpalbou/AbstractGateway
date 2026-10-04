@@ -41,6 +41,7 @@ function overview() {
     last_error: null, needs_node_install: false, install_available: false, install_blocked_reason: null,
     install_parts: ["web"], actions: ["launch", "logs"], active_job: null, log_path: null, content_summary: null,
     interfaces: [{ kind: "web" }],
+    status_control: { label: "Stopped", tone: "muted", busy: false, action: "launch", enabled: true, tip: "Stopped — click to start" },
   }, extra);
   return {
     ok: true,
@@ -49,7 +50,7 @@ function overview() {
       web("observer", "Observer", { version: "0.7.0", latest_version: "0.8.0", update_available: true, update_tip: EXTERNAL,
         running: true, status: "running", managed: false, source: "external", url: "http://127.0.0.1:3001/", port: 3001, pid: 77,
         external: { port: 3001, pid: 77, version: "0.7.0", gateway_url: null, detail: "Started outside the gateway on port 3001" },
-        actions: ["open"] }),
+        actions: ["open"], status_control: { label: "Running", tone: "ok", busy: false, action: null, enabled: false, tip: "Started outside the gateway — stop it where it was started" } }),
       web("flow", "Flow Editor", { version: "0.7.0", latest_version: "0.8.0", update_available: true, update_label: "Update to 0.8.0", update_tip: FLOW_TIP,
         actions: ["launch", "update", "logs"] }),
       { id: "assistant", name: "Assistant", kind: "desktop", description: "A menu-bar assistant: chat or talk hands-free.", package: "abstractassistant",
@@ -57,6 +58,7 @@ function overview() {
         running: false, status: "stopped", managed: false, source: "script", external: null, enabled: false, url: null, port: null, pid: null,
         restarts_last_minute: 0, last_exit_code: null, last_error: null, needs_node_install: false, install_available: false,
         install_blocked_reason: null, install_parts: ["desktop"], actions: ["open", "update"], active_job: null, log_path: null,
+        status_control: { label: "Stopped", tone: "muted", busy: false, action: "launch", enabled: true, tip: "Stopped — click to start" },
         content_summary: null, interfaces: [],
         desktop: { location: "/venv/bin/abstractassistant", found_by: ["script:/venv/bin/abstractassistant"], launch_command: "/venv/bin/abstractassistant",
           install_command: "uv pip install --python /venv/bin/python abstractassistant", launch_available: true, launch_blocked: null,

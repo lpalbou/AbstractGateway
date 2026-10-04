@@ -424,6 +424,71 @@ def quit_to_run_sentence(version: Any) -> str:
     return f"Quit it and open it again to run {version}"
 
 
+# R11.3: the status badge IS the start/stop control (one click, as Install is).
+# The row carries the badge (`status_control`), so the web console (kit tooltip)
+# and the terminal console (hint line) say the same words; neither composes its own.
+BADGE_RUNNING_TIP = "Running — click to stop"
+BADGE_STOPPED_TIP = "Stopped — click to start"
+BADGE_QUIT_TIP = "Running — click to quit"
+BADGE_EXTERNAL_TIP = "Started outside the gateway — stop it where it was started"
+BADGE_ADMIN_TIP = "Only an admin can start or stop apps"
+# Plain-pill labels of the states that are not a control.
+_BADGE_STATES: Dict[str, Tuple[str, str, bool]] = {
+    "not_installed": ("Not installed", "muted", False),
+    "starting": ("Starting…", "info", True),
+    "stopping": ("Stopping…", "info", True),
+}
+
+
+def status_control(
+    status: Any,
+    *,
+    action: Optional[str] = None,
+    enabled: bool = False,
+    tip: Optional[str] = None,
+) -> Dict[str, Any]:
+    """The row's status badge. `action` (stop | launch) is what a click POSTs
+    (/apps/{id}/<action>); `tip` is None for a plain pill (not a control);
+    a control with `enabled` False is shown disabled with `tip` as its reason.
+
+    {label, tone: ok|muted|info|err, busy, action, enabled, tip}"""
+    st = str(status or "")
+    if st in _BADGE_STATES:
+        label, tone, busy = _BADGE_STATES[st]
+        return {"label": label, "tone": tone, "busy": busy, "action": None, "enabled": False, "tip": None}
+    if st == "running":
+        label, tone = "Running", "ok"
+    elif st == "crashed":
+        label, tone = "Stopped unexpectedly", "err"
+    elif st == "crash_loop":
+        label, tone = "Keeps crashing", "err"
+    else:
+        label, tone = "Stopped", "muted"
+    return {"label": label, "tone": tone, "busy": False, "action": action,
+            "enabled": bool(enabled and action and tip), "tip": tip}
+
+
+def _start_tip(label: str) -> str:
+    return BADGE_STOPPED_TIP if label == "Stopped" else f"{label} — click to start"
+
+
+def browser_status_control(*, status: str, actions: Sequence[str], external: bool, admin: bool) -> Dict[str, Any]:
+    """The badge of a browser app's row: Running → stop, Stopped (or crashed)
+    → start; an app started outside the gateway is never stopped from here."""
+    if status in _BADGE_STATES:
+        return status_control(status)
+    running = status == "running"
+    if external:
+        return status_control(status, action=None, enabled=False, tip=BADGE_EXTERNAL_TIP)
+    action = "stop" if running else "launch"
+    if not admin:
+        return status_control(status, action=action, enabled=False, tip=BADGE_ADMIN_TIP)
+    if action not in actions:
+        return status_control(status)
+    label = status_control(status)["label"]
+    return status_control(status, action=action, enabled=True, tip=BADGE_RUNNING_TIP if running else _start_tip(label))
+
+
 def update_offer(name: str, latest: Optional[str], *, restarts: bool = True) -> Tuple[str, str]:
     """(label, tooltip) of the Update action. `restarts` False: a running copy
     the gateway did not start is left alone, and the tooltip says what to do."""
@@ -3426,8 +3491,13 @@ class AppsManager:
                 actions.append("install")
         else:
             actions.append("open")
+            if ours:
+                # R11.3: the copy this gateway started can be quit from here.
+                actions.append("stop")
             if update_available and allowed and argv is not None and not source_checkout:
                 actions.append("update")
+        badge = self._desktop_status_control(installed=installed, running=running, ours=bool(ours), admin=admin,
+                                             launch_available=launch_available, launch_blocked=launch_blocked)
         if not update_available:
             upd_label, upd_tip = None, None
         elif source_checkout:
@@ -3463,6 +3533,7 @@ class AppsManager:
             "install_blocked_reason": blocked,
             "install_parts": ["desktop"],
             "actions": actions,
+            "status_control": badge,
             "active_job": job.to_dict() if job is not None else None,
             "log_path": str(self.app_log_path(spec.id)),
             "content_summary": None,
@@ -3493,6 +3564,53 @@ class AppsManager:
                 "latest_error": f"PyPI is not reachable: {registry_error}" if registry_error else None,
             },
         }
+
+    @staticmethod
+    def _desktop_status_control(
+        *, installed: bool, running: bool, ours: bool, admin: bool,
+        launch_available: bool, launch_blocked: Optional[str],
+    ) -> Dict[str, Any]:
+        """R11.3, the Assistant's badge: Running (started by this gateway) →
+        click quits it; Running (started elsewhere) → disabled with the
+        sentence; Stopped → click opens it (POST /launch), or disabled with
+        why it cannot open for this caller (another computer, not an admin)."""
+        if not installed:
+            return status_control("not_installed")
+        if running:
+            if not ours:
+                return status_control("running", tip=BADGE_EXTERNAL_TIP)
+            if not admin:
+                return status_control("running", action="stop", tip=BADGE_ADMIN_TIP)
+            return status_control("running", action="stop", enabled=True, tip=BADGE_QUIT_TIP)
+        if not admin:
+            return status_control("stopped", action="launch", tip=BADGE_ADMIN_TIP)
+        if not launch_available:
+            return status_control("stopped", action="launch", tip=launch_blocked or BADGE_ADMIN_TIP)
+        return status_control("stopped", action="launch", enabled=True, tip=BADGE_STOPPED_TIP)
+
+    def stop_desktop(self, app_id: str) -> Dict[str, Any]:
+        """R11.3: quit the desktop app THIS gateway started (SIGTERM; the Qt
+        app closes cleanly). A copy started anywhere else is not the
+        gateway's to quit: refused with the badge's sentence."""
+        from .apps_desktop import DESKTOP_BY_ID
+
+        spec = DESKTOP_BY_ID[str(app_id)]
+        pres = self.desktop_presence(spec.id, refresh=True)
+        pid = pres.get("pid") if pres.get("running") else None
+        if pid is None:
+            self._desktop_launched.pop(spec.id, None)
+            return {"ok": True, "app": self.desktop_row(spec.id), "message": f"The {spec.name} is not running."}
+        if self._desktop_launched.get(spec.id) != pid:
+            raise StartedOutsideGateway(
+                f"The {spec.name} was started outside the gateway, so the gateway cannot quit it.",
+                hint=f"{BADGE_EXTERNAL_TIP}.",
+            )
+        quit_ok = bool(self.desktop_quit(int(pid)))
+        self._desktop_launched.pop(spec.id, None)
+        self._desktop_cache.pop(spec.id, None)
+        if not quit_ok:
+            raise AppsError(f"The {spec.name} did not quit (process {pid}).", hint="Quit it from its menu-bar icon.")
+        return {"ok": True, "app": self.desktop_row(spec.id), "message": f"The {spec.name} is stopped."}
 
     def start_desktop_install(
         self,
@@ -3749,6 +3867,8 @@ class AppsManager:
             "install_blocked_reason": None,
             "install_parts": ["web"],
             "actions": ["open"],
+            # R11.3: the badge says Running, disabled: its process is not the gateway's.
+            "status_control": browser_status_control(status="running", actions=["open"], external=True, admin=bool((caller or {}).get("admin", True))),
             "active_job": job.to_dict() if job is not None else None,
             "log_path": None,
             # Counted on THIS gateway: unknown when the app's page says it
@@ -3843,6 +3963,11 @@ class AppsManager:
             # when the app's terminal version comes with it on this computer.
             "install_parts": ["web", "tui"] if (not installed and self.install_includes_terminal(spec.id) is not None) else ["web"],
             "actions": actions,
+            # R11.3: the badge is the start/stop control (Running → stop, Stopped → start).
+            "status_control": browser_status_control(
+                status=snap["status"] if (installed or running) else "not_installed",
+                actions=actions, external=False, admin=bool((caller or {}).get("admin", True)),
+            ),
             "active_job": job.to_dict() if job is not None else None,
             "log_path": str(self.app_log_path(spec.id)),
             # Entity: {"entities_count": n | None}; None for the other apps.

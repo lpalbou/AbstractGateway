@@ -160,7 +160,11 @@ async function fetch(path, options = {}) {
   if (path === "/api/gateway/engines/jobs/eng-1/continue" && method === "POST") return res(200, { schema: "engine_install_job_v1", job_id: "eng-1", engine: "ollama", state: "failed", status: "failed", message: "The build failed: no C compiler was found.", error: { code: "build_failed", message: "The build failed: no C compiler was found." }, details: "xcrun: error: invalid active developer path", can_cancel: false });
   if (path.startsWith("/api/gateway/jobs?")) return res(200, { schema: "host_jobs_v1", jobs: [] });
   if (path.startsWith("/api/gateway/apps?")) {
-    const row = (id, pkg, extra) => Object.assign({ id, name: id, package: pkg, installed: false, running: false, status: "not_installed", needs_node_install: true, install_available: false, install_blocked_reason: "Installing software on the gateway host is turned off for this gateway.", actions: [], active_job: null }, extra || {});
+    // R11.3: every gateway row carries its status badge (apps_manager.status_control).
+    const badgeOf = (r) => r.status === "running" ? { label: "Running", tone: "ok", busy: false, action: "stop", enabled: true, tip: "Running — click to stop" }
+      : r.status === "stopped" ? { label: "Stopped", tone: "muted", busy: false, action: "launch", enabled: true, tip: "Stopped — click to start" }
+      : { label: "Not installed", tone: "muted", busy: false, action: null, enabled: false, tip: null };
+    const row = (id, pkg, extra) => { const r = Object.assign({ id, name: id, package: pkg, installed: false, running: false, status: "not_installed", needs_node_install: true, install_available: false, install_blocked_reason: "Installing software on the gateway host is turned off for this gateway.", actions: [], active_job: null }, extra || {}); r.status_control = badgeOf(r); return r; };
     return res(200, { ok: true, gateway_url: "http://127.0.0.1:18080", install_allowed: true, registry: { reachable: true }, runtime: { node: { available: false, active_job: null } },
       console_tui: { kind: "tui", installed: false, install_available: false, install_method: "cargo", install_command: "cargo install abstractgateway-console", command: "abstractgateway-console --url http://127.0.0.1:18080" }, apps: [
       row("flow", "@abstractframework/flow", { install_available: true, install_blocked_reason: null, actions: ["install"] }),
@@ -341,7 +345,9 @@ if (scenario.name === "claim") {
   // version) and the commands; OFF removes them from the DOM again.
   context.uiSetAdvanced(true); await settle();
   const tech = el("first-run-apps-body").innerHTML;
-  for (const want of ['data-app-action="stop"', 'data-app-action="logs"', "Show log", "Version 0.4.2", "Terminal 0.5.0", "abstractcode --gateway http://127.0.0.1:18080", "ui-card__techline"]) if (!tech.includes(want)) fail("Technical details must render " + want + ": " + tech);
+  // R11.3: no Stop button under Technical details: the status badge stops (data-badge-action="stop").
+  if (!tech.includes('data-badge-action="stop"')) fail("the Running badge must be the stop control: " + tech);
+  for (const want of ['data-app-action="logs"', "Show log", "Version 0.4.2", "Terminal 0.5.0", "abstractcode --gateway http://127.0.0.1:18080", "ui-card__techline"]) if (!tech.includes(want)) fail("Technical details must render " + want + ": " + tech);
   for (const pkg of ["flow", "code", "observer", "continuum", "entity"]) if (!tech.includes("npx @abstractframework/" + pkg)) fail("Technical details must show the npx line for " + pkg);
   context.uiSetAdvanced(false); await settle();
   if (el("first-run-apps-body").innerHTML.includes('data-app-action="stop"')) fail("switching Technical details off must remove Stop from the DOM");
