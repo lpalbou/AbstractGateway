@@ -6364,7 +6364,7 @@ The sidebar groups the tabs in four sections, in this order:
 
 | Group | Tab | What it covers |
 |---|---|---|
-| Accounts | **Accounts** | every user and entity in one table: the **Active** switch, email, a link to each account's runtimes, activity (Logs), workspaces, token rotation, entity management, the administrator's **Shared workspace & allowed workspaces** and **Email for everyone** switches ([below](#accounts)) |
+| Accounts | **Accounts** | every user and entity in one table: the **Active** switch, email, a link to each account's runtimes, activity (Logs), workspaces, token rotation, entity management, the administrator's **Eligible workspaces** and **Email for everyone** switches ([below](#accounts)) |
 | Work | **Workflows** | the workflow bundles on this gateway, shared by the gateway or your own (name, what each does, version, source, the apps that use it, availability to users), import, export, open in AbstractFlow, archive, the default workflow for each app and the **Streamed replies** setting ([below](#workflows)) |
 | Work | **Skills & MCP** | administrators: **Skills** — the skills shelf setting and every skill (curated and imported, **Show archived**) with View, Export and Archive, import a `.zip` or folder, Duplicate to edit a curated one; **MCP servers** — whether agents are offered tools, an **Enabled for agents** switch per server, add, edit, test and archive ([configuration.md](docs/configuration.md#skills-shelf)) |
 | Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches; `#runtimes?account=<id>` lists one account's runtimes ([below](#runtimes-of-one-account)) |
@@ -6456,8 +6456,9 @@ on it, in one table (`GET /api/gateway/admin/accounts`, see
 [api.md](docs/api.md#accounts-and-activity)). Above it, **Create user** issues a
 user and their token (shown once) and **Create entity** summons a new entity
 from a spark template (its name is permanent, [entities.md](docs/entities.md)).
-Administrators also have **Shared workspace & allowed workspaces** first in
-that row: the workspaces every agent may use ([below](#workspaces)).
+Administrators also have **Eligible workspaces** first in that row: the
+workspaces accounts may choose from, and the most each one allows
+([below](#workspaces)).
 
 | Column | Shows |
 |---|---|
@@ -6520,7 +6521,9 @@ it is off by default and your browser remembers it.
   record (page views and reads, mail received, what agents send with their
   email tools).
 - **Workspace** opens "Workspaces — <id>", the workspaces that account's
-  agents may use ([below](#workspaces)).
+  agents use ([below](#workspaces)). Every row has it — users, entities
+  (including entities older than entity accounts: the gateway gives each one
+  an account at start) and your own.
 - **Rotate token** asks in a row under the account ("Rotate the token of
   alice? The current token stops working now; the new one is shown once."),
   then issues the new token and shows it once. Entities have no token to rotate.
@@ -6542,8 +6545,9 @@ tools for users** and **Sign-in by email** ([email.md](docs/email.md#administrat
 Someone who is not an administrator sees the page as **Your account** ("Your
 account and the entities you created."): the same table with their own row and
 one row per entity they created (`GET /api/gateway/me/accounts`). There is no
-Create user, no Shared workspace & allowed workspaces and no Email for everyone;
-their own row's **Workspace** opens their own workspaces; it has no **Rotate token**
+Create user, no Eligible workspaces and no Email for everyone;
+their own row's **Workspace** opens their own workspaces, and an entity's row
+opens that entity's; it has no **Rotate token**
 (only an admin rotates tokens), they can archive an entity they created but not
 unarchive it, and an entity's Active switch says "Only an admin can suspend an
 entity." Archived accounts are not listed for them. See [security.md](docs/security.md#who-sees-which-account).
@@ -6551,43 +6555,53 @@ entity." Archived accounts are not listed for them. See [security.md](docs/secur
 
 ### Workspaces
 
-A workspace is a directory an agent may work in. The administrator decides
-which workspaces agents may reach; each account can narrow that further
-([security.md](docs/security.md) explains how the gateway enforces it). Two
-things decide it: **what** agents may reach (the posture and its workspaces)
-and **how** (Read-only or Read & write, per workspace).
+A workspace is a directory an agent may work in. Three levels decide which
+workspaces a run may use, each inside the one above
+([security.md](docs/security.md) explains how the gateway enforces it):
 
-**Shared workspace & allowed workspaces** (administrators, top of Accounts)
-opens the gateway's policy. The line at the top states it exactly, for
-example "Deny everything, allow listed workspaces · Shared workspace (rw) · /data/project (rw) ·
-/archive (ro)" or "Allow everything, refuse listed workspaces (rw) · Shared workspace (rw) ·
-/secrets (refused) · /archive (ro)".
+1. **Eligible workspaces** — the administrator's set: what any account may
+   choose from, and the most each workspace allows.
+2. **An account's workspaces** — what that account's agents use, among the
+   eligible ones (every account has its own: users and entities).
+3. **One conversation's workspaces** — chosen in the apps (AbstractCode,
+   Flow, Observer, the Assistant) for one conversation or one run, inside the
+   account's.
 
-| Control | What it does |
+Every run also has its own private workspace (`<data dir>/workspaces/session-…`):
+a file written without a full path lands there. It is always available, read &
+write, and never listed. The workspaces a run may use are listed to its agent
+with their paths and modes.
+
+Both dialogs below are the same chooser, with the same words, as the apps'
+workspace settings. Their parts:
+
+| Part | What it does |
 |---|---|
-| Posture: **Deny everything, allow listed workspaces** (the default) | agents may use the shared workspace and the **Allowed workspaces** listed under it, nothing else |
-| Posture: **Allow everything, refuse listed workspaces** | agents may use any workspace; **Everything else** sets its permission (**Read-only** or **Read & write**) and the **Refused workspaces** listed under it are the exceptions |
-| **Shared workspace** | the one workspace every account's agents can always use; always Read & write and required. A conversation that names no workspace works in its own private session folder, so a file it writes without a full path lands there, not here. The shared workspace and the allowed workspaces are listed to the agent with their paths and modes |
-| Rows | one row per workspace (**Add a workspace**, the remove icon on each row), each **Read-only**, **Read & write** or **Refused** (a refused workspace stays out, even inside an allowed one) |
+| **Gateway: …** (account level) | the eligible set in one line, as the gateway states it, e.g. "Gateway: Allow everything, refuse listed workspaces (rw) · /secrets (refused) · /archive (ro)" |
+| **Follow the gateway policy** (account level) | a switch: on, the account gets exactly the eligible set; off, the account has its own posture and rows (starting from what applied) |
+| Posture | **Deny everything, allow listed workspaces** (only the **Allowed workspaces** listed below) or **Allow everything, refuse listed workspaces** (any workspace except the **Refused workspaces** listed below; **Everything else** sets **Read-only** or **Read & write** for the rest) |
+| Rows | one row per workspace: the path, **Read & write** / **Read-only** / **Refused**, and a remove icon; **Add a workspace path** adds one (Refused under Allow everything, refuse listed workspaces; under Deny everything, allow listed workspaces Read & write in Eligible workspaces and Read-only in an account) |
+| The last line | what applies, as the gateway states it, e.g. "Deny everything, allow listed workspaces · /Users/me/Pictures (rw) · /Users/me/Documents (ro)" |
 
-**Workspace** on an account's row opens that account's workspaces (users,
-entities and your own row) in the same chooser, with the same words, as the
-Workspace settings of AbstractCode and the Assistant. An account can only
-narrow what the gateway allows: lower a workspace to Read-only or refuse it, and
-under Allow everything, refuse listed workspaces lower everything else to Read-only; it never
-gains a workspace or a permission the gateway does not give. The line at the
-top, "Agents may use: …", is the gateway's own summary of what applies.
-**Follow the gateway policy** removes the account's own limits, after asking.
-An entity's workspaces are changed by an administrator; someone who is not an
-administrator opens their own from their own row.
+**Eligible workspaces** (administrators, top of Accounts) holds the
+administrator's set. A row's mode is its **cap**: no account can use that
+workspace with more. Under it, the gateway's own data directory and credentials
+are listed as always refused. A fresh gateway starts at Allow everything,
+refuse listed workspaces (Read & write), with no row.
 
-Every change applies at once; there is no Save button. A row applies when you
-leave the field (or press Enter): the gateway first checks the path
-(`POST /api/gateway/workspace/path-check`) and says in a sentence why it
-cannot be used; such a row is not saved, and a refused change ends with "Not
-saved.". A saved row shows "Saved" for a moment. The API is
-`GET`/`PUT /api/gateway/workspace/policy` and
-`GET`/`PUT /api/gateway/workspace/policy/{account}` ([api.md](docs/api.md)).
+**Workspace** on an account's row opens that account's level. An account
+chooses among the eligible workspaces: a path outside them, or a mode above a
+workspace's cap, is refused with the gateway's sentence. A mode above the cap
+is shown greyed and keeps its tooltip, "The gateway allows this workspace
+read-only" (reachable with the keyboard too). An entity's workspaces are set by
+its creator or an administrator; someone who is not an administrator opens
+their own from their own row.
+
+Every change applies at once and is saved by the gateway; there is no Save
+button. When the gateway refuses a change, its sentence shows under the control
+with "Not saved." and nothing changes. The API is `GET`/`PUT
+/api/gateway/workspace/policy` (eligible workspaces) and `GET`/`PUT
+/api/gateway/workspace/policy/{account}` (`me` for your own) ([api.md](docs/api.md)).
 
 ### Runtimes of one account
 
@@ -6596,9 +6610,8 @@ The Runtime link on an Accounts row opens **Runtimes** at
 chip "Account: alice" names the filter, only that account's runtimes are
 listed, and a single runtime opens at once. The link survives a reload; the
 × on the chip shows every runtime again. The **Workspace** column opens the
-workspaces that apply: **Shared workspace** (the gateway policy) for the
-default runtime, **Workspaces** (the owner's) for a user's or an entity's
-runtime.
+workspaces that apply: **Eligible workspaces** for the default runtime,
+**Workspaces** (the owner's) for a user's or an entity's runtime.
 
 ### Workflows
 
@@ -10092,6 +10105,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Apps: the status badge is the start/stop control.** On every Apps card (web console and terminal console) **Running** stops the app and **Stopped** (or a crash) starts it, in one click as Install already is (`POST /apps/{id}/stop` / `/launch`, the requests the old buttons sent); the separate **Stop** and **Start** buttons under Technical details are gone (Open stays). The Assistant's badge quits the Assistant this gateway opened (`POST /apps/assistant/stop` now quits it; any other running Assistant is refused with 409 `started_outside_gateway` and left alone) and opens a stopped one. An app started outside the gateway shows the badge disabled with "Started outside the gateway — stop it where it was started"; for a user who is not an admin every badge is disabled with "Only an admin can start or stop apps". Every apps row carries the badge (`status_control {label, tone, busy, action, enabled, tip}`), so both consoles say the gateway's words: the web console as a button with the kit tooltip (focusable, Enter or Space; "Stopping…"/"Starting…" while its request runs), the terminal console as a selectable status cell (→ onto it, ← back, Enter or Space; `s` anywhere; the hint line says the tooltip). An installed, stopped app's badge reads **Stopped** (was "Installed").
 - **Workspaces: three levels, no shared workspace** (supersedes the 0.13.0 "two dimensions", "shared workspace" and "accounts narrow" lines below). The **gateway** policy defines the eligible set: the posture (*Deny everything, allow listed workspaces* / *Allow everything, refuse listed workspaces* with a default mode) and rows whose mode (Read-only, Read & write, Refused) is a cap; built-in refusals stay; a fresh gateway allows everything, read & write. An **account** (person or entity) picks its own default subset with the same shape (`GET/PUT /api/gateway/workspace/policy/{account|me}` → `{account, configured, posture, default_mode, folders}`; `{configured: false}` follows the gateway): any path inside the eligible set, at most at its cap. A **conversation** picks its own subset (`GET/PUT /api/gateway/sessions/{id}/workspaces`, stored by the gateway in the owner's plane, before or after the first run; "Use my default" = `{configured: false}`), and a run may carry a one-off `workspace` (start body or `input_data.workspace`; an automation keeps it in `target.input_data.workspace`, an older `workspace_allowed_paths` list is converted). Every door resolves run > session > account > gateway, clamps to the eligible set and caps (a client never widens: refused at the HTTP doors; at the in-process doors dropped or lowered and recorded with its sentence as `_gateway_workspace.clamped`, shown by `GET /runs/{id}/workspace`) and records `_gateway_workspace.{level, summary}` on the run. `GET /api/gateway/workspace/effective/{account}[?session=]` answers `{level, posture, default_mode, folders: [{path, mode, cap, source}], summary, gateway_summary}`; `POST` on the same route is a dry run for an unsaved payload. Every refusal is `400 {"detail": {"reason": "workspace_refused", "message", "path"}}`. `shared_workspace` is gone (a PUT carrying it: "list it as a workspace"), as are `builtin_never_allowed` (now `builtin_refused`) and the run key `workspace_shared_path`. Entity workspaces are set by admins and the entity's creator. Migration at serve start (`_migrated.workspace_policy_v2`, audited, idempotent): posture "Allow everything, refuse listed workspaces", the old shared workspace a listed read & write row, rows kept as caps, each round-9 account entry a configured account layer. Docs: api, security, configuration, architecture, maintenance.
 - **Every entity has a gateway account.** Entity homes created before entity accounts existed (on older gateways, for example castor and mnemosyne) get one at serve start, minted like a creation (roles `entity`, token discarded), audited (`entity_account_created`, reason `migration`), once. Every Accounts row that is not archived offers the workspace action; "This entity has no gateway account yet" is gone.
+- **Console: Accounts → Workspaces on the three-level model (no shared workspace).** **Eligible workspaces** (administrators; the button that was "Shared workspace & allowed workspaces") holds the gateway's set: the posture, **Everything else**, and rows whose mode (**Read & write** / **Read-only** / **Refused**) is the cap no account can exceed, with the gateway's own data directory and credentials shown as always refused. The workspace icon on every Accounts row (users, entities — legacy ones included — and your own; an entity's for its creator and administrators) opens that account's level: the line "Gateway: …", **Follow the gateway policy** as a switch, the account's own posture and rows, a mode above a workspace's cap greyed with the tooltip "The gateway allows this workspace read-only". Both dialogs are the kit `WorkspaceChooser` (ui-kit 0.8.2, islands re-synced), the same component and words as the apps; every change is one `PUT`, a refusal shows the gateway's sentence with "Not saved.", there is no Save button. The console no longer path-checks rows itself (the gateway's `PUT` answers the sentence).
 - **Apps: every row shows an available update, and the Assistant updates in one click.** The Assistant's card reads the newest `abstractassistant` from PyPI and offers **Update to x.y.z** beside **Open**, as the browser apps now do too (it was under Technical details): the install job with `abstractassistant==<latest>` and the gateway's own pins. An Assistant the gateway opened is quit and opened again on the new version, signed in; one started elsewhere is left alone with "Quit it and open it again to run x.y.z". An app started outside the gateway shows "Latest x.y.z · Started outside the gateway — update it where it was installed", with no action; an Assistant installed from a source checkout (editable, read from its `direct_url.json`) shows the version its checkout's `pyproject.toml` declares and "Latest x.y.z · Installed from a source checkout — update it there", with no action. An update whose requested version did not land fails ("Asked for 0.14.0, but 0.13.0 is still installed — not updated.") and restarts nothing. Label and tooltip come from the gateway (`update_label`, `update_tip`), the same in the web console (kit tooltip) and the terminal console (`u`, with the tooltip as its confirmation). The npm registry, PyPI and GitHub share one cache (10 minutes, 1 minute after a failure), so a version published while the gateway runs shows up without a restart.
 - **Terminal console Workspaces page parked.** `abstractgateway-console`'s **W Workspaces** shows one sentence, "Workspaces are managed from Accounts in the web console; the terminal console follows in the next update.", and sends no request: it no longer calls the routes this release removed (`/admin/user-workspace-policy`, `/workspace/policy/self`, the runtime-config `workspace_*` keys). Its Runtimes knobs no longer list workspace settings.
 - **Console top bar: a memory and compute line replaces the address.** Memory used of total (%), GPU busy % and the number of loaded models — the desktop tray's glance — from the Resources data (`GET /api/gateway/host/state`), refreshed every 5 seconds while signed in and the browser tab is visible. Its tooltip lists the real values (RAM, accelerator heap, model weights, KV caches, GPU load); a click opens Resources. The address and its copy button left the top bar: every address, with **Copy**, is on the Network page.
