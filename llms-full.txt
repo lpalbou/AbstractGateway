@@ -1483,7 +1483,8 @@ read & write workspace after the migration, and a run that names no
 (`<data dir>/workspaces/session-…`), where a relative path lands. The run's
 allowed workspaces are listed to the agent with their paths and modes. The
 legacy `ABSTRACTGATEWAY_WORKSPACE_ROOT` / `ABSTRACTGATEWAY_WORKSPACE_DIR` are
-read only by the migration of a pre-round-9 store.
+read once, by a store that has no workspace policy yet: the folder becomes one
+listed read & write workspace, and the variables are ignored afterwards.
 `ABSTRACTGATEWAY_WORKSPACE_MOUNTS` is read once, by the migration.
 These are gone:
 
