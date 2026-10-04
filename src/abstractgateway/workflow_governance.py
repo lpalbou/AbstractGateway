@@ -176,6 +176,74 @@ class WorkflowArchiveStore(_JsonBundleStore):
             return True
 
 
+# A workflow's description as its owner wrote it (round 8): the console edits it inline. The
+# .flow file is never rewritten (Export keeps returning the original bytes); the text lives
+# next to the archive file of the same owner:
+#   <registry root>/config/workflow_descriptions.json
+#   {version: 1, bundles: {<bundle_id>: {description, updated_by, updated_at}}}
+# One description per bundle (every version shows it); an empty text removes the entry, so
+# the manifest's own description shows again.
+WORKFLOW_DESCRIPTION_MAX_CHARS = 2000
+SHIPPED_NOT_EDITABLE_MESSAGE = "Workflows that ship with the gateway keep their own description."
+
+
+class WorkflowDescriptionStore(_JsonBundleStore):
+    def records(self) -> Dict[str, Dict[str, Any]]:
+        with self._lock:
+            return {str(k): dict(v) for k, v in self._load().items() if isinstance(v, dict)}
+
+    def set_description(self, bundle_id: str, description: str, *, updated_by: str) -> Optional[Dict[str, Any]]:
+        """Store (or, for an empty text, remove) the owner's description. Returns the record,
+        or None when it was removed."""
+        bid = str(bundle_id or "").strip()
+        if not bid:
+            raise ValueError("bundle_id is required")
+        text = str(description or "").strip()
+        with self._lock:
+            bundles = self._load()
+            if not text:
+                bundles.pop(bid, None)
+                self._save(bundles)
+                return None
+            rec = {"description": text, "updated_by": str(updated_by or ""), "updated_at": _utc_now_iso()}
+            bundles[bid] = rec
+            self._save(bundles)
+            return dict(rec)
+
+
+def description_store_for(owner_kind: str, *, data_dir: Union[str, Path], bundles_dir: Optional[Union[str, Path]]) -> WorkflowDescriptionStore:
+    """The descriptions file of `owner_kind` (same folders as `archive_store_for`)."""
+    if owner_kind == OWNER_USER:
+        if bundles_dir is None:
+            raise RuntimeError("a user-owned bundle without a registry folder")
+        return WorkflowDescriptionStore(Path(bundles_dir).expanduser().resolve().parent / "config" / "workflow_descriptions.json")
+    return WorkflowDescriptionStore(Path(data_dir) / "config" / "workflow_descriptions.json")
+
+
+_WORKFLOW_AUDIT_FIELDS = frozenset({"bundle_id", "owner_kind", "actor", "tenant_id", "outcome", "reason", "chars", "previous_chars"})
+
+
+def audit_workflow_event(event: str, **fields: Any) -> Optional[Dict[str, Any]]:
+    """Append one typed workflow event to `<data_dir>/audit_log.jsonl` (lengths, never the
+    text). Never raises: auditing must not break the caller."""
+    try:
+        from .security.gateway_security import _AUDIT_LOCK, _audit_data_dir_from_env, _audit_log_enabled
+
+        if not _audit_log_enabled(default=True):
+            return None
+        entry: Dict[str, Any] = {"ts": _utc_now_iso(), "event": str(event)}
+        entry.update({k: v for k, v in fields.items() if k in _WORKFLOW_AUDIT_FIELDS and v is not None})
+        line = json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n"
+        with _AUDIT_LOCK:
+            path = (_audit_data_dir_from_env() / "audit_log.jsonl").resolve()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "ab") as fh:
+                fh.write(line.encode("utf-8", errors="replace"))
+        return entry
+    except Exception:
+        return None
+
+
 def availability_store(data_dir: Union[str, Path]) -> WorkflowAvailabilityStore:
     return WorkflowAvailabilityStore(Path(data_dir) / "config" / "workflow_availability.json")
 

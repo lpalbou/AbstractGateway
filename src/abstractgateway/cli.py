@@ -644,8 +644,17 @@ def _apply_backlog_launch_flags(args: Any, data_dir: Path) -> None:
     reports them as `source: flag`. Without flags the record is removed, so
     an earlier run's flag never outlives it. No environment variable is set.
     """
-    from .runtime_config import RuntimeConfigError, record_launch_settings, validate_backlog_root
+    from .runtime_config import (
+        RuntimeConfigError,
+        migrate_legacy_backlog_root_env,
+        record_launch_settings,
+        validate_backlog_root,
+    )
 
+    # Round 8: no environment variable is read for the backlog folder; a value
+    # an older launcher still exports is stored once (then ignored).
+    if migrate_legacy_backlog_root_env(data_dir):
+        _stderr("Backlog folder: kept from the environment as the saved setting (the variable is no longer read)")
     values: dict[str, object] = {}
     raw_root = getattr(args, "backlog_root", None)
     if raw_root:

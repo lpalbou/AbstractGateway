@@ -6,8 +6,9 @@ with proper settings and --param_name."
 
 Pins:
 - ONE resolution (runtime_config.resolve_backlog_root / resolve_exec_runner):
-  `serve --backlog-root` / `--exec-runner` > stored setting > legacy env
-  (reported as `source: env`) > default (<data dir>/backlog, created with the
+  `serve --backlog-root` / `--exec-runner` > stored setting > (exec runner
+  only: legacy env, `source: env`; round 8 removed the folder's env rung and
+  stores an exported folder once) > default (<data dir>/backlog, created with the
   standard skeleton on first use; the runner off);
 - every consumer honours it (the backlog routes read ONLY the environment
   before, so the stored setting was cosmetic and a fresh install had no
@@ -73,7 +74,9 @@ def _client() -> TestClient:
 # --------------------------------------------------------------- resolution
 
 
-def test_resolution_order_flag_beats_stored_beats_env_beats_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolution_order_flag_beats_stored_beats_default_no_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Round 8: flag > stored > the gateway's own folder. The environment is
+    NOT a rung: a read (ensure=False, the settings GET) never reports it."""
     from abstractgateway.runtime_config import (
         clear_launch_settings,
         record_launch_settings,
@@ -87,15 +90,16 @@ def test_resolution_order_flag_beats_stored_beats_env_beats_default(tmp_path: Pa
     res = resolve_backlog_root(data)
     assert (res["source"], res["value"]) == ("default", str((data / "backlog").resolve()))
 
+    # A GET-style read with the variable set: still the default, no env fields.
     monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", str(env_repo))
-    res = resolve_backlog_root(data)
-    assert (res["source"], res["value"]) == ("env", str(env_repo.resolve()))
-    assert res["env_name"] == "ABSTRACTGATEWAY_TRIAGE_REPO_ROOT"
+    res = resolve_backlog_root(data, ensure=False)
+    assert (res["source"], res["value"]) == ("default", str((data / "backlog").resolve()))
+    assert "env_name" not in res and "env_shadowed" not in res
+    monkeypatch.delenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT")
 
     write_runtime_config(data, {"triage_repo_root": str(stored_repo)}, actor="t")
     res = resolve_backlog_root(data)
     assert (res["source"], res["value"]) == ("stored", str(stored_repo.resolve()))
-    assert res.get("env_shadowed") is True
 
     record_launch_settings(data, {"triage_repo_root": str(flag_repo)})
     res = resolve_backlog_root(data)
@@ -108,9 +112,69 @@ def test_resolution_order_flag_beats_stored_beats_env_beats_default(tmp_path: Pa
 
     clear_launch_settings(data)
     write_runtime_config(data, {"triage_repo_root": None}, actor="t")
-    assert resolve_backlog_root(data)["source"] == "env"
-    monkeypatch.delenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT")
+    # Cleared with the old variable exported: the gateway's own folder, never the variable.
+    monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", str(env_repo))
     assert resolve_backlog_root(data)["source"] == "default"
+
+
+def test_legacy_env_backlog_folder_is_stored_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Migration: an install whose launcher exported the folder keeps it — the
+    value is stored ONCE (first consumer read or serve start); afterwards the
+    variable is ignored, and a clear is never undone by it."""
+    import json as _json
+
+    from abstractgateway.runtime_config import (
+        migrate_legacy_backlog_root_env,
+        read_runtime_config,
+        resolve_backlog_root,
+        write_runtime_config,
+    )
+
+    data = tmp_path / "data"
+    env_repo, other = _repo(tmp_path, "env"), _repo(tmp_path, "other")
+    monkeypatch.setenv("ABSTRACT_TRIAGE_REPO_ROOT", str(env_repo))
+    res = resolve_backlog_root(data)  # a consumer read (ensure=True) migrates
+    assert (res["source"], res["value"]) == ("stored", str(env_repo.resolve()))
+    store = _json.loads((data / "config" / "runtime_config.json").read_text())
+    assert store["triage_repo_root"] == str(env_repo.resolve())
+    assert store["legacy_env_imported"]["triage_repo_root"]["env"] == "ABSTRACT_TRIAGE_REPO_ROOT"
+    assert read_runtime_config(data)["triage_repo_root"]["source"] == "stored"
+
+    # Once only: a changed variable is not imported again.
+    monkeypatch.setenv("ABSTRACT_TRIAGE_REPO_ROOT", str(other))
+    assert migrate_legacy_backlog_root_env(data) is False
+    assert resolve_backlog_root(data)["value"] == str(env_repo.resolve())
+
+    # Cleared by the admin: the variable never brings it back.
+    write_runtime_config(data, {"triage_repo_root": None}, actor="t")
+    assert resolve_backlog_root(data)["source"] == "default"
+
+    # An invalid value is not stored (the gateway's own folder applies) and not retried.
+    data2 = tmp_path / "data2"
+    monkeypatch.setenv("ABSTRACT_TRIAGE_REPO_ROOT", str(tmp_path / "missing"))
+    assert resolve_backlog_root(data2)["source"] == "default"
+    store2 = _json.loads((data2 / "config" / "runtime_config.json").read_text())
+    assert store2["legacy_env_imported"]["triage_repo_root"]["stored"] is False
+    assert "triage_repo_root" not in store2
+
+    # A folder saved before any import: the variable never replaces it, even after a clear.
+    data3 = tmp_path / "data3"
+    monkeypatch.delenv("ABSTRACT_TRIAGE_REPO_ROOT")
+    write_runtime_config(data3, {"triage_repo_root": str(other)}, actor="t")
+    monkeypatch.setenv("ABSTRACT_TRIAGE_REPO_ROOT", str(env_repo))
+    write_runtime_config(data3, {"triage_repo_root": None}, actor="t")
+    assert resolve_backlog_root(data3)["source"] == "default"
+
+
+def test_serve_start_stores_the_legacy_env_folder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractgateway import cli
+
+    data = tmp_path / "data"
+    env_repo = _repo(tmp_path, "env")
+    monkeypatch.setenv("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", str(env_repo))
+    cli._apply_backlog_launch_flags(argparse.Namespace(backlog_root=None, exec_runner=None), data)
+    store = json.loads((data / "config" / "runtime_config.json").read_text())
+    assert store["triage_repo_root"] == str(env_repo.resolve())
 
 
 def test_exec_runner_order_flag_beats_stored_beats_env_beats_off(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

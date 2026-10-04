@@ -1109,9 +1109,13 @@ def executor_registry() -> List[Dict[str, Any]]:
 #   backlog folder (key `triage_repo_root`):
 #       `serve --backlog-root PATH`  (source "flag")
 #     > the stored setting            (source "stored")
-#     > the legacy environment        (source "env" — reported, never taught)
 #     > <data dir>/backlog            (source "default"; the standard skeleton
 #                                      is created there on first use)
+#   No environment variable is read (round 8, operator rule "no env vars").
+#   A value an older gateway took from ABSTRACTGATEWAY_TRIAGE_REPO_ROOT /
+#   ABSTRACT_TRIAGE_REPO_ROOT is STORED ONCE by `migrate_legacy_backlog_root_env`
+#   (at serve start and on the first consumer read), so an existing install
+#   keeps its folder; afterwards the variable is ignored.
 #
 #   exec runner (key `backlog_exec_runner`):
 #       `serve --exec-runner on|off` > stored > legacy env > off
@@ -1121,7 +1125,9 @@ def executor_registry() -> List[Dict[str, Any]]:
 # must reach `serve --reload` workers and the CLI's `config get` without an
 # environment variable. A record whose process is gone is ignored.
 
+# Read ONLY by the one-time migration below; the resolver never reads them.
 _ENV_TRIAGE_ROOT_LEGACY = ("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", "ABSTRACT_TRIAGE_REPO_ROOT")
+_LEGACY_ENV_IMPORTED_KEY = "legacy_env_imported"
 _ENV_EXEC_RUNNER_LEGACY = ("ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER", "ABSTRACT_BACKLOG_EXEC_RUNNER")
 BACKLOG_DEFAULT_DIRNAME = "backlog"
 BACKLOG_SUBPATH = ("docs", "backlog")
@@ -1345,36 +1351,31 @@ def resolve_backlog_root(
     launch: Optional[Dict[str, Any]] = None,
     ensure: bool = True,
 ) -> Dict[str, Any]:
-    """THE backlog-folder resolution (flag > stored > legacy env > default).
+    """THE backlog-folder resolution (flag > stored > default; no environment).
 
     Returns {value, source, available, reason, default_path, backlog_dir,
-    env_shadowed?, env_name?, created?}. `available` False carries a plain
+    created?}. `available` False carries a plain
     `reason` (the path is in `value`, never in `reason`, so the reason can be
     shown to non-admins). `ensure` creates the default folder's skeleton —
     the "first use" — and is what every consumer passes; the settings read
     passes False (a GET never writes)."""
     data_dir = Path(data_dir)
+    if ensure and migrate_legacy_backlog_root_env(data_dir):
+        stored = None  # the migration just stored the folder: read it back
     if stored is None:
         stored = _read_store(data_dir)
     if launch is None:
         launch = read_launch_settings(data_dir)
     default_path = default_backlog_root(data_dir)
-    env_hit = _legacy_env(_ENV_TRIAGE_ROOT_LEGACY)
     raw: Optional[str] = None
     source = "default"
     if launch.get("triage_repo_root"):
         raw, source = str(launch["triage_repo_root"]), "flag"
     elif stored.get("triage_repo_root"):
         raw, source = str(stored["triage_repo_root"]), "stored"
-    elif env_hit is not None:
-        raw, source = env_hit[1], "env"
     out: Dict[str, Any] = {"source": source, "default_path": str(default_path)}
     if source == "flag" and stored.get("triage_repo_root"):
         out["stored_value"] = str(stored["triage_repo_root"])  # saved, applies once the flag is gone
-    if env_hit is not None:
-        out["env_name"] = env_hit[0]
-        if source in ("flag", "stored"):
-            out["env_shadowed"] = True
     if raw is None:
         path = default_path
     else:
@@ -1399,12 +1400,63 @@ def resolve_backlog_root(
             out.update({"available": True, "reason": None, "exists": exists})
         return out
     problem = backlog_root_problem(path, data_dir, require_backlog=False)
-    rung = {"flag": "the --backlog-root launch flag", "stored": "the saved setting", "env": "the environment"}[source]
+    rung = {"flag": "the --backlog-root launch flag", "stored": "the saved setting"}[source]
     if problem:
         out.update({"available": False, "reason": f"{problem} (set by {rung})"})
     else:
         out.update({"available": True, "reason": None})
     return out
+
+
+def _now_iso() -> str:
+    import datetime
+
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def migrate_legacy_backlog_root_env(data_dir: Path) -> bool:
+    """Store, ONCE, a backlog folder an older gateway took from the environment.
+
+    Round 8 removed the environment rung (operator rule: no env vars for
+    settings). An install whose launcher still exports
+    ABSTRACTGATEWAY_TRIAGE_REPO_ROOT (or ABSTRACT_TRIAGE_REPO_ROOT) keeps its
+    folder: when nothing is stored yet, the variable's value is validated and
+    written as the saved setting, and `legacy_env_imported.triage_repo_root`
+    records that it happened so a later clear is never undone by the
+    variable. Returns True when it stored the folder. An invalid value is not
+    stored (the gateway's own folder applies) and is logged once. Never
+    raises: a migration must not stop a start or a read."""
+    data_dir = Path(data_dir)
+    hit = _legacy_env(_ENV_TRIAGE_ROOT_LEGACY)
+    if hit is None:
+        return False
+    try:
+        with store_lock(data_dir):
+            stored = _read_store(data_dir, strict=True)
+            done = stored.get(_LEGACY_ENV_IMPORTED_KEY)
+            done = dict(done) if isinstance(done, dict) else {}
+            if "triage_repo_root" in done or stored.get("triage_repo_root"):
+                return False
+            name, raw = hit
+            import logging
+
+            log = logging.getLogger("abstractgateway.runtime_config")
+            try:
+                value = str(validate_backlog_root(raw, data_dir))
+            except RuntimeConfigError as exc:
+                done["triage_repo_root"] = {"env": name, "stored": False, "reason": str(exc), "at": _now_iso()}
+                stored[_LEGACY_ENV_IMPORTED_KEY] = done
+                _write_store(data_dir, stored)
+                log.warning("%s was not kept as the backlog folder: %s", name, exc)
+                return False
+            stored["triage_repo_root"] = value
+            done["triage_repo_root"] = {"env": name, "stored": True, "at": _now_iso()}
+            stored[_LEGACY_ENV_IMPORTED_KEY] = done
+            _write_store(data_dir, stored)
+            log.info("Backlog folder %s stored from %s (the variable is no longer read).", value, name)
+            return True
+    except Exception:  # noqa: BLE001 - a corrupt store or a read-only disk: the resolver reports the rest
+        return False
 
 
 def resolve_exec_runner(data_dir: Path, *, stored: Optional[Dict[str, Any]] = None, launch: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -1875,8 +1927,14 @@ def write_runtime_config(
         )
     if "triage_repo_root" in changes:
         raw = changes["triage_repo_root"]
+        # An explicit choice settles the one-time environment import for good:
+        # a later clear must never bring the old variable's folder back.
+        imported = stored.get(_LEGACY_ENV_IMPORTED_KEY)
+        imported = dict(imported) if isinstance(imported, dict) else {}
+        imported.setdefault("triage_repo_root", {"stored": False, "reason": "set through a settings door", "at": _now_iso()})
+        stored[_LEGACY_ENV_IMPORTED_KEY] = imported
         if raw is None or str(raw).strip() == "":
-            stored.pop("triage_repo_root", None)  # clear = fall back to the launch flag / env / default
+            stored.pop("triage_repo_root", None)  # clear = fall back to the launch flag / the gateway's own folder
             applied["triage_repo_root"] = None
         else:
             # One validation for every door: an existing folder

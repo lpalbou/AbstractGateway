@@ -149,10 +149,14 @@ from ..workflow_governance import (
     OWNER_GATEWAY,
     OWNER_USER,
     SHIPPED_NOT_ARCHIVABLE_MESSAGE,
+    SHIPPED_NOT_EDITABLE_MESSAGE,
     UNAVAILABLE_MESSAGE,
+    WORKFLOW_DESCRIPTION_MAX_CHARS,
     WorkflowArchiveStore,
     archive_store_for,
+    audit_workflow_event,
     availability_store,
+    description_store_for,
     owner_of,
     stamp_owner_into_bundle_bytes,
     workflow_visible,
@@ -7600,6 +7604,10 @@ def _bundle_archive_store(host: Any, owner: Dict[str, Any]) -> WorkflowArchiveSt
     return archive_store_for(str(owner.get("kind")), data_dir=gateway_data_dir_from_env(), bundles_dir=getattr(host, "bundles_dir", None))
 
 
+def _bundle_description_store(host: Any, owner: Dict[str, Any]):
+    return description_store_for(str(owner.get("kind")), data_dir=gateway_data_dir_from_env(), bundles_dir=getattr(host, "bundles_dir", None))
+
+
 def _agent_default_bundle_ids(svc: Any, principal: Optional[GatewayPrincipal]) -> set[str]:
     """Bundles an admin chose as an app's default workflow (Default workflow per app):
     they keep running for everyone even when hidden from users' lists (§5.2)."""
@@ -7846,6 +7854,11 @@ async def list_bundles(
         OWNER_GATEWAY: _bundle_archive_store(host, {"kind": OWNER_GATEWAY}).records(),
         OWNER_USER: (_bundle_archive_store(host, {"kind": OWNER_USER}).records() if not shared_host else {}),
     }
+    # The owner's own descriptions (round 8: edited inline in the console), per owner.
+    descriptions = {
+        OWNER_GATEWAY: _bundle_description_store(host, {"kind": OWNER_GATEWAY}).records(),
+        OWNER_USER: (_bundle_description_store(host, {"kind": OWNER_USER}).records() if not shared_host else {}),
+    }
 
     want_iface = str(executable_for or "").strip()
     if want_iface:
@@ -7969,6 +7982,8 @@ async def list_bundles(
             source_kind = bundle_source(source_meta.get("path") if isinstance(source_meta, dict) else None, metadata_obj)
             shipped = source_kind == "shipped"
             may_govern = is_admin if owner["kind"] == OWNER_GATEWAY else True
+            desc_rec = descriptions.get(owner["kind"], {}).get(str(bid))
+            own_desc = str(desc_rec.get("description") or "") if isinstance(desc_rec, dict) and not shipped else ""
             items.append(
                 {
                     "bundle_id": str(bid),
@@ -7983,8 +7998,10 @@ async def list_bundles(
                     # Admin availability (gateway-owned only; users' own bundles are always theirs).
                     "available": available,
                     "archived": archived,
-                    # What it does: the default entrypoint's description ("" when it has none).
-                    "description": default_desc,
+                    # What it does: the owner's own text when they wrote one (PATCH
+                    # /bundles/{id}), else the default entrypoint's description ("" when none).
+                    "description": own_desc or default_desc,
+                    "description_edited": bool(own_desc),
                     "version_channel": version_channel,
                     "is_draft": version_channel == "draft",
                     "is_published": version_channel == "published",
@@ -8002,6 +8019,9 @@ async def list_bundles(
                         "can_remove": False,
                         "can_archive": (not shipped) and may_govern,
                         "can_set_availability": is_admin and owner["kind"] == OWNER_GATEWAY,
+                        # PATCH /bundles/{id} {description}: the owner (or an admin for the
+                        # gateway's); shipped bundles keep their own description.
+                        "can_edit_description": (not shipped) and may_govern,
                         "can_deprecate": True,
                         "catalog_promote_endpoint": _api_gateway_path("/admin/workflow-catalog/promote"),
                     },
@@ -8351,6 +8371,63 @@ async def archive_workflow(request: Request, bundle_id: str, req: Optional[Workf
     _require_archive_rights(principal, owner, rows)
     rec = _bundle_archive_store(host, owner).archive(str(bundle_id).strip(), ver, archived_by=str(principal.user_id))
     return {"ok": True, "bundle_id": str(bundle_id).strip(), "owner": owner, **rec}
+
+
+class WorkflowDescriptionRequest(BaseModel):
+    description: str = Field(
+        ...,
+        max_length=WORKFLOW_DESCRIPTION_MAX_CHARS,
+        description="What the workflow does, in the owner's words. Empty = back to the description the file carries.",
+    )
+
+
+@router.patch("/bundles/{bundle_id}")
+async def patch_workflow(request: Request, bundle_id: str, req: WorkflowDescriptionRequest) -> Dict[str, Any]:
+    """Change a workflow's description (round 8: the console edits it inline).
+
+    Only the owner may: a user for their own workflows, an admin for the gateway's
+    (and their own). Shipped workflows refuse (409). The .flow file is never rewritten
+    (Export keeps the original bytes); the text applies to every version. Audited as
+    `workflow.description` (lengths only)."""
+    principal = _principal_from_request(request)
+    svc = get_gateway_service()
+    host = _require_bundle_host(svc)
+    bid = str(bundle_id or "").strip()
+    owner, rows = _governed_bundle(host, principal, bid, None)
+    actor = str(getattr(principal, "user_id", "") or "")
+    tenant = str(getattr(principal, "tenant_id", "") or "") or None
+    if any(bundle_source(r.get("path"), r.get("metadata")) == "shipped" for r in rows):
+        audit_workflow_event("workflow.description", bundle_id=bid, owner_kind=owner.get("kind"), actor=actor, tenant_id=tenant, outcome="refused", reason="shipped")
+        raise HTTPException(status_code=409, detail={"reason_code": "workflow_shipped", "message": SHIPPED_NOT_EDITABLE_MESSAGE})
+    if owner.get("kind") == OWNER_GATEWAY and not principal.is_admin():
+        audit_workflow_event("workflow.description", bundle_id=bid, owner_kind=owner.get("kind"), actor=actor, tenant_id=tenant, outcome="refused", reason="admin_required")
+        raise HTTPException(
+            status_code=403,
+            detail={"reason_code": "admin_required", "message": "Only an admin can change the description of a workflow shared by the gateway."},
+        )
+    store = _bundle_description_store(host, owner)
+    previous = store.records().get(bid) or {}
+    rec = store.set_description(bid, req.description, updated_by=actor)
+    text = str((rec or {}).get("description") or "")
+    audit_workflow_event(
+        "workflow.description",
+        bundle_id=bid,
+        owner_kind=owner.get("kind"),
+        actor=actor,
+        tenant_id=tenant,
+        outcome="ok",
+        chars=len(text),
+        previous_chars=len(str(previous.get("description") or "")),
+    )
+    return {
+        "ok": True,
+        "bundle_id": bid,
+        "owner": owner,
+        "description": text,
+        "description_edited": bool(text),
+        "updated_by": (rec or {}).get("updated_by"),
+        "updated_at": (rec or {}).get("updated_at"),
+    }
 
 
 @router.post("/bundles/{bundle_id}/unarchive")
