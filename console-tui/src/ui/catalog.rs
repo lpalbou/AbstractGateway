@@ -3137,9 +3137,19 @@ fn on_write(
                 let freed = num(&res, "freed_bytes")
                     .map(|b| format!(" {} freed.", ui_bytes(b)))
                     .unwrap_or_default();
+                // The row goes away: the selection moves to its neighbour so
+                // the page stays where the person is (and shows the notice).
+                let neighbour = SEL_ORDER.with(|o| {
+                    let o = o.borrow();
+                    let i = o.iter().position(|k| k == art)?;
+                    o.get(i + 1).or_else(|| i.checked_sub(1).and_then(|j| o.get(j))).cloned()
+                });
                 edit(|p| {
                     p.del.remove(art);
                     p.deleted.insert(art.to_string());
+                    if extra && p.sel.as_deref() == Some(art) {
+                        p.sel = neighbour.clone();
+                    }
                     if extra {
                         p.extra_notice = Some((Tone::Ok, format!("Deleted {artifact}.{freed}")));
                     } else {
