@@ -224,12 +224,50 @@ def test_redact_removes_named_fields_and_known_secrets():
 # ---- no route answers a stored token --------------------------------------------
 
 def _paths(app):
+    """Every (method, full path) the app serves, however FastAPI nests them.
+
+    FastAPI up to 0.13x copies included routers' routes into app.routes as
+    APIRoutes; newer releases keep one _IncludedRouter per include whose
+    effective_candidates() are route contexts (full path, methods,
+    original_route) or nested included routers. Starlette Mounts nest
+    routes under a path prefix. All three are walked, so the token check below
+    covers every route on every supported FastAPI."""
     from fastapi.routing import APIRoute
 
-    for route in app.routes:
-        if isinstance(route, APIRoute):
-            for method in sorted(route.methods or ()):
-                yield method, route.path
+    seen = set()
+
+    def walk(routes, prefix=""):
+        for route in routes:
+            if isinstance(route, APIRoute):
+                items = [(m, prefix + route.path) for m in sorted(route.methods or ())]
+            elif callable(getattr(route, "effective_candidates", None)):  # FastAPI >= 0.14x included router
+                yield from walk(route.effective_candidates(), prefix)
+                continue
+            elif hasattr(route, "original_route") and hasattr(route, "methods"):  # its route context
+                if not isinstance(route.original_route, APIRoute):
+                    continue
+                items = [(m, prefix + route.path) for m in sorted(route.methods or ())]
+            elif isinstance(getattr(route, "routes", None), list):  # Mount / nested router
+                yield from walk(route.routes, prefix + getattr(route, "path", ""))
+                continue
+            else:
+                continue
+            for item in items:
+                if item not in seen:
+                    seen.add(item)
+                    yield item
+
+    yield from walk(app.routes)
+
+
+def test_the_route_walk_sees_every_route(gw):
+    """The walk itself sees the console API and the OpenAI API page's routes, whatever FastAPI
+    nests them in. (`/v1/*` is served by the gateway's ASGI door, not a FastAPI route.)"""
+    walked = list(_paths(gw.app))
+    paths = {p for _m, p in walked}
+    assert len(walked) > 250, len(walked)
+    for must in ("/api/gateway/openai-api", "/api/gateway/admin/core-endpoint", "/api/gateway/runs/start"):
+        assert any(p == must or p.startswith(must + "/") for p in paths), must
 
 
 def test_no_route_answers_a_stored_token_in_clear(gw, monkeypatch):
