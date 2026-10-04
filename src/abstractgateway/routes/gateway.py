@@ -12834,7 +12834,17 @@ class MusicGenerateRequest(BaseModel):
     music_provider: Optional[str] = Field(default=None, max_length=120, description="Optional music provider override.")
     music_model: Optional[str] = Field(default=None, max_length=240, description="Optional music model id/name.")
     lyrics: Optional[str] = Field(default=None, max_length=20000, description="Optional lyrics for vocal music backends.")
-    duration_s: Optional[float] = Field(default=None, gt=0, le=3600, description="Requested output duration in seconds.")
+    duration_s: Optional[float] = Field(default=None, gt=0, le=3600, description="Requested output duration in seconds (same as `seconds`).")
+    seconds: Optional[float] = Field(
+        default=None,
+        gt=0,
+        le=3600,
+        description=(
+            "Length of the clip in seconds. Without it a sound effect (task text_to_audio) is 5 s and music keeps "
+            "the backend's default (30 s for Stable Audio 3). The model's own maximum still applies (120 s for the "
+            "Stable Audio 3 small checkpoints)."
+        ),
+    )
     seed: Optional[int] = Field(default=None, description="Optional deterministic seed.")
     num_inference_steps: Optional[int] = Field(default=None, ge=1, le=2000, description="Optional sampling step count.")
     guidance_scale: Optional[float] = Field(default=None, description="Optional guidance scale when supported.")
@@ -14743,6 +14753,14 @@ async def music_generate(run_id: str, req: MusicGenerateRequest) -> MusicGenerat
         "run_id": str(getattr(run, "run_id", rid)),
         "tags": tags,
     }
+    # One length: `seconds` (agents, Sandbox) or `duration_s` (older callers); the
+    # engine receives it as duration_s (its seconds_total conditioning).
+    seconds_value = getattr(req, "seconds", None)
+    duration_value = getattr(req, "duration_s", None)
+    if seconds_value is not None and duration_value is not None and float(seconds_value) != float(duration_value):
+        raise HTTPException(status_code=400, detail="seconds and duration_s disagree; send one.")
+    if seconds_value is not None:
+        output_spec["duration_s"] = float(seconds_value)
     for key in (
         "lyrics",
         "duration_s",

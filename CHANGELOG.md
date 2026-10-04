@@ -64,6 +64,7 @@ Requires AbstractRuntime 0.9.0, AbstractCore 2.25.0 and AbstractVoice 0.14.0 (in
 
 ### Fixed
 
+- **Sound effects have a length.** `POST /api/gateway/runs/{run_id}/music/generate` takes `seconds` (same value as `duration_s`; 400 when the two disagree, 422 outside 0–3600) and the console **Sandbox** shows a **Length (seconds)** field in SFX (default 5) and Music (default 30) mode. With AbstractMusic's matching fix the `output.sound` route runs its own model (`stabilityai/stable-audio-3-small-sfx`) for the requested length: "laser gunshot" with 3 seconds is a 3.0 s clip (it was a 30 s clip from the music checkpoint).
 - `POST /runs/{run_id}/voice/tts/stream` prepares the stream (run load, durable child run, engine call) off the event loop: the gateway keeps answering `/api/health` and every other request while speech is set up and synthesised.
 - `GET /api/gateway/about` (and every About that reads it) reports the AbstractFramework release the installer recorded (`bootstrap.env` `FRAMEWORK_VERSION`) before the `abstractframework` package metadata, so installer installs show the right AbstractFramework version.
 - Models page: the filters-in-use label no longer overlaps the "N of M models" count on a narrow screen.

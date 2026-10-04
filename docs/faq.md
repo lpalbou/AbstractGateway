@@ -319,6 +319,10 @@ GET /api/gateway/audio/music/providers
 GET /api/gateway/audio/music/models
 ```
 
+A sound effect is the same route with `task: "text_to_audio"`; give its length in `seconds`
+(`{"prompt": "laser gunshot", "task": "text_to_audio", "seconds": 3}`). Without `seconds` a sound
+effect is 5 seconds and music 30 seconds (Stable Audio 3).
+
 Higher apps should feature-detect music from
 `capabilities.contracts.flow_editor.media.generated_music` or
 `capabilities.contracts.assistant.media.generated_music`.

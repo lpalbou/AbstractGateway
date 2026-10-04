@@ -1121,6 +1121,11 @@ reply = await sendMode("output.music", "calm jazz");
 if (!reply.media || reply.media[0].kind !== "audio" || !String(reply.media[0].src).startsWith("blob:audio/wav")) {{
   throw new Error("sandbox music artifact should render as a blob-backed inline audio player");
 }}
+// R10.1: music carries a length, 30 s unless typed.
+const musicCall = calls.find((call) => call.path === "/api/gateway/runs/session_memory_gateway_console_sandbox_default_admin/music/generate" && String(call.body || "").includes("calm jazz"));
+if (JSON.parse(musicCall.body).seconds !== 30) {{
+  throw new Error("sandbox Music must send seconds (default 30), got " + musicCall.body);
+}}
 reply = await sendMode("output.sound", "scifi laser");
 const soundCall = calls.find((call) => call.path === "/api/gateway/runs/session_memory_gateway_console_sandbox_default_admin/music/generate" && String(call.body || "").includes("scifi laser"));
 if (!soundCall) {{
@@ -1129,6 +1134,20 @@ if (!soundCall) {{
 const soundBody = JSON.parse(soundCall.body);
 if (soundBody.task !== "text_to_audio") {{
   throw new Error("sandbox SFX test must request text_to_audio, got " + soundBody.task);
+}}
+// R10.1: the SFX length field (default 5 s) applies to the request.
+if (soundBody.seconds !== 5) {{
+  throw new Error("sandbox SFX must send seconds (default 5), got " + soundCall.body);
+}}
+if (el("sandbox-seconds-label").classList.contains("hidden")) {{
+  throw new Error("the Length (seconds) field must show in SFX mode");
+}}
+el("sandbox-seconds").value = "3";
+el("sandbox-seconds").oninput();  // typing fires input: the SFX mode keeps 3
+await sendMode("output.sound", "laser gunshot");
+const gunshotCall = calls.find((call) => call.path === "/api/gateway/runs/session_memory_gateway_console_sandbox_default_admin/music/generate" && String(call.body || "").includes("laser gunshot"));
+if (!gunshotCall || JSON.parse(gunshotCall.body).seconds !== 3) {{
+  throw new Error("sandbox SFX must send the typed length (3), got " + (gunshotCall && gunshotCall.body));
 }}
 if (!reply.media || reply.media[0].kind !== "audio" || !String(reply.media[0].src).startsWith("blob:audio/wav")) {{
   throw new Error("sandbox SFX artifact should render as a blob-backed inline audio player");

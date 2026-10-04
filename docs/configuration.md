@@ -1168,7 +1168,9 @@ and image-to-video are configured separately in the Multimodal Capabilities tab
 through `output.image.image_to_image`, `output.image.image_upscale`, and
 `output.video.image_to_video`. The Sandbox renders generated images, videos,
 voice, sound, and music artifacts inline when the route completes, while keeping artifact
-links available for opening the raw content. Text chat can include uploaded
+links available for opening the raw content. In SFX and Music mode a **Length (seconds)** field
+sits with the composer: 5 seconds for SFX and 30 for Music by default, and each mode keeps the
+value you type; the request carries it as `seconds`. Text chat can include uploaded
 attachments such as images, audio, video, PDFs, Markdown, or text documents.
 Uploaded attachments are stored as Gateway artifacts and then materialized by
 Runtime into provider-ready media for AbstractCore, so vision-capable
@@ -1451,7 +1453,7 @@ does not implicitly install them.
 - `POST /api/gateway/runs/{run_id}/images/upscale`: creates a durable Runtime child run for image upscaling from a run-visible `image_artifact`. Optional `resolution` accepts a shortest-edge integer or a scale factor such as `2x`; `scale`, `softness`, `seed`, `quantize`, and `vae_tiling` values are passed through only when the client supplies them.
 - `POST /api/gateway/runs/{run_id}/videos/generate`: creates a durable Runtime child run for text-to-video and returns an artifact-backed video result. Optional batch `count` / `n`, `seeds`, ordered `lora_adapters`, and `flow_shift` values are passed through only when the client supplies them. Batch responses also return `video_artifacts`.
 - `POST /api/gateway/runs/{run_id}/videos/from_image`: creates a durable Runtime child run for image-to-video and returns an artifact-backed video result. Optional batch `count` / `n`, `seeds`, ordered `lora_adapters`, and `flow_shift` values are passed through only when the client supplies them. Batch responses also return `video_artifacts`.
-- `POST /api/gateway/runs/{run_id}/music/generate`: creates a durable Runtime child run and returns an artifact-backed music result for thin clients.
+- `POST /api/gateway/runs/{run_id}/music/generate`: creates a durable Runtime child run and returns an artifact-backed music result for thin clients. `task: "text_to_audio"` makes a sound effect. `seconds` is the clip length (`duration_s` is accepted as the same value; two different values answer 400, a value that is not a number between 0 and 3600 answers 422); without it a sound effect is 5 seconds and music keeps the backend default (30 seconds for Stable Audio 3), and the model's own maximum applies (120 seconds for the Stable Audio 3 small checkpoints). `music_model` selects the checkpoint that runs.
 
 Direct image, image-edit, image-upscale, text-to-video, and image-to-video child runs advertise
 `event_name=abstract.progress`. Thin clients should stream the returned

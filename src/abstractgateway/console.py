@@ -1377,6 +1377,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      align-items: start;
 	    }
 	    .sandbox-system-compact { margin: 0; display: grid; gap: 6px; }
+	    #sandbox-seconds { max-width: 10rem; }
 	    .sandbox-system-compact input,
 	    .sandbox-system-compact select { min-height: 36px; }
 	    /* The kit chat island (islands mountSandboxChat) fills this box. */
@@ -2439,6 +2440,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                  <option value="">inherit</option><option value="off">off</option>
 	                  <option value="2">depth 2</option><option value="3">depth 3</option><option value="4">depth 4</option><option value="5">depth 5</option>
 	                </select><span class="sandbox-field-help">Per-request speculative decoding; inherit uses the Core default.</span></label>
+	                <label id="sandbox-seconds-label" class="sandbox-system-compact hidden">Length (seconds)<input id="sandbox-seconds" type="number" min="0.5" max="600" step="0.5" inputmode="decimal" value="5"><span class="sandbox-field-help">How long the generated clip is.</span></label>
 	              </div>
 	            </div>
 	            <div id="sandbox-chat-root" class="sandbox-chat-root"></div>
@@ -3505,7 +3507,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
   <script id="af-console-islands">/*__AF_CONSOLE_ISLANDS_JS__*/</script>
   <!--__ABSTRACTCORE_FRAGMENT_SCRIPT__-->
   <script>
-		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), voiceReasons: new Map(), providerStateLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], sandboxChat: [], sandboxDraft: "", sandboxBusy: false, activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
+		    const state = { principal: null, users: [], defaults: [], providers: [], providerLabels: new Map(), voiceLabels: new Map(), voiceReasons: new Map(), providerStateLabels: new Map(), providerModels: new Map(), endpointProfiles: [], endpointModelOptions: [], sandboxMessages: [], sandboxAttachments: [], sandboxObjectUrls: [], sandboxChat: [], sandboxDraft: "", sandboxSeconds: { sound: 5, music: 30 }, sandboxBusy: false, activeProviderPreset: "openai", activeTab: "providers", activeDefaultRow: null, confirmResolve: null, appearance: null, availability: new Map(), availabilityPlan: null, downloadJobs: new Map(), runtimeConfig: null, hostState: null, hostPollToken: 0, hostStateSeq: 0, modalityUi: null, modelEstimates: new Map(), modelsShowCached: false };
 		    const $ = (id) => document.getElementById(id);
 		    const HTML_ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 		    const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] || ch);
@@ -13075,6 +13077,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      $("sandbox-system-label").classList.toggle("hidden", mode !== "text");
 	      $("sandbox-reasoning-label").classList.toggle("hidden", mode !== "text");
 	      $("sandbox-speculation-label").classList.toggle("hidden", mode !== "text");
+	      // Sound effects and music take a length (seconds): 5 s and 30 s by default,
+	      // each mode keeping what was typed for it.
+	      const timed = mode === "sound" || mode === "music";
+	      $("sandbox-seconds-label").classList.toggle("hidden", !timed);
+	      if (timed) $("sandbox-seconds").value = String(state.sandboxSeconds[mode]);
 	      if (mode === "text") refreshSandboxSpeculationSupport(row);
 	      const configured = defaultRowConfigured(row);
 	      const prov = row.provider ? (state.providerLabels.get(row.provider) || row.provider) : "";
@@ -13442,6 +13449,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        sandboxPatch(messageId, { media: [{ kind, src: href, href, label }], content: `${label}: ${String(err.message || err)}. Open the raw file with the link.` });
 	      }
 	    }
+	    function sandboxSecondsFor(mode) {
+	      const seconds = Number($("sandbox-seconds").value);
+	      if (!Number.isFinite(seconds) || seconds <= 0) throw new Error("Length must be a positive number of seconds.");
+	      state.sandboxSeconds[mode] = seconds;
+	      return seconds;
+	    }
 	    async function runSandbox(draftText) {
 	      $("sandbox-message").textContent = "";
 	      $("sandbox-message").className = "message";
@@ -13506,7 +13519,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          } else if (mode === "music" || mode === "sound") {
 	            endpoint = `/api/gateway/runs/${encodeURIComponent(runId)}/music/generate`;
 	            const soundTask = key === "output.sound" || mode === "sound";
-	            body = { prompt: promptText, task: soundTask ? "text_to_audio" : "text_to_music", music_provider: row.provider, music_model: row.model, request_id: sandboxRequestId() };
+	            body = { prompt: promptText, task: soundTask ? "text_to_audio" : "text_to_music", seconds: sandboxSecondsFor(mode), music_provider: row.provider, music_model: row.model, request_id: sandboxRequestId() };
 	          } else if (mode === "video") {
 	            endpoint = `/api/gateway/runs/${encodeURIComponent(runId)}/videos/generate`;
 	            body = { prompt: promptText, video_provider: row.provider, video_model: row.model, request_id: sandboxRequestId() };
@@ -15264,6 +15277,11 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("clear-default").onclick = () => clearDefault();
 	    $("sandbox-capability").onchange = updateSandboxControls;
 	    $("sandbox-provider").onchange = () => loadSandboxModels();
+	    $("sandbox-seconds").oninput = () => {
+	      const mode = sandboxRouteMode(defaultRowKey(selectedSandboxRoute()));
+	      const seconds = Number($("sandbox-seconds").value);
+	      if ((mode === "sound" || mode === "music") && Number.isFinite(seconds) && seconds > 0) state.sandboxSeconds[mode] = seconds;
+	    };
 	    $("sandbox-file-input").onchange = (event) => {
 	      const input = event?.target;
 	      const files = Array.from(input?.files || []);
