@@ -358,7 +358,7 @@ fn capture_pages(size: (i32, i32)) {
         let mut h = live(size, Mount::Root, &url, &token);
         for (screen, name, wait) in [
             (ui::SCREEN_USERS, "root-accounts", "Name"),
-            (ui::SCREEN_WORKSPACES, "root-workspaces", "Gateway policy:"),
+            (ui::SCREEN_WORKSPACES, "root-workspaces", "Own policy ·"),
             (
                 ui::SCREEN_WORKFLOWS,
                 "root-workflows",

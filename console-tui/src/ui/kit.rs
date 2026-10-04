@@ -978,6 +978,18 @@ pub fn inline_input(
         .build()
 }
 
+/// [`sentence`] indented by `indent` cells on every line (help under a
+/// field keeps the field's indent when it wraps).
+pub fn sentence_indent(t: &TokenSet, text: &str, width: i32, indent: usize, ink: Rgba) -> View {
+    let pad = " ".repeat(indent);
+    let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+    for l in wrap_text(text.trim_start(), (width - indent as i32).max(10) as usize) {
+        col = col.child(line(vec![span(format!("{pad}{l}"), ink)]));
+    }
+    let _ = t;
+    col.build()
+}
+
 /// A one-line muted sentence (empty/error text helpers keep the WUI words).
 pub fn sentence(t: &TokenSet, text: &str, width: i32, ink: Rgba) -> View {
     let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));

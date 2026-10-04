@@ -84,12 +84,12 @@ pages are usable at 80×24.
    (`c`: open a hosted visit, send turns, close with the reflection
    pass; one visit at a time).
 - **W Workspaces** (ACCOUNTS) — which folders agents may read and write: the
-   gateway policy and every user account's (own policy or follows the
-   gateway), the effective policy in one line on top. `Enter` opens the
-   editor: **Access** (Allow my list / Allow everything except), **Trust the
-   launch folder**, the allowed and refused folders as rows (`Enter` edits in
-   place, **+ Add a folder**, `x` removes; `POST /workspace/path-check` first),
-   **Follow the gateway policy** for an account with its own. Each change
+   gateway policy and every user account (its **Own policy** switch and one
+   sentence), the summary in one line on top. `Enter` opens the editor:
+   **Access** (Allow my list / Allow everything except), **Launch-folder
+   trust**, the allowed and refused folders as rows (`Enter` edits in place,
+   **+ Add folder**, `x` removes; `POST /workspace/path-check` first),
+   **Default folder** (gateway) and **Any folder (old clients)**. Each change
    applies at once (`POST /admin/runtime-config`, `PUT
    /admin/user-workspace-policy`, `PUT /workspace/policy/self` for a
    non-admin).

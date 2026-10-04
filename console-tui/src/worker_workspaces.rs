@@ -16,7 +16,7 @@ use super::{finish_write, require_client, with_busy};
 use crate::api::{ApiError, GatewayClient};
 use crate::store::operator::MyPolicy;
 use crate::store::skills::Tone;
-use crate::store::workspaces::{Edit, ListKind, PathCheck, Policy, Scope};
+use crate::store::workspaces::{Edit, ListKind, PathCheck, Policy, Scope, DUPLICATE};
 use crate::store::{Loadable, RuntimeConfigData, Store};
 
 /// Workspaces commands (one `Cmd::Workspaces` variant carries them).
@@ -39,8 +39,6 @@ pub enum WsCmd {
         edit: Edit,
         path: String,
     },
-    /// A non-admin's view of the gateway policy (`GET /workspace/policy`).
-    LoadPublic,
 }
 
 /// The gateway-wide body: only the keys that changed (lists as arrays).
@@ -62,6 +60,19 @@ pub fn gateway_body(before: &Policy, after: &Policy) -> Value {
         if before.list(kind) != after.list(kind) {
             m.insert(kind.gateway_key().into(), json!(after.list(kind)));
         }
+    }
+    if before.legacy != after.legacy {
+        m.insert(
+            "client_workspace_scope_overrides".into(),
+            json!(after.legacy.unwrap_or(false)),
+        );
+    }
+    if before.root != after.root {
+        let r = after.root.clone().unwrap_or_default();
+        m.insert(
+            "workspace_root".into(),
+            if r.is_empty() { Value::Null } else { json!(r) },
+        );
     }
     Value::Object(m)
 }
@@ -197,16 +208,6 @@ pub(super) fn handle(
 ) {
     let ws = store.ws;
     match cmd {
-        WsCmd::LoadPublic => {
-            let res = with_busy(store, wake, "reading the gateway workspace policy", || {
-                require_client(client).and_then(|c| c.server_workspace_policy())
-            });
-            let out = match res {
-                Ok(v) => Loadable::Ready(v),
-                Err(e) => Loadable::Failed(e),
-            };
-            wake.post(move || ws.public.set(out.clone()));
-        }
         WsCmd::Save {
             scope,
             before,
@@ -259,17 +260,33 @@ pub(super) fn handle(
                 } else {
                     check.sentence.clone()
                 };
-                say(wake, store, format!("Not saved: {s}"), Tone::Error);
+                // The web's words: the gateway's sentence, then "Not saved."
+                say(wake, store, format!("{s} Not saved."), Tone::Error);
                 wake.post(move || ws.busy.set(false));
                 return;
             }
             let mut after = before.clone();
+            let duplicate = match &edit {
+                Edit::Add(k) => after.list(*k).contains(&check.normalized),
+                Edit::Row(k, i) => after
+                    .list(*k)
+                    .iter()
+                    .enumerate()
+                    .any(|(j, p)| j != *i && *p == check.normalized),
+                Edit::Root => false,
+            };
+            if duplicate {
+                say(wake, store, DUPLICATE.into(), Tone::Error);
+                wake.post(move || ws.busy.set(false));
+                return;
+            }
             let what = match &edit {
+                Edit::Root => {
+                    after.root = Some(check.normalized.clone());
+                    "default folder"
+                }
                 Edit::Add(k) => {
-                    let list = after.list_mut(*k);
-                    if !list.contains(&check.normalized) {
-                        list.push(check.normalized.clone());
-                    }
+                    after.list_mut(*k).push(check.normalized.clone());
                     "a folder added"
                 }
                 Edit::Row(k, i) => {
@@ -319,8 +336,7 @@ mod tests {
             mode: Some("whitelist".into()),
             trust: Some(true),
             allowed: vec!["/a".into()],
-            refused: vec![],
-            keep: Default::default(),
+            ..Policy::default()
         };
         let mut after = before.clone();
         after.allowed.push("/b".into());

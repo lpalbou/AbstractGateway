@@ -31,17 +31,16 @@ use crate::store::accounts::AccountRow;
 use crate::store::operator::MyPolicy;
 use crate::store::skills::Tone;
 use crate::store::workspaces::{
-    account_cell, account_policy, mode_label, public_line, summary, Edit, ListKind, Policy, Scope,
-    ADD_FOLDER, FOLLOW_GATEWAY, MODE_ALLOW_ALL, MODE_ALLOW_LIST, MODE_HELP_ALL, MODE_HELP_LIST,
-    REFUSED_HELP, SUBTITLE, TITLE, TRUST_HELP, TRUST_LABEL,
+    account_entries, account_policy, admin_summary, gateway_sentence, list_help, own_sentence,
+    self_summary, Edit, ListKind, Policy, Scope, ACCOUNTS_NOTE, ADD_FOLDER, ENTITIES_NOTE,
+    GATEWAY_NOTE, LEGACY_HELP, LEGACY_LABEL, MODE_ALLOW_ALL, MODE_ALLOW_LIST, MODE_HELP,
+    MODE_HELP_ALL, MODE_HELP_LIST, MODE_LABEL, OWN_LABEL, ROOT_HELP, ROOT_LABEL, SELF_NOTE,
+    SUBTITLE, TITLE, TRUST_HELP, TRUST_LABEL,
 };
 use crate::store::{ConnPhase, Loadable};
 use crate::worker::operator::OpCmd;
 use crate::worker::workspaces::WsCmd;
 use crate::worker::Cmd;
-
-/// The page's one-sentence explanation (the web's).
-pub const PURPOSE: &str = "The gateway policy applies to everyone; an account with its own policy uses that instead (the gateway's refused folders always apply).";
 
 /// The footer verbs.
 pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
@@ -94,7 +93,6 @@ pub fn refresh(ctx: &Ctx) {
     } else {
         store.op.my_policy.set(Loadable::Loading);
         ctx.send(Cmd::Operator(OpCmd::LoadMyPolicy));
-        ctx.send(Cmd::Workspaces(WsCmd::LoadPublic));
     }
 }
 
@@ -106,7 +104,6 @@ pub fn refresh_for_tests(store: &crate::store::Store, tx: &std::sync::mpsc::Send
         let _ = tx.send(Cmd::load_accounts_for(store));
     } else {
         let _ = tx.send(Cmd::Operator(OpCmd::LoadMyPolicy));
-        let _ = tx.send(Cmd::Workspaces(WsCmd::LoadPublic));
     }
 }
 
@@ -158,7 +155,7 @@ fn own_policy(p: &MyPolicy) -> Policy {
         },
         allowed: p.allowed.clone(),
         refused: p.blocked.clone(),
-        keep: Default::default(),
+        ..Policy::default()
     }
 }
 
@@ -199,10 +196,6 @@ pub fn view(cx: Scope_, ctx: &Ctx, t: &TokenSet) -> View {
                 ) {
                     c.store.op.my_policy.set(Loadable::Loading);
                     c.send(Cmd::Operator(OpCmd::LoadMyPolicy));
-                }
-                if not_asked(ws.public.with(|r| matches!(r, Loadable::NotAsked))) {
-                    ws.public.set(Loadable::Loading);
-                    c.send(Cmd::Workspaces(WsCmd::LoadPublic));
                 }
             }
         });
@@ -301,30 +294,19 @@ fn admin_page(
     };
     let gw = Policy::gateway(&c);
     let accounts = account_rows(ctx);
-    let sel = ws.sel.get();
-    // The effective summary of the highlighted scope, one line on top.
-    let top = match sel {
-        0 => format!("Gateway policy: {}", summary(&gw, &gw)),
-        i => match accounts.get(i - 1) {
-            Some(a) => {
-                let p = account_policy(&c, &a.tenant_id, &a.id).filter(Policy::is_custom);
-                match p {
-                    Some(p) => format!("{}: {}", a.id, summary(&p, &gw)),
-                    None => format!(
-                        "{}: follows the gateway policy — {}",
-                        a.id,
-                        summary(&gw, &gw)
-                    ),
-                }
-            }
-            None => String::new(),
-        },
-    };
-    col = col.child(kit::sentence(t, &top, width, t.text));
-    col = col.child(kit::sentence(t, PURPOSE, width, t.text_muted));
+    // The summary in one line on top (the web's): the gateway policy and
+    // how many accounts have their own.
+    let own = account_entries(&c).len();
+    col = col.child(kit::sentence(t, &admin_summary(&gw, own), width, t.text));
+    col = col.child(kit::sentence(
+        t,
+        &format!("{GATEWAY_NOTE} {ACCOUNTS_NOTE}"),
+        width,
+        t.text_muted,
+    ));
     let mut rows = vec![Row::new(vec![
-        "Gateway policy\nEveryone".into(),
-        summary(&gw, &gw),
+        "Gateway policy".into(),
+        gateway_sentence(&gw),
     ])];
     for a in &accounts {
         let p = account_policy(&c, &a.tenant_id, &a.id);
@@ -333,7 +315,11 @@ fn admin_page(
         } else {
             a.id.clone()
         };
-        rows.push(Row::new(vec![name, account_cell(p.as_ref(), &gw)]));
+        let cell = match p.as_ref().filter(|p| p.is_custom()) {
+            Some(_) => format!("[x] {OWN_LABEL} · {}", own_sentence(p.as_ref(), &gw)),
+            None => format!("[ ] {OWN_LABEL} · {}", own_sentence(None, &gw)),
+        };
+        rows.push(Row::new(vec![name, cell]));
     }
     super::util::clamp_selection(cx, ws.sel, {
         let n = rows.len();
@@ -357,7 +343,7 @@ fn admin_page(
     );
     col = col.child(kit::sentence(
         t,
-        "Enter edits the highlighted policy. Entities set their folders in Accounts → Manage.",
+        &format!("Enter edits the highlighted policy. {ENTITIES_NOTE}"),
         width,
         t.text_faint,
     ));
@@ -368,20 +354,6 @@ fn own_page(cx: Scope_, ctx: &Ctx, t: &TokenSet, keeper: &super::util::FocusKeep
     let store = ctx.store;
     let width = (abstracttui::app::use_viewport(cx).get().w - 4).max(20);
     let mut col = Element::new().style(LayoutStyle::column().gap(0).grow(1.0));
-    match store.ws.public.get() {
-        Loadable::Ready(v) => {
-            col = col.child(kit::sentence(t, &public_line(&v), width, t.text_muted))
-        }
-        Loadable::Failed(e) => {
-            col = col.child(kit::sentence(
-                t,
-                &format!("Could not read the gateway policy. {e}"),
-                width,
-                t.error,
-            ))
-        }
-        _ => {}
-    }
     let body = match store.op.my_policy.get() {
         Loadable::Ready(p) => {
             let own = own_policy(&p);
@@ -390,17 +362,12 @@ fn own_page(cx: Scope_, ctx: &Ctx, t: &TokenSet, keeper: &super::util::FocusKeep
                 trust: Some(p.eff_trust),
                 ..Policy::default()
             };
-            let state = if own.is_custom() {
-                format!("Your policy: {}", summary(&own, &gw))
-            } else {
-                format!(
-                    "Your policy follows the gateway policy — {}",
-                    p.effective_text()
-                )
-            };
+            let _ = &gw;
+            let state = self_summary(&own, p.customized, &p.eff_mode, p.eff_trust);
             Element::new()
                 .style(LayoutStyle::column().gap(0))
                 .child(kit::sentence(t, &state, width, t.text))
+                .child(kit::sentence(t, SELF_NOTE, width, t.text_muted))
                 .child(kit::sentence(
                     t,
                     "Enter edits your policy.",
@@ -426,17 +393,31 @@ fn own_page(cx: Scope_, ctx: &Ctx, t: &TokenSet, keeper: &super::util::FocusKeep
 /// One selectable line of the editor.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Item {
+    /// An account's / your "Own policy" switch (off = follows the gateway).
+    Own,
     Mode,
     Trust,
     Caption(ListKind),
     Folder(ListKind, usize),
     Add(ListKind),
-    Follow,
+    /// The gateway's Default folder.
+    Root,
+    /// "Any folder (old clients)" (gateway, accounts — never self-service).
+    Legacy,
 }
 
-/// The editor's lines for `p` (captions are skipped by the selection).
+/// The editor's lines for `p` (captions are skipped by the selection),
+/// in the web editor's order.
 pub fn items(scope: &Scope, p: &Policy) -> Vec<Item> {
-    let mut out = vec![Item::Mode, Item::Trust];
+    let mut out = Vec::new();
+    if !matches!(scope, Scope::Gateway) {
+        out.push(Item::Own);
+        if !p.is_custom() {
+            return out;
+        }
+    }
+    out.push(Item::Mode);
+    out.push(Item::Trust);
     for kind in [ListKind::Allowed, ListKind::Refused] {
         out.push(Item::Caption(kind));
         for i in 0..p.list(kind).len() {
@@ -444,8 +425,11 @@ pub fn items(scope: &Scope, p: &Policy) -> Vec<Item> {
         }
         out.push(Item::Add(kind));
     }
-    if !matches!(scope, Scope::Gateway) && p.is_custom() {
-        out.push(Item::Follow);
+    if matches!(scope, Scope::Gateway) {
+        out.push(Item::Root);
+    }
+    if !matches!(scope, Scope::Own) {
+        out.push(Item::Legacy);
     }
     out
 }
@@ -596,21 +580,41 @@ fn editor_key(ctx: &Ctx, scope: &Scope, confirm: InlineConfirm, key: Key) -> boo
                 ws.msg.set(None);
                 ws.editing.set(Some(Edit::Add(kind)));
             }
-            Some(Item::Follow) => {
+            Some(Item::Own) if !p.is_custom() => {
+                // An own policy starts as a copy of the gateway's mode and
+                // trust, then diverges (the web's).
+                let after = Policy {
+                    mode: gw.mode.clone(),
+                    trust: gw.trust,
+                    ..Policy::default()
+                };
+                save(ctx, scope, &p, Some(after), "own policy on");
+            }
+            Some(Item::Own) => {
                 let c = ctx.clone();
                 let s = scope.clone();
                 let before = p.clone();
                 confirm.ask(
-                    format!(
-                        "{} follows the gateway policy again? Its own folders and choices are dropped.",
-                        match scope {
-                            Scope::Account { user_id, .. } => user_id.clone(),
-                            _ => "Your account".into(),
-                        }
-                    ),
-                    FOLLOW_GATEWAY,
-                    move || save(&c, &s, &before, None, "follow the gateway policy"),
+                    match scope {
+                        Scope::Account { user_id, .. } => format!(
+                            "Drop {user_id}'s own policy? Their agents follow the gateway policy again."
+                        ),
+                        _ => "Drop your own policy? Your agents follow the gateway policy again."
+                            .to_string(),
+                    },
+                    "Drop",
+                    move || save(&c, &s, &before, None, "own policy dropped"),
                 );
+            }
+            Some(Item::Root) => {
+                ws.draft.set(p.root.clone().unwrap_or_default());
+                ws.msg.set(None);
+                ws.editing.set(Some(Edit::Root));
+            }
+            Some(Item::Legacy) => {
+                let mut after = p.clone();
+                after.legacy = Some(p.legacy != Some(true));
+                save(ctx, scope, &p, Some(after), "any folder (old clients)");
             }
             _ => return false,
         },
@@ -645,7 +649,10 @@ fn editor_body(cx: Scope_, ctx: &Ctx, scope: &Scope, confirm: InlineConfirm) -> 
     // The effective summary, one line on top.
     col = col.child(kit::sentence(
         &t,
-        &format!("Effective: {}", summary(&p, &gw)),
+        &match scope {
+            Scope::Gateway => gateway_sentence(&p),
+            _ => own_sentence(Some(&p), &gw),
+        },
         width,
         t.text,
     ));
@@ -663,9 +670,13 @@ fn editor_body(cx: Scope_, ctx: &Ctx, scope: &Scope, confirm: InlineConfirm) -> 
                         span(format!(" {label} "), t.text_muted)
                     }
                 };
-                let mut spans = vec![
+                col = col.child(line(vec![
                     span(mark(i), ink),
-                    span_bold("Access  ", ink),
+                    span_bold(format!("{MODE_LABEL}  "), ink),
+                    span(MODE_HELP, t.text_faint),
+                ]));
+                let mut spans = vec![
+                    span("    ", ink),
                     seg(MODE_ALLOW_LIST, mode != "blacklist"),
                     span(" ", t.text),
                     seg(MODE_ALLOW_ALL, mode == "blacklist"),
@@ -701,24 +712,17 @@ fn editor_body(cx: Scope_, ctx: &Ctx, scope: &Scope, confirm: InlineConfirm) -> 
                     spans.push(span("  (the gateway's)", t.text_faint));
                 }
                 col = col.child(line(spans));
-                col = col.child(kit::sentence(
-                    &t,
-                    &format!("    {TRUST_HELP}"),
-                    width,
-                    t.text_faint,
-                ));
+                col = col.child(kit::sentence_indent(&t, TRUST_HELP, width, 4, t.text_faint));
             }
             Item::Caption(kind) => {
-                let mut spans = vec![span_bold(format!("  {}", kind.title()), t.text)];
-                if *kind == ListKind::Refused {
-                    spans.push(span(format!("  {REFUSED_HELP}"), t.text_faint));
-                } else if p.effective_mode(&gw) == "blacklist" {
-                    spans.push(span(
-                        "  Not used while everything is allowed.",
-                        t.text_faint,
-                    ));
-                }
-                col = col.child(line(spans));
+                col = col.child(line(vec![span_bold(format!("  {}", kind.title()), t.text)]));
+                col = col.child(kit::sentence_indent(
+                    &t,
+                    list_help(scope, *kind),
+                    width,
+                    4,
+                    t.text_faint,
+                ));
                 if p.list(*kind).is_empty() {
                     col = col.child(line(vec![span("      None.", t.text_faint)]));
                 }
@@ -744,35 +748,69 @@ fn editor_body(cx: Scope_, ctx: &Ctx, scope: &Scope, confirm: InlineConfirm) -> 
                     ]));
                 }
             }
-            Item::Follow => {
-                col = col.child(line(vec![span(String::new(), t.text)]));
+            Item::Own => {
                 col = col.child(line(vec![
                     span(mark(i), ink),
-                    span_bold(FOLLOW_GATEWAY, ink),
+                    span_bold(
+                        super::switch::switch_text(OWN_LABEL, p.is_custom(), None, false),
+                        ink,
+                    ),
                 ]));
+                if !p.is_custom() {
+                    col = col.child(kit::sentence_indent(
+                        &t,
+                        &format!("{} {}", own_sentence(None, &gw), gateway_sentence(&gw)),
+                        width,
+                        4,
+                        t.text_faint,
+                    ));
+                }
+            }
+            Item::Root => {
+                if editing == Some(Edit::Root) {
+                    col = col.child(folder_input(cx, ctx, scope, &p, Edit::Root));
+                } else {
+                    let saved = p.root.clone().unwrap_or_default();
+                    let shown = if saved.is_empty() {
+                        if p.root_in_use.is_empty() {
+                            "(the gateway's own folder)".to_string()
+                        } else {
+                            format!("(the gateway's own folder) {}", p.root_in_use)
+                        }
+                    } else {
+                        saved
+                    };
+                    col = col.child(line(vec![
+                        span(mark(i), ink),
+                        span_bold(format!("{ROOT_LABEL}: "), ink),
+                        span(shown, t.text),
+                    ]));
+                }
+                col = col.child(kit::sentence_indent(&t, ROOT_HELP, width, 4, t.text_faint));
+            }
+            Item::Legacy => {
+                col = col.child(line(vec![
+                    span(mark(i), ink),
+                    span_bold(
+                        super::switch::switch_text(
+                            LEGACY_LABEL,
+                            p.legacy == Some(true),
+                            None,
+                            false,
+                        ),
+                        ink,
+                    ),
+                ]));
+                col = col.child(kit::sentence_indent(
+                    &t,
+                    LEGACY_HELP,
+                    width,
+                    4,
+                    t.text_faint,
+                ));
             }
         }
     }
-    // The outcome line is its own reactive view: a new message must not
-    // rebuild the editor (an open input would lose its caret).
-    col = col.child(dyn_view(
-        LayoutStyle::column().gap(0).shrink(0.0),
-        move || {
-            let t = use_theme(cx).get().tokens;
-            match ws.msg.get() {
-                Some((text, tone)) => {
-                    let ink = match tone {
-                        Tone::Ok => t.ok,
-                        Tone::Error => t.error,
-                        Tone::Plain => t.text_muted,
-                    };
-                    kit::sentence(&t, &text, width, ink)
-                }
-                None => Element::new().style(LayoutStyle::default().h(0)).build(),
-            }
-        },
-    ));
-    let _ = mode_label;
     // Not editing: the editor takes the keyboard back (an in-place input
     // that held it has just closed).
     if editing.is_none() {
@@ -790,10 +828,31 @@ fn editor_body(cx: Scope_, ctx: &Ctx, scope: &Scope, confirm: InlineConfirm) -> 
             }
         }
     });
-    Scroll::new(col.build())
+    let scroll = Scroll::new(col.build())
         .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
         .scrollbar_auto_hide(true)
-        .view(cx)
+        .view(cx);
+    // The outcome line sits under the scroll (always visible) as its own reactive view: a new message must not
+    // rebuild the editor (an open input would lose its caret).
+    let msg_line = dyn_view(LayoutStyle::column().gap(0).shrink(0.0), move || {
+        let t = use_theme(cx).get().tokens;
+        match ws.msg.get() {
+            Some((text, tone)) => {
+                let ink = match tone {
+                    Tone::Ok => t.ok,
+                    Tone::Error => t.error,
+                    Tone::Plain => t.text_muted,
+                };
+                kit::sentence(&t, &text, width, ink)
+            }
+            None => Element::new().style(LayoutStyle::default().h(0)).build(),
+        }
+    });
+    Element::new()
+        .style(LayoutStyle::column().gap(0).grow(1.0))
+        .child(scroll)
+        .child(msg_line)
+        .build()
 }
 
 /// The in-place folder input: Enter checks then saves; Esc keeps.
@@ -812,15 +871,28 @@ fn folder_input(cx: Scope_, ctx: &Ctx, scope: &Scope, p: &Policy, edit: Edit) ->
         "/absolute/path",
         move |typed| {
             let typed = typed.trim().to_string();
-            if typed.is_empty() {
-                ws.editing.set(None);
-                return;
-            }
             if ws.busy.get_untracked() {
                 return;
             }
-            ws.msg
-                .set(Some(("Checking the folder...".into(), Tone::Plain)));
+            if typed.is_empty() {
+                if e == Edit::Root && before.root.as_deref().is_some_and(|r| !r.is_empty()) {
+                    // Empty Default folder = the gateway's own folder.
+                    let mut after = before.clone();
+                    after.root = Some(String::new());
+                    ws.msg.set(Some(("Saving...".into(), Tone::Plain)));
+                    c.send(Cmd::Workspaces(WsCmd::Save {
+                        scope: s.clone(),
+                        before: before.clone(),
+                        policy: Some(after),
+                        what: "default folder".into(),
+                    }));
+                    ws.editing.set(None);
+                } else {
+                    ws.editing.set(None);
+                }
+                return;
+            }
+            ws.msg.set(Some(("Checking…".into(), Tone::Plain)));
             c.send(Cmd::Workspaces(WsCmd::PutFolder {
                 scope: s.clone(),
                 before: before.clone(),

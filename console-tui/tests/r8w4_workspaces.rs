@@ -75,21 +75,22 @@ fn the_page_lists_the_gateway_policy_and_every_user_account() {
     for size in SIZES {
         let mut h = page(size);
         let s = h.shoot("workspaces");
+        let f = flat(&s);
         assert!(
-            s.contains("Workspaces — Which folders agents may read and write"),
+            f.contains("Workspaces — Which folders agents may read and write"),
             "{s}"
         );
-        // The effective summary of the highlighted scope, one line on top.
+        // The web's summary line: the gateway sentence + the own count.
         assert!(
-            s.contains("Gateway policy: Allow my list · 2 allowed folders · 1 refused folder"),
+            f.contains("Agents may use only 2 allowed folders and the folder they start in; 1 folder refused. 1 account has its own policy."),
             "{s}"
         );
         assert!(
-            s.contains("Follows the gateway policy"),
-            "bob/admin inherit:\n{s}"
+            f.contains("[ ] Own policy · Follows the gateway policy."),
+            "bob/admin:\n{s}"
         );
         assert!(
-            s.contains("Own policy · Allow everything except"),
+            f.contains("[x] Own policy · Any folder (old clients) is on for this account."),
             "alice:\n{s}"
         );
         // Entities set their folders in Manage — no row here.
@@ -98,13 +99,15 @@ fn the_page_lists_the_gateway_policy_and_every_user_account() {
     }
 }
 
-#[test]
-fn the_summary_follows_the_highlighted_account() {
-    let mut h = page((120, 40));
-    let alice = 2; // gateway, admin, alice, bob
-    h.store.ws.sel.set(alice);
-    let s = h.text();
-    assert!(s.contains("alice: Allow everything except"), "{s}");
+/// The page's text with borders and line breaks folded away.
+fn flat(s: &str) -> String {
+    s.lines()
+        .map(|l| l.trim_matches(|c| c == '│' || c == ' '))
+        .collect::<Vec<_>>()
+        .join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 #[test]
@@ -134,15 +137,21 @@ fn enter_opens_the_gateway_editor_with_the_segmented_mode_and_rows() {
             s.contains("[Allow my list]  Allow everything except"),
             "{s}"
         );
-        assert!(s.contains("[x] Trust the launch folder"), "{s}");
+        assert!(s.contains("[x] Launch-folder trust"), "{s}");
+        if size.1 >= 40 {
+            assert!(
+                s.contains("Default folder") && s.contains("[ ] Any folder (old clients)"),
+                "{s}"
+            );
+        }
         assert!(
             s.contains("Allowed folders") && s.contains("/srv/projects"),
             "{s}"
         );
         assert!(s.contains("Refused folders") && s.contains("/etc"), "{s}");
-        assert!(s.contains("+ Add a folder"), "{s}");
-        // The gateway policy has nothing to follow.
-        assert!(!s.contains("Follow the gateway policy"), "{s}");
+        assert!(s.contains("+ Add folder"), "{s}");
+        // The gateway policy has no "Own policy" switch.
+        assert!(!s.contains("Own policy"), "{s}");
         // No Save button: rows apply at once.
         assert!(!s.contains("Save"), "{s}");
         h.assert_fits();
@@ -215,7 +224,7 @@ fn a_folder_is_added_in_place_and_checked_by_the_gateway() {
         other => panic!("Enter sends the path check + write: {other:?}"),
     }
     let s = h.text();
-    assert!(s.contains("Checking the folder..."), "{s}");
+    assert!(s.contains("Checking…"), "{s}");
 }
 
 #[test]
@@ -266,29 +275,26 @@ fn x_removes_a_folder_row() {
 }
 
 #[test]
-fn an_account_with_its_own_policy_can_follow_the_gateway_again() {
+fn own_policy_off_asks_to_drop_and_on_starts_from_the_gateway() {
     let mut h = page((120, 40));
-    h.store.ws.sel.set(2); // alice
+    h.store.ws.sel.set(2); // alice (own policy)
     h.turns(2);
     let s = h.key(b"\r");
     h.shoot("workspaces-editor-account");
     assert!(s.contains("Workspace policy — alice's policy"), "{s}");
+    assert!(s.contains("[x] Own policy"), "{s}");
     assert!(
         s.contains(" Allow my list  [Allow everything except]"),
         "{s}"
     );
-    assert!(s.contains("(the gateway's)"), "trust inherited:\n{s}");
     assert!(s.contains("/home/alice/private"), "{s}");
-    assert!(s.contains("Follow the gateway policy"), "{s}");
-    // Down to the last item.
-    for _ in 0..12 {
-        h.key(b"\x1b[B");
-    }
+    assert!(s.contains("[x] Any folder (old clients)"), "{s}");
+    assert!(!s.contains("Default folder"), "gateway only:\n{s}");
     h.sent();
-    let s = h.key(b"\r");
+    let s = h.key(b" "); // Own policy is the first line
     assert!(
-        s.contains("[y] Follow the gateway policy"),
-        "inline confirm:\n{s}"
+        flat(&s).contains("Drop alice's own policy? Their agents follow the gateway policy again."),
+        "{s}"
     );
     assert!(sent_ws(&mut h).is_empty(), "nothing before y");
     h.key(b"y");
@@ -302,6 +308,30 @@ fn an_account_with_its_own_policy_can_follow_the_gateway_again() {
         }
         other => panic!("y sends {{policy: null}}: {other:?}"),
     }
+    // bob follows the gateway: Own policy on copies its mode and trust.
+    let mut h = page((120, 40));
+    h.store.ws.sel.set(3);
+    h.turns(2);
+    let s = h.key(b"\r");
+    assert!(s.contains("[ ] Own policy"), "{s}");
+    assert!(
+        !s.contains("Allowed folders"),
+        "nothing else while off:\n{s}"
+    );
+    h.sent();
+    h.key(b" ");
+    match sent_ws(&mut h).as_slice() {
+        [WsCmd::Save {
+            policy: Some(after),
+            ..
+        }] => {
+            assert_eq!(
+                after.entry(),
+                json!({"mode": "whitelist", "trust_client_launch_folder": true})
+            )
+        }
+        other => panic!("{other:?}"),
+    }
 }
 
 #[test]
@@ -311,6 +341,7 @@ fn an_account_edit_keeps_the_admin_grant() {
     h.turns(2);
     h.key(b"\r");
     h.sent();
+    h.key(b"\x1b[B");
     h.key(b"\x1b[B");
     h.key(b" "); // trust → explicit off
     match sent_ws(&mut h).as_slice() {
@@ -328,27 +359,22 @@ fn an_account_edit_keeps_the_admin_grant() {
 }
 
 #[test]
-fn a_non_admin_sees_the_gateway_line_and_edits_their_own_policy() {
+fn a_non_admin_sees_one_line_and_edits_their_own_policy() {
     let mut h = harness((80, 24), Mount::Page(page_view));
     h.identity("bob", false);
-    h.store.ws.public.set(Loadable::Ready(json!({"ok": true, "policy": {
-        "trust_client_launch_folder": true, "extra_allowed_workspaces": 2, "blocked_workspace_roots": 1}})));
     h.store.op.my_policy.set(Loadable::Ready(MyPolicy::from_value(&json!({
         "tenant_id": "default", "user_id": "bob", "policy": {}, "customized": false,
         "effective": {"mode": "whitelist", "trust_client_launch_folder": true,
                       "workspace_allowed_paths": ["/srv/projects"], "workspace_blocked_paths": []}}))));
     let s = h.shoot("workspaces-non-admin");
     assert!(
-        s.contains("Gateway policy (set by an admin): 2 allowed folders · 1 refused folder"),
+        flat(&s).contains("The gateway policy: your agents may use only the gateway's allowed folders, the folder they start in."),
         "{s}"
     );
-    assert!(s.contains("Your policy follows the gateway policy"), "{s}");
-    assert!(
-        !s.contains("Own policy ·") && !s.contains("alice"),
-        "no per-account list:\n{s}"
-    );
+    assert!(!s.contains("alice"), "no per-account list:\n{s}");
     let s = h.key(b"\r");
     assert!(s.contains("Workspace policy — Your policy"), "{s}");
+    assert!(s.contains("[ ] Own policy"), "{s}");
     h.sent();
     h.key(b" ");
     match sent_ws(&mut h).as_slice() {
@@ -357,7 +383,8 @@ fn a_non_admin_sees_the_gateway_line_and_edits_their_own_policy() {
             policy: Some(after),
             ..
         }] => {
-            assert_eq!(after.mode.as_deref(), Some("blacklist"))
+            assert_eq!(after.mode.as_deref(), Some("whitelist"));
+            assert_eq!(after.legacy, None, "self-service never sends the grant");
         }
         other => panic!("{other:?}"),
     }
@@ -369,7 +396,7 @@ fn live_page(size: (i32, i32)) -> Option<(r8w4::Harness, String, String)> {
     let (url, token) = live_env()?;
     let mut h = live(size, Mount::Page(page_view), &url, &token);
     workspaces::refresh_for_tests(&h.store, &h.tx);
-    h.until_text("Gateway policy:");
+    h.until_text("Own policy ·");
     Some((h, url, token))
 }
 
@@ -413,7 +440,7 @@ fn live_gateway_mode_and_folder_rows() {
     h.key(b"\r");
     h.type_text("relative/path");
     h.key(b"\r");
-    let s = h.until_text("Not saved:");
+    let s = h.until_text("Not saved.");
     h.shoot("live-workspaces-folder-refused");
     assert!(s.contains("Folder:"), "the input stays open:\n{s}");
     let after = gw("GET", &url, &token, "/admin/runtime-config", None);
@@ -446,6 +473,15 @@ fn live_gateway_mode_and_folder_rows() {
             .any(|p| p.ends_with(folder.trim_end_matches('/'))),
         "{paths:?}"
     );
+    // The same folder again: the web's "Already in this list. Not saved."
+    h.store.ws.msg.set(None);
+    h.store.ws.item.set(3 + paths.len()); // + Add folder under the rows
+    h.turns(2);
+    h.key(b"\r");
+    h.type_text(&folder);
+    h.key(b"\r");
+    h.until_text("Already in this list. Not saved.");
+    h.esc();
     // Remove it again (x on its row).
     let idx = paths.len() - 1;
     h.store.ws.item.set(3 + idx); // Mode, Trust, the caption, then the rows
@@ -475,8 +511,8 @@ fn live_account_policy_and_follow_the_gateway() {
     workspaces_focus(&mut h, &user);
     h.key(b"\r");
     h.until_text(&format!("Workspace policy — {user}'s policy"));
-    h.key(b" "); // mode → explicit
-    h.until_text("Saved");
+    h.key(b" "); // Own policy on: a copy of the gateway's mode and trust
+    h.until_text("Allowed folders");
     let read = |url: &str, token: &str| {
         gw(
             "GET",
@@ -489,12 +525,11 @@ fn live_account_policy_and_follow_the_gateway() {
     let v = read(&url, &token);
     assert!(v["policy"]["mode"].is_string(), "{v}");
     h.shoot("live-workspaces-account-own");
-    let s = h.until_text(workspaces_follow());
-    assert!(s.contains("Follow the gateway policy"));
-    for _ in 0..20 {
-        h.key(b"\x1b[B");
-    }
-    h.key(b"\r");
+    // Own policy off: asks, then drops.
+    h.store.ws.item.set(0);
+    h.turns(2);
+    h.key(b" ");
+    h.until_text("Drop");
     h.key(b"y");
     h.until("follows again", |h, _| {
         h.store.runtime_config.with_untracked(|c| match c {
@@ -506,8 +541,4 @@ fn live_account_policy_and_follow_the_gateway() {
     });
     let v = read(&url, &token);
     assert!(v["policy"].is_null() || v["policy"] == json!({}), "{v}");
-}
-
-fn workspaces_follow() -> &'static str {
-    abstractgateway_console::store::workspaces::FOLLOW_GATEWAY
 }

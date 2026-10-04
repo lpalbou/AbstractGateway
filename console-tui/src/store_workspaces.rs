@@ -20,21 +20,51 @@ use serde_json::{json, Map, Value};
 use super::skills::Tone;
 use super::RuntimeConfigData;
 
-/// The access mode's two segments (the web's segmented switch).
+/// The access mode's two segments (the web's segmented switch) and its
+/// field help — the web console's words (console_workspaces.py).
+pub const MODE_LABEL: &str = "Access";
+pub const MODE_HELP: &str = "Which folders agents may use.";
 pub const MODE_ALLOW_LIST: &str = "Allow my list";
 pub const MODE_ALLOW_ALL: &str = "Allow everything except";
-pub const MODE_HELP_LIST: &str =
-    "Agents may use only the allowed folders below (and the launch folder while it is trusted).";
-pub const MODE_HELP_ALL: &str = "Agents may use every folder except the refused ones below.";
-pub const TRUST_LABEL: &str = "Trust the launch folder";
-pub const TRUST_HELP: &str = "An agent may read and write the folder its app was started from.";
+pub const MODE_HELP_LIST: &str = "Only the allowed folders below.";
+pub const MODE_HELP_ALL: &str = "Any folder except the refused ones.";
+pub const TRUST_LABEL: &str = "Launch-folder trust";
+pub const TRUST_HELP: &str = "Agents may also use the folder they were started from.";
 pub const ALLOWED_TITLE: &str = "Allowed folders";
 pub const REFUSED_TITLE: &str = "Refused folders";
-pub const REFUSED_HELP: &str = "Refused in every mode.";
-pub const ADD_FOLDER: &str = "+ Add a folder";
-pub const FOLLOW_GATEWAY: &str = "Follow the gateway policy";
+pub const ADD_FOLDER: &str = "+ Add folder";
+pub const ROOT_LABEL: &str = "Default folder";
+pub const ROOT_HELP: &str =
+    "Where a run starts when the app names no folder; empty = the gateway's own folder.";
+pub const LEGACY_LABEL: &str = "Any folder (old clients)";
+pub const LEGACY_HELP: &str = "Lets old clients name any folder; the rules above stop applying.";
+pub const OWN_LABEL: &str = "Own policy";
+pub const GATEWAY_NOTE: &str = "Every account follows it unless it has its own policy below.";
+pub const ACCOUNTS_NOTE: &str = "Turn on Own policy to give one account different folders.";
+pub const SELF_NOTE: &str =
+    "Turn on Own policy to choose your own folders; the gateway's refused folders always apply.";
+pub const ENTITIES_NOTE: &str = "Entities: their folders are set in Manage, on the Accounts page.";
+pub const DUPLICATE: &str = "Already in this list. Not saved.";
 pub const TITLE: &str = "Workspaces";
 pub const SUBTITLE: &str = "Which folders agents may read and write";
+
+/// The folder lists' help, per scope (the web's).
+pub fn list_help(scope: &Scope, kind: ListKind) -> &'static str {
+    match (scope, kind) {
+        (Scope::Gateway, ListKind::Allowed) => "Folders every account may use.",
+        (Scope::Gateway, ListKind::Refused) => "Folders no agent may ever use, in either mode.",
+        (Scope::Account { .. }, ListKind::Allowed) => {
+            "Folders this account may use, on top of the gateway's allowed folders."
+        }
+        (Scope::Account { .. }, ListKind::Refused) => {
+            "Folders this account may never use, on top of the gateway's refused folders."
+        }
+        (Scope::Own, ListKind::Allowed) => {
+            "Folders your agents may use, on top of the gateway's allowed folders."
+        }
+        (Scope::Own, ListKind::Refused) => "Folders your agents may never use.",
+    }
+}
 
 /// The mode word for a stored/served mode ("blacklist" = allow all).
 pub fn mode_label(mode: &str) -> &'static str {
@@ -104,8 +134,15 @@ pub struct Policy {
     pub trust: Option<bool>,
     pub allowed: Vec<String>,
     pub refused: Vec<String>,
-    /// Fields the editor never shows but a rewrite must keep (the
-    /// admin-classed scope-override grant on an account entry).
+    /// "Any folder (old clients)" (`client_workspace_scope_overrides`);
+    /// None = not set (accounts).
+    pub legacy: Option<bool>,
+    /// The gateway's "Default folder" (`workspace_root`; gateway only):
+    /// the SAVED value ("" = the gateway's own folder), and the folder in
+    /// use for the placeholder.
+    pub root: Option<String>,
+    pub root_in_use: String,
+    /// Fields the editor never shows but a rewrite must keep.
     pub keep: Map<String, Value>,
 }
 
@@ -113,13 +150,13 @@ impl Policy {
     /// A stored per-account entry (`user_workspace_policies["t:u"]` or the
     /// self route's `policy`).
     pub fn from_entry(v: &Value) -> Policy {
-        let mut keep = Map::new();
-        if let Some(x) = v.get("client_workspace_scope_overrides") {
-            if !x.is_null() {
-                keep.insert("client_workspace_scope_overrides".into(), x.clone());
-            }
-        }
+        let keep = Map::new();
         Policy {
+            legacy: v
+                .get("client_workspace_scope_overrides")
+                .and_then(Value::as_bool),
+            root: None,
+            root_in_use: String::new(),
             mode: v
                 .get("mode")
                 .and_then(Value::as_str)
@@ -143,6 +180,13 @@ impl Policy {
             trust: Some(c.trust_client_launch_folder),
             allowed: lines(&c.workspace_allowed_paths),
             refused: lines(&c.workspace_blocked_paths),
+            legacy: Some(c.client_workspace_scope_overrides),
+            root: Some(if c.workspace_root_source == "stored" {
+                c.workspace_root.clone()
+            } else {
+                String::new()
+            }),
+            root_in_use: c.workspace_root.clone(),
             keep: Map::new(),
         }
     }
@@ -177,6 +221,10 @@ impl Policy {
         if !self.refused.is_empty() {
             m.insert("workspace_blocked_paths".into(), json!(self.refused));
         }
+        // The web removes the grant when switched off (never writes false).
+        if self.legacy == Some(true) {
+            m.insert("client_workspace_scope_overrides".into(), json!(true));
+        }
         Value::Object(m)
     }
 
@@ -201,52 +249,123 @@ fn plural(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
-/// The one-line effective summary at the top of the page (and in each
-/// scope's row): mode · trust · folders.
-pub fn summary(p: &Policy, gateway: &Policy) -> String {
-    let mode = p.effective_mode(gateway);
-    let mut parts = vec![mode_label(mode).to_string()];
+/// The gateway policy in one line (the web's `wsGatewaySentence`).
+pub fn gateway_sentence(g: &Policy) -> String {
+    if g.legacy == Some(true) {
+        return "Any folder (old clients) is on: agents may use any folder the app names; the folder rules don't apply.".into();
+    }
+    if g.mode.as_deref() == Some("blacklist") {
+        return format!(
+            "Agents may use any folder except {}.",
+            if g.refused.is_empty() {
+                "none refused yet".to_string()
+            } else {
+                plural(g.refused.len(), "refused folder", "refused folders")
+            }
+        );
+    }
+    let mut what: Vec<String> = Vec::new();
+    if !g.allowed.is_empty() {
+        what.push(plural(g.allowed.len(), "allowed folder", "allowed folders"));
+    }
+    if g.trust.unwrap_or(true) {
+        what.push("the folder they start in".into());
+    }
+    if what.is_empty() {
+        return "Agents may not use any folder yet: add an allowed folder or turn on launch-folder trust.".into();
+    }
+    let refused = if g.refused.is_empty() {
+        String::new()
+    } else {
+        format!("; {} refused", plural(g.refused.len(), "folder", "folders"))
+    };
+    format!("Agents may use only {}{refused}.", what.join(" and "))
+}
+
+/// An account's policy in one line (the web's `wsOwnSentence`).
+pub fn own_sentence(entry: Option<&Policy>, g: &Policy) -> String {
+    let Some(e) = entry.filter(|e| e.is_custom()) else {
+        return "Follows the gateway policy.".into();
+    };
+    if e.legacy == Some(true) {
+        return "Any folder (old clients) is on for this account.".into();
+    }
+    let mode = e.effective_mode(g);
+    let trust = e.effective_trust(g);
+    let blocked = e.refused.len();
     if mode == "blacklist" {
+        return format!(
+            "Any folder except {}.",
+            if blocked > 0 {
+                plural(blocked, "refused folder", "refused folders")
+            } else {
+                "the gateway's refused ones".to_string()
+            }
+        );
+    }
+    let mut parts = vec!["the gateway's allowed folders".to_string()];
+    if !e.allowed.is_empty() {
         parts.push(plural(
-            p.refused.len() + gateway_refused_extra(p, gateway),
-            "refused folder",
-            "refused folders",
-        ));
-    } else {
-        parts.push(plural(p.allowed.len(), "allowed folder", "allowed folders"));
-        parts.push(plural(
-            p.refused.len() + gateway_refused_extra(p, gateway),
-            "refused folder",
-            "refused folders",
+            e.allowed.len(),
+            "folder of its own",
+            "folders of its own",
         ));
     }
-    parts.push(if p.effective_trust(gateway) {
-        "launch folder trusted".into()
+    if trust {
+        parts.push("the folder it starts in".into());
+    }
+    let refused = if blocked > 0 {
+        format!("; {} refused", plural(blocked, "folder", "folders"))
     } else {
-        "launch folder not trusted".into()
-    });
-    parts.join(" · ")
+        String::new()
+    };
+    format!("Only {}{refused}.", parts.join(", "))
 }
 
-/// The gateway's refused folders still apply under an account's own
-/// policy (the gateway-wide deny list always applies).
-fn gateway_refused_extra(p: &Policy, gateway: &Policy) -> usize {
-    if std::ptr::eq(p, gateway) {
-        return 0;
-    }
-    gateway
-        .refused
-        .iter()
-        .filter(|g| !p.refused.contains(g))
-        .count()
+/// The page's summary line for an admin: the gateway sentence, then how
+/// many accounts have their own policy (the web's `wsSummaryText`).
+pub fn admin_summary(g: &Policy, own: usize) -> String {
+    let tail = match own {
+        0 => String::new(),
+        1 => " 1 account has its own policy.".into(),
+        n => format!(" {n} accounts have their own policy."),
+    };
+    format!("{}{tail}", gateway_sentence(g))
 }
 
-/// An account row's policy cell.
-pub fn account_cell(entry: Option<&Policy>, gateway: &Policy) -> String {
-    match entry.filter(|e| e.is_custom()) {
-        Some(e) => format!("Own policy · {}", summary(e, gateway)),
-        None => "Follows the gateway policy".into(),
+/// A non-admin's summary line (the web's `wsSummaryText`, self part).
+pub fn self_summary(mine: &Policy, customized: bool, eff_mode: &str, eff_trust: bool) -> String {
+    let who = if customized {
+        "Your own policy"
+    } else {
+        "The gateway policy"
+    };
+    let refused = if customized { mine.refused.len() } else { 0 };
+    if eff_mode == "blacklist" {
+        let tail = if refused > 0 {
+            format!(" ({refused} of yours)")
+        } else {
+            String::new()
+        };
+        return format!("{who}: your agents may use any folder except the refused ones{tail}.");
     }
+    let mut parts = vec!["the gateway's allowed folders".to_string()];
+    let extra = if customized { mine.allowed.len() } else { 0 };
+    if extra > 0 {
+        parts.push(plural(extra, "folder of yours", "folders of yours"));
+    }
+    if eff_trust {
+        parts.push("the folder they start in".into());
+    }
+    let tail = if refused > 0 {
+        format!("; {} refused", plural(refused, "folder", "folders"))
+    } else {
+        String::new()
+    };
+    format!(
+        "{who}: your agents may use only {}{tail}.",
+        parts.join(", ")
+    )
 }
 
 /// Which scope the editor shows.
@@ -327,6 +446,8 @@ pub enum Edit {
     Add(ListKind),
     /// Folder `index` of `kind`.
     Row(ListKind, usize),
+    /// The gateway's Default folder.
+    Root,
 }
 
 /// The page's signals (ride `Store::ws`).
@@ -345,8 +466,6 @@ pub struct WorkspacesStore {
     pub busy: Signal<bool>,
     /// The Accounts Workspace jump: focus this account's row.
     pub focus: Signal<Option<(String, String)>>,
-    /// A non-admin's view of the gateway policy (`GET /workspace/policy`).
-    pub public: Signal<super::Loadable<Value>>,
 }
 
 impl WorkspacesStore {
@@ -359,7 +478,6 @@ impl WorkspacesStore {
             msg: cx.signal(None),
             busy: cx.signal(false),
             focus: cx.signal(None),
-            public: cx.signal(super::Loadable::NotAsked),
         }
     }
 
@@ -369,40 +487,11 @@ impl WorkspacesStore {
         self.msg.set(None);
         self.busy.set(false);
         self.focus.set(None);
-        self.public.set(super::Loadable::NotAsked);
     }
 }
 
 /// The reactive scope type (the page's `Scope` enum shadows the name).
 pub type Scope_ = abstracttui::prelude::Scope;
-
-/// A non-admin's read-only gateway line from `GET /workspace/policy`.
-pub fn public_line(v: &Value) -> String {
-    let p = v.get("policy").unwrap_or(v);
-    let n = |k: &str| p.get(k).and_then(Value::as_u64).unwrap_or(0) as usize;
-    let trust = p
-        .get("trust_client_launch_folder")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    format!(
-        "Gateway policy (set by an admin): {} · {} · {}",
-        plural(
-            n("extra_allowed_workspaces"),
-            "allowed folder",
-            "allowed folders"
-        ),
-        plural(
-            n("blocked_workspace_roots"),
-            "refused folder",
-            "refused folders"
-        ),
-        if trust {
-            "launch folder trusted"
-        } else {
-            "launch folder not trusted"
-        }
-    )
-}
 
 #[cfg(test)]
 mod tests {
@@ -414,40 +503,54 @@ mod tests {
             trust: Some(true),
             allowed: vec!["/srv/a".into(), "/srv/b".into()],
             refused: vec!["/etc".into()],
-            keep: Map::new(),
+            legacy: Some(false),
+            ..Policy::default()
         }
     }
 
     #[test]
-    fn the_summary_names_mode_folders_and_trust() {
+    fn the_gateway_sentence_is_the_webs() {
         let g = gw();
         assert_eq!(
-            summary(&g, &g),
-            "Allow my list · 2 allowed folders · 1 refused folder · launch folder trusted"
+            gateway_sentence(&g),
+            "Agents may use only 2 allowed folders and the folder they start in; 1 folder refused."
         );
         let mut all = g.clone();
         all.mode = Some("blacklist".into());
-        all.trust = Some(false);
         assert_eq!(
-            summary(&all, &all),
-            "Allow everything except · 1 refused folder · launch folder not trusted"
+            gateway_sentence(&all),
+            "Agents may use any folder except 1 refused folder."
         );
+        let none = Policy {
+            mode: Some("whitelist".into()),
+            trust: Some(false),
+            ..Policy::default()
+        };
+        assert_eq!(
+            gateway_sentence(&none),
+            "Agents may not use any folder yet: add an allowed folder or turn on launch-folder trust."
+        );
+        assert!(admin_summary(&g, 2).ends_with(" 2 accounts have their own policy."));
     }
 
     #[test]
-    fn an_account_inherits_what_it_does_not_set_and_keeps_the_gateway_refusals() {
+    fn an_accounts_sentence_is_the_webs() {
         let g = gw();
-        let acc = Policy::from_entry(&json!({"workspace_allowed_paths": ["/home/al"]}));
+        assert_eq!(own_sentence(None, &g), "Follows the gateway policy.");
+        let e = Policy::from_entry(&json!({"workspace_allowed_paths": ["/home/al"]}));
         assert_eq!(
-            summary(&acc, &g),
-            "Allow my list · 1 allowed folder · 1 refused folder · launch folder trusted"
+            own_sentence(Some(&e), &g),
+            "Only the gateway's allowed folders, 1 folder of its own, the folder it starts in."
         );
-        assert_eq!(account_cell(None, &g), "Follows the gateway policy");
-        assert!(account_cell(Some(&acc), &g).starts_with("Own policy · "));
+        let l = Policy::from_entry(&json!({"client_workspace_scope_overrides": true}));
+        assert_eq!(
+            own_sentence(Some(&l), &g),
+            "Any folder (old clients) is on for this account."
+        );
     }
 
     #[test]
-    fn the_entry_keeps_the_admin_grant_and_drops_unset_fields() {
+    fn the_entry_keeps_the_grant_only_when_on() {
         let p = Policy::from_entry(&json!({
             "mode": "blacklist", "client_workspace_scope_overrides": true,
             "workspace_blocked_paths": "/x\n/y"
@@ -457,6 +560,12 @@ mod tests {
             json!({"mode": "blacklist", "client_workspace_scope_overrides": true,
                    "workspace_blocked_paths": ["/x", "/y"]})
         );
+        let mut off = p.clone();
+        off.legacy = Some(false);
+        assert!(off
+            .entry()
+            .get("client_workspace_scope_overrides")
+            .is_none());
         assert!(!Policy::default().is_custom());
     }
 
@@ -469,12 +578,14 @@ mod tests {
         );
         assert!(c.valid && !c.exists);
         assert_eq!(c.normalized, "/Users/a/x");
-        assert_eq!(c.sentence, "This folder does not exist yet.");
     }
 
     #[test]
-    fn mode_words_match_the_segmented_switch() {
-        assert_eq!(mode_label("whitelist"), MODE_ALLOW_LIST);
-        assert_eq!(mode_label("blacklist"), MODE_ALLOW_ALL);
+    fn the_self_summary_is_the_webs() {
+        let mine = Policy::default();
+        assert_eq!(
+            self_summary(&mine, false, "whitelist", true),
+            "The gateway policy: your agents may use only the gateway's allowed folders, the folder they start in."
+        );
     }
 }

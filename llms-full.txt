@@ -6619,17 +6619,21 @@ groups and their keys. The local engines live on Providers, as on the web.
   users** and **Sign-in by email**, each applied at once. Someone who is not an administrator
   sees their own row and the entities they created.
 - **W Workspaces** sets which folders agents may read and write. The top line
-  is the effective policy of the highlighted row; the table lists the
-  **Gateway policy** and every user account ("Own policy · …" or "Follows the
-  gateway policy"). `Enter` edits the highlighted policy: **Access** is a
-  segmented switch (**Allow my list** / **Allow everything except**; `←` / `→`
-  or Space), **Trust the launch folder** is a switch, and the **Allowed
-  folders** and **Refused folders** are rows: `Enter` edits a row in place,
-  **+ Add a folder** adds one, `x` removes one. The gateway checks a typed
-  folder first and says why when it can't be used; nothing is saved then. An
-  account with its own policy offers **Follow the gateway policy** (asks
-  first). Every change applies at once and says "Saved". Someone who is not an
-  administrator sees the gateway policy in one line and edits their own.
+  says what the gateway policy allows and how many accounts have their own;
+  the table lists the **Gateway policy** and every user account with its
+  **Own policy** switch and one sentence ("Follows the gateway policy." or
+  what its own policy allows). `Enter` edits the highlighted policy:
+  **Access** is a segmented switch (**Allow my list** / **Allow everything
+  except**; `←` / `→` or Space), **Launch-folder trust** is a switch, and the
+  **Allowed folders** and **Refused folders** are rows: `Enter` edits a row in
+  place, **+ Add folder** adds one, `x` removes one. The gateway policy also
+  has **Default folder** and, like an account, **Any folder (old clients)**.
+  The gateway checks a typed folder first; when it can't be used, or is
+  already listed, it says so and nothing is saved. For an account, **Own
+  policy** on starts from the gateway's access mode and launch-folder trust;
+  off asks first, then the account follows the gateway policy again. Every
+  change applies at once and says "Saved". Someone who is not an
+  administrator sees their summary in one line and edits their own policy.
 - **Your email settings** (`@` on your own row): your **Email address**, your
   **Mailbox** (tabs **IMAP**, the default, **Google** and **Microsoft**; the
   IMAP pane shows the incoming and outgoing servers, filled in as soon as the

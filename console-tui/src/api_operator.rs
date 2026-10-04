@@ -176,12 +176,6 @@ impl GatewayClient {
         self.get("/workspace/policy/self", false)
     }
 
-    /// `GET /workspace/policy` — the gateway policy, safe for any principal
-    /// (counts, no server paths): a non-admin's Workspaces line (R8.2).
-    pub fn server_workspace_policy(&self) -> ApiResult<Value> {
-        self.get("/workspace/policy", false)
-    }
-
     /// `POST /workspace/path-check {path}` → `{path, normalized, absolute,
     /// exists, is_dir, valid, sentence}` (R8.2; any signed-in principal;
     /// the same rules as the write validator).

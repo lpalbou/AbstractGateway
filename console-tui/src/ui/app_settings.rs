@@ -390,7 +390,7 @@ fn overlay_body(cx: Scope, ctx: &Ctx, which: Which, st: St) -> View {
                     let _ = st.notes.get();
                     match note_of(&st, &key) {
                         Some((text, tone)) => {
-                            kit::sentence(&t, &format!("    {text}"), width, tone_ink(&t, tone))
+                            kit::sentence_indent(&t, &text, width, 4, tone_ink(&t, tone))
                         }
                         None => Element::new().style(LayoutStyle::default().h(0)).build(),
                     }
@@ -398,23 +398,13 @@ fn overlay_body(cx: Scope, ctx: &Ctx, which: Which, st: St) -> View {
             ));
         }
         if !r.help.is_empty() {
-            col = col.child(kit::sentence(
-                &t,
-                &format!("    {}", r.help),
-                width,
-                t.text_faint,
-            ));
+            col = col.child(kit::sentence_indent(&t, &r.help, width, 4, t.text_faint));
         }
         if let Some(why) = &r.locked {
-            col = col.child(kit::sentence(
-                &t,
-                &format!("    {why}"),
-                width,
-                t.text_muted,
-            ));
+            col = col.child(kit::sentence_indent(&t, why, width, 4, t.text_muted));
         }
         if let Some(w) = &r.warn {
-            col = col.child(kit::sentence(&t, &format!("    {w}"), width, t.warn));
+            col = col.child(kit::sentence_indent(&t, w, width, 4, t.warn));
         }
     }
     col = col.child(kit::sentence(

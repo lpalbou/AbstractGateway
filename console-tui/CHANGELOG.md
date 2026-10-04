@@ -7,11 +7,12 @@ Needs AbstractGateway 0.13.0 or later (the OpenAI API routes, `POST /models/dele
 
 ### Added
 - **Workspaces** (`W`, right after Accounts): which folders agents may read and write — the gateway policy and every
-  user account's, the effective policy in one line on top. The editor (`Enter`) has the access mode as a segmented
-  switch (**Allow my list** / **Allow everything except**), **Trust the launch folder**, the allowed and refused
-  folders as rows edited in place (`POST /workspace/path-check` first: a folder the gateway refuses is not saved and
-  its sentence is shown), and **Follow the gateway policy** for an account with its own. Every change applies at
-  once and says "Saved". A non-admin sees the gateway policy in one line and edits their own.
+  user account (its **Own policy** switch and one sentence), the summary in one line on top. The editor (`Enter`) has
+  the access mode as a segmented switch (**Allow my list** / **Allow everything except**), **Launch-folder trust**,
+  the allowed and refused folders as rows edited in place (`POST /workspace/path-check` first: a folder the gateway
+  refuses, or one already listed, is not saved and the reason is shown), **Default folder** (gateway) and **Any
+  folder (old clients)**. **Own policy** on starts from the gateway's mode and trust; off asks first. Every change
+  applies at once and says "Saved". A non-admin sees their summary in one line and edits their own policy.
 - **Runtimes filtered to one account**: `g` on an Accounts row opens Runtimes with `[Account: <id> ×]`
   (`GET /admin/runtimes?account=`); `x` lists every runtime again.
 
