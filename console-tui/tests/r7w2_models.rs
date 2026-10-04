@@ -776,6 +776,14 @@ fn usable_at_80x24_and_never_wider_than_the_screen() {
     let s = h.key(b"s");
     assert!(s.contains("Not in the catalog"), "{s}");
     h.shoot("downloaded");
+    // The page message shows at this width too.
+    h.select("mlx/mlx-community/Qwen3-0.6B-4bit");
+    h.key(b"u");
+    let s = h.answer(
+        "catalog.default",
+        WriteState::Failed(ApiError::new(ApiErrorKind::Http(403), "admin only")),
+    );
+    assert!(s.contains("Could not set the default: admin only"), "{s}");
 }
 
 #[test]

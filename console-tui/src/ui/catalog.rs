@@ -337,13 +337,12 @@ pub fn progress_lines(job: &Value) -> Vec<(String, Tone)> {
         format!("{} · part of Download all", phase_label(&phase))
     };
     let mut bits = vec![label];
-    match job_percent(job) {
-        Some(p) => bits.push(if p < 10.0 {
+    if let Some(p) = job_percent(job) {
+        bits.push(if p < 10.0 {
             format!("{p:.1}%")
         } else {
             format!("{p:.0}%")
-        }),
-        None => {}
+        });
     }
     let (done, total) = job_bytes(job);
     let active = !matches!(phase.as_str(), "done" | "failed" | "cancelled");
@@ -850,7 +849,7 @@ fn group_thousands(n: i64) -> String {
     let s = n.abs().to_string();
     let mut out = String::new();
     for (i, ch) in s.chars().enumerate() {
-        if i > 0 && (s.len() - i) % 3 == 0 {
+        if i > 0 && (s.len() - i).is_multiple_of(3) {
             out.push(',');
         }
         out.push(ch);
@@ -2003,6 +2002,7 @@ fn hub_search(ctx: &Ctx, q: &str) {
     )));
 }
 
+#[allow(clippy::too_many_arguments)]
 fn send_write(
     ctx: &Ctx,
     key: String,
@@ -2521,8 +2521,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         tp = tp.clamp(0, (lines.len() as i32 - h).max(0));
                         top.set(tp);
                         let mut map = Vec::new();
-                        let mut y = rect.y;
-                        for l in lines.iter().skip(tp as usize) {
+                        for (y, l) in (rect.y..).zip(lines.iter().skip(tp as usize)) {
                             if y >= rect.y + rect.h {
                                 break;
                             }
@@ -2558,7 +2557,6 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                 }
                             }
                             map.push(l.row.clone());
-                            y += 1;
                         }
                         *painted.borrow_mut() = map;
                     })
@@ -3142,7 +3140,9 @@ fn on_write(
                 let neighbour = SEL_ORDER.with(|o| {
                     let o = o.borrow();
                     let i = o.iter().position(|k| k == art)?;
-                    o.get(i + 1).or_else(|| i.checked_sub(1).and_then(|j| o.get(j))).cloned()
+                    o.get(i + 1)
+                        .or_else(|| i.checked_sub(1).and_then(|j| o.get(j)))
+                        .cloned()
                 });
                 edit(|p| {
                     p.del.remove(art);

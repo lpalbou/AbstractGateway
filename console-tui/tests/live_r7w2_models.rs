@@ -37,7 +37,12 @@ impl ConsoleTransport for NoTransport {
     fn engines_status(&self, _probe: bool) -> Result<Value, TransportError> {
         Err(TransportError::unavailable("not under test"))
     }
-    fn models_catalog(&self, _q: &str, _e: Option<&str>, _f: bool) -> Result<Value, TransportError> {
+    fn models_catalog(
+        &self,
+        _q: &str,
+        _e: Option<&str>,
+        _f: bool,
+    ) -> Result<Value, TransportError> {
         panic!("the Models page never uses the shared screens' transport")
     }
     fn models_installed(&self, _p: Option<&str>) -> Result<Value, TransportError> {
@@ -145,7 +150,9 @@ impl H {
     fn turns(&mut self, n: usize) -> String {
         let mut last = String::new();
         for _ in 0..n {
-            self.driver.turn(&mut self.app, &mut self.term).expect("turn");
+            self.driver
+                .turn(&mut self.app, &mut self.term)
+                .expect("turn");
             last = self.term.screen().to_text();
         }
         last
@@ -193,7 +200,11 @@ impl H {
         if let Ok(dir) = std::env::var("R7W2_SHOTS") {
             let size = self.term.screen().size();
             std::fs::create_dir_all(&dir).unwrap();
-            std::fs::write(format!("{dir}/models-live-{name}-{}x{}.txt", size.w, size.h), s).unwrap();
+            std::fs::write(
+                format!("{dir}/models-live-{name}-{}x{}.txt", size.w, size.h),
+                s,
+            )
+            .unwrap();
         }
     }
 }
@@ -237,7 +248,9 @@ fn live(size: Size) -> H {
         h.store.conn.with_untracked(ConnPhase::is_connected)
     });
     h.ui.screen.set(ui::SCREEN_CATALOG);
-    h.until("the catalog", |_, s| s.contains("Qwen3 0.6B") && s.contains("artifacts shown"));
+    h.until("the catalog", |_, s| {
+        s.contains("Qwen3 0.6B") && s.contains("artifacts shown")
+    });
     h
 }
 
@@ -273,31 +286,49 @@ fn live_a_resident_model_refuses_the_delete_with_the_gateways_words() {
     let mut h = live(Size::new(150, 45));
     h.select("ollama/qwen3:0.6b");
     h.key(b"d");
-    let s = h.until("the refusal", |_, s| s.contains("so its files cannot be deleted"));
+    let s = h.until("the refusal", |_, s| {
+        s.contains("so its files cannot be deleted")
+    });
     assert!(s.contains("Unload it first"), "{s}");
     assert!(!s.contains("[y] Delete"), "{s}");
     h.shoot("delete-refused");
-    assert!(installed_has(&h.http_get("/models/installed"), "ollama", "qwen3:0.6b"));
+    assert!(installed_has(
+        &h.http_get("/models/installed"),
+        "ollama",
+        "qwen3:0.6b"
+    ));
 }
 
 #[test]
 #[ignore = "talks to a live gateway; run with --ignored"]
 fn live_delete_confirms_with_the_dry_run_size_and_removes_the_files() {
     let mut h = live(Size::new(150, 45));
-    assert!(installed_has(&h.http_get("/models/installed"), "ollama", "my-finetune:7b"), "fixture present (restart the scratch gateway)");
+    assert!(
+        installed_has(&h.http_get("/models/installed"), "ollama", "my-finetune:7b"),
+        "fixture present (restart the scratch gateway)"
+    );
     h.select("ollama/my-finetune:7b");
     h.key(b"d");
-    let s = h.until("the confirmation", |_, s| s.contains("[y] Delete  [n] Keep"));
+    let s = h.until("the confirmation", |_, s| {
+        s.contains("[y] Delete  [n] Keep")
+    });
     assert!(
-        s.contains("Deletes 4.7 GB from this computer. Files only — nothing in your runs is touched."),
+        s.contains(
+            "Deletes 4.7 GB from this computer. Files only — nothing in your runs is touched."
+        ),
         "{s}"
     );
     h.shoot("delete-confirm");
     h.key(b"y");
-    let s = h.until("deleted", |_, s| s.contains("Deleted my-finetune:7b. 4.7 GB freed."));
+    let s = h.until("deleted", |_, s| {
+        s.contains("Deleted my-finetune:7b. 4.7 GB freed.")
+    });
     h.shoot("deleted");
     let _ = s;
-    assert!(!installed_has(&h.http_get("/models/installed"), "ollama", "my-finetune:7b"), "gone from the gateway");
+    assert!(
+        !installed_has(&h.http_get("/models/installed"), "ollama", "my-finetune:7b"),
+        "gone from the gateway"
+    );
 }
 
 #[test]
@@ -331,10 +362,13 @@ fn live_use_as_default_sets_the_text_route() {
         .cloned()
         .unwrap();
     if prev["read_only"] != json!(true) && prev["provider"].is_string() {
-        let _ = ureq::put(&format!("{}/api/gateway/config/capability-defaults/output/text", h.url))
-            .set("Authorization", &format!("Bearer {}", h.token))
-            .set("Content-Type", "application/json")
-            .send_string(&json!({"provider": prev["provider"], "model": prev["model"]}).to_string());
+        let _ = ureq::put(&format!(
+            "{}/api/gateway/config/capability-defaults/output/text",
+            h.url
+        ))
+        .set("Authorization", &format!("Bearer {}", h.token))
+        .set("Content-Type", "application/json")
+        .send_string(&json!({"provider": prev["provider"], "model": prev["model"]}).to_string());
     }
 }
 
@@ -355,5 +389,8 @@ fn live_filters_hide_and_count() {
     assert!(!s.contains("Qwen3 0.6B"), "{s}");
     h.shoot("filters");
     let s = h.key(b"x");
-    assert!(s.contains("s Status: [All]") && s.contains("[ ] Fits this computer"), "{s}");
+    assert!(
+        s.contains("s Status: [All]") && s.contains("[ ] Fits this computer"),
+        "{s}"
+    );
 }
