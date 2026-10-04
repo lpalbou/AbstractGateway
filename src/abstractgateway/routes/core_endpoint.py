@@ -1,15 +1,18 @@
 """The OpenAI API page's doors (contract `gateway_openai_api_v1`).
 
-    GET  /gateway/openai-api                    status for every signed-in account
+    GET  /gateway/openai-api                    status for every signed-in account (an admin sees the access settings)
     GET  /gateway/openai-api/logs?limit=        recent requests (an admin: all; anyone else: their own)
-    POST /gateway/admin/core-endpoint {enabled?, access?, reach?}   admin: applies immediately
+    GET  /gateway/openai-api/logs/{request_id}  one request with its recorded request and response (redacted)
+    POST /gateway/admin/core-endpoint {enabled?, access?, reach?, open_account?}   admin: applies immediately
     POST /gateway/admin/core-endpoint/restart   admin: ends open requests, keeps the settings
     POST /gateway/admin/core-endpoint/check     admin: plain setup checks
     GET  /gateway/admin/core-endpoint           admin: the same status (0.12.0 door)
-    POST /gateway/admin/core-endpoint/token/*   admin: the 0.12.0 endpoint key (deprecated)
+    POST /gateway/admin/core-endpoint/token/rotate   admin: a new internal endpoint key (deprecated)
 
 A caller's API key is their own gateway token; the semantics live in
-`abstractgateway.core_endpoint`.
+`abstractgateway.core_endpoint`. No route answers a stored token: the console
+shows the signed-in person's own token from what that browser kept at sign-in,
+and a new key is answered once, when it is made.
 """
 from __future__ import annotations
 
@@ -18,7 +21,7 @@ from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from .. import core_endpoint as ce
 from .. import network_exposure as ne
@@ -39,6 +42,7 @@ class EndpointChange(BaseModel):
     enabled: Optional[StrictBool] = None
     access: Optional[Literal["token", "open"]] = None
     reach: Optional[Literal["machine", "network", "tailnet", "anywhere"]] = None
+    open_account: Optional[str] = Field(default=None, min_length=1, max_length=200)
 
 
 def _network(data_dir) -> Dict[str, Any]:
@@ -69,8 +73,11 @@ def _warnings(settings: ce.EndpointSettings, network: Dict[str, Any]) -> List[Di
     if settings.access == "open":
         who = {"machine": "any program on this machine", "network": "any device on your network",
                "tailnet": "any device on your network or tailnet"}.get(settings.reach, "anyone who reaches it")
-        out.append({"id": "open", "tone": "warn",
-                    "text": f"Without a key, {who} can use your local models. Cloud providers still need a key."})
+        if settings.open_account == ce.GUEST_ACCOUNT:
+            text = f"Without a key, {who} can use your local models as Guest (models only). Cloud providers still need a key."
+        else:
+            text = f"Without a key, {who} can use this API as {settings.open_account}, with that account's models and providers."
+        out.append({"id": "open", "tone": "warn", "text": text})
     if settings.reach == "anywhere":
         out.append({"id": "anywhere", "tone": "warn",
                     "text": "Reachable from the internet through your proxy or tunnel. Keep your key private."})
@@ -82,31 +89,34 @@ def _warnings(settings: ce.EndpointSettings, network: Dict[str, Any]) -> List[Di
     return out
 
 
+def _key(principal) -> Dict[str, Any]:
+    """The caller's API key, described (never the token): their gateway token. `fingerprint` is the
+    first 12 hex digits of its SHA-256, so the page can tell whether the copy this browser kept at
+    sign-in is still the current one."""
+    from ..users import GatewayUserRegistry
+
+    own = principal.source == "user-registry"
+    rec = GatewayUserRegistry().get_user(str(principal.user_id), tenant_id=str(principal.tenant_id or "default")) if own else None
+    return {"own_token": own, "user_id": principal.user_id,
+            "fingerprint": (rec.token_fingerprint if rec is not None else principal.token_fingerprint) or None,
+            # May this account call /v1 at all (its Accounts switch)?
+            "allowed": bool(rec.openai_api_allowed()) if rec is not None else True}
+
+
 def _status(request: Request, settings: ce.EndpointSettings, data_dir, *, admin: bool,
             listed: Optional[List[str]] = None) -> Dict[str, Any]:
+    """The page's data. Everyone: running or not, the base URL, their own key, the docs. An admin
+    also gets the access settings (authentication, who can connect, who Open mode runs as)."""
     principal = _principal_from_request(request)
-    network = _network(data_dir)
-    tailscale = network.get("tailscale")
     base = _browser_gateway_url(request).rstrip("/")
-    return {
+    out: Dict[str, Any] = {
         "schema": SCHEMA,
+        "role": "admin" if admin else "user",
         "writable": admin,
         "enabled": settings.enabled,
         "running": settings.enabled,
-        "access": settings.access,
-        "reach": settings.reach,
         "base_url": base + ce.BASE_PATH,
-        "legacy_base_url": base + ce.LEGACY_PREFIX + ce.BASE_PATH,
-        "token_present": bool(settings.token),
-        "reach_options": _reach_options(data_dir, settings, tailscale),
-        "warnings": _warnings(settings, network),
-        "listener": {"mode": (network.get("effective") or {}).get("mode"),
-                     "label": (network.get("effective") or {}).get("label")},
-        "tailscale": tailscale,
-        "open_requests": ce.inflight_count(),
-        # The key is the caller's own gateway token: rotatable by its owner
-        # only when the account has a token of its own (not the operator token).
-        "key": {"own_token": principal.source == "user-registry", "user_id": principal.user_id},
+        "key": _key(principal),
         "docs": {"openai_api": DOCS_URL, "abstractcore": CORE_DOCS_URL},
         # tested: checked with the official openai SDK; served: AbstractCore answers when an engine
         # for it is set up; not_yet: refused with a standard 400 or not served (404).
@@ -116,6 +126,25 @@ def _status(request: Request, settings: ce.EndpointSettings, data_dir, *, admin:
         # API is stopped or lists none.
         "example_model": _example_model(listed),
     }
+    if not admin:
+        return out
+    network = _network(data_dir)
+    tailscale = network.get("tailscale")
+    out.update({
+        "access": settings.access,
+        "reach": settings.reach,
+        "legacy_base_url": base + ce.LEGACY_PREFIX + ce.BASE_PATH,
+        "token_present": bool(settings.token),
+        "reach_options": _reach_options(data_dir, settings, tailscale),
+        "open_account": settings.open_account,
+        "open_account_options": ce.open_account_options(settings),
+        "warnings": _warnings(settings, network),
+        "listener": {"mode": (network.get("effective") or {}).get("mode"),
+                     "label": (network.get("effective") or {}).get("label")},
+        "tailscale": tailscale,
+        "open_requests": ce.inflight_count(),
+    })
+    return out
 
 
 def _example_model(listed: Optional[List[str]]) -> Optional[str]:
@@ -160,6 +189,19 @@ async def openai_api_logs(request: Request, limit: int = Query(default=50, ge=1,
     return _response({"schema": SCHEMA, "rows": rows, "scope": "all" if own is None else "own"})
 
 
+@user_router.get("/logs/{request_id}")
+async def openai_api_log_record(request: Request, request_id: str):
+    """One request with what was recorded (keys and tokens removed when written). Anyone but an
+    admin reads only their own: someone else's id answers 404, like an unknown one."""
+    principal = _principal_from_request(request)
+    own = None if principal.is_admin() else str(principal.user_id)
+    row = await asyncio.to_thread(ce.request_record, request_id[:200], user_id=own,
+                                  tenant_id=str(principal.tenant_id or "default"))
+    if row is None:
+        raise HTTPException(status_code=404, detail="There is no such request in the log.")
+    return _response({"schema": SCHEMA, "row": row})
+
+
 @router.get("")
 async def status(request: Request):
     _require_admin_principal(request)
@@ -173,13 +215,14 @@ async def change(request: Request, body: EndpointChange):
     _require_admin_principal(request)
     data_dir = gateway_data_dir_from_env()
     try:
-        settings = await asyncio.to_thread(ce.change_settings, data_dir,
-                                           enabled=body.enabled, access=body.access, reach=body.reach)
+        settings = await asyncio.to_thread(ce.change_settings, data_dir, enabled=body.enabled, access=body.access,
+                                           reach=body.reach, open_account=body.open_account)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     ended = ce.end_inflight_requests() if body.enabled is False else 0
     request.state.audit_detail = {"setting_change": {"setting": "core_endpoint", "enabled": settings.enabled,
-                                                     "access": settings.access, "reach": settings.reach}}
+                                                     "access": settings.access, "reach": settings.reach,
+                                                     "open_account": settings.open_account}}
     out = await asyncio.to_thread(_status, request, settings, data_dir, admin=True, listed=await _listed(settings))
     out["ended_requests"] = ended
     return _response(out)
@@ -209,16 +252,6 @@ async def check(request: Request):
     except asyncio.TimeoutError:
         checks = [{"id": "models", "ok": False, "text": "Listing models took longer than 20 s."}]
     return _response({"schema": SCHEMA, "checks": checks, "ok": all(c.get("ok") is not False for c in checks)})
-
-
-@router.post("/token/reveal")
-async def reveal(request: Request):
-    _require_admin_principal(request)
-    settings = await asyncio.to_thread(ce.read_settings, gateway_data_dir_from_env())
-    if not settings.token:
-        raise HTTPException(status_code=404, detail="Generate a Core endpoint token first")
-    request.state.audit_detail = {"core_endpoint_token_action": "reveal"}
-    return _response({"token": settings.token})
 
 
 @router.post("/token/rotate")

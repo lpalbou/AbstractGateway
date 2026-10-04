@@ -833,8 +833,8 @@ def _account_error(exc: Any) -> HTTPException:
     summary="Accounts: users and entities in one list",
     description="One row per account, sorted admins, users, entities, then id: `{id, tenant_id, kind: user | entity, "
     "role: admin | user | entity, own, email_address, mailbox {state: connected | not_connected | paused | unavailable, "
-    "address, provider, reason}, runtime_id, active, entity_state, archived, archived_at, actions {email, logs, workspace, "
-    "rotate, manage, archive, unarchive, suspend: {available, reason}}}`. Archived accounts are left out unless "
+    "address, provider, reason}, runtime_id, active, entity_state, archived, archived_at, openai_api, actions {openai_api, "
+    "email, logs, workspace, rotate, manage, archive, unarchive, suspend: {available, reason}}}`. Archived accounts are left out unless "
     "`include_archived=true`. The email address and mailbox come from the same resolver as `GET /me/email` (entities: "
     "their own mailbox), so your own row matches your own email settings. An action that can't apply carries a "
     "one-sentence `reason`. `entities_warning` says why entities are missing when the entity list could not be read.",
@@ -869,6 +869,35 @@ async def gateway_admin_set_account_active(
     if row.get("kind") == "entity":
         changes["entity_state"] = row.get("entity_state")
     _audit_account_change(request, user_id=str(row.get("id")), tenant_id=str(row.get("tenant_id") or "default"), changes=changes)
+    return row
+
+
+class AccountOpenAIRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = Field(..., description="May this account call the OpenAI API at /v1 with its own key?")
+
+
+@router.put(
+    "/admin/accounts/{account_id}/openai-api",
+    tags=["accounts"],
+    summary="Turn an account's OpenAI API switch on or off",
+    description="Admin only. `enabled` false: the account's key is refused at `/v1` with 403 `openai_api_off` "
+    "(the OpenAI error envelope); its console sign-in is unchanged. On by default for an active account. Entities "
+    "have no key (409). Answers the updated account row (`openai_api`).",
+)
+async def gateway_admin_set_account_openai_api(
+    request: Request, account_id: str, payload: AccountOpenAIRequest, tenant_id: str = Query(default="default")
+) -> Dict[str, Any]:
+    admin = _require_admin_principal(request)
+    from ..admin_accounts import AccountError, set_openai_api
+
+    try:
+        row = await _off_the_event_loop(set_openai_api, admin, account_id, enabled=bool(payload.enabled), tenant_id=tenant_id)
+    except AccountError as exc:
+        raise _account_error(exc) from None
+    _audit_account_change(request, user_id=str(row.get("id")), tenant_id=str(row.get("tenant_id") or "default"),
+                          changes={"openai_api": bool(payload.enabled)})
     return row
 
 

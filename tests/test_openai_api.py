@@ -157,7 +157,7 @@ def test_open_mode_accepts_any_key_text_as_anonymous_without_core_credential(gw)
     r = lan.post("/v1/chat/completions", headers={"Authorization": "Bearer not-needed"}, json=CHAT)
     assert r.status_code == 200, r.text
     assert b"authorization" not in gw.stub.calls[-1]["headers"]
-    assert _audit(gw)[-1]["openai_api"]["client"] == "anonymous"
+    assert _audit(gw)[-1]["openai_api"]["client"] == "guest"
 
 
 def test_refused_keys_count_toward_the_lockout(gw):
@@ -355,7 +355,14 @@ def test_status_is_readable_by_every_account_but_changes_are_admin_only(gw):
     me = {"Authorization": f"Bearer {USER_TOKEN}"}
     status = gw.admin.get("/api/gateway/openai-api", headers=me)
     assert status.status_code == 200 and status.json()["writable"] is False
-    assert status.json()["key"] == {"own_token": True, "user_id": "alice"}
+    key = status.json()["key"]
+    assert (key["own_token"], key["user_id"], key["allowed"]) == (True, "alice", True)
+    assert key["fingerprint"] == __import__("hashlib").sha256(USER_TOKEN.encode()).hexdigest()[:12]
+    # A user's view carries no access settings: those are the admin's.
+    for admin_only in ("access", "reach", "reach_options", "open_account", "open_account_options", "warnings",
+                       "listener", "tailscale", "open_requests", "legacy_base_url"):
+        assert admin_only not in status.json(), admin_only
+    assert status.json()["role"] == "user" and gw.admin.get("/api/gateway/openai-api", headers=ADMIN).json()["role"] == "admin"
     assert gw.admin.post("/api/gateway/admin/core-endpoint", headers=me, json={"enabled": True}).status_code == 403
     assert gw.admin.get("/api/gateway/openai-api", headers=ADMIN).json()["key"]["own_token"] is False
 

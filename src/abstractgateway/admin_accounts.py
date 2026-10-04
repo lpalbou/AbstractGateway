@@ -52,6 +52,9 @@ REASON_ENTITY_NO_HOME = "This entity's home is not on this gateway's runtime, so
 REASON_LAST_ADMIN = "This is the last active admin account; make another account admin first."
 # Non-admin rows (GET /me/accounts): what only an admin can do, said once per action.
 REASON_ADMIN_SUSPEND_ENTITY = "Only an admin can suspend an entity."
+# The "OpenAI API" switch (round 5): who may call /v1 with their own key.
+REASON_ENTITY_OPENAI = "Entities have no key, so they never use the OpenAI API."
+REASON_ADMIN_OPENAI = "Only an admin can change who may use the OpenAI API."
 
 _ROLE_ORDER = {"admin": 0, "user": 1, "entity": 2}
 
@@ -172,7 +175,10 @@ def _user_row(rec: GatewayUserRecord, caller: GatewayPrincipal, records: List[Ga
         "entity_state": None,
         "archived": archived,
         "archived_at": rec.archived_at or None,
+        # May this account call the OpenAI API at /v1 with its key (Accounts row switch)?
+        "openai_api": rec.openai_api_allowed(),
         "actions": {
+            "openai_api": _act(not archived, REASON_ARCHIVED),
             "email": _act(not archived, REASON_ARCHIVED),
             "logs": _act(True),
             "workspace": _act(not archived, REASON_ARCHIVED),
@@ -215,7 +221,9 @@ def _entity_row(
         # Who created it ({tenant_id, user_id}); null for an entity created before creators were
         # recorded (admins only see those).
         "created_by": created_by,
+        "openai_api": False,
         "actions": {
+            "openai_api": _act(False, REASON_ENTITY_OPENAI),
             "email": _act(has_home and not archived, REASON_ARCHIVED if archived else REASON_ENTITY_NO_HOME),
             "logs": _act(True),
             "workspace": _act(has_home and not archived, REASON_ARCHIVED if archived else REASON_ENTITY_NO_HOME),
@@ -325,7 +333,10 @@ def list_my_accounts(caller: GatewayPrincipal) -> Dict[str, Any]:
     if me is not None and me.principal_kind != "entity" and not me.archived:
         # Rotate stays available on your own row: anyone rotates their own token
         # (POST /me/token/rotate); only an admin rotates another user's.
-        rows.append(_user_row(me, caller, records))
+        mine = _user_row(me, caller, records)
+        if not caller.is_admin():
+            mine["actions"]["openai_api"] = _act(False, REASON_ADMIN_OPENAI)
+        rows.append(mine)
     homes, warning = _entity_homes()  # the caller's own runtime: where its entities live
     by_id = {r.user_id: r for r in records if r.principal_kind == "entity"}
     for slug, home in homes.items():
@@ -341,6 +352,7 @@ def list_my_accounts(caller: GatewayPrincipal) -> Dict[str, Any]:
             continue  # archived accounts are never listed here (A16); admins: /admin/accounts
         if not caller.is_admin():
             row["actions"]["suspend"] = _act(False, REASON_ADMIN_SUSPEND_ENTITY)
+            row["actions"]["openai_api"] = _act(False, REASON_ADMIN_OPENAI)
             row["actions"]["unarchive"] = _act(False, REASON_ADMIN_UNARCHIVE)
         rows.append(row)
     rows.sort(key=_sort_key)
@@ -447,6 +459,27 @@ def set_active(caller: GatewayPrincipal, account_id: str, *, active: bool, tenan
                 registry.update_user(user_id=rec.user_id, tenant_id=rec.tenant_id, enabled=False)
         _sync_entity_mail()
     row = account_row(caller, account_id, rec.tenant_id if rec is not None else tenant_id)
+    if row is None:
+        raise AccountError(404, "account_not_found", f"There is no account named {account_id!r} on this gateway.")
+    return row
+
+
+def set_openai_api(caller: GatewayPrincipal, account_id: str, *, enabled: bool, tenant_id: str = "default") -> Dict[str, Any]:
+    """The Accounts row's "OpenAI API" switch (admin route): may this account call /v1 with its own
+    key? Off = its requests answer 403 `openai_api_off` in the OpenAI error envelope."""
+    registry = GatewayUserRegistry()
+    records = registry.list_users()
+    rec = _find_record(records, account_id, tenant_id)
+    if rec is None:
+        if account_id in _entity_homes()[0]:
+            raise AccountError(409, "entity_no_key", REASON_ENTITY_OPENAI)
+        raise AccountError(404, "account_not_found", f"There is no account named {account_id!r} on this gateway.")
+    if rec.principal_kind == "entity":
+        raise AccountError(409, "entity_no_key", REASON_ENTITY_OPENAI)
+    if rec.archived:
+        raise AccountError(409, "archived", REASON_ARCHIVED)
+    registry.update_user(user_id=rec.user_id, tenant_id=rec.tenant_id, openai_api=bool(enabled))
+    row = account_row(caller, rec.user_id, rec.tenant_id)
     if row is None:
         raise AccountError(404, "account_not_found", f"There is no account named {account_id!r} on this gateway.")
     return row

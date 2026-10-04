@@ -138,7 +138,7 @@ def test_admin_controls_reject_user_and_never_disclose_token_in_status(host, mon
         request.state.gateway_principal = GatewayPrincipal("tester", roles=("admin",) if request.headers.get("x-test-admin") else ())
         return await call_next(request)
     http = client(app)
-    for path in ["", "/token/reveal", "/token/rotate"]:
+    for path in ["", "/token/rotate"]:
         assert http.post("/api/gateway/admin/core-endpoint" + path, json={}).status_code == 403
     assert http.get("/api/gateway/admin/core-endpoint").status_code == 403
     headers = {"x-test-admin": "yes"}
@@ -149,9 +149,9 @@ def test_admin_controls_reject_user_and_never_disclose_token_in_status(host, mon
     assert token not in status.text
     assert status.headers["cache-control"] == "no-store"
     assert status.json()["base_url"].endswith("/v1") and not status.json()["base_url"].endswith("/core/v1")
+    # Round 5: no route reveals a stored key (the rotate answer above is the only showing).
     reveal = http.post("/api/gateway/admin/core-endpoint/token/reveal", headers=headers)
-    assert reveal.json()["token"] == token
-    assert reveal.headers["cache-control"] == "no-store"
+    assert reveal.status_code in (404, 405) and token not in reveal.text
     assert http.post("/api/gateway/admin/core-endpoint", headers=headers, json={"enabled": "false"}).status_code == 422
 
 

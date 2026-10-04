@@ -797,6 +797,7 @@ class GatewaySecurityMiddleware:
         if isinstance(state, dict):
             state["gateway_principal"] = principal
         capture = UsageCapture()
+        capture.request_start(self._header(scope, "content-type") or "")
         status = {"code": 0}
 
         async def _receive():
@@ -843,6 +844,18 @@ class GatewaySecurityMiddleware:
                 api["client_class"] = note["client_class"]
             if note.get("ended"):
                 api["ended"] = note["ended"]
+            # The request and response as recorded, credentials removed (the page's log rows expand to it).
+            try:
+                from ..core_endpoint import read_settings as _endpoint_settings
+                from ..users import gateway_data_dir_from_env as _data_dir
+
+                internal = _endpoint_settings(_data_dir()).token
+            except Exception:  # noqa: BLE001 - the record must never break a request
+                internal = ""
+            try:
+                api.update(capture.record(secrets=(token, internal)))
+            except Exception:  # noqa: BLE001
+                api["request"] = {"omitted": "could not be recorded"}
             entry: Dict[str, Any] = {
                 "ts": _now_utc_iso(),
                 "request_id": request_id,
@@ -856,6 +869,11 @@ class GatewaySecurityMiddleware:
             if principal is not None:
                 entry["principal_user_id"] = str(principal.user_id)
                 entry["principal_tenant_id"] = str(principal.tenant_id)
+            elif note.get("run_as"):
+                # Open mode: the request ran as the account the admin chose; it is that account's.
+                entry["principal_user_id"] = str(note["run_as"])
+                entry["principal_tenant_id"] = "default"
+                api["run_as"] = str(note["run_as"])
             ua = self._header(scope, "user-agent")
             if ua:
                 entry["user_agent"] = str(ua)[:300]

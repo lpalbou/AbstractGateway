@@ -56,12 +56,22 @@ REACH_LABELS = {
 }
 
 
+# Open (no key) mode: anonymous requests run as this account. The built-in guest
+# may only use models (no tools, no files or media inputs, no media generation).
+GUEST_ACCOUNT = "guest"
+GUEST_LABEL = "Guest (models only)"
+GUEST_PATHS = frozenset({"/v1/models", "/v1/chat/completions", "/v1/responses", "/v1/embeddings"})
+_GUEST_TOOL_FIELDS = ("tools", "tool_choice", "functions", "function_call")
+_TEXT_PARTS = frozenset({"text", "input_text", "output_text"})
+
+
 @dataclass(frozen=True)
 class EndpointSettings:
     enabled: bool = False
     access: str = "token"
     reach: str = "machine"
     token: str = field(default="", repr=False)
+    open_account: str = GUEST_ACCOUNT
 
 
 def _settings_path(data_dir: Path) -> Path:
@@ -78,13 +88,57 @@ def read_settings(data_dir: Path) -> EndpointSettings:
         raise ValueError("Invalid Core endpoint settings; restore config/core_endpoint.json")
     # A 0.12.0 file has no `reach`: it served every client the listener reached.
     reach = raw.get("reach", "network")
-    if (type(raw.get("enabled")) is not bool
+    open_account = raw.get("open_account", GUEST_ACCOUNT)
+    if (not isinstance(open_account, str) or not open_account.strip()
+            or type(raw.get("enabled")) is not bool
             or raw.get("access") not in ACCESS_MODES
             or reach not in REACH_MODES
             or not isinstance(raw.get("token"), str)
             or (raw["enabled"] and not raw["token"].strip())):
         raise ValueError("Invalid Core endpoint settings; restore config/core_endpoint.json")
-    return EndpointSettings(raw["enabled"], raw["access"], reach, raw["token"])
+    return EndpointSettings(raw["enabled"], raw["access"], reach, raw["token"], open_account.strip())
+
+
+def open_account_refusal(account: str, *, tenant_id: str = "default") -> Optional[str]:
+    """None when Open-mode requests may run as `account`, else why not (one sentence)."""
+    if account == GUEST_ACCOUNT:
+        return None
+    from .users import GatewayUserRegistry
+
+    rec = GatewayUserRegistry().get_user(account, tenant_id=tenant_id)
+    if rec is None:
+        return f"There is no account named {account!r} on this gateway."
+    if rec.principal_kind == "entity":
+        return "Entities can't be chosen: requests without a key run as a person's account or as Guest."
+    if "admin" in {str(r).strip() for r in rec.roles}:
+        return "Requests without a key never run as an admin: choose Guest or a user account."
+    if rec.archived or not rec.enabled:
+        return f"{account} is not active."
+    if not rec.openai_api_allowed():
+        return f"The OpenAI API is off for {account}: turn it on in Accounts first."
+    return None
+
+
+def open_account_options(settings: "EndpointSettings") -> List[Dict[str, Any]]:
+    """The accounts Open mode can run as: Guest first, then every human account (admins and
+    inactive ones listed as unavailable, with the reason)."""
+    from .users import GatewayUserRegistry
+
+    out: List[Dict[str, Any]] = [{"id": GUEST_ACCOUNT, "label": GUEST_LABEL, "available": True,
+                                  "selected": settings.open_account == GUEST_ACCOUNT}]
+    for rec in sorted(GatewayUserRegistry().list_users(), key=lambda r: r.user_id):
+        if rec.principal_kind == "entity" or rec.archived or rec.tenant_id != "default":
+            continue
+        reason = open_account_refusal(rec.user_id)
+        row: Dict[str, Any] = {"id": rec.user_id, "label": rec.user_id, "available": reason is None,
+                               "selected": settings.open_account == rec.user_id}
+        if reason:
+            row["reason"] = reason
+        out.append(row)
+    if not any(o["selected"] for o in out):
+        out.append({"id": settings.open_account, "label": settings.open_account, "available": False, "selected": True,
+                    "reason": open_account_refusal(settings.open_account) or ""})
+    return out
 
 
 def anywhere_allowed(data_dir: Path) -> Optional[str]:
@@ -95,13 +149,19 @@ def anywhere_allowed(data_dir: Path) -> Optional[str]:
     return None
 
 
-def change_settings(data_dir: Path, *, enabled=None, access=None, reach=None, rotate=False) -> EndpointSettings:
+def change_settings(data_dir: Path, *, enabled=None, access=None, reach=None, open_account=None,
+                    rotate=False) -> EndpointSettings:
     with store_lock(data_dir):
         current = read_settings(data_dir)
         updated = replace(current,
                           enabled=current.enabled if enabled is None else enabled,
                           access=current.access if access is None else access,
-                          reach=current.reach if reach is None else reach)
+                          reach=current.reach if reach is None else reach,
+                          open_account=current.open_account if open_account is None else str(open_account).strip())
+        if open_account is not None:
+            reason = open_account_refusal(updated.open_account)
+            if reason:
+                raise ValueError(reason)
         if updated.access not in ACCESS_MODES or updated.reach not in REACH_MODES:
             raise ValueError("Unknown authentication or reach value")
         if access == "open" and resolve_network_setting(data_dir)["mode"] == "internet":
@@ -126,7 +186,13 @@ def change_settings(data_dir: Path, *, enabled=None, access=None, reach=None, ro
         finally:
             if os.path.exists(tmp):
                 os.unlink(tmp)
-        return updated
+    if updated.enabled and not current.enabled:
+        # Round-5 migration: the "OpenAI API" switch is written for every account that never
+        # had it (on for active accounts) the first time the endpoint starts.
+        from .users import GatewayUserRegistry
+
+        GatewayUserRegistry().migrate_openai_api_default()
+    return updated
 
 
 _LOCAL_NETWORKS = tuple(ipaddress.ip_network(n) for n in (
@@ -234,11 +300,12 @@ SERVING_ROUTES = {
 SUPPORT = {
     "tested": ["GET /v1/models", "GET /v1/models/{id}",
                "POST /v1/chat/completions: streaming, tools and tool_choice, stream_options.include_usage, max_completion_tokens",
+               "POST /v1/chat/completions: response_format json_object and json_schema (structured outputs, every provider)",
                "POST /v1/embeddings: float and base64"],
     "served": ["POST /v1/responses", "POST /v1/audio/speech", "POST /v1/audio/transcriptions",
                "POST /v1/audio/translations", "POST /v1/images/generations", "POST /v1/images/edits",
                "POST /v1/images/variations"],
-    "not_yet": ["response_format (JSON mode, structured outputs)", "n > 1", "logprobs", "logit_bias",
+    "not_yet": ["response_format together with tools", "text.format on /v1/responses", "n > 1", "logprobs", "logit_bias",
                 "files, batches, assistants, fine-tuning, moderations, realtime"],
 }
 
@@ -314,10 +381,20 @@ def normalize_chat_request(doc: Dict[str, Any]) -> Dict[str, Any]:
             doc["max_tokens"] = value
     rf = doc.get("response_format")
     if rf is not None:
-        if isinstance(rf, dict) and rf.get("type") == "text":
+        # Structured outputs: AbstractCore drives them for every provider (constrained decoding
+        # where the provider has it, the schema in the prompt otherwise, and the answer validated
+        # against the schema). The shape is checked here so a bad schema never reaches a model.
+        from abstractcore.structured.json_schema import ResponseFormatError, parse_response_format
+
+        try:
+            kind, _schema, _name = parse_response_format(rf)
+        except ResponseFormatError as exc:
+            raise RequestRefused(str(exc), exc.param, "invalid_response_format") from None
+        if kind == "text":
             doc.pop("response_format")
-        else:
-            raise RequestRefused("response_format is not supported yet: only {\"type\": \"text\"}.", "response_format")
+        elif doc.get("tools"):
+            raise RequestRefused("response_format cannot be combined with tools yet: send one or the other.",
+                                 "response_format")
     n = doc.get("n")
     if n is not None:
         if n != 1:
@@ -397,6 +474,41 @@ ROUTING_FIELDS = frozenset({
     "extra_headers", "default_headers", "endpoint", "upstream", "upstream_base_url", "base_url_key",
     "organization", "project",
 })
+
+
+def _capability_refusal(principal) -> Optional[str]:
+    """Why a signed-in caller may not use /v1 (its account's "OpenAI API" switch is off), or None.
+    The operator's own token (not a registry account) is always allowed."""
+    if getattr(principal, "source", "") != "user-registry":
+        return None
+    from .users import GatewayUserRegistry
+
+    rec = GatewayUserRegistry().get_user(str(principal.user_id), tenant_id=str(principal.tenant_id or "default"))
+    if rec is None or rec.openai_api_allowed():
+        return None
+    return "The OpenAI API is off for your account. An admin can turn it on in Accounts."
+
+
+def refuse_for_guest(doc: Any) -> None:
+    """Guest (Open mode, no key): models only — no tools, no files, images or audio in the input."""
+    if not isinstance(doc, dict):
+        return
+    for name in _GUEST_TOOL_FIELDS:
+        if doc.get(name):
+            raise RequestRefused(f"Without a key, {name} can't be used (Guest: models only).", name,
+                                 "guest_not_allowed", 403)
+    turns = doc.get("messages") if isinstance(doc.get("messages"), list) else []
+    if isinstance(doc.get("input"), list):
+        turns = turns + doc["input"]
+    for turn in turns:
+        content = turn.get("content") if isinstance(turn, dict) else None
+        if isinstance(turn, dict) and turn.get("type") and turn.get("type") not in _TEXT_PARTS | {"message"}:
+            content = [turn]
+        for part in content if isinstance(content, list) else []:
+            kind = part.get("type") if isinstance(part, dict) else None
+            if kind is not None and kind not in _TEXT_PARTS:
+                raise RequestRefused(f"Without a key, {kind} input can't be sent (Guest: text only).", "messages",
+                                     "guest_not_allowed", 403)
 
 
 def refuse_routing_fields(names) -> None:
@@ -664,19 +776,46 @@ class CoreEndpoint:
         scheme, _, credential = (authorization or "").partition(" ")
         legacy = bool(settings.token) and scheme.lower() == "bearer" and hmac.compare_digest(
             credential.strip().encode(), settings.token.encode())
+        guest = False
         if principal is not None:
             note["client"] = str(getattr(principal, "user_id", "") or "user")
+            refused = await asyncio.to_thread(_capability_refusal, principal)
+            if refused:
+                return await openai_error(403, refused, type_="permission_error",
+                                          code="openai_api_off")(scope, receive, send)
         elif legacy:
             note["client"] = "endpoint key"
         elif allow_open:
-            note["client"] = "anonymous"
+            # Open mode: the request runs as the account the admin chose (never an admin),
+            # by default the built-in guest that may only use models.
+            account = settings.open_account or GUEST_ACCOUNT
+            if account == GUEST_ACCOUNT:
+                guest = True
+                note["client"] = GUEST_ACCOUNT
+            else:
+                reason = await asyncio.to_thread(open_account_refusal, account)
+                if reason:
+                    note["client"] = "refused"
+                    return await openai_error(
+                        403, "Requests without a key are not accepted right now: an admin can choose who they run "
+                             "as on the OpenAI API page.", type_="permission_error",
+                        code="open_account_unavailable")(scope, receive, send)
+                note["client"] = account
+                note["run_as"] = account
+            if guest and path not in GUEST_PATHS and not retrieve:
+                return await openai_error(
+                    403, "Without a key, this API answers model requests only (Guest). Send your gateway token "
+                         "as the API key for this endpoint.", type_="permission_error",
+                    code="guest_not_allowed")(scope, receive, send)
         else:
             note["client"] = "refused"
             message = ("Incorrect API key provided: use your gateway token." if authorization
                        else "You didn't provide an API key: send your gateway token as Authorization: Bearer <token>.")
             return await openai_error(401, message, code="invalid_api_key",
                                       headers={"WWW-Authenticate": "Bearer"})(scope, receive, send)
-        authenticated = principal is not None or legacy
+        # A chosen Open-mode account runs with the gateway's credential, like a keyed caller;
+        # the guest stays anonymous towards Core (local models only).
+        authenticated = principal is not None or legacy or bool(note.get("run_as"))
         if retrieve:
             from urllib.parse import unquote
 
@@ -712,6 +851,8 @@ class CoreEndpoint:
                     except ValueError:
                         return await openai_error(400, "The request body is not valid JSON.")(scope, receive, send)
                     refuse_routing_fields(doc.keys() if isinstance(doc, dict) else ())
+                    if guest:
+                        refuse_for_guest(doc)
                     if path == "/v1/embeddings":
                         base64_embeddings = normalize_embeddings_request(doc)["base64"]
                     elif path == "/v1/chat/completions":
@@ -720,9 +861,13 @@ class CoreEndpoint:
                             chat_stream = ChatStreamNormalizer(facts["include_usage"], note)
                     raw = json.dumps(doc).encode("utf-8")
                 elif "multipart/form-data" in ctype or "application/x-www-form-urlencoded" in ctype:
+                    if guest:
+                        raise RequestRefused("Without a key, files can't be sent (Guest: models only).", None,
+                                             "guest_not_allowed", 403)
                     refuse_routing_fields(await _form_field_names(scope, raw))
             except RequestRefused as exc:
                 return await openai_error(413 if exc.code == "request_too_large" else exc.status, str(exc),
+                                          type_="permission_error" if exc.status == 403 else "invalid_request_error",
                                           param=exc.param, code=exc.code)(scope, receive, send)
             body = raw
             headers = [(k, v) for k, v in headers if k.lower() != b"content-length"]
@@ -806,21 +951,145 @@ def _usage_of(doc: Any) -> Dict[str, Any]:
     return out
 
 
+# ---- The log's record of each request (redacted, bounded) -----------------
+#
+# Each audit line keeps the request and the response as they crossed /v1, with
+# credentials removed: fields named like a credential, and every occurrence of
+# a secret this gateway knows (the caller's key, the internal endpoint key).
+# Inline media (data: URLs) is replaced by its type and size. A side larger
+# than RECORD_MAX is kept up to that size and marked truncated.
+
+RECORD_MAX = 256 * 1024
+REDACTED = "[redacted]"
+SECRET_FIELDS = frozenset({
+    "api_key", "apikey", "api-key", "x-api-key", "authorization", "proxy-authorization", "token", "access_token",
+    "refresh_token", "id_token", "password", "passwd", "secret", "client_secret", "bearer", "credentials",
+    "openai_api_key", "anthropic_api_key", "session", "cookie",
+})
+_DATA_URL_MIN = 256
+
+
+def redact(value: Any, secrets_: Tuple[str, ...] = ()) -> Any:
+    """`value` with credentials removed (see above); never mutates its argument."""
+    known = tuple(x for x in secrets_ if isinstance(x, str) and len(x) >= 8)
+
+    def walk(v: Any) -> Any:
+        if isinstance(v, dict):
+            return {k: (REDACTED if str(k).lower() in SECRET_FIELDS and v[k] not in (None, "") else walk(v[k]))
+                    for k in v}
+        if isinstance(v, list):
+            return [walk(x) for x in v]
+        if isinstance(v, str):
+            if v.startswith("data:") and len(v) > _DATA_URL_MIN:
+                head = v[5:].split(",", 1)[0].split(";", 1)[0] or "data"
+                return f"[inline {head}, {len(v)} bytes]"
+            for secret in known:
+                if secret in v:
+                    v = v.replace(secret, REDACTED)
+            return v
+        return v
+
+    return walk(value)
+
+
+def _bounded(doc: Any, size: int) -> Dict[str, Any]:
+    text = json.dumps(doc, ensure_ascii=False)
+    if len(text) <= RECORD_MAX:
+        return {"body": doc, "bytes": size}
+    return {"text": text[:RECORD_MAX], "bytes": size, "truncated": True}
+
+
+class _StreamAssembler:
+    """A chat.completion (or the Responses API's final response) rebuilt from its SSE events."""
+
+    def __init__(self) -> None:
+        self.events = 0
+        self.base: Dict[str, Any] = {}
+        self.content: List[str] = []
+        self.reasoning: List[str] = []
+        self.tools: Dict[int, Dict[str, Any]] = {}
+        self.finish: Optional[str] = None
+        self.usage: Optional[Dict[str, Any]] = None
+        self.final: Optional[Dict[str, Any]] = None
+        self.size = 0
+
+    def event(self, doc: Any) -> None:
+        if not isinstance(doc, dict):
+            return
+        self.events += 1
+        if doc.get("type") == "response.completed" and isinstance(doc.get("response"), dict):
+            self.final = doc["response"]
+            return
+        for key in ("id", "created", "model"):
+            if doc.get(key) is not None:
+                self.base[key] = doc[key]
+        if isinstance(doc.get("usage"), dict):
+            self.usage = doc["usage"]
+        for choice in doc.get("choices") or []:
+            if not isinstance(choice, dict):
+                continue
+            delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
+            if self.size < RECORD_MAX:
+                for name, sink in (("content", self.content), ("reasoning_content", self.reasoning),
+                                   ("reasoning", self.reasoning)):
+                    if isinstance(delta.get(name), str):
+                        sink.append(delta[name])
+                        self.size += len(delta[name])
+            for call in delta.get("tool_calls") or []:
+                if not isinstance(call, dict):
+                    continue
+                slot = self.tools.setdefault(int(call.get("index") or 0), {"id": None, "type": "function",
+                                                                           "function": {"name": "", "arguments": ""}})
+                if call.get("id"):
+                    slot["id"] = call["id"]
+                fn = call.get("function") if isinstance(call.get("function"), dict) else {}
+                slot["function"]["name"] += str(fn.get("name") or "")
+                slot["function"]["arguments"] += str(fn.get("arguments") or "")
+            if choice.get("finish_reason"):
+                self.finish = choice["finish_reason"]
+
+    def result(self) -> Dict[str, Any]:
+        if self.final is not None:
+            return {"assembled_from_stream": self.events, **self.final}
+        message: Dict[str, Any] = {"role": "assistant", "content": "".join(self.content) or None}
+        if self.reasoning:
+            message["reasoning"] = "".join(self.reasoning)
+        if self.tools:
+            message["tool_calls"] = [self.tools[i] for i in sorted(self.tools)]
+        out: Dict[str, Any] = {"assembled_from_stream": self.events, "object": "chat.completion", **self.base,
+                               "choices": [{"index": 0, "message": message, "finish_reason": self.finish}]}
+        if self.usage is not None:
+            out["usage"] = self.usage
+        return out
+
+
 class UsageCapture:
-    """Tees an OpenAI request/response pair (bounded) into one log summary:
-    model, stream, prompt/completion tokens. Streams are read line by line."""
+    """Tees an OpenAI request/response pair (bounded) into one log summary
+    (model, stream, prompt/completion tokens) and, through `record()`, the
+    redacted request and response. Streams are read line by line."""
 
     def __init__(self) -> None:
         self._req = bytearray()
+        self._req_size = 0
         self._req_over = False
+        self._req_type = ""
         self._resp = bytearray()
+        self._resp_size = 0
         self._resp_over = False
+        self._resp_type = ""
         self._sse = False
         self._line = b""
+        self._stream = _StreamAssembler()
         self.found: Dict[str, Any] = {}
 
+    def request_start(self, content_type: str) -> None:
+        self._req_type = str(content_type or "").lower()
+
     def request_chunk(self, chunk: bytes) -> None:
-        if self._req_over or not chunk:
+        if not chunk:
+            return
+        self._req_size += len(chunk)
+        if self._req_over:
             return
         if len(self._req) + len(chunk) > _CAPTURE_MAX:
             self._req_over = True
@@ -830,12 +1099,15 @@ class UsageCapture:
 
     def response_start(self, message: dict) -> None:
         for k, v in message.get("headers") or []:
-            if bytes(k).lower() == b"content-type" and b"text/event-stream" in bytes(v).lower():
-                self._sse = True
+            if bytes(k).lower() == b"content-type":
+                self._resp_type = bytes(v).decode("latin-1").lower()
+                if b"text/event-stream" in bytes(v).lower():
+                    self._sse = True
 
     def response_chunk(self, chunk: bytes) -> None:
         if not chunk:
             return
+        self._resp_size += len(chunk)
         if not self._sse:
             if self._resp_over or len(self._resp) + len(chunk) > _CAPTURE_MAX:
                 self._resp_over = True
@@ -848,11 +1120,15 @@ class UsageCapture:
         self._line = lines.pop()[-_CAPTURE_MAX:]
         for line in lines:
             line = line.strip()
-            if line.startswith(b"data:") and b"usage" in line:
-                try:
-                    self.found.update(_usage_of(json.loads(line[5:].strip())))
-                except ValueError:
-                    continue
+            if not line.startswith(b"data:") or line[5:].strip() == b"[DONE]":
+                continue
+            try:
+                doc = json.loads(line[5:].strip())
+            except ValueError:
+                continue
+            self._stream.event(doc)
+            if b"usage" in line:
+                self.found.update(_usage_of(doc))
 
     def summary(self) -> Dict[str, Any]:
         out: Dict[str, Any] = {"stream": self._sse}
@@ -871,6 +1147,30 @@ class UsageCapture:
         out.update({k: v for k, v in self.found.items() if k != "model" or "model" not in out})
         return out
 
+    def _side(self, raw: bytearray, size: int, over: bool, ctype: str, secrets_: Tuple[str, ...]) -> Dict[str, Any]:
+        if size == 0:
+            return {"bytes": 0}
+        if over:
+            return {"bytes": size, "omitted": f"larger than {_CAPTURE_MAX // (1024 * 1024)} MB"}
+        if "application/json" in ctype or (not ctype and raw[:1] in (b"{", b"[")):
+            try:
+                return _bounded(redact(json.loads(bytes(raw)), secrets_), size)
+            except ValueError:
+                pass
+        if ctype.startswith("text/") or "json" in ctype:
+            text = redact(bytes(raw).decode("utf-8", "replace"), secrets_)
+            return {"text": text[:RECORD_MAX], "bytes": size, **({"truncated": True} if len(text) > RECORD_MAX else {})}
+        return {"bytes": size, "omitted": f"{ctype.split(';')[0] or 'binary'} body"}
+
+    def record(self, *, secrets: Tuple[str, ...] = ()) -> Dict[str, Any]:
+        """{"request": {...}, "response": {...}} as recorded, credentials removed."""
+        request = self._side(self._req, self._req_size, self._req_over, self._req_type, secrets)
+        if self._sse:
+            response = _bounded(redact(self._stream.result(), secrets), self._resp_size)
+        else:
+            response = self._side(self._resp, self._resp_size, self._resp_over, self._resp_type, secrets)
+        return {"request": request, "response": response}
+
 
 async def listed_text_models(settings: EndpointSettings) -> List[str]:
     """The text model ids `/v1/models?output_type=text` lists (authenticated, as the gateway)."""
@@ -887,13 +1187,10 @@ async def listed_text_models(settings: EndpointSettings) -> List[str]:
 LOG_MARK = b'"openai_api"'
 
 
-def recent_requests(*, limit: int = 50, user_id: Optional[str] = None, tenant_id: Optional[str] = None,
-                    data_dir: Optional[Path] = None, byte_budget: int = 16 * 1024 * 1024) -> List[Dict[str, Any]]:
-    """The OpenAI API rows of the audit log, newest first. `user_id` limits the
-    rows to that account's own requests (a non-admin caller)."""
-    from .account_activity import _lines_backwards, audit_files, observer_path_for
+def _log_lines(data_dir: Optional[Path], byte_budget: int):
+    """(doc, openai_api) for every OpenAI API audit line, newest first, within the byte budget."""
+    from .account_activity import _lines_backwards, audit_files
 
-    rows: List[Dict[str, Any]] = []
     budget = [int(byte_budget)]
     for path in audit_files(data_dir):
         try:
@@ -905,35 +1202,73 @@ def recent_requests(*, limit: int = 50, user_id: Optional[str] = None, tenant_id
                 except ValueError:
                     continue
                 api = doc.get("openai_api") if isinstance(doc, dict) else None
-                if not isinstance(api, dict):
-                    continue
-                if user_id is not None and (str(doc.get("principal_user_id") or "") != user_id
-                                            or str(doc.get("principal_tenant_id") or "default") != (tenant_id or "default")):
-                    continue
-                run_id = str(api.get("run_id") or "") or None
-                rows.append({
-                    "ts": doc.get("ts"),
-                    "client": api.get("client") or "unknown",
-                    "user_id": doc.get("principal_user_id"),
-                    "ip": doc.get("ip"),
-                    "method": doc.get("method"),
-                    "path": doc.get("path"),
-                    "model": api.get("model"),
-                    "prompt_tokens": api.get("prompt_tokens"),
-                    "completion_tokens": api.get("completion_tokens"),
-                    "stream": bool(api.get("stream")),
-                    "duration_ms": doc.get("duration_ms"),
-                    "status": doc.get("status"),
-                    "run_id": run_id,
-                    "observer_path": observer_path_for(run_id) if run_id else None,
-                })
-                if len(rows) >= limit:
-                    return rows
+                if isinstance(api, dict):
+                    yield doc, api
         except OSError:
             continue
         if budget[0] <= 0:
             break
+
+
+def _visible(doc: Dict[str, Any], user_id: Optional[str], tenant_id: Optional[str]) -> bool:
+    return user_id is None or (str(doc.get("principal_user_id") or "") == user_id
+                               and str(doc.get("principal_tenant_id") or "default") == (tenant_id or "default"))
+
+
+def _row(doc: Dict[str, Any], api: Dict[str, Any]) -> Dict[str, Any]:
+    from .account_activity import observer_path_for
+
+    run_id = str(api.get("run_id") or "") or None
+    return {
+        "request_id": doc.get("request_id"),
+        "ts": doc.get("ts"),
+        "client": api.get("client") or "unknown",
+        "user_id": doc.get("principal_user_id"),
+        "ip": doc.get("ip"),
+        "method": doc.get("method"),
+        "path": doc.get("path"),
+        "model": api.get("model"),
+        "prompt_tokens": api.get("prompt_tokens"),
+        "completion_tokens": api.get("completion_tokens"),
+        "stream": bool(api.get("stream")),
+        "duration_ms": doc.get("duration_ms"),
+        "status": doc.get("status"),
+        "run_id": run_id,
+        "observer_path": observer_path_for(run_id) if run_id else None,
+        "recorded": isinstance(api.get("request"), dict) or isinstance(api.get("response"), dict),
+    }
+
+
+def recent_requests(*, limit: int = 50, user_id: Optional[str] = None, tenant_id: Optional[str] = None,
+                    data_dir: Optional[Path] = None, byte_budget: int = 16 * 1024 * 1024) -> List[Dict[str, Any]]:
+    """The OpenAI API rows of the audit log, newest first. `user_id` limits the
+    rows to that account's own requests (a non-admin caller)."""
+    rows: List[Dict[str, Any]] = []
+    for doc, api in _log_lines(data_dir, byte_budget):
+        if not _visible(doc, user_id, tenant_id):
+            continue
+        rows.append(_row(doc, api))
+        if len(rows) >= limit:
+            break
     return rows
+
+
+def request_record(request_id: str, *, user_id: Optional[str] = None, tenant_id: Optional[str] = None,
+                   data_dir: Optional[Path] = None, byte_budget: int = 64 * 1024 * 1024) -> Optional[Dict[str, Any]]:
+    """One log row with its recorded request and response (credentials already
+    removed when it was written), or None (unknown id, or not the caller's)."""
+    for doc, api in _log_lines(data_dir, byte_budget):
+        if str(doc.get("request_id") or "") != request_id:
+            continue
+        if not _visible(doc, user_id, tenant_id):
+            return None
+        out = _row(doc, api)
+        out["request"] = api.get("request") if isinstance(api.get("request"), dict) else None
+        out["response"] = api.get("response") if isinstance(api.get("response"), dict) else None
+        out["user_agent"] = doc.get("user_agent")
+        out["client_class"] = api.get("client_class")
+        return out
+    return None
 
 
 # ---- Check setup ---------------------------------------------------------

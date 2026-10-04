@@ -198,10 +198,22 @@ class GatewayUserRecord:
     archived: bool = False
     archived_at: str = ""
     archived_by: str = ""
+    # "OpenAI API" capability (round 5): None = never set, read through `openai_api_allowed()`
+    # (on for an active account). Additive: absent in users.json = None.
+    openai_api: Optional[bool] = None
 
     @property
     def key(self) -> str:
         return f"{self.tenant_id}:{self.user_id}"
+
+    def openai_api_allowed(self) -> bool:
+        """May this account use the OpenAI API at /v1? An explicit switch wins; never set = on
+        for an active (enabled, not archived) account. Entities hold no token, so never."""
+        if self.principal_kind == "entity" or self.archived:
+            return False
+        if self.openai_api is not None:
+            return bool(self.openai_api)
+        return bool(self.enabled)
 
     def to_storage_dict(self) -> dict[str, Any]:
         out = self._storage_core()
@@ -209,6 +221,8 @@ class GatewayUserRecord:
             out["archived"] = bool(self.archived)
             out["archived_at"] = self.archived_at
             out["archived_by"] = self.archived_by
+        if self.openai_api is not None:
+            out["openai_api"] = bool(self.openai_api)
         return out
 
     def _storage_core(self) -> dict[str, Any]:
@@ -333,6 +347,7 @@ def _normalize_record(raw: dict[str, Any]) -> GatewayUserRecord:
         archived=bool(raw.get("archived", False)),
         archived_at=str(raw.get("archived_at") or ""),
         archived_by=str(raw.get("archived_by") or ""),
+        openai_api=raw["openai_api"] if isinstance(raw.get("openai_api"), bool) else None,
     )
 
 
@@ -570,6 +585,7 @@ class GatewayUserRegistry:
         runtime_id: Optional[str] = None,
         email: Optional[str] = None,
         token: Optional[str] = None,
+        openai_api: Optional[bool] = None,
     ) -> tuple[GatewayUserRecord, Optional[str]]:
         key = f"{safe_principal_component(tenant_id, default='default')}:{safe_principal_component(user_id, default='')}"
         issued_token: Optional[str] = None
@@ -613,6 +629,7 @@ class GatewayUserRegistry:
                 archived=rec.archived,
                 archived_at=rec.archived_at,
                 archived_by=rec.archived_by,
+                openai_api=bool(openai_api) if openai_api is not None else rec.openai_api,
             )
             self._require_runtime_available_unlocked(
                 records,
@@ -652,6 +669,23 @@ class GatewayUserRegistry:
             records[key] = updated
             self._save_store_unlocked(records, reservations)
             return updated
+
+    def migrate_openai_api_default(self) -> int:
+        """Round-5 migration, run when the OpenAI API is turned on: every human account that never
+        had the "OpenAI API" switch set gets it written explicitly — on for an active account, off
+        for an inactive or archived one. Accounts created later default on while active. Returns
+        how many records were written."""
+        with self._lock:
+            records, reservations = self._load_store_unlocked()
+            changed = 0
+            for key, rec in list(records.items()):
+                if rec.principal_kind == "entity" or rec.openai_api is not None:
+                    continue
+                records[key] = dataclasses.replace(rec, openai_api=bool(rec.enabled and not rec.archived))
+                changed += 1
+            if changed:
+                self._save_store_unlocked(records, reservations)
+            return changed
 
     def transfer_runtime_reservation(
         self,
@@ -714,6 +748,7 @@ class GatewayUserRegistry:
                 archived=target.archived,
                 archived_at=target.archived_at,
                 archived_by=target.archived_by,
+                openai_api=target.openai_api,
             )
             if previous_runtime_id != runtime0:
                 self._reserve_runtime_unlocked(reservations, record=target, reason="runtime-transferred")

@@ -215,8 +215,9 @@ def test_errors_use_the_standard_envelope(sdk):
         c = sdk.client()
         with pytest.raises(openai.BadRequestError) as err:
             await c.chat.completions.create(model="ollama/qwen3:4b", messages=[{"role": "user", "content": "hi"}],
-                                            response_format={"type": "json_object"})
-        assert err.value.body["param"] == "response_format" and err.value.body["type"] == "invalid_request_error"
+                                            response_format={"type": "xml"})
+        assert err.value.body["param"] == "response_format.type" and err.value.body["type"] == "invalid_request_error"
+        assert err.value.body["code"] == "invalid_response_format"
         with pytest.raises(openai.BadRequestError) as err:  # Core's validation (422) -> 400
             await c.chat.completions.create(model="ollama/qwen3:4b", messages=[{"role": "wizard", "content": "hi"}])
         assert set(err.value.body) == {"message", "type", "param", "code"}
