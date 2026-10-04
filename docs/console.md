@@ -308,22 +308,25 @@ on. The catalog data, the presence checks and the fit verdicts come from
 AbstractCore (`GET /api/gateway/models/catalog`, contract `model_catalog_v1`);
 downloads are the gateway's own jobs (see [Model downloads](model-downloads.md)).
 
-**Models** (tab id `catalog`) shows the catalog as **one card per model**:
+**Models** (tab id `catalog`) is one page: the catalog as **one compact card
+per model**, and the downloaded models the catalog does not know in the same
+list.
 
-- The card header: the model's name, organisation, parameter count and
-  licence, its capabilities (Text, Thinking, Tools, Vision, Audio, Embedding,
-  Voice, Image, Video) and a **Starter** badge for the models of the recommended
-  starter set.
-- The card body: one row per downloadable build (artifact) of that model: the
+- The card header is one line: the model's name, organisation, parameter count
+  and licence, its capabilities (Text, Thinking, Tools, Vision, Audio,
+  Embedding, Voice, Image, Video) as small tags, and a **Starter** badge for the
+  models of the recommended starter set.
+- The card body: one line per downloadable build (artifact) of that model: the
   provider (MLX, Ollama, LM Studio, Hugging Face, ...), the artifact id (long
   ids are shortened with "..."; hover to read the whole id, click it to copy
-  it), the quantization (4-bit, 8-bit, 16-bit, ... and its bits per weight),
-  the download size ("about" when the size is estimated from the parameter
+  it), the quantization (4-bit, 8-bit, 16-bit, ...; hover for the exact
+  quantization and bits per weight), the download size ("about" when the size is estimated from the parameter
   count), whether the weights are already here (Downloaded, Not downloaded,
   Unknown, Remote) and whether it fits this machine (Fits, Tight, Partial
-  offload, Too large; hover the pill for the numbers behind it). The build
-  recommended for this computer comes first and is marked; the others are
-  quieter.
+  offload, Too large; hover the pill for the numbers behind it), then the
+  actions. The build recommended for this computer comes first, with a small
+  accent dot before its id; the others are quieter. On a narrow window the
+  facts move under the id; every button is at least 44 px.
 - One action per row: **Download** (a download shows its progress bar with
   bytes, speed and time left, and **Cancel**, the same progress display as the
   setup guide), then **Use as default** once a text model is downloaded (it
@@ -353,7 +356,8 @@ The filter bar above the cards:
   answered carry a warning. The query is part of the address:
   `/console#catalog?hf=smollm`.
 - **Provider**, **Capability** and **Status** (Downloaded, Not downloaded)
-  chips, each with the number of builds it would show.
+  chips, each with the number of builds it would show (the rows under "Not in
+  the catalog" included).
 - **Fits this computer** hides the builds that do not fit (only Fits and Tight
   remain).
 - A live count: "12 of 77 models · 31 artifacts shown". The row with the search
@@ -380,10 +384,17 @@ locked in memory ("Unload it first"), while its download is still running
 (delete it in LM Studio). Every delete and refusal is written to the audit log.
 The terminal console keeps its own delete for now.
 
-Below the cards, **On this computer** is AbstractCore's own list of the models
-the local engines hold (including models that are not in the catalog), with
-their size and location, and **Delete** (with a confirmation that names the
-model and any blocker, such as a model that is loaded right now).
+**Not in the catalog.** With Status **All** or **Downloaded**, the models the
+local engines hold that no catalog build accounts for (`GET
+/api/gateway/models/installed`: an Ollama tag you pulled yourself, a Hugging
+Face or MLX repository downloaded elsewhere) follow the cards as plain rows
+under a small **Not in the catalog** heading: provider, id, the quantization
+the engine reports, the size on disk, Downloaded (and Loaded) chips, and the
+same **Delete** with the same confirmation and refusals. They follow the
+Provider filter and the search; a capability, **Fits this computer**, the 4-bit
+/ 8-bit chips and Hugging Face mode leave them out, because nothing is known
+about them there. A model the catalog does know is never listed twice. If the
+engines' list cannot be read the page says so under that heading.
 
 The setup guide's **Default model** step shows the same catalog cards with
 **Fits this computer** already on; **Open in the Models tab** carries the

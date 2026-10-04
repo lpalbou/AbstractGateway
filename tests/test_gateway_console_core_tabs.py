@@ -64,8 +64,10 @@ def _require_screens() -> dict:
 
 def test_tabs_are_appended_with_their_own_ids() -> None:
     html = gateway_console_html()
-    for element_id in ("tab-button-catalog", "tab-catalog", "catalog-core-root", "engines-core-root"):
+    for element_id in ("tab-button-catalog", "tab-catalog", "catalog-cards-root", "engines-core-root"):
         assert html.count(f'id="{element_id}"') == 1, element_id
+    # R5.2: one Models page; AbstractCore's "On this computer" screen is gone.
+    assert 'id="catalog-core-root"' not in html and "On this computer" not in html
     # DESIGN-v3 §7: the Engines tab merged into Providers (no nav item, no panel).
     for element_id in ("tab-button-engines", "tab-engines"):
         assert f'id="{element_id}"' not in html, element_id
@@ -95,7 +97,8 @@ def test_fragments_are_spliced_exactly_once() -> None:
     models = core_config.core_console_fragment("models")
     engines = core_config.core_console_fragment("engines")
     assert models["js"] == engines["js"] and models["css"] == engines["css"]
-    assert html.count(models["html"]) == 1
+    # R5.2: the Models page is the cards alone; only the engines screen is spliced.
+    assert models["html"] not in html
     assert html.count(engines["html"]) == 1
     assert html.count(models["css"].strip()) == 1
     assert html.count('<script id="abstractcore-console-js">') == 1
@@ -103,7 +106,7 @@ def test_fragments_are_spliced_exactly_once() -> None:
     assert html.index('<script id="abstractcore-console-js">') < html.index("const CORE_CONSOLE =")
     # The spliced html sits inside the right panels.
     catalog_panel = html[html.index('id="tab-catalog"') : html.index('id="tab-apps"')]
-    assert 'data-acc-kind="models"' in catalog_panel
+    assert 'data-acc-kind="models"' not in catalog_panel
     # The engines placeholder sits in the Providers tab's Local providers section
     # (replaced by the engine cards when the tab opens).
     engines_panel = html[html.index('id="local-providers-section"') : html.index('id="provider-setup-section"')]
@@ -151,7 +154,7 @@ def test_hostile_fragment_content_cannot_break_the_page(monkeypatch) -> None:
     html = gateway_console_html()
     # Content is inert: tokens inside it are NOT expanded, the script tag is not closed early.
     assert html.count("__CORE_CONSOLE_CONFIG_JSON__") == 1  # only the copy inside the fragment js
-    assert html.count("<!--__ABSTRACTCORE_ENGINES_HTML__-->") == 2  # the two copies inside the fragment html
+    assert html.count("<!--__ABSTRACTCORE_ENGINES_HTML__-->") == 1  # the copy inside the (engines) fragment html
     assert "</style> */" not in html
     scripts = _all_scripts(html)
     assert len(scripts) == 3  # kit islands + AbstractCore screens + console
@@ -173,7 +176,7 @@ def test_older_abstractcore_renders_an_upgrade_card(monkeypatch) -> None:
     html = gateway_console_html()
     assert "abstractcore-console-js" not in html
     assert 'data-acc-kind="models"' not in html
-    for panel_id, nxt in (("tab-catalog", "tab-apps"), ("local-providers-section", "provider-setup-section")):
+    for panel_id, nxt in (("local-providers-section", "provider-setup-section"),):
         panel = html[html.index(f'id="{panel_id}"') : html.index(f'id="{nxt}"')]
         assert 'data-core-console="unavailable"' in panel
         assert "Models and Engines require abstractcore ≥ 2.14.0" in panel
@@ -199,7 +202,7 @@ def test_missing_abstractcore_renders_the_card_with_the_reason(monkeypatch) -> N
         lambda: {"available": False, "abstractcore_version": None, "required": "2.14.0", "missing": ["abstractcore"]},
     )
     html = gateway_console_html()
-    assert html.count('data-core-console="unavailable"') == 2
+    assert html.count('data-core-console="unavailable"') == 1  # the Providers placeholder (the Models page is the cards)
     assert "which is not installed" in html
     assert _core_console_config(html)["available"] is False
     _node_check(_all_scripts(html)[0])

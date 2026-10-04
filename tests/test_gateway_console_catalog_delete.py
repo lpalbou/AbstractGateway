@@ -53,6 +53,7 @@ const ctx = vm.createContext({
     const body = (opts && opts.body) ? JSON.parse(opts.body) : null;
     calls.push({ path, body });
     if (path === "/api/gateway/models/catalog") return JSON.parse(JSON.stringify(FIXTURE));
+    if (path === "/api/gateway/models/installed") return { schema: "models_installed_v1", rows: [], errors: {} };
     if (path === "/api/gateway/models/delete-download") {
       if (body.provider === "lmstudio") {
         const err = new Error("LM Studio keeps its own model library, so this model is deleted in LM Studio.");

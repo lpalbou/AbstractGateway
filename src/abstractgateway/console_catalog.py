@@ -86,79 +86,74 @@ CATALOG_CSS = r"""
     .mc-chip__n { color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 600; font-variant-numeric: tabular-nums; }
     button.mc-chip[aria-pressed="true"] .mc-chip__n { color: var(--text-secondary); }
     .mc-seam strong { font-weight: 650; }
-    /* Cards: one per model. */
-    .mc-list { display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr); align-items: start; min-width: 0; }
-    .mc-card { container: mc-card / inline-size; display: grid; gap: 14px; min-width: 0; padding: 18px 20px 12px; }
+    /* Cards: one per model, condensed (R5.2): the header is one line (name,
+       organisation, parameters, licence, capability tags, badges) and each
+       artifact is one 44 px row. */
+    .mc-list { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); align-items: start; min-width: 0; }
+    .mc-card { container: mc-card / inline-size; display: grid; gap: 2px; min-width: 0; padding: 8px 14px 4px; }
     .mc-card.is-starter { border-color: var(--accent-border, var(--ui-border-2)); }
-    .mc-card__head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; min-width: 0; }
-    .mc-card__head .ui-mark { flex: 0 0 40px; }
-    .mc-card__titles { display: grid; gap: 4px; min-width: 0; flex: 1 1 320px; }
-    .mc-card__title { margin: 0; font-size: var(--font-size-lg); font-weight: 650; line-height: 1.25; color: var(--text-primary); letter-spacing: -.01em; }
+    .mc-card__head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; padding: 2px 0; }
+    .mc-card__title { margin: 0; font-size: var(--font-size-md, 1rem); font-weight: 650; line-height: 1.3; color: var(--text-primary); letter-spacing: -.01em; overflow-wrap: break-word; min-width: 0; }
     .mc-card__meta { color: var(--text-secondary); font-size: var(--font-size-sm); }
-    .mc-card__meta span + span::before { content: "\00B7"; margin: 0 7px; color: var(--text-muted); }
-    .mc-card__badges { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-    .mc-badge { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; font-size: var(--font-size-xs); font-weight: 650; white-space: nowrap; color: var(--accent); background: var(--accent-subtle); border: 1px solid var(--accent-border, var(--ui-border-2)); }
-    .mc-tags { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 0 54px; padding: 0; list-style: none; }
-    @container mc-card (max-width: 560px) { .mc-tags { margin-left: 0; } }
-    .mc-tag { padding: 2px 9px; border-radius: 999px; background: var(--ui-surface-2); color: var(--text-secondary); font-size: var(--font-size-xs); font-weight: 600; white-space: nowrap; }
+    .mc-card__meta span + span::before { content: "\00B7"; margin: 0 6px; color: var(--text-muted); }
+    .mc-badge { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; font-size: var(--font-size-xs); font-weight: 650; white-space: nowrap; color: var(--accent); background: var(--accent-subtle); border: 1px solid var(--accent-border, var(--ui-border-2)); }
+    .mc-tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; }
+    .mc-tag { padding: 1px 8px; border-radius: 999px; background: var(--ui-surface-2); color: var(--text-secondary); font-size: var(--font-size-xs); font-weight: 600; white-space: nowrap; }
     .mc-note { color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.45; }
-    /* Artifact rows: a grid per row with fixed columns, so the columns line
-       up across every card. Narrow cards (container query) fold each row
-       onto two lines instead of squeezing a column. */
-    .mc-arts { display: grid; margin: 0 -10px; padding: 0; list-style: none; min-width: 0; }
-    .mc-art { display: grid; align-items: center; gap: 8px 14px; min-width: 0; padding: 11px 10px; border-radius: var(--radius-md);
-      grid-template-columns: 112px minmax(0, 2.6fr) repeat(4, minmax(104px, 1fr)) 172px;
-      grid-template-areas: "prov id quant size weights fit action" ". job job job job job job"; }
+    /* Artifact rows: one grid line per row with fixed columns, so the columns
+       line up across every card: engine · id · quant · size · status chips ·
+       actions. Narrower cards (container queries) put the facts under the id. */
+    .mc-arts { display: grid; margin: 0 -8px; padding: 0; list-style: none; min-width: 0; }
+    .mc-art { display: grid; align-items: center; gap: 0 12px; min-width: 0; min-height: 44px; padding: 0 8px; border-radius: var(--radius-md);
+      grid-template-columns: 96px minmax(0, 1fr) 72px 84px 236px 188px;
+      grid-template-areas: "prov id quant size chips action" "job job job job job job"; }
     .mc-art + .mc-art { border-top: 1px solid var(--ui-border-1); border-top-left-radius: 0; border-top-right-radius: 0; }
     .mc-art.is-primary { background: var(--ui-surface-1); box-shadow: inset 3px 0 0 var(--accent); }
     .mc-art.is-primary + .mc-art { border-top-color: transparent; }
-    .mc-art__prov { grid-area: prov; min-width: 0; }
-    .mc-prov { display: inline-flex; max-width: 100%; padding: 3px 9px; border-radius: var(--radius-sm); background: var(--ui-surface-2); border: 1px solid var(--ui-border-1); color: var(--text-primary); font-size: var(--font-size-xs); font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .mc-art__id { grid-area: id; display: grid; gap: 3px; min-width: 0; }
-    .mc-id { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; word-break: normal; font-family: var(--font-mono); font-size: var(--font-size-sm); color: var(--text-primary); background: transparent; border: 0; padding: 0; cursor: copy; }
-    .mc-art:not(.is-primary) .mc-id { color: var(--text-secondary); }
-    .mc-rec { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: var(--font-size-xs); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .mc-rec::before { content: ""; flex: 0 0 6px; width: 6px; height: 6px; border-radius: 999px; background: var(--accent); }
     .mc-art__facts { display: contents; }
-    .mc-art__quant { grid-area: quant; display: grid; gap: 1px; min-width: 0; font-size: var(--font-size-sm); }
-    .mc-art__quant b { color: var(--text-primary); font-weight: 650; white-space: nowrap; }
-    .mc-art__quant span, .mc-art__size span { color: var(--text-muted); font-size: var(--font-size-xs); white-space: nowrap; font-variant-numeric: tabular-nums; }
-    .mc-art__size { grid-area: size; display: grid; gap: 1px; color: var(--text-primary); font-size: var(--font-size-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
-    .mc-art__weights { grid-area: weights; min-width: 0; }
-    .mc-art__fit { grid-area: fit; min-width: 0; }
-    .mc-art__fit .ui-pill[title] { cursor: help; }
-    .mc-art__action { grid-area: action; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; min-width: 0; }
+    .mc-art__prov { grid-area: prov; min-width: 0; }
+    .mc-prov { display: inline-flex; max-width: 100%; padding: 1px 8px; border-radius: var(--radius-sm); background: var(--ui-surface-2); border: 1px solid var(--ui-border-1); color: var(--text-primary); font-size: var(--font-size-xs); font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .mc-art__id { grid-area: id; display: flex; align-items: center; gap: 7px; min-width: 0; }
+    .mc-id { display: block; flex: 0 1 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; word-break: normal; font-family: var(--font-mono); font-size: var(--font-size-sm); line-height: 44px; color: var(--text-primary); background: transparent; border: 0; padding: 0; cursor: copy; }
+    .mc-art:not(.is-primary) .mc-id { color: var(--text-secondary); }
+    /* The recommended build: a small accent dot before its id (plus the row's accent edge). */
+    .mc-rec { flex: 0 0 8px; width: 8px; height: 8px; border-radius: 999px; background: var(--accent); }
+    .mc-art__quant { grid-area: quant; min-width: 0; color: var(--text-primary); font-size: var(--font-size-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .mc-art__quant b { font-weight: 650; }
+    .mc-art__size { grid-area: size; color: var(--text-primary); font-size: var(--font-size-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .mc-art__chips { grid-area: chips; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+    .mc-art__chips .ui-pill[title] { cursor: help; }
+    .mc-art__action { grid-area: action; display: flex; flex-wrap: nowrap; justify-content: flex-end; align-items: center; gap: 6px; min-width: 0; }
+    .mc-art__action .ui-btn { min-height: 44px; padding: 6px 12px; white-space: nowrap; }
     .mc-art__action .ui-btn.mc-del { display: inline-flex; align-items: center; justify-content: center; width: 44px; min-width: 44px; min-height: 44px; padding: 0; }
+    .mc-art__action .ui-pill { white-space: nowrap; }
     .mc-del .button-icon { display: inline-flex; }
     .mc-del .button-icon svg { width: 18px; height: 18px; }
     .mc-del[aria-busy="true"] .button-icon { animation: mc-del-busy 1s ease-in-out infinite alternate; }
     @keyframes mc-del-busy { from { opacity: 1; } to { opacity: .3; } }
-    .mc-del-confirm { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 10px 12px; border-radius: var(--radius-md); background: var(--ui-surface-2); box-shadow: inset 0 0 0 1px var(--ui-border-2); }
+    .mc-del-confirm { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 8px 12px; border-radius: var(--radius-md); background: var(--ui-surface-2); box-shadow: inset 0 0 0 1px var(--ui-border-2); }
     .mc-del-confirm__q { flex: 1 1 260px; min-width: 0; color: var(--text-primary); font-size: var(--font-size-sm); line-height: 1.45; }
     .mc-del-confirm__actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
-    .mc-del-confirm__actions .ui-btn { min-height: 32px; padding: 6px 14px; }
-    .mc-art__action .ui-btn { min-height: 32px; padding: 6px 14px; white-space: nowrap; }
+    .mc-del-confirm__actions .ui-btn { min-height: 44px; padding: 6px 14px; }
     .mc-art__action .mc-muted { color: var(--text-muted); font-size: var(--font-size-xs); text-align: right; }
-    .mc-art__job { grid-area: job; display: grid; gap: 8px; min-width: 0; }
+    .mc-art__job { grid-area: job; display: grid; gap: 6px; min-width: 0; padding-bottom: 6px; }
     .mc-art__job:empty { display: none; }
     .mc-art:not(.is-primary) .ui-pill.tone-muted { opacity: .85; }
-    @container mc-card (max-width: 1060px) {
-      .mc-art { grid-template-columns: 104px minmax(0, 1fr) auto; grid-template-areas: "prov id action" "facts facts facts" "job job job"; }
-      .mc-art__facts { grid-area: facts; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; min-width: 0; padding-left: 118px; }
-      .mc-art__quant, .mc-art__size { display: flex; align-items: baseline; gap: 6px; }
+    @container mc-card (max-width: 1000px) {
+      .mc-art { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "id action" "facts action" "job job"; padding-bottom: 6px; }
+      .mc-art__facts { grid-area: facts; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; min-width: 0; }
+      .mc-id { line-height: 1.4; padding: 6px 0 2px; }
     }
     @container mc-card (max-width: 560px) {
-      .mc-art { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "prov action" "id id" "facts facts" "job job"; }
-      .mc-art__facts { padding-left: 0; }
+      .mc-art { grid-template-areas: "id action" "facts facts" "job job"; }
+      .mc-id { line-height: 44px; padding: 0; }
     }
+    /* Downloaded models no catalog entry knows: plain rows under a small heading. */
+    .mc-extra__title { margin: 4px 0 2px; color: var(--text-muted); font-size: var(--font-size-xs); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
     .mc-empty { display: grid; justify-items: center; gap: 10px; }
     .mc-empty strong { color: var(--text-primary); font-weight: 650; }
-    .mc-installed { display: grid; gap: 12px; min-width: 0; margin-top: 28px; }
-    /* AbstractCore's Models screen stays mounted below the cards for what the
-       engines hold (including models outside the catalog) and Delete; its own
-       catalog table, filters and host line are the cards' job now. */
-    #catalog-core-root .acc-host-line, #catalog-core-root .acc-toolbar, #catalog-core-root .acc-section:has([data-acc="catalog-table"]),
-    #catalog-core-root .acc-section-head h3 { display: none; }
+    /* Phones: filter chips and the mode switch are touch targets too. */
+    @media (max-width: 767.98px) { button.mc-chip, .mc-mode button { min-height: 44px; } }
 """
 
 CATALOG_JS = r"""
@@ -189,6 +184,10 @@ CATALOG_JS = r"""
       // `deleted` = keys whose files this page deleted (a finished download job
       // in the shared feed must not draw them as Downloaded again).
       del: new Map(), deleted: new Set(),
+      // GET /models/installed (models_installed_v1): what the local engines
+      // hold. Rows no catalog artifact accounts for are drawn as plain rows
+      // under "Not in the catalog" (status All / Downloaded).
+      installed: null, installedError: "", extraNotice: null,
       hub: { q: null, data: null, error: "", loading: false, seq: 0 } };
     // `hf`: null = the curated catalog; a string = Hugging Face mode and its query.
     function mcDefaultFilters() { return { q: "", quant: "all", provider: "all", cap: "all", status: "all", fits: false, hf: null }; }
@@ -345,6 +344,63 @@ CATALOG_JS = r"""
     }
     function mcCountArts(list) { return list.reduce((n, x) => n + x.arts.length, 0); }
     function mcPlural(n, one, many) { return `${n} ${n === 1 ? one : many}`; }
+    // ---- Downloaded models that are not in the catalog ----
+    // Engines whose files live in the shared Hugging Face cache (an installed
+    // row names the repo; a catalog GGUF artifact names `org/repo:QUANT`).
+    const MC_HF_FAMILY = new Set(["mlx", "huggingface", "mlx-vlm", "mlx-gen", "diffusers", "transformers", "mflux", "llamacpp"]);
+    function mcNorm(x) { return String(x || "").trim().toLowerCase(); }
+    function mcRepoOf(id) {
+      const i = id.indexOf(":");
+      if (i < 0) return id;
+      const head = id.slice(0, i);
+      return head.indexOf("/") >= 0 && id.length > i + 1 ? head : id;
+    }
+    function mcOllamaFull(id) { return id.indexOf(":") >= 0 ? id : `${id}:latest`; }
+    // Does catalog artifact `a` name the files of installed row `r`?
+    function mcSameFiles(a, r) {
+      const ap = mcNorm(a.provider); const rp = mcNorm(r.provider);
+      const aa = mcNorm(a.artifact); const ra = mcNorm(r.artifact);
+      if (rp === "ollama") return ap === "ollama" && mcOllamaFull(aa) === mcOllamaFull(ra);
+      if (MC_HF_FAMILY.has(rp)) return MC_HF_FAMILY.has(ap) && (aa === ra || mcRepoOf(aa) === ra);
+      if (rp === "lmstudio") return ap === "lmstudio" && (aa === ra || aa.split("@")[0] === ra.split("@")[0]);
+      return ap === rp && aa === ra;
+    }
+    function mcInstalledRows() {
+      const d = mcStore.installed;
+      return d && Array.isArray(d.rows) ? d.rows.filter((r) => r && typeof r === "object" && r.provider && r.artifact) : [];
+    }
+    // A row is accounted for when a catalog artifact for the same files is
+    // downloaded (or was just deleted from its card: the next load decides).
+    function mcCovered(r) {
+      for (const row of mcRowsOf(mcStore.data)) {
+        for (const a of mcArts(row)) {
+          if ((((a.presence || {}).status === "installed") || mcStore.deleted.has(mcKey(a)) || mcJobDone(mcJob(a))) && mcSameFiles(a, r)) return true;
+        }
+      }
+      return false;
+    }
+    function mcIsExtraKey(key) {
+      if (!mcInstalledRows().some((r) => mcKey(r) === key)) return false;
+      return !mcRowsOf(mcStore.data).some((row) => mcArts(row).some((a) => mcKey(a) === key));
+    }
+    // The not-in-catalog rows a view shows with filters `f`. They have no
+    // capability, fit or quant_class, so those filters (other than the
+    // "Other" quant bucket) leave them out; never in Hugging Face mode or
+    // the setup guide.
+    function mcExtras(view, f) {
+      if (!view || view.guide || mcHfMode(f) || f.status === "not_downloaded" || f.cap !== "all" || f.fits) return [];
+      if (f.quant !== "all" && f.quant !== "other" && mcQuantReported()) return [];
+      const tokens = mcTokens(f.q);
+      return mcInstalledRows().filter((r) => {
+        if (mcStore.deleted.has(mcKey(r))) return false;
+        if (f.provider !== "all" && r.provider !== f.provider) return false;
+        if (tokens.length) {
+          const hay = [r.artifact, r.provider, r.catalog_id].map((x) => String(x || "").toLowerCase()).join(" ");
+          if (!tokens.every((t) => hay.includes(t))) return false;
+        }
+        return !mcCovered(r);
+      });
+    }
     // ---- Markup ----
     function mcHostMarkup() {
       const p = (mcStore.data && mcStore.data.host_profile) || null;
@@ -363,7 +419,7 @@ CATALOG_JS = r"""
     // A chip's count = the artifacts the view would show with that chip on.
     function mcChipCount(view, group, value) {
       const f = Object.assign({}, view.filters, { [group]: value });
-      return mcCountArts(mcVisible(f));
+      return mcCountArts(mcVisible(f)) + mcExtras(view, f).length;
     }
     function mcControlsMarkup(view) {
       const f = view.filters;
@@ -371,6 +427,7 @@ CATALOG_JS = r"""
       const rows = mcRows();
       const providers = [];
       for (const r of rows) for (const a of mcArts(r)) if (a.provider && !providers.includes(a.provider)) providers.push(a.provider);
+      for (const r of mcExtras(view, Object.assign({}, f, { provider: "all" }))) if (!providers.includes(r.provider)) providers.push(r.provider);
       if (f.provider !== "all" && !providers.includes(f.provider)) providers.push(f.provider);
       const caps = MC_CAPS.filter(([id]) => rows.some((r) => mcRowCaps(r).includes(id)) || f.cap === id);
       const quant = MC_QUANT_CHIPS.map(([id, label]) => mcChip("quant", id, label, quantOn && f.quant === id, quantOn && id !== "all" ? mcChipCount(view, "quant", id) : null, !quantOn)).join("");
@@ -385,9 +442,10 @@ CATALOG_JS = r"""
         + group("Status", status)
         + `</div>`;
     }
-    function mcCountMarkup(view, list) {
+    function mcCountMarkup(view, list, extras) {
       const total = mcRows().length;
-      return `<b>${esc(list.length)}</b> of ${esc(mcPlural(total, "model", "models"))} · <b>${esc(mcCountArts(list))}</b> ${mcCountArts(list) === 1 ? "artifact" : "artifacts"} shown`;
+      const arts = mcCountArts(list) + (extras || []).length;
+      return `<b>${esc(list.length)}</b> of ${esc(mcPlural(total, "model", "models"))} · <b>${esc(arts)}</b> ${arts === 1 ? "artifact" : "artifacts"} shown`;
     }
     // The filters in use, in words, on the sticky row (the chips scroll away).
     function mcActiveMarkup(view) {
@@ -523,50 +581,78 @@ CATALOG_JS = r"""
       // With quant_class: its label ("8-bit"). Without it: the catalog's own
       // quant string as sent -- never a class guessed from that string.
       const quantMain = quantOn ? (MC_QUANT_LABEL[a.quant_class] || a.quant_class) : (raw || "Not stated");
-      const quantSub = bits;
+      const quantTitle = [raw ? `Quantization: ${raw}` : "The catalog does not name a quantization", bits].filter(Boolean).join(" · ");
       const exact = ["catalog", "hf_api", "engine"].includes(String(a.size_source || ""));
       const size = uiNum(a.download_bytes) ? `${exact ? "" : "about "}${uiBytes(a.download_bytes)}` : "Size unknown";
       const sizeTitle = uiNum(a.download_bytes) ? (exact ? "Download size" : "Estimated from the parameter count and quantization") : "The catalog has no size for this build";
       const primary = !!a.recommended;
-      // The label only means something next to other builds of the same model.
-      const rec = primary && !alone ? `<span class="mc-rec">Recommended for this computer</span>` : "";
+      // The marker only means something next to other builds of the same model.
+      const rec = primary && !alone ? `<span class="mc-rec" role="img" aria-label="Recommended for this computer" title="Recommended for this computer"></span>` : "";
       return `<li class="mc-art${primary ? " is-primary" : ""}" data-mc-art="${esc(mcKey(a))}" data-provider="${esc(a.provider)}" data-quant-class="${esc(quantOn ? a.quant_class : "")}">`
-        + `<div class="mc-art__prov"><span class="mc-prov" title="${esc(a.engine && a.engine !== a.provider ? `${mcProviderLabel(a.provider)} (runs on ${mcProviderLabel(a.engine)})` : mcProviderLabel(a.provider))}">${esc(mcProviderLabel(a.provider))}</span></div>`
-        + `<div class="mc-art__id"><code class="mc-id" tabindex="0" role="button" title="${esc(a.artifact)} (click to copy)" data-mc-copy="${esc(a.artifact)}">${esc(a.artifact)}</code>${rec}</div>`
+        + `<div class="mc-art__id">${rec}<code class="mc-id" tabindex="0" role="button" title="${esc(a.artifact)} (click to copy)" data-mc-copy="${esc(a.artifact)}">${esc(a.artifact)}</code></div>`
         + `<div class="mc-art__facts">`
-        + `<div class="mc-art__quant" title="${esc(raw ? `Quantization: ${raw}` : "The catalog does not name a quantization")}"><b>${esc(quantMain)}</b>${quantSub ? `<span>${esc(quantSub)}</span>` : ""}</div>`
+        + `<div class="mc-art__prov"><span class="mc-prov" title="${esc(a.engine && a.engine !== a.provider ? `${mcProviderLabel(a.provider)} (runs on ${mcProviderLabel(a.engine)})` : mcProviderLabel(a.provider))}">${esc(mcProviderLabel(a.provider))}</span></div>`
+        + `<div class="mc-art__quant" title="${esc(quantTitle)}"><b>${esc(quantMain)}</b></div>`
         + `<div class="mc-art__size" title="${esc(sizeTitle)}">${esc(size)}</div>`
-        + `<div class="mc-art__weights">${weights}</div>`
-        + `<div class="mc-art__fit">${uiPill(fLabel, fTone, mcFitTitle(a.fit))}</div>`
+        + `<div class="mc-art__chips">${weights}${uiPill(fLabel, fTone, mcFitTitle(a.fit))}</div>`
         + `</div>`
         + `<div class="mc-art__action">${mcActionMarkup(row, a, job)}</div>`
         + `<div class="mc-art__job">${a.supported_on_host === false ? "" : mcGpuLimitMarkup(a)}${mcJobMarkup(a, job)}</div>`
         + `</li>`;
     }
-    // The card's mark: two letters of the model's name, like the engine and
-    // app cards' marks ("Qw", "Ge", "Ll").
-    function mcMark(row) {
-      const name = String(row.display_name || row.id || "?").replace(/[^A-Za-z0-9]/g, "");
-      return name ? name.charAt(0).toUpperCase() + name.charAt(1).toLowerCase() : "?";
+    // A downloaded model no catalog entry accounts for: the same row, with
+    // what the engine says (provider, id, quant, size on disk), Downloaded
+    // (and Loaded) chips, and the same Delete.
+    function mcExtraArtMarkup(r) {
+      const admin = !!(state.principal && state.principal.admin);
+      const attrs = `data-provider="${esc(r.provider)}" data-artifact="${esc(r.artifact)}"`;
+      const size = uiNum(r.size_bytes) ? uiBytes(r.size_bytes) : "Size unknown";
+      const quant = r.quant ? String(r.quant) : "Not stated";
+      const chips = uiPill("Downloaded", "ok", String(r.location || "")) + (r.loaded === true ? uiPill("Loaded", "info") : "");
+      return `<li class="mc-art is-extra" data-mc-art="${esc(mcKey(r))}" data-provider="${esc(r.provider)}" data-mc-extra-row="1">`
+        + `<div class="mc-art__id"><code class="mc-id" tabindex="0" role="button" title="${esc(r.artifact)} (click to copy)" data-mc-copy="${esc(r.artifact)}">${esc(r.artifact)}</code></div>`
+        + `<div class="mc-art__facts">`
+        + `<div class="mc-art__prov"><span class="mc-prov" title="${esc(mcProviderLabel(r.provider))}">${esc(mcProviderLabel(r.provider))}</span></div>`
+        + `<div class="mc-art__quant" title="${esc(r.quant ? `Quantization: ${r.quant}` : "The engine does not name a quantization")}"><b>${esc(quant)}</b></div>`
+        + `<div class="mc-art__size" title="Size on disk">${esc(size)}</div>`
+        + `<div class="mc-art__chips">${chips}</div>`
+        + `</div>`
+        + `<div class="mc-art__action">${mcDeleteButton(r, attrs, admin)}</div>`
+        + `<div class="mc-art__job">${mcJobMarkup(r, null)}</div>`
+        + `</li>`;
     }
+    function mcExtrasMarkup(view, extras) {
+      const f = view.filters;
+      const err = !view.guide && !mcHfMode(f) && f.status !== "not_downloaded" && mcStore.installedError;
+      const note = !view.guide && !mcHfMode(f) ? mcStore.extraNotice : null;
+      if (!extras.length && !err && !note) return "";
+      return `<section class="ui-card mc-card mc-extra" data-mc-extra="1" aria-label="Not in the catalog"><h4 class="mc-extra__title">Not in the catalog</h4>`
+        + (note ? `<div class="ui-alert tone-${esc(note.tone)}" role="status">${esc(note.text)}</div>` : "")
+        + (err ? `<div class="ui-alert tone-warn" role="alert" data-mc-installed-error="1"><strong>The models outside the catalog could not be listed.</strong><span>${esc(err)}</span></div>` : "")
+        + (extras.length ? `<ul class="mc-arts">${extras.map(mcExtraArtMarkup).join("")}</ul>` : "")
+        + `</section>`;
+    }
+    // One line of facts per model: name · organisation · parameters · licence, the capability tags and badges inline.
     function mcCardMarkup(item) {
       const row = item.row;
       const params = mcParams(row.params_total);
       const active = mcParams(row.params_active);
-      const meta = [row.vendor, params ? `${params} parameters${active ? ` (${active} active)` : ""}` : "", row.license].filter(Boolean);
+      const meta = [row.vendor, params ? `${params} params${active ? ` (${active} active)` : ""}` : "", row.license].filter(Boolean);
       const caps = mcRowCaps(row).map((c) => (MC_CAPS.find((x) => x[0] === c) || [c, c])[1]);
       const badges = [];
       if (row.starter) badges.push(`<span class="mc-badge" title="Part of the recommended starter set for this computer">Starter</span>`);
       if (row.source === "hf_search") badges.push(`<span class="mc-badge">Hugging Face</span>`);
       return `<article class="ui-card mc-card${row.starter ? " is-starter" : ""}" data-mc-model="${esc(row.id)}">`
-        + `<header class="mc-card__head"><span class="ui-mark" aria-hidden="true">${esc(mcMark(row))}</span><div class="mc-card__titles"><h4 class="mc-card__title">${esc(row.display_name || row.id)}</h4>`
-        + (meta.length ? `<div class="mc-card__meta">${meta.map((m) => `<span>${esc(m)}</span>`).join("")}</div>` : "")
-        + `</div>${badges.length ? `<div class="mc-card__badges">${badges.join("")}</div>` : ""}</header>`
+        + `<header class="mc-card__head"><h4 class="mc-card__title">${esc(row.display_name || row.id)}</h4>`
+        + (meta.length ? `<span class="mc-card__meta">${meta.map((m) => `<span>${esc(m)}</span>`).join("")}</span>` : "")
         + (caps.length ? `<ul class="mc-tags" aria-label="Capabilities">${caps.map((c) => `<li class="mc-tag">${esc(c)}</li>`).join("")}</ul>` : "")
+        + badges.join("")
+        + `</header>`
         + `<ul class="mc-arts">${item.arts.map((a) => mcArtMarkup(row, a, mcArts(row).length === 1)).join("")}</ul>`
         + `</article>`;
     }
-    function mcListMarkup(view, list) {
+    function mcListMarkup(view, list, extras) {
+      extras = extras || [];
       if (mcHfMode(view.filters)) {
         const hub = mcStore.hub;
         const q = view.filters.hf;
@@ -585,12 +671,13 @@ CATALOG_JS = r"""
         return `<div class="ui-alert tone-err" role="alert"><strong>The model catalog did not load.</strong><span>${esc(mcStore.error)}</span></div>`;
       }
       if (!mcStore.data) return `<div class="ui-empty">Loading the model catalog...</div>`;
+      if (!list.length && extras.length) return mcExtrasMarkup(view, extras);
       if (!list.length) {
         return `<div class="ui-empty mc-empty" data-mc-empty="1"><strong>No model matches these filters.</strong>`
           + `<span>${esc(mcRows().length ? "Change or clear the filters to see the rest of the catalog." : "This gateway's catalog is empty.")}</span>`
-          + (mcRows().length ? `<button type="button" class="ui-btn is-ghost" data-mc-action="clear">Clear filters</button>` : "") + `</div>`;
+          + (mcRows().length ? `<button type="button" class="ui-btn is-ghost" data-mc-action="clear">Clear filters</button>` : "") + `</div>` + mcExtrasMarkup(view, extras);
       }
-      return list.map(mcCardMarkup).join("");
+      return list.map(mcCardMarkup).join("") + mcExtrasMarkup(view, extras);
     }
     function mcSearchPlaceholder(f) { return mcHfMode(f) ? "Search Hugging Face, then press Enter" : "Search by model, organisation or artifact id"; }
     function mcModeMarkup(view) {
@@ -625,16 +712,17 @@ CATALOG_JS = r"""
       if (!el) return;
       const have = !!mcData();
       const list = have ? mcVisible(view.filters) : [];
+      const extras = have ? mcExtras(view, view.filters) : [];
       const parts = {
         host: mcHostMarkup() + `<button type="button" class="ui-btn is-quiet" data-mc-action="refresh">${mcStore.loading ? "Checking..." : "Check again"}</button>`
           + (view.guide ? `<button type="button" class="ui-btn is-quiet" data-mc-action="open-tab">Open in the Models tab</button>` : ""),
         mode: mcModeMarkup(view),
-        count: have ? mcCountMarkup(view, list) : "",
+        count: have ? mcCountMarkup(view, list, extras) : "",
         active: mcActiveMarkup(view),
         controls: have ? mcControlsMarkup(view) : "",
         notice: mcNoticeMarkup(view),
         message: view.message ? `<div class="ui-alert tone-${esc(view.message.tone)}" role="status">${esc(view.message.text)}</div>` : "",
-        list: mcListMarkup(view, list),
+        list: mcListMarkup(view, list, extras),
       };
       if (!mcPart(view, "list")) {
         // First paint (or a host without querySelector): the whole view.
@@ -723,10 +811,18 @@ CATALOG_JS = r"""
         mcStore.reloadTimer = setTimeout(() => { mcLoad(); }, 800);
       }
     }
+    function mcWantsInstalled() {
+      for (const v of mcStore.views.values()) if (!v.guide) return true;
+      return false;
+    }
     async function mcLoad() {
       const seq = ++mcStore.seq;
       mcStore.loading = true;
       mcRender();
+      // The engines' own list, in parallel with the catalog (the Models tab only).
+      const installedP = mcWantsInstalled()
+        ? api("/api/gateway/models/installed", { slow: true }).then((d) => ({ d }), (e) => ({ e }))
+        : null;
       try {
         const data = await api("/api/gateway/models/catalog", { slow: true });
         if (seq !== mcStore.seq) return;
@@ -741,6 +837,20 @@ CATALOG_JS = r"""
       } catch (err) {
         if (seq !== mcStore.seq) return;
         mcStore.error = String((err && err.message) || err);
+      }
+      if (installedP) {
+        const got = await installedP;
+        if (seq !== mcStore.seq) return;
+        if (got.e) {
+          mcStore.installedError = String((got.e && got.e.message) || got.e);
+        } else if (!got.d || got.d.schema !== "models_installed_v1" || !Array.isArray(got.d.rows)) {
+          mcStore.installedError = `The gateway answered with an unexpected list (schema ${JSON.stringify((got.d && got.d.schema) || null)}, expected "models_installed_v1").`;
+        } else {
+          mcStore.installed = got.d;
+          mcStore.installedError = "";
+          // Same rule as the catalog: what the engines still report is there.
+          for (const r of mcInstalledRows()) mcStore.deleted.delete(mcKey(r));
+        }
       }
       mcStore.loading = false;
       mcRender();
@@ -831,6 +941,7 @@ CATALOG_JS = r"""
       const key = downloadJobKey(provider, artifact);
       if (mcStore.del.has(key)) return;
       mcStore.notices.delete(key);
+      mcStore.extraNotice = null;
       mcStore.del.set(key, { phase: "checking" });
       mcRender();
       try {
@@ -838,8 +949,11 @@ CATALOG_JS = r"""
         mcStore.del.set(key, { phase: "confirm", plan: plan || {}, at: Date.now() });
       } catch (err) {
         mcStore.del.delete(key);
-        if (err && err.data && err.data.reason === "not_downloaded") mcStore.deleted.add(key);
-        mcStore.notices.set(key, mcDeleteNotice(err));
+        const gone = !!(err && err.data && err.data.reason === "not_downloaded");
+        // A not-in-catalog row that disappears says so above the list.
+        if (gone && mcIsExtraKey(key)) mcStore.extraNotice = Object.assign(mcDeleteNotice(err), { text: `${artifact}: ${mcDeleteNotice(err).text}` });
+        else mcStore.notices.set(key, mcDeleteNotice(err));
+        if (gone) mcStore.deleted.add(key);
       }
       mcRender();
     }
@@ -853,9 +967,11 @@ CATALOG_JS = r"""
       try {
         const res = await api(MC_DELETE_URL, { slow: true, method: "POST", body: JSON.stringify({ provider, artifact, dry_run: false }) });
         mcStore.del.delete(key);
+        const extra = mcIsExtraKey(key);
         mcStore.deleted.add(key);
         const freed = res && uiNum(res.freed_bytes) ? ` ${uiBytes(res.freed_bytes)} freed.` : "";
-        mcStore.notices.set(key, { tone: "ok", text: `Download deleted.${freed}` });
+        if (extra) mcStore.extraNotice = { tone: "ok", text: `Deleted ${artifact}.${freed}` };
+        else mcStore.notices.set(key, { tone: "ok", text: `Download deleted.${freed}` });
         clearTimeout(mcStore.reloadTimer);
         mcStore.reloadTimer = setTimeout(() => { mcLoad(); }, 300);
       } catch (err) {
@@ -865,7 +981,7 @@ CATALOG_JS = r"""
       mcRender();
     }
     function mcAction(view, action, b) {
-      if (action === "refresh") { view.message = null; mcLoad(); if (mcHfMode(view.filters) && view.filters.hf) mcHubSearch(view, view.filters.hf); return; }
+      if (action === "refresh") { view.message = null; mcStore.extraNotice = null; mcLoad(); if (mcHfMode(view.filters) && view.filters.hf) mcHubSearch(view, view.filters.hf); return; }
       if (action === "clear") { view.filters = Object.assign(mcDefaultFilters(), { hf: view.filters.hf }); mcWriteHash(view); mcRenderView(view); return; }
       if (action === "mode") { mcSetMode(view, b.dataset.mcMode); return; }
       if (action === "hf-search") {

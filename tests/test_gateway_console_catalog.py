@@ -91,6 +91,7 @@ import vm from "node:vm";
 const source = __SOURCE__;
 const FIXTURE = __FIXTURE__;
 const HUB = __HUB__;
+const INSTALLED = __INSTALLED__;
 const calls = [];
 const tracked = [];
 const location = { hash: __HASH__, pathname: "/console", search: "" };
@@ -114,6 +115,15 @@ const ctx = vm.createContext({
     if (path.startsWith("/api/gateway/models/catalog?")) {
       if (HUB === null) throw new Error("hub search failed (offline?): connection refused");
       return JSON.parse(JSON.stringify(HUB));
+    }
+    if (path === "/api/gateway/models/installed") {
+      if (INSTALLED === null) throw new Error("installed list failed: connection refused");
+      return JSON.parse(JSON.stringify(INSTALLED));
+    }
+    if (path === "/api/gateway/models/delete-download") {
+      const body = JSON.parse(opts.body);
+      if (!body.dry_run) INSTALLED.rows = INSTALLED.rows.filter((r) => !(r.provider === body.provider && r.artifact === body.artifact));
+      return body.dry_run ? { status: "planned", freed_bytes: 2000000000, also_used_by: [] } : { status: "deleted", freed_bytes: 2000000000, presence: "absent" };
     }
     if (path === "/api/gateway/models/download") return { ok: true, job: { job: "dl-1", provider: "mlx", artifact: "x", status: "running", state: "downloading" } };
     return {};
@@ -189,6 +199,24 @@ if (__SCRIPT__ === "gpulimit") {
   root.onchange({ target: { dataset: { mcFits: "1" }, checked: true } }); snap("fits");
   out.fitsHtml = root.innerHTML;
 }
+if (__SCRIPT__ === "merged") {
+  out.html = root.innerHTML;
+  chip("status", "downloaded"); snap("downloaded"); out.downloadedHtml = root.innerHTML;
+  chip("status", "not_downloaded"); snap("notDownloaded"); out.notDownloadedHtml = root.innerHTML;
+  chip("status", "downloaded");
+  chip("provider", "ollama"); snap("ollama"); out.ollamaHtml = root.innerHTML; chip("provider", "all");
+  chip("cap", "vision"); snap("vision"); out.visionHtml = root.innerHTML; chip("cap", "all");
+  vm.runInContext(`mcSetFilter(mcStore.views.get("tab"), { q: "my-own" })`, ctx); snap("search"); out.searchHtml = root.innerHTML;
+  vm.runInContext(`mcSetFilter(mcStore.views.get("tab"), { q: "" })`, ctx);
+  if (INSTALLED) {
+  const X = INSTALLED.rows[0];
+  const click = (action) => root.onclick({ target: { closest: (sel) => (sel === "[data-mc-action]" ? { disabled: false, dataset: { mcAction: action, provider: X.provider, artifact: X.artifact } } : null) } });
+  click("delete-ask"); await settle(); out.confirmHtml = root.innerHTML;
+  vm.runInContext(`for (const v of mcStore.del.values()) v.at = 0`, ctx);
+  click("delete-confirm"); await settle(); await settle(); snap("afterDelete"); out.afterDeleteHtml = root.innerHTML;
+  out.deletes = calls.filter((c) => c.path === "/api/gateway/models/delete-download").map((c) => JSON.parse(c.body));
+  }
+}
 if (__SCRIPT__ === "unreported") {
   chip("quant", "8bit", true); snap("clicked");
 }
@@ -196,13 +224,17 @@ console.log(JSON.stringify(out));
 """
 
 
-def _run(fixture: dict, script: str, hash_: str = "", js: str | None = None, hub: dict | None = None) -> dict:
+EMPTY_INSTALLED = {"schema": "models_installed_v1", "rows": [], "errors": {}}
+
+
+def _run(fixture: dict, script: str, hash_: str = "", js: str | None = None, hub: dict | None = None, installed: dict | None = EMPTY_INSTALLED) -> dict:
     node = require_node()
     source = js if js is not None else CONSOLE_UI_JS + CATALOG_JS
     harness = (
         _HARNESS.replace("__SOURCE__", json.dumps(source))
         .replace("__FIXTURE__", json.dumps(fixture))
         .replace("__HUB__", json.dumps(hub))
+        .replace("__INSTALLED__", json.dumps(installed))
         .replace("__HASH__", json.dumps(hash_))
         .replace("__SCRIPT__", json.dumps(script))
     )
@@ -279,7 +311,9 @@ def test_catalog_is_spliced_into_the_page_once() -> None:
     assert html.count(".mc-card {") == 1
     assert html.count('id="catalog-cards-root"') == 1
     panel = html[html.index('id="tab-catalog"') : html.index('id="tab-apps"')]
-    assert panel.index('id="catalog-cards-root"') < panel.index('id="catalog-core-root"')
+    # R5.2: one page. The cards are the whole panel; no second "On this computer" list.
+    assert 'id="catalog-cards-root"' in panel
+    assert 'catalog-core-root' not in panel and "On this computer" not in panel and "mc-installed" not in panel
 
 
 def test_filters_counts_hash_and_downloads() -> None:

@@ -220,7 +220,6 @@ def gateway_console_html() -> str:
         "installed": parts.get("installed"),
     }
     if parts["available"]:
-        catalog_body = parts["models_html"]
         engines_body = parts["engines_html"]
         script = (
             '<script id="abstractcore-console-js">\n'
@@ -229,7 +228,6 @@ def gateway_console_html() -> str:
         )
         css = parts["css"]
     else:
-        catalog_body = _core_console_unavailable_card(parts, "Models")
         engines_body = _core_console_unavailable_card(parts, "Engines")
         script = ""
         css = ""
@@ -255,7 +253,6 @@ def gateway_console_html() -> str:
         ("/*__CONSOLE_UI_JS__*/", ui_js),
         ("/*__AF_CONSOLE_ISLANDS_JS__*/", islands_js),
         ("/*__ABSTRACTCORE_FRAGMENT_CSS__*/", css.replace("</style", "<\\/style")),
-        ("<!--__ABSTRACTCORE_CATALOG_HTML__-->", catalog_body),
         ("<!--__ABSTRACTCORE_ENGINES_HTML__-->", engines_body),
         ("<!--__ABSTRACTCORE_FRAGMENT_SCRIPT__-->", script),
     ):
@@ -2641,14 +2638,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	           gateway's api() (CSRF) and apiBase /api/gateway. Not to be
 	           confused with Resources (id models) and Runtimes. -->
 	      <div id="tab-catalog" class="tab-panel">
-	        <!-- One card per model with a sticky filter bar (console_catalog.py);
-	             AbstractCore's Models screen below it keeps the
-	             "on this computer" list (models outside the catalog, Delete). -->
+	        <!-- ONE page (R5.2): one card per model with a sticky filter bar
+	             (console_catalog.py); the downloaded models no catalog entry
+	             knows are rows under "Not in the catalog" in the same list. -->
 	        <div id="catalog-cards-root"></div>
-	        <section class="mc-installed" aria-labelledby="catalog-installed-title">
-	          <div class="ui-section-title"><h3 id="catalog-installed-title">On this computer</h3><span class="ui-sub">Everything the local engines hold, including models that are not in the catalog. Delete a model here.</span></div>
-	          <div id="catalog-core-root" class="core-console-root"><!--__ABSTRACTCORE_CATALOG_HTML__--></div>
-	        </section>
 	      </div>
 	      <div id="tab-apps" class="tab-panel">
 	        <div id="apps-root" class="core-console-root"></div>
@@ -14277,6 +14270,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           syncHash: true,
           filters: (opts && opts.filters) || (first ? mcParseHash(String(location.hash || "")) : null),
         });
+        // Everything the page shows is in the cards (including the downloaded
+        // models outside the catalog): nothing of AbstractCore's is mounted.
+        return;
       }
       if (!CORE_CONSOLE.available) return;  // the panel carries the server-rendered card
       const kind = "models";

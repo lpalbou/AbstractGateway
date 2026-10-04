@@ -374,12 +374,10 @@ if (scenario.name === "claim") {
     el("tab-button-catalog").onclick(); await settle();
     el("tab-button-providers").onclick(); await settle();
     el("tab-button-catalog").onclick(); await settle();
-    const tabModels = mounts.filter((x) => x.id === "catalog-core-root");
-    if (tabModels.length !== 1 || tabModels[0].kind !== "models") fail("Models tab did not mount once: " + JSON.stringify(mounts.map((x) => [x.kind, x.id])));
+    // R5.2: the Models tab is the cards alone; AbstractCore's screen is never mounted.
+    if (mounts.some((x) => x.kind === "models")) fail("the Models tab must not mount AbstractCore's Models screen: " + JSON.stringify(mounts.map((x) => [x.kind, x.id])));
     if (mounts.some((x) => x.id === "engines-core-root")) fail("the Providers tab renders engine cards, it must not mount AbstractCore's table");
     if (!el("engines-core-root").innerHTML.includes("data-engine-card")) fail("Providers tab shows no local provider cards: " + el("engines-core-root").innerHTML);
-    if (tabModels[0].refreshed !== 1) fail("re-opening the Models tab must refresh it");
-    if (tabModels[0].options.cliPrefix !== "abstractgateway" || tabModels[0].options.apiBase !== "/api/gateway") fail("tab mount options wrong");
     if (!String(el("tab-catalog").className).includes("active")) fail("Models tab panel not active");
     // The tab shows the catalog cards above AbstractCore's list, and its
     // filters are the shareable `#catalog` link.
