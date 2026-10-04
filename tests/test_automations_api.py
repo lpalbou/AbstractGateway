@@ -864,6 +864,9 @@ def test_runs_rows_carry_the_folder_turns_execute_in(live: TestClient, tmp_path:
     # A chat turn started with a launch-folder override reports THAT folder.
     project = tmp_path / "project"
     project.mkdir()
+    # Round 9: the launch folder is reachable once listed ("Deny everything, allow listed workspaces").
+    listed = live.put("/api/gateway/workspace/policy", headers=HEADERS, json={"folders": [{"path": os.path.realpath(str(project)), "mode": "rw"}]})
+    assert listed.status_code == 200, listed.text
     r = live.post("/api/gateway/runs/start", headers=HEADERS, json={
         "bundle_id": live.bundle_ref, "flow_id": ECHO_FLOW_ID, "session_id": "ws-chat", "input_data": {"prompt": "p", "workspace_root": str(project)}})
     assert r.status_code == 200, r.text

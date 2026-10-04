@@ -533,6 +533,11 @@ def test_an_account_default_read_only_binds_its_runs(f: dict, tmp_path: Path) ->
         _gateway(c, f, posture="any_except_denied", default_mode="rw", folders=[])
         alice = _user("alice")
         assert c.put("/api/gateway/workspace/policy/me", json={"default_mode": "ro"}, headers=alice).status_code == 200
+    from abstractgateway.workspace_policy import effective_folder_paths
+
+    # The per-path answer (exports, run-start checks) and the host binding agree.
+    assert effective_folder_paths(_data(tmp_path), tenant_id="default", user_id="alice").mode(Path(f["notes"]) / "x.txt") == "ro"
+    assert effective_folder_paths(_data(tmp_path), tenant_id="default", user_id="admin").mode(Path(f["notes"]) / "x.txt") == "rw"
     session = tmp_path / "session"
     session.mkdir()
     for who, writable in (("alice", False), ("admin", True)):
