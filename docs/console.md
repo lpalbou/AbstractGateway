@@ -668,7 +668,7 @@ groups and their keys. The local engines live on Providers, as on the web.
   description in place (shown when the gateway lets you: your own workflows,
   or the gateway's as an admin; `Enter` saves, `Esc` keeps, empty returns to
   the file's own description), Space switches **Available to users** (admin,
-  shared workflows), and `i` imports `.flow` files from this machine. **Default workflow per app** lists each app and
+  shared workflows), and `i` imports `.flow` files from this machine. **Default workflow per app** (admin only) lists each app and
   what it runs; `Enter` picks a workflow and saves it at once, `o` shows
   **Other workflow types**, `s` switches **Streamed replies**. **Broken
   workflows** appears when the gateway could not load some versions, with the
