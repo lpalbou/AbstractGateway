@@ -22,8 +22,8 @@ use super::util::{line, span, span_bold, wrap_text};
 use super::widths;
 use super::{confirm_danger, open_form, open_prompt, Ctx};
 use crate::store::apps::{
-    app_key, copyables, part_word, primary_verb, secondary_verbs, status_label, tui_key, AppJob,
-    AppNote, AppOpenLink, AppRow, AppVerb, AppsOverview, Tone, VerbState, NODE_KEY,
+    app_blurb, app_key, copyables, part_word, primary_verb, secondary_verbs, status_label, tui_key,
+    AppJob, AppNote, AppOpenLink, AppRow, AppVerb, AppsOverview, Tone, VerbState, NODE_KEY,
 };
 use crate::store::{ConnPhase, Loadable};
 use crate::worker::Cmd;
@@ -39,7 +39,48 @@ pub const HINTS: &[(&str, &str)] = &[
     ("t/T", "terminal"),
     ("n", "Node.js"),
     ("y", "copy"),
+    ("a", "apps settings"),
+    ("b", "backlog settings"),
 ];
+
+/// The text column inside the Apps block (border + padding, both sides).
+fn text_width(cx: Scope) -> usize {
+    (abstracttui::app::use_viewport(cx).get().w - widths::BLOCK_CHROME - 2).max(20) as usize
+}
+
+/// `text` wrapped to `width` (never cut at the edge — R7.2), each line
+/// indented by `indent`; the first line may carry a muted `label`.
+fn wrapped(
+    mut col: Element,
+    t: &TokenSet,
+    label: Option<&str>,
+    text: &str,
+    ink: abstracttui::base::Rgba,
+    bold: bool,
+    width: usize,
+    indent: usize,
+) -> Element {
+    let pad = " ".repeat(indent);
+    let head = label.map(|l| format!("{l} ")).unwrap_or_default();
+    let hw = abstracttui::text::width(&head) as usize;
+    for (i, l) in wrap_text(text, width.saturating_sub(indent + hw).max(10))
+        .into_iter()
+        .enumerate()
+    {
+        let lead = if i == 0 {
+            format!("{pad}{head}")
+        } else {
+            format!("{pad}{}", " ".repeat(hw))
+        };
+        let body = if bold {
+            span_bold(l, ink)
+        } else {
+            span(l, ink)
+        };
+        col = col.child(line(vec![span(lead, t.text_faint), body]));
+    }
+    col
+}
 
 const LOG_TAIL: u32 = 200;
 
@@ -114,6 +155,26 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     {
         let c = ctx.clone();
         root = root.shortcut(key('y'), move |_| copy_menu(cx, &c));
+    }
+    // The two Advanced blocks (the web shows them under the cards): their
+    // values come from `GET /admin/runtime-config` (admin), read once.
+    {
+        let c = ctx.clone();
+        cx.effect(move || {
+            let conn = c.store.conn.get();
+            if is_admin(&conn)
+                && c.store
+                    .runtime_config
+                    .with_untracked(|r| matches!(r, Loadable::NotAsked))
+            {
+                c.store.runtime_config.set(Loadable::Loading);
+                c.send(Cmd::LoadRuntimeConfig);
+            }
+        });
+    }
+    for (ch, which) in [('a', "apps"), ('b', "backlog")] {
+        let c = ctx.clone();
+        root = root.shortcut(key(ch), move |_| settings_key(cx, &c, which));
     }
     {
         let c = ctx.clone();
@@ -202,62 +263,67 @@ fn ready_view(
             .or_else(|| fallback.cloned())
     };
     let mut col = Element::new().style(LayoutStyle::column().gap(0).grow(1.0));
-    let gw = d
-        .gateway_url
-        .clone()
-        .unwrap_or_else(|| "this gateway".into());
-    let mut intro = vec![
-        span("Apps talk to ", t.text_muted),
-        span(gw, t.text),
-        span(".", t.text_muted),
-    ];
+    let width = text_width(cx);
+    // The web's intro sentence, then where apps listen (the "Where apps
+    // listen" setting below changes it) — one paragraph.
+    let mut intro = d.intro();
     if let Some(h) = &d.apps_host {
-        intro.push(span(
-            if h.starts_with("127.") || h == "localhost" {
-                format!("  They listen on {h}: this machine only.")
-            } else {
-                format!("  They listen on {h}.")
-            },
-            t.text_faint,
-        ));
+        if h.starts_with("127.") || h == "localhost" {
+            intro.push_str(&format!(" They listen on {h}: this machine only."));
+        } else {
+            intro.push_str(&format!(" They listen on {h}."));
+        }
     }
-    col = col.child(line(intro));
-    col = col.child(node_view(
+    col = wrapped(col, t, None, &intro, t.text_muted, false, width, 0);
+    // Node.js rides in the scroll below the table (a short terminal keeps
+    // the app list on screen).
+    let node = node_view(
         t,
+        width,
         d,
         job_of(NODE_KEY, d.node.active_job.as_ref()),
         apps.note_for(NODE_KEY),
         apps.is_pending(NODE_KEY),
         admin,
-    ));
+    );
     if d.registry_reachable == Some(false) {
-        col = col.child(line(vec![
-            span_bold("The app store (npm) is not reachable. ", t.warn),
-            span(
-                "Installed apps keep working; installing needs the internet.",
-                t.text_muted,
-            ),
-        ]));
+        col = wrapped(
+            col,
+            t,
+            None,
+            "The app store (npm) is not reachable. Installed apps keep working; installing needs the internet.",
+            t.warn,
+            false,
+            width,
+            0,
+        );
     }
     if d.apps.is_empty() {
         return keeper.anchor(
-            col.child(line(vec![span(
-                "∅ this gateway lists no apps",
-                t.text_muted,
-            )]))
-            .build(),
+            col.child(node)
+                .child(line(vec![span(
+                    "∅ this gateway lists no apps",
+                    t.text_muted,
+                )]))
+                .build(),
         );
     }
     col = col.child(apps_table(cx, ctx, t, d, admin, &job_of, keeper));
+    // Below the table: the chosen app's card, then the two Advanced
+    // blocks — in a scroll, so nothing is cut off on a short terminal.
+    let mut below = Element::new()
+        .style(LayoutStyle::column().gap(0))
+        .child(line(vec![span(String::new(), t.text)]));
     if let Some(row) = d.apps.get(apps.sel.get()) {
         let job = job_of(&app_key(&row.id), row.active_job.as_ref());
         let tjob = job_of(
             &tui_key(&row.id),
             row.tui.as_ref().and_then(|x| x.active_job.as_ref()),
         );
-        col = col.child(detail_view(
+        below = below.child(detail_view(
             cx,
             t,
+            d,
             row,
             job.as_ref(),
             tjob.as_ref(),
@@ -267,11 +333,171 @@ fn ready_view(
             admin,
         ));
     }
+    below = below
+        .child(line(vec![span(String::new(), t.text)]))
+        .child(node);
+    if admin {
+        below = below.child(settings_view(t, &ctx.store.runtime_config.get(), width));
+    }
+    col.child(
+        Scroll::new(below.build())
+            .layout(LayoutStyle::default().grow(1.0).basis(Dimension::Cells(0)))
+            .scrollbar_auto_hide(true)
+            .view(cx),
+    )
+    .build()
+}
+
+/// `a` / `b`: edit the apps / backlog settings (the same forms the
+/// Runtimes knobs open; one write path, POST /admin/runtime-config).
+fn settings_key(cx: Scope, ctx: &Ctx, which: &str) {
+    if !super::util::admin_gate(&ctx.store, "changing the apps settings") {
+        return;
+    }
+    match ctx.store.runtime_config.get_untracked() {
+        Loadable::Ready(cfg) => {
+            if which == "apps" {
+                super::runtimes::open_apps_settings_form(cx, ctx, cfg);
+            } else {
+                super::runtimes::open_backlog_settings_form(cx, ctx, cfg);
+            }
+        }
+        Loadable::Failed(e) => ctx
+            .store
+            .notice
+            .set(Some(format!("Could not read the apps settings: {e}"))),
+        _ => ctx
+            .store
+            .notice
+            .set(Some("Reading the apps settings... — one moment".into())),
+    }
+}
+
+/// The two Advanced blocks under the apps (the web's "Advanced: apps
+/// settings" and "Advanced: backlog settings (Continuum)" disclosures):
+/// one summary line each with the key that edits them, then the current
+/// values. Data = `GET /admin/runtime-config` (the web's read).
+pub fn settings_lines(
+    cfg: &Loadable<crate::store::RuntimeConfigData>,
+) -> Vec<(String, &'static str)> {
+    let mut out: Vec<(String, &'static str)> = Vec::new();
+    match cfg {
+        Loadable::Ready(d) => {
+            if !d.apps.is_empty() {
+                let custom = d.apps.iter().filter(|a| a.source != "default").count();
+                out.push((
+                    format!(
+                        "Advanced: apps settings · {}",
+                        if custom > 0 {
+                            format!("{custom} changed from the default")
+                        } else {
+                            "all defaults".to_string()
+                        }
+                    ),
+                    "head",
+                ));
+                for a in &d.apps {
+                    let source = match a.source.as_str() {
+                        "stored" => "Saved setting",
+                        "env" => "From the environment",
+                        _ => "Default",
+                    };
+                    let now = if a.value.is_empty() {
+                        "(none)"
+                    } else {
+                        a.value.as_str()
+                    };
+                    out.push((format!("  {}: {now} · {source}", a.label), "text"));
+                    if !a.help.is_empty() {
+                        out.push((format!("    {}", a.help), "faint"));
+                    }
+                    if !a.invalid.is_empty() {
+                        out.push((format!("    Set aside: {}", a.invalid), "warn"));
+                    }
+                }
+                out.push((
+                    if d.writable {
+                        "  a edits · Empty = the default (or the value this gateway's environment gives). Applies at the next app start or download.".to_string()
+                    } else {
+                        "  Only an admin can change these.".to_string()
+                    },
+                    "faint",
+                ));
+            }
+            if !d.backlog.is_empty() {
+                let trouble = d.backlog.iter().any(|b| b.available == Some(false));
+                out.push((
+                    format!(
+                        "Advanced: backlog settings (Continuum) · {}",
+                        if trouble {
+                            "backlog folder not available"
+                        } else {
+                            "backlog folder, exec runner, process manager"
+                        }
+                    ),
+                    "head",
+                ));
+                for b in &d.backlog {
+                    let value = if b.value.is_empty() {
+                        "(hidden)"
+                    } else {
+                        b.value.as_str()
+                    };
+                    out.push((
+                        format!(
+                            "  {}: {value} · {}",
+                            b.label,
+                            crate::store::operator::backlog_source_word(&b.source)
+                        ),
+                        "text",
+                    ));
+                    if b.available == Some(false) {
+                        out.push((format!("    Not available: {}", b.reason), "warn"));
+                    }
+                }
+                out.push((
+                    if d.writable {
+                        "  b edits · Empty = not saved: the launch flag, else the default (the gateway's own folder; switches off). Applies at once.".to_string()
+                    } else {
+                        "  Only an admin can change these.".to_string()
+                    },
+                    "faint",
+                ));
+            }
+        }
+        Loadable::Failed(e) => {
+            out.push(("Could not read the apps settings.".to_string(), "warn"));
+            out.push((format!("  {e}"), "faint"));
+        }
+        _ => out.push(("Reading the apps settings...".to_string(), "faint")),
+    }
+    out
+}
+
+fn settings_view(
+    t: &TokenSet,
+    cfg: &Loadable<crate::store::RuntimeConfigData>,
+    width: usize,
+) -> View {
+    let mut col = Element::new()
+        .style(LayoutStyle::column().gap(0))
+        .child(line(vec![span(String::new(), t.text)]));
+    for (text, tone) in settings_lines(cfg) {
+        let indent = text.len() - text.trim_start().len();
+        let (ink, bold) = match tone {
+            "head" => (t.text, true),
+            "warn" => (t.warn, false),
+            "faint" => (t.text_faint, false),
+            _ => (t.text_muted, false),
+        };
+        col = wrapped(col, t, None, text.trim_start(), ink, bold, width, indent);
+    }
     col.build()
 }
 
 fn node_view(
     t: &TokenSet,
+    width: usize,
     d: &AppsOverview,
     job: Option<AppJob>,
     note: Option<AppNote>,
@@ -296,10 +522,19 @@ fn node_view(
         "managed" => spans.push(span(" · installed by the gateway", t.text_muted)),
         _ => {}
     }
-    spans.push(span("  — the engine the browser apps run on", t.text_faint));
     let mut col = Element::new()
         .style(LayoutStyle::column().gap(0).shrink(0.0))
         .child(line(spans));
+    col = wrapped(
+        col,
+        t,
+        None,
+        "The engine the browser apps run on.",
+        t.text_faint,
+        false,
+        width,
+        2,
+    );
     if let Some(j) = job.as_ref().filter(|j| j.is_active()) {
         col = col.child(line(vec![span(
             format!("  ⟳ {}", j.progress_line("Installing Node.js")),
@@ -314,10 +549,16 @@ fn node_view(
             t.text_faint,
         )]));
     } else if !n.available {
-        col = col.child(line(vec![span(
-            "  Node.js will be installed for you: the gateway puts it in its own folder (about 56 MB, no password, no terminal) the first time you install an app, or now.",
+        col = wrapped(
+            col,
+            t,
+            None,
+            "Node.js will be installed for you: the gateway puts it in its own folder (about 56 MB, no password, no terminal) the first time you install an app, or now.",
             t.text_muted,
-        )]));
+            false,
+            width,
+            2,
+        );
         let action = if pending {
             "  starting…".to_string()
         } else if !n.install_available {
@@ -333,10 +574,19 @@ fn node_view(
         } else {
             "  Install Node.js: only an admin can install Node.js".to_string()
         };
-        col = col.child(line(vec![span(action, t.text_faint)]));
+        col = wrapped(
+            col,
+            t,
+            None,
+            action.trim_start(),
+            t.text_faint,
+            false,
+            width,
+            2,
+        );
     }
     if let Some(note) = note {
-        col = note_lines(col, t, &note, 2);
+        col = note_lines(col, t, &note, 2, width);
     }
     col.build()
 }
@@ -408,27 +658,41 @@ fn apps_table(
     )
 }
 
-fn note_lines(mut col: Element, t: &TokenSet, note: &AppNote, indent: usize) -> Element {
-    let pad = " ".repeat(indent);
+fn note_lines(
+    mut col: Element,
+    t: &TokenSet,
+    note: &AppNote,
+    indent: usize,
+    width: usize,
+) -> Element {
     let tone = note.tone.unwrap_or(Tone::Info);
-    col = col.child(line(vec![span_bold(
-        format!("{pad}{}", note.text),
-        ink(t, tone),
-    )]));
+    col = wrapped(col, t, None, &note.text, ink(t, tone), true, width, indent);
     if let Some(h) = &note.hint {
-        col = col.child(line(vec![span(format!("{pad}{h}"), t.text_muted)]));
+        col = wrapped(col, t, None, h, t.text_muted, false, width, indent);
     }
     for (label, cmd) in &note.commands {
-        col = col.child(line(vec![
-            span(format!("{pad}{label}: "), t.text_muted),
-            span(cmd.clone(), t.text),
-        ]));
+        col = wrapped(
+            col,
+            t,
+            Some(&format!("{label}:")),
+            cmd,
+            t.text,
+            false,
+            width,
+            indent,
+        );
     }
     if note.details.is_some() {
-        col = col.child(line(vec![span(
-            format!("{pad}(y copies the details)"),
+        col = wrapped(
+            col,
+            t,
+            None,
+            "(y copies the details)",
             t.text_faint,
-        )]));
+            false,
+            width,
+            indent,
+        );
     }
     col
 }
@@ -437,6 +701,7 @@ fn note_lines(mut col: Element, t: &TokenSet, note: &AppNote, indent: usize) -> 
 fn detail_view(
     cx: Scope,
     t: &TokenSet,
+    d: &AppsOverview,
     row: &AppRow,
     job: Option<&AppJob>,
     tjob: Option<&AppJob>,
@@ -445,97 +710,128 @@ fn detail_view(
     pending: bool,
     admin: bool,
 ) -> View {
-    let vw = abstracttui::app::use_viewport(cx).get().w.max(40) as usize;
+    let width = text_width(cx);
     let active = job.map(AppJob::is_active).unwrap_or(false);
     let (label, tone) = status_label(row, active);
     let mut col = Element::new().style(LayoutStyle::column().gap(0));
-    col = col.child(line(vec![span(String::new(), t.text)]));
+    // The card head: name + pill, then the web's one-line blurb.
     col = col.child(line(vec![
         span_bold(row.name.clone(), t.accent),
         span("  ", t.text),
         span_bold(label, ink(t, tone)),
-        span(format!("  {}", row.description), t.text_muted),
     ]));
+    col = wrapped(col, t, None, &app_blurb(row), t.text_muted, false, width, 0);
     // The body: only what the operator must see now (web card body).
     if let Some(j) = job.filter(|j| j.is_active()) {
-        col = col.child(line(vec![span(
-            format!("⟳ {}", j.progress_line(&format!("Installing {}", row.name))),
+        col = wrapped(
+            col,
+            t,
+            None,
+            &format!("⟳ {}", j.progress_line(&format!("Installing {}", row.name))),
             t.info,
-        )]));
+            false,
+            width,
+            0,
+        );
         for p in &j.parts {
-            col = col.child(line(vec![span(
-                format!("  {} · {}", p.label, part_word(&p.state)),
+            col = wrapped(
+                col,
+                t,
+                None,
+                &format!("{} · {}", p.label, part_word(&p.state)),
                 t.text_muted,
-            )]));
+                false,
+                width,
+                2,
+            );
         }
     } else if let Some(j) = job.filter(|j| j.state == "failed") {
         let err = j.error.clone().unwrap_or_default();
-        col = col.child(line(vec![span_bold(
-            if err.message.is_empty() {
-                "The install did not finish.".to_string()
-            } else {
-                err.message
-            },
-            t.error,
-        )]));
+        let head = if err.message.is_empty() {
+            "The install did not finish.".to_string()
+        } else {
+            err.message
+        };
+        col = wrapped(col, t, None, &head, t.error, true, width, 0);
         if let Some(h) = err.hint {
-            col = col.child(line(vec![span(h, t.text_muted)]));
+            col = wrapped(col, t, None, &h, t.text_muted, false, width, 0);
         }
         for p in &j.parts {
-            col = col.child(line(vec![span(
-                format!("  {} · {}", p.label, part_word(&p.state)),
+            col = wrapped(
+                col,
+                t,
+                None,
+                &format!("{} · {}", p.label, part_word(&p.state)),
                 t.text_muted,
-            )]));
+                false,
+                width,
+                2,
+            );
         }
         col = col.child(line(vec![span("(y copies the install log)", t.text_faint)]));
     } else if matches!(row.status.as_str(), "crashed" | "crash_loop") {
-        col = col.child(line(vec![
-            span_bold(format!("{} stopped unexpectedly. ", row.name), t.error),
-            span("Open starts it again.", t.text_muted),
-        ]));
+        col = wrapped(
+            col,
+            t,
+            None,
+            &format!("{} stopped unexpectedly. Open starts it again.", row.name),
+            t.error,
+            true,
+            width,
+            0,
+        );
         if let Some(e) = &row.last_error {
-            for l in wrap_text(e, vw.saturating_sub(6)).into_iter().take(4) {
-                col = col.child(line(vec![span(format!("  {l}"), t.text_muted)]));
-            }
+            // Show details: the whole error, wrapped (never cut).
+            col = wrapped(col, t, None, e, t.text_muted, false, width, 2);
         }
     }
     if !row.installed && !active {
         if let Some(r) = &row.install_blocked_reason {
-            col = col.child(line(vec![span(r.clone(), t.warn)]));
+            col = wrapped(col, t, None, r, t.warn, false, width, 0);
         }
     }
     if let Some(desk) = &row.desktop {
         if row.installed && desk.launch_blocked.as_deref() == Some("other_computer") {
-            col = col.child(line(vec![span(
-                desk.launch_blocked_reason.clone().unwrap_or_default(),
+            col = wrapped(
+                col,
+                t,
+                None,
+                desk.launch_blocked_reason.as_deref().unwrap_or_default(),
                 t.text_muted,
-            )]));
+                false,
+                width,
+                0,
+            );
         }
     }
     if let Some(j) = tjob.filter(|j| j.is_active()) {
-        col = col.child(line(vec![span(
-            format!(
+        col = wrapped(
+            col,
+            t,
+            None,
+            &format!(
                 "⟳ {}",
                 j.progress_line(&format!("Installing {} for the terminal", row.name))
             ),
             t.info,
-        )]));
+            false,
+            width,
+            0,
+        );
     } else if let Some(j) = tjob.filter(|j| j.state == "failed") {
         let err = j.error.clone().unwrap_or_default();
-        col = col.child(line(vec![span_bold(
-            if err.message.is_empty() {
-                format!("{}'s terminal app did not install.", row.name)
-            } else {
-                err.message
-            },
-            t.error,
-        )]));
+        let head = if err.message.is_empty() {
+            format!("{}'s terminal app did not install.", row.name)
+        } else {
+            err.message
+        };
+        col = wrapped(col, t, None, &head, t.error, true, width, 0);
     }
     if let Some(n) = &note {
-        col = note_lines(col, t, n, 0);
+        col = note_lines(col, t, n, 0, width);
     }
     if let Some(n) = &tnote {
-        col = note_lines(col, t, n, 0);
+        col = note_lines(col, t, n, 0, width);
     }
 
     // The verbs: the primary one, then everything under the web's
@@ -545,14 +841,11 @@ fn detail_view(
         verbs.push(p);
     }
     verbs.extend(secondary_verbs(row, job, tjob, admin));
-    let mut on: Vec<(String, abstracttui::base::Rgba, bool)> = Vec::new();
+    let mut on: Vec<(&str, String)> = Vec::new();
     let mut off: Vec<(String, String)> = Vec::new();
     for v in &verbs {
         match &v.available {
             Ok(()) => {
-                if !on.is_empty() {
-                    on.push(span("  ·  ", t.text_faint));
-                }
                 let k = if v.verb == AppVerb::Cancel
                     && primary_verb(row, job, admin).map(|p| p.verb) == Some(AppVerb::Cancel)
                 {
@@ -560,8 +853,7 @@ fn detail_view(
                 } else {
                     v.verb.key()
                 };
-                on.push(span_bold(k.to_string(), t.accent));
-                on.push(span(format!(" {}", v.label), t.text));
+                on.push((k, v.label.clone()));
             }
             Err(why) => off.push((v.label.clone(), why.clone())),
         }
@@ -569,95 +861,168 @@ fn detail_view(
     if pending {
         col = col.child(line(vec![span("⟳ working…", t.info)]));
     } else if !on.is_empty() {
-        col = col.child(line(on));
+        let pairs: Vec<(&str, &str)> = on.iter().map(|(k, l)| (*k, l.as_str())).collect();
+        col = col.child(super::kit::key_hint_bar(t, &pairs, width as i32));
     }
-    for (label, why) in off.iter().take(6) {
-        col = col.child(line(vec![
-            span(format!("{label}: "), t.text_faint),
-            span(why.clone(), t.text_faint),
-        ]));
+    for (label, why) in &off {
+        col = wrapped(
+            col,
+            t,
+            Some(&format!("{label}:")),
+            why,
+            t.text_faint,
+            false,
+            width,
+            0,
+        );
     }
 
-    // Facts (the web's technical line and rows).
+    // The web's technical line and rows, in its words.
     let mut facts: Vec<String> = Vec::new();
-    if let Some(v) = &row.version {
-        facts.push(format!("version {v}"));
-    } else if let Some(l) = row.latest_version.as_ref().filter(|_| row.update_available) {
-        facts.push(format!("latest {l}"));
-    }
     if let Some(port) = row.external_port {
         facts.push(format!("Started outside the gateway on port {port}"));
     }
-    if row.running {
+    if let Some(v) = &row.version {
+        facts.push(format!("Version {v}"));
+    } else if let Some(l) = row.latest_version.as_ref().filter(|_| row.update_available) {
+        facts.push(format!("Latest {l}"));
+    }
+    if row.is_desktop() && row.running {
         if let Some(pid) = row.pid {
-            facts.push(format!("process {pid}"));
+            facts.push(format!("Running (process {pid})"));
         }
-    }
-    if let Some(u) = &row.url {
-        facts.push(format!("address {u}"));
-    }
-    if !row.is_desktop() && !row.package.is_empty() {
-        facts.push(format!("npx {}", row.package));
     }
     if let Some(t2) = &row.tui {
         if t2.installed {
-            facts.push(format!(
-                "terminal {}",
-                t2.version.clone().unwrap_or_else(|| "installed".into())
-            ));
+            if let Some(v) = &t2.version {
+                facts.push(format!("Terminal {v}"));
+            }
+        }
+    }
+    if !facts.is_empty() {
+        col = wrapped(
+            col,
+            t,
+            None,
+            &facts.join(" · "),
+            t.text_faint,
+            false,
+            width,
+            0,
+        );
+    }
+    let address = d.address_of(row);
+    if let Some(a) = &address {
+        col = wrapped(col, t, Some("Address"), a, t.text_muted, false, width, 0);
+    }
+    if let Some(u) = &row.url {
+        let label = if address.is_some() {
+            "On this machine"
+        } else {
+            "Address"
+        };
+        col = wrapped(col, t, Some(label), u, t.text_muted, false, width, 0);
+    }
+    if !row.is_desktop() && !row.package.is_empty() {
+        col = wrapped(
+            col,
+            t,
+            Some("npm"),
+            &format!("npx {}", row.package),
+            t.text_muted,
+            false,
+            width,
+            0,
+        );
+    }
+    if let Some(t2) = &row.tui {
+        if !t2.installed && !t2.install_available && t2.install_method == "cargo" {
+            if let Some(c) = &t2.install_command {
+                col = wrapped(
+                    col,
+                    t,
+                    Some("Terminal version: needs the Rust toolchain"),
+                    c,
+                    t.text_muted,
+                    false,
+                    width,
+                    0,
+                );
+            }
+        } else if !t2.installed && !t2.install_available {
+            let why = t2
+                .install_blocked_reason
+                .clone()
+                .unwrap_or_else(|| "installing is not available right now".into());
+            col = wrapped(
+                col,
+                t,
+                None,
+                &format!("Terminal version: {why}"),
+                t.text_faint,
+                false,
+                width,
+                0,
+            );
+        } else if t2.installed && !t2.launch_available {
+            if let Some(c) = &t2.command {
+                col = wrapped(
+                    col,
+                    t,
+                    Some("Terminal version, on the other computer"),
+                    c,
+                    t.text_muted,
+                    false,
+                    width,
+                    0,
+                );
+            }
+            if let Some(c) = &t2.signin_command {
+                col = wrapped(
+                    col,
+                    t,
+                    Some("First time there, sign in once"),
+                    c,
+                    t.text_muted,
+                    false,
+                    width,
+                    0,
+                );
+            }
+        } else if t2.installed {
+            if let Some(c) = &t2.command {
+                col = wrapped(col, t, Some("Terminal"), c, t.text_muted, false, width, 0);
+            }
         }
     }
     if let Some(dk) = &row.desktop {
         if let Some(l) = &dk.location {
-            facts.push(format!("location {l}"));
+            col = wrapped(col, t, Some("Location"), l, t.text_muted, false, width, 0);
         }
-    }
-    if !facts.is_empty() {
-        col = col.child(line(vec![span(facts.join("  ·  "), t.text_faint)]));
-    }
-    if let Some(t2) = &row.tui {
-        if t2.installed && t2.launch_available {
-            if let Some(c) = &t2.command {
-                col = col.child(line(vec![
-                    span("terminal: ", t.text_faint),
-                    span(c.clone(), t.text_muted),
-                ]));
-            }
-        } else if t2.installed {
-            if let Some(c) = &t2.command {
-                col = col.child(line(vec![
-                    span("terminal, on the other computer: ", t.text_faint),
-                    span(c.clone(), t.text_muted),
-                ]));
-            }
-            if let Some(c) = &t2.signin_command {
-                col = col.child(line(vec![
-                    span("first time there, sign in once: ", t.text_faint),
-                    span(c.clone(), t.text_muted),
-                ]));
-            }
-        } else if !t2.install_available && t2.install_method == "cargo" {
-            if let Some(c) = &t2.install_command {
-                col = col.child(line(vec![
-                    span("terminal version needs the Rust toolchain: ", t.text_faint),
-                    span(c.clone(), t.text_muted),
-                ]));
-            }
-        }
-    }
-    if let Some(dk) = &row.desktop {
         if let Some(c) = &dk.launch_command {
-            col = col.child(line(vec![
-                span("launch command: ", t.text_faint),
-                span(c.clone(), t.text_muted),
-            ]));
+            col = wrapped(
+                col,
+                t,
+                Some("Launch command"),
+                c,
+                t.text_muted,
+                false,
+                width,
+                0,
+            );
         }
         if !row.installed {
             if let Some(c) = &dk.install_command {
-                col = col.child(line(vec![
-                    span("install command: ", t.text_faint),
-                    span(c.clone(), t.text_muted),
-                ]));
+                col = wrapped(
+                    col,
+                    t,
+                    Some("Install command"),
+                    c,
+                    t.text_muted,
+                    false,
+                    width,
+                    0,
+                );
             }
         }
     }

@@ -539,6 +539,9 @@ pub enum Cmd {
         query: String,
         offset: u32,
         scope: crate::store::RunScope,
+        /// The web toolbar's "root runs only" (own plane; the per-plane
+        /// drill-in has no such parameter).
+        root_only: bool,
     },
     /// Durable cancel command (consumed at the run's next tick).
     CancelRun {
@@ -3112,6 +3115,7 @@ fn handle(
             status,
             query,
             offset,
+            root_only: want_root_only,
         } => {
             let label = format!("loading runs: {}", scope.short());
             load(store, wake, &label, store.runs, || {
@@ -3119,9 +3123,9 @@ fn handle(
                 let (rows, has_more, root_only) = match &scope {
                     crate::store::RunScope::Own => {
                         // Server-side filters + paging (the web console's lane).
-                        let v = c.runs(100, offset, &status, &query, true)?;
+                        let v = c.runs(100, offset, &status, &query, want_root_only)?;
                         let more = v.get("has_more").and_then(Value::as_bool).unwrap_or(false);
-                        (crate::store::runs_from_payload(&v), more, true)
+                        (crate::store::runs_from_payload(&v), more, want_root_only)
                     }
                     crate::store::RunScope::Plane {
                         kind,

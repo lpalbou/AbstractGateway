@@ -3190,6 +3190,15 @@ pub struct RunRow {
     /// so it folds None there. The plane lane filters on it client-side
     /// (the drill-in endpoint has no root_only parameter).
     pub parent_run_id: Option<String>,
+    /// The web Runs table's Node / Session columns and its Inspect rows
+    /// (actor, waiting, error, created) — "" when the payload has none.
+    pub current_node: String,
+    pub session_id: String,
+    pub actor_id: String,
+    pub error: String,
+    pub created_at: String,
+    /// `waiting` as compact JSON ("" when the run waits on nothing).
+    pub waiting: String,
 }
 
 pub fn runs_from_payload(v: &Value) -> Vec<RunRow> {
@@ -3201,6 +3210,19 @@ pub fn runs_from_payload(v: &Value) -> Vec<RunRow> {
             updated_at: s(r, "updated_at").unwrap_or_default(),
             paused: b(r, "paused").unwrap_or(false),
             parent_run_id: s(r, "parent_run_id").filter(|p| !p.is_empty()),
+            current_node: s(r, "current_node").unwrap_or_default(),
+            session_id: s(r, "session_id").unwrap_or_default(),
+            actor_id: s(r, "actor_id").unwrap_or_default(),
+            error: match r.get("error") {
+                Some(Value::String(e)) => e.clone(),
+                Some(Value::Null) | None => String::new(),
+                Some(other) => other.to_string(),
+            },
+            created_at: s(r, "created_at").unwrap_or_default(),
+            waiting: match r.get("waiting") {
+                Some(Value::Null) | None => String::new(),
+                Some(w) => w.to_string(),
+            },
         })
     })
 }

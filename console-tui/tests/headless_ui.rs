@@ -4319,6 +4319,7 @@ fn runs_fixture_rows(n: usize, status: &str) -> Vec<abstractgateway_console::sto
             updated_at: "2026-07-25T10:00:00Z".into(),
             paused: false,
             parent_run_id: None,
+            ..Default::default()
         })
         .collect()
 }
@@ -4428,7 +4429,9 @@ fn runs_panel_follows_runtime_selection() {
     }));
     let s = h.turns(2);
     assert!(
-        s.contains("no durable runs in Testor's plane"),
+        s.contains(
+            "No runs on this runtime yet. Entity chats and life days don't create runtime runs"
+        ),
         "empty state names the plane AND the why:\n{s}"
     );
     assert!(
@@ -4670,11 +4673,20 @@ fn run_double_click_opens_steer_form() {
     }));
     let s = h.turns(3);
     let y = find_row(&s, "run-0000");
-    double_click_at(&mut h, 6, y);
+    // Enter (or a double-click's Enter) opens the web Inspect rows in
+    // place; `s` opens steer.
+    click_at(&mut h, 6, y);
+    h.key(b"\r");
+    let s = h.turns(3);
+    assert!(
+        s.contains("Run      run-0000-aaaaaaaa"),
+        "Enter expands the run's Inspect rows:\n{s}"
+    );
+    h.type_text("s");
     let s = h.turns(3);
     assert!(
         s.contains("Steer run"),
-        "double-click on a running run opens steer:\n{s}"
+        "s on a running run opens steer:\n{s}"
     );
 }
 
@@ -4802,8 +4814,9 @@ fn steer_modal_survives_runs_region_rerender() {
     let s = h.turns(3);
     let y = find_row(&s, "run-0000");
 
-    // Baseline: the drive itself works — open, type, Tab to Send, Enter.
-    double_click_at(&mut h, 6, y);
+    // Baseline: the drive itself works — open (s), type, Tab to Send, Enter.
+    click_at(&mut h, 6, y);
+    h.type_text("s");
     let s = h.turns(3);
     assert!(s.contains("Steer run"), "steer modal open:\n{s}");
     h.type_text("baseline");
@@ -4821,7 +4834,7 @@ fn steer_modal_survives_runs_region_rerender() {
     // Round two: a background op lands while the modal is open (the
     // exact shape of refresh_runs after a cancel): the runs region
     // regenerates under the open modal.
-    double_click_at(&mut h, 6, y);
+    h.type_text("s");
     let s = h.turns(3);
     assert!(s.contains("Steer run"), "steer modal open again:\n{s}");
     h.store.runs.set(Loadable::Ready(RunsData {
