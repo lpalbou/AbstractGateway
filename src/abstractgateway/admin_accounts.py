@@ -55,10 +55,9 @@ REASON_ADMIN_SUSPEND_ENTITY = "Only an admin can suspend an entity."
 # The "OpenAI API" switch (round 5): who may call /v1 with their own key.
 REASON_ENTITY_OPENAI = "Entities have no key, so they never use the OpenAI API."
 REASON_ADMIN_OPENAI = "Only an admin can change who may use the OpenAI API."
-# Round 9: an entity's workspace folders are admin-only (PUT /workspace/policy/{account} answers 403
-# to its creator), and need the entity's gateway account (the policy target must be registered).
-REASON_ADMIN_ENTITY_WORKSPACE = "Only an admin can change an entity's workspace folders."
-REASON_ENTITY_NO_ACCOUNT = "This entity has no gateway account yet, so its workspace folders can't be set."
+# Round 11: an entity's workspaces are set by admins and the entity's creator (PUT
+# /workspace/policy/{account}); every entity has a gateway account (entity_accounts.py mints the
+# missing ones at boot), so the workspace action is there on every row that is not archived.
 
 _ROLE_ORDER = {"admin": 0, "user": 1, "entity": 2}
 
@@ -230,10 +229,7 @@ def _entity_row(
             "openai_api": _act(False, REASON_ENTITY_OPENAI),
             "email": _act(has_home and not archived, REASON_ARCHIVED if archived else REASON_ENTITY_NO_HOME),
             "logs": _act(True),
-            "workspace": _act(
-                rec is not None and not archived,
-                REASON_ARCHIVED if archived else REASON_ENTITY_NO_ACCOUNT,
-            ),
+            "workspace": _act(not archived, REASON_ARCHIVED),
             "rotate": _act(False, REASON_ENTITY_ROTATE),
             "manage": _act(has_home and not archived, REASON_ARCHIVED if archived else REASON_ENTITY_NO_HOME),
             "archive": _act(not archived, REASON_ARCHIVED),
@@ -361,7 +357,6 @@ def list_my_accounts(caller: GatewayPrincipal) -> Dict[str, Any]:
             row["actions"]["suspend"] = _act(False, REASON_ADMIN_SUSPEND_ENTITY)
             row["actions"]["openai_api"] = _act(False, REASON_ADMIN_OPENAI)
             row["actions"]["unarchive"] = _act(False, REASON_ADMIN_UNARCHIVE)
-            row["actions"]["workspace"] = _act(False, REASON_ADMIN_ENTITY_WORKSPACE)
         rows.append(row)
     rows.sort(key=_sort_key)
     out: Dict[str, Any] = {"accounts": rows, "scope": "own"}

@@ -69,6 +69,7 @@ from ..service import get_gateway_service
 from .gateway import (
     DEFAULT_AGENT_SENTINEL,
     _off_the_event_loop,
+    _parse_any_string_list,
     _principal_from_request,
     _require_bundle_host,
     _resolve_bundle_from_host,
@@ -485,7 +486,22 @@ def _guarded_input_data(svc: Any, principal: Any, input_data: Dict[str, Any], *,
     try:
         data = _sanitize_run_workspace_policy(data, principal=principal, session_id=session_id)
     except HTTPException as e:
-        raise AutomationError(422, "invalid_definition", str(e.detail), field="target.input_data")
+        message = e.detail.get("message") if isinstance(e.detail, dict) else e.detail
+        raise AutomationError(422, "invalid_definition", str(message), field="target.input_data")
+    tenant, user = _principal_tuple(principal)
+    root_data_dir = getattr(svc.config, "root_data_dir", None) or svc.config.data_dir
+    # Round 11: the automation's workspaces are ONE object, `input_data.workspace` {posture,
+    # default_mode, folders} (absent = the account default, frozen at creation like every protected
+    # input). A round-9 definition's `workspace_allowed_paths` list (already checked above) becomes
+    # "Deny everything, allow listed workspaces" with each workspace at its gateway cap.
+    if not isinstance(data.get("workspace"), dict) and isinstance(dict(input_data).get("workspace_allowed_paths"), (list, str)):
+        from ..workspace_policy import caps_for, legacy_paths_to_layer
+
+        data["workspace"] = legacy_paths_to_layer(
+            caps_for(Path(str(root_data_dir)), tenant_id=tenant or "default", user_id=user or "admin"),
+            _parse_any_string_list(dict(input_data).get("workspace_allowed_paths")),
+        )
+    chosen_workspace = copy.deepcopy(data.get("workspace")) if isinstance(data.get("workspace"), dict) else None
     # The automation's context mode is the ONE history control (operator
     # 2026-09-28): the runtime replays prior occurrences into
     # `context.messages` for "growing" and none for "independent"; the flow
@@ -493,8 +509,6 @@ def _guarded_input_data(svc: Any, principal: Any, input_data: Dict[str, Any], *,
     # default False on basic-agent) silently dropped a growing automation's
     # history and a discussion's seed, so it is server-owned here.
     data["use_context"] = True
-    tenant, user = _principal_tuple(principal)
-    root_data_dir = getattr(svc.config, "root_data_dir", None) or svc.config.data_dir
     # The registered user's email, the one address the send_email recipient
     # refiner treats as "self" (framework backlog 0992 WP0). The automation
     # grant never pre-approves send_email, so without this value an
@@ -524,6 +538,9 @@ def _guarded_input_data(svc: Any, principal: Any, input_data: Dict[str, Any], *,
         tenant_id=tenant,
         user_id=user,
     )
+    if chosen_workspace is not None:
+        # Kept in the definition (clients show and edit it); the guard above applied it, clamped.
+        data["workspace"] = chosen_workspace
     return data
 
 

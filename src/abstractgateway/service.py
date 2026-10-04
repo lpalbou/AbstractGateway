@@ -947,31 +947,31 @@ def begin_gateway_boot() -> None:
                     print(f"[WARN] email: {note}", file=sys.stderr, flush=True)
             except Exception:  # noqa: BLE001 - never a boot blocker
                 logging.getLogger("abstractgateway.service").warning("email legacy import failed", exc_info=True)
-            # Round 9: the old workspace model (access modes, per-user lists, "Any folder (old
-            # clients)") is migrated ONCE to the workspace policy at serve start (it would also run
-            # at the first read); `_migrated.workspace_policy_v1` keeps the old block.
+            # Round 11: older workspace models (pre-round-9 access modes; the round-9 shared
+            # workspace) are migrated ONCE at serve start (it would also run at the first read);
+            # `_migrated.workspace_policy_v1/_v2` keep the old blocks.
             try:
                 from .users import gateway_data_dir_from_env as _ws_data_dir
-                from .workspace_policy import ensure_migrated, ensure_shared_workspace
+                from .workspace_policy import ensure_migrated
 
-                migrated = ensure_migrated(_ws_data_dir())
-                shared_source = ensure_shared_workspace(_ws_data_dir())
-                if shared_source:
+                if ensure_migrated(_ws_data_dir()):
                     print(
-                        f"[INFO] workspaces: shared workspace settled ({shared_source}); see Accounts → Shared "
-                        "workspace & allowed workspaces.",
-                        file=sys.stderr,
-                        flush=True,
-                    )
-                if migrated:
-                    print(
-                        "[INFO] workspaces: the old workspace settings were migrated to the workspace policy "
-                        "(shared workspace, posture, workspace rows); see Accounts → Shared workspace & allowed workspaces.",
+                        "[INFO] workspaces: the old workspace settings were migrated (posture \"Allow everything, "
+                        "refuse listed workspaces\"; the old shared workspace is now a listed workspace); see Accounts.",
                         file=sys.stderr,
                         flush=True,
                     )
             except Exception:  # noqa: BLE001 - never a boot blocker; the first read retries
                 logging.getLogger("abstractgateway.service").warning("workspace policy migration failed", exc_info=True)
+            # Round 11 (R11.2): every entity has a gateway account — entity homes created before
+            # entity accounts existed get theirs here, once, audited.
+            try:
+                from .entity_accounts import ensure_entity_accounts
+
+                for note in ensure_entity_accounts():
+                    print(f"[INFO] accounts: {note}", file=sys.stderr, flush=True)
+            except Exception:  # noqa: BLE001 - never a boot blocker; the next boot retries
+                logging.getLogger("abstractgateway.service").warning("entity account migration failed", exc_info=True)
             _boot_checkpoint()
             start_gateway_runner()
             _boot_checkpoint()

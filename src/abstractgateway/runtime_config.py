@@ -2087,13 +2087,6 @@ def resolve_backlog_exec_runner_enabled(data_dir: Path) -> bool:
     return bool(resolve_exec_runner(Path(data_dir))["value"])
 
 
-def resolve_workspace_root(data_dir: Path) -> Path:
-    """The gateway's SHARED WORKSPACE (round 9 workspace policy)."""
-    from .workspace_policy import gateway_policy
-
-    return Path(gateway_policy(Path(data_dir))["shared_workspace"])
-
-
 def resolve_workspace_mounts(data_dir: Path) -> Dict[str, Path]:
     """The gateway's ro/rw folder rows as deterministic {mount name: folder} (existing folders only).
     Used where no account is known; account-scoped doors read workspace_policy.effective_policy."""

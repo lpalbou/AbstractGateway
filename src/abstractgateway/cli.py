@@ -1053,17 +1053,13 @@ def main(argv: list[str] | None = None) -> None:
                 "this gateway's environment): every person signs in with an account."
             )
 
-        # Round 9: settle the shared workspace BEFORE this boot writes anything (the bootstrap admin,
-        # the audit log): "does this data folder already hold work?" must see the folder as it was.
+        # Round 11: migrate an older workspace model once, before this boot writes anything.
         try:
-            from .workspace_policy import ensure_migrated, ensure_shared_workspace
+            from .workspace_policy import ensure_migrated
 
             ensure_migrated(_serve_data_dir)
-            _settled = ensure_shared_workspace(_serve_data_dir)
-            if _settled:
-                _stderr(f"[INFO] workspaces: shared workspace settled ({_settled}).")
         except Exception as _exc:  # noqa: BLE001 - never a boot blocker; the boot and the first read retry
-            _stderr(f"[WARN] workspaces: the shared workspace could not be settled yet ({_exc}).")
+            _stderr(f"[WARN] workspaces: the workspace settings could not be migrated yet ({_exc}).")
 
         # ------------------------------------------------------------------
         # Startup security self-checks (fail-fast on missing auth token).
