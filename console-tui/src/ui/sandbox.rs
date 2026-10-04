@@ -1253,6 +1253,28 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             }
         });
     }
+    // Text uses the configured Text Chat route, like the web (its pickers
+    // are hidden there): with nothing picked yet, the pickers start on the
+    // input.text route's pair — still changeable here (the Providers `t`
+    // prefill lands on its own pair).
+    {
+        let prefilled = cx.signal(false);
+        cx.effect(move || {
+            if prefilled.get_untracked() {
+                return;
+            }
+            let pair = store
+                .routes
+                .with(|r| r.ready().and_then(|d| mode_row(&d.rows, SbMode::Text).and_then(row_pair)));
+            if let Some((p, m)) = pair {
+                prefilled.set(true);
+                if ui.sb_provider.get_untracked().is_empty() {
+                    ui.sb_provider.set(p);
+                    ui.sb_model.set(m);
+                }
+            }
+        });
+    }
     // MTP depth availability follows the picked text pair (the web's
     // refreshSandboxSpeculationSupport): a NEW pair resets the choice to
     // inherit, marks the depths as being checked, and asks the gateway.
@@ -1308,7 +1330,7 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         .child(
             Block::new()
                 .border(BorderKind::Rounded)
-                .title("Live test (sandbox generate)")
+                .title("Sandbox")
                 .fill(t.surface)
                 .layout(LayoutStyle::column().gap(0).grow(1.0).padding(Edges::hv(1, 0)))
                 // Mode picker + the mode's teaching line on ONE row (the
@@ -1321,9 +1343,24 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         .map(|m| SelectOption::new(mode_option_label(*m, rows.as_deref())))
                         .collect();
                     let mode = ws.mode.get();
+                    // The web's field help: what the next message generates.
                     let teach = match mode {
-                        SbMode::Text => "run a REAL text generation through the gateway to prove a provider/model pair works".to_string(),
-                        m => format!("generate {} through the configured {} route", m.label().to_lowercase(), m.route_key()),
+                        // The web's context line for Text Chat: the pair the
+                        // next message uses (the picked one), else why not.
+                        SbMode::Text => {
+                            let (p, m) = (ui.sb_provider.get(), ui.sb_model.get());
+                            let route = rows
+                                .as_deref()
+                                .and_then(|r| mode_row(r, SbMode::Text).and_then(row_pair));
+                            if !p.is_empty() && !m.is_empty() {
+                                context_ready("Text Chat", &p, &m, None, "")
+                            } else if route.is_none() && rows.is_some() && p.is_empty() {
+                                context_unconfigured("Text Chat")
+                            } else {
+                                "run a REAL text generation through the gateway to prove a provider/model pair works".to_string()
+                            }
+                        }
+                        _ => "What the next message generates, with its route from Multimodal.".to_string(),
                     };
                     Element::new()
                         .style(LayoutStyle::row().gap(1).h(1))
@@ -1332,7 +1369,7 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                                 .style(LayoutStyle::default().w(18 + 1 + 28).h(1).shrink(0.0))
                                 .child(field(
                                     &t,
-                                    "mode",
+                                    "output",
                                     Select::new(opts)
                                         .value(mode_ix)
                                         .layout(LayoutStyle::default().w(28).h(1).shrink(0.0))
@@ -1543,8 +1580,13 @@ pub fn workspace(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
 }
 
 fn mode_option_label(m: SbMode, rows: Option<&[RouteRow]>) -> String {
+    // The web's mode buttons: the short label, then the route's model or
+    // "not configured" (`renderSandboxCapabilityOptions`).
     if m == SbMode::Text {
-        return "Text chat".into();
+        return match rows.and_then(|r| mode_row(r, SbMode::Text)).and_then(row_pair) {
+            Some((_, model)) => format!("Text — {model}"),
+            None => "Text — not configured".into(),
+        };
     }
     match rows {
         None => format!("{} — routes not loaded", m.label()),
@@ -1555,6 +1597,20 @@ fn mode_option_label(m: SbMode, rows: Option<&[RouteRow]>) -> String {
             Some(ModeRoute::NotConfigured) => format!("{} — not configured", m.label()),
         },
     }
+}
+
+/// The web's context sentence for a configured mode (`updateSandboxControls`):
+/// "Image will use mlx / flux (inherited from output.image)."
+pub fn context_ready(label: &str, provider: &str, model: &str, inherited: Option<&str>, extra: &str) -> String {
+    let from = inherited
+        .map(|k| format!(" (inherited from {k})"))
+        .unwrap_or_default();
+    format!("{label} will use {provider} / {model}{extra}{from}.")
+}
+
+/// The web's sentence for a mode with no route.
+pub fn context_unconfigured(label: &str) -> String {
+    format!("{label} is not configured yet. Configure it in Multimodal Capabilities first.")
 }
 
 fn route_line(t: &TokenSet, store: &Store, m: SbMode) -> View {
@@ -1590,25 +1646,10 @@ fn route_line(t: &TokenSet, store: &Store, m: SbMode) -> View {
                 } else {
                     String::new()
                 };
-                let from = inherited_from
-                    .map(|k| format!(" (inherited from {k})"))
-                    .unwrap_or_default();
-                (
-                    format!(
-                        "{} will use {provider} / {model}{voice}{from}",
-                        m.route_key()
-                    ),
-                    t.text,
-                )
+                (context_ready(m.label(), &provider, &model, inherited_from.as_deref(), &voice), t.text)
             }
             Some(ModeRoute::Incomplete { key }) => (incomplete_reason(m, &key), t.warn),
-            Some(ModeRoute::NotConfigured) => (
-                format!(
-                    "{} is not configured yet — configure it on Multimodal (9) first",
-                    m.route_key()
-                ),
-                t.warn,
-            ),
+            Some(ModeRoute::NotConfigured) => (context_unconfigured(m.label()), t.warn),
         },
     };
     field(t, "route", line(vec![span(msg.0, msg.1)]))

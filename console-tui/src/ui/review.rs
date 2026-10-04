@@ -151,10 +151,12 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                         // 4-state harness matrix proves the arithmetic).
                         // Newest entries render first, so the cap hides
                         // only the oldest; the scroll reaches them.
+                        // (2 since round 7: the key-hint footer may
+                        // wrap onto a second line.)
                         let cap = if abstracttui::app::use_viewport(gcx).get().h >= 30 {
                             10
                         } else {
-                            3
+                            2
                         };
                         let h = (rows.len() as i32).min(cap);
                         // Returned DIRECTLY (no wrapper): the dyn slot

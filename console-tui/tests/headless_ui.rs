@@ -7056,7 +7056,7 @@ fn models_tab_breaks_down_what_is_consuming_memory() {
     let strip: String = s
         .lines()
         .skip_while(|l| !l.contains("consuming memory:"))
-        .take_while(|l| !l.contains("Loaded"))
+        .take_while(|l| !l.contains("Session caches"))
         .collect::<Vec<_>>()
         .join("\n");
     assert!(
@@ -7101,7 +7101,7 @@ fn models_tab_states_the_gateway_process_rss_exactly_once() {
     let strip: Vec<&str> = s
         .lines()
         .skip_while(|l| !l.contains("RAM "))
-        .take_while(|l| !l.contains("Loaded"))
+        .take_while(|l| !l.contains("Session caches"))
         .collect();
     // 1_073_741_824 B — the fixture's RSS, and no other figure on the
     // strip renders as "1.0 GiB".

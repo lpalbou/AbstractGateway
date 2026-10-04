@@ -281,10 +281,10 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 // long one ran into the corner (no closing run).
                 .title(
                     if abstracttui::app::use_viewport(cx).get_untracked().w >= 110 {
-                        "Resources — what is resident on the execution host right now \
+                        "Resources — Memory & GPU, Models, Session caches \
                          · ~ = estimated size, not measured"
                     } else {
-                        "Resources — resident on the execution host · ~ = estimated"
+                        "Resources — Memory & GPU · Models · Session caches"
                     },
                 )
                 .fill(t.surface)
@@ -345,7 +345,8 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
 /// DRAW time and the budget below has to be decided during BUILD. The
 /// 80x24 and 110x34 layout tests pin the outcome, so a chrome change fails
 /// loudly instead of silently squeezing the Loaded table off screen again.
-const PAGE_CHROME_ROWS: usize = 9;
+// 10 since round 7: the key-hint footer wraps onto a second line.
+const PAGE_CHROME_ROWS: usize = 10;
 
 /// The Ready body: the PINNED head (meters, the accelerator's scoped label
 /// and its note, degradation notes), then the WINDOWED memory itemization,
@@ -487,11 +488,11 @@ fn body(
         .child(strip.build())
         .child(
             Tabs::new()
-                .tab("Loaded", {
+                .tab(models_tab_title(&models), {
                     let keeper = keeper.clone();
                     move || models_table(cx, &tt, &models, ui.model_sel, &keeper)
                 })
-                .tab("Caches", {
+                .tab("Session caches", {
                     let keeper = keeper.clone();
                     move || caches_table(cx, &tt, &caches, ui.cache_sel, &keeper)
                 })
@@ -796,6 +797,12 @@ fn gauge_row(t: &TokenSet, label: &str, frac: f32, text: String) -> View {
     )
 }
 
+/// The web's section title: "Models (N resident)" — resident rows only.
+pub fn models_tab_title(rows: &[ModelRow]) -> String {
+    let n = rows.iter().filter(|r| r.resident == Some(true)).count();
+    format!("Models ({n} resident)")
+}
+
 fn models_table(
     cx: Scope,
     t: &TokenSet,
@@ -804,8 +811,9 @@ fn models_table(
     keeper: &super::util::FocusKeeper,
 ) -> View {
     if data.is_empty() {
+        // The web's sentence (console.py `renderModelsTable`).
         return keeper.anchor(line(vec![span(
-            "∅ no models resident — w warms one up",
+            "No models loaded right now.  w warms one up",
             t.text_muted,
         )]));
     }
@@ -844,7 +852,7 @@ fn caches_table(
 ) -> View {
     if data.is_empty() {
         return keeper.anchor(line(vec![span(
-            "∅ no session prompt caches on the host",
+            "No session prompt caches right now.",
             t.text_muted,
         )]));
     }
