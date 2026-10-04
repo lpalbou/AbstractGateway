@@ -952,9 +952,18 @@ def begin_gateway_boot() -> None:
             # at the first read); `_migrated.workspace_policy_v1` keeps the old block.
             try:
                 from .users import gateway_data_dir_from_env as _ws_data_dir
-                from .workspace_policy import ensure_migrated
+                from .workspace_policy import ensure_migrated, ensure_shared_workspace
 
-                if ensure_migrated(_ws_data_dir()):
+                migrated = ensure_migrated(_ws_data_dir())
+                shared_source = ensure_shared_workspace(_ws_data_dir())
+                if shared_source:
+                    print(
+                        f"[INFO] workspaces: shared workspace settled ({shared_source}); see Accounts → Shared "
+                        "workspace & allowed workspaces.",
+                        file=sys.stderr,
+                        flush=True,
+                    )
+                if migrated:
                     print(
                         "[INFO] workspaces: the old workspace settings were migrated to the workspace policy "
                         "(shared workspace, posture, workspace rows); see Accounts → Shared workspace & allowed workspaces.",

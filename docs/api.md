@@ -584,6 +584,7 @@ mode (read-only or read & write); accounts narrow. Full model and enforcement:
 with `policy = {shared_workspace, posture: "allowed_only" | "any_except_denied",
 default_mode: "ro" | "rw", folders: [{path, mode: "ro" | "rw" | "deny"}],
 builtin_never_allowed[] (read-only), max_attachment_bytes (read-only)}`.
+A gateway that has no stored `shared_workspace` settles it once: the legacy env, else its frozen current value for a data folder that already holds work, else `<data_dir>/workspace` (see [configuration.md](./configuration.md#workspace-policy-filesystem-scope)).
 `allowed_only` reads "Deny everything, allow listed workspaces";
 `any_except_denied` reads "Allow everything, refuse listed workspaces", where
 `default_mode` is the mode of every unlisted directory. A non-admin gets

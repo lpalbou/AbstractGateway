@@ -30,6 +30,7 @@ per-user allow/deny lists, launch-folder trust, "Any folder (old clients)") is m
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -171,7 +172,9 @@ def in_own_plane(path: Path, data_dir: Path, *, tenant_id: str, user_id: str) ->
     return _under(path, plane) and _under_any(path, others) is None
 
 
-def _default_shared_workspace() -> str:
+def _previous_effective_shared_workspace() -> str:
+    """What a gateway before this version used when nothing was stored (the legacy env, else the
+    runtime's repo-root guess, else the working folder). Used ONLY to freeze an existing install."""
     return str(_store_mod()._workspace_root_fallback())
 
 
@@ -240,10 +243,15 @@ def _rows(raw: Any, modes: Tuple[str, ...]) -> List[Dict[str, str]]:
     return out
 
 
-def _stored_gateway(stored: Dict[str, Any]) -> Dict[str, Any]:
+def fresh_shared_workspace(data_dir: Path) -> Path:
+    """The shared workspace of a FRESH gateway: ``<data_dir>/workspace`` (created on first use)."""
+    return _real(Path(data_dir)) / "workspace"
+
+
+def _stored_gateway(stored: Dict[str, Any], data_dir: Path) -> Dict[str, Any]:
     raw = stored.get(POLICY_KEY)
     raw = raw if isinstance(raw, dict) else {}
-    shared = str(raw.get("shared_workspace") or "").strip() or _default_shared_workspace()
+    shared = str(raw.get("shared_workspace") or "").strip() or str(fresh_shared_workspace(data_dir))
     posture = raw.get("posture") if raw.get("posture") in POSTURES else "allowed_only"
     return {
         "shared_workspace": str(_real(Path(shared))),
@@ -273,7 +281,76 @@ def _empty_entry() -> Dict[str, Any]:
 
 def _read(data_dir: Path) -> Dict[str, Any]:
     ensure_migrated(data_dir)
+    ensure_shared_workspace(data_dir)
     return _store_mod()._read_store(Path(data_dir))
+
+
+_LEGACY_SHARED_ENV = ("ABSTRACTGATEWAY_WORKSPACE_ROOT", "ABSTRACTGATEWAY_WORKSPACE_DIR")
+
+
+def _store_is_populated(data_dir: Path) -> bool:
+    """Does this data folder already hold work (runs, conversations, accounts)? A fresh one does not."""
+    base = Path(data_dir)
+    if not base.is_dir():
+        return False
+    for name in ("first_run.json", "audit_log.jsonl"):
+        if (base / name).is_file():
+            return True
+    try:
+        for entry in base.iterdir():
+            if entry.is_file() and (entry.name.startswith("ledger_") or entry.name.startswith("run_")):
+                return True
+    except OSError:
+        return False
+    ws = base / "workspaces"
+    if ws.is_dir() and any(ws.iterdir()):
+        return True
+    users = base / "auth" / "users.json"
+    try:
+        if users.is_file() and json.loads(users.read_text() or "{}"):
+            return True
+    except (OSError, ValueError):
+        return True  # unreadable registry: treat as populated (never move an existing install)
+    return False
+
+
+def ensure_shared_workspace(data_dir: Path) -> Optional[str]:
+    """Settle the shared workspace ONCE when none is stored, never by guessing (parent rule, round 9):
+
+    - the legacy env (``ABSTRACTGATEWAY_WORKSPACE_ROOT`` / ``ABSTRACTGATEWAY_WORKSPACE_DIR``) when set,
+      imported once (then ignored);
+    - a data folder that already holds work FREEZES its current effective value (what the gateway
+      used before this version), so nothing moves for an existing install;
+    - a fresh data folder gets ``<data_dir>/workspace``.
+
+    The decision is stored with a record under ``_migrated.shared_workspace_v1``. Returns how it was
+    decided ("env" | "frozen" | "fresh"), or None when a shared workspace was already stored."""
+    rc = _store_mod()
+    data_dir = Path(data_dir)
+    raw = rc._read_store(data_dir).get(POLICY_KEY)
+    if isinstance(raw, dict) and str(raw.get("shared_workspace") or "").strip():
+        return None
+    with rc.store_lock(data_dir):
+        stored = rc._read_store(data_dir, strict=True)
+        policy = stored.get(POLICY_KEY) if isinstance(stored.get(POLICY_KEY), dict) else {}
+        if str(policy.get("shared_workspace") or "").strip():
+            return None
+        env_name = next((n for n in _LEGACY_SHARED_ENV if str(os.getenv(n) or "").strip()), None)
+        if env_name:
+            source, value = "env", str(_real(Path(str(os.getenv(env_name)).strip())))
+        elif _store_is_populated(data_dir):
+            source, value = "frozen", str(_real(Path(_previous_effective_shared_workspace())))
+        else:
+            source, value = "fresh", str(fresh_shared_workspace(data_dir))
+        stored[POLICY_KEY] = {**policy, "shared_workspace": value}
+        migrated = dict(stored.get("_migrated") or {}) if isinstance(stored.get("_migrated"), dict) else {}
+        migrated["shared_workspace_v1"] = {"at": _now(), "source": source, "value": value, **({"env": env_name} if env_name else {})}
+        stored["_migrated"] = migrated
+        stored["_last_changed_by"] = "system:workspace_policy_migration"
+        stored["_last_changed_at"] = _now()
+        rc._write_store(data_dir, stored)
+    audit_policy_change("migration", actor="system:workspace_policy_migration", changed=["shared_workspace"])
+    return source
 
 
 # ---------------------------------------------------------------- migration
@@ -346,7 +423,7 @@ def migrate_store(stored: Dict[str, Any], *, accounts: Iterable[str] = ()) -> Di
     old_block = {k: stored[k] for k in LEGACY_STORE_KEYS if k in stored}
 
     root_payload = rc._workspace_root_payload(stored)
-    shared = str(root_payload.get("value") or "").strip() or _default_shared_workspace()
+    shared = str(root_payload.get("value") or "").strip() or _previous_effective_shared_workspace()
     shared = str(_real(Path(shared)))
 
     raw_mounts = stored.get("workspace_mounts")
@@ -488,7 +565,13 @@ def ensure_migrated(data_dir: Path) -> bool:
 def gateway_policy(data_dir: Path) -> Dict[str, Any]:
     from .runtime_config import resolve_workspace_builtin_deny_enabled
 
-    g = _stored_gateway(_read(data_dir))
+    g = _stored_gateway(_read(data_dir), Path(data_dir))
+    fresh = fresh_shared_workspace(data_dir)
+    if Path(g["shared_workspace"]) == fresh and not fresh.is_dir():
+        try:
+            fresh.mkdir(parents=True, exist_ok=True)  # created on first use
+        except OSError:
+            pass
     try:
         max_bytes = int(str(os.getenv("ABSTRACTGATEWAY_MAX_ATTACHMENT_BYTES", "") or "").strip() or 0)
     except ValueError:
@@ -685,7 +768,7 @@ def write_gateway_policy(data_dir: Path, changes: Dict[str, Any], *, actor: str)
     ensure_migrated(data_dir)
     with rc.store_lock(data_dir):
         stored = rc._read_store(data_dir, strict=True)
-        g = _stored_gateway(stored)
+        g = _stored_gateway(stored, data_dir)
         if "shared_workspace" in changes:
             raw = changes["shared_workspace"]
             if raw is None or (isinstance(raw, str) and not raw.strip()):
@@ -707,7 +790,7 @@ def write_gateway_policy(data_dir: Path, changes: Dict[str, Any], *, actor: str)
 
         shared = Path(g["shared_workspace"])
         hit = _under_any(shared, [Path(p) for p in builtin_never_allowed(data_dir)])
-        if hit is not None:
+        if hit is not None and _real(shared) != fresh_shared_workspace(data_dir):
             raise WorkspacePolicyError(
                 f"Shared workspace {str(shared)!r} is inside {str(hit)!r} (the gateway's data directory or a credential "
                 "directory), which is never a workspace."

@@ -232,7 +232,7 @@ def test_policy_changes_are_audited(f: dict, tmp_path: Path) -> None:
         alice = _user("alice")
         c.put("/api/gateway/workspace/policy/me", json={"folders": [{"path": f["archive"], "mode": "deny"}]}, headers=alice)
     lines = [json.loads(ln) for ln in (_data(tmp_path) / "audit_log.jsonl").read_text().splitlines() if ln.strip()]
-    events = [e for e in lines if e.get("event") == "workspace_policy_changed"]
+    events = [e for e in lines if e.get("event") == "workspace_policy_changed" and e.get("scope") != "migration"]
     assert {"scope": "gateway", "actor": "person:admin"}.items() <= events[0].items()
     assert sorted(events[0]["changed"]) == ["folders", "shared_workspace"]
     assert events[-1]["scope"] == "account" and events[-1]["account"] == "default:alice" and events[-1]["actor"] == "person:alice"
@@ -489,14 +489,72 @@ def test_migration_pure_function_is_deterministic_and_audited(f: dict, tmp_path:
     assert len([e for e in lines if e.get("event") == "workspace_policy_changed" and e.get("scope") == "migration"]) == 1
 
 
-def test_no_old_keys_means_no_migration_write(tmp_path: Path) -> None:
+def test_no_old_keys_means_no_model_migration(tmp_path: Path) -> None:
     from abstractgateway.workspace_policy import ensure_migrated, gateway_policy
 
     data = _data(tmp_path)
     _write_old_store(data, {"executor": "codex"})
     assert ensure_migrated(data) is False
     gateway_policy(data)
-    assert _read_store(data) == {"executor": "codex"}
+    stored = _read_store(data)
+    assert stored["executor"] == "codex" and "user_workspace_policies" not in stored
+    assert stored["workspace_policy"] == {"shared_workspace": str((data / "workspace").resolve())}  # settled once
+
+
+# ---------------------------------------------------------------- the default shared workspace is never a guess
+
+
+def test_a_fresh_gateway_gets_its_data_folder_workspace(tmp_path: Path) -> None:
+    from abstractgateway.workspace_policy import effective_folder_paths, ensure_shared_workspace, gateway_policy
+
+    data = _data(tmp_path)
+    data.mkdir(parents=True)
+    assert ensure_shared_workspace(data) == "fresh"
+    g = gateway_policy(data)
+    fresh = (data / "workspace").resolve()
+    assert g["shared_workspace"] == str(fresh) and fresh.is_dir()
+    assert _read_store(data)["_migrated"]["shared_workspace_v1"]["source"] == "fresh"
+    assert ensure_shared_workspace(data) is None  # once
+    # Reachable and writable although it sits in the data folder (the host lifts the deny for it).
+    from abstractgateway.run_workspace_guard import guard_run_vars
+
+    v: dict = {}
+    guard_run_vars(v, data_dir=data, root_data_dir=data, session_id="s1", tenant_id="default", user_id="admin")
+    assert str(fresh) in v["workspace_builtin_allow"]
+    _write(_scope(v), fresh / "deliverable.md")
+    assert effective_folder_paths(data, tenant_id="default", user_id="alice").mode(fresh / "x") == "rw"
+
+
+def test_a_populated_gateway_freezes_its_current_value(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractgateway import runtime_config
+    from abstractgateway.workspace_policy import ensure_shared_workspace, gateway_policy
+
+    data = _data(tmp_path)
+    data.mkdir(parents=True)
+    (data / "audit_log.jsonl").write_text("{}\n")  # this install already did work
+    before = tmp_path / "what-it-used-before"
+    before.mkdir()
+    monkeypatch.setattr(runtime_config, "_workspace_root_fallback", lambda: str(before))
+    assert ensure_shared_workspace(data) == "frozen"
+    assert gateway_policy(data)["shared_workspace"] == str(before.resolve())
+    # Frozen for good: the old guess changing later moves nothing.
+    monkeypatch.setattr(runtime_config, "_workspace_root_fallback", lambda: str(tmp_path))
+    assert gateway_policy(data)["shared_workspace"] == str(before.resolve())
+
+
+def test_a_stored_shared_workspace_and_the_legacy_env(f: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractgateway.workspace_policy import ensure_shared_workspace, gateway_policy
+
+    data = _data(tmp_path)
+    _write_old_store(data, {"workspace_policy": {"shared_workspace": f["shared"]}})
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_ROOT", f["other"])
+    assert ensure_shared_workspace(data) is None
+    assert gateway_policy(data)["shared_workspace"] == f["shared"]  # stored wins
+    other = tmp_path / "other-data"
+    other.mkdir()
+    assert ensure_shared_workspace(other) == "env"  # imported once ...
+    monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_ROOT", f["notes"])
+    assert gateway_policy(other)["shared_workspace"] == f["other"]  # ... then ignored
 
 
 def test_the_most_specific_rule_and_a_deny_above_it(tmp_path: Path) -> None:

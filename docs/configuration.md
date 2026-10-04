@@ -1198,9 +1198,21 @@ caller). `GET /api/gateway/workspace/effective/{account}` returns what applies,
 with its one-line summary. The full model, its enforcement and the one-time
 migration are in [security.md](./security.md#workspaces-two-dimensions).
 
-Until an admin chooses one, the shared workspace is
-`ABSTRACTGATEWAY_WORKSPACE_DIR` when set, otherwise the gateway's working
-folder. `ABSTRACTGATEWAY_WORKSPACE_MOUNTS` is read once, by the migration.
+The shared workspace is never guessed. The stored value wins. When none is
+stored, the gateway settles it once, at its first start (recorded under
+`_migrated.shared_workspace_v1`):
+
+- the legacy `ABSTRACTGATEWAY_WORKSPACE_ROOT` / `ABSTRACTGATEWAY_WORKSPACE_DIR`
+  when set (imported once, then ignored);
+- otherwise, for a data folder that already holds work (runs, conversations,
+  accounts, an audit log), its current value, frozen, so nothing moves for an
+  existing install;
+- otherwise, for a fresh data folder, `<data_dir>/workspace`, created on first
+  use. The host lifts the data folder's built-in deny for exactly that
+  directory.
+
+An admin changes it in Accounts → Shared workspace & allowed workspaces.
+`ABSTRACTGATEWAY_WORKSPACE_MOUNTS` is read once, by the migration.
 These are gone:
 
 - the old runtime-config workspace keys;
