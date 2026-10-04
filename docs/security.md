@@ -728,7 +728,7 @@ environment. The flag is off by default and has no environment variable. Where
 a sandbox exists it changes nothing. With `--reload` it is ignored (the app
 runs in uvicorn's reloader child). It is audited at boot as
 `command_sandbox_configured`
-`{source, kind, state, line, unsandboxed_commands_allowed, env_keys}`.
+`{actor: "system:serve"|"system:runner", source, kind, state, line, unsandboxed_commands_allowed, env_keys}`.
 
 **State, not a control.** `GET /api/gateway/workspace/policy` and `GET
 /api/gateway/discovery/tools` carry `command_sandbox` `{state:

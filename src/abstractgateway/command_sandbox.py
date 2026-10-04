@@ -89,6 +89,7 @@ def configure_at_boot() -> Dict[str, Any]:
         record = {
             "ts": datetime.now(timezone.utc).isoformat(),
             "event": "command_sandbox_configured",
+            "actor": "system:" + (_flag_source or "serve"),
             "source": _flag_source or "default",
             "kind": st["kind"],
             "state": st["state"],

@@ -129,7 +129,7 @@ def test_the_flag_reaches_the_core_and_the_audit(tmp_path: Path) -> None:
     rec = command_sandbox.configure_at_boot()
     assert host_policy()["unsandboxed_commands_allowed"] is True
     line = [e for e in _audit(tmp_path) if e.get("event") == "command_sandbox_configured"][0]
-    assert line["unsandboxed_commands_allowed"] is True and line["source"] == "serve"
+    assert line["unsandboxed_commands_allowed"] is True and line["source"] == "serve" and line["actor"] == "system:serve"
     assert rec["unsandboxed_commands_allowed"] is True
 
 

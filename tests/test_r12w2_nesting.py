@@ -2,7 +2,7 @@
 
 - Refusing ``home`` while allowing ``home/project`` (rw) is VALID at the gateway, account and session
   levels; the child is reachable, the rest of ``home`` refused; a refused row inside an allowed one
-  refuses that subtree. The round-11 sentence "nothing re-opens under a refusal" is gone.
+  refuses that subtree. The round-11 refusal of a row nested under a refused row is gone.
 - Built-in refusals are absolute: an ro/rw row inside one is refused with
   "'X' is inside the built-in refused workspace 'Y'." (gateway, account, session, one-off run).
 - Caps: a child under a listed gateway row never exceeds that row's cap; a child under a REFUSED
@@ -105,7 +105,10 @@ def test_gateway_level_refused_parent_allowed_child_is_valid(ua: TestClient, tmp
 
 def test_the_round_11_sentence_is_deleted() -> None:
     src = Path(__file__).resolve().parents[1] / "src" / "abstractgateway"
-    hits = [p for p in src.rglob("*.py") if "nothing re-opens" in p.read_text(encoding="utf-8")]
+    gone = "nothing " + "re-opens"  # assembled, so a grep for the old sentence finds no test either
+    root = src.parents[1]
+    files = list(src.rglob("*.py")) + list((root / "docs").rglob("*.md")) + [root / "CHANGELOG.md", root / "llms-full.txt"]
+    hits = [p for p in files if gone in p.read_text(encoding="utf-8")]
     assert hits == []
 
 
