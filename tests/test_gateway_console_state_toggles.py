@@ -97,8 +97,10 @@ def test_users_table_and_create_user_follow_design() -> None:
     html = _html()
     # DESIGN-v2 §2.1: one Accounts table (users + entities); "Email for everyone" BELOW it.
     # Round-2 polish: no Role column (the kind chip says Admin / User / Entity, its title the role).
-    assert "<th>Name</th><th>Email address</th><th>Mailbox</th><th>Runtime</th><th>Active</th><th>Actions</th>" in html
-    users = html[html.index('<section id="users-section"'):html.index('<details id="my-workspace-policy-section"')]
+    # Round 8: ONE Email column ("address · state"); the workspace policy left for its own page.
+    assert "<th>Name</th><th>Email</th><th>Runtime</th><th>Active</th><th>Actions</th>" in html
+    users = html[html.index('<section id="users-section"'):html.index('<div id="my-email-section"')]
+    assert "my-workspace-policy" not in html
     assert "<th>State</th>" not in users
     assert users.index('<table class="users-table accounts-table" data-ui-no-stack>') < users.index('id="email-cap-email"')
     assert users.index('id="open-create-user"') < users.index('id="accounts-create-entity"') < users.index("<table")

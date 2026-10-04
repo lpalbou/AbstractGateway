@@ -84,10 +84,32 @@ def _run_summary(run: Any) -> Dict[str, Any]:
     }
 
 
-def list_runtimes(*, data_dir: Path, include_sizes: bool = True, entity_registry: Optional[Any] = None) -> Dict[str, Any]:
+def _owned_by(row: Dict[str, Any], account: str, tenant: Optional[str]) -> bool:
+    """Does `account` (a user id or an entity slug) own this plane? The
+    owners list is the one the table shows, so the filter and the Owner
+    column always agree."""
+    if tenant and str(row.get("tenant_id") or "default") != tenant:
+        return False
+    if row.get("kind") == "entity" and str(row.get("entity") or "") == account:
+        return True
+    return any(str((o or {}).get("user_id") or "") == account for o in (row.get("owners") or []))
+
+
+def list_runtimes(
+    *,
+    data_dir: Path,
+    include_sizes: bool = True,
+    entity_registry: Optional[Any] = None,
+    account: Optional[str] = None,
+    account_tenant: Optional[str] = None,
+) -> Dict[str, Any]:
     """Compose the runtime inventory: default plane + user planes + entity
     planes, with owners joined from the user registry and the entity roster.
-    Pure read; every per-plane failure is a labeled warning on the row."""
+    Pure read; every per-plane failure is a labeled warning on the row.
+
+    `account` (round 8, the Accounts Runtime link): keep only the planes that
+    account owns (before the size walk, so a filtered list is cheap); the
+    answer carries `filter: {account, tenant_id}`."""
     warnings: List[str] = []
     rows: List[Dict[str, Any]] = []
 
@@ -203,6 +225,13 @@ def list_runtimes(*, data_dir: Path, include_sizes: bool = True, entity_registry
     except Exception as e:  # noqa: BLE001
         warnings.append(f"#FALLBACK entity roster unreadable: {e}")
 
+    want = str(account or "").strip()
+    want_tenant = str(account_tenant or "").strip() or None
+    if want:
+        rows = [r for r in rows if not r.get("error") and _owned_by(r, want, want_tenant)]
+        kept = {id(r) for r in rows}
+        size_jobs = [j for j in size_jobs if id(j[0]) in kept]
+
     # Size pass, cheap planes first: entity homes and user planes are MBs;
     # the default root can be GBs — it goes last so the budget starves it
     # alone. Budget spent = size_bytes null with the label, never a slow tab.
@@ -220,6 +249,8 @@ def list_runtimes(*, data_dir: Path, include_sizes: bool = True, entity_registry
                 row["size_note"] = "#TRUNCATION size is a floor (walk capped)"
 
     out: Dict[str, Any] = {"runtimes": rows}
+    if want:
+        out["filter"] = {"account": want, "tenant_id": want_tenant}
     if warnings:
         out["warnings"] = warnings
     return out

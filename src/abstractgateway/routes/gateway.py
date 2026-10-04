@@ -1744,10 +1744,17 @@ async def get_workflow_catalog_flow_input_schema(
 
 
 @router.get("/admin/runtimes")
-def gateway_admin_list_runtimes(request: Request, include_sizes: bool = Query(default=True)) -> Dict[str, Any]:
+def gateway_admin_list_runtimes(
+    request: Request,
+    include_sizes: bool = Query(default=True),
+    account: Optional[str] = Query(default=None, description="Only the planes this account owns (user id or entity slug)."),
+    tenant_id: Optional[str] = Query(default=None, description="With `account`: the account's tenant (default: any)."),
+) -> Dict[str, Any]:
     """The runtimes-first inventory (operator order 2026-07-14): every data
     plane on this gateway — default, per-user, per-entity — with owners,
-    sizes, and entity liveness. Cheap by design; runs serve on drill-in."""
+    sizes, and entity liveness. Cheap by design; runs serve on drill-in.
+    `?account=<id>` (round 8: the Accounts Runtime link) keeps only the
+    planes that account owns and echoes the filter as `filter`."""
     _require_admin_principal(request)
     svc = get_gateway_service()
     from ..admin_runtimes import list_runtimes as _list_runtimes
@@ -1760,6 +1767,8 @@ def gateway_admin_list_runtimes(request: Request, include_sizes: bool = Query(de
         data_dir=Path(svc.config.data_dir),
         include_sizes=bool(include_sizes),
         entity_registry=registry,
+        account=account,
+        account_tenant=tenant_id,
     )
 
 
@@ -29322,6 +29331,22 @@ async def embeddings_config() -> Dict[str, Any]:
 async def workspace_policy() -> Dict[str, Any]:
     """Return the operator-configured server workspace policy (read-only, safe for thin clients)."""
     return {"ok": True, "policy": _server_workspace_policy_public()}
+
+
+@router.post("/workspace/path-check")
+async def workspace_path_check(request: Request, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Check ONE folder typed on the console's Workspaces page (round 8):
+    {path} -> {path, normalized, absolute, exists, is_dir, valid, sentence}.
+    Same rules as the policy writes (absolute, existing directory), so the
+    page can say why in plain words and never save an invalid row. Any
+    signed-in principal: a user's own policy write already refuses a missing
+    folder by name, so this reveals nothing the write does not."""
+    _principal_from_request(request)
+    from ..runtime_config import check_workspace_path
+
+    out = await _off_the_event_loop(check_workspace_path, (payload or {}).get("path"))
+    out["ok"] = True
+    return out
 
 
 @router.get("/workspace/policy/self")

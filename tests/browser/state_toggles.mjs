@@ -148,7 +148,7 @@ try {
     await signIn(page, "admin", ADMIN);
     // Sidebar (DESIGN-v2 §1): four groups in order, Setup at the bottom opens the guide.
     const nav = await page.evaluate(() => Array.from(document.querySelectorAll("#console-nav .af-nav-group")).map((g) => [g.querySelector(".af-nav-group__caption").textContent.trim(), Array.from(g.querySelectorAll(".tab-button")).map((b) => b.id.replace("tab-button-", ""))]));
-    check(JSON.stringify(nav) === JSON.stringify([["Accounts", ["users"]], ["Work", ["workflows", "skills", "runtimes", "apps"]], ["Models", ["providers", "catalog", "defaults"]], ["System", ["models", "sandbox", "network"]]]), "sidebar groups in order", nav);
+    check(JSON.stringify(nav) === JSON.stringify([["Accounts", ["users", "workspaces"]], ["Work", ["workflows", "skills", "runtimes", "apps"]], ["Models", ["providers", "openai", "catalog", "defaults"]], ["System", ["models", "sandbox", "network"]]]), "sidebar groups in order", nav);
     check((await page.locator("#topbar-static #open-setup, #af-topbar-root [id*=setup]").count()) === 0, "no Setup button in the top bar");
     await page.click("#open-setup");
     await page.waitForSelector("#first-run-backdrop:not(.hidden)", { timeout: 10000 });
@@ -165,27 +165,27 @@ try {
     check(JSON.stringify(caps) === JSON.stringify([["email-cap-email", "switch", "true"], ["email-cap-agent-tools", "switch", "true"], ["email-cap-recovery", "switch", "true"]]), "admin switches on by default", caps);
     // Accounts (§2): ONE table, users AND entities, tinted by kind, from GET /admin/accounts.
     const cols = await page.$$eval("#users-section thead th", (ths) => ths.map((t) => t.textContent.trim()));
-    check(JSON.stringify(cols) === JSON.stringify(["Name", "Email address", "Mailbox", "Runtime", "Active", "Actions"]), "accounts columns (the kind chip carries the role)", cols);
+    check(JSON.stringify(cols) === JSON.stringify(["Name", "Email", "Runtime", "Active", "Actions"]), "accounts columns (round 8: ONE Email column; the kind chip carries the role)", cols);
     const rows = await page.$$eval("#users-table tr.accounts-row", (trs) => trs.map((t) => [t.dataset.user, t.className.split(" ").find((c) => c.startsWith("af-row--")), getComputedStyle(t.cells[0]).backgroundColor]));
     check(JSON.stringify(rows.map((r) => r.slice(0, 2))) === JSON.stringify([["admin", "af-row--admin"], ["alice", "af-row--user"], ["bob", "af-row--user"], ["castor", "af-row--entity"]]), "one table: admin, users, entity rows with kind classes", rows);
     check(rows[0][2] !== "rgba(0, 0, 0, 0)" && rows[3][2] !== "rgba(0, 0, 0, 0)" && rows[0][2] !== rows[3][2], "admin and entity rows are tinted (kit tokens), differently", rows);
     check((await page.locator("#entities-list-section").isHidden()), "no separate Summoned entities panel for the admin");
     const own = await page.evaluate(() => { const b = document.querySelector("tr[data-user='admin'] .users-active [role=switch]"); const r = b && document.getElementById(b.id + "-reason"); return b && { dis: b.getAttribute("aria-disabled"), reason: r && !r.hidden ? r.textContent : null }; });
     check(own && own.dis === "true" && own.reason === "You can't deactivate your own account.", "own Active row unavailable with the reason", own);
-    const alice = await page.textContent("tr[data-user='alice'] .accounts-mailbox__text");
-    check(alice.trim() === "Connected as alice@fastmail.com", "alice mailbox cell", alice);
+    const alice = await page.textContent("tr[data-user='alice'] .accounts-email__text");
+    check(alice.trim() === "alice@fastmail.com · connected", "alice Email cell: address · state", alice);
     check((await page.textContent("tr[data-user='bob'] .accounts-col-email")).trim() === "No address", "bob has no email address (words, not a dash)");
     // Entities are AI users with their own mailbox (DESIGN-v3 §3): the real state of its own plane.
-    check((await page.textContent("tr[data-user='castor'] .accounts-mailbox__text")).trim() === "Not connected", "entity mailbox reads its own plane's state");
+    check((await page.textContent("tr[data-user='castor'] .accounts-email__text")).trim().endsWith("not connected") || (await page.textContent("tr[data-user='castor'] .accounts-email__text")).trim() === "No address", "entity Email cell reads its own plane's state");
     // DESIGN-v3 §1.1: only the actions that apply, no disabled buttons, no reasons paragraph.
     const acts = await page.evaluate(() => Object.fromEntries(Array.from(document.querySelectorAll("#users-table tr.accounts-row")).map((tr) => [tr.dataset.user, {
       vis: Array.from(tr.querySelectorAll(".accounts-actions__buttons > button")).map((b) => b.dataset.action),
-      menu: Array.from(tr.querySelectorAll(".af-menu__item")).map((b) => b.dataset.action),
       disabled: tr.querySelectorAll("button[disabled]").length,
     }])));
-    check(JSON.stringify(acts.castor) === JSON.stringify({ vis: ["email", "logs", "manage"], menu: ["archive"], disabled: 0 }), "entity row: Email · Logs · Manage + menu Archive", acts.castor);
-    check(JSON.stringify(acts.alice) === JSON.stringify({ vis: ["email", "logs", "workspace"], menu: ["rotate", "archive"], disabled: 0 }), "user row: Email · Logs · Workspace + menu Rotate token, Archive", acts.alice);
-    check(JSON.stringify(acts.admin) === JSON.stringify({ vis: ["email", "logs", "workspace"], menu: ["rotate"], disabled: 0 }), "own row: no Archive offered", acts.admin);
+    // Round 8: icon actions, no "⋯" menu: users Email · OpenAI API · Logs · Workspace · Rotate · Archive.
+    check(JSON.stringify(acts.castor) === JSON.stringify({ vis: ["email", "logs", "manage", "archive"], disabled: 0 }), "entity row: Email · Logs · Manage · Archive", acts.castor);
+    check(JSON.stringify(acts.alice) === JSON.stringify({ vis: ["email", "openai_api", "logs", "workspace", "rotate", "archive"], disabled: 0 }), "user row: Email · OpenAI API · Logs · Workspace · Rotate · Archive", acts.alice);
+    check(JSON.stringify(acts.admin) === JSON.stringify({ vis: ["email", "openai_api", "logs", "workspace", "rotate"], disabled: 0 }), "own row: no Archive offered", acts.admin);
     check((await page.locator("#users-section .accounts-reasons").count()) === 0 && !(await page.textContent("#users-section")).includes("don't apply to entities"), "no per-row reasons paragraph");
     // Round-2 polish: no placeholder dashes, actions on ONE row per account at 1440, one card title.
     const polish = await page.evaluate(() => {
@@ -452,8 +452,8 @@ try {
     check(head.title === "Your account" && head.sub === "Your account and the entities you created.", "non-admin page title: Your account", head);
     check(await page.locator("#my-email-section").isHidden(), "no inline 'My email address and mailbox' section on a user's page");
     check(await page.evaluate(() => !document.getElementById("tab-users").innerText.includes("My email address and mailbox")), "the old inline section title is gone from the page");
-    const ws = await page.evaluate(() => { const d = document.getElementById("my-workspace-policy-section"); const s = d.querySelector("summary"); return { cls: d.className, title: s.querySelector(".workspace-policy-disclosure__title")?.textContent, help: s.querySelector(".workspace-policy-disclosure__help")?.textContent, marker: getComputedStyle(s, "::before").content }; });
-    check(ws.cls.includes("plain-disclosure") && ws.title === "Workspace policy" && ws.help === "Which folders your agents may read and write." && ws.marker.includes("›"), "Workspace policy: kit chevron disclosure, short title + one helper sentence", ws);
+    // Round 8: the workspace policy left the account page for its own Workspaces page.
+    check(await page.evaluate(() => !document.getElementById("my-workspace-policy-section") && !document.getElementById("tab-button-workspaces").classList.contains("hidden")), "no workspace policy on the account page; Workspaces is in the sidebar for a user too");
     await page.click("tr[data-user='bob'] button[data-action='email']");
     await page.waitForSelector("#account-email-backdrop:not([hidden]) #my-email-section", { timeout: 10000 });
     const card = await page.evaluate(() => ({ title: document.getElementById("account-email-title").textContent, text: document.getElementById("my-email-registered-text").textContent, link: document.getElementById("my-email-registered-change").textContent, shown: document.getElementById("my-email-registered-view").checkVisibility() }));

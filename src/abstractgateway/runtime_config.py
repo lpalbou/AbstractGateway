@@ -379,6 +379,49 @@ def _normalize_workspace_path_list(
     return out
 
 
+def check_workspace_path(raw: Any) -> Dict[str, Any]:
+    """One folder typed on the Workspaces page, checked with the SAME rules
+    the policy writes enforce (_normalize_workspace_path_list strict): an
+    absolute path (``~`` expands to the gateway's home) to an existing
+    directory. ``valid`` is exactly "a write with this path would land";
+    ``sentence`` says in plain words why not (empty when valid), so the
+    console shows it inline and never saves an invalid row."""
+    text = str(raw or "").strip()
+    out: Dict[str, Any] = {
+        "path": text,
+        "normalized": "",
+        "absolute": False,
+        "exists": False,
+        "is_dir": False,
+        "valid": False,
+        "sentence": "",
+    }
+    if not text:
+        out["sentence"] = "Type a folder path."
+        return out
+    p = Path(text).expanduser()
+    if not p.is_absolute():
+        out["sentence"] = "Use a full path that starts with / (or ~ for the gateway's home folder)."
+        return out
+    out["absolute"] = True
+    try:
+        resolved = p.resolve()
+    except Exception:  # noqa: BLE001 - said, never raised
+        out["sentence"] = "This path can't be read on the gateway's computer."
+        return out
+    out["normalized"] = str(resolved)
+    if not resolved.exists():
+        out["sentence"] = "No folder at this path on the gateway's computer."
+        return out
+    out["exists"] = True
+    if not resolved.is_dir():
+        out["sentence"] = "This is a file, not a folder."
+        return out
+    out["is_dir"] = True
+    out["valid"] = True
+    return out
+
+
 def _format_workspace_path_list(entries: list[str]) -> str:
     return "\n".join(str(item).strip() for item in entries if str(item).strip())
 

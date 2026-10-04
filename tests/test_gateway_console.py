@@ -185,17 +185,13 @@ def test_gateway_console_routes_are_served(monkeypatch) -> None:
     assert 'id="runtime-subtab-runs"' not in console.text  # no Runs tab (dm#35)
     assert 'id="runtime-subtab-sessions"' in console.text
     assert 'id="runtime-subtab-caches"' in console.text
-    # Workspace access policy (operator redesign 2026-08-19): NO standing
-    # card/form — ONE modal edits both the gateway defaults (default-row
-    # button) and a single user's policy (per-row button, Users-table
-    # Workspace action). Posture = radio cards; trust first.
+    # Workspace access policy (round 8): its own page "Workspaces" (sidebar, right after
+    # Accounts); the old modal and the Accounts disclosure are gone.
     assert 'id="runtime-settings-section"' not in console.text
-    assert 'id="workspace-policy-modal-backdrop"' in console.text
-    assert 'id="wsp-mode-cards"' in console.text
-    assert 'id="wsp-trust"' in console.text
-    assert 'id="wsp-allowed"' in console.text
-    assert 'id="wsp-blocked"' in console.text
-    assert 'id="wsp-root-field"' in console.text
+    assert 'id="tab-button-workspaces"' in console.text and 'id="workspaces-root"' in console.text
+    assert 'id="workspace-policy-modal-backdrop"' not in console.text
+    assert 'id="wsp-mode-cards"' not in console.text
+    assert 'id="my-workspace-policy-section"' not in console.text
     assert 'id="runtime-workspace-root"' not in console.text  # inline form gone
     assert 'id="runtime-config-save"' not in console.text
     assert 'id="runtime-runs-default"' in console.text

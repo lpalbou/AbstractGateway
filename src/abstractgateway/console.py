@@ -155,12 +155,13 @@ def _console_owned_sources() -> Tuple[str, str, str, str]:
     from .console_skills_mcp import SKILLS_MCP_CSS, SKILLS_MCP_JS
     from .console_themes import KIT_THEME_CSS
     from .console_ui import CONSOLE_UI_CSS, CONSOLE_UI_JS
+    from .console_workspaces import ACCOUNTS_CSS, WORKSPACES_CSS, WORKSPACES_JS
 
     return (
         _strip_html_comments(_CONSOLE_HTML_TEMPLATE),
         _strip_css_comments(KIT_THEME_CSS),
-        _strip_css_comments(CONSOLE_UI_CSS + CATALOG_CSS + SKILLS_MCP_CSS),
-        _strip_js_line_comments(CONSOLE_UI_JS + CATALOG_JS + SKILLS_MCP_JS),
+        _strip_css_comments(CONSOLE_UI_CSS + CATALOG_CSS + SKILLS_MCP_CSS + ACCOUNTS_CSS + WORKSPACES_CSS),
+        _strip_js_line_comments(CONSOLE_UI_JS + CATALOG_JS + SKILLS_MCP_JS + WORKSPACES_JS),
     )
 
 
@@ -1105,14 +1106,13 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      width: min(500px, 100%);
 	      max-width: min(500px, 100%);
 	    }
-	    .modal.wsp-modal { width: min(860px, 100%); max-width: min(860px, 100%); }
 	    .modal.log-modal { width: min(1100px, 100%); max-width: min(1100px, 100%); }
 	    /* Dialogs become bottom sheets on phones and in phone landscape
 	       (DESIGN §5.7): full width, top corners rounded, the actions row
 	       stays visible (sticky) above the home indicator. */
 	    @media (max-width: 767.98px), (max-height: 500px) {
 	      .modal-backdrop { place-items: end center; padding: var(--safe-top, 0px) 0 0; }
-	      .modal, .modal.wide, .modal.flow-modal, .default-modal, .modal.wsp-modal, .modal.log-modal, .modal.provider-modal {
+	      .modal, .modal.wide, .modal.flow-modal, .default-modal, .modal.log-modal, .modal.provider-modal {
 	        width: 100%; max-width: 100%;
 	        max-height: calc(var(--vh-full, 100vh) - var(--safe-top, 0px));
 	        border-radius: var(--radius-lg) var(--radius-lg) 0 0;
@@ -1155,21 +1155,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      font-size: var(--font-size-sm); line-height: 1.5;
 	      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 	    }
-	    .wsp-mode-cards { display: grid; gap: 8px; margin: 2px 0 10px; }
-	    .wsp-card { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--ui-border-1); border-radius: var(--radius-lg); padding: 10px 12px; cursor: pointer; text-transform: none; letter-spacing: normal; }
-	    .wsp-card:hover { border-color: var(--ui-border-2); }
-	    .wsp-card.selected { border-color: var(--accent); background: var(--accent-subtle); }
-	    .wsp-card input[type="radio"] { width: auto; min-height: auto; flex: 0 0 auto; margin-top: 3px; padding: 0; border: none; background: transparent; accent-color: var(--accent); }
-	    .wsp-card > span { flex: 1 1 auto; min-width: 0; }
-	    .wsp-card b { display: block; margin-bottom: 2px; }
-	    .wsp-card .wsp-card-sub { color: var(--text-secondary); font-size: var(--font-size-sm); line-height: 1.4; }
-	    .wsp-field { display: block; margin-bottom: 10px; }
-	    .wsp-field .wsp-hint { color: var(--text-secondary); font-size: var(--font-size-sm); display: block; margin: 2px 0 4px; text-transform: none; letter-spacing: normal; font-weight: normal; }
-	    .wsp-field textarea, .wsp-field select { width: 100%; }
-	    .wsp-badge { font-size: var(--font-size-xs); border: 1px solid var(--ui-border-1); border-radius: 999px; padding: 1px 8px; color: var(--text-secondary); white-space: nowrap; }
 	    .spin-inline { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--ui-border-2); border-top-color: var(--accent); border-radius: 50%; animation: afspin .8s linear infinite; vertical-align: -2px; margin-right: 7px; }
 	    @keyframes afspin { to { transform: rotate(360deg); } }
-	    .wsp-badge.custom { border-color: var(--accent); color: var(--accent); }
 	    .modal.provider-modal {
 	      width: min(720px, 100%);
 	      padding: 14px 14px 0;
@@ -1575,12 +1562,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .plain-disclosure > summary::before { content: "›"; display: inline-block; width: 1em; text-align: center; transition: transform .15s; }
 	    .plain-disclosure[open] > summary::before { transform: rotate(90deg); }
 	    .plain-disclosure[open] > summary { color: var(--text); margin-bottom: 8px; }
-	    /* F5: the workspace policy disclosure = the kit chevron (as Advanced), a short title + one helper line. */
-	    .workspace-policy-disclosure { margin-top: 16px; }
 	    .weights-reason { display: block; margin-top: 4px; font-size: var(--af-helper-size, 13px); color: var(--text-secondary); }
-	    .workspace-policy-disclosure > summary { display: grid; grid-template-columns: 1em 1fr; column-gap: 4px; align-items: baseline; }
-	    .workspace-policy-disclosure__title { font-size: var(--font-size-md); font-weight: 600; color: var(--text); }
-	    .workspace-policy-disclosure__help { grid-column: 2; font-size: var(--af-helper-size, 13px); color: var(--text-secondary); font-weight: 400; }
 	    .link-button {
 	      min-height: 0; padding: 2px 0; border: 0; background: transparent; color: var(--muted);
 	      font-size: var(--font-size-base); font-weight: 400; text-decoration: underline;
@@ -1806,13 +1788,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      .mail-server-row__fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 	      .mail-server-row__host { grid-column: 1 / -1; }
 	    }
-	    /* ---- Accounts (DESIGN-v3 §1): header row, ONE full-width table that never scrolls
-	       sideways: table-layout fixed + colgroup, cells that wrap (never truncate), Actions = Email · Logs · Workspace|Manage · the kit "⋯" menu (af-menu).
-	       Columns: Name 22 %, Runtime 16 %, Active 84 px, Actions 280 px (fits Email · Logs ·
-	       Workspace · ⋯), Email address and Mailbox share the rest. Card list when the table would
-	       not fit: a CONTAINER query on the table's own width, computed from the column minimums
-	       (Email address and Mailbox >= 120 px each: (364 + 240) / 0.62 = 974 px), so the sidebar
-	       width never matters. Proven at 1024-2560 px by tests/browser/accounts.mjs. */
+	    /* ---- Accounts: the page frame here; the table, its icon actions and the card list are
+	       console_workspaces.py ACCOUNTS_CSS (round 8). */
 	    #tab-users #account { display: none; }
 	    /* One subheading size on every round-2 page (= the card heading, h2 15 px / 600). */
 	    .section-subtitle { font-size: calc(15px * var(--font-scale)); font-weight: 600; color: var(--text); margin: 0 0 4px; }
@@ -1824,78 +1801,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .accounts-head__archived { display: inline-flex; align-items: center; margin-right: 4px; }
 	    .accounts-head__archived[hidden] { display: none; }
 	    .accounts-head__archived .af-switch__reason { display: none; }
-	    .accounts-page .users-table-wrap { overflow: visible; container: accounts / inline-size; }
-	    .accounts-table { width: 100%; table-layout: fixed; border-collapse: collapse; }
-	    .accounts-table col.accounts-c-name { width: 22%; }
-	    .accounts-table col.accounts-c-runtime { width: 16%; }
-	    .accounts-table col.accounts-c-active { width: 84px; }
-	    .accounts-table col.accounts-c-actions { width: 280px; }
-	    .accounts-table th { text-align: left; white-space: normal; overflow-wrap: anywhere; }
-	    .accounts-table th, .accounts-table td { padding-left: 10px; padding-right: 10px; }
-	    .accounts-table td { vertical-align: middle; padding-top: 10px; padding-bottom: 10px; overflow: hidden; }
-	    /* Wrap, never truncate (operator rule): a long id or address breaks anywhere and the row grows. */
-	    .accounts-cell-text { display: block; min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; word-break: normal; }
-	    /* Runtime ids: plain mono text (no chip box) that wraps at its hyphens first. */
-	    code.accounts-cell-text { display: block; padding: 0; border: 0; background: transparent; box-shadow: none; color: inherit; white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; word-break: normal; font-size: var(--font-size-md); }
-	    .accounts-mailbox__reason { margin-top: 2px; font-size: var(--af-helper-size, var(--font-size-md)); }
-	    /* The id keeps its line; the chips wrap under it when the column is narrow. */
-	    .accounts-name__line { display: flex; align-items: center; gap: 4px 8px; min-width: 0; flex-wrap: wrap; }
-	    .accounts-name__line > strong { flex: 0 1 auto; min-width: 0; max-width: 100%; font-weight: 600; }
-	    .accounts-name__line > .af-kind-chip, .accounts-archived-chip { flex: 0 0 auto; }
-	    .accounts-archived-chip { display: inline-flex; align-items: center; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); font-size: var(--font-size-sm, 12px); font-weight: 600; line-height: 1.5; white-space: nowrap; }
-	    .accounts-row--archived .accounts-name__line > strong { color: var(--muted); }
-	    .accounts-phone-line { display: none; }
 	    #users-section > .message:empty, #users-section > .issued.hidden { display: none; }
 	    #email-caps-message:empty { display: none; }
-	    /* Active: the switch only (its unavailable reason is the switch's title + aria-describedby). */
-	    .accounts-active .af-switch__reason { display: none; }
-	    .accounts-active__archived { font-size: var(--font-size-md); }
-	    /* Actions: one line that never leaves its cell; the "⋯" list is position: fixed (kit). */
-	    .accounts-table td.accounts-actions { overflow: visible; white-space: nowrap; }
-	    .accounts-actions__buttons { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; }
-	    .accounts-actions__buttons > button { display: inline-flex; align-items: center; justify-content: center; height: 32px; min-height: 32px; padding: 0 10px; font-size: var(--font-size-md); white-space: nowrap; }
-	    .accounts-actions__buttons .af-menu__button { height: 32px; min-width: 36px; }
 	    .accounts-legend { margin: 0; }
 	    /* Email for everyone: a full-width settings row (label + description left, switch at the card edge). */
 	    #users-section .accounts-email { margin: 8px 0 0; padding: 16px 0 0; border: 0; border-top: 1px solid var(--line-soft); background: transparent; box-shadow: none; max-width: none; width: 100%; }
 	    #users-section .accounts-email .switch-list, #users-section .accounts-email .af-switch--row { width: 100%; max-width: none; }
 	    #users-section .accounts-email .plain-disclosure { margin-top: 8px; }
-	    @media (pointer: coarse) {
-	      .accounts-actions__buttons > button, .accounts-actions__buttons .af-menu__button { height: 44px; min-height: 44px; }
-	    }
-	    /* Card list (DESIGN-v3 §1.2): one flat block per account (no card in a card). Line 1 name +
-	       chip + Active (right); line 2 "Email address · Mailbox"; line 3 runtime (muted); line 4 actions. */
-	    @container accounts (max-width: 973.98px) {
-	      .accounts-table, .accounts-table tbody, .accounts-table tr { display: block; width: 100%; }
-	      .accounts-table thead, .accounts-table colgroup { display: none; }
-	      .accounts-table tr.accounts-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 12px 12px 12px 14px; border-top: 1px solid var(--line-soft); }
-	      .accounts-table tr.accounts-row > td { display: block; padding: 0; border: 0; min-width: 0; width: auto; overflow: visible; }
-	      .accounts-table tr.accounts-row > td::before { content: none; }
-	      .accounts-table td.accounts-name { grid-column: 1; grid-row: 1; align-self: center; }
-	      .accounts-table td.accounts-active { grid-column: 2; grid-row: 1; justify-self: end; align-self: center; }
-	      .accounts-table td.accounts-mailbox { grid-column: 1 / -1; grid-row: 2; }
-	      .accounts-table tr.accounts-row > td.accounts-col-email { display: none; }
-	      .accounts-table td.accounts-col-runtime { grid-column: 1 / -1; grid-row: 3; color: var(--af-row-text-muted, var(--muted)); }
-	      .accounts-table td.accounts-actions { grid-column: 1 / -1; grid-row: 4; margin-top: 6px; }
-	      .accounts-table .accounts-mailbox__text { display: none; }
-	      .accounts-phone-line { display: block; overflow-wrap: anywhere; }
-	      /* Line 3: a plain muted line, never a box that reads as an input. */
-	      .accounts-table td.accounts-col-runtime .accounts-cell-text { display: block; background: transparent; border: 0; box-shadow: none; padding: 0; color: inherit; font-size: var(--font-size-md); }
-	      .accounts-table td.accounts-col-runtime .accounts-cell-text::before { content: "Runtime "; font-family: var(--font-sans, inherit); }
-	      .accounts-actions__buttons { flex-wrap: wrap; gap: 8px; }
-	      /* One flat block per row: the tint and the kind bar paint the row, not each cell. */
-	      .accounts-table tr.accounts-row > td { background: transparent !important; box-shadow: none !important; }
-	      .accounts-table tr.af-row--admin { background-color: var(--af-row-tint-admin); box-shadow: inset 3px 0 0 var(--af-row-mark-admin); }
-	      .accounts-table tr.af-row--user { box-shadow: inset 3px 0 0 var(--af-row-mark-user); }
-	      .accounts-table tr.af-row--entity { background-color: var(--af-row-tint-entity); box-shadow: inset 3px 0 0 var(--af-row-mark-entity); }
-	      .accounts-table .row-confirm, .accounts-table .row-confirm > td { display: block; padding: 0 0 10px; border: 0; }
-	    }
 	    @media (max-width: 767.98px) {
 	      .accounts-head { justify-content: stretch; }
 	      .accounts-head__actions { flex: 1 1 100%; }
 	      .accounts-head__actions > button { flex: 1 1 100%; min-height: 44px; }
 	      .accounts-head__archived { flex: 1 1 100%; }
-	      .accounts-actions__buttons > button, .accounts-actions__buttons .af-menu__button { height: 44px; min-height: 44px; padding: 0 14px; font-size: var(--font-size-base); }
 	    }
 	    /* Account modals (kit af-modal): content rules only; the shell is the kit's. */
 	    .account-modal-body .account-page { max-width: none; }
@@ -2037,6 +1954,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <div class="shell_nav_group af-nav-group" role="group" aria-labelledby="nav-group-accounts">
 	        <div id="nav-group-accounts" class="shell_nav_caption af-nav-group__caption">Accounts</div>
 	        <button id="tab-button-users" class="tab-button shell_nav_item" type="button" title="People who use this gateway and the entities that act on it"><span class="shell_nav_icon" aria-hidden="true">☾</span><span class="shell_nav_label">Accounts</span></button>
+	        <button id="tab-button-workspaces" class="tab-button shell_nav_item" type="button" title="Which folders agents may read and write, for the gateway and per account"><span class="shell_nav_icon" aria-hidden="true">▢</span><span class="shell_nav_label">Workspaces</span></button>
 	      </div>
 	      <div class="shell_nav_group af-nav-group" role="group" aria-labelledby="nav-group-work">
 	        <div id="nav-group-work" class="shell_nav_caption af-nav-group__caption">Work</div>
@@ -2290,9 +2208,12 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <button id="runtimes-refresh" class="secondary icon-only" title="Reload the runtime inventory" aria-label="Refresh runtimes"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
 	              </div>
 	              <div id="runtimes-message" class="message"></div>
+	              <!-- Round 8: `#runtimes?account=<id>` (the Accounts Runtime link) = GET /admin/runtimes?account=<id>;
+	                   the filter shows as a removable chip. -->
+	              <div id="runtimes-filter" class="runtimes-filter" hidden></div>
 	              <div class="table-scroll" id="runtimes-scroll">
 	                <table>
-	                  <thead><tr><th>Runtime</th><th>Kind</th><th>Owner</th><th>State</th><th>Size</th><th>Workspace policy</th></tr></thead>
+	                  <thead><tr><th>Runtime</th><th>Kind</th><th>Owner</th><th>State</th><th>Size</th><th>Workspace</th></tr></thead>
 	                  <tbody id="runtimes-table"></tbody>
 	                </table>
 	              </div>
@@ -2648,14 +2569,18 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      <div id="tab-openai" class="tab-panel">
 	        <div id="openai-root" class="core-console-root"></div>
 	      </div>
+	      <!-- WORKSPACES (round 8, console_workspaces.py): the gateway policy + per-account policies; rows apply on blur. -->
+	      <div id="tab-workspaces" class="tab-panel">
+	        <div id="workspaces-root" class="ws-page session-only"></div>
+	      </div>
 	      <div id="tab-users" class="tab-panel">
 	        <div id="account" class="session-summary">No active session.</div>
 	        <div class="tab-grid tab-grid-wide">
 	          <div class="tab-stack">
 	            <!-- ACCOUNTS (DESIGN-v3 §1): ONE table for users AND entities (GET /admin/accounts),
 	                 rows tinted by kind (kit .af-row--*), an Active switch on every live row, only the
-	                 actions that apply (Email · Logs · Workspace|Manage · the kit "⋯" menu), Show archived
-	                 (admins), a flat card list when the table would not fit, and the Email / Logs modals. -->
+	                 actions that apply as icon buttons with tooltips (round 8: no "⋯" menu), Show archived
+	                 (admins), a flat card list below ~900 px, and the Email / Logs modals. -->
 	            <section id="users-section" class="session-only hidden accounts-page">
 	              <div class="accounts-head">
 	                <div class="accounts-head__actions">
@@ -2668,8 +2593,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	              <div id="users-message" class="message" role="status" aria-live="polite"></div>
 	              <div class="users-table-wrap">
 	                <table class="users-table accounts-table" data-ui-no-stack>
-	                  <colgroup><col class="accounts-c-name"><col class="accounts-c-email"><col class="accounts-c-mailbox"><col class="accounts-c-runtime"><col class="accounts-c-active"><col class="accounts-c-actions"></colgroup>
-	                  <thead><tr><th>Name</th><th>Email address</th><th>Mailbox</th><th>Runtime</th><th>Active</th><th>Actions</th></tr></thead>
+	                  <colgroup><col class="accounts-c-name"><col class="accounts-c-email"><col class="accounts-c-runtime"><col class="accounts-c-active"><col class="accounts-c-actions"></colgroup>
+	                  <thead><tr><th>Name</th><th>Email</th><th>Runtime</th><th>Active</th><th>Actions</th></tr></thead>
 	                  <tbody id="users-table"></tbody>
 	                </table>
 	              </div>
@@ -2691,29 +2616,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <p id="email-caps-message" class="inline-state" role="status" aria-live="polite"></p>
 	              </section>
 	            </section>
-	            <details id="my-workspace-policy-section" class="plain-disclosure workspace-policy-disclosure session-only">
-	              <summary><span class="workspace-policy-disclosure__title">Workspace policy</span><span id="my-workspace-policy-summary" class="workspace-policy-disclosure__help">Which folders your agents may read and write.</span></summary>
-	              <div class="entity-config-block">
-	                <div class="section-head">
-	                  <div>
-	                    <p class="section-note">How your agents' filesystem access is decided. Whitelist (default): deny everything, allow your listed folders — plus the folder an agent is started from while launch-folder trust is on. Blacklist: allow everything except your refused folders. The gateway-wide deny list always applies on top.</p>
-	                  </div>
-	                  <button id="my-workspace-policy-refresh" class="secondary icon-only" title="Reload my workspace policy" aria-label="Refresh my workspace policy"><span class="button-icon icon-refresh" aria-hidden="true">↻</span></button>
-	                </div>
-	                <div id="my-workspace-policy-message" class="message"></div>
-	                <div class="provider-config-form">
-	                  <label>Launch-folder trust <select id="my-workspace-trust"><option value="">inherit gateway default</option><option value="on">on — agents may write where they start</option><option value="off">off — launch folders are not trusted</option></select></label>
-	                  <label>Access mode <select id="my-workspace-mode"><option value="">whitelist (default) — deny everything, allow my list</option><option value="whitelist">whitelist — deny everything, allow my list</option><option value="blacklist">blacklist — allow everything, refuse my list</option></select></label>
-	                  <label class="field-span-2">Extra allowed folders (added to the gateway-wide roots) <textarea id="my-workspace-allowed" rows="3" spellcheck="false" placeholder="/abs/path/to/project&#10;/abs/path/to/notes"></textarea></label>
-	                  <label class="field-span-2">Refused folders (always denied, in every posture) <textarea id="my-workspace-blocked" rows="3" spellcheck="false" placeholder="/abs/path/to/private"></textarea></label>
-	                </div>
-	                <div class="inline">
-	                  <button id="my-workspace-policy-save" type="button">Save my workspace policy</button>
-	                  <button id="my-workspace-policy-clear" class="secondary" type="button">Reset to inherited</button>
-	                </div>
-	                <div id="my-workspace-policy-current" class="section-note"></div>
-	              </div>
-	            </details>
             <!-- The user's account page (DESIGN §6). Cards, in order: Email address
                  (the one inline Save) → Mailbox (tabs Google / Microsoft / Other, or the
                  connected status) → Notifications (two switches) → Agent email tools →
@@ -3025,70 +2927,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      </div>
 	      <div class="modal-actions">
 	        <button id="run-modal-close" class="secondary" type="button">Close</button>
-	      </div>
-	    </div>
-	  </div>
-	  <div id="workspace-policy-modal-backdrop" class="modal-backdrop hidden" role="presentation">
-	    <div class="modal flow-modal wsp-modal" role="dialog" aria-modal="true" aria-labelledby="workspace-policy-modal-title">
-	      <div class="modal-header">
-	        <h2 id="workspace-policy-modal-title">Workspace policy</h2>
-	        <p id="workspace-policy-modal-user"></p>
-	      </div>
-	      <div class="modal-body">
-	        <label class="wsp-field">Launch-folder trust
-	          <span class="wsp-hint">Whether an agent may write in the folder it was started from.</span>
-	          <select id="wsp-trust">
-	            <option value="">Inherit gateway default</option>
-	            <option value="on">On — the launch folder is writable</option>
-	            <option value="off">Off — launch folders get no special treatment</option>
-	          </select>
-	        </label>
-	        <div class="wsp-mode-cards" id="wsp-mode-cards">
-	          <label class="wsp-card" data-mode="" id="wsp-card-inherit">
-	            <input type="radio" name="wsp-mode" value="">
-	            <span><b>Inherit the gateway default</b>
-	            <span class="wsp-card-sub" id="wsp-inherit-sub">Deny everything except the allowed folders — plus the folder an agent is launched from, while launch-folder trust is on.</span></span>
-	          </label>
-	          <label class="wsp-card" data-mode="whitelist">
-	            <input type="radio" name="wsp-mode" value="whitelist">
-	            <span><b>Deny everything, allow listed folders</b>
-	            <span class="wsp-card-sub" id="wsp-whitelist-sub">Agents may only work under the gateway roots plus this user's allowed folders — and the launch folder while trust is on.</span></span>
-	          </label>
-	          <label class="wsp-card" data-mode="blacklist">
-	            <input type="radio" name="wsp-mode" value="blacklist">
-	            <span><b>Allow everything, refuse listed folders</b>
-	            <span class="wsp-card-sub" id="wsp-blacklist-sub">Agents may work anywhere on the gateway host except the refused folders. The gateway-wide deny list still applies.</span></span>
-	          </label>
-	        </div>
-	        <label class="wsp-field">Allowed folders
-	          <span class="wsp-hint" id="wsp-allowed-hint">Extra folders this user's agents may use, one per line — added on top of the gateway-wide roots.</span>
-	          <textarea id="wsp-allowed" rows="3" spellcheck="false" placeholder="/abs/path/to/project"></textarea>
-	        </label>
-	        <label class="wsp-field">Refused folders
-	          <span class="wsp-hint" id="wsp-blocked-hint">Folders this user's agents may never touch, one per line — enforced in every posture.</span>
-	          <textarea id="wsp-blocked" rows="3" spellcheck="false" placeholder="/abs/path/to/private"></textarea>
-	        </label>
-	        <details class="advanced-panel">
-	          <summary>Advanced</summary>
-	          <label class="wsp-field hidden" id="wsp-root-field">Default workspace folder
-	            <span class="wsp-hint">Where a run lands when the client names no folder. Blank keeps the gateway's built-in default.</span>
-	            <input id="wsp-root" type="text" spellcheck="false" placeholder="/abs/path/to/default/workspace">
-	          </label>
-	          <label class="wsp-field">Full filesystem bypass (legacy)
-	            <span class="wsp-hint" id="wsp-overrides-hint">Not the same as launch-folder trust: trust only covers the one folder an agent is started from. This legacy switch lets this user's clients name ANY folder as a workspace and browse server files anywhere — the posture and folder lists above stop applying. Leave inherited unless an old client depends on it.</span>
-	            <select id="wsp-overrides">
-	              <option value="">Inherit gateway default</option>
-	              <option value="on">Granted</option>
-	              <option value="off">Refused</option>
-	            </select>
-	          </label>
-	        </details>
-	        <div id="wsp-message" class="message"></div>
-	      </div>
-	      <div class="modal-actions">
-	        <button id="wsp-cancel" class="secondary">Cancel</button>
-	        <button id="wsp-reset" class="secondary" title="Drop every override for this user — they fall back to the gateway defaults"><span class="button-icon" aria-hidden="true">×</span><span>Reset to inherited</span></button>
-	        <button id="wsp-save" title="Save this user's workspace policy"><span class="button-icon" aria-hidden="true">✓</span><span>Save</span></button>
 	      </div>
 	    </div>
 	  </div>
@@ -3941,7 +3779,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // door (users & entities), where they run, then setup (providers,
 	    // capability defaults), then validation (sandbox). A stale persisted
 	    // "entities" value folds into "users" below.
-	    const TABS = ["users", "runtimes", "workflows", "skills", "providers", "openai", "defaults", "sandbox", "models", "catalog", "apps", "network"];
+	    const TABS = ["users", "workspaces", "runtimes", "workflows", "skills", "providers", "openai", "defaults", "sandbox", "models", "catalog", "apps", "network"];
 	    // Retired tab ids and their new homes: a persisted value or a `#<id>` link
 	    // still lands there (entities merged into users; DESIGN-v3 §7: the Engines
 	    // tab merged into Providers).
@@ -4150,6 +3988,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    }
 	    const TAB_TITLES = {
 	      users: ["Accounts", "People who use this gateway and the entities that act on it"],
+	      workspaces: ["Workspaces", "Which folders agents may read and write"],
 	      runtimes: ["Runtimes", "Each user's own data plane: runs, flows, sessions and memory"],
       workflows: ["Workflows", "Bundles, versions, import and export"],
       skills: ["Skills & MCP", "Skills agents can load, and MCP tool servers"],
@@ -4185,6 +4024,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        $("page-subtitle").textContent = t[1];
 	      }
 	      writeStringSetting(ACTIVE_TAB_KEY, next);
+	      wsOnTabChange(next);  // drops a `#runtimes?account=` / `#workspaces?account=` link when leaving its page (console_workspaces.py)
 	      if (next === "skills") openSkillsMcpPage();  // console_skills_mcp.py
 	      mcOnTabChange(next);  // the catalog's `#catalog?...` link follows the tab (console_catalog.py)
 	    }
@@ -6671,7 +6511,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      loadingTr.append(loadingTd);
 	      body.append(loadingTr);
 	      try {
-	        const data = await api("/api/gateway/admin/runtimes");
+	        const filter = runtimesFilterFromHash();
+	        renderRuntimesFilter(filter);
+	        const data = await api(`/api/gateway/admin/runtimes${filter ? `?account=${encodeURIComponent(filter.account)}${filter.tenant_id ? `&tenant_id=${encodeURIComponent(filter.tenant_id)}` : ""}` : ""}`);
+	        if (filter && !(data.filter && data.filter.account === filter.account)) throw new Error("GET /admin/runtimes?account= answered without its filter (round-8 seam).");
 	        const rows = Array.isArray(data.runtimes) ? data.runtimes : [];
 	        state.runtimeRows = rows;
 	        // One cheap GET feeds every row's policy badge (never N+1) and the
@@ -6742,44 +6585,21 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          size.textContent = (typeof r.size_bytes === "number") ? _fmtBytes(r.size_bytes) : "";
 	          if (r.size_note) size.title = r.size_note;
 	          tr.append(size);
-	          // Workspace policy cell. The DEFAULT row is the gateway itself —
-	          // its button edits the gateway-wide defaults. User rows with
-	          // exactly ONE enabled owner edit that user's policy; multi-owner
-	          // and ownerless planes have no single principal to configure.
+	          // Workspace cell (round 8): a link to the Workspaces page — the gateway policy for the
+	          // default plane, the owner's row for a one-owner user plane. Entities: their folders live in Manage.
 	          const policyTd = document.createElement("td");
 	          const enabledOwners = (r.owners || []).filter((o) => o && o.enabled !== false && o.user_id);
 	          if (r.kind === "default") {
-	            const gear = document.createElement("button");
-	            gear.className = "secondary";
-	            // ICONS.gear inline: boot-time icon hydration only touches
-	            // static markup — dynamic rows must carry the SVG themselves
-	            // or they regress to the tiny platform glyph.
-	            gear.innerHTML = `<span class="button-icon" aria-hidden="true">${ICONS.gear}</span><span>Gateway defaults</span>`;
-	            gear.title = "Edit the gateway-wide workspace defaults every user inherits";
-	            gear.setAttribute("aria-label", "Configure gateway workspace defaults");
-	            gear.onclick = (ev) => { ev.stopPropagation(); openGatewayPolicyModal(); };
-	            policyTd.append(gear);
+	            policyTd.append(workspacesLink("Gateway policy", null));
 	          } else if (r.kind === "user" && enabledOwners.length === 1) {
-	            const target = { tenant_id: r.tenant_id || "default", user_id: enabledOwners[0].user_id };
-	            const key = _wspPolicyKeyOf(target);
-	            const badge = document.createElement("span");
-	            badge.className = "wsp-badge" + (state.userPolicyKeys?.has(key) ? " custom" : "");
-	            badge.dataset.wspkey = key;
-	            badge.textContent = state.userPolicyKeys?.has(key) ? "custom" : "inherited";
-	            const gear = document.createElement("button");
-	            gear.className = "secondary";
-	            gear.innerHTML = `<span class="button-icon" aria-hidden="true">${ICONS.gear}</span><span>Configure</span>`;
-	            gear.title = `Configure where ${target.user_id}'s agents may read and write`;
-	            gear.setAttribute("aria-label", `Workspace policy for ${target.user_id}`);
-	            gear.onclick = (ev) => { ev.stopPropagation(); openWorkspacePolicyModal(target); };
-	            policyTd.append(gear, document.createTextNode(" "), badge);
+	            const key = `${r.tenant_id || "default"}:${enabledOwners[0].user_id}`;
+	            const own = state.userPolicyKeys && state.userPolicyKeys.has(key);
+	            policyTd.append(workspacesLink(own ? "Own policy" : "Gateway policy", { account: enabledOwners[0].user_id, tenant_id: r.tenant_id || "default" }));
 	          } else if (r.kind === "entity") {
-	            policyTd.innerHTML = `<span class="muted" title="Entity filesystem access is configured on the entity itself (workspace mounts, Accounts tab)">via entity</span>`;
+	            policyTd.innerHTML = `<span class="muted">Set in Manage</span>`;
 	          } else {
-	            policyTd.textContent = "—";
-	            policyTd.title = enabledOwners.length > 1
-	              ? "Several users bind this plane — set each user's policy from the Users table"
-	              : "No live user binds this plane";
+	            policyTd.textContent = "None";
+	            policyTd.className = "muted";
 	          }
 	          tr.append(policyTd);
 	          body.append(tr);
@@ -6789,7 +6609,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	          const td = document.createElement("td");
 	          td.colSpan = 6;
 	          td.className = "empty";
-	          td.textContent = "No runtimes found.";
+	          td.textContent = filter ? `${filter.account} owns no runtime yet.` : "No runtimes found.";
 	          tr.append(td);
 	          body.append(tr);
 	        }
@@ -6801,7 +6621,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        // mid-read).
 	        const curKey = state.selectedRuntime ? _runtimeKeyOf(state.selectedRuntime) : "";
 	        const pick = curKey ? rows.find((r) => !r.error && _runtimeKeyOf(r) === curKey) || null : null;
+	        const only = filter ? rows.filter((r) => !r.error) : [];
 	        if (pick) selectRuntime(pick, { preserve: true });
+	        else if (only.length === 1) selectRuntime(only[0]);  // the account's one runtime opens at once
 	        else _clearRuntimeSelection();
 	      } catch (e) {
 	        // The failure lands IN the table (one error surface, entities-row
@@ -6991,60 +6813,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      // panel, nothing else) — this cache feeds the modal and the
 	      // per-row policy badges.
 	      state.runtimeConfig = payload || null;
-	    }
-	    function renderMyWorkspacePolicy(payload) {
-	      state.myWorkspacePolicy = payload || null;
-	      const entry = payload?.policy || {};
-	      const eff = payload?.effective || {};
-	      $("my-workspace-mode").value = typeof entry.mode === "string" ? entry.mode : "";
-	      const trust = entry.trust_client_launch_folder;
-	      $("my-workspace-trust").value = trust === true ? "on" : trust === false ? "off" : "";
-	      $("my-workspace-allowed").value = (entry.workspace_allowed_paths || []).join("\\n");
-	      $("my-workspace-blocked").value = (entry.workspace_blocked_paths || []).join("\\n");
-	      const effMode = eff.mode || "whitelist";
-	      const effTrust = eff.trust_client_launch_folder === true;
-	      $("my-workspace-policy-current").textContent =
-	        `Effective: ${effMode} mode · launch-folder trust ${effTrust ? "on" : "off"} · ` +
-	        `${(eff.workspace_allowed_paths || []).length} allowed · ${(eff.workspace_blocked_paths || []).length} refused`;
-	    }
-	    async function loadMyWorkspacePolicy() {
-	      const msg = $("my-workspace-policy-message");
-	      msg.textContent = "Loading…";
-	      msg.className = "message";
-	      try {
-	        renderMyWorkspacePolicy(await api("/api/gateway/workspace/policy/self"));
-	        msg.textContent = "";
-	      } catch (e) {
-	        msg.textContent = String((e && e.message) || e);
-	        msg.className = "message error";
-	      }
-	    }
-	    async function saveMyWorkspacePolicy(clear = false) {
-	      const msg = $("my-workspace-policy-message");
-	      msg.textContent = clear ? "Resetting to inherited…" : "Saving…";
-	      msg.className = "message";
-	      const body = {};
-	      if (!clear) {
-	        const mode = $("my-workspace-mode").value;
-	        if (mode) body.mode = mode;
-	        const trust = $("my-workspace-trust").value;
-	        if (trust) body.trust_client_launch_folder = trust === "on";
-	        const allowed = $("my-workspace-allowed").value.trim();
-	        if (allowed) body.workspace_allowed_paths = allowed.split(/\\n+/).map((s) => s.trim()).filter(Boolean);
-	        const blocked = $("my-workspace-blocked").value.trim();
-	        if (blocked) body.workspace_blocked_paths = blocked.split(/\\n+/).map((s) => s.trim()).filter(Boolean);
-	      }
-	      try {
-	        renderMyWorkspacePolicy(await api("/api/gateway/workspace/policy/self", {
-	          method: "PUT",
-	          body: JSON.stringify(body),
-	        }));
-	        msg.textContent = clear ? "Reset — inheriting the gateway defaults." : "Saved.";
-	        msg.className = "message ok";
-	      } catch (e) {
-	        msg.textContent = String((e && e.message) || e);
-	        msg.className = "message error";
-	      }
 	    }
     // ------------------------------------------------------------ Switches
     // The kit's af-switch markup (CONTRACT §2, DESIGN §2): role=switch,
@@ -7803,196 +7571,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       $("my-email-notify-test").onclick = testMyNotifications;
       bindMyEmailSwitches();
     }
-    function _wspSetMode(mode) {
-	      for (const card of document.querySelectorAll("#wsp-mode-cards .wsp-card")) {
-	        const input = card.querySelector("input");
-	        const on = input.value === (mode || "");
-	        input.checked = on;
-	        card.classList.toggle("selected", on);
-	      }
-	      const allowedHint = $("wsp-allowed-hint");
-	      if (allowedHint) {
-	        allowedHint.textContent = (mode === "blacklist")
-	          ? "Not used in the allow-everything posture (kept for when you switch back)."
-	          : "Extra folders this user's agents may use, one per line — added on top of the gateway-wide roots.";
-	      }
-	    }
-	    function _wspSelectedMode() {
-	      const el = document.querySelector('input[name="wsp-mode"]:checked');
-	      return el ? el.value : "";
-	    }
-	    function _wspLines(id) {
-	      const raw = $(id).value.trim();
-	      return raw ? raw.split(/\\n+/).map((s) => s.trim()).filter(Boolean) : [];
-	    }
-	    function _wspPolicyKeyOf(target) {
-	      return `${target.tenant_id || "default"}:${target.user_id}`;
-	    }
-	    function _wspTargetQuery(target) {
-	      return `tenant_id=${encodeURIComponent(target.tenant_id || "default")}&user_id=${encodeURIComponent(target.user_id)}`;
-	    }
-	    function _wspSyncBadges(key, customized) {
-	      if (!state.userPolicyKeys) state.userPolicyKeys = new Set();
-	      if (customized) state.userPolicyKeys.add(key); else state.userPolicyKeys.delete(key);
-	      for (const el of document.querySelectorAll(`[data-wspkey="${CSS.escape(key)}"]`)) {
-	        el.textContent = customized ? "custom" : "inherited";
-	        el.classList.toggle("custom", customized);
-	      }
-	    }
-	    function _wspApplyKind(kind) {
-	      // ONE modal, two subjects: a USER's policy, or the GATEWAY defaults
-	      // every user inherits (the defaults are
-	      // set in the same modal, not an inline form).
-	      state.wspModalKind = kind;
-	      const gw = kind === "gateway";
-	      $("wsp-card-inherit").classList.toggle("hidden", gw);
-	      $("wsp-root-field").classList.toggle("hidden", !gw);
-	      $("wsp-reset").classList.toggle("hidden", gw);
-	      $("workspace-policy-modal-title").textContent = gw ? "Gateway workspace defaults" : "Workspace policy";
-	      $("wsp-trust").options[0].textContent = gw ? "Gateway default (on)" : "Inherit gateway default";
-	      $("wsp-overrides").options[0].textContent = gw ? "Gateway default" : "Inherit gateway default";
-	      $("wsp-overrides-hint").textContent = gw
-	        ? "Not the same as launch-folder trust: trust only covers the one folder an agent is started from. This legacy switch lets ANY client name ANY folder as a workspace and browse server files anywhere — the posture and folder lists above stop applying. Prefer per-user grants over this."
-	        : "Not the same as launch-folder trust: trust only covers the one folder an agent is started from. This legacy switch lets this user's clients name ANY folder as a workspace and browse server files anywhere — the posture and folder lists above stop applying. Leave inherited unless an old client depends on it.";
-	      $("wsp-whitelist-sub").textContent = gw
-	        ? "Every user without their own posture gets: deny everything except the gateway roots and allowed folders — plus the launch folder while trust is on. The shipped default."
-	        : "Agents may only work under the gateway roots plus this user's allowed folders — and the launch folder while trust is on.";
-	      $("wsp-blacklist-sub").textContent = gw
-	        ? "Every user without their own posture may work anywhere on the gateway host except the refused folders. A wide grant — consider per-user instead."
-	        : "Agents may work anywhere on the gateway host except the refused folders. The gateway-wide deny list still applies.";
-	      $("wsp-allowed-hint").textContent = gw
-	        ? "Folders every user's agents may use, one per line — the gateway-wide roots."
-	        : "Extra folders this user's agents may use, one per line — added on top of the gateway-wide roots.";
-	      $("wsp-blocked-hint").textContent = gw
-	        ? "Folders NO agent may ever touch, one per line — the gateway-wide deny list, enforced for every user in every posture."
-	        : "Folders this user's agents may never touch, one per line — enforced in every posture.";
-	    }
-	    function renderWorkspacePolicyModal(payload) {
-	      const entry = payload?.policy || {};
-	      _wspSetMode(typeof entry.mode === "string" ? entry.mode : "");
-	      const trust = entry.trust_client_launch_folder;
-	      $("wsp-trust").value = trust === true ? "on" : trust === false ? "off" : "";
-	      const overrides = entry.client_workspace_scope_overrides;
-	      $("wsp-overrides").value = overrides === true ? "on" : overrides === false ? "off" : "";
-	      $("wsp-allowed").value = (entry.workspace_allowed_paths || []).join("\\n");
-	      $("wsp-blocked").value = (entry.workspace_blocked_paths || []).join("\\n");
-	      const gd = payload?.gateway_defaults || {};
-	      const inheritSub = $("wsp-inherit-sub");
-	      if (inheritSub) {
-	        inheritSub.textContent = `Gateway default: ${gd.mode === "blacklist"
-	          ? "allow everything except the refused folders"
-	          : "deny everything except the allowed folders"} — launch-folder trust ${gd.trust_client_launch_folder ? "on" : "off"}.`;
-	      }
-	    }
-	    function renderGatewayPolicyModal(payload) {
-	      state.runtimeConfig = payload || state.runtimeConfig;
-	      _wspSetMode(payload?.workspace_default_mode?.value === "blacklist" ? "blacklist" : "whitelist");
-	      // Only STORED choices prefill (writing a resolved env/default value
-	      // back would silently promote it to the stored rung).
-	      const trustP = payload?.trust_client_launch_folder || {};
-	      $("wsp-trust").value = trustP.source === "stored" ? (trustP.value ? "on" : "off") : "";
-	      const ovP = payload?.client_workspace_scope_overrides || {};
-	      $("wsp-overrides").value = ovP.source === "stored" ? (ovP.value ? "on" : "off") : "";
-	      const rootP = payload?.workspace_root || {};
-	      $("wsp-root").value = rootP.source === "stored" ? (runtimeConfigStringValue(rootP) || "") : "";
-	      $("wsp-root").placeholder = runtimeConfigStringValue(rootP) || "/abs/path/to/default/workspace";
-	      $("wsp-allowed").value = runtimeConfigStringValue(payload?.workspace_allowed_paths || payload?.workspace_mounts);
-	      $("wsp-blocked").value = runtimeConfigStringValue(payload?.workspace_blocked_paths);
-	    }
-	    async function openWorkspacePolicyModal(target) {
-	      _wspApplyKind("user");
-	      state.workspacePolicyTarget = target;
-	      const label = (target.tenant_id && target.tenant_id !== "default")
-	        ? `${target.tenant_id}/${target.user_id}` : target.user_id;
-	      $("workspace-policy-modal-user").textContent =
-	        `Where ${label}'s agents may read and write. Inherits the gateway defaults until customized.`;
-	      $("wsp-message").textContent = "Loading current policy…";
-	      $("wsp-message").className = "message";
-	      $("workspace-policy-modal-backdrop").classList.remove("hidden");
-	      try {
-	        const payload = await api(`/api/gateway/admin/user-workspace-policy?${_wspTargetQuery(target)}`);
-	        renderWorkspacePolicyModal(payload);
-	        $("wsp-message").textContent = payload.customized
-	          ? "This user has a custom policy." : "This user inherits the gateway defaults.";
-	      } catch (e) {
-	        $("wsp-message").textContent = String((e && e.message) || e);
-	        $("wsp-message").className = "message error";
-	      }
-	    }
-	    async function openGatewayPolicyModal() {
-	      _wspApplyKind("gateway");
-	      state.workspacePolicyTarget = null;
-	      $("workspace-policy-modal-user").textContent =
-	        "The gateway-wide defaults every user inherits. Per-user overrides (Configure on a runtime row) win over these.";
-	      $("wsp-message").textContent = "Loading gateway defaults…";
-	      $("wsp-message").className = "message";
-	      $("workspace-policy-modal-backdrop").classList.remove("hidden");
-	      try {
-	        renderGatewayPolicyModal(await api("/api/gateway/admin/runtime-config"));
-	        $("wsp-message").textContent = "";
-	      } catch (e) {
-	        $("wsp-message").textContent = String((e && e.message) || e);
-	        $("wsp-message").className = "message error";
-	      }
-	    }
-	    function closeWorkspacePolicyModal() {
-	      $("workspace-policy-modal-backdrop").classList.add("hidden");
-	      state.workspacePolicyTarget = null;
-	    }
-	    async function saveWorkspacePolicyModal(reset = false) {
-	      $("wsp-message").textContent = reset ? "Resetting to inherited…" : "Saving…";
-	      $("wsp-message").className = "message";
-	      try {
-	        if (state.wspModalKind === "gateway") {
-	          // user_workspace_policies is DELIBERATELY absent from this body:
-	          // present-but-empty deletes the whole per-user map server-side;
-	          // per-user edits ride the single-entry PUT.
-	          const trustSel = $("wsp-trust").value;
-	          const body = {
-	            workspace_default_mode: _wspSelectedMode() || "whitelist",
-	            workspace_root: $("wsp-root").value.trim() || null,
-	            workspace_allowed_paths: $("wsp-allowed").value.trim(),
-	            workspace_blocked_paths: $("wsp-blocked").value.trim(),
-	            trust_client_launch_folder: trustSel ? trustSel === "on" : null,
-	          };
-	          const ov = $("wsp-overrides").value;
-	          if (ov) body.client_workspace_scope_overrides = ov === "on";
-	          const payload = await api("/api/gateway/admin/runtime-config", {
-	            method: "POST",
-	            body: JSON.stringify(body),
-	          });
-	          renderRuntimeConfig(payload);
-	          closeWorkspacePolicyModal();
-	          return;
-	        }
-	        const target = state.workspacePolicyTarget;
-	        if (!target) return;
-	        const policy = {};
-	        if (!reset) {
-	          const mode = _wspSelectedMode();
-	          if (mode) policy.mode = mode;
-	          const trust = $("wsp-trust").value;
-	          if (trust) policy.trust_client_launch_folder = trust === "on";
-	          const overrides = $("wsp-overrides").value;
-	          if (overrides) policy.client_workspace_scope_overrides = overrides === "on";
-	          const allowed = _wspLines("wsp-allowed");
-	          if (allowed.length) policy.workspace_allowed_paths = allowed;
-	          const blocked = _wspLines("wsp-blocked");
-	          if (blocked.length) policy.workspace_blocked_paths = blocked;
-	        }
-	        const payload = await api(`/api/gateway/admin/user-workspace-policy?${_wspTargetQuery(target)}`, {
-	          method: "PUT",
-	          body: JSON.stringify({ policy: reset ? null : policy }),
-	        });
-	        _wspSyncBadges(_wspPolicyKeyOf(target), payload.customized === true);
-	        closeWorkspacePolicyModal();
-	      } catch (e) {
-	        // The modal stays open: the gateway's refusal names the offending
-	        // path/field — the admin fixes it in place.
-	        $("wsp-message").textContent = String((e && e.message) || e);
-	        $("wsp-message").className = "message error";
-	      }
-	    }
 	    async function ensureDataHomes(force = false) {
 	      // ONE cache feeds the machine-wide disclosure AND every runtime's
 	      // Caches tab — a purge or explicit refresh invalidates it; a tab
@@ -12325,7 +11903,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 		        $("page-subtitle").textContent = "Users & summoned entities, runtimes, providers, and multimodal capabilities";
 		        $("account").textContent = "No active session.";
 	        state.runtimeConfig = null;
-	        state.myWorkspacePolicy = null;
 	        // Signed out: kill the host-state poll chain (the principal check
 	        // inside the poll is the belt; the token bump is the suspenders).
 	        state.hostPollToken = (state.hostPollToken || 0) + 1;
@@ -12486,7 +12063,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const row = document.createElement("tr");
       row.className = "row-confirm";
       const td = document.createElement("td");
-      td.colSpan = 6;
+      td.colSpan = 5;
       const box = document.createElement("div");
       box.className = "inline-confirm";
       box.setAttribute("role", "group");
@@ -12518,10 +12095,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     // ---- Accounts (DESIGN-v3 §1): ONE table for users AND entities, read from
     // GET /admin/accounts (admins; ?include_archived=true when "Show archived" is on) or
     // GET /me/accounts. Row tint by kind (kit .af-row--admin|user|entity), an Active switch on
-    // every live row, and ONLY the actions that apply: Email · Logs · Workspace (users) /
-    // Manage (entities) visible, the rest in the kit "⋯" menu (af-menu). Nothing unavailable is
-    // rendered; a title on "⋯" says why when an absence would surprise. Archive, never delete.
-    const accountsUi = { rows: [], emailRelease: null, logsRelease: null, emailHome: null, logsFor: null, logsKind: "", showArchived: false, menuReleases: [], archivedSwitch: null };
+    // every live row, and ONLY the actions that apply, as 44 px icon buttons with tooltips (round 8:
+    // Email · OpenAI API · Logs · Workspace (users) | Manage (entities) · Rotate (users) · Archive;
+    // no "⋯" menu, no labels). Nothing unavailable is rendered. Archive, never delete.
+    const accountsUi = { rows: [], emailRelease: null, logsRelease: null, emailHome: null, logsFor: null, logsKind: "", showArchived: false, archivedSwitch: null };
     const ACCOUNT_KIND_LABEL = { admin: "Admin", user: "User", entity: "Entity" };
     const ACCOUNT_ROLE_TITLE = { admin: "Admin — manages this gateway", user: "User — signs in and runs their own agents", entity: "Entity — an AI user with its own memory and mailbox" };
     // The row contract of accounts-api (DESIGN-v3 §2.2): every key present, `delete` gone.
@@ -12543,19 +12120,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (typeof a.archived !== "boolean") throw new Error(`GET /admin/accounts row ${a && a.id} has no boolean "archived" (accounts-api seam, DESIGN-v3 §2.2).`);
       return a.archived;
     }
-    // Words, never placeholder dashes: "Connected as x@y" / "Not connected" / "Paused".
-    function accountMailboxText(a) {
+    // Round 8: ONE Email column = "address · connection state" (`alice@x.org · connected`), or
+    // "No address" when the account has none. Same words in the table and the card list.
+    const ACCOUNT_MAILBOX_STATE = { connected: "connected", receive_only: "receive only", paused: "paused", not_connected: "not connected", unavailable: "mailbox not available" };
+    function accountEmailText(a) {
       const m = a.mailbox || {};
-      if (m.state === "connected") return m.address ? `Connected as ${m.address}` : "Connected";
-      if (m.state === "receive_only") return "Receive only — no outgoing server";
-      if (m.state === "paused") return "Paused";
-      if (m.state === "not_connected") return "Not connected";
-      if (m.state === "unavailable") return "Not available";
-      throw new Error(`GET /admin/accounts row ${a.id} has mailbox.state ${JSON.stringify(m.state)} (accounts-api seam, DESIGN-v3 §3.1).`);
-    }
-    // The card line "Email address · Mailbox": the same words as the table's two cells.
-    function accountPhoneLine(a) {
-      return `${a.email_address || "No address"} · ${accountMailboxText(a)}`;
+      const word = ACCOUNT_MAILBOX_STATE[m.state];
+      if (!word) throw new Error(`GET /admin/accounts row ${a.id} has mailbox.state ${JSON.stringify(m.state)} (accounts-api seam, DESIGN-v3 §3.1).`);
+      const address = a.email_address || m.address || "";
+      return address ? `${address} · ${word}` : "No address";
     }
     function accountIsOwn(a) {
       const p = state.principal || {};
@@ -12604,64 +12177,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       renderAccounts(out.accounts);
       return out.accounts;
     }
-    function accountButton(label, opts) {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = opts.cls || "secondary";
-      b.textContent = label;
-      b.setAttribute("aria-label", opts.aria || label);
-      b.setAttribute("data-label", label);
-      if (opts.title) b.title = opts.title;
-      return b;
-    }
-    // The kit menu (af-menu, bound by the islands' bindMenu). The node-VM tests load no
-    // islands bundle: there the list toggles on click so its items stay testable. The served
-    // console always carries the bundle, so a bundle WITHOUT bindMenu is a broken re-sync and throws.
-    function bindAccountMenu(button, list) {
-      const lib = islandsLib();
-      if (lib) {
-        if (typeof lib.bindMenu !== "function") throw new Error(`The abstractuic islands bundle (kit ${lib.kitVersion || "?"}) has no bindMenu: re-sync console_islands (DESIGN-v3 §1.4).`);
-        return lib.bindMenu(button, list);
-      }
-      if (typeof window !== "undefined" && window.document && window.document.getElementById && window.document.getElementById("af-console-islands")) {
-        throw new Error("The abstractuic islands bundle did not load: the Accounts row menu needs its bindMenu (DESIGN-v3 §1.4).");
-      }
-      list.hidden = true;
-      button.setAttribute("aria-haspopup", "menu");
-      button.setAttribute("aria-expanded", "false");
-      button.onclick = () => { list.hidden = !list.hidden; button.setAttribute("aria-expanded", list.hidden ? "false" : "true"); };
-      list.onclick = () => { list.hidden = true; button.setAttribute("aria-expanded", "false"); };
-      return () => {};
-    }
-    // items: [{ key, label, onSelect, danger }] — only actions that apply; none = no "⋯" at all.
-    function accountMenu(a, items, whyAbsent) {
-      if (!items.length) return null;
-      const wrap = document.createElement("div");
-      wrap.className = "af-menu accounts-menu";
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "af-menu__button";
-      button.setAttribute("aria-label", `More actions for ${a.id}`);
-      button.setAttribute("data-action", "more");
-      button.textContent = "⋯";
-      if (whyAbsent) button.title = whyAbsent;
-      const list = document.createElement("div");
-      list.className = "af-menu__list";
-      list.hidden = true;
-      for (const it of items) {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.className = `af-menu__item${it.danger ? " af-menu__item--danger" : ""}`;
-        b.setAttribute("role", "menuitem");
-        b.setAttribute("data-action", it.key);
-        b.textContent = it.label;
-        b.onclick = it.onSelect;
-        list.append(b);
-      }
-      wrap.append(button, list);
-      accountsUi.menuReleases.push(bindAccountMenu(button, list));
-      return wrap;
-    }
     const ACCOUNT_ARCHIVE_QUESTION = {
       user: (id) => `Archive ${id}? They can't sign in any more. Their runtime, runs and history are kept; you can unarchive later.`,
       entity: (id) => `Archive ${id}? It stops acting and never wakes. Its memory, runs and history are kept; you can unarchive later.`,
@@ -12698,17 +12213,49 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const span = document.createElement(opts.code ? "code" : "span");
       span.className = `accounts-cell-text${opts.muted ? " af-row__muted" : ""}`;
       span.textContent = text;
-      span.title = opts.title || text;
       td.append(span);
+      return td;
+    }
+    // Round 8: the Runtime cell is a LINK to the Runtimes page filtered to this account
+    // (`#runtimes?account=<id>`, console_workspaces.py openRuntimesFor). Only admins have the
+    // Runtimes page; anyone else reads the id as text.
+    function accountRuntimeCell(a) {
+      const td = document.createElement("td");
+      td.className = "accounts-col-runtime";
+      td.setAttribute("data-label", "Runtime");
+      if (!a.runtime_id) {
+        const none = document.createElement("span");
+        none.className = "accounts-cell-text af-row__muted";
+        none.textContent = "No runtime";
+        td.append(none);
+        return td;
+      }
+      if (!accountsAdmin()) {
+        const code = document.createElement("code");
+        code.className = "accounts-cell-text";
+        code.textContent = a.runtime_id;
+        td.append(code);
+        return td;
+      }
+      const link = document.createElement("a");
+      link.className = "accounts-cell-text accounts-runtime-link";
+      link.href = runtimesHref({ account: a.id, tenant_id: a.tenant_id || "default" });
+      link.textContent = a.runtime_id;
+      link.setAttribute("aria-label", `Runtimes of ${a.id}: ${a.runtime_id}`);
+      link.onclick = (ev) => {
+        if (ev && (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button === 1)) return;  // new tab: the hash link
+        if (ev && ev.preventDefault) ev.preventDefault();
+        openRuntimesFor({ account: a.id, tenant_id: a.tenant_id || "default" });
+      };
+      td.append(link);
       return td;
     }
     function renderAccounts(rows) {
       const tbody = $("users-table");
-      for (const release of accountsUi.menuReleases.splice(0)) { try { release(); } catch {} }
       tbody.textContent = "";
       if (!rows.length) {
         const tr = document.createElement("tr");
-        tr.innerHTML = `<td colspan="6" class="empty">No accounts yet.</td>`;
+        tr.innerHTML = `<td colspan="5" class="empty">No accounts yet.</td>`;
         tbody.append(tr);
         return;
       }
@@ -12722,39 +12269,35 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
         tr.setAttribute("data-kind", a.kind);
         if (archived) tr.setAttribute("data-archived", "true");
         const shown = (a.tenant_id && a.tenant_id !== "default") ? `${a.tenant_id}/${a.id}` : a.id;
-        const mailbox = accountMailboxText(a);
         // Name: id (600) + kind chip (+ "Archived").
         const nameTd = document.createElement("td");
         nameTd.className = "accounts-name";
         nameTd.setAttribute("data-label", "Name");
-        nameTd.innerHTML = `<span class="accounts-name__line"><strong class="accounts-cell-text" title="${esc(shown)}">${esc(shown)}</strong>`
+        nameTd.innerHTML = `<span class="accounts-name__line"><strong class="accounts-cell-text">${esc(shown)}</strong>`
           + `<span class="af-kind-chip af-kind-chip--${kind}" title="${esc(ACCOUNT_ROLE_TITLE[kind])}">${ACCOUNT_KIND_LABEL[kind]}</span>`
           + (archived ? `<span class="accounts-archived-chip" title="Archived: can't sign in or act; runs and history are kept.">Archived</span>` : "")
           + `</span>`;
         tr.append(nameTd);
-        tr.append(accountTextCell("accounts-col-email", "Email address", a.email_address || "No address", { muted: !a.email_address }));
-        const mailboxTd = accountTextCell("accounts-mailbox", "Mailbox", mailbox, { muted: a.mailbox && a.mailbox.state !== "connected" });
-        mailboxTd.firstChild.classList.add("accounts-mailbox__text");
+        // Email: ONE column, "address · state" (round 8).
+        const connected = a.mailbox && a.mailbox.state === "connected";
+        const emailTd = accountTextCell("accounts-col-email", "Email", accountEmailText(a), { muted: !connected });
+        emailTd.firstChild.classList.add("accounts-email__text");
         if (a.mailbox && a.mailbox.state === "receive_only") {
           // The API's sentence, visible (never a tooltip only): why it can't send and what to do.
           if (!a.mailbox.reason) throw new Error(`GET /admin/accounts row ${a.id}: mailbox.state receive_only without a reason (gateway seam).`);
           const why = document.createElement("span");
-          why.className = "accounts-cell-text accounts-mailbox__reason af-row__muted";
+          why.className = "accounts-cell-text accounts-email__reason af-row__muted";
           why.textContent = a.mailbox.reason;
-          mailboxTd.append(why);
+          emailTd.append(why);
         }
-        const phone = document.createElement("span");
-        phone.className = "accounts-phone-line af-row__muted";
-        phone.textContent = accountPhoneLine(a);
-        mailboxTd.prepend(phone);
-        tr.append(mailboxTd);
-        tr.append(accountTextCell("accounts-col-runtime", "Runtime", a.runtime_id ? a.runtime_id : "No runtime", { code: Boolean(a.runtime_id), muted: !a.runtime_id, title: a.runtime_id ? `Runtime ${a.runtime_id}` : "No runtime" }));
+        tr.append(emailTd);
+        tr.append(accountRuntimeCell(a));
         const activeCell = document.createElement("td");
         activeCell.className = "users-active accounts-active";
         activeCell.setAttribute("data-label", "Active");
         tr.append(activeCell);
         if (archived) {
-          // Archived rows: plain text, never a switch (Unarchive is in the menu; the account comes back inactive).
+          // Archived rows: plain text, never a switch (Unarchive is an action; the account comes back inactive).
           activeCell.innerHTML = `<span class="accounts-active__archived af-row__muted">Archived</span>`;
         } else {
           // Active (§2.2 v2): users = registry `enabled`; entities = suspend / resume.
@@ -12799,53 +12342,48 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
             return true;
           }, (e) => usersMessage(emailErrorText(e), "error"));
         }
-        // Actions (DESIGN-v3 §1.1 + §13.2): users Email · Logs · Workspace · ⋯ (Rotate token, Archive);
-        // entities Email · Logs · Manage · ⋯ (Archive); archived Logs · ⋯ (Unarchive).
+        // Actions (round 8): icon buttons with tooltips, only those that apply, in one fixed order —
+        // users Email · OpenAI API · Logs · Workspace · Rotate · Archive; entities Email · Logs ·
+        // Manage · Archive (no token, no per-account workspace: their folders are set in Manage);
+        // archived rows Logs · Unarchive.
         const actions = document.createElement("td");
         actions.className = "actions accounts-actions";
         actions.setAttribute("data-label", "Actions");
         const buttons = document.createElement("div");
         buttons.className = "accounts-actions__buttons";
-        const visible = (key, label, opts, onClick) => {
+        const add = (key, icon, tip, aria, onClick, danger) => {
           if (!accountCan(a, key)) return;
-          const b = accountButton(label, opts);
+          const b = accountIconButton(icon, tip, aria, danger);
           b.setAttribute("data-action", key);
           b.onclick = onClick;
           buttons.append(b);
         };
-        const menu = [];
-        const absent = [];
-        const offer = (key, label, onSelect, danger) => {
-          if (accountCan(a, key)) menu.push({ key, label, onSelect, danger: Boolean(danger) });
-          else if (accountAction(a, key).reason) absent.push(accountAction(a, key).reason);
-        };
-        const userWorkspace = () => openWorkspacePolicyModal({ tenant_id: a.tenant_id || "default", user_id: a.id });
         if (archived) {
-          visible("logs", "Logs", { aria: `Activity of ${a.id}` }, () => openAccountLogs(a));
-          if (accountCan(a, "unarchive")) menu.push({ key: "unarchive", label: "Unarchive", onSelect: () => unarchiveAccount(a), danger: false });
+          add("logs", "logs", "Logs", `Activity of ${a.id}`, () => openAccountLogs(a));
+          add("unarchive", "unarchive", "Unarchive", `Unarchive ${a.id}`, () => unarchiveAccount(a));
         } else {
-          visible("email", "Email", { aria: `Email for ${a.id}` }, () => openAccountEmail(a));
+          add("email", "mail", "Email", `Email for ${a.id}`, () => openAccountEmail(a));
           // Admins: the account's OpenAI API switch (a non-admin's row carries it unavailable, so no button).
-          visible("openai_api", "OpenAI API", { aria: `OpenAI API for ${a.id}`, title: `OpenAI API: ${a.openai_api ? "on" : "off"} for ${a.id}` }, () => openAccountOpenAI(a));
-          visible("logs", "Logs", { aria: `Activity of ${a.id}` }, () => openAccountLogs(a));
+          add("openai_api", "openai", `OpenAI API: ${a.openai_api ? "on" : "off"}`, `OpenAI API for ${a.id} (${a.openai_api ? "on" : "off"})`, () => openAccountOpenAI(a));
+          add("logs", "logs", "Logs", `Activity of ${a.id}`, () => openAccountLogs(a));
           if (a.kind === "entity") {
-            visible("manage", "Manage", { aria: `Manage ${a.id}`, title: "Lifecycle, substrate, capabilities, prompt; Talk lives here too" }, () => openEntityManage(a.id));
-            // No Workspace for entities: their file access is not the per-user workspace policy, and
-            // Manage has no workspace view (C3F / manage-modal) — not offered rather than mis-routed.
-            // Entities have no token: Rotate is never offered; the "⋯" title says why.
-            absent.unshift(accountAction(a, "rotate").reason || "Entities have no token to rotate.");
+            add("manage", "manage", "Manage", `Manage ${a.id}`, () => openEntityManage(a.id));
           } else {
-            visible("workspace", "Workspace", { aria: `Workspace policy for ${a.id}`, title: "Where this account's agents may read and write" }, userWorkspace);
-            offer("rotate", "Rotate token", () => rotateUser({ user_id: a.id, tenant_id: a.tenant_id || "default", own: !!a.own }));
+            add("workspace", "folder", "Workspace", `Workspace policy for ${a.id}`, () => openWorkspacesFor({ account: a.id, tenant_id: a.tenant_id || "default" }));
+            add("rotate", "rotate", "Rotate token", `Rotate the token of ${a.id}`, () => askRotateAccount(tr, a));
           }
-          offer("archive", "Archive", () => askArchiveAccount(tr, a), true);
+          add("archive", "archive", "Archive", `Archive ${a.id}`, () => askArchiveAccount(tr, a), true);
         }
-        const more = accountMenu(a, menu, absent.filter((x, i) => x && absent.indexOf(x) === i).join(" "));
-        if (more) buttons.append(more);
         actions.append(buttons);
         tr.append(actions);
         tbody.append(tr);
       }
+    }
+    // Rotate (round 8): an inline confirmation under the row, like Archive and Deactivate.
+    function askRotateAccount(tr, a) {
+      userConfirmRow(tr, `Rotate the token of ${a.id}? The current token stops working now; the new one is shown once.`, "Rotate", async () => {
+        await rotateUser({ user_id: a.id, tenant_id: a.tenant_id || "default", own: !!a.own }, { confirmed: true });
+      });
     }
     // ---- Account modals: the kit's af-modal markup, bound by the islands' bindModal
     // (focus trap, Esc, backdrop click, scroll lock). Without the islands bundle the
@@ -14927,6 +14465,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       // the first painted screen still showed the pre-login error row).
       if (state.activeTab === "users") loadEntities();
       if (state.activeTab === "runtimes") loadRuntimes();  // data homes ride along inside loadRuntimes (cached)
+      if (state.activeTab === "workspaces") loadWorkspaces();
       if (state.activeTab === "models") { loadHostState(); startHostStatePoll(); }
       if (state.activeTab === "catalog" || state.activeTab === "providers" || state.activeTab === "apps" || state.activeTab === "network" || state.activeTab === "openai") openCoreTab(state.activeTab);
       try {
@@ -15215,14 +14754,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       el.append(text, code, copy, note);
       el.classList.remove("hidden");
     }
-    async function rotateUser(u) {
-      // Rotation invalidates the live token — never one silent click.
-      const ok = await confirmAction({
-        title: `Rotate token for ${u.user_id}?`,
-        message: "The current bearer token stops working immediately; anything signed in with it is disconnected. The new token is shown once.",
-        confirmLabel: "Rotate token",
-      });
-      if (!ok) return;
+    async function rotateUser(u, opts = {}) {
+      // Rotation invalidates the live token — never one silent click (the Accounts row asks
+      // inline first and passes {confirmed: true}).
+      if (!opts.confirmed) {
+        const ok = await confirmAction({
+          title: `Rotate token for ${u.user_id}?`,
+          message: "The current bearer token stops working immediately; anything signed in with it is disconnected. The new token is shown once.",
+          confirmLabel: "Rotate token",
+        });
+        if (!ok) return;
+      }
       // Your own row: the self route (any signed-in user; the session moves to the new token).
       // Another user's row: the admin route.
       const res = u.own
@@ -15496,7 +15038,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // selection restore auto-selects a runtime (default first) and its
 	    // Runs tab loader fires from there. Cache sizes load when the Cache
 	    // tab opens (shared ensureDataHomes cache).
-	    $("tab-button-runtimes").onclick = () => { setActiveTab("runtimes"); loadRuntimes(); };
+	    $("tab-button-runtimes").onclick = () => { runtimesClearFilter(); setActiveTab("runtimes"); loadRuntimes(); };
+	    $("tab-button-workspaces").onclick = () => { setActiveTab("workspaces"); loadWorkspaces(); };
 	    bindSkillsMcpPage();
 	    $("tab-button-workflows").onclick = () => { setActiveTab("workflows"); mountWorkflowSwitches(); loadWorkflows(); if (state.principal && state.principal.admin) mountAgentDefaults("workflows", $("agent-defaults-root")); };
 	    $("workflows-refresh").onclick = () => loadWorkflows();
@@ -15618,27 +15161,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("templates-backdrop").onclick = (event) => { if (event.target === $("templates-backdrop")) closeTemplates(); };
 	    $("tpl-select").onchange = renderTplSelectState;
 	    $("runtimes-refresh").onclick = loadRuntimes;
-		    $("my-workspace-policy-section").ontoggle = () => {
-	      if ($("my-workspace-policy-section").open && !state.myWorkspacePolicy) loadMyWorkspacePolicy();
-	    };
-	    $("my-workspace-policy-refresh").onclick = loadMyWorkspacePolicy;
-	    $("my-workspace-policy-save").onclick = () => saveMyWorkspacePolicy(false);
-	    $("my-workspace-policy-clear").onclick = () => saveMyWorkspacePolicy(true);
     bindMyEmail();
     bindEmailCaps();
-	    $("wsp-cancel").onclick = closeWorkspacePolicyModal;
-	    $("wsp-save").onclick = () => saveWorkspacePolicyModal(false);
-	    $("wsp-reset").onclick = () => saveWorkspacePolicyModal(true);
-	    $("workspace-policy-modal-backdrop").onclick = (event) => {
-	      if (event.target === $("workspace-policy-modal-backdrop")) closeWorkspacePolicyModal();
-	    };
-	    // Guarded: the login-JS test harness stubs `document` without
-	    // querySelectorAll; browsers always have it.
-	    if (typeof document.querySelectorAll === "function") {
-	      for (const card of document.querySelectorAll("#wsp-mode-cards input")) {
-	        card.onchange = () => _wspSetMode(card.value);
-	      }
-	    }
 	    // Detail refresh re-runs the ACTIVE subtab's loader; on Caches it
 	    // forces a registry re-walk (the cached homes are the point of the
 	    // shared ensureDataHomes, so only an explicit refresh pays sizes).
