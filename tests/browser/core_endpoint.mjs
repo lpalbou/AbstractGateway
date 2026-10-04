@@ -1,4 +1,5 @@
-// The OpenAI API page in a real browser at three widths (admin), then read-only for a user.
+// The OpenAI API page in a real browser at three widths (admin), then a user's own view, then the
+// Accounts row's OpenAI API switch. The key card is filled client-side (masked, eye, copy).
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import assert from 'node:assert/strict';
@@ -33,6 +34,7 @@ try {
     await idle(page);
     await page.waitForSelector('[data-oai-warning="open"]');
     await page.waitForSelector('[data-oai-open-note]');
+    assert.equal(await root.locator('[data-oai-open-account]').inputValue(), 'guest');
     await root.locator('[data-oai-access="token"]').click();
     await idle(page);
     await page.waitForFunction(() => !document.querySelector('[data-oai-warning="open"]'));
@@ -47,9 +49,28 @@ try {
     assert.match(await root.locator('[data-oai-support]').textContent(), /Supported:.*Not yet:/s);
     await root.locator('[data-oai-snippet="python"]').click();
     assert.match(await root.locator('[data-oai-code]').textContent(), new RegExp(`base_url="${base}/v1"`));
+    // The key: masked, revealed by the eye, masked again; the example never shows it in clear.
+    const keyText = () => root.locator('[data-oai-key-value]').textContent();
+    assert.match(await keyText(), /^•+$/);
+    assert(!(await root.locator('[data-oai-code]').textContent()).includes(admin));
+    await root.locator('[data-oai-action="reveal"]').click();
+    assert.equal(await keyText(), admin);
+    await root.locator('[data-oai-action="reveal"]').click();
+    assert.match(await keyText(), /^•+$/);
     // A request shows in the log.
     assert.equal((await page.request.get(`${base}/v1/models`, { headers: { Authorization: `Bearer ${admin}` } })).status(), 200);
     await page.waitForSelector('[data-oai-logs] tbody tr', { timeout: 15000 });
+    // A row opens to the recorded request and response (keys removed), with Open in Observer.
+    const okRid = await (await page.waitForFunction(() => {
+      const row = [...document.querySelectorAll('#openai-root tr.oai-row')]
+        .find((tr) => (tr.querySelector('td[data-label="Status"]') || {}).textContent?.trim() === '200');
+      return row ? row.getAttribute('data-oai-row') : null;
+    }, null, { timeout: 15000 })).jsonValue();
+    await root.locator(`[data-oai-toggle="${okRid}"]`).click();
+    await page.waitForSelector('[data-oai-detail] [data-oai-json="response"]');
+    assert.match(await root.locator('[data-oai-detail] [data-oai-json="response"]').textContent(), /"object": "list"/);
+    assert.equal(await root.locator('[data-oai-detail] [data-oai-observer]').count(), 1);
+    assert(!(await root.locator('[data-oai-detail]').textContent()).includes(admin));
     assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `overflow at ${width}`);
     for (const card of await root.locator('[data-oai-card]').all()) {
       const b = await card.boundingBox();
@@ -69,10 +90,33 @@ try {
   page.on('pageerror', (error) => errors.push(error.message));
   await signIn(page, 'alice', 'endpoint-browser-user-001');
   await page.evaluate(() => document.getElementById('tab-button-openai').click());
-  await page.waitForSelector('#openai-root [data-oai-enabled]');
-  assert.equal(await page.locator('#openai-root [data-oai-enabled]').isDisabled(), true);
-  assert.equal(await page.locator('#openai-root [data-oai-access="open"]').isDisabled(), true);
+  // A user's own view: on/off, base URL, their key, docs, their requests; no access settings.
+  await page.waitForSelector('#openai-root [data-oai-user-status]');
+  assert.equal(await page.locator('#openai-root [data-oai-enabled]').count(), 0);
+  assert.equal(await page.locator('#openai-root [data-oai-card="access"]').count(), 0);
   assert.equal(await page.locator('#openai-root [data-oai-action="new-key"]').count(), 1);
+  await page.locator('#openai-root [data-oai-action="reveal"]').click();
+  assert.equal(await page.locator('#openai-root [data-oai-key-value]').textContent(), 'endpoint-browser-user-001');
+  await page.close();
+  // Accounts: the admin turns alice's OpenAI API off; her key is refused at /v1 with the standard 403.
+  const adminPage = await browser.newPage();
+  adminPage.on('pageerror', (error) => errors.push(error.message));
+  await signIn(adminPage, 'admin', admin);
+  await adminPage.evaluate(() => document.getElementById('tab-button-users').click());
+  const button = adminPage.locator('tr[data-user="alice"] [data-action="openai_api"]');
+  await button.waitFor();
+  await button.click();
+  const toggle = adminPage.locator('#account-openai-body [role="switch"]');
+  await toggle.waitFor();
+  assert.equal(await toggle.getAttribute('aria-checked'), 'true');
+  await toggle.click();
+  await adminPage.waitForFunction(() => document.querySelector('#account-openai-body [role="switch"]').getAttribute('aria-checked') === 'false'
+    && document.querySelector('#account-openai-body [role="switch"]').getAttribute('aria-busy') !== 'true');
+  const started = await adminPage.request.post(`${base}/api/gateway/admin/core-endpoint`, { headers: { Authorization: `Bearer ${admin}` }, data: { enabled: true } });
+  assert.equal(started.status(), 200);
+  const refused = await adminPage.request.get(`${base}/v1/models`, { headers: { Authorization: 'Bearer endpoint-browser-user-001' } });
+  assert.equal(refused.status(), 403);
+  assert.equal((await refused.json()).error.code, 'openai_api_off');
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ ok: true, screens: 3 }));
 } finally { await browser.close(); }

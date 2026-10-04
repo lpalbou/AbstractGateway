@@ -3283,6 +3283,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       <div id="account-email-body" class="af-modal__body account-modal-body"></div>
     </div>
   </div>
+  <!-- OpenAI API (round 5): the account's "OpenAI API" switch, in the same af-modal as Email. -->
+  <div id="account-openai-backdrop" class="af-modal-backdrop" hidden>
+    <div class="af-modal" role="dialog" aria-modal="true" aria-labelledby="account-openai-title">
+      <div class="af-modal__header">
+        <h2 id="account-openai-title" class="af-modal__title">OpenAI API</h2>
+        <button id="account-openai-close" class="af-modal__close" type="button" aria-label="Close">×</button>
+      </div>
+      <div id="account-openai-body" class="af-modal__body account-modal-body"></div>
+    </div>
+  </div>
   <div id="account-logs-backdrop" class="af-modal-backdrop" hidden>
     <div class="af-modal" role="dialog" aria-modal="true" aria-labelledby="account-logs-title">
       <div class="af-modal__header">
@@ -12578,7 +12588,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     const ACCOUNT_KIND_LABEL = { admin: "Admin", user: "User", entity: "Entity" };
     const ACCOUNT_ROLE_TITLE = { admin: "Admin — manages this gateway", user: "User — signs in and runs their own agents", entity: "Entity — an AI user with its own memory and mailbox" };
     // The row contract of accounts-api (DESIGN-v3 §2.2): every key present, `delete` gone.
-    const ACCOUNT_ACTIONS = ["email", "logs", "workspace", "rotate", "manage", "archive", "unarchive", "suspend"];
+    const ACCOUNT_ACTIONS = ["openai_api", "email", "logs", "workspace", "rotate", "manage", "archive", "unarchive", "suspend"];
     const ACCOUNTS_SHOW_ARCHIVED_KEY = "abstractgateway.console.accounts.show_archived";
     function accountKindClass(a) {
       if (a.kind === "entity") return "entity";
@@ -12878,6 +12888,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           if (accountCan(a, "unarchive")) menu.push({ key: "unarchive", label: "Unarchive", onSelect: () => unarchiveAccount(a), danger: false });
         } else {
           visible("email", "Email", { aria: `Email for ${a.id}` }, () => openAccountEmail(a));
+          // Admins: the account's OpenAI API switch (a non-admin's row carries it unavailable, so no button).
+          visible("openai_api", "OpenAI API", { aria: `OpenAI API for ${a.id}`, title: `OpenAI API: ${a.openai_api ? "on" : "off"} for ${a.id}` }, () => openAccountOpenAI(a));
           visible("logs", "Logs", { aria: `Activity of ${a.id}` }, () => openAccountLogs(a));
           if (a.kind === "entity") {
             visible("manage", "Manage", { aria: `Manage ${a.id}`, title: "Lifecycle, substrate, capabilities, prompt; Talk lives here too" }, () => openEntityManage(a.id));
@@ -12916,6 +12928,47 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       const first = backdrop.querySelector(".af-modal__body button, .af-modal__body input, .af-modal__body select, .af-modal__close");
       try { if (first && first.focus) first.focus(); } catch {}
       return () => { document.removeEventListener("keydown", onKey, true); backdrop.removeEventListener("click", onClick); };
+    }
+    // ---- OpenAI API modal (round 5): PUT /admin/accounts/{id}/openai-api {enabled} -> the row.
+    function closeAccountOpenAI() {
+      const backdrop = $("account-openai-backdrop");
+      if (backdrop.hidden) return;
+      $("account-openai-body").textContent = "";
+      backdrop.hidden = true;
+      const release = accountsUi.openaiRelease;
+      accountsUi.openaiRelease = null;
+      if (release) release();
+    }
+    function openAccountOpenAI(a) {
+      closeAccountOpenAI();
+      if (typeof a.openai_api !== "boolean") throw new Error(`GET /admin/accounts row ${a.id} has no boolean "openai_api" (round-5 seam).`);
+      const body = $("account-openai-body");
+      body.textContent = "";
+      $("account-openai-title").textContent = `OpenAI API — ${a.id}`;
+      const lead = document.createElement("p");
+      lead.className = "account-modal-lead";
+      lead.textContent = `Lets ${a.id} use the OpenAI-compatible API (/v1) with their own gateway token as the key. Off: that key is refused there; signing in to the console is unchanged.`;
+      const row = document.createElement("div");
+      row.className = "account-openai-row";
+      const sw = afSwitchCreate({ id: `account-openai-${a.tenant_id || "default"}-${a.id}`.replace(/[^A-Za-z0-9_-]/g, "-"), label: "OpenAI API", ariaLabel: `OpenAI API: ${a.id}`, checked: Boolean(a.openai_api) });
+      row.append(...sw.nodes);
+      const note = document.createElement("p");
+      note.className = "inline-state";
+      note.setAttribute("role", "status");
+      note.setAttribute("aria-live", "polite");
+      body.append(lead, row, note);
+      afSwitchBind(sw.button, async (next) => {
+        const out = await api(`/api/gateway/admin/accounts/${encodeURIComponent(a.id)}/openai-api?tenant_id=${encodeURIComponent(a.tenant_id || "default")}`, { method: "PUT", body: JSON.stringify({ enabled: next }) });
+        if (!out || out.id !== a.id || typeof out.openai_api !== "boolean") throw new Error("PUT /admin/accounts/{id}/openai-api answered without the updated account (round-5 seam).");
+        Object.assign(a, out);
+        note.textContent = out.openai_api ? `Saved: ${a.id} can use the OpenAI API.` : `Saved: ${a.id}'s key is refused at /v1.`;
+        note.className = "inline-state ok";
+        renderAccounts(accountsUi.rows || []);
+        return true;
+      }, (e) => { note.textContent = `Not saved: ${emailErrorText(e)}`; note.className = "inline-state error"; });
+      const backdrop = $("account-openai-backdrop");
+      backdrop.hidden = false;
+      accountsUi.openaiRelease = bindAccountModal(backdrop, closeAccountOpenAI);
     }
     function closeAccountEmail() {
       const backdrop = $("account-email-backdrop");
@@ -15006,6 +15059,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
           method: "POST",
           body: JSON.stringify({ user_id: user, token, remember: $("login-remember").checked })
         });
+        // The OpenAI API page shows this person's key from what this browser keeps here (never a
+        // server reveal): this tab only, or this browser when "Remember this browser" is on.
+        oaiKeepToken(user, token, $("login-remember").checked);
         $("login-token").value = "";
         setLoginStatus(`Signed in as ${user}`, "ok");
         await refresh();
@@ -15158,6 +15214,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       }
     }
     async function signOut() {
+      oaiForgetToken();
       try { await api("/api/gateway/session/logout", { method: "POST" }); } catch {}
       location.reload();
     }
@@ -15624,6 +15681,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    $("open-create-entity").onclick = openEntityCreate;
 	    $("accounts-create-entity").onclick = openEntityCreate;
 	    $("account-email-close").onclick = closeAccountEmail;
+	    $("account-openai-close").onclick = closeAccountOpenAI;
 	    $("account-logs-close").onclick = closeAccountLogs;
 	    $("entity-create-cancel").onclick = closeEntityCreate;
 	    $("open-templates").onclick = openTemplates;

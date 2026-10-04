@@ -14,28 +14,32 @@ setting, and AbstractCore answers each request behind it.
 
 ## Turn it on
 
-Open the web console, **Models → OpenAI API**. The page has five cards:
+Open the web console, **Models → OpenAI API**. An admin sees five cards; any
+other account sees Status (running or not, the base URL), Connect your app
+(their own key), Docs and Recent requests (their own):
 
-- **Status**: Running or Stopped, the base URL with **Copy**, the **Endpoint**
+- **Status**: Running or Stopped, the base URL with **Copy**; for an admin, the **Endpoint**
   switch (on: apps can connect; off: apps get 404 and open requests end),
   **Restart** (ends open requests, keeps serving) and **Check setup** (settings,
   AbstractCore's server, whether the gateway listens where *Who can connect*
   needs it, and how many models `/v1/models` lists).
 - **Connect your app**: the base URL and the API key. The key is the token you
-  sign in with; **New key** replaces your gateway token and shows the new one
-  once (your old token stops working everywhere). An admin signed in with the
-  operator token uses that token.
-- **Access**: *Authentication* and *Who can connect* (below). Changes apply to
-  the next request.
+  sign in with, shown masked (`••••`) with an eye to reveal it and **Copy**. The
+  page fills it in from what this browser kept when you signed in with your
+  token: no gateway route ever returns a stored token. Signed in with a link or
+  an emailed code, the browser has no copy: **New key** makes one. **New key**
+  replaces your gateway token everywhere (the old one stops working) and the
+  gateway shows the new key once; this browser keeps it for the page.
+- **Access** (admin): *Authentication*, who requests without a key run as, and
+  *Who can connect* (below). Changes apply to the next request.
 - **Docs**: what is supported, links to this page and to AbstractCore's server
-  docs, and a first request (curl, Python, JavaScript) with your base URL.
+  docs, and a first request (curl, Python, JavaScript) with your base URL and
+  your key (masked on the page; **Copy example** copies it in clear).
 - **Recent requests**: time, client (account and address), model, tokens in and
-  out, latency and status, newest first, refreshed every 5 s. **Open** opens the
-  run in Observer when the request named one. An admin sees every request;
-  anyone else sees their own.
-
-Every signed-in account can open the page and copy the base URL; only an admin
-changes the settings.
+  out, latency and status, newest first, refreshed every 5 s. A row opens to the
+  request and the response as recorded (see [Request log](#request-log)) with
+  **Open in Observer** when the request belongs to a run. An admin sees every
+  request; anyone else sees their own.
 
 ## Connect
 
@@ -81,7 +85,21 @@ Checked with the official `openai` Python SDK:
 | `GET /v1/models` | `{object: "list", data: [{id, object: "model", created, owned_by}]}` |
 | `GET /v1/models/{id}` | one model; `404 model_not_found` otherwise |
 | `POST /v1/chat/completions` | `id`, `object`, `created`, `model`, `choices[].message`, `finish_reason`, `usage.{prompt,completion,total}_tokens`; `tools` and `tool_choice` with structured `tool_calls` (`finish_reason: "tool_calls"`) and `role: "tool"` results; `stream: true` as SSE `data:` chunks (`chat.completion.chunk`, role on the first delta, `finish_reason` on the last chunk) ending with `data: [DONE]`; `stream_options.include_usage` adds a final chunk with `choices: []` and `usage`; `max_completion_tokens` (or `max_tokens`) |
+| `POST /v1/chat/completions` with `response_format` | structured outputs: `{"type": "json_object"}` and `{"type": "json_schema", "json_schema": {"name", "schema", "strict"?}}`, also through the SDK's `chat.completions.parse(response_format=<Pydantic model>)`; for every provider (see below); with `stream: true` the validated JSON arrives as one content chunk |
 | `POST /v1/embeddings` | `encoding_format` `float` or `base64` (the SDK's default) |
+
+**Structured outputs on every provider.** AbstractCore's structured-output
+support runs the request: a provider that can constrain decoding receives the
+schema as the constraint (Ollama `format`, LM Studio, llama.cpp and other
+OpenAI-compatible servers `response_format`, MLX or Transformers with Outlines,
+OpenAI, Anthropic's forced tool); any other model gets the schema in its prompt.
+Every answer is then validated against your schema (type, properties, required,
+`additionalProperties`, items, enum, const, anyOf/oneOf/allOf, local `$ref`,
+length, pattern and number bounds); an answer that does not match is retried
+with the violation fed back, and one that still does not match answers
+`500 structured_output_invalid`. A schema that cannot be used answers
+`400 invalid_response_format` before any model runs. The answer's `usage` is not
+reported for structured requests yet.
 
 Also served when an engine for the capability is set up (AbstractCore answers;
 not part of the SDK checks): `POST /v1/responses`, `POST /v1/audio/speech`,
@@ -89,8 +107,8 @@ not part of the SDK checks): `POST /v1/responses`, `POST /v1/audio/speech`,
 `POST /v1/images/generations`, `POST /v1/images/edits`,
 `POST /v1/images/variations`.
 
-Not yet: `response_format` other than `{"type": "text"}` (JSON mode,
-structured outputs), `n` greater than 1, `logprobs`, `logit_bias` (each answers
+Not yet: `response_format` together with `tools`, `text.format` on
+`/v1/responses`, `n` greater than 1, `logprobs`, `logit_bias` (each answers
 `400 unsupported_parameter` with the parameter named), and files, batches,
 assistants, fine-tuning, moderations and realtime (`404`).
 
@@ -116,15 +134,30 @@ Every error uses the OpenAI envelope, so SDKs raise their usual exceptions:
 
 | Status | When | `code` |
 | --- | --- | --- |
-| 400 | invalid request or unsupported parameter | `unsupported_parameter` or none |
+| 400 | invalid request, unsupported parameter, unusable `response_format` | `unsupported_parameter`, `invalid_response_format` or none |
 | 401 | missing or wrong key | `invalid_api_key` |
-| 403 | the client is outside *Who can connect*, or a page without a key from an origin that is not accepted | `client_not_allowed`, `origin_not_allowed` |
+| 403 | the account's OpenAI API switch is off; the client is outside *Who can connect*; Guest asked for more than models; the account Open mode runs as is unavailable; a page without a key from an origin that is not accepted | `openai_api_off`, `client_not_allowed`, `guest_not_allowed`, `open_account_unavailable`, `origin_not_allowed` |
 | 404 | unknown route, an unknown provider or model, or the API is stopped | `model_not_found`, `endpoint_stopped` |
 | 429 | too many refused keys from one address | `auth_lockout` |
+| 500 | a structured answer that still does not match `response_format` | `structured_output_invalid` |
 
 Each response carries `x-request-id`.
 
 ## Access
+
+**Who may use it.** Identities are the gateway's own accounts. A caller's key is
+their gateway token and the request runs as that account. Each account has an
+**OpenAI API** switch (Accounts → the row's **OpenAI API** button, admins): on
+by default for an active account; off, that account's key answers
+`403 openai_api_off` at `/v1` (its console sign-in is unchanged). The first time
+the endpoint is turned on, the switch is written on for every active account
+and off for inactive ones. Without a key (Open mode), requests run as the
+account the admin chose: by default the built-in **Guest**, which may only use
+models (`/v1/models`, chat, responses, embeddings; no tools, no image, audio or
+file inputs, no media generation, anonymous towards AbstractCore so only local
+engines answer); or a user account, whose models and providers it then uses
+and whose log shows the requests. Never an admin, and never an account whose
+switch is off. The operator's own token (not an account) is always accepted.
 
 **Authentication**
 
@@ -132,13 +165,14 @@ Each response carries `x-request-id`.
   `Authorization: Bearer <token>`. The gateway resolves it to the account; the
   token never reaches AbstractCore. Repeated wrong keys from one address are
   locked out like sign-in attempts.
-- **Open (no key)**: requests without a key are served. SDKs still require some
-  key value; any text works, for example `not-needed` (a key that is not a gateway token is served as anonymous). Open applies only to
-  direct clients on this machine, your network or your VPN: a request through a
-  proxy, in Internet mode, or with proxies elsewhere trusted needs a key. Cloud
-  providers whose keys are stored on the gateway still need a key; open clients
-  can use local engines or send their own provider key in
-  `X-AbstractCore-Provider-API-Key`.
+- **Open (no key)**: requests without a key are served, as Guest or the chosen
+  account (above). SDKs still require some key value; any text works, for
+  example `not-needed` (a key that is not a gateway token is served without
+  one). Open applies only to direct clients on this machine, your network or
+  your VPN: a request through a proxy, in Internet mode, or with proxies
+  elsewhere trusted needs a key. As Guest, cloud providers whose keys are stored
+  on the gateway still need a key; open clients can use local engines or send
+  their own provider key in `X-AbstractCore-Provider-API-Key`.
 
 **Who can connect** filters on the client address:
 
@@ -163,19 +197,28 @@ may call it.
 ## Request log
 
 Each `/v1` request writes one line to the gateway's audit log
-(`<data dir>/audit_log.jsonl`) with an `openai_api` object: client, model,
-`prompt_tokens`, `completion_tokens`, `stream`, and `run_id` when the request
-sent `X-AbstractCore-Run-Id`. Prompts and replies are never logged. The log
-shares the audit log's rotation and retention (`ABSTRACTGATEWAY_AUDIT_LOG_*`);
-with the audit log off, the card stays empty.
+(`<data dir>/audit_log.jsonl`; no other store) with an `openai_api` object:
+client, model, `prompt_tokens`, `completion_tokens`, `stream`, `run_id` when the
+request sent `X-AbstractCore-Run-Id`, `run_as` for an Open-mode account, and the
+`request` and `response` as they crossed `/v1`. A streamed answer is recorded
+assembled (content, tool calls, finish reason, usage). Credentials are removed
+before the line is written: fields named like a credential (`api_key`,
+`authorization`, `token`, `password`, `secret`, ...) and every occurrence of the
+caller's key and the internal endpoint key read `[redacted]`; inline media
+(`data:` URLs) is replaced by its type and size; a side larger than 256 KB is
+kept to that size and marked truncated. Who reads it: an admin, every request;
+anyone else, their own. The log shares the audit log's rotation and retention
+(`ABSTRACTGATEWAY_AUDIT_LOG_*`); with the audit log off, the card stays empty.
 
 ## Admin API
 
 | Method | Route | Who | Result |
 | --- | --- | --- | --- |
-| GET | `/api/gateway/openai-api` | any account | status `gateway_openai_api_v1`: `enabled`, `access`, `reach`, `base_url`, `reach_options[]`, `warnings[]`, `listener`, `tailscale`, `key`, `support`, `example_model` (a text model `/v1/models` lists, the default one when listed; null when stopped), `writable` |
-| GET | `/api/gateway/openai-api/logs?limit=` | any account | `{rows[{ts, client, user_id, ip, method, path, model, prompt_tokens, completion_tokens, stream, duration_ms, status, run_id, observer_path}], scope}`: every request for an admin, the caller's own otherwise |
-| POST | `/api/gateway/admin/core-endpoint` | admin | `{enabled?, access?: token\|open, reach?: machine\|network\|tailnet\|anywhere}`; `409` with the reason when refused |
+| GET | `/api/gateway/openai-api` | any account | status `gateway_openai_api_v1`: everyone `role`, `writable`, `enabled`, `running`, `base_url`, `key{own_token, user_id, fingerprint, allowed}` (`fingerprint`: first 12 hex digits of the token's SHA-256, never the token), `docs`, `support`, `example_model` (a text model `/v1/models` lists; null when stopped); an admin also `access`, `reach`, `reach_options[]`, `open_account`, `open_account_options[]`, `warnings[]`, `listener`, `tailscale`, `open_requests`, `legacy_base_url` |
+| GET | `/api/gateway/openai-api/logs?limit=` | any account | `{rows[{request_id, ts, client, user_id, ip, method, path, model, prompt_tokens, completion_tokens, stream, duration_ms, status, run_id, observer_path, recorded}], scope}`: every request for an admin, the caller's own otherwise |
+| GET | `/api/gateway/openai-api/logs/{request_id}` | any account | `{row{..., request, response, user_agent}}`, the recorded request and response (redacted); someone else's id answers 404 for a non-admin |
+| POST | `/api/gateway/admin/core-endpoint` | admin | `{enabled?, access?: token\|open, reach?: machine\|network\|tailnet\|anywhere, open_account?: guest\|<user id>}`; `409` with the reason when refused |
+| PUT | `/api/gateway/admin/accounts/{id}/openai-api` | admin | `{enabled}`: the account's OpenAI API switch; answers the account row (`openai_api`) |
 | POST | `/api/gateway/admin/core-endpoint/restart` | admin | ends open requests; `{ended_requests}` |
 | POST | `/api/gateway/admin/core-endpoint/check` | admin | `{checks[{id, ok, text}], ok}` |
 | GET | `/api/gateway/admin/core-endpoint` | admin | the same status |
@@ -187,7 +230,7 @@ writes).
 
 `/core/v1/...` answers `308 Permanent Redirect` to `/v1/...` (method and body
 kept) and is deprecated: point your apps at `/v1`. The dedicated endpoint token
-of gateway 0.12.0 is still accepted as a key, and its routes
-(`/api/gateway/admin/core-endpoint/token/reveal|rotate`) remain, both
-deprecated: use gateway tokens. A 0.12.0 settings file without *Who can
+of gateway 0.12.0 is still accepted as a key (deprecated: use gateway tokens);
+`/api/gateway/admin/core-endpoint/token/rotate` still makes a new one (answered
+once), and the reveal route is gone: no route returns a stored token. A 0.12.0 settings file without *Who can
 connect* reads as **Devices on my network**.

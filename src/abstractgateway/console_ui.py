@@ -307,13 +307,33 @@ CONSOLE_UI_CSS = r"""
     .oai-supports { display: grid; gap: 4px; }
     .oai-support { margin: 0; font-size: var(--font-size-sm); line-height: 1.5; color: var(--text-secondary); }
     .oai-support b { color: var(--text-primary); font-weight: 650; }
-    .ui-log.oai-snippet { margin: 0; max-height: none; color: var(--text-primary); }
+    .ui-log.oai-snippet { margin: 0; max-height: none; max-width: 100%; min-width: 0; overflow-x: auto; color: var(--text-primary); }
     .oai-table { min-width: 0; }
     .oai-table table { width: 100%; }
     .oai-client, .oai-ip { display: block; }
     /* Stacked on a phone: two columns per request, not one cell per line. */
     .oai-table table.ui-stacked:not(#ui-none) > tbody > tr { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; padding: 12px 4px; }
     .oai-ip { font-size: var(--font-size-xs); color: var(--text-muted); }
+    .oai-key { font-family: var(--font-mono); letter-spacing: .02em; }
+    .oai-key.is-masked { color: var(--text-secondary); letter-spacing: .12em; }
+    .oai-eye { min-width: 44px; min-height: 36px; display: inline-grid; place-items: center; padding: 0 10px; }
+    .oai-eye[aria-pressed="true"] { background: var(--accent-subtle); color: var(--text-primary); }
+    #oai-open-account { max-width: 100%; min-height: 40px; }
+    .oai-toggle { display: inline-flex; align-items: center; gap: 8px; min-height: 32px; padding: 0 6px 0 0; border: 0; background: transparent; color: var(--text-primary); font: inherit; cursor: pointer; box-shadow: none; text-align: left; }
+    .oai-toggle:hover:not(:disabled) { filter: none; color: var(--accent); }
+    .oai-toggle__chev { width: 8px; height: 8px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); transition: transform .15s; flex: 0 0 8px; }
+    .oai-toggle[aria-expanded="true"] .oai-toggle__chev { transform: rotate(45deg); }
+    .oai-row.is-open > td { border-bottom-color: transparent; }
+    tr.oai-detail > td { padding: 4px 12px 16px; background: var(--ui-surface-1); }
+    .oai-table table.ui-stacked:not(#ui-none) > tbody > tr.oai-detail { display: block; padding: 8px 4px 14px; }
+    .oai-table table.ui-stacked:not(#ui-none) > tbody > tr.oai-detail > td::before { content: none; }
+    .oai-records { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr)); gap: 12px; min-width: 0; margin: 8px 0 10px; }
+    .oai-record { display: grid; align-content: start; grid-template-rows: auto 1fr; gap: 6px; min-width: 0; }
+    .oai-record__head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+    .oai-record__head h4 { margin: 0; font-size: var(--font-size-sm); font-weight: 650; color: var(--text-primary); }
+    .oai-record__head .ui-btn { margin-left: auto; }
+    .oai-record__facts { margin: 6px 0 0; overflow-wrap: anywhere; }
+    .ui-log.oai-json { margin: 0; max-height: 420px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-primary); font-size: var(--font-size-xs); }
     .first-run-network { display: grid; gap: 18px; min-width: 0; padding-top: 6px; border-top: 1px solid var(--ui-border-1); }
     .ui-seg { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 4px; padding: 4px; border: 1px solid var(--ui-border-2); border-radius: var(--radius-lg); background: var(--ui-surface-1); }
     .ui-seg__opt { display: grid; align-content: start; gap: 6px; min-width: 0; min-height: 0; padding: 12px 14px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-secondary); text-align: left; font-weight: 500; white-space: normal; box-shadow: none; cursor: pointer; }
@@ -2607,16 +2627,25 @@ CONSOLE_UI_JS = r"""
     function unmountNetworkPanel(key) { netStore.views.delete(key); }
     // ---- OpenAI API page (sidebar MODELS, after Providers) ----
     // Contract gateway_openai_api_v1 (routes/core_endpoint.py): GET
-    // /openai-api -> {writable, enabled, running, access: token|open, reach:
-    // machine|network|tailnet|anywhere, base_url, legacy_base_url,
-    // reach_options[{id,label,selected,available,reason?,shown?}],
-    // warnings[{id,tone,text}], listener{mode,label}, tailscale, key{own_token,
-    // user_id}, docs{openai_api, abstractcore}, example_model}; GET
-    // /openai-api/logs -> {rows[], scope: all|own}. Admin: POST
-    // /admin/core-endpoint {enabled?|access?|reach?} applies immediately; POST
-    // /admin/core-endpoint/restart; POST /admin/core-endpoint/check ->
-    // {checks[{id, ok: true|false|null, text}]}. Every sentence about access
-    // comes from the gateway (warnings, reasons); the page only lays it out.
+    // /openai-api -> everyone: {role: admin|user, writable, enabled, running,
+    // base_url, key{own_token, user_id, fingerprint, allowed}, docs{openai_api,
+    // abstractcore}, support, example_model}; an admin also gets {access:
+    // token|open, reach, reach_options[{id,label,selected,available,reason?,
+    // shown?}], open_account, open_account_options[{id,label,available,
+    // selected,reason?}], warnings[{id,tone,text}], listener, tailscale,
+    // open_requests}. GET /openai-api/logs -> {rows[], scope: all|own}; GET
+    // /openai-api/logs/{request_id} -> {row{..., request, response}} (keys and
+    // tokens removed when recorded). Admin: POST /admin/core-endpoint
+    // {enabled?|access?|reach?|open_account?} applies immediately; POST
+    // /admin/core-endpoint/restart; POST /admin/core-endpoint/check. Every
+    // sentence about access comes from the gateway; the page lays it out.
+    //
+    // The API key is the signed-in person's gateway token. No route answers a
+    // stored token: the page shows the copy this browser kept at sign-in
+    // (sessionStorage; localStorage when "Remember this browser" was on),
+    // checked against the gateway's fingerprint (SHA-256, 12 hex) when the
+    // browser can hash. "New key" makes a new token, answered once.
+    const OAI_KEY_STORE = "abstractgateway.console.openai.key";
     const OAI_AUTH = [
       { id: "token", label: "Protected (API key)", text: "Apps send a gateway token as their API key." },
       { id: "open", label: "Open (no key)", text: "Apps connect without a key. Cloud providers still need one." },
@@ -2629,11 +2658,63 @@ CONSOLE_UI_JS = r"""
     };
     const OAI_SNIPPETS = [["curl", "curl"], ["python", "Python"], ["js", "JavaScript"]];
     const OAI_LOG_REFRESH_MS = 5000;
+    const OAI_MASK = "••••••••••••••••";
     const oaiStore = { data: null, error: "", loading: false, busy: "", notice: null, checks: null, logs: null, logsScope: "", logsError: "",
-      snippet: "curl", views: new Map(), confirmKey: false, newKey: "", timer: null };
-    function oaiSnippet(kind, d) {
+      snippet: "curl", views: new Map(), confirmKey: false, timer: null, reveal: false, keyCheck: "", keyNotice: null,
+      open: new Set(), details: new Map() };
+    function oaiStorages() {
+      const out = [];
+      try { if (typeof sessionStorage !== "undefined" && sessionStorage) out.push(sessionStorage); } catch {}
+      try { if (typeof localStorage !== "undefined" && localStorage) out.push(localStorage); } catch {}
+      return out;
+    }
+    // Called by sign-in (console.py login) and by New key: this person's token, kept in this browser only.
+    function oaiKeepToken(user, token, remember) {
+      const value = JSON.stringify({ u: String(user || ""), t: String(token || "") });
+      try { sessionStorage.setItem(OAI_KEY_STORE, value); } catch {}
+      try { if (remember) localStorage.setItem(OAI_KEY_STORE, value); else localStorage.removeItem(OAI_KEY_STORE); } catch {}
+      oaiStore.keyCheck = "";
+    }
+    function oaiForgetToken() {
+      for (const s of oaiStorages()) { try { s.removeItem(OAI_KEY_STORE); } catch {} }
+      oaiStore.keyCheck = "";
+      oaiStore.reveal = false;
+    }
+    function oaiKeptRemembered() {
+      try { return !!localStorage.getItem(OAI_KEY_STORE); } catch { return false; }
+    }
+    // The kept token for the signed-in account, or "" (none kept, another account's, or outdated).
+    function oaiKeptToken(d) {
+      const who = String((d && d.key && d.key.user_id) || "");
+      for (const s of oaiStorages()) {
+        let doc = null;
+        try { doc = JSON.parse(s.getItem(OAI_KEY_STORE) || "null"); } catch { doc = null; }
+        if (doc && doc.t && doc.u === who) return oaiStore.keyCheck === "stale" ? "" : String(doc.t);
+      }
+      return "";
+    }
+    async function oaiCheckKept(d) {
+      const fp = d && d.key && d.key.fingerprint;
+      const who = String((d && d.key && d.key.user_id) || "");
+      let token = "";
+      for (const s of oaiStorages()) {
+        try { const doc = JSON.parse(s.getItem(OAI_KEY_STORE) || "null"); if (doc && doc.t && doc.u === who) { token = String(doc.t); break; } } catch {}
+      }
+      if (!token || !fp) { oaiStore.keyCheck = token ? "unknown" : ""; return; }
+      const subtle = (typeof crypto !== "undefined" && crypto && crypto.subtle) ? crypto.subtle : null;
+      if (!subtle || typeof TextEncoder === "undefined") { oaiStore.keyCheck = "unknown"; return; }
+      try {
+        const digest = new Uint8Array(await subtle.digest("SHA-256", new TextEncoder().encode(token)));
+        const hex = Array.from(digest).map((b) => b.toString(16).padStart(2, "0")).join("").slice(0, 12);
+        oaiStore.keyCheck = hex === fp ? "match" : "stale";
+      } catch { oaiStore.keyCheck = "unknown"; }
+    }
+    // shown: what the page displays (masked unless revealed); copied: the real text.
+    function oaiSnippet(kind, d, opts) {
       const base = String(d.base_url || "");
-      const key = d.access === "open" ? "not-needed" : (oaiStore.newKey || "YOUR_GATEWAY_TOKEN");
+      const kept = oaiKeptToken(d);
+      const open = d.access === "open" && !kept;
+      const key = open ? "not-needed" : (kept ? (opts && opts.clear ? kept : (oaiStore.reveal ? kept : OAI_MASK)) : "YOUR_GATEWAY_TOKEN");
       const model = d.example_model || "provider/model";
       if (kind === "python") {
         return `from openai import OpenAI\n\nclient = OpenAI(base_url="${base}", api_key="${key}")\nreply = client.chat.completions.create(\n    model="${model}",\n    messages=[{"role": "user", "content": "Hello"}],\n)\nprint(reply.choices[0].message.content)`;
@@ -2654,56 +2735,91 @@ CONSOLE_UI_JS = r"""
           + `<span class="ui-seg__text">${esc(locked && o.reason ? o.reason : (o.text || ""))}</span></button>`;
       }).join("") + `</div>`;
     }
+    function oaiCopyButton(value, label) {
+      return `<button type="button" class="ui-btn is-ghost ui-addr__copy" data-oai-copy="${esc(value)}" aria-label="Copy ${esc(label)}">Copy</button>`;
+    }
     function oaiStatusCard(d) {
-      const admin = !!d.writable;
+      const admin = d.role === "admin";
       const off = !admin || !!oaiStore.busy;
       let out = `<article class="ui-card oai-card" data-oai-card="status"><div class="ui-card__head"><div class="ui-card__titles"><h3 class="ui-card__title">Status</h3>`
         + `<p class="ui-card__note">One address for every OpenAI-compatible app.</p></div>${uiPill(d.running ? "Running" : "Stopped", d.running ? "ok" : "muted")}</div>`
         + `<ul class="ui-addr-list"><li class="ui-addr"><div class="ui-addr__text"><span class="ui-addr__label">Base URL</span><code class="ui-ellip is-block" data-oai-base title="${esc(d.base_url)}">${esc(d.base_url)}</code></div>`
-        + `<div class="ui-addr__side"><button type="button" class="ui-btn is-ghost ui-addr__copy" data-oai-copy="${esc(d.base_url)}" aria-label="Copy base URL">Copy</button></div></li></ul>`
-        + `<div class="ui-toolbar oai-controls"><label class="ui-switch" title="Answer OpenAI API requests at the base URL"><input type="checkbox" role="switch" data-oai-enabled aria-describedby="oai-enabled-help"${d.enabled ? " checked" : ""}${off ? " disabled" : ""}><span>${oaiStore.busy === "enabled" ? "Saving..." : "Endpoint"}</span></label>`;
-      if (admin) {
-        out += `<button type="button" class="ui-btn is-ghost" data-oai-action="restart" title="End open requests and keep serving"${off || !d.enabled ? " disabled" : ""}${oaiStore.busy === "restart" ? ' aria-busy="true"' : ""}>${oaiStore.busy === "restart" ? "Restarting..." : "Restart"}</button>`
-          + `<button type="button" class="ui-btn is-ghost" data-oai-action="check" title="Check settings, Core and models"${oaiStore.busy ? " disabled" : ""}${oaiStore.busy === "check" ? ' aria-busy="true"' : ""}>${oaiStore.busy === "check" ? "Checking..." : "Check setup"}</button>`;
+        + `<div class="ui-addr__side">${oaiCopyButton(d.base_url, "base URL")}</div></li></ul>`;
+      if (!admin) {
+        return out + `<p class="ui-card__note" data-oai-user-status>${d.running ? "Apps can connect now." : "Stopped: apps can't connect."} Only an admin can start or stop it.</p></article>`;
       }
-      out += `</div><p class="ui-card__note" id="oai-enabled-help">Endpoint: answers apps at this address.${admin ? " Restart ends open requests." : " Only an admin can change it."}</p>`;
+      out += `<div class="ui-toolbar oai-controls"><label class="ui-switch" title="Answer OpenAI API requests at the base URL"><input type="checkbox" role="switch" data-oai-enabled aria-describedby="oai-enabled-help"${d.enabled ? " checked" : ""}${off ? " disabled" : ""}><span>${oaiStore.busy === "enabled" ? "Saving..." : "Endpoint"}</span></label>`
+        + `<button type="button" class="ui-btn is-ghost" data-oai-action="restart" title="End open requests and keep serving"${off || !d.enabled ? " disabled" : ""}${oaiStore.busy === "restart" ? ' aria-busy="true"' : ""}>${oaiStore.busy === "restart" ? "Restarting..." : "Restart"}</button>`
+        + `<button type="button" class="ui-btn is-ghost" data-oai-action="check" title="Check settings, Core and models"${oaiStore.busy ? " disabled" : ""}${oaiStore.busy === "check" ? ' aria-busy="true"' : ""}>${oaiStore.busy === "check" ? "Checking..." : "Check setup"}</button>`
+        + `</div><p class="ui-card__note" id="oai-enabled-help">Endpoint: answers apps at this address. Restart ends open requests.</p>`;
       if (Array.isArray(oaiStore.checks)) {
         out += `<ul class="oai-checks" data-oai-checks>${oaiStore.checks.map((c) => `<li class="oai-check tone-${c.ok === true ? "ok" : c.ok === false ? "err" : "warn"}">${uiPill(c.ok === true ? "OK" : c.ok === false ? "Fix" : "Note", c.ok === true ? "ok" : c.ok === false ? "err" : "warn")}<span>${esc(c.text)}</span></li>`).join("")}</ul>`;
       }
       return out + `</article>`;
     }
+    function oaiKeyRow(d) {
+      const k = d.key || {};
+      let out = `<li class="ui-addr" data-oai-key><div class="ui-addr__text"><span class="ui-addr__label">API key</span>`;
+      if (!k.own_token) {
+        return out + `<span>The gateway admin token</span><span class="ui-addr__note">The token this gateway was started with.</span></div></li>`;
+      }
+      const kept = oaiKeptToken(d);
+      if (kept) {
+        const shown = oaiStore.reveal ? kept : OAI_MASK;
+        out += `<code class="ui-ellip is-block oai-key${oaiStore.reveal ? "" : " is-masked"}" data-oai-key-value aria-label="${oaiStore.reveal ? "Your API key" : "Your API key, hidden"}">${esc(shown)}</code>`
+          + `<span class="ui-addr__note">Your gateway token: apps use it as their API key and act as you.</span></div>`
+          + `<div class="ui-addr__side"><button type="button" class="ui-btn is-ghost oai-eye" data-oai-action="reveal" aria-pressed="${oaiStore.reveal ? "true" : "false"}" aria-label="${oaiStore.reveal ? "Hide key" : "Show key"}" title="${oaiStore.reveal ? "Hide key" : "Show key"}">${oaiEyeIcon(oaiStore.reveal)}</button>`
+          + `<button type="button" class="ui-btn is-ghost ui-addr__copy" data-oai-action="copy-key" aria-label="Copy API key">Copy</button>`
+          + `<button type="button" class="ui-btn is-ghost" data-oai-action="new-key"${oaiStore.busy ? " disabled" : ""}>New key</button></div></li>`;
+        return out;
+      }
+      const why = oaiStore.keyCheck === "stale"
+        ? "Your token changed since you signed in here, so this browser's copy no longer works."
+        : "This browser doesn't have your token: you signed in with a link or an emailed code, or in another browser.";
+      return out + `<span class="oai-key is-masked">${OAI_MASK}</span><span class="ui-addr__note" data-oai-key-missing>${esc(why)} New key makes one; the gateway shows it once.</span></div>`
+        + `<div class="ui-addr__side"><button type="button" class="ui-btn is-ghost" data-oai-action="new-key"${oaiStore.busy ? " disabled" : ""}>New key</button></div></li>`;
+    }
+    function oaiEyeIcon(open) {
+      return open
+        ? `<svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"/><path d="M10.6 5.1A10.9 10.9 0 0 1 12 5c6.5 0 10 7 10 7a17.6 17.6 0 0 1-3.2 4.2M6.6 6.6C3.8 8.4 2 12 2 12s3.5 7 10 7a10.6 10.6 0 0 0 5.4-1.5"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>`
+        : `<svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>`;
+    }
     function oaiConnectCard(d) {
       const k = d.key || {};
       let out = `<article class="ui-card oai-card" data-oai-card="connect"><div class="ui-card__head"><div class="ui-card__titles"><h3 class="ui-card__title">Connect your app</h3>`
-        + `<p class="ui-card__note">Paste these two values into any OpenAI SDK or app.</p></div></div><ul class="ui-addr-list">`
-        + `<li class="ui-addr"><div class="ui-addr__text"><span class="ui-addr__label">Base URL</span><code class="ui-ellip is-block" title="${esc(d.base_url)}">${esc(d.base_url)}</code></div>`
-        + `<div class="ui-addr__side"><button type="button" class="ui-btn is-ghost ui-addr__copy" data-oai-copy="${esc(d.base_url)}" aria-label="Copy base URL">Copy</button></div></li>`
-        + `<li class="ui-addr" data-oai-key><div class="ui-addr__text"><span class="ui-addr__label">API key</span>`;
-      if (oaiStore.newKey) {
-        out += `<code class="ui-ellip is-block" data-oai-newkey>${esc(oaiStore.newKey)}</code><span class="ui-addr__note">Your new gateway token, shown once. Your old one stopped working.</span></div>`
-          + `<div class="ui-addr__side"><button type="button" class="ui-btn is-primary ui-addr__copy" data-oai-copy="${esc(oaiStore.newKey)}" aria-label="Copy API key">Copy</button></div></li>`;
-      } else if (k.own_token) {
-        out += `<span>Your gateway token</span><span class="ui-addr__note">The token you sign in with. Lost it? Get a new one.</span></div>`
-          + `<div class="ui-addr__side"><button type="button" class="ui-btn is-ghost" data-oai-action="new-key"${oaiStore.busy ? " disabled" : ""}>New key</button></div></li>`;
-      } else {
-        out += `<span>The gateway admin token</span><span class="ui-addr__note">The token you signed in with.</span></div></li>`;
+        + `<p class="ui-card__note">Paste these two values into any OpenAI SDK or app.</p></div></div>`;
+      if (k.allowed === false) {
+        out += `<div class="ui-alert tone-warn" role="status" data-oai-off-for-you><strong>The OpenAI API is off for your account.</strong><span>An admin can turn it on in Accounts.</span></div>`;
       }
-      out += `</ul>`;
+      out += `<ul class="ui-addr-list"><li class="ui-addr"><div class="ui-addr__text"><span class="ui-addr__label">Base URL</span><code class="ui-ellip is-block" title="${esc(d.base_url)}">${esc(d.base_url)}</code></div>`
+        + `<div class="ui-addr__side">${oaiCopyButton(d.base_url, "base URL")}</div></li>${oaiKeyRow(d)}</ul>`;
+      if (oaiStore.keyNotice) {
+        const n = oaiStore.keyNotice;
+        out += `<div class="ui-alert tone-${esc(n.tone)}" role="${n.tone === "err" ? "alert" : "status"}" data-oai-key-notice><strong>${esc(n.text)}</strong></div>`;
+      }
       if (oaiStore.confirmKey) {
-        out += `<div class="ui-confirm" role="alertdialog" aria-label="Replace your gateway token"><p>Replace your gateway token? Apps and devices using the old one must use the new one.</p>`
-          + `<div class="ui-toolbar"><button type="button" class="ui-btn is-primary" data-oai-action="new-key-yes"${oaiStore.busy ? " disabled" : ""}>${oaiStore.busy === "new-key" ? "Replacing..." : "Replace"}</button><button type="button" class="ui-btn is-ghost" data-oai-action="new-key-no">Cancel</button></div></div>`;
+        out += `<div class="ui-confirm" role="alertdialog" aria-label="Make a new key"><p>Make a new key? It replaces your gateway token: apps, devices and other browsers using the old one stop working. The gateway shows the new key once; this browser keeps it for this page.</p>`
+          + `<div class="ui-toolbar"><button type="button" class="ui-btn is-primary" data-oai-action="new-key-yes"${oaiStore.busy ? " disabled" : ""}>${oaiStore.busy === "new-key" ? "Making..." : "New key"}</button><button type="button" class="ui-btn is-ghost" data-oai-action="new-key-no">Cancel</button></div></div>`;
       }
       if (d.access === "open") out += `<p class="ui-card__note" data-oai-open-note>Open mode: SDKs still ask for a key; any text works, for example <code>not-needed</code>.</p>`;
       return out + `<p class="ui-card__note">Model names are <code>provider/model</code>, as listed at <code>/v1/models</code>.</p></article>`;
     }
+    function oaiOpenAccountField(d) {
+      const opts = Array.isArray(d.open_account_options) ? d.open_account_options : [];
+      const busy = oaiStore.busy === "open_account";
+      const options = opts.map((o) => `<option value="${esc(o.id)}"${o.selected ? " selected" : ""}${o.available === false && !o.selected ? " disabled" : ""}>${esc(o.label)}${o.available === false ? ` — ${esc(o.reason || "unavailable")}` : ""}</option>`).join("");
+      return `<div class="oai-field" data-oai-open-account-field><label class="oai-field__title" for="oai-open-account">Requests without a key run as</label>`
+        + `<select id="oai-open-account" data-oai-open-account aria-describedby="oai-open-account-help"${busy || oaiStore.busy ? " disabled" : ""}>${options}</select>`
+        + `<p class="ui-card__note" id="oai-open-account-help">Guest may only use models: no tools, no files or images. An account brings its own models and providers, and its requests show in its log. Never an admin.</p></div>`;
+    }
     function oaiAccessCard(d) {
-      const admin = !!d.writable;
       const reach = (Array.isArray(d.reach_options) ? d.reach_options : []).filter((o) => o.shown !== false)
         .map((o) => ({ ...o, text: OAI_REACH_TEXT[o.id] || "" }));
       let out = `<article class="ui-card oai-card oai-card--wide" data-oai-card="access"><div class="ui-card__head"><div class="ui-card__titles"><h3 class="ui-card__title">Access</h3>`
-        + `<p class="ui-card__note">Changes apply immediately.${admin ? "" : " Only an admin can change them."}</p></div></div>`
-        + `<div class="oai-field"><h4 class="oai-field__title" id="oai-auth-h">Authentication</h4>${oaiSeg("access", "Authentication", OAI_AUTH, d.access, { writable: admin })}</div>`
-        + `<div class="oai-field"><h4 class="oai-field__title" id="oai-reach-h">Who can connect</h4>${oaiSeg("reach", "Who can connect", reach, d.reach, { writable: admin })}</div>`;
+        + `<p class="ui-card__note">Changes apply immediately. Who may use the API with their own key: the OpenAI API switch of each account, in Accounts.</p></div></div>`
+        + `<div class="oai-field"><h4 class="oai-field__title" id="oai-auth-h">Authentication</h4>${oaiSeg("access", "Authentication", OAI_AUTH, d.access, { writable: true })}</div>`;
+      if (d.access === "open") out += oaiOpenAccountField(d);
+      out += `<div class="oai-field"><h4 class="oai-field__title" id="oai-reach-h">Who can connect</h4>${oaiSeg("reach", "Who can connect", reach, d.reach, { writable: true })}</div>`;
       for (const w of (Array.isArray(d.warnings) ? d.warnings : [])) {
         out += `<div class="ui-alert tone-${esc(w.tone === "warn" ? "warn" : "info")}" role="status" data-oai-warning="${esc(w.id)}"><strong>${esc(w.text)}</strong>`
           + (w.id === "listener" ? `<div class="ui-card__actions"><button type="button" class="ui-btn is-ghost" data-oai-action="goto-network">Network</button></div>` : "") + `</div>`;
@@ -2717,16 +2833,17 @@ CONSOLE_UI_JS = r"""
     function oaiDocsCard(d) {
       const docs = d.docs || {};
       const tabs = OAI_SNIPPETS.map(([id, label]) => `<button type="button" role="tab" class="ui-btn ${oaiStore.snippet === id ? "is-primary" : "is-ghost"}" data-oai-snippet="${id}" aria-selected="${oaiStore.snippet === id ? "true" : "false"}">${label}</button>`).join("");
-      const code = oaiSnippet(oaiStore.snippet, d);
+      const kept = oaiKeptToken(d);
       return `<article class="ui-card oai-card" data-oai-card="docs"><div class="ui-card__head"><div class="ui-card__titles"><h3 class="ui-card__title">Docs</h3>`
-        + `<p class="ui-card__note">What is supported, and a first request with your base URL.</p></div></div>`
+        + `<p class="ui-card__note">What is supported, and a first request with your base URL${kept ? " and your key" : ""}.</p></div></div>`
         + `<ul class="oai-links"><li><a href="${esc(docs.openai_api || "#")}" target="_blank" rel="noopener">OpenAI API compatibility</a> <span class="ui-card__note">endpoints and parameters this gateway supports</span></li>`
         + `<li><a href="${esc(docs.abstractcore || "#")}" target="_blank" rel="noopener">AbstractCore server</a> <span class="ui-card__note">the engine behind it</span></li></ul>`
         + oaiSupportMarkup(d.support)
         + `<div class="ui-toolbar oai-tabs" role="tablist" aria-label="Example">${tabs}</div>`
-        + `<pre class="ui-log oai-snippet" data-oai-code>${esc(code)}</pre>`
+        + `<pre class="ui-log oai-snippet" data-oai-code>${esc(oaiSnippet(oaiStore.snippet, d))}</pre>`
         + `<div class="ui-toolbar"><button type="button" class="ui-btn is-ghost" data-oai-copy-snippet>Copy example</button>`
-        + (d.access === "open" ? "" : `<span class="ui-card__note">Replace YOUR_GATEWAY_TOKEN with your token.</span>`) + `</div></article>`;
+        + (kept ? `<span class="ui-card__note">The key is hidden here; Copy example includes it.</span>`
+          : (d.access === "open" ? "" : `<span class="ui-card__note">Replace YOUR_GATEWAY_TOKEN with your token.</span>`)) + `</div></article>`;
     }
     function oaiSupportMarkup(sp) {
       if (!sp) return "";
@@ -2737,10 +2854,41 @@ CONSOLE_UI_JS = r"""
     function oaiTime(ts) {
       try { const t = new Date(ts); return isNaN(t.getTime()) ? String(ts || "") : t.toLocaleTimeString(); } catch { return String(ts || ""); }
     }
+    function oaiJson(side) {
+      if (!side) return "Not recorded.";
+      if (side.body !== undefined) return JSON.stringify(side.body, null, 2);
+      if (typeof side.text === "string") return side.text;
+      if (side.omitted) return `Not kept: ${side.omitted} (${side.bytes} bytes).`;
+      return side.bytes === 0 ? "Empty." : "Not recorded.";
+    }
+    function oaiSideMarkup(label, side, rid, which) {
+      const size = side && typeof side.bytes === "number" ? `${side.bytes} bytes` : "";
+      const note = side && side.truncated ? " · first 256 KB shown" : "";
+      const stream = which === "response" && side && side.body && side.body.assembled_from_stream ? ` · assembled from ${side.body.assembled_from_stream} stream events` : "";
+      return `<section class="oai-record"><div class="oai-record__head"><h4>${esc(label)}</h4><span class="ui-card__note">${esc(size + note + stream)}</span>`
+        + `<button type="button" class="ui-btn is-ghost" data-oai-copy-record="${esc(rid)}" data-oai-side="${which}">Copy</button></div>`
+        + `<pre class="ui-log oai-json" data-oai-json="${which}">${esc(oaiJson(side))}</pre></section>`;
+    }
+    function oaiDetailMarkup(r) {
+      const det = oaiStore.details.get(r.request_id);
+      let body;
+      if (!det) body = `<div class="ui-empty">Reading the request...</div>`;
+      else if (det.error) body = `<div class="ui-alert tone-err" role="alert"><strong>Could not read this request.</strong><span>${esc(det.error)}</span></div>`;
+      else {
+        const row = det.row;
+        const facts = [`${row.method || ""} ${row.path || ""}`.trim(), row.client ? `as ${row.client}` : "", row.ip || "", row.user_agent || ""].filter(Boolean).join(" · ");
+        body = `<p class="ui-card__note oai-record__facts">${esc(facts)}. Keys and tokens were removed when this was recorded.</p>`
+          + `<div class="oai-records">${oaiSideMarkup("Request", row.request, r.request_id, "request")}${oaiSideMarkup("Response", row.response, r.request_id, "response")}</div>`
+          + `<div class="ui-toolbar">${row.observer_path
+            ? `<a class="ui-btn is-ghost" href="${esc(row.observer_path)}" target="_blank" rel="noopener" data-oai-observer>Open in Observer</a>`
+            : `<button type="button" class="ui-btn is-ghost" disabled title="This request was not part of a run" data-oai-observer>Open in Observer</button><span class="ui-card__note">Not part of a run: Observer shows the requests that a run made.</span>`}</div>`;
+      }
+      return `<tr class="oai-detail" data-oai-detail="${esc(r.request_id)}"><td colspan="7" data-label="">${body}</td></tr>`;
+    }
     function oaiLogsCard() {
       const rows = Array.isArray(oaiStore.logs) ? oaiStore.logs : null;
       let out = `<article class="ui-card oai-card oai-card--wide" data-oai-card="logs"><div class="ui-card__head"><div class="ui-card__titles"><h3 class="ui-card__title">Recent requests</h3>`
-        + `<p class="ui-card__note">${oaiStore.logsScope === "own" ? "Your requests, newest first." : "Newest first."} Refreshes every 5 s; kept as long as the audit log.</p></div></div>`;
+        + `<p class="ui-card__note">${oaiStore.logsScope === "own" ? "Your requests, newest first." : "Every account's requests, newest first."} Open a row to see the request and the response. Refreshes every 5 s; kept as long as the audit log.</p></div></div>`;
       if (oaiStore.logsError) out += `<div class="ui-alert tone-err" role="alert"><strong>Could not read the request log.</strong><span>${esc(oaiStore.logsError)}</span></div>`;
       if (!rows) return out + `<div class="ui-empty">Reading the log...</div></article>`;
       if (!rows.length) return out + `<div class="ui-empty" data-oai-logs-empty>No requests yet.</div></article>`;
@@ -2748,10 +2896,15 @@ CONSOLE_UI_JS = r"""
       for (const r of rows) {
         const tokens = [r.prompt_tokens == null ? "" : `${r.prompt_tokens} in`, r.completion_tokens == null ? "" : `${r.completion_tokens} out`].filter(Boolean).join(" · ") || "—";
         const ok = Number(r.status) >= 200 && Number(r.status) < 300;
-        out += `<tr><td title="${esc(r.ts || "")}">${esc(oaiTime(r.ts))}</td><td><span class="oai-client">${esc(r.client || "")}</span><span class="oai-ip">${esc(r.ip || "")}</span></td>`
-          + `<td>${esc(r.model || "—")}</td><td>${esc(tokens)}</td><td>${r.duration_ms == null ? "—" : `${esc(r.duration_ms)} ms`}</td>`
-          + `<td>${uiPill(String(r.status || "—"), ok ? "ok" : "err")}</td>`
-          + `<td>${r.observer_path ? `<a class="ui-btn is-ghost" href="${esc(r.observer_path)}" target="_blank" rel="noopener" title="Open in Observer">Open</a>` : ""}</td></tr>`;
+        const rid = String(r.request_id || "");
+        const open = rid && oaiStore.open.has(rid);
+        out += `<tr class="oai-row${open ? " is-open" : ""}"${rid ? ` data-oai-row="${esc(rid)}"` : ""}>`
+          + `<td data-label="Time" title="${esc(r.ts || "")}">${rid ? `<button type="button" class="oai-toggle" data-oai-toggle="${esc(rid)}" aria-expanded="${open ? "true" : "false"}" aria-label="${open ? "Hide" : "Show"} the request and response of ${esc(oaiTime(r.ts))}"><span class="oai-toggle__chev" aria-hidden="true"></span>${esc(oaiTime(r.ts))}</button>` : esc(oaiTime(r.ts))}</td>`
+          + `<td data-label="Client"><span class="oai-client">${esc(r.client || "")}</span><span class="oai-ip">${esc(r.ip || "")}</span></td>`
+          + `<td data-label="Model">${esc(r.model || "—")}</td><td data-label="Tokens">${esc(tokens)}</td><td data-label="Latency">${r.duration_ms == null ? "—" : `${esc(r.duration_ms)} ms`}</td>`
+          + `<td data-label="Status">${uiPill(String(r.status || "—"), ok ? "ok" : "err")}</td>`
+          + `<td data-label="Run">${r.observer_path ? `<a class="ui-btn is-ghost" href="${esc(r.observer_path)}" target="_blank" rel="noopener" title="Open in Observer">Open</a>` : "—"}</td></tr>`;
+        if (open) out += oaiDetailMarkup(r);
       }
       return out + `</tbody></table></div></article>`;
     }
@@ -2762,17 +2915,25 @@ CONSOLE_UI_JS = r"""
       }
       const d = oaiStore.data;
       if (!d) return `<div class="ui-empty">Reading the OpenAI API settings...</div>`;
-      return `<div class="oai-grid">${oaiStatusCard(d)}${oaiConnectCard(d)}</div>${oaiAccessCard(d)}<div class="oai-grid">${oaiDocsCard(d)}</div>${oaiLogsCard()}`;
+      const admin = d.role === "admin";
+      return `<div class="oai-grid">${oaiStatusCard(d)}${oaiConnectCard(d)}</div>${admin ? oaiAccessCard(d) : ""}<div class="oai-grid">${oaiDocsCard(d)}</div>${oaiLogsCard()}`;
     }
     function oaiRender() {
       for (const el of oaiStore.views.values()) if (el) el.innerHTML = oaiViewMarkup();
     }
     async function oaiRefresh() {
       oaiStore.loading = true;
-      try { oaiStore.data = await api("/api/gateway/openai-api"); oaiStore.error = ""; }
+      try { oaiStore.data = await api("/api/gateway/openai-api"); oaiStore.error = ""; await oaiCheckKept(oaiStore.data); }
       catch (err) { oaiStore.error = String((err && err.message) || err); }
       oaiStore.loading = false;
       oaiRender();
+    }
+    function oaiRedrawLogs() {
+      // Only the log card is redrawn: a poll never resets a choice, a revealed key or a confirmation.
+      for (const el of oaiStore.views.values()) {
+        const card = el && el.querySelector ? el.querySelector('[data-oai-card="logs"]') : null;
+        if (card) card.outerHTML = oaiLogsCard(); else if (el) el.innerHTML = oaiViewMarkup();
+      }
     }
     async function oaiLogsRefresh() {
       try {
@@ -2781,20 +2942,28 @@ CONSOLE_UI_JS = r"""
         oaiStore.logsScope = String((res && res.scope) || "");
         oaiStore.logsError = "";
       } catch (err) { oaiStore.logsError = String((err && err.message) || err); }
-      // Only the log card is redrawn: a poll never resets a choice or a confirmation in progress.
-      for (const el of oaiStore.views.values()) {
-        const card = el && el.querySelector ? el.querySelector('[data-oai-card="logs"]') : null;
-        if (card) card.outerHTML = oaiLogsCard(); else if (el) el.innerHTML = oaiViewMarkup();
-      }
+      oaiRedrawLogs();
+    }
+    async function oaiToggleRow(rid) {
+      if (oaiStore.open.has(rid)) { oaiStore.open.delete(rid); oaiRedrawLogs(); return; }
+      oaiStore.open.add(rid);
+      oaiRedrawLogs();
+      if (oaiStore.details.has(rid) && !oaiStore.details.get(rid).error) return;
+      try {
+        const res = await api(`/api/gateway/openai-api/logs/${encodeURIComponent(rid)}`);
+        oaiStore.details.set(rid, { row: res.row });
+      } catch (err) { oaiStore.details.set(rid, { error: String((err && err.message) || err) }); }
+      oaiRedrawLogs();
     }
     const OAI_SAVED = {
       enabled: (d) => d.enabled ? "Running: apps can connect now." : "Stopped: open requests ended.",
       access: (d) => `Saved: ${d.access === "open" ? "Open (no key)" : "Protected (API key)"}. Applies now.`,
       reach: (d) => `Saved: ${((d.reach_options || []).find((o) => o.id === d.reach) || {}).label || d.reach}. Applies now.`,
+      open_account: (d) => `Saved: requests without a key run as ${((d.open_account_options || []).find((o) => o.id === d.open_account) || {}).label || d.open_account}.`,
     };
     async function oaiChange(field, value) {
       if (oaiStore.busy) return;
-      oaiStore.busy = field === "enabled" ? "enabled" : `${field}:${value}`;
+      oaiStore.busy = field === "enabled" || field === "open_account" ? field : `${field}:${value}`;
       oaiStore.notice = null;
       oaiRender();
       try {
@@ -2809,10 +2978,13 @@ CONSOLE_UI_JS = r"""
     async function oaiAction(action) {
       if (action === "goto-network") { setActiveTab("network"); openCoreTab("network"); return; }
       if (action === "refresh") { await oaiRefresh(); return; }
+      if (action === "reveal") { oaiStore.reveal = !oaiStore.reveal; oaiRender(); return; }
+      if (action === "copy-key") { const t = oaiKeptToken(oaiStore.data); if (t) uiCopy(t); return; }
       if (action === "new-key" || action === "new-key-no") { oaiStore.confirmKey = action === "new-key"; oaiRender(); return; }
       if (oaiStore.busy) return;
       oaiStore.busy = action === "new-key-yes" ? "new-key" : action;
       oaiStore.notice = null;
+      oaiStore.keyNotice = null;
       oaiRender();
       try {
         if (action === "restart") {
@@ -2825,13 +2997,20 @@ CONSOLE_UI_JS = r"""
           oaiStore.checks = Array.isArray(res.checks) ? res.checks : [];
         } else if (action === "new-key-yes") {
           const res = await api("/api/gateway/me/token/rotate", { method: "POST", body: "{}" });
-          oaiStore.newKey = String(res.token || "");
+          const token = String((res && res.token) || "");
+          if (!token) throw new Error("The gateway answered without the new key.");
+          oaiKeepToken(String((oaiStore.data && oaiStore.data.key && oaiStore.data.key.user_id) || ""), token, oaiKeptRemembered());
           oaiStore.confirmKey = false;
+          oaiStore.reveal = true;
+          oaiStore.keyNotice = { tone: "ok", text: "New key made: your old one stopped working. Copy it now: the gateway shows a key only once." };
+          oaiStore.data = await api("/api/gateway/openai-api");
+          await oaiCheckKept(oaiStore.data);
         }
       } catch (err) {
         const text = String((err && err.message) || err);
         if (action === "check") oaiStore.checks = [{ id: "error", ok: false, text }];
-        else oaiStore.notice = { tone: "err", text: action === "restart" ? `Not restarted: ${text}` : `No new key: ${text}` };
+        else if (action === "new-key-yes") oaiStore.keyNotice = { tone: "err", text: `No new key: ${text}` };
+        else oaiStore.notice = { tone: "err", text: `Not restarted: ${text}` };
         oaiStore.confirmKey = false;
       }
       oaiStore.busy = "";
@@ -2843,7 +3022,11 @@ CONSOLE_UI_JS = r"""
         if (!t) return;
         const copy = t.closest("[data-oai-copy]");
         if (copy) { uiCopy(copy.dataset.oaiCopy); return; }
-        if (t.closest("[data-oai-copy-snippet]") && oaiStore.data) { uiCopy(oaiSnippet(oaiStore.snippet, oaiStore.data)); return; }
+        if (t.closest("[data-oai-copy-snippet]") && oaiStore.data) { uiCopy(oaiSnippet(oaiStore.snippet, oaiStore.data, { clear: true })); return; }
+        const rec = t.closest("[data-oai-copy-record]");
+        if (rec) { const det = oaiStore.details.get(rec.dataset.oaiCopyRecord); if (det && det.row) uiCopy(oaiJson(det.row[rec.dataset.oaiSide])); return; }
+        const toggle = t.closest("[data-oai-toggle]");
+        if (toggle) { oaiToggleRow(toggle.dataset.oaiToggle); return; }
         const tab = t.closest("[data-oai-snippet]");
         if (tab) { oaiStore.snippet = tab.dataset.oaiSnippet; oaiRender(); return; }
         const act = t.closest("[data-oai-action]");
@@ -2855,7 +3038,9 @@ CONSOLE_UI_JS = r"""
       };
       el.onchange = (event) => {
         const target = event && event.target;
-        if (target && !target.disabled && target.matches && target.matches("[data-oai-enabled]")) oaiChange("enabled", !!target.checked);
+        if (!target || target.disabled || !target.matches) return;
+        if (target.matches("[data-oai-enabled]")) oaiChange("enabled", !!target.checked);
+        else if (target.matches("[data-oai-open-account]")) oaiChange("open_account", String(target.value || ""));
       };
     }
     function mountOpenAIPanel(key, el) {
@@ -2874,7 +3059,10 @@ CONSOLE_UI_JS = r"""
     }
     function unmountOpenAIPanel(key) {
       oaiStore.views.delete(key);
-      if (!oaiStore.views.size) { oaiStore.newKey = ""; oaiStore.confirmKey = false; if (oaiStore.timer) { clearInterval(oaiStore.timer); oaiStore.timer = null; } }
+      if (!oaiStore.views.size) {
+        oaiStore.confirmKey = false; oaiStore.reveal = false; oaiStore.keyNotice = null;
+        if (oaiStore.timer) { clearInterval(oaiStore.timer); oaiStore.timer = null; }
+      }
     }
 
 

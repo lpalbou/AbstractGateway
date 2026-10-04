@@ -190,7 +190,11 @@ users remain on `1 user = 1 runtime` routing.
 Browser apps should exchange a Gateway user token for an opaque Gateway browser
 session through `/api/gateway/session/login`; the raw bearer token should not be
 kept in browser storage, and the login response body does not expose the session
-id or CSRF token. Session-authenticated writes carry
+id or CSRF token. One deliberate exception (round 5, operator decision): the web
+console keeps the token a person typed at sign-in in session storage (local
+storage with *Remember this browser*) so the OpenAI API page can show that
+person their own API key without any server route returning a stored token; it
+is removed at sign-out. Session-authenticated writes carry
 `X-AbstractGateway-Session` plus `X-AbstractGateway-CSRF`, and
 `/api/gateway/session/logout` revokes the session. Apps such as AbstractFlow,
 AbstractCode, AbstractAssistant, and AbstractObserver should authenticate as the
