@@ -13,12 +13,12 @@ use super::{urlencode, ApiResult, GatewayClient};
 impl GatewayClient {
     /// `GET /me/email` — settings and status (never a secret).
     pub fn my_email(&self) -> ApiResult<Value> {
-        self.get("/me/email", false)
+        self.get(&self.me_path("/me/email"), false)
     }
 
     /// `PUT /me/email` — test, then store (the password travels in the body only).
     pub fn connect_my_email(&self, body: &Value) -> ApiResult<Value> {
-        self.send("PUT", "/me/email", body, true)
+        self.send("PUT", &self.me_path("/me/email"), body, true)
     }
 
     /// `POST /me/email/discover {"address"}` — the mailbox's IMAP/SMTP
@@ -26,7 +26,7 @@ impl GatewayClient {
     pub fn discover_my_email(&self, address: &str) -> ApiResult<Value> {
         self.send(
             "POST",
-            "/me/email/discover",
+            &self.me_path("/me/email/discover"),
             &json!({ "address": address }),
             true,
         )
@@ -37,7 +37,7 @@ impl GatewayClient {
     pub fn set_my_email_address(&self, address: &str) -> ApiResult<Value> {
         self.send(
             "PUT",
-            "/me/email/address",
+            &self.me_path("/me/email/address"),
             &json!({ "address": address }),
             false,
         )
@@ -46,7 +46,7 @@ impl GatewayClient {
     /// `PUT /me/email/notifications {job_failed?, approval_needed?}` — the
     /// two notification switches; answers like `GET /me/email`.
     pub fn set_my_notification_switches(&self, body: &Value) -> ApiResult<Value> {
-        self.send("PUT", "/me/email/notifications", body, false)
+        self.send("PUT", &self.me_path("/me/email/notifications"), body, false)
     }
 
     /// `GET /session/recovery` (public) — is "Forgot your token?" offered.
@@ -89,22 +89,22 @@ impl GatewayClient {
 
     /// `POST /me/email/test` — per-leg `{imap, smtp, ok}`.
     pub fn test_my_email(&self) -> ApiResult<Value> {
-        self.send("POST", "/me/email/test", &json!({}), true)
+        self.send("POST", &self.me_path("/me/email/test"), &json!({}), true)
     }
 
     /// `DELETE /me/email` — credentials and cursor deleted.
     pub fn disconnect_my_email(&self) -> ApiResult<Value> {
-        self.delete("/me/email")
+        self.delete(&self.me_path("/me/email"))
     }
 
     /// `PUT /me/email/policy` — `{mode, entries}`.
     pub fn set_my_email_policy(&self, body: &Value) -> ApiResult<Value> {
-        self.send("PUT", "/me/email/policy", body, false)
+        self.send("PUT", &self.me_path("/me/email/policy"), body, false)
     }
 
     /// `PUT /me/email/limits` — `{per_hour, per_day}`.
     pub fn set_my_email_limits(&self, body: &Value) -> ApiResult<Value> {
-        self.send("PUT", "/me/email/limits", body, false)
+        self.send("PUT", &self.me_path("/me/email/limits"), body, false)
     }
 
     /// `PUT /me/email/folder {"folder"}` — the IMAP folder read (empty =
@@ -112,7 +112,7 @@ impl GatewayClient {
     pub fn set_my_email_folder(&self, folder: &str) -> ApiResult<Value> {
         self.send(
             "PUT",
-            "/me/email/folder",
+            &self.me_path("/me/email/folder"),
             &json!({ "folder": folder }),
             false,
         )
@@ -122,7 +122,7 @@ impl GatewayClient {
     pub fn set_my_email_enabled(&self, enabled: bool) -> ApiResult<Value> {
         self.send(
             "PUT",
-            "/me/email/enabled",
+            &self.me_path("/me/email/enabled"),
             &json!({ "enabled": enabled }),
             false,
         )
@@ -132,7 +132,7 @@ impl GatewayClient {
     pub fn set_my_email_agent_tools(&self, enabled: bool) -> ApiResult<Value> {
         self.send(
             "PUT",
-            "/me/email/agent-tools",
+            &self.me_path("/me/email/agent-tools"),
             &json!({ "enabled": enabled }),
             true,
         )
@@ -140,29 +140,34 @@ impl GatewayClient {
 
     /// `GET /me/notifications`.
     pub fn my_notifications(&self) -> ApiResult<Value> {
-        self.get("/me/notifications", false)
+        self.get(&self.me_path("/me/notifications"), false)
     }
 
     /// `PUT /me/notifications` — `{email: {event: bool}}`.
     pub fn set_my_notifications(&self, body: &Value) -> ApiResult<Value> {
-        self.send("PUT", "/me/notifications", body, false)
+        self.send("PUT", &self.me_path("/me/notifications"), body, false)
     }
 
     /// `POST /me/notifications/test` — `{ok, state, error?}`.
     pub fn test_my_notifications(&self) -> ApiResult<Value> {
-        self.send("POST", "/me/notifications/test", &json!({}), true)
+        self.send(
+            "POST",
+            &self.me_path("/me/notifications/test"),
+            &json!({}),
+            true,
+        )
     }
 
     /// `POST /me/email/oauth/start` — device code or loopback link.
     pub fn my_email_oauth_start(&self, body: &Value) -> ApiResult<Value> {
-        self.send("POST", "/me/email/oauth/start", body, true)
+        self.send("POST", &self.me_path("/me/email/oauth/start"), body, true)
     }
 
     /// `POST /me/email/oauth/finish` — waits up to `wait_s` (≤ 60) for the approval.
     pub fn my_email_oauth_finish(&self, flow_id: &str, wait_s: f64) -> ApiResult<Value> {
         self.send(
             "POST",
-            "/me/email/oauth/finish",
+            &self.me_path("/me/email/oauth/finish"),
             &json!({"flow_id": flow_id, "wait_s": wait_s}),
             true,
         )
@@ -172,7 +177,7 @@ impl GatewayClient {
     pub fn my_email_oauth_cancel(&self, flow_id: &str) -> ApiResult<Value> {
         self.send(
             "POST",
-            "/me/email/oauth/cancel",
+            &self.me_path("/me/email/oauth/cancel"),
             &json!({"flow_id": flow_id}),
             false,
         )

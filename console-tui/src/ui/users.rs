@@ -9,12 +9,11 @@ use abstracttui::prelude::*;
 use abstracttui::widgets::{Table, Tone};
 use serde_json::{json, Value};
 
-use super::util::{badge, field, line, loadable_view, span, span_bold};
+use super::kit::{self, InlineConfirm, Row, WrapTable};
+use super::util::{badge, field, line, span, span_bold};
 use super::widths;
 use super::{open_form, Ctx};
-use crate::store::accounts::{
-    activity_time, AccountRow, ACTIVITY_EMPTY, ACTIVITY_FILTERS, ACTIVITY_SCOPE,
-};
+use crate::store::accounts::{activity_time, AccountRow, ACTIVITY_EMPTY, ACTIVITY_FILTERS};
 use crate::store::{ConnPhase, EntityRow, Loadable, UserRow};
 use crate::worker::Cmd;
 
@@ -31,56 +30,39 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     let store = ctx.store;
     let ui = ctx.ui;
     let tt = *t;
+    let acc = store.acc;
+    let confirm = InlineConfirm::new(cx);
+    let keeper = super::util::FocusKeeper::new();
 
     super::util::clamp_selection(cx, ui.entity_sel, move || {
         store
             .entities
             .with(|d| d.ready().map(Vec::len).unwrap_or(0))
     });
-
-    let ctx_add = ctx.clone();
-    let ctx_edit = ctx.clone();
-    let ctx_rotate = ctx.clone();
-    let ctx_del = ctx.clone();
-    let ctx_manage = ctx.clone();
-    let ctx_resv = ctx.clone();
-    let ctx_inspect = ctx.clone();
-    let ctx_mypolicy = ctx.clone();
-    let ctx_myemail = ctx.clone();
-    let ctx_mail = ctx.clone();
-    let ctx_summon = ctx.clone();
-    let ctx_talk = ctx.clone();
-    let ctx_tpl = ctx.clone();
-    let ctx_logs = ctx.clone();
-
-    super::util::clamp_selection(cx, ui.account_sel, move || {
-        store
-            .accounts
-            .with(|d| d.ready().map(Vec::len).unwrap_or(0))
-    });
+    super::util::clamp_selection(cx, ui.account_sel, move || visible_len(&store));
     // The account selection drives the entity selection: an entity row
     // selected in the one table IS the entity the inspector, Manage and
     // Talk act on (they read `entity_sel`).
-    cx.effect(move || {
-        let idx = ui.account_sel.get();
-        let Some(name) = store.accounts.with(|d| {
-            d.ready()
-                .and_then(|rows| rows.get(idx))
-                .filter(|r| r.is_entity())
-                .map(|r| r.id.clone())
-        }) else {
-            return;
-        };
-        let pos = store.entities.with(|d| {
-            d.ready()
-                .and_then(|es| es.iter().position(|e| e.is_account(&name)))
-        });
-        if let Some(pos) = pos {
-            if ui.entity_sel.get_untracked() != pos {
-                ui.entity_sel.set(pos);
+    {
+        let ctx_sel = ctx.clone();
+        cx.effect(move || {
+            let _ = ui.account_sel.get();
+            let _ = acc.show_archived.get();
+            store.accounts.with(|_| ());
+            let Some(row) = selected_account(&ctx_sel).filter(AccountRow::is_entity) else {
+                return;
+            };
+            let pos = store.entities.with(|d| {
+                d.ready()
+                    .and_then(|es| es.iter().position(|e| e.is_account(&row.id)))
+            });
+            if let Some(pos) = pos {
+                if ui.entity_sel.get_untracked() != pos {
+                    ui.entity_sel.set(pos);
+                }
             }
-        }
-    });
+        });
+    }
 
     // Keep the manage snapshot warm for the SELECTED entity: arrowing
     // to a row loads its detail (worker serializes; entity rosters are
@@ -90,8 +72,7 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
         // The name of the last detail request this effect sent — the
         // Failed arm below holds ONLY for that name, so a persistent
         // failure never loops while a selection move still loads the
-        // new row (round-4 transport audit: `Failed => reload` was an
-        // unbounded auto-retry against a persistently failing read).
+        // new row (round-4 transport audit).
         let last_requested = cx.signal(Option::<String>::None);
         cx.effect(move || {
             let idx = ui.entity_sel.get();
@@ -102,19 +83,9 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             if !store.conn.with_untracked(ConnPhase::is_connected) {
                 return;
             }
-            // TRACKED read (F2, proven stall): moving the selection while
-            // a load is in flight used to skip the send AND never re-run
-            // (untracked slot) — the drawer then said "reading Bestor…"
-            // forever with nothing loading. Tracking the slot re-runs
-            // this effect when the stale result lands; a name mismatch
-            // then sends for the CURRENT row (the Loading arm terminates
-            // the one extra self-triggered run).
             let held = store.entity_detail.with(|d| match d {
                 Loadable::Ready(d) => d.name == name,
                 Loadable::Loading => true,
-                // Hold on Failed only for the name we last asked for:
-                // same row → no retry loop (recovery stays r / manage
-                // menu); different row → load it.
                 Loadable::Failed(_) => {
                     last_requested.with_untracked(|l| l.as_deref() == Some(name.as_str()))
                 }
@@ -127,79 +98,253 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
             }
         });
     }
+    // The administrator's email switches are read once an admin is here
+    // (their tab shows them; the gateway's defaults load with the page).
+    {
+        use crate::worker::operator::{EmailAction, OpCmd};
+        let ctx_caps = ctx.clone();
+        cx.effect(move || {
+            let admin = store.conn.with(ConnPhase::is_admin);
+            let not_asked = store
+                .op
+                .email_caps
+                .with(|c| matches!(c, Loadable::NotAsked));
+            if admin && not_asked {
+                store.op.email_caps.set(Loadable::Loading);
+                ctx_caps.send(Cmd::Operator(OpCmd::Email {
+                    action: EmailAction::LoadCaps,
+                    form_id: None,
+                }));
+            }
+        });
+    }
+    // "Open in Observer" from Logs mints a link through the Apps lane;
+    // its modal opens here.
+    {
+        let ctx_link = ctx.clone();
+        cx.effect(move || {
+            if let Some(link) = ctx_link.store.apps.open_link.get() {
+                if !OBSERVER_PENDING.with(|p| p.get()) || ctx_link.ui.prompt_open.get() > 0 {
+                    return;
+                }
+                OBSERVER_PENDING.with(|p| p.set(false));
+                ctx_link.store.apps.open_link.set(None);
+                super::apps::open_link_modal(cx, &ctx_link, link);
+            }
+        });
+    }
 
-    Element::new()
+    let keys = ctx.clone();
+    let root = Element::new()
         // Focusable + autofocus content root: the screen's keys must live
-        // even when no table exists to take the keyboard (a non-admin on a
-        // gateway with no entities yet). A table that mounts later still
-        // takes the focus.
+        // even when no table exists to take the keyboard.
         .focusable()
         .autofocus()
-        .style(LayoutStyle::column().gap(0))
-        .shortcut(KeyChord::plain(Key::Char('m')), move |_| {
-            manage_selected_entity(cx, &ctx_manage);
-        })
-        .shortcut(KeyChord::plain(Key::Char('n')), move |_| {
-            // Create entity (the web's secondary header button; summon —
-            // Advanced configuration inside is admin-only).
+        .style(LayoutStyle::column().gap(0).grow(1.0))
+        .on(abstracttui::ui::Phase::Bubble, move |ectx, ev| {
+            if let abstracttui::ui::UiEvent::Key(k) = ev {
+                if k.mods.0 != 0 {
+                    return;
+                }
+                if handle_key(cx, &keys, confirm, k.key) {
+                    ectx.stop_propagation();
+                }
+            }
+        });
+    let root = confirm.keys(root);
+    let body = ctx.clone();
+    root.child(
+        Block::new()
+            .border(BorderKind::Rounded)
+            .title(dyn_title(&store))
+            .fill(t.surface)
+            .layout(
+                LayoutStyle::column()
+                    .gap(0)
+                    .grow(1.0)
+                    .padding(Edges::all(1)),
+            )
+            .child(dyn_view(LayoutStyle::line(1).shrink(0.0), move || {
+                let admin = store.conn.with(ConnPhase::is_admin);
+                let tab = acc.tab.get();
+                let mark = |on: bool, label: &str| {
+                    if on {
+                        span_bold(format!("[{label}]"), tt.accent)
+                    } else {
+                        span(format!(" {label} "), tt.text_muted)
+                    }
+                };
+                let mut spans = vec![mark(tab == 0, "Accounts")];
+                if admin {
+                    spans.push(span(" ", tt.text));
+                    spans.push(mark(tab == 1, "Email for everyone"));
+                }
+                line(spans)
+            }))
+            .child(dyn_view_scoped(
+                LayoutStyle::column().gap(0).grow(1.0).min_h(3),
+                move |gcx| {
+                    if acc.tab.get() == 1 && store.conn.with(ConnPhase::is_admin) {
+                        email_switches(gcx, &body, &tt)
+                    } else {
+                        accounts_tab(gcx, &body, &tt, &keeper)
+                    }
+                },
+            ))
+            .child(confirm.view(t, 0))
+            .element(t)
+            .build(),
+    )
+    .build()
+}
+
+thread_local! {
+    /// A Logs "Open in Observer" is waiting for its one-time link.
+    static OBSERVER_PENDING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The page title: the web's header for an admin, "Your account" otherwise.
+fn dyn_title(store: &crate::store::Store) -> String {
+    if store.conn.with_untracked(ConnPhase::is_known_non_admin) {
+        format!("{NON_ADMIN_TITLE} — {NON_ADMIN_SUBTITLE}")
+    } else {
+        ACCOUNTS_TITLE.to_string()
+    }
+}
+
+pub const NON_ADMIN_TITLE: &str = "Your account";
+pub const NON_ADMIN_SUBTITLE: &str = "Your account and the entities you created.";
+
+/// The rows shown (archived ones only with Show archived).
+pub fn visible_accounts(store: &crate::store::Store) -> Vec<AccountRow> {
+    let show = store.acc.show_archived.get_untracked();
+    store.accounts.with_untracked(|d| {
+        d.ready()
+            .map(|rows| {
+                rows.iter()
+                    .filter(|r| show || !r.archived)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+}
+
+fn visible_len(store: &crate::store::Store) -> usize {
+    let show = store.acc.show_archived.get();
+    store.accounts.with(|d| {
+        d.ready()
+            .map(|rows| rows.iter().filter(|r| show || !r.archived).count())
+            .unwrap_or(0)
+    })
+}
+
+/// The footer verbs of this page (the vec already follows the role).
+pub fn hints(ctx: &Ctx) -> Vec<(&'static str, &'static str)> {
+    let store = ctx.store;
+    if store.acc.tab.get() == 1 {
+        return vec![
+            ("Tab", "tab"),
+            ("space", "switch"),
+            ("Enter", "Advanced"),
+            ("r", "refresh"),
+        ];
+    }
+    let mut out = vec![
+        ("Tab", "tab"),
+        ("Enter", "expand row"),
+        ("space", "Active"),
+        ("@", "Email"),
+        ("l", "Logs"),
+        ("w", "Workspace"),
+        ("m", "Manage"),
+        ("o", "OpenAI API"),
+        ("t", "Rotate token"),
+        ("d", "Archive/Unarchive"),
+        ("h", "Show archived"),
+        ("a", "Create user"),
+        ("n", "Create entity"),
+        ("e", "edit user"),
+        ("c", "talk"),
+        ("i", "inspect"),
+        ("s", "spark templates"),
+        ("v", "kept data of deleted users"),
+        ("x", "reset mailbox override"),
+    ];
+    out.push(("r", "refresh"));
+    out
+}
+
+/// One key of the page. True when handled.
+fn handle_key(cx: Scope, ctx: &Ctx, confirm: InlineConfirm, key: Key) -> bool {
+    let store = ctx.store;
+    let acc = store.acc;
+    let admin = store.conn.with_untracked(ConnPhase::is_admin);
+    if matches!(key, Key::Tab | Key::Char('[') | Key::Char(']')) {
+        if admin {
+            acc.tab
+                .set(if acc.tab.get_untracked() == 0 { 1 } else { 0 });
+        }
+        return true;
+    }
+    if acc.tab.get_untracked() == 1 {
+        return false;
+    }
+    match key {
+        Key::Char(' ') => switch_selected_active(cx, ctx, confirm),
+        Key::Char('h') => {
+            if super::util::admin_gate(&store, "showing archived accounts") {
+                acc.show_archived.update(|v| *v = !*v);
+            }
+        }
+        Key::Char('m') => manage_selected_entity(cx, ctx),
+        Key::Char('n') => {
             if store.conn.with_untracked(ConnPhase::is_connected) {
-                super::entity_create::open_summon_form(cx, &ctx_summon);
+                super::entity_create::open_summon_form(cx, ctx);
             } else {
                 store.notice.set(Some(
                     "not connected — probe on the Connection screen first".into(),
                 ));
             }
-        })
-        .shortcut(KeyChord::plain(Key::Char('c')), move |_| {
+        }
+        Key::Char('c') => {
             if !store.conn.with_untracked(ConnPhase::is_connected) {
                 store.notice.set(Some(
                     "not connected — probe on the Connection screen first".into(),
                 ));
-            } else if let Some(e) = selected_entity(&ctx_talk) {
-                super::entity_chat::open_talk_modal(cx, &ctx_talk, e.name);
+            } else if let Some(e) = selected_entity(ctx) {
+                super::entity_chat::open_talk_modal(cx, ctx, e.name);
             } else {
                 store
                     .notice
                     .set(Some("no entity selected — nobody to talk to".into()));
             }
-        })
-        .shortcut(KeyChord::plain(Key::Char('s')), move |_| {
+        }
+        Key::Char('s') => {
             if store.conn.with_untracked(ConnPhase::is_connected) {
-                super::entity_create::open_templates_modal(cx, &ctx_tpl);
+                super::entity_create::open_templates_modal(cx, ctx);
             } else {
                 store.notice.set(Some(
                     "not connected — probe on the Connection screen first".into(),
                 ));
             }
-        })
-        .shortcut(KeyChord::plain(Key::Char('v')), move |_| {
+        }
+        Key::Char('v') => {
             if super::util::admin_gate(&store, "the kept data of deleted users") {
-                open_reservations_modal(cx, &ctx_resv);
+                open_reservations_modal(cx, ctx);
             }
-        })
-        // Workspace: the selected account's workspace policy (your own on
-        // your row or for a non-admin).
-        .shortcut(KeyChord::plain(Key::Char('w')), move |_| {
-            workspace_selected(cx, &ctx_mypolicy)
-        })
-        // Email: your row = the full account email view; another user's
-        // row = the address-only view; an entity = the reason.
-        .shortcut(KeyChord::plain(Key::Char('@')), move |_| {
-            email_selected(cx, &ctx_myemail)
-        })
-        // Logs: the selected account's activity (yours for a non-admin).
-        .shortcut(KeyChord::plain(Key::Char('l')), move |_| {
-            open_activity(cx, &ctx_logs)
-        })
-        // Reset an old per-user mailbox override (a one-shot action; the
-        // console never creates per-user overrides).
-        .shortcut(KeyChord::plain(Key::Char('x')), move |_| {
+        }
+        Key::Char('w') => workspace_selected(cx, ctx),
+        Key::Char('@') => email_selected(cx, ctx),
+        Key::Char('l') => open_activity(cx, ctx),
+        Key::Char('o') => openai_selected(cx, ctx),
+        Key::Char('x') => {
             if !super::util::admin_gate(&store, "resetting a user's mailbox override") {
-                return;
+                return true;
             }
-            match selected_user(&ctx_mail) {
+            match selected_user(ctx) {
                 Some(u) if u.mailbox_view().1 => {
-                    ctx_mail.send(crate::worker::Cmd::Operator(
+                    ctx.send(crate::worker::Cmd::Operator(
                         crate::worker::operator::OpCmd::Email {
                             action: crate::worker::operator::EmailAction::AdminResetMailbox {
                                 user_id: u.user_id.clone(),
@@ -217,12 +362,10 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     .notice
                     .set(Some("no user selected — nothing to reset".into())),
             }
-        })
-        .shortcut(KeyChord::plain(Key::Char('i')), move |_| {
-            // Toggle the entity-inspector drawer (passive: the table keeps
-            // the keyboard; i again closes; leaving the screen closes it).
-            if selected_entity(&ctx_inspect).is_some() {
-                if let Some(h) = ctx_inspect.entity_drawer.borrow().as_ref() {
+        }
+        Key::Char('i') => {
+            if selected_entity(ctx).is_some() {
+                if let Some(h) = ctx.entity_drawer.borrow().as_ref() {
                     h.toggle();
                 }
             } else {
@@ -230,106 +373,214 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     .notice
                     .set(Some("no entity selected — nothing to inspect".into()));
             }
-        })
-        .shortcut(KeyChord::plain(Key::Char('a')), move |_| {
+        }
+        Key::Char('a') => {
             if super::util::admin_gate(&store, "creating a user") {
-                open_user_form(cx, &ctx_add, None);
+                open_user_form(cx, ctx, None);
             }
-        })
-        .shortcut(KeyChord::plain(Key::Char('e')), move |_| {
-            edit_selected_user(cx, &ctx_edit);
-        })
-        .shortcut(KeyChord::plain(Key::Char('t')), move |_| {
-            rotate_selected(cx, &ctx_rotate);
-        })
-        .shortcut(KeyChord::plain(Key::Char('d')), move |_| {
-            archive_selected(cx, &ctx_del);
-        })
-        .child(
-            Block::new()
-                .border(BorderKind::Rounded)
-                .title(ACCOUNTS_TITLE)
-                .fill(t.surface)
-                .layout(
-                    LayoutStyle::column()
-                        .gap(0)
-                        .grow(1.0)
-                        .padding(Edges::all(1)),
-                )
-                .child(dyn_view_scoped(
-                    LayoutStyle::default().grow(1.0).min_h(1),
-                    {
-                        let ctx_act = ctx.clone();
-                        move |gcx| {
-                            // RBAC (operator ruling 2026-10-01): an admin's
-                            // table is every account (`/admin/accounts`); a
-                            // non-admin's is themself + the entities they
-                            // created (`/me/accounts`) — the same table,
-                            // with one line saying whose view it is.
-                            let scope_note = store.conn.with(|c| match c {
-                                ConnPhase::Connected(id) | ConnPhase::Verifying(id)
-                                    if !id.admin =>
-                                {
-                                    Some(non_admin_scope_line(&id.user_id))
-                                }
-                                _ => None,
-                            });
-                            let data = store.accounts.get();
-                            let ctx_act = ctx_act.clone();
-                            let table = loadable_view(
-                                &tt,
-                                &store.conn.get(),
-                                || store.tick.get(),
-                                &data,
-                                |d: &Vec<AccountRow>| d.is_empty(),
-                                "no accounts yet — a creates a user, n creates an entity",
-                                |d| {
-                                    let ctx_space = ctx_act.clone();
-                                    accounts_table(
-                                        gcx,
-                                        &tt,
-                                        d,
-                                        ui.account_sel,
-                                        move |_| {
-                                            // Activation (Enter / double-click):
-                                            // a user → edit; an entity → Manage.
-                                            activate_selected(cx, &ctx_act);
-                                        },
-                                        // Space switches the row's Active.
-                                        move || switch_selected_active(cx, &ctx_space),
-                                    )
-                                },
-                            );
-                            match scope_note {
-                                None => table,
-                                Some(note) => {
-                                    let vw = abstracttui::app::use_viewport(gcx).get_untracked().w;
-                                    let mut col = Element::new()
-                                        .style(LayoutStyle::column().gap(0).grow(1.0));
-                                    for l in
-                                        super::util::wrap_text(&note, (vw - 6).max(20) as usize)
-                                    {
-                                        col = col.child(line(vec![span(l, tt.text_muted)]));
-                                    }
-                                    col.child(table).build()
-                                }
-                            }
-                        }
-                    },
-                ))
-                // The selected account: its kind chip, its Active switch and
-                // the actions that cannot apply, each with its reason.
-                .child(dyn_view_scoped(LayoutStyle::column().gap(0).shrink(0.0), {
-                    let ctx_sw = ctx.clone();
-                    move |scx| selected_row_lines(scx, &ctx_sw, &tt)
-                }))
-                // The administrator's email switches: "Email for everyone"
-                // below the table (DESIGN-v2 §2.1).
-                .child(email_switches(cx, ctx, t))
-                .element(t)
-                .build(),
+        }
+        Key::Char('e') => edit_selected_user(cx, ctx),
+        Key::Char('t') => rotate_selected(cx, ctx),
+        Key::Char('d') => archive_selected(ctx, confirm),
+        _ => return false,
+    }
+    true
+}
+
+/// The Accounts tab: the toolbar, the one table, the legend.
+fn accounts_tab(cx: Scope, ctx: &Ctx, tt: &TokenSet, keeper: &super::util::FocusKeeper) -> View {
+    let store = ctx.store;
+    let ui = ctx.ui;
+    let acc = store.acc;
+    let vw = abstracttui::app::use_viewport(cx).get().w;
+    let width = (vw - 4).max(20);
+    let admin = store.conn.with(ConnPhase::is_admin);
+    let show = acc.show_archived.get();
+    let mut col = Element::new().style(LayoutStyle::column().gap(0).grow(1.0));
+    // RBAC (operator ruling 2026-10-01): a non-admin's table is themself
+    // + the entities they created (`/me/accounts`).
+    let scope_note = store.conn.with(|c| match c {
+        ConnPhase::Connected(id) | ConnPhase::Verifying(id) if !id.admin => {
+            Some(non_admin_scope_line(&id.user_id))
+        }
+        _ => None,
+    });
+    if let Some(note) = scope_note {
+        col = col.child(kit::sentence(tt, &note, width, tt.text_muted));
+    }
+    let toolbar = if admin {
+        format!(
+            "{}   a Create user · n Create entity",
+            super::switch::switch_text("Show archived", show, None, false)
         )
-        .build()
+    } else {
+        "n Create entity".to_string()
+    };
+    col = col.child(kit::sentence(tt, &toolbar, width, tt.text));
+    let data = store.accounts.get();
+    match data {
+        Loadable::NotAsked | Loadable::Loading => {
+            col = col.child(keeper.anchor(kit::sentence(tt, "Loading…", width, tt.text_muted)));
+        }
+        Loadable::Failed(e) => {
+            col = col.child(keeper.anchor(super::util::error_panel(tt, &e)));
+        }
+        Loadable::Ready(all) => {
+            let rows: Vec<AccountRow> = all.into_iter().filter(|r| show || !r.archived).collect();
+            let narrow = vw < 110;
+            let rules = if narrow {
+                vec![
+                    widths::ColRule::tail("Name", 10),
+                    widths::ColRule::head("Email address · Mailbox", 18),
+                    widths::ColRule::head("Active", 6),
+                ]
+            } else {
+                vec![
+                    widths::ColRule::tail("Name", 10),
+                    widths::ColRule::tail("Email address", 14),
+                    widths::ColRule::head("Mailbox", 14),
+                    widths::ColRule::tail("Runtime", 8),
+                    widths::ColRule::head("Active", 6),
+                ]
+            };
+            let own = own_key(&store);
+            let table_rows: Vec<Row> = rows
+                .iter()
+                .map(|r| account_row(r, narrow, own.as_ref()))
+                .collect();
+            let ctx_act = ctx.clone();
+            col = col.child(
+                keeper.wire(
+                    WrapTable::new(rules, table_rows, ui.account_sel)
+                        .expanded(acc.expanded)
+                        .empty("No accounts yet.")
+                        .on_activate(move |_| activate_selected(cx, &ctx_act))
+                        .element(cx, tt),
+                ),
+            );
+        }
+    }
+    col = col.child(kind_legend(tt));
+    col.build()
+}
+
+/// The name cell: `tenant/id` off the default tenant, then the kind badge
+/// (and Archived) in words.
+fn name_cell(r: &AccountRow) -> String {
+    let id = if r.tenant_id != "default" {
+        format!("{}/{}", r.tenant_id, r.id)
+    } else {
+        r.id.clone()
+    };
+    let mut out = format!("{id}\n{}", r.kind_label());
+    if r.archived {
+        out.push_str(" · Archived");
+    }
+    out
+}
+
+/// The Active cell: `[x]` / `[ ]`, `[-]` when it can't be switched here
+/// (the reason is in the row's detail and said on Space), "Archived".
+fn active_cell(r: &AccountRow) -> String {
+    if r.archived {
+        return "Archived".into();
+    }
+    super::switch::marker(r.active, r.refusal("suspend").is_some()).to_string()
+}
+
+/// One table row with its detail lines: what the actions are, which keys
+/// they are on, and why the others can't apply (visible, never
+/// tooltip-only).
+fn account_row(r: &AccountRow, narrow: bool, _own: Option<&(String, String)>) -> Row {
+    let address = r
+        .email_address
+        .clone()
+        .unwrap_or_else(|| "No address".into());
+    let runtime = r.runtime_id.clone().unwrap_or_else(|| "No runtime".into());
+    let cells = if narrow {
+        vec![
+            name_cell(r),
+            format!("{address} · {}\nRuntime {runtime}", r.mailbox_cell()),
+            active_cell(r),
+        ]
+    } else {
+        vec![
+            name_cell(r),
+            address,
+            r.mailbox_cell(),
+            runtime,
+            active_cell(r),
+        ]
+    };
+    let mut detail = vec![crate::store::accounts::kind_help(r.kind_label()).to_string()];
+    if r.mailbox.state == "receive_only" {
+        if let Some(why) = &r.mailbox.reason {
+            detail.push(why.clone());
+        }
+    }
+    if r.archived {
+        detail.push("Archived: can't sign in or act; runs and history are kept.".into());
+    }
+    if let Some(why) = r.refusal("suspend").filter(|_| !r.archived) {
+        detail.push(format!("Active: {why}"));
+    }
+    let mut keys: Vec<String> = Vec::new();
+    let mut add = |avail: bool, k: &str| {
+        if avail {
+            keys.push(k.to_string());
+        }
+    };
+    if r.archived {
+        add(r.refusal("logs").is_none(), "l Logs");
+        add(r.refusal("unarchive").is_none(), "d Unarchive");
+    } else {
+        add(r.refusal("email").is_none(), "@ Email");
+        if let Some(a) = &r.openai_action {
+            add(
+                a.available,
+                if r.openai_api {
+                    "o OpenAI API (on)"
+                } else {
+                    "o OpenAI API (off)"
+                },
+            );
+        }
+        add(r.refusal("logs").is_none(), "l Logs");
+        if r.is_entity() {
+            add(r.refusal("manage").is_none(), "m Manage");
+        } else {
+            add(r.refusal("workspace").is_none(), "w Workspace");
+            add(r.refusal("rotate").is_none(), "t Rotate token");
+        }
+        add(r.refusal("archive").is_none(), "d Archive");
+        add(r.refusal("suspend").is_none(), "space Active");
+    }
+    if !keys.is_empty() {
+        detail.push(format!("Actions: {}", keys.join(" · ")));
+    }
+    let names: &[(&str, &str)] = if r.archived {
+        &[]
+    } else if r.is_entity() {
+        &[
+            ("email", "Email"),
+            ("manage", "Manage"),
+            ("rotate", "Rotate token"),
+            ("archive", "Archive"),
+        ]
+    } else {
+        &[
+            ("email", "Email"),
+            ("workspace", "Workspace"),
+            ("rotate", "Rotate token"),
+            ("archive", "Archive"),
+        ]
+    };
+    for (key, label) in names {
+        if let Some(why) = r.refusal(key) {
+            detail.push(format!("{label}: {why}"));
+        }
+    }
+    Row::new(cells).detail(detail).dim(r.archived || !r.active)
 }
 
 /// The screen's block title (DESIGN-v2 §2.1: the page line, in words).
@@ -339,9 +590,7 @@ pub const ACCOUNTS_TITLE: &str =
 /// The selected row of the one table (admin view).
 pub fn selected_account(ctx: &Ctx) -> Option<AccountRow> {
     let idx = ctx.ui.account_sel.get_untracked();
-    ctx.store
-        .accounts
-        .with_untracked(|d| d.ready().and_then(|rows| rows.get(idx).cloned()))
+    visible_accounts(&ctx.store).get(idx).cloned()
 }
 
 /// Is `row` the signed-in principal's own account?
@@ -485,6 +734,12 @@ fn email_selected(cx: Scope, ctx: &Ctx) {
     match row {
         None => super::my_email::open(cx, ctx),
         Some(r) if is_own(&ctx.store, &r) => super::my_email::open(cx, ctx),
+        // An entity's mailbox is its own: the full Email form on the
+        // gateway's `/accounts/{id}/email` mirror (admin or its creator).
+        Some(r) if r.is_entity() => match r.refusal("email") {
+            Some(why) => ctx.store.notice.set(Some(why)),
+            None => super::my_email::open_entity(cx, ctx, r.id.clone()),
+        },
         // Entities are AI users with their own mailbox (round 3): the same
         // read-only view as another user's; it is set up in the web console.
         Some(r) => match r.refusal("email") {
@@ -554,7 +809,7 @@ fn rotate_selected(cx: Scope, ctx: &Ctx) {
 /// `d`: archive the selected account, or unarchive an archived one
 /// (round 3: accounts are archived, never deleted). The gateway's row says
 /// which applies (`actions.archive` / `actions.unarchive`) and why not.
-fn archive_selected(cx: Scope, ctx: &Ctx) {
+fn archive_selected(ctx: &Ctx, confirm: InlineConfirm) {
     let Some(r) = selected_account(ctx) else {
         ctx.store
             .notice
@@ -576,8 +831,97 @@ fn archive_selected(cx: Scope, ctx: &Ctx) {
             admin,
         });
     } else {
-        confirm_archive(cx, ctx, r, admin);
+        confirm_archive(ctx, confirm, r, admin);
     }
+}
+
+/// `k`: the account's OpenAI API switch (the web's "OpenAI API — <id>"
+/// dialog: one switch, applied at once).
+fn openai_selected(cx: Scope, ctx: &Ctx) {
+    if !super::util::admin_gate(&ctx.store, "changing who may use the OpenAI API") {
+        return;
+    }
+    let Some(r) = selected_account(ctx) else {
+        ctx.store.notice.set(Some("no account selected".into()));
+        return;
+    };
+    match &r.openai_action {
+        None => {
+            ctx.store.notice.set(Some(
+                "this gateway does not offer the OpenAI API switch".into(),
+            ));
+            return;
+        }
+        Some(a) if !a.available => {
+            ctx.store.notice.set(Some(
+                a.reason
+                    .clone()
+                    .unwrap_or_else(|| "The OpenAI API switch is not available here.".into()),
+            ));
+            return;
+        }
+        _ => {}
+    }
+    let id = r.id.clone();
+    let c = ctx.clone();
+    kit::open_overlay(
+        ctx,
+        cx,
+        format!("OpenAI API — {id}"),
+        &[("space", "switch")],
+        move |mcx, _close, _guard| {
+            let t = use_theme(mcx).get().tokens;
+            let width = abstracttui::app::use_viewport(mcx).get_untracked().w - 6;
+            let store = c.store;
+            let on = mcx.signal(r.openai_api);
+            // The shown state is the gateway's: republished from the
+            // accounts list after each verified write.
+            {
+                let id = id.clone();
+                mcx.effect(move || {
+                    if let Some(row) = store.accounts.with(|d| {
+                        d.ready()
+                            .and_then(|rows| rows.iter().find(|a| a.id == id).cloned())
+                    }) {
+                        if on.get_untracked() != row.openai_api {
+                            on.set(row.openai_api);
+                        }
+                    }
+                });
+            }
+            let request = {
+                let c = c.clone();
+                let r = r.clone();
+                move |want: bool| {
+                    c.send(Cmd::SetAccountOpenAi {
+                        id: r.id.clone(),
+                        tenant_id: r.tenant_id.clone(),
+                        enabled: want,
+                    })
+                }
+            };
+            Element::new()
+                .style(LayoutStyle::column().gap(0))
+                .child(kit::sentence(
+                    &t,
+                    &format!(
+                        "Lets {id} use the OpenAI-compatible API (/v1) with their own gateway token as the key. Off: that key is refused there; signing in to the console is unchanged."
+                    ),
+                    width,
+                    t.text_muted,
+                ))
+                .child(
+                    super::switch::Switch::new("OpenAI API", on)
+                        .notice(store.notice)
+                        .on_request(request)
+                        .fill()
+                        .element(mcx, &t)
+                        .autofocus()
+                        .build(),
+                )
+                .build()
+        },
+    );
 }
 
 /// The archive confirm, in the web's words (DESIGN-v3 §1.3).
@@ -595,29 +939,24 @@ pub fn archive_question(r: &AccountRow) -> String {
     }
 }
 
-fn confirm_archive(cx: Scope, ctx: &Ctx, r: AccountRow, admin: bool) {
+/// The web's inline confirm under the row: the sentence, `[y] Archive`,
+/// `[n] Keep`.
+fn confirm_archive(ctx: &Ctx, confirm: InlineConfirm, r: AccountRow, admin: bool) {
     let ctx2 = ctx.clone();
-    super::confirm_danger(
-        cx,
-        ctx.ui,
-        archive_question(&r),
-        "Archive",
-        "Keep it",
-        move || {
-            ctx2.send(Cmd::ArchiveAccount {
-                id: r.id,
-                tenant_id: r.tenant_id,
-                unarchive: false,
-                admin,
-            })
-        },
-    );
+    confirm.ask(archive_question(&r), "Archive", move || {
+        ctx2.send(Cmd::ArchiveAccount {
+            id: r.id.clone(),
+            tenant_id: r.tenant_id.clone(),
+            unarchive: false,
+            admin,
+        })
+    });
 }
 
 /// The Active switch of the selected account: OFF asks first (a user is
 /// signed out; an entity stops acting), ON applies at once; an
 /// unavailable switch (your own account) says why.
-fn switch_selected_active(cx: Scope, ctx: &Ctx) {
+fn switch_selected_active(_cx: Scope, ctx: &Ctx, confirm: InlineConfirm) {
     if !super::util::admin_gate(&ctx.store, "switching an account's Active state") {
         return;
     }
@@ -668,7 +1007,7 @@ fn switch_selected_active(cx: Scope, ctx: &Ctx) {
                 "Deactivate",
             )
         };
-        super::confirm_danger(cx, ctx.ui, question, verb, "Cancel", move || send(false));
+        confirm.ask(question, verb, move || send(false));
     } else {
         send(true);
     }
@@ -685,145 +1024,6 @@ pub fn kind_tone(label: &str) -> Tone {
     }
 }
 
-/// The accounts table: Name · Kind · Email address · Mailbox · Runtime ·
-/// Active (`[x]` / `[ ]` / `[-] reason`).
-fn accounts_table(
-    cx: Scope,
-    t: &TokenSet,
-    data: &[AccountRow],
-    sel: Signal<usize>,
-    on_activate: impl FnMut(usize) + 'static,
-    mut on_space: impl FnMut() + 'static,
-) -> View {
-    let vw = abstracttui::app::use_viewport(cx).get().w;
-    let mut rows: Vec<Vec<String>> = data
-        .iter()
-        .map(|r| {
-            vec![
-                r.id.clone(),
-                r.kind_label().to_string(),
-                r.email_address.clone().unwrap_or_else(|| "—".into()),
-                r.mailbox_cell(),
-                r.runtime_id.clone().unwrap_or_else(|| "—".into()),
-                r.active_cell(),
-            ]
-        })
-        .collect();
-    // Ids and addresses discriminate on their TAIL; the kind word, the
-    // mailbox words and the switch marker lead with what matters.
-    let rules = vec![
-        widths::ColRule::tail("name", 10),
-        widths::ColRule::head("kind", 6),
-        widths::ColRule::tail("email address", 14),
-        widths::ColRule::head("mailbox", 14),
-        widths::ColRule::tail("runtime", 8),
-        widths::ColRule::head("active", 6),
-    ];
-    let cols = widths::columns(&rules, &mut rows, vw - widths::BLOCK_CHROME);
-    let table = Table::new(cols)
-        .rows(rows)
-        .selection(sel)
-        .on_activate(on_activate)
-        .layout(LayoutStyle::default().grow(1.0))
-        .element(cx, t)
-        .autofocus()
-        .build();
-    // Space is the switch key (the Table would alias it to activation):
-    // caught on the way down, before the Table sees it.
-    Element::new()
-        .style(LayoutStyle::column().grow(1.0))
-        .on(abstracttui::ui::Phase::Capture, move |ectx, ev| {
-            if let abstracttui::ui::UiEvent::Key(k) = ev {
-                if k.key == Key::Char(' ') && k.mods.0 == 0 {
-                    on_space();
-                    ectx.stop_propagation();
-                }
-            }
-        })
-        .child(table)
-        .build()
-}
-
-/// Under the table: the selected account (chip + id + Active switch), the
-/// actions that cannot apply with their reasons, and the kind legend.
-fn selected_row_lines(scx: Scope, ctx: &Ctx, tt: &TokenSet) -> View {
-    let store = ctx.store;
-    let ui = ctx.ui;
-    let empty = || Element::new().style(LayoutStyle::default().h(0)).build();
-    let idx = ui.account_sel.get();
-    let Some(r) = store
-        .accounts
-        .with(|d| d.ready().and_then(|rows| rows.get(idx).cloned()))
-    else {
-        return empty();
-    };
-    let on = scx.signal(r.active);
-    let ctx_req = ctx.clone();
-    let vw = abstracttui::app::use_viewport(scx).get_untracked().w;
-    let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
-    col = col.child(
-        Element::new()
-            .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
-            .child(badge(tt, r.kind_label(), kind_tone(r.kind_label())))
-            .child(super::util::line_styled(
-                LayoutStyle::default()
-                    .w(r.id.chars().count() as i32 + 1)
-                    .h(1)
-                    .shrink(0.0),
-                vec![span_bold(r.id.clone(), tt.text)],
-            ))
-            .child(
-                super::switch::Switch::new("Active", on)
-                    .unavailable(r.refusal("suspend"))
-                    .notice(store.notice)
-                    .on_request(move |_| switch_selected_active(scx, &ctx_req))
-                    .layout(LayoutStyle::default().grow(1.0).h(1))
-                    .element(scx, tt)
-                    .build(),
-            )
-            .build(),
-    );
-    // Every action that cannot apply, with its reason (visible, never
-    // tooltip-only — DESIGN-v2 §2.1).
-    let labels = [
-        ("email", "Email"),
-        ("logs", "Logs"),
-        ("workspace", "Workspace"),
-        ("rotate", "Rotate"),
-        ("manage", "Manage"),
-        ("archive", "Archive"),
-    ];
-    let mut refusals: Vec<String> = Vec::new();
-    for (key, label) in labels {
-        if key == "manage" && !r.is_entity() {
-            continue; // Manage is an entity action: users never show it
-        }
-        if let Some(why) = r.refusal(key) {
-            refusals.push(format!("{label}: {why}"));
-        }
-    }
-    let keys = if r.archived {
-        "l logs · d unarchive"
-    } else if r.is_entity() {
-        "@ email · l logs · w workspace · m manage · d archive · space Active"
-    } else {
-        "@ email · l logs · w workspace · t rotate · e edit · d archive · space Active"
-    };
-    for l in super::util::wrap_text(keys, (vw - 6).max(20) as usize) {
-        col = col.child(line(vec![span(l, tt.text_faint)]));
-    }
-    if !refusals.is_empty() {
-        let text = format!("Unavailable — {}", refusals.join(" · "));
-        for l in super::util::wrap_text(&text, (vw - 6).max(20) as usize) {
-            col = col.child(line(vec![span(l, tt.text_muted)]));
-        }
-    }
-    col.child(kind_legend(tt))
-        .child(line(vec![span(String::new(), tt.text)]))
-        .build()
-}
-
-/// The chip legend (the web's "Tint: admin · user · entity").
 fn kind_legend(t: &TokenSet) -> View {
     Element::new()
         .style(LayoutStyle::row().gap(1).h(1).shrink(0.0))
@@ -878,118 +1078,160 @@ fn open_activity(cx: Scope, ctx: &Ctx) {
         kind: String::new(),
     });
     let ctx2 = ctx.clone();
-    super::open_form(ctx, cx, Size::new(110, 30), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let store = ctx2.store;
-        let cycle = {
-            let ctx3 = ctx2.clone();
-            let target = target.clone();
-            let key = key.clone();
-            move |dir: isize| {
-                let n = ACTIVITY_FILTERS.len() as isize;
-                let next = (filter.get_untracked() as isize + dir).rem_euclid(n) as usize;
-                filter.set(next);
-                ctx3.send(Cmd::LoadActivity {
-                    target: target.clone(),
-                    mine,
-                    key: key.clone(),
-                    kind: ACTIVITY_FILTERS[next].1.to_string(),
-                });
-            }
-        };
-        let cycle_b = cycle.clone();
-        let close_b = close.clone();
-        Element::new()
-            .focusable()
-            .autofocus()
-            .style(LayoutStyle::column().gap(0))
-            .shortcut(KeyChord::plain(Key::Char('f')), move |_| cycle(1))
-            .shortcut(KeyChord::plain(Key::Char('F')), move |_| cycle_b(-1))
-            .child(dyn_view(LayoutStyle::line(1), {
-                let who = who.clone();
+    super::open_form(
+        ctx,
+        cx,
+        abstracttui::app::use_viewport(cx).get_untracked(),
+        move |mcx, _close| {
+            let theme = use_theme(mcx);
+            let store = ctx2.store;
+            let cycle = {
+                let ctx3 = ctx2.clone();
+                let target = target.clone();
+                let key = key.clone();
+                move |dir: isize| {
+                    let n = ACTIVITY_FILTERS.len() as isize;
+                    let next = (filter.get_untracked() as isize + dir).rem_euclid(n) as usize;
+                    filter.set(next);
+                    ctx3.send(Cmd::LoadActivity {
+                        target: target.clone(),
+                        mine,
+                        key: key.clone(),
+                        kind: ACTIVITY_FILTERS[next].1.to_string(),
+                    });
+                }
+            };
+            let cycle_b = cycle.clone();
+            let sel = mcx.signal(0usize);
+            // The list regenerates on each filter: the keeper hands the
+            // keyboard (and with it Esc) to each new instance.
+            let keeper = super::util::FocusKeeper::new();
+            let open_obs = {
+                let ctx_o = ctx2.clone();
                 move || {
-                    let t = theme.get().tokens;
-                    line(vec![span_bold(format!("Activity — {who}"), t.accent)])
-                }
-            }))
-            // The filter chips: the current one lit (f / F cycle).
-            .child(dyn_view(LayoutStyle::line(1), move || {
-                let t = theme.get().tokens;
-                let cur = filter.get();
-                let mut spans = vec![span("filter: ", t.text_faint)];
-                for (i, (label, _)) in ACTIVITY_FILTERS.iter().enumerate() {
-                    if i > 0 {
-                        spans.push(span(" · ", t.text_faint));
-                    }
-                    if i == cur {
-                        spans.push(span_bold(format!("[{label}]"), t.accent));
-                    } else {
-                        spans.push(span(label.to_string(), t.text_muted));
-                    }
-                }
-                spans.push(span("   f / F change the filter", t.text_faint));
-                line(spans)
-            }))
-            .child(dyn_view_scoped(
-                LayoutStyle::default().grow(1.0),
-                move |gcx| {
-                    let t = theme.get().tokens;
-                    match store.activity.get().map(|(_, _, d)| d) {
-                        None | Some(Loadable::NotAsked) | Some(Loadable::Loading) => {
-                            line(vec![span("⟳ reading the activity…", t.info)])
+                    let ev = store.activity.with_untracked(|a| match a {
+                        Some((_, _, Loadable::Ready(d))) => {
+                            d.events.get(sel.get_untracked()).cloned()
                         }
-                        Some(Loadable::Failed(e)) => super::util::error_panel_hint(
+                        _ => None,
+                    });
+                    let Some(ev) = ev else { return };
+                    let path = match (&ev.observer_path, &ev.run_id) {
+                        (Some(p), _) => p.clone(),
+                        (None, Some(id)) => format!("/apps/observer/#run/{id}"),
+                        _ => {
+                            ctx_o
+                                .store
+                                .notice
+                                .set(Some("this event has no run to open".into()));
+                            return;
+                        }
+                    };
+                    OBSERVER_PENDING.with(|p| p.set(true));
+                    ctx_o.send(Cmd::AppAct {
+                        app_id: "observer".into(),
+                        name: "AbstractObserver".into(),
+                        verb: crate::store::apps::AppVerb::Open,
+                        path: Some(path),
+                        start_first: false,
+                    });
+                }
+            };
+            Element::new()
+                .focusable()
+                .autofocus()
+                .style(LayoutStyle::column().gap(0).grow(1.0))
+                .shortcut(KeyChord::plain(Key::Char('f')), move |_| cycle(1))
+                .shortcut(KeyChord::plain(Key::Char('F')), move |_| cycle_b(-1))
+                .shortcut(KeyChord::plain(Key::Char('o')), move |_| open_obs())
+                .child(dyn_view(LayoutStyle::line(1), {
+                    let who = who.clone();
+                    move || {
+                        let t = theme.get().tokens;
+                        line(vec![span_bold(format!("Activity — {who}"), t.accent)])
+                    }
+                }))
+                // The filter chips: the current one lit (f / F cycle).
+                .child(dyn_view(LayoutStyle::line(1), move || {
+                    let t = theme.get().tokens;
+                    let cur = filter.get();
+                    let mut spans = vec![];
+                    for (i, (label, _)) in ACTIVITY_FILTERS.iter().enumerate() {
+                        if i > 0 {
+                            spans.push(span(" · ", t.text_faint));
+                        }
+                        if i == cur {
+                            spans.push(span_bold(format!("[{label}]"), t.accent));
+                        } else {
+                            spans.push(span(label.to_string(), t.text_muted));
+                        }
+                    }
+                    line(spans)
+                }))
+                .child(dyn_view_scoped(
+                    LayoutStyle::column().grow(1.0).min_h(3),
+                    move |gcx| {
+                        let t = theme.get().tokens;
+                        let width = abstracttui::app::use_viewport(gcx).get().w - 6;
+                        match store.activity.get().map(|(_, _, d)| d) {
+                            None | Some(Loadable::NotAsked) | Some(Loadable::Loading) => {
+                                keeper.anchor(line(vec![span("Loading…", t.text_muted)]))
+                            }
+                            Some(Loadable::Failed(e)) => keeper.anchor(kit::sentence(
+                                &t,
+                                &crate::worker::skills::refusal_text(&e),
+                                width,
+                                t.error,
+                            )),
+                            Some(Loadable::Ready(d)) if d.events.is_empty() => keeper
+                                .anchor(kit::sentence(&t, ACTIVITY_EMPTY, width, t.text_muted)),
+                            Some(Loadable::Ready(d)) => {
+                                keeper.wire(activity_table(gcx, &t, &d, sel))
+                            }
+                        }
+                    },
+                ))
+                .child(dyn_view_scoped(
+                    LayoutStyle::column().gap(0).shrink(0.0),
+                    move |gcx| {
+                        let t = theme.get().tokens;
+                        let width = abstracttui::app::use_viewport(gcx).get().w - 6;
+                        let mut col =
+                            Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
+                        if let Some((_, _, Loadable::Ready(d))) = store.activity.get() {
+                            if let Some(note) = d.note.clone().filter(|n| !n.trim().is_empty()) {
+                                col =
+                                    col.child(kit::sentence(&t, note.trim(), width, t.text_faint));
+                            }
+                        }
+                        col.child(kit::key_hint_bar(
                             &t,
-                            &e,
-                            Some("change the filter (f) or reopen to read again"),
-                        ),
-                        Some(Loadable::Ready(d)) if d.events.is_empty() => {
-                            line(vec![span(ACTIVITY_EMPTY, t.text_muted)])
-                        }
-                        Some(Loadable::Ready(d)) => activity_table(gcx, &t, &d),
-                    }
-                },
-            ))
-            .child(dyn_view_scoped(
-                LayoutStyle::column().gap(0).shrink(0.0),
-                move |_| {
-                    let t = theme.get().tokens;
-                    let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
-                    if let Some((_, _, Loadable::Ready(d))) = store.activity.get() {
-                        let mut note = d.note.clone().unwrap_or_default();
-                        if d.truncated {
-                            note.push_str(" Older events are not shown.");
-                        }
-                        if !note.trim().is_empty() {
-                            col =
-                                col.child(line(vec![span(note.trim().to_string(), t.text_faint)]));
-                        }
-                    }
-                    col.child(line(vec![span(ACTIVITY_SCOPE, t.text_faint)]))
+                            &[
+                                ("f / F", "filter"),
+                                ("Enter", "expand"),
+                                ("o", "Open in Observer"),
+                                ("esc", "close"),
+                            ],
+                            width,
+                        ))
                         .build()
-                },
-            ))
-            .child(dyn_view_scoped(
-                LayoutStyle::line(1).shrink(0.0),
-                move |bcx| {
-                    let t = theme.get().tokens;
-                    let close_c = close_b.clone();
-                    Button::new("Close (Esc)")
-                        .on_click(move || close_c())
-                        .element(bcx, &t)
-                        .build()
-                },
-            ))
-            .build()
-    });
+                    },
+                ))
+                .build()
+        },
+    );
 }
 
-/// One line per event, newest first: time · event · detail · run (with
-/// the Observer path to open it).
-fn activity_table(cx: Scope, t: &TokenSet, d: &crate::store::accounts::ActivityData) -> View {
-    let vw = 110.min(abstracttui::app::use_viewport(cx).get().w) - 4;
+/// One row per event, newest first (time · event · detail), wrapping;
+/// the run and its Observer link in the row's detail.
+fn activity_table(
+    cx: Scope,
+    t: &TokenSet,
+    d: &crate::store::accounts::ActivityData,
+    sel: Signal<usize>,
+) -> Element {
     let today = crate::localtime::local_today();
-    let mut rows: Vec<Vec<String>> = d
+    let rows: Vec<Row> = d
         .events
         .iter()
         .map(|e| {
@@ -998,31 +1240,33 @@ fn activity_table(cx: Scope, t: &TokenSet, d: &crate::store::accounts::ActivityD
             } else {
                 format!("✗ {}", e.title)
             };
-            let run = match (&e.run_id, &e.observer_path) {
-                (Some(id), Some(p)) => format!("{id} · Observer {p}"),
-                (Some(id), None) => id.clone(),
-                _ => String::new(),
-            };
-            vec![
+            let mut detail = Vec::new();
+            if let Some(id) = &e.run_id {
+                detail.push(format!("Run {id} — o Open in Observer"));
+            } else if e.observer_path.is_some() {
+                detail.push("o Open in Observer".into());
+            }
+            Row::new(vec![
                 activity_time(&e.ts, &today),
                 title,
                 e.detail.clone().unwrap_or_default(),
-                run,
-            ]
+            ])
+            .detail(detail)
+            .dim(!e.ok)
         })
         .collect();
-    let rules = [
-        widths::ColRule::head("time", 12),
-        widths::ColRule::head("event", 18),
-        widths::ColRule::head("detail", 20),
-        widths::ColRule::tail("run", 16),
-    ];
-    let cols = widths::columns(&rules, &mut rows, vw);
-    Table::new(cols)
-        .rows(rows)
-        .layout(LayoutStyle::default().grow(1.0))
-        .element(cx, t)
-        .build()
+    let expanded = cx.signal(None);
+    WrapTable::new(
+        vec![
+            widths::ColRule::head("Time", 11),
+            widths::ColRule::head("Event", 16),
+            widths::ColRule::head("Detail", 20),
+        ],
+        rows,
+        sel,
+    )
+    .expanded(expanded)
+    .element(cx, t)
 }
 
 /// Retained runtime planes (a user moved to another runtime, or a deleted
@@ -1041,156 +1285,163 @@ fn open_reservations_modal(cx: Scope, ctx: &Ctx) {
     ctx.send(Cmd::LoadReservations);
     let ctx2 = ctx.clone();
     let screen_cx = cx;
-    super::open_form(ctx, cx, Size::new(RESV_MODAL_W, 20), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let ui = ctx2.ui;
-        let ctx3 = ctx2.clone();
-        let close_b = close.clone();
-        let target = mcx.signal(String::new());
-        // F8: rows shrink by this modal's own action (transfer) —
-        // an unclamped stranded index would dead-end the reopened modal.
-        super::util::clamp_selection(mcx, ui.resv_sel, move || {
-            store
-                .reservations
-                .with(|d| d.ready().map(Vec::len).unwrap_or(0))
-        });
-        Element::new()
-            .style(LayoutStyle::column().gap(0))
-            .child(dyn_view(LayoutStyle::line(1), move || {
-                let t = theme.get().tokens;
-                line(vec![span_bold(
-                    "Retained runtimes — transfer to a user (data is never deleted)".to_string(),
-                    t.accent,
-                )])
-            }))
-            .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), {
-                move |gcx| {
+    super::open_form(
+        ctx,
+        cx,
+        abstracttui::app::use_viewport(cx).get_untracked(),
+        move |mcx, close| {
+            let theme = use_theme(mcx);
+            let ui = ctx2.ui;
+            let ctx3 = ctx2.clone();
+            let close_b = close.clone();
+            let target = mcx.signal(String::new());
+            // F8: rows shrink by this modal's own action (transfer) —
+            // an unclamped stranded index would dead-end the reopened modal.
+            super::util::clamp_selection(mcx, ui.resv_sel, move || {
+                store
+                    .reservations
+                    .with(|d| d.ready().map(Vec::len).unwrap_or(0))
+            });
+            Element::new()
+                .style(LayoutStyle::column().gap(0))
+                .child(dyn_view(LayoutStyle::line(1), move || {
                     let t = theme.get().tokens;
-                    match store.reservations.get() {
-                        Loadable::NotAsked | Loadable::Loading => {
-                            line(vec![span("⟳ loading reservations…", t.info)])
-                        }
-                        Loadable::Failed(e) => super::util::error_panel_hint(
-                            &t,
-                            &e,
-                            Some("close and reopen this dialog to retry (opening re-reads)"),
-                        ),
-                        Loadable::Ready(rows) if rows.is_empty() => line(vec![span(
-                            "no retained runtimes — deleting a user creates one",
-                            t.text_muted,
-                        )]),
-                        Loadable::Ready(rows) => {
-                            // THIS GRID IS IN A MODAL, not on the page:
-                            // its budget comes from the modal's own
-                            // width (clipped by a smaller terminal),
-                            // never from the viewport — over-budgeting
-                            // here would clamp the last columns to
-                            // nothing.
-                            let vw = RESV_MODAL_W.min(abstracttui::app::use_viewport(gcx).get().w)
-                                - RESV_MODAL_CHROME;
-                            let mut table_rows: Vec<Vec<String>> = rows
-                                .iter()
-                                .map(|r| {
-                                    vec![
-                                        r.runtime_id.clone(),
-                                        r.tenant_id.clone(),
-                                        r.owner_user_id.clone(),
-                                        r.reason.clone(),
-                                        if r.data_exists {
-                                            "on disk".into()
-                                        } else {
-                                            "no data".into()
-                                        },
-                                    ]
-                                })
-                                .collect();
-                            // Ids discriminate on their TAIL; the reason
-                            // and the on-disk answer are bounded words.
-                            let rules = [
-                                widths::ColRule::tail("runtime", 16),
-                                widths::ColRule::tail("tenant", 8),
-                                widths::ColRule::tail("was owned by", 12),
-                                widths::ColRule::head("reason", 12),
-                                widths::ColRule::head("data", 7),
-                            ];
-                            let cols = widths::columns(&rules, &mut table_rows, vw);
-                            Table::new(cols)
-                                .rows(table_rows)
-                                .selection(ui.resv_sel)
-                                .layout(LayoutStyle::default().grow(1.0))
-                                .element(gcx, &t)
-                                .autofocus()
-                                .build()
+                    line(vec![span_bold(
+                        "Retained runtimes — transfer to a user (data is never deleted)"
+                            .to_string(),
+                        t.accent,
+                    )])
+                }))
+                .child(dyn_view_scoped(LayoutStyle::default().grow(1.0), {
+                    move |gcx| {
+                        let t = theme.get().tokens;
+                        match store.reservations.get() {
+                            Loadable::NotAsked | Loadable::Loading => {
+                                line(vec![span("⟳ loading reservations…", t.info)])
+                            }
+                            Loadable::Failed(e) => super::util::error_panel_hint(
+                                &t,
+                                &e,
+                                Some("close and reopen this dialog to retry (opening re-reads)"),
+                            ),
+                            Loadable::Ready(rows) if rows.is_empty() => line(vec![span(
+                                "no retained runtimes — deleting a user creates one",
+                                t.text_muted,
+                            )]),
+                            Loadable::Ready(rows) => {
+                                // THIS GRID IS IN A MODAL, not on the page:
+                                // its budget comes from the modal's own
+                                // width (clipped by a smaller terminal),
+                                // never from the viewport — over-budgeting
+                                // here would clamp the last columns to
+                                // nothing.
+                                let vw = RESV_MODAL_W
+                                    .min(abstracttui::app::use_viewport(gcx).get().w)
+                                    - RESV_MODAL_CHROME;
+                                let mut table_rows: Vec<Vec<String>> = rows
+                                    .iter()
+                                    .map(|r| {
+                                        vec![
+                                            r.runtime_id.clone(),
+                                            r.tenant_id.clone(),
+                                            r.owner_user_id.clone(),
+                                            r.reason.clone(),
+                                            if r.data_exists {
+                                                "on disk".into()
+                                            } else {
+                                                "no data".into()
+                                            },
+                                        ]
+                                    })
+                                    .collect();
+                                // Ids discriminate on their TAIL; the reason
+                                // and the on-disk answer are bounded words.
+                                let rules = [
+                                    widths::ColRule::tail("runtime", 16),
+                                    widths::ColRule::tail("tenant", 8),
+                                    widths::ColRule::tail("was owned by", 12),
+                                    widths::ColRule::head("reason", 12),
+                                    widths::ColRule::head("data", 7),
+                                ];
+                                let cols = widths::columns(&rules, &mut table_rows, vw);
+                                Table::new(cols)
+                                    .rows(table_rows)
+                                    .selection(ui.resv_sel)
+                                    .layout(LayoutStyle::default().grow(1.0))
+                                    .element(gcx, &t)
+                                    .autofocus()
+                                    .build()
+                            }
                         }
                     }
-                }
-            }))
-            .child(dyn_view_scoped(LayoutStyle::default().h(1).shrink(0.0), {
-                let theme2 = theme;
-                move |fcx| {
-                    let t = theme2.get().tokens;
-                    field(
-                        &t,
-                        "transfer to",
-                        TextInput::new()
-                            .value(target)
-                            .placeholder("existing user id (for Transfer)")
-                            .placeholder_while_focused(true)
-                            .layout(LayoutStyle::default().w(30).h(1))
-                            .element(fcx, &t)
-                            .build(),
-                    )
-                }
-            }))
-            .child(dyn_view_scoped(
-                LayoutStyle::default().h(1).shrink(0.0),
-                move |bcx| {
-                    let t = theme.get().tokens;
-                    let ctx_t = ctx3.clone();
-                    let close_t = close_b.clone();
-                    let close_esc = close_b.clone();
-                    Element::new()
-                        .style(LayoutStyle::row().gap(2))
-                        .child(
-                            Button::new("Transfer to user")
-                                .on_click(move || {
-                                    let idx = ctx_t.ui.resv_sel.get_untracked();
-                                    let row = ctx_t.store.reservations.with_untracked(|d| {
-                                        d.ready().and_then(|r| r.get(idx).cloned())
-                                    });
-                                    let Some(row) = row else {
-                                        ctx_t
-                                            .store
-                                            .notice
-                                            .set(Some("no reservation selected".into()));
-                                        return;
-                                    };
-                                    let tgt = target.get_untracked().trim().to_string();
-                                    if tgt.is_empty() {
-                                        ctx_t
-                                            .store
-                                            .notice
-                                            .set(Some("type the target user id first".into()));
-                                        return;
-                                    }
-                                    let c = ctx_t.clone();
-                                    close_t();
-                                    confirm_transfer(screen_cx, &c, row, tgt);
-                                })
-                                .element(bcx, &t)
+                }))
+                .child(dyn_view_scoped(LayoutStyle::default().h(1).shrink(0.0), {
+                    let theme2 = theme;
+                    move |fcx| {
+                        let t = theme2.get().tokens;
+                        field(
+                            &t,
+                            "transfer to",
+                            TextInput::new()
+                                .value(target)
+                                .placeholder("existing user id (for Transfer)")
+                                .placeholder_while_focused(true)
+                                .layout(LayoutStyle::default().w(30).h(1))
+                                .element(fcx, &t)
                                 .build(),
                         )
-                        .child(
-                            Button::new("Close (Esc)")
-                                .on_click(move || close_esc())
-                                .element(bcx, &t)
-                                .build(),
-                        )
-                        .build()
-                },
-            ))
-            .build()
-    });
+                    }
+                }))
+                .child(dyn_view_scoped(
+                    LayoutStyle::default().h(1).shrink(0.0),
+                    move |bcx| {
+                        let t = theme.get().tokens;
+                        let ctx_t = ctx3.clone();
+                        let close_t = close_b.clone();
+                        let close_esc = close_b.clone();
+                        Element::new()
+                            .style(LayoutStyle::row().gap(2))
+                            .child(
+                                Button::new("Transfer to user")
+                                    .on_click(move || {
+                                        let idx = ctx_t.ui.resv_sel.get_untracked();
+                                        let row = ctx_t.store.reservations.with_untracked(|d| {
+                                            d.ready().and_then(|r| r.get(idx).cloned())
+                                        });
+                                        let Some(row) = row else {
+                                            ctx_t
+                                                .store
+                                                .notice
+                                                .set(Some("no reservation selected".into()));
+                                            return;
+                                        };
+                                        let tgt = target.get_untracked().trim().to_string();
+                                        if tgt.is_empty() {
+                                            ctx_t
+                                                .store
+                                                .notice
+                                                .set(Some("type the target user id first".into()));
+                                            return;
+                                        }
+                                        let c = ctx_t.clone();
+                                        close_t();
+                                        confirm_transfer(screen_cx, &c, row, tgt);
+                                    })
+                                    .element(bcx, &t)
+                                    .build(),
+                            )
+                            .child(
+                                Button::new("Close (Esc)")
+                                    .on_click(move || close_esc())
+                                    .element(bcx, &t)
+                                    .build(),
+                            )
+                            .build()
+                    },
+                ))
+                .build()
+        },
+    );
 }
 
 fn confirm_transfer(cx: Scope, ctx: &Ctx, row: crate::store::ReservationRow, target: String) {
@@ -1424,268 +1675,273 @@ fn confirm_rotate(cx: Scope, ctx: &Ctx, u: UserRow) {
 fn open_user_form(cx: Scope, ctx: &Ctx, existing: Option<UserRow>) {
     let create = existing.is_none();
     let ctx2 = ctx.clone();
-    super::open_form_guarded(ctx, cx, Size::new(84, 26), move |mcx, close, guard| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        let ex = existing.clone();
+    super::open_form_guarded(
+        ctx,
+        cx,
+        abstracttui::app::use_viewport(cx).get_untracked(),
+        move |mcx, close, guard| {
+            let theme = use_theme(mcx);
+            let t0 = theme.get().tokens;
+            let ex = existing.clone();
 
-        let user_id = mcx.signal(ex.as_ref().map(|u| u.user_id.clone()).unwrap_or_default());
-        let email = mcx.signal(ex.as_ref().map(|u| u.email.clone()).unwrap_or_default());
-        let roles = mcx.signal(
-            ex.as_ref()
-                .map(|u| u.roles.clone())
-                .unwrap_or_else(|| vec!["user".to_string()]),
-        );
-        // Advanced create-time bindings (web parity). Blank = the
-        // gateway's own defaults (tenant "default"; one runtime named
-        // after the user id) — the placeholders SAY so instead of
-        // fabricating a value into the field.
-        let tenant = mcx.signal(String::new());
-        let runtime = mcx.signal(String::new());
-        // Advanced (create only): the tenant and runtime binding.
-        let advanced = mcx.signal(false);
-        let form_error = mcx.signal(Option::<String>::None);
-        let in_flight = mcx.signal(false);
-        let esc_armed = mcx.signal(false);
-        let form_id = crate::worker::next_form_id();
-
-        // Dirty-Esc guard + disarm + write_done: the shared contract (F4).
-        {
-            let initial = (
-                user_id.get_untracked(),
-                email.get_untracked(),
-                roles.get_untracked(),
+            let user_id = mcx.signal(ex.as_ref().map(|u| u.user_id.clone()).unwrap_or_default());
+            let email = mcx.signal(ex.as_ref().map(|u| u.email.clone()).unwrap_or_default());
+            let roles = mcx.signal(
+                ex.as_ref()
+                    .map(|u| u.roles.clone())
+                    .unwrap_or_else(|| vec!["user".to_string()]),
             );
-            super::install_dirty_guard_with(
-                mcx,
-                &guard,
-                move || {
-                    user_id.get_untracked() != initial.0
-                        || email.get_untracked() != initial.1
-                        || roles.get_untracked() != initial.2
-                        || !tenant.get_untracked().is_empty()
-                        || !runtime.get_untracked().is_empty()
-                },
-                move || {
-                    let _ = (
-                        user_id.get(),
-                        email.get(),
-                        roles.get(),
-                        tenant.get(),
-                        runtime.get(),
-                    );
-                },
-                esc_armed,
-                form_error,
-            );
-        }
-        super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
+            // Advanced create-time bindings (web parity). Blank = the
+            // gateway's own defaults (tenant "default"; one runtime named
+            // after the user id) — the placeholders SAY so instead of
+            // fabricating a value into the field.
+            let tenant = mcx.signal(String::new());
+            let runtime = mcx.signal(String::new());
+            // Advanced (create only): the tenant and runtime binding.
+            let advanced = mcx.signal(false);
+            let form_error = mcx.signal(Option::<String>::None);
+            let in_flight = mcx.signal(false);
+            let esc_armed = mcx.signal(false);
+            let form_id = crate::worker::next_form_id();
 
-        let title = if create {
-            "New gateway user".to_string()
-        } else {
-            format!(
-                "Edit user '{}'",
-                ex.as_ref().map(|u| u.user_id.as_str()).unwrap_or("")
-            )
-        };
-        let ctx_save = ctx2.clone();
-        let ex_save = ex.clone();
-        let close_cancel = close.clone();
+            // Dirty-Esc guard + disarm + write_done: the shared contract (F4).
+            {
+                let initial = (
+                    user_id.get_untracked(),
+                    email.get_untracked(),
+                    roles.get_untracked(),
+                );
+                super::install_dirty_guard_with(
+                    mcx,
+                    &guard,
+                    move || {
+                        user_id.get_untracked() != initial.0
+                            || email.get_untracked() != initial.1
+                            || roles.get_untracked() != initial.2
+                            || !tenant.get_untracked().is_empty()
+                            || !runtime.get_untracked().is_empty()
+                    },
+                    move || {
+                        let _ = (
+                            user_id.get(),
+                            email.get(),
+                            roles.get(),
+                            tenant.get(),
+                            runtime.get(),
+                        );
+                    },
+                    esc_armed,
+                    form_error,
+                );
+            }
+            super::install_write_done(mcx, &ctx2, form_id, in_flight, form_error, close.clone());
 
-        Element::new()
-            .style(LayoutStyle::column().gap(0))
-            .child(line(vec![span_bold(title, t0.accent)]))
-            .child(field(
-                &t0,
-                "User ID",
-                if create {
-                    TextInput::new()
-                        .value(user_id)
-                        .placeholder("e.g. alice")
-                        .placeholder_while_focused(true)
-                        .layout(LayoutStyle::default().w(30).h(1))
-                        .element(mcx, &t0)
-                        .autofocus()
-                        .build()
-                } else {
-                    line(vec![span(user_id.get_untracked(), t0.text_muted)])
-                },
-            ))
-            .child(if create {
-                helper_line(&t0, USER_ID_HELP)
+            let title = if create {
+                "Create user".to_string()
             } else {
-                Element::new().style(LayoutStyle::default().h(0)).build()
-            })
-            .child(field(
-                &t0,
-                "Role",
-                MultiSelect::new(vec![
-                    SelectOption::keyed("user", "User — runs workflows on their own runtime"),
-                    SelectOption::keyed("admin", "Admin — manages this gateway"),
-                    SelectOption::keyed("readonly", "Read-only — can look, not change"),
-                ])
-                .values(roles)
-                .placeholder("pick a role…")
-                .layout(LayoutStyle::default().w(46).h(1).shrink(0.0))
-                .element(mcx, &t0)
-                .build(),
-            ))
-            .child(field(&t0, "Email address", {
-                let e = TextInput::new()
-                    .value(email)
-                    .placeholder("")
-                    .layout(LayoutStyle::default().w(36).h(1))
-                    .element(mcx, &t0);
-                if create {
-                    e.build()
-                } else {
-                    e.autofocus().build()
-                }
-            }))
-            .child(helper_line(&t0, EMAIL_ADDRESS_HELP))
-            .child(if create {
-                // A disclosure (not a setting): opens the two rarely-set
-                // bindings below.
-                dyn_view_scoped(LayoutStyle::line(1).shrink(0.0), move |dcx| {
-                    let t = theme.get().tokens;
-                    Button::new(if advanced.get() {
-                        "Advanced ▾"
+                format!(
+                    "Edit user '{}'",
+                    ex.as_ref().map(|u| u.user_id.as_str()).unwrap_or("")
+                )
+            };
+            let ctx_save = ctx2.clone();
+            let ex_save = ex.clone();
+            let close_cancel = close.clone();
+
+            Element::new()
+                .style(LayoutStyle::column().gap(0))
+                .child(line(vec![span_bold(title, t0.accent)]))
+                .child(field(
+                    &t0,
+                    "User ID",
+                    if create {
+                        TextInput::new()
+                            .value(user_id)
+                            .placeholder("e.g. alice")
+                            .placeholder_while_focused(true)
+                            .layout(LayoutStyle::default().w(30).h(1))
+                            .element(mcx, &t0)
+                            .autofocus()
+                            .build()
                     } else {
-                        "Advanced ▸  runtime, tenant"
-                    })
-                    .on_click(move || advanced.update(|v| *v = !*v))
-                    .element(dcx, &t)
-                    .build()
+                        line(vec![span(user_id.get_untracked(), t0.text_muted)])
+                    },
+                ))
+                .child(if create {
+                    helper_line(&t0, USER_ID_HELP)
+                } else {
+                    Element::new().style(LayoutStyle::default().h(0)).build()
                 })
-            } else {
-                Element::new().style(LayoutStyle::default().h(0)).build()
-            })
-            .child(dyn_view_scoped(
-                LayoutStyle::column().gap(0).shrink(0.0),
-                move |acx| {
-                    if !(create && advanced.get()) {
-                        return Element::new().style(LayoutStyle::default().h(0)).build();
+                .child(field(
+                    &t0,
+                    "Role",
+                    MultiSelect::new(vec![
+                        SelectOption::keyed("user", "User — runs workflows on their own runtime"),
+                        SelectOption::keyed("admin", "Admin — manages this gateway"),
+                        SelectOption::keyed("readonly", "Read-only — can look, not change"),
+                    ])
+                    .values(roles)
+                    .placeholder("pick a role…")
+                    .layout(LayoutStyle::default().w(46).h(1).shrink(0.0))
+                    .element(mcx, &t0)
+                    .build(),
+                ))
+                .child(field(&t0, "Email address", {
+                    let e = TextInput::new()
+                        .value(email)
+                        .placeholder("")
+                        .layout(LayoutStyle::default().w(36).h(1))
+                        .element(mcx, &t0);
+                    if create {
+                        e.build()
+                    } else {
+                        e.autofocus().build()
                     }
-                    let t = theme.get().tokens;
-                    Element::new()
-                        .style(LayoutStyle::column().gap(0).shrink(0.0))
-                        .child(field(
-                            &t,
-                            "Runtime",
-                            TextInput::new()
-                                .value(runtime)
-                                .placeholder("")
-                                .layout(LayoutStyle::default().w(30).h(1))
-                                .element(acx, &t)
-                                .build(),
-                        ))
-                        .child(helper_line(&t, RUNTIME_HELP))
-                        .child(field(
-                            &t,
-                            "Tenant",
-                            TextInput::new()
-                                .value(tenant)
-                                .placeholder("default")
-                                .placeholder_while_focused(true)
-                                .layout(LayoutStyle::default().w(30).h(1))
-                                .element(acx, &t)
-                                .build(),
-                        ))
-                        .child(helper_line(&t, TENANT_HELP))
+                }))
+                .child(helper_line(&t0, EMAIL_ADDRESS_HELP))
+                .child(if create {
+                    // A disclosure (not a setting): opens the two rarely-set
+                    // bindings below.
+                    dyn_view_scoped(LayoutStyle::line(1).shrink(0.0), move |dcx| {
+                        let t = theme.get().tokens;
+                        Button::new(if advanced.get() {
+                            "Advanced ▾"
+                        } else {
+                            "Advanced ▸  runtime, tenant"
+                        })
+                        .on_click(move || advanced.update(|v| *v = !*v))
+                        .element(dcx, &t)
                         .build()
-                },
-            ))
-            .child(if create {
-                line(vec![span(
-                    "The gateway makes their token when you create the user; it is shown once.",
-                    t0.text_faint,
-                )])
-            } else {
-                line(vec![span(
-                    "token rotation lives on the table (t) — this form edits the record only",
-                    t0.text_faint,
-                )])
-            })
-            .child(super::message_slot(theme, form_error, in_flight))
-            .child(dyn_view_scoped(
-                LayoutStyle::default().h(1).shrink(0.0),
-                move |bcx| {
-                    let t = theme.get().tokens;
-                    let busy_form = in_flight.get();
-                    let ctx_save = ctx_save.clone();
-                    let ex_save = ex_save.clone();
-                    let close_cancel = close_cancel.clone();
-                    Element::new()
-                        .style(LayoutStyle::row().gap(2))
-                        .child(
-                            Button::new(if create { "Create user" } else { "Save" })
-                                .disabled(busy_form)
-                                .on_click(move || {
-                                    if in_flight.get_untracked() {
-                                        return; // a write is already running
-                                    }
-                                    let uid = user_id.get_untracked().trim().to_string();
-                                    if create && uid.is_empty() {
-                                        form_error.set(Some("Type a User ID.".into()));
-                                        return;
-                                    }
-                                    let roles_v = roles.get_untracked();
-                                    if roles_v.is_empty() {
-                                        form_error.set(Some("Pick a role.".into()));
-                                        return;
-                                    }
-                                    // Active is the table's switch (space), not a
-                                    // form field: a new user starts active.
-                                    let mut body = json!({
-                                        "roles": roles_v,
-                                        "email": email.get_untracked().trim(),
-                                    });
-                                    if create {
-                                        body["enabled"] = Value::Bool(true);
-                                    }
-                                    form_error.set(None);
-                                    in_flight.set(true);
-                                    if create {
-                                        body["user_id"] = Value::String(uid.clone());
-                                        // Optional bindings: omitted when blank so
-                                        // the gateway's own defaults apply (tenant
-                                        // "default"; runtime = user id).
-                                        let tv = tenant.get_untracked().trim().to_string();
-                                        if !tv.is_empty() {
-                                            body["tenant_id"] = Value::String(tv);
+                    })
+                } else {
+                    Element::new().style(LayoutStyle::default().h(0)).build()
+                })
+                .child(dyn_view_scoped(
+                    LayoutStyle::column().gap(0).shrink(0.0),
+                    move |acx| {
+                        if !(create && advanced.get()) {
+                            return Element::new().style(LayoutStyle::default().h(0)).build();
+                        }
+                        let t = theme.get().tokens;
+                        Element::new()
+                            .style(LayoutStyle::column().gap(0).shrink(0.0))
+                            .child(field(
+                                &t,
+                                "Runtime",
+                                TextInput::new()
+                                    .value(runtime)
+                                    .placeholder("")
+                                    .layout(LayoutStyle::default().w(30).h(1))
+                                    .element(acx, &t)
+                                    .build(),
+                            ))
+                            .child(helper_line(&t, RUNTIME_HELP))
+                            .child(field(
+                                &t,
+                                "Tenant",
+                                TextInput::new()
+                                    .value(tenant)
+                                    .placeholder("default")
+                                    .placeholder_while_focused(true)
+                                    .layout(LayoutStyle::default().w(30).h(1))
+                                    .element(acx, &t)
+                                    .build(),
+                            ))
+                            .child(helper_line(&t, TENANT_HELP))
+                            .build()
+                    },
+                ))
+                .child(if create {
+                    line(vec![span(
+                        "The gateway makes their token when you create the user; it is shown once.",
+                        t0.text_faint,
+                    )])
+                } else {
+                    line(vec![span(
+                        "token rotation lives on the table (t) — this form edits the record only",
+                        t0.text_faint,
+                    )])
+                })
+                .child(super::message_slot(theme, form_error, in_flight))
+                .child(dyn_view_scoped(
+                    LayoutStyle::default().h(1).shrink(0.0),
+                    move |bcx| {
+                        let t = theme.get().tokens;
+                        let busy_form = in_flight.get();
+                        let ctx_save = ctx_save.clone();
+                        let ex_save = ex_save.clone();
+                        let close_cancel = close_cancel.clone();
+                        Element::new()
+                            .style(LayoutStyle::row().gap(2))
+                            .child(
+                                Button::new(if create { "Create user" } else { "Save" })
+                                    .disabled(busy_form)
+                                    .on_click(move || {
+                                        if in_flight.get_untracked() {
+                                            return; // a write is already running
                                         }
-                                        let rv = runtime.get_untracked().trim().to_string();
-                                        if !rv.is_empty() {
-                                            body["runtime_id"] = Value::String(rv);
+                                        let uid = user_id.get_untracked().trim().to_string();
+                                        if create && uid.is_empty() {
+                                            form_error.set(Some("Type a User ID.".into()));
+                                            return;
                                         }
-                                        ctx_save.send(Cmd::CreateUser {
-                                            body: body.into(),
-                                            form_id: Some(form_id),
+                                        let roles_v = roles.get_untracked();
+                                        if roles_v.is_empty() {
+                                            form_error.set(Some("Pick a role.".into()));
+                                            return;
+                                        }
+                                        // Active is the table's switch (space), not a
+                                        // form field: a new user starts active.
+                                        let mut body = json!({
+                                            "roles": roles_v,
+                                            "email": email.get_untracked().trim(),
                                         });
-                                    } else if let Some(u) = &ex_save {
-                                        ctx_save.send(Cmd::PatchUser {
-                                            user_id: u.user_id.clone(),
-                                            tenant_id: u.tenant_id.clone(),
-                                            body: body.into(),
-                                            form_id: Some(form_id),
-                                        });
-                                    }
-                                })
-                                .element(bcx, &t)
-                                .build(),
-                        )
-                        .child(
-                            Button::new("Cancel (Esc)")
-                                .on_click(move || close_cancel())
-                                .element(bcx, &t)
-                                .build(),
-                        )
-                        .build()
-                },
-            ))
-            .build()
-    });
+                                        if create {
+                                            body["enabled"] = Value::Bool(true);
+                                        }
+                                        form_error.set(None);
+                                        in_flight.set(true);
+                                        if create {
+                                            body["user_id"] = Value::String(uid.clone());
+                                            // Optional bindings: omitted when blank so
+                                            // the gateway's own defaults apply (tenant
+                                            // "default"; runtime = user id).
+                                            let tv = tenant.get_untracked().trim().to_string();
+                                            if !tv.is_empty() {
+                                                body["tenant_id"] = Value::String(tv);
+                                            }
+                                            let rv = runtime.get_untracked().trim().to_string();
+                                            if !rv.is_empty() {
+                                                body["runtime_id"] = Value::String(rv);
+                                            }
+                                            ctx_save.send(Cmd::CreateUser {
+                                                body: body.into(),
+                                                form_id: Some(form_id),
+                                            });
+                                        } else if let Some(u) = &ex_save {
+                                            ctx_save.send(Cmd::PatchUser {
+                                                user_id: u.user_id.clone(),
+                                                tenant_id: u.tenant_id.clone(),
+                                                body: body.into(),
+                                                form_id: Some(form_id),
+                                            });
+                                        }
+                                    })
+                                    .element(bcx, &t)
+                                    .build(),
+                            )
+                            .child(
+                                Button::new("Cancel (Esc)")
+                                    .on_click(move || close_cancel())
+                                    .element(bcx, &t)
+                                    .build(),
+                            )
+                            .build()
+                    },
+                ))
+                .build()
+        },
+    );
 }
 
 pub const USER_ID_HELP: &str = "Letters, digits, dots or dashes. This is how they sign in.";
@@ -1708,54 +1964,57 @@ fn helper_line(t: &TokenSet, text: &str) -> View {
 /// The once-shown token modal (create-user / rotate-token).
 pub fn open_token_modal(cx: Scope, ctx: &Ctx, user: String, token: String) {
     let ctx2 = ctx.clone();
-    open_form(ctx, cx, Size::new(74, 12), move |mcx, close| {
-        let theme = use_theme(mcx);
-        let t0 = theme.get().tokens;
-        let tok_copy = token.clone();
-        let tok_show = token.clone();
-        let store = ctx2.store;
-        let close_b = close.clone();
-        Element::new()
-            .style(LayoutStyle::column().gap(1))
-            .child(line(vec![span_bold(
-                format!("Access token for '{user}'"),
-                t0.accent,
-            )]))
-            .child(line(vec![span(
-                format!(
-                    "Give this token to {user}. It is shown once — the gateway stores only a hash."
-                ),
-                t0.warn,
-            )]))
-            .child(line(vec![span_bold(tok_show, t0.text)]))
-            .child(
-                Element::new()
-                    .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
-                    .child(
-                        Button::new("Copy to clipboard")
-                            .on_click(move || {
-                                copy_to_clipboard(tok_copy.clone());
-                                // Do NOT name the route: since abstracttui
-                                // 0.3.0 the engine picks exactly one (OSC 52
-                                // when the terminal advertises it, else the
-                                // host clipboard) and labels its own notice
-                                // if neither worked. Claiming "OSC 52" here
-                                // was wrong on every Terminal.app-class host.
-                                store
-                                    .notice
-                                    .set(Some("token copied to the clipboard".into()));
-                            })
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .child(
-                        Button::new("Done — I copied it")
-                            .on_click(move || close_b())
-                            .element(mcx, &t0)
-                            .build(),
-                    )
-                    .build(),
-            )
-            .build()
-    });
+    open_form(
+        ctx,
+        cx,
+        abstracttui::app::use_viewport(cx).get_untracked(),
+        move |mcx, close| {
+            let theme = use_theme(mcx);
+            let t0 = theme.get().tokens;
+            let tok_copy = token.clone();
+            let tok_show = token.clone();
+            let store = ctx2.store;
+            let close_b = close.clone();
+            Element::new()
+                .style(LayoutStyle::column().gap(1))
+                .child(line(vec![span_bold(
+                    format!("Access token for '{user}'"),
+                    t0.accent,
+                )]))
+                .child(line(vec![span(
+                    format!("Give this token to {user}. It is shown once."),
+                    t0.warn,
+                )]))
+                .child(line(vec![span_bold(tok_show, t0.text)]))
+                .child(
+                    Element::new()
+                        .style(LayoutStyle::row().gap(2).h(1).shrink(0.0))
+                        .child(
+                            Button::new("Copy to clipboard")
+                                .on_click(move || {
+                                    copy_to_clipboard(tok_copy.clone());
+                                    // Do NOT name the route: since abstracttui
+                                    // 0.3.0 the engine picks exactly one (OSC 52
+                                    // when the terminal advertises it, else the
+                                    // host clipboard) and labels its own notice
+                                    // if neither worked. Claiming "OSC 52" here
+                                    // was wrong on every Terminal.app-class host.
+                                    store
+                                        .notice
+                                        .set(Some("token copied to the clipboard".into()));
+                                })
+                                .element(mcx, &t0)
+                                .build(),
+                        )
+                        .child(
+                            Button::new("Done — I copied it")
+                                .on_click(move || close_b())
+                                .element(mcx, &t0)
+                                .build(),
+                        )
+                        .build(),
+                )
+                .build()
+        },
+    );
 }

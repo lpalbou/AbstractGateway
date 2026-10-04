@@ -110,6 +110,7 @@ pub fn open_overlay(
         pairs.push(("esc".into(), "close".into()));
     }
     let vp = abstracttui::app::use_viewport(cx).get_untracked();
+    let notice = ctx.store.notice;
     super::open_form_guarded(ctx, cx, vp, move |mcx, close, guard| {
         let t = use_theme(mcx).get().tokens;
         let vw = abstracttui::app::use_viewport(mcx).get_untracked().w;
@@ -126,6 +127,18 @@ pub fn open_overlay(
                     .child(build(mcx, close, guard))
                     .build(),
             )
+            // The notice lane: a write's outcome sentence stays visible
+            // while the overlay covers the page's footer.
+            .child(dyn_view(
+                LayoutStyle::column().gap(0).shrink(0.0),
+                move || {
+                    let t = use_theme(mcx).get().tokens;
+                    match notice.get() {
+                        Some(n) if !n.is_empty() => sentence(&t, &n, vw - 6, t.text_muted),
+                        _ => Element::new().style(LayoutStyle::default().h(0)).build(),
+                    }
+                },
+            ))
             .child(key_hint_bar(&t, &refs, vw - 6))
             .build()
     });
@@ -463,6 +476,8 @@ impl WrapTable {
         let painted_ev = painted.clone();
         let top_ev = top.clone();
         let rows_ev = rows.clone();
+        let last_click: Rc<Cell<Option<(usize, std::time::Instant)>>> = Rc::new(Cell::new(None));
+        let on_activate_click = on_activate.clone();
         let rows_mv = rows.clone();
         let move_to = move |i: usize| {
             if n == 0 {
@@ -540,10 +555,28 @@ impl WrapTable {
                     MouseKind::Down(MouseButton::Left) => {
                         let rect = ectx.current_rect();
                         let y = m.pos.y - rect.y;
-                        let p = painted_ev.borrow();
-                        if y >= 0 {
-                            if let Some(Some(r)) = p.0.get(y as usize) {
-                                move_to(*r);
+                        let hit = {
+                            let p = painted_ev.borrow();
+                            if y >= 0 {
+                                p.0.get(y as usize).copied().flatten()
+                            } else {
+                                None
+                            }
+                        };
+                        if let Some(r) = hit {
+                            // A second press on the same row within the
+                            // double-click window activates it.
+                            let now = std::time::Instant::now();
+                            let double = last_click.get().is_some_and(|(row, at)| {
+                                row == r && now.duration_since(at).as_millis() < 500
+                            });
+                            last_click.set(Some((r, now)));
+                            move_to(r);
+                            if double && sel.get_untracked() == r {
+                                last_click.set(None);
+                                if let Some(f) = on_activate_click.borrow_mut().as_mut() {
+                                    f(r);
+                                }
                             }
                         }
                         ectx.stop_propagation();

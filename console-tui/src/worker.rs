@@ -210,6 +210,13 @@ pub enum Cmd {
         entity: bool,
         active: bool,
     },
+    /// `PUT /admin/accounts/{id}/openai-api` `{enabled}` (admin): the
+    /// account's key at /v1 (round 5).
+    SetAccountOpenAi {
+        id: String,
+        tenant_id: String,
+        enabled: bool,
+    },
     /// Archive (or, `unarchive`, bring back inactive) an account: accounts
     /// are archived, never deleted (round 3). `admin` picks the route.
     ArchiveAccount {
@@ -1681,11 +1688,12 @@ fn handle(
             active,
         } => {
             // The status line names the NEW state (state-toggles rule).
+            // The web console's sentences (console.py setAccountActive).
             let action = match (entity, active) {
-                (false, true) => format!("{id} is active — can sign in"),
-                (false, false) => format!("{id} is inactive — signed out, cannot sign in"),
-                (true, true) => format!("{id} is active — acting again"),
-                (true, false) => format!("{id} is suspended — stopped acting"),
+                (false, true) => format!("{id} is active again."),
+                (false, false) => format!("{id} is deactivated."),
+                (true, true) => format!("{id} is active again."),
+                (true, false) => format!("{id} is suspended."),
             };
             let (write, verify) = with_busy(store, wake, &format!("switching {id}"), || {
                 let write = require_client(client)
@@ -1724,6 +1732,36 @@ fn handle(
             }
         }
 
+        Cmd::SetAccountOpenAi {
+            id,
+            tenant_id,
+            enabled,
+        } => {
+            let action = if enabled {
+                format!("Saved: {id} can use the OpenAI API.")
+            } else {
+                format!("Saved: {id}'s key is refused at /v1.")
+            };
+            let write = with_busy(store, wake, &format!("saving OpenAI API for {id}"), || {
+                require_client(client)
+                    .and_then(|c| c.set_account_openai(&id, &tenant_id, enabled))
+                    .map_err(api_message)
+            });
+            let verified =
+                write
+                    .as_ref()
+                    .ok()
+                    .map(|v| match v.get("openai_api").and_then(Value::as_bool) {
+                        Some(on) if on == enabled => Ok(format!(
+                            "the gateway answers OpenAI API {}",
+                            if on { "on" } else { "off" }
+                        )),
+                        _ => Err(format!("the gateway's row for {id} is unchanged")),
+                    });
+            finish_write(store, wake, action, write, verified, None, on_done);
+            refresh_accounts(store, wake, client);
+        }
+
         Cmd::ArchiveAccount {
             id,
             tenant_id,
@@ -1731,11 +1769,6 @@ fn handle(
             admin,
         } => {
             // The status line names the NEW state (state-toggles rule).
-            let action = if unarchive {
-                format!("{id} is back, inactive — switch Active on to let it in")
-            } else {
-                format!("{id} is archived — runs and history are kept")
-            };
             let write = with_busy(store, wake, &format!("archiving {id}"), || {
                 require_client(client)
                     .and_then(|c| {
@@ -1762,6 +1795,20 @@ fn handle(
                         )),
                         _ => Err(format!("the gateway's row for {id} is unchanged")),
                     });
+            // The web console's sentences (console.py archiveAccount): the
+            // row the gateway answers says whether it is an entity.
+            let entity = write
+                .as_ref()
+                .ok()
+                .and_then(|v| v.get("kind").and_then(Value::as_str))
+                == Some("entity");
+            let action = match (unarchive, entity) {
+                (true, true) => format!("{id} is back, inactive: turn Active on to let it act."),
+                (true, false) => {
+                    format!("{id} is back, inactive: turn Active on to let it sign in.")
+                }
+                (false, _) => format!("{id} is archived. Turn on Show archived to see it."),
+            };
             finish_write(store, wake, action, write, verified, None, on_done);
             if admin {
                 refresh_accounts(store, wake, client);

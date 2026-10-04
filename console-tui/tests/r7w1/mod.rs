@@ -207,6 +207,41 @@ impl Harness {
         }
         self.turns(3)
     }
+    /// Click the first occurrence of `text` on screen.
+    pub fn click_text(&mut self, text: &str) -> String {
+        let screen = self.turns(1);
+        let (row, col) = screen
+            .lines()
+            .enumerate()
+            .find_map(|(i, l)| l.find(text).map(|c| (i, l[..c].chars().count())))
+            .unwrap_or_else(|| panic!("{text:?} not on screen:\n{screen}"));
+        let click = format!(
+            "\x1b[<0;{};{}M\x1b[<0;{};{}m",
+            col + 2,
+            row + 1,
+            col + 2,
+            row + 1
+        );
+        self.key(click.as_bytes())
+    }
+    /// Click `dx` cells right of the first occurrence of `text` (a field
+    /// beside its label).
+    pub fn click_right_of(&mut self, text: &str, dx: usize) -> String {
+        let screen = self.turns(1);
+        let (row, col) = screen
+            .lines()
+            .enumerate()
+            .find_map(|(i, l)| l.find(text).map(|c| (i, l[..c].chars().count())))
+            .unwrap_or_else(|| panic!("{text:?} not on screen:\n{screen}"));
+        let x = col + dx + 1;
+        let click = format!("\x1b[<0;{};{}M\x1b[<0;{};{}m", x, row + 1, x, row + 1);
+        self.key(click.as_bytes())
+    }
+    /// Type text (each char a key press).
+    pub fn type_text(&mut self, text: &str) -> String {
+        self.term.push_input(text.as_bytes());
+        self.turns(3)
+    }
     pub fn text(&mut self) -> String {
         self.turns(2)
     }
@@ -308,12 +343,23 @@ pub fn live(size: (i32, i32), mount: Mount, url: &str, token: &str) -> Harness {
         }
     };
     let rx = h.rx.take().expect("rx");
+    // Issued tokens go to the token queue, as in production (lib.rs).
+    let token_sink = {
+        let wake = wake.clone();
+        move |u: String, t: String| {
+            wake.post(move || {
+                ui_state
+                    .token_queue
+                    .update(|q| q.push((u.clone(), t.clone())))
+            })
+        }
+    };
     let _ = abstractgateway_console::worker::spawn(
         h.store,
         wake,
         rx,
         h.tx.clone(),
-        |_u: String, _t: String| {},
+        token_sink,
         done_sink,
     );
     h.ui.wizard.set(false);

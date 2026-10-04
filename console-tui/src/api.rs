@@ -264,6 +264,11 @@ pub struct GatewayClient {
     token: Option<String>,
     agent: ureq::Agent,
     slow_agent: ureq::Agent,
+    /// Whose mailbox the email routes act on: `None` = the caller's own
+    /// (`/me/email…`), `Some(id)` = an entity's (`/accounts/{id}/email…`,
+    /// the gateway's mirror of every `/me/email` and `/me/notifications`
+    /// route). Shared by the clones of one connection.
+    email_subject: std::sync::Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl GatewayClient {
@@ -296,6 +301,24 @@ impl GatewayClient {
             token: token.map(str::to_string).filter(|t| !t.is_empty()),
             agent,
             slow_agent,
+            email_subject: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
+
+    /// Point the email routes at an entity's mailbox (`Some(id)`) or back
+    /// at the caller's own (`None`).
+    pub fn set_email_subject(&self, subject: Option<String>) {
+        if let Ok(mut s) = self.email_subject.lock() {
+            *s = subject;
+        }
+    }
+
+    /// `/me/<rest>` for the current email subject.
+    pub(crate) fn me_path(&self, me: &str) -> String {
+        let subject = self.email_subject.lock().ok().and_then(|s| s.clone());
+        match (subject, me.strip_prefix("/me")) {
+            (Some(id), Some(rest)) => format!("/accounts/{}{rest}", urlencode(&id)),
+            _ => me.to_string(),
         }
     }
 
@@ -828,6 +851,16 @@ impl GatewayClient {
             urlencode(tenant_id)
         );
         self.send("PUT", &path, &json!({ "active": active }), false)
+    }
+
+    /// `PUT /admin/accounts/{id}/openai-api?tenant_id=` `{enabled}` (admin).
+    pub fn set_account_openai(&self, id: &str, tenant_id: &str, enabled: bool) -> ApiResult<Value> {
+        let path = format!(
+            "/admin/accounts/{}/openai-api?tenant_id={}",
+            urlencode(id),
+            urlencode(tenant_id)
+        );
+        self.send("PUT", &path, &json!({ "enabled": enabled }), false)
     }
 
     /// One account's activity (admin), or the caller's own (`None`).

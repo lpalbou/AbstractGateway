@@ -2971,6 +2971,8 @@ pub struct Store {
     pub users: Signal<Loadable<UsersData>>,
     /// `GET /admin/accounts`: users and entities in one list (DESIGN-v2 §2).
     pub accounts: Signal<Loadable<Vec<accounts::AccountRow>>>,
+    /// The Accounts page's view state (Show archived, tab, expanded row).
+    pub acc: accounts::AccountsPage,
     /// The activity list open in the Logs view: (account id or "me", the
     /// filter's `kind=` value, the read).
     pub activity: Signal<Option<(String, String, Loadable<accounts::ActivityData>)>>,
@@ -3778,6 +3780,7 @@ impl Store {
             unload_locked: cx.signal(None),
             users: cx.signal(Loadable::default()),
             accounts: cx.signal(Loadable::default()),
+            acc: accounts::AccountsPage::create(cx),
             activity: cx.signal(None),
             entities: cx.signal(Loadable::default()),
             runtimes: cx.signal(Loadable::default()),
@@ -3864,6 +3867,7 @@ impl Store {
             unload_locked,
             users,
             accounts,
+            acc: _,
             activity,
             entities,
             runtimes,

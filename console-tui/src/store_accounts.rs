@@ -59,6 +59,12 @@ pub struct AccountRow {
     pub archived: bool,
     /// (name, availability) for every name in [`ACTIONS`].
     pub actions: Vec<(String, Action)>,
+    /// `own`: the signed-in principal's own row.
+    pub own: bool,
+    /// `openai_api`: this account's key is accepted at /v1.
+    pub openai_api: bool,
+    /// `actions.openai_api` (round 5; absent on older gateways).
+    pub openai_action: Option<Action>,
 }
 
 impl AccountRow {
@@ -99,7 +105,17 @@ impl AccountRow {
                 },
             ));
         }
+        let openai_action = acts.get("openai_api").map(|a| Action {
+            available: a.get("available").and_then(Value::as_bool).unwrap_or(false),
+            reason: s(a, "reason"),
+        });
         Ok(AccountRow {
+            own: v.get("own").and_then(Value::as_bool).unwrap_or(false),
+            openai_api: v
+                .get("openai_api")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            openai_action,
             tenant_id: s(v, "tenant_id").unwrap_or_else(|| "default".into()),
             email_address: s(v, "email_address").filter(|a| !a.trim().is_empty()),
             runtime_id: s(v, "runtime_id"),
@@ -158,10 +174,11 @@ impl AccountRow {
                 Some(a) => format!("Connected as {a}"),
                 None => "Connected".into(),
             },
+            "receive_only" => "Receive only — no outgoing server".into(),
             "not_connected" => "Not connected".into(),
             "paused" => "Paused".into(),
-            // Entities (and users whose mailbox cannot apply): the
-            // reason lives in the Email view.
+            "unavailable" => "Not available".into(),
+            // A state this console does not know yet: say nothing false.
             _ => "—".into(),
         }
     }
@@ -307,7 +324,11 @@ mod tests {
             "reason": "Mailboxes are turned off for this account (Email for everyone)."});
         let r = AccountRow::from_value(&v).unwrap();
         assert_eq!(r.kind_label(), "Entity");
-        assert_eq!(r.mailbox_cell(), "—");
+        assert_eq!(
+            r.mailbox_cell(),
+            "Not available",
+            "the web's word for unavailable"
+        );
         assert_eq!(r.active_cell(), "[x]");
         assert_eq!(
             r.refusal("unarchive").as_deref(),
@@ -390,5 +411,34 @@ mod tests {
         .unwrap();
         assert_eq!(d.events[0].observer_path.as_deref(), Some("/runs/r1"));
         assert!(d.note.unwrap().contains("audit log"));
+    }
+}
+
+/// The kind badge's tooltip, in the web's words.
+pub fn kind_help(kind_label: &str) -> &'static str {
+    match kind_label {
+        "Admin" => "Admin — manages this gateway",
+        "Entity" => "Entity — an AI user with its own memory and mailbox",
+        _ => "User — signs in and runs their own agents",
+    }
+}
+
+/// The Accounts page's own view state (ride `Store::acc`).
+#[derive(Clone, Copy)]
+pub struct AccountsPage {
+    /// "Show archived" (the web remembers it per browser; here per session).
+    pub show_archived: abstracttui::reactive::Signal<bool>,
+    /// 0 = Accounts, 1 = Email for everyone (admin).
+    pub tab: abstracttui::reactive::Signal<usize>,
+    pub expanded: abstracttui::reactive::Signal<Option<usize>>,
+}
+
+impl AccountsPage {
+    pub fn create(cx: abstracttui::reactive::Scope) -> AccountsPage {
+        AccountsPage {
+            show_archived: cx.signal(false),
+            tab: cx.signal(0),
+            expanded: cx.signal(None),
+        }
     }
 }

@@ -63,17 +63,16 @@ fn one_table_lists_users_and_entities_with_kind_and_active() {
     let s = h.turns(2);
     for want in [
         "Accounts — people who use this gateway",
-        "name",
-        "kind",
-        "email address",
-        "mailbox",
-        "runtime",
-        "active",
+        "Name",
+        "Email address",
+        "Mailbox",
+        "Runtime",
+        "Active",
         "Connected as admin@example.test",
         "Not connected",
         "castor",
         "Entity",
-        "[-] You can't deactivate your own account.",
+        "[-]",
         "kind:",
     ] {
         assert!(s.contains(want), "{want:?}:\n{s}");
@@ -89,7 +88,8 @@ fn d_archives_an_entity_after_the_confirm_never_deletes() {
     select(&mut h, "castor");
     let s = h.turns(2);
     assert!(!s.contains("Delete"), "no Delete anywhere on the row:\n{s}");
-    assert!(s.contains("d archive"), "{s}");
+    let s = h.key(b"\r"); // the row's detail names its actions
+    assert!(s.contains("d Archive"), "{s}");
     let s = h.key(b"d");
     // The confirm wraps; the sentence itself is DESIGN-v3 §1.3's, word for word.
     let flat = s.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -97,9 +97,12 @@ fn d_archives_an_entity_after_the_confirm_never_deletes() {
         flat.contains("Archive castor? It stops acting and never wakes. Its memory, runs and history are kept; you can unarchive later."),
         "{s}"
     );
+    assert!(
+        s.contains("[y] Archive") && s.contains("[n] Keep"),
+        "inline confirm:\n{s}"
+    );
     assert!(h.sent().is_empty(), "nothing sent before the confirm");
-    h.key(b"\x1b[A"); // up to "Archive" (Keep is the default)
-    h.key(b"\r");
+    h.key(b"y");
     let sent = h.sent();
     assert!(
         sent.iter().any(|c| matches!(c,
@@ -126,12 +129,11 @@ fn space_suspends_an_entity_after_the_confirm() {
     select(&mut h, "castor");
     let s = h.key(b" ");
     assert!(
-        s.contains("Suspend castor? It stops acting until you turn") && s.contains("○ Suspend"),
+        s.contains("Suspend castor? It stops acting until you turn") && s.contains("[y] Suspend"),
         "{s}"
     );
     assert!(h.sent().is_empty(), "nothing sent before the confirm");
-    h.key(b"\x1b[A"); // up to "Suspend" (Cancel is the default)
-    h.key(b"\r");
+    h.key(b"y");
     let sent = h.sent();
     assert!(
         sent.iter().any(|c| matches!(c,
@@ -202,12 +204,14 @@ fn logs_read_the_accounts_activity_and_filter() {
         "Activity — alice",
         "[All]",
         "Run started",
-        "run-42 · Observer /runs/run-42",
         "From the gateway's audit log",
-        "Read-only requests",
+        "o Open in Observer",
     ] {
         assert!(s.contains(want), "{want:?}:\n{s}");
     }
+    // The run rides in the row's detail (Enter), with its Observer verb.
+    let s = h.key(b"\r");
+    assert!(s.contains("Run run-42 — o Open in Observer"), "{s}");
     h.key(b"f");
     let sent = h.sent();
     assert!(

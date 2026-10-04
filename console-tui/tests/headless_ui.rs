@@ -2197,7 +2197,7 @@ fn create_user_flow_and_token_shown_once() {
     h.turns(2);
     h.type_text("a");
     let s = h.turns(2);
-    assert!(s.contains("New gateway user"), "form:\n{s}");
+    assert!(s.contains("Create user"), "form:\n{s}");
     assert!(
         s.contains("The gateway makes their token when you create the user; it is shown once."),
         "token teaching:\n{s}"
@@ -2233,7 +2233,7 @@ fn create_user_flow_and_token_shown_once() {
         .update(|q| q.push(("bob".into(), "agw_once_only_XYZ".into())));
     let s = h.turns(2);
     assert!(
-        s.contains("New gateway user"),
+        s.contains("Create user"),
         "token modal WAITS while the form is still open:\n{s}"
     );
     assert!(
@@ -10643,22 +10643,20 @@ fn accounts_table_has_the_design_columns_and_the_active_switch() {
         .users
         .set(Loadable::Ready(users_from_payload(&users)));
     let s = h.turns(3);
-    for col in [
-        "name",
-        "kind",
-        "email address",
-        "mailbox",
-        "runtime",
-        "active",
-    ] {
+    for col in ["Name", "Email address", "Mailbox", "Runtime", "Active"] {
         assert!(s.contains(col), "column {col:?}:\n{s}");
     }
     assert!(!s.contains("enabled"), "no State/enabled column:\n{s}");
     assert!(s.contains("Connected as a@x.io"), "{s}");
+    // The own row's switch is unavailable; Enter shows the reason.
+    assert!(s.contains("[-]"), "own row unavailable:\n{s}");
+    h.key(b"\r");
+    let s = h.turns(2);
     assert!(
-        s.contains("[-] You can't deactivate your own account."),
+        s.contains("Active: You can't deactivate your own account."),
         "own row unavailable, with the reason:\n{s}"
     );
+    h.key(b"\r");
     // Own row (admin, selected first): space says why, sends nothing.
     let _ = h.drain_cmds();
     h.type_text(" ");
@@ -10696,9 +10694,11 @@ fn accounts_table_has_the_design_columns_and_the_active_switch() {
     assert!(h
         .find_cmd(|c| matches!(c, Cmd::SetAccountActive { .. }))
         .is_none());
-    h.key(b"\x1b[A"); // up to "Deactivate" (Cancel is the default)
-    h.turns(1);
-    h.key(b"\r");
+    assert!(
+        s.contains("[y] Deactivate") && s.contains("[n] Keep"),
+        "inline confirm:\n{s}"
+    );
+    h.type_text("y");
     h.turns(2);
     match h.find_cmd(|c| matches!(c, Cmd::SetAccountActive { .. })) {
         Some(Cmd::SetAccountActive {
@@ -10739,6 +10739,9 @@ fn users_admin_switch_mailboxes_for_users_applies_at_once() {
         agent_tools: true,
         recovery: false,
     }));
+    h.turns(2);
+    // "Email for everyone" is the page's second tab.
+    h.key(b"\t");
     let s = h.turns(3);
     assert!(s.contains("[x] Mailboxes for users"), "{s}");
     assert!(s.contains("You never see anyone's mail."), "{s}");
