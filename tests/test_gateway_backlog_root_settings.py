@@ -196,8 +196,14 @@ def test_exec_runner_order_flag_beats_stored_beats_env_beats_off(tmp_path: Path,
 
     data = tmp_path / "data"
     assert resolve_exec_runner(data) == {"value": False, "source": "default"}
+    # Round 8: no environment rung. A settings GET (stored passed) never reports or stores it;
+    # a consumer read stores an exported value ONCE, then the variable is ignored.
     monkeypatch.setenv("ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER", "1")
-    assert {k: resolve_exec_runner(data)[k] for k in ("value", "source")} == {"value": True, "source": "env"}
+    assert read_runtime_config(data)["backlog_exec_runner"]["source"] == "default"
+    assert {k: resolve_exec_runner(data)[k] for k in ("value", "source")} == {"value": True, "source": "stored"}
+    store = json.loads((data / "config" / "runtime_config.json").read_text())
+    assert store["backlog_exec_runner"] is True
+    assert store["legacy_env_imported"]["backlog_exec_runner"]["env"] == "ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER"
     write_runtime_config(data, {"backlog_exec_runner": "off"}, actor="t")
     assert {k: resolve_exec_runner(data)[k] for k in ("value", "source")} == {"value": False, "source": "stored"}
     record_launch_settings(data, {"backlog_exec_runner": True})
@@ -207,6 +213,32 @@ def test_exec_runner_order_flag_beats_stored_beats_env_beats_off(tmp_path: Path,
     # The settings read serves the same answer with its labels.
     knob = read_runtime_config(data)["backlog_exec_runner"]
     assert (knob["value"], knob["source"], knob["label"]) == (True, "flag", "Backlog exec runner")
+
+
+def test_legacy_env_exec_runner_is_stored_once_then_ignored(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from abstractgateway import cli
+    from abstractgateway.maintenance.backlog_exec_runner import BacklogExecRunnerConfig
+    from abstractgateway.runtime_config import migrate_legacy_exec_runner_env, resolve_exec_runner, write_runtime_config
+
+    # The serve start stores it.
+    data = tmp_path / "data"
+    monkeypatch.setenv("ABSTRACT_BACKLOG_EXEC_RUNNER", "on")
+    cli._apply_backlog_launch_flags(argparse.Namespace(backlog_root=None, exec_runner=None), data)
+    assert json.loads((data / "config" / "runtime_config.json").read_text())["backlog_exec_runner"] is True
+    # The admin turns it off: the variable never turns it back on.
+    write_runtime_config(data, {"backlog_exec_runner": "off"}, actor="t")
+    assert migrate_legacy_exec_runner_env(data) is False
+    assert resolve_exec_runner(data) == {"value": False, "source": "stored"}
+    # Set through a door before any import: the variable is never imported.
+    data2 = tmp_path / "data2"
+    monkeypatch.delenv("ABSTRACT_BACKLOG_EXEC_RUNNER")
+    write_runtime_config(data2, {"backlog_exec_runner": "off"}, actor="t")
+    write_runtime_config(data2, {"backlog_exec_runner": None}, actor="t")
+    monkeypatch.setenv("ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER", "1")
+    assert resolve_exec_runner(data2) == {"value": False, "source": "default"}
+    # The runner's own config never reads the variable.
+    assert BacklogExecRunnerConfig.from_env().enabled is False
+    assert BacklogExecRunnerConfig.from_gateway(data2).enabled is False
 
 
 def test_default_folder_gets_the_standard_skeleton_on_first_use_only(tmp_path: Path) -> None:

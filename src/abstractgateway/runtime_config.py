@@ -1118,7 +1118,8 @@ def executor_registry() -> List[Dict[str, Any]]:
 #   keeps its folder; afterwards the variable is ignored.
 #
 #   exec runner (key `backlog_exec_runner`):
-#       `serve --exec-runner on|off` > stored > legacy env > off
+#       `serve --exec-runner on|off` > stored > off (no environment variable;
+#       an exported value is stored once by `migrate_legacy_exec_runner_env`)
 #
 # The launch flags reach the resolver through a small record the serving
 # process writes under <data dir>/run/ (and removes when it stops): the value
@@ -1128,6 +1129,7 @@ def executor_registry() -> List[Dict[str, Any]]:
 # Read ONLY by the one-time migration below; the resolver never reads them.
 _ENV_TRIAGE_ROOT_LEGACY = ("ABSTRACTGATEWAY_TRIAGE_REPO_ROOT", "ABSTRACT_TRIAGE_REPO_ROOT")
 _LEGACY_ENV_IMPORTED_KEY = "legacy_env_imported"
+# Read ONLY by migrate_legacy_exec_runner_env (stored once, then ignored).
 _ENV_EXEC_RUNNER_LEGACY = ("ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER", "ABSTRACT_BACKLOG_EXEC_RUNNER")
 BACKLOG_DEFAULT_DIRNAME = "backlog"
 BACKLOG_SUBPATH = ("docs", "backlog")
@@ -1467,28 +1469,60 @@ def migrate_legacy_backlog_root_env(data_dir: Path) -> bool:
         return False
 
 
+def migrate_legacy_exec_runner_env(data_dir: Path) -> bool:
+    """Store, ONCE, an exec-runner switch an older gateway took from the environment
+    (ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER / ABSTRACT_BACKLOG_EXEC_RUNNER), the same rule as
+    the backlog folder: when nothing is stored yet, the variable's on/off is written as the
+    saved setting and `legacy_env_imported.backlog_exec_runner` records it, so the variable
+    is never read again and a later change is never undone by it. Returns True when it
+    stored the switch. Never raises."""
+    data_dir = Path(data_dir)
+    hit = _legacy_env(_ENV_EXEC_RUNNER_LEGACY)
+    if hit is None:
+        return False
+    try:
+        with store_lock(data_dir):
+            stored = _read_store(data_dir, strict=True)
+            done = stored.get(_LEGACY_ENV_IMPORTED_KEY)
+            done = dict(done) if isinstance(done, dict) else {}
+            if "backlog_exec_runner" in done or stored.get("backlog_exec_runner") is not None:
+                return False
+            name, raw = hit
+            value = _bool(raw, False)
+            stored["backlog_exec_runner"] = value
+            done["backlog_exec_runner"] = {"env": name, "stored": True, "at": _now_iso()}
+            stored[_LEGACY_ENV_IMPORTED_KEY] = done
+            _write_store(data_dir, stored)
+            import logging
+
+            logging.getLogger("abstractgateway.runtime_config").info(
+                "Backlog exec runner %s stored from %s (the variable is no longer read).", "on" if value else "off", name
+            )
+            return True
+    except Exception:  # noqa: BLE001 - a corrupt store or a read-only disk: the resolver reports the rest
+        return False
+
+
 def resolve_exec_runner(data_dir: Path, *, stored: Optional[Dict[str, Any]] = None, launch: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """{value, source} for the backlog exec runner (flag > stored > legacy env > off)."""
+    """{value, source} for the backlog exec runner (flag > stored > off; no environment).
+
+    A consumer read (no `stored` passed) first stores, once, a value an older launcher
+    still exports (`migrate_legacy_exec_runner_env`); the settings GET passes `stored`
+    and never writes."""
     if stored is None:
+        migrate_legacy_exec_runner_env(Path(data_dir))
         stored = _read_store(Path(data_dir))
     if launch is None:
         launch = read_launch_settings(Path(data_dir))
-    env_hit = _legacy_env(_ENV_EXEC_RUNNER_LEGACY)
     out: Dict[str, Any]
     if "backlog_exec_runner" in launch and launch["backlog_exec_runner"] is not None:
         out = {"value": _bool(launch["backlog_exec_runner"], False), "source": "flag"}
     elif "backlog_exec_runner" in stored and stored["backlog_exec_runner"] is not None:
         out = {"value": _bool(stored["backlog_exec_runner"], False), "source": "stored"}
-    elif env_hit is not None:
-        out = {"value": _bool(env_hit[1], False), "source": "env"}
     else:
         out = {"value": False, "source": "default"}
     if out["source"] == "flag" and stored.get("backlog_exec_runner") is not None:
         out["stored_value"] = _bool(stored["backlog_exec_runner"], False)  # saved, applies once the flag is gone
-    if env_hit is not None:
-        out["env_name"] = env_hit[0]
-        if out["source"] in ("flag", "stored"):
-            out["env_shadowed"] = True
     return out
 
 
@@ -1911,6 +1945,12 @@ def write_runtime_config(
             f"unknown setting(s) {unknown}; nothing was saved. Known: {sorted(_WRITE_KEYS)} "
             "plus apps.<name>, agents.default_workflow.<interface>, agents.streaming_default, skills.shelf"
         )
+    if "backlog_exec_runner" in changes:
+        # An explicit choice settles the one-time environment import for good.
+        imported = stored.get(_LEGACY_ENV_IMPORTED_KEY)
+        imported = dict(imported) if isinstance(imported, dict) else {}
+        imported.setdefault("backlog_exec_runner", {"stored": False, "reason": "set through a settings door", "at": _now_iso()})
+        stored[_LEGACY_ENV_IMPORTED_KEY] = imported
     for _switch in ("process_manager", "backlog_exec_runner"):
         if _switch in changes:
             raw_switch = changes[_switch]

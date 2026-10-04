@@ -382,7 +382,9 @@ def default_process_specs(*, repo_root: Path) -> Dict[str, ProcessSpec]:
                 "ABSTRACTGATEWAY_UAT_PORT": "6081",
                 "ABSTRACTGATEWAY_UAT_DATA_DIR": "runtime/gateway_uat",
                 "ABSTRACTGATEWAY_UAT_REPO_ROOT": "untracked/backlog_exec_uat/current",
-                # UAT should not execute backlog jobs (only the prod gateway should).
+                # UAT should not execute backlog jobs (only the prod gateway should). The
+                # variable is no longer read as a setting; "0" here means a leaked "1" from the
+                # operator shell can never be stored by the UAT gateway's one-time import.
                 "ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER": "0",
             },
             command=[_default_shell(), "-lc", "./agw-uat.sh"],

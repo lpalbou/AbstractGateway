@@ -902,16 +902,16 @@ triage and process routes, the exec runner at each poll, the skills shelf):
 1. the launch flag of the running gateway: `abstractgateway serve --backlog-root PATH`
    and `--exec-runner on|off` (for that run only; source `flag`);
 2. the saved setting (source `stored`);
-3. exec runner only: an environment value (`ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER`;
-   source `env`; supported for compatibility, never needed; a saved value wins);
-4. the default (source `default`).
+3. the default (source `default`).
 
-The backlog folder reads no environment variable. A folder an older launcher
-still exports as `ABSTRACTGATEWAY_TRIAGE_REPO_ROOT` (or
-`ABSTRACT_TRIAGE_REPO_ROOT`) is stored once as the saved setting, at the next
-start (an unusable one is not stored and the gateway's own folder applies);
-from then on the variable is ignored, and clearing the setting never brings it
-back.
+Neither reads an environment variable. A value an older launcher still
+exports (`ABSTRACTGATEWAY_TRIAGE_REPO_ROOT` / `ABSTRACT_TRIAGE_REPO_ROOT` for
+the folder, `ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER` /
+`ABSTRACT_BACKLOG_EXEC_RUNNER` for the runner) is stored once as the saved
+setting, at the next start (a folder that does not exist is not stored and the
+gateway's own folder applies); from then on the variable is ignored, and
+changing or clearing the setting never brings it back. For a value that holds
+for one run only, use the launch flags above.
 
 `GET /api/gateway/admin/runtime-config` serves each as `{value, source, key,
 label, help, cli, flag?}`; the backlog folder also carries `available`,

@@ -647,6 +647,7 @@ def _apply_backlog_launch_flags(args: Any, data_dir: Path) -> None:
     from .runtime_config import (
         RuntimeConfigError,
         migrate_legacy_backlog_root_env,
+        migrate_legacy_exec_runner_env,
         record_launch_settings,
         validate_backlog_root,
     )
@@ -655,6 +656,8 @@ def _apply_backlog_launch_flags(args: Any, data_dir: Path) -> None:
     # an older launcher still exports is stored once (then ignored).
     if migrate_legacy_backlog_root_env(data_dir):
         _stderr("Backlog folder: kept from the environment as the saved setting (the variable is no longer read)")
+    if migrate_legacy_exec_runner_env(data_dir):
+        _stderr("Backlog exec runner: kept from the environment as the saved setting (the variable is no longer read)")
     values: dict[str, object] = {}
     raw_root = getattr(args, "backlog_root", None)
     if raw_root:

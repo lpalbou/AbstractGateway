@@ -890,9 +890,10 @@ class BacklogExecRunnerConfig:
 
     @staticmethod
     def from_env() -> "BacklogExecRunnerConfig":
-        enabled = _as_bool(os.getenv("ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER"), False) or _as_bool(
-            os.getenv("ABSTRACT_BACKLOG_EXEC_RUNNER"), False
-        )
+        # On/off is a gateway setting (runtime_config.resolve_exec_runner: `serve
+        # --exec-runner` > saved > off), never an environment variable (round 8);
+        # from_gateway() fills it in.
+        enabled = False
         poll_s_raw = os.getenv("ABSTRACTGATEWAY_BACKLOG_EXEC_POLL_S") or os.getenv("ABSTRACT_BACKLOG_EXEC_POLL_S") or ""
         try:
             poll_s = float(str(poll_s_raw).strip()) if str(poll_s_raw).strip() else 2.0
