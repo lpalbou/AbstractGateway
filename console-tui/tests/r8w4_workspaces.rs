@@ -448,7 +448,7 @@ fn live_gateway_mode_and_folder_rows() {
     );
     // Remove it again (x on its row).
     let idx = paths.len() - 1;
-    h.store.ws.item.set(2 + idx);
+    h.store.ws.item.set(3 + idx); // Mode, Trust, the caption, then the rows
     h.store.ws.msg.set(None);
     h.key(b"x");
     h.until_text("Saved");
@@ -471,6 +471,7 @@ fn live_account_policy_and_follow_the_gateway() {
         return;
     };
     let user = std::env::var("R8W4_USER").unwrap_or_else(|_| "alice".into());
+    h.until_text(&format!("{user} "));
     workspaces_focus(&mut h, &user);
     h.key(b"\r");
     h.until_text(&format!("Workspace policy — {user}'s policy"));

@@ -218,7 +218,19 @@ fn live_continuum_and_apps_settings() {
     h.key(b"\x1b[B");
     h.key(b"\x1b[B");
     h.key(b" ");
-    h.until_text("Saved");
+    // "Saved" beside the row (not the "Saved setting" source word), and
+    // the console's re-read shows the new state.
+    h.until("saved", |h, s| {
+        s.lines()
+            .any(|l| l.trim_matches(|c| c == '│' || c == ' ') == "Saved")
+            && h.store.runtime_config.with_untracked(|r| match r {
+                Loadable::Ready(d) => d
+                    .backlog
+                    .iter()
+                    .any(|b| b.key == "process_manager" && (b.value == "on") == !was),
+                _ => false,
+            })
+    });
     h.shoot("live-continuum-saved");
     let now = gw("GET", &url, &token, "/admin/runtime-config", None);
     assert_eq!(now["process_manager"]["value"], json!(!was), "{now}");

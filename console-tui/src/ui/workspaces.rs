@@ -257,7 +257,7 @@ pub fn view(cx: Scope_, ctx: &Ctx, t: &TokenSet) -> View {
                 LayoutStyle::column().gap(0).grow(1.0).min_h(3),
                 move |gcx| {
                     if store.conn.with(ConnPhase::is_admin) {
-                        admin_page(gcx, &body, &tt, &keeper)
+                        admin_page(gcx, cx, &body, &tt, &keeper)
                     } else {
                         own_page(gcx, &body, &tt, &keeper)
                     }
@@ -272,7 +272,15 @@ pub fn view(cx: Scope_, ctx: &Ctx, t: &TokenSet) -> View {
 /// The reactive scope type (the page's `Scope` enum shadows the name).
 type Scope_ = abstracttui::prelude::Scope;
 
-fn admin_page(cx: Scope_, ctx: &Ctx, t: &TokenSet, keeper: &super::util::FocusKeeper) -> View {
+/// `page` = the page's own scope: the editor opens on it, so a data
+/// reload that rebuilds this view never closes an open editor.
+fn admin_page(
+    cx: Scope_,
+    page: Scope_,
+    ctx: &Ctx,
+    t: &TokenSet,
+    keeper: &super::util::FocusKeeper,
+) -> View {
     let store = ctx.store;
     let ws = store.ws;
     let width = (abstracttui::app::use_viewport(cx).get().w - 4).max(20);
@@ -341,7 +349,7 @@ fn admin_page(cx: Scope_, ctx: &Ctx, t: &TokenSet, keeper: &super::util::FocusKe
             )
             .on_activate(move |i| {
                 if let Some(s) = scope_at(&ctx_act, i) {
-                    open_editor(cx, &ctx_act, s);
+                    open_editor(page, &ctx_act, s);
                 }
             })
             .element(cx, t),
@@ -632,7 +640,6 @@ fn editor_body(cx: Scope_, ctx: &Ctx, scope: &Scope, confirm: InlineConfirm) -> 
     let list = items(scope, &p);
     let at = ws.item.get().min(list.len().saturating_sub(1));
     let editing = ws.editing.get();
-    let msg = ws.msg.get();
     let inherit = !matches!(scope, Scope::Gateway);
     let mut col = Element::new().style(LayoutStyle::column().gap(0));
     // The effective summary, one line on top.
@@ -746,14 +753,25 @@ fn editor_body(cx: Scope_, ctx: &Ctx, scope: &Scope, confirm: InlineConfirm) -> 
             }
         }
     }
-    if let Some((text, tone)) = msg {
-        let ink = match tone {
-            Tone::Ok => t.ok,
-            Tone::Error => t.error,
-            Tone::Plain => t.text_muted,
-        };
-        col = col.child(kit::sentence(&t, &text, width, ink));
-    }
+    // The outcome line is its own reactive view: a new message must not
+    // rebuild the editor (an open input would lose its caret).
+    col = col.child(dyn_view(
+        LayoutStyle::column().gap(0).shrink(0.0),
+        move || {
+            let t = use_theme(cx).get().tokens;
+            match ws.msg.get() {
+                Some((text, tone)) => {
+                    let ink = match tone {
+                        Tone::Ok => t.ok,
+                        Tone::Error => t.error,
+                        Tone::Plain => t.text_muted,
+                    };
+                    kit::sentence(&t, &text, width, ink)
+                }
+                None => Element::new().style(LayoutStyle::default().h(0)).build(),
+            }
+        },
+    ));
     let _ = mode_label;
     // Not editing: the editor takes the keyboard back (an in-place input
     // that held it has just closed).

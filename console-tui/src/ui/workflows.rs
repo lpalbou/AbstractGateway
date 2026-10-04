@@ -506,7 +506,15 @@ fn workflows_tab(cx: Scope, ctx: &Ctx, keeper: &super::util::FocusKeeper) -> Vie
         width,
         t.text,
     ));
-    col = col.child(message(&t, wf.msg.get(), width));
+    // Its own reactive line: a new message must not rebuild the table or
+    // an open description input (it would lose its caret).
+    col = col.child(dyn_view(
+        LayoutStyle::column().gap(0).shrink(0.0),
+        move || {
+            let t = use_theme(cx).get().tokens;
+            message(&t, wf.msg.get(), width)
+        },
+    ));
     match data {
         Loadable::NotAsked | Loadable::Loading => {
             col = col.child(keeper.anchor(kit::sentence(&t, "Loading…", width, t.text_muted)));

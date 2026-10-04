@@ -727,7 +727,6 @@ fn shelf_row(cx: Scope, ctx: &Ctx, width: i32, keeper: &super::util::FocusKeeper
         let t = use_theme(gcx).get().tokens;
         let cfg = c.store.runtime_config.get();
         let editing = sk.shelf_editing.get();
-        let msg = sk.shelf_msg.get();
         let mut col = Element::new().style(LayoutStyle::column().gap(0).shrink(0.0));
         let shelf = match &cfg {
             Loadable::Ready(d) => match &d.skills_shelf {
@@ -807,9 +806,18 @@ fn shelf_row(cx: Scope, ctx: &Ctx, width: i32, keeper: &super::util::FocusKeeper
                 col = col.child(kit::sentence(&t, &text, width, ink));
             }
         }
-        if let Some((text, tone)) = msg {
-            col = col.child(kit::sentence(&t, &text, width, msg_ink(&t, tone)));
-        }
+        // Its own reactive line: a new message must not rebuild an open
+        // input (it would lose its caret).
+        col = col.child(dyn_view(
+            LayoutStyle::column().gap(0).shrink(0.0),
+            move || {
+                let t = use_theme(gcx).get().tokens;
+                match sk.shelf_msg.get() {
+                    Some((text, tone)) => kit::sentence(&t, &text, width, msg_ink(&t, tone)),
+                    None => Element::new().style(LayoutStyle::default().h(0)).build(),
+                }
+            },
+        ));
         col.build()
     })
 }

@@ -316,6 +316,14 @@ fn live_email_switches_apply() {
         let now = gw("GET", &url, &token, "/admin/email/capabilities", None);
         now != before
     });
+    // The switch is busy until the console's verify lands.
+    h.until("verified", |h, _| {
+        h.store
+            .notice
+            .get_untracked()
+            .unwrap_or_default()
+            .contains("verified")
+    });
     let now = gw("GET", &url, &token, "/admin/email/capabilities", None);
     // Put it back.
     h.click_text("Sign-in by email");

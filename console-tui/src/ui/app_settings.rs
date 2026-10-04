@@ -178,7 +178,7 @@ struct St {
 }
 
 fn note_of(st: &St, key: &str) -> Option<(String, Tone)> {
-    st.notes.with(|n| {
+    st.notes.with_untracked(|n| {
         n.iter()
             .find(|(k, _, _)| k == key)
             .map(|(_, t, tone)| (t.clone(), *tone))
@@ -316,7 +316,6 @@ fn overlay_body(cx: Scope, ctx: &Ctx, which: Which, st: St) -> View {
     let list = rows(which, &d);
     let at = st.sel.get().min(list.len().saturating_sub(1));
     let editing = st.editing.get();
-    let _ = st.notes.get();
     let mut col = Element::new().style(LayoutStyle::column().gap(0));
     if list.is_empty() {
         col = col.child(kit::sentence(
@@ -338,10 +337,9 @@ fn overlay_body(cx: Scope, ctx: &Ctx, which: Which, st: St) -> View {
         let selected = i == at;
         let ink = if selected { t.accent } else { t.text };
         let mark = if selected { "▸ " } else { "  " };
-        let note = note_of(&st, &r.key);
         match r.switch {
             Some(on) => {
-                let mut spans = vec![
+                let spans = vec![
                     span(mark, ink),
                     span_bold(
                         super::switch::switch_text(&r.label, on, None, r.locked.is_some()),
@@ -349,9 +347,6 @@ fn overlay_body(cx: Scope, ctx: &Ctx, which: Which, st: St) -> View {
                     ),
                     span(format!("  {}", r.source), t.text_faint),
                 ];
-                if let Some((text, tone)) = &note {
-                    spans.push(span(format!("  {text}"), tone_ink(&t, *tone)));
-                }
                 col = col.child(line(spans));
             }
             None if editing.as_deref() == Some(r.key.as_str()) => {
@@ -372,27 +367,34 @@ fn overlay_body(cx: Scope, ctx: &Ctx, which: Which, st: St) -> View {
                     },
                     move || st.editing.set(None),
                 ));
-                if let Some((text, tone)) = &note {
-                    col = col.child(kit::sentence(
-                        &t,
-                        &format!("    {text}"),
-                        width,
-                        tone_ink(&t, *tone),
-                    ));
-                }
             }
             None => {
-                let mut spans = vec![
+                let spans = vec![
                     span(mark, ink),
                     span_bold(format!("{}: ", r.label), ink),
                     span(r.now.clone(), t.text),
                     span(format!("  {}", r.source), t.text_faint),
                 ];
-                if let Some((text, tone)) = &note {
-                    spans.push(span(format!("  {text}"), tone_ink(&t, *tone)));
-                }
                 col = col.child(line(spans));
             }
+        }
+        // "Saved" / "Not saved: …" under the row: its own reactive line,
+        // so an outcome never rebuilds an open input (its caret would reset).
+        {
+            let key = r.key.clone();
+            col = col.child(dyn_view(
+                LayoutStyle::column().gap(0).shrink(0.0),
+                move || {
+                    let t = use_theme(cx).get().tokens;
+                    let _ = st.notes.get();
+                    match note_of(&st, &key) {
+                        Some((text, tone)) => {
+                            kit::sentence(&t, &format!("    {text}"), width, tone_ink(&t, tone))
+                        }
+                        None => Element::new().style(LayoutStyle::default().h(0)).build(),
+                    }
+                },
+            ));
         }
         if !r.help.is_empty() {
             col = col.child(kit::sentence(
@@ -444,6 +446,9 @@ fn overlay_body(cx: Scope, ctx: &Ctx, which: Which, st: St) -> View {
                     st.sel.set((at + 1).min(n.saturating_sub(1)));
                     true
                 }
+                // One write at a time: a press while one is in flight
+                // would act on the value shown before it landed.
+                Key::Enter | Key::Char(' ') if st.pending.with_untracked(|p| !p.is_empty()) => true,
                 Key::Enter | Key::Char(' ') => {
                     if let Some(r) = list.get(at) {
                         if !writable {
