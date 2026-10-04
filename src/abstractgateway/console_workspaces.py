@@ -144,6 +144,7 @@ WORKSPACES_CSS = r"""
 .ws-folder__state.is-ok { color: var(--success, #2f9e44); font-weight: 600; }
 .ws-folder__state.is-error { color: var(--error, #c0392b); }
 .ws-add { justify-self: start; min-height: 40px; }
+.ws-seg .ui-seg__opt { padding: 10px 12px; justify-items: start; justify-content: stretch; text-align: left; }
 .ws-builtin { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; }
 .ws-builtin code { font-size: var(--font-size-sm); overflow-wrap: anywhere; color: var(--text-secondary); background: transparent; border: 0; padding: 0; }
 @media (max-width: 767.98px) {
@@ -453,23 +454,63 @@ WORKSPACES_JS = r"""
       return f.box;
     }
 
-    // -- The GATEWAY policy modal ("Shared workspace & allowed folders", admins).
+    // -- The GATEWAY policy modal ("Shared workspace & allowed folders", admins). Two postures
+    // (R9 amendments): "Only allowed folders" (the shared workspace + allowed folders) or "Any
+    // folder except denied" (the Never allowed list); the matching list shows under the switch.
+    const WS_POSTURES = [
+      { id: "allowed_only", title: "Only allowed folders", text: "Agents use the shared workspace and the folders you allow; each account turns them on." },
+      { id: "any_except_denied", title: "Any folder except denied", text: "Accounts may add any folder of their own, except the Never allowed ones." },
+    ];
     function wsGatewayPolicy(out) {
       const p = out && out.policy;
-      if (!p || typeof p.shared_workspace !== "string" || !Array.isArray(p.allowed_folders) || typeof p.allow_any_folder !== "boolean"
+      if (!p || typeof p.shared_workspace !== "string" || !Array.isArray(p.allowed_folders) || !WS_POSTURES.some((x) => x.id === p.posture)
         || !Array.isArray(p.never_allowed) || typeof p.launch_folder_trust !== "boolean" || !Array.isArray(p.builtin_never_allowed)) {
-        throw new Error("GET/PUT /workspace/policy answered without the gateway policy fields (R9 WORKSPACE API seam).");
+        throw new Error("GET/PUT /workspace/policy answered without the gateway policy fields (R9 WORKSPACE API seam: shared_workspace, allowed_folders, posture, never_allowed, launch_folder_trust, builtin_never_allowed).");
       }
       return p;
     }
     // One line: what agents may use, gateway-wide. Presentation of the server's values only.
     function wsGatewaySummary(p) {
-      const allowed = p.allowed_folders.length;
       const never = p.never_allowed.length;
-      const parts = [allowed ? `the shared workspace + ${wsPlural(allowed, "allowed folder", "allowed folders")} (each account turns them on)` : "the shared workspace"];
-      parts.push(p.allow_any_folder ? "accounts may add folders of their own" : "accounts may not add folders of their own");
-      if (p.launch_folder_trust) parts.push("the folder an app starts in");
-      return `Agents may use ${parts.join("; ")}. Never allowed: ${never ? wsPlural(never, "folder", "folders") : "none"}, plus the gateway's own data and credential folders.`;
+      const tail = `Never allowed: ${never ? wsPlural(never, "folder", "folders") : "none"}, plus the gateway's own data and credential folders.`;
+      const trust = p.launch_folder_trust ? " and the folder an app starts in" : "";
+      if (p.posture === "any_except_denied") return `Agents may use the shared workspace, folders accounts add of their own${trust}. ${tail}`;
+      const allowed = p.allowed_folders.length;
+      return `Agents may use only the shared workspace${allowed ? ` + ${wsPlural(allowed, "allowed folder", "allowed folders")} (each account turns them on)` : ""}${trust}. ${tail}`;
+    }
+    // The posture: a segmented switch (radio group), applies on click (one PUT).
+    function wsPostureField(current, apply) {
+      const f = wsField("Folders agents may use", "");
+      const seg = wsEl("div", "ui-seg ws-seg");
+      seg.setAttribute("role", "radiogroup");
+      seg.setAttribute("aria-label", "Folders agents may use");
+      const buttons = [];
+      for (const o of WS_POSTURES) {
+        const on = o.id === current;
+        const b = wsEl("button", `ui-seg__opt${on ? " is-on" : ""}`);
+        b.type = "button";
+        b.setAttribute("role", "radio");
+        b.setAttribute("aria-checked", on ? "true" : "false");
+        b.setAttribute("data-ws-posture", o.id);
+        b.tabIndex = on ? 0 : -1;
+        b.innerHTML = `<span class="ui-seg__title">${esc(o.title)}</span><span class="ui-seg__text">${esc(o.text)}</span>`;
+        b.onclick = async () => {
+          if (b.getAttribute("aria-checked") === "true" || seg.getAttribute("aria-busy") === "true") return;
+          seg.setAttribute("aria-busy", "true");
+          wsSaved(f.saved, "Saving…");
+          try { await wsQueue(() => apply(o.id)); }
+          catch (e) { seg.removeAttribute("aria-busy"); wsSaved(f.saved, `${emailErrorText(e)} Not saved.`, true); }
+        };
+        b.onkeydown = (ev) => {
+          if (!["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp"].includes(ev.key)) return;
+          ev.preventDefault();
+          buttons[(buttons.indexOf(b) + 1) % buttons.length].focus();
+        };
+        buttons.push(b);
+        seg.append(b);
+      }
+      f.box.append(seg);
+      return f.box;
     }
     function closeGatewayWorkspace() {
       const backdrop = $("gateway-workspace-backdrop");
@@ -479,6 +520,39 @@ WORKSPACES_JS = r"""
       const release = wsStore.gwRelease;
       wsStore.gwRelease = null;
       if (release) release();
+    }
+    function wsRenderGateway(body, p, focusPosture) {
+      body.textContent = "";
+      const summary = wsEl("p", "wsm-summary", wsGatewaySummary(p));
+      summary.setAttribute("data-ws-summary", "");
+      summary.setAttribute("role", "status");
+      let cur = p;
+      const put = async (change) => {
+        const out = wsGatewayPolicy(await api("/api/gateway/workspace/policy", { method: "PUT", body: JSON.stringify(change) }));
+        cur = out;
+        summary.textContent = wsGatewaySummary(cur);
+        return out;
+      };
+      const builtin = wsField("Always refused", "The gateway's own data folder and credential folders; no setting changes this.");
+      const ul = wsEl("ul", "ws-builtin");
+      for (const x of p.builtin_never_allowed) { const li = wsEl("li"); li.append(wsEl("code", "", x)); ul.append(li); }
+      builtin.box.append(ul);
+      const posture = wsPostureField(p.posture, async (next) => {
+        const out = await put({ posture: next });
+        wsRenderGateway(body, out, next);
+      });
+      body.append(summary, posture, wsSharedField("wsg-shared", p.shared_workspace, (path) => put({ shared_workspace: path })));
+      if (p.posture === "allowed_only") {
+        body.append(wsFoldersField("wsg-allowed", "Allowed folders", "Extra folders accounts may turn on for their agents; off for each account until turned on.", p.allowed_folders, (list) => put({ allowed_folders: list })));
+      } else {
+        body.append(wsFoldersField("wsg-never", "Never allowed", "Folders no agent may use, whatever an account adds.", p.never_allowed, (list) => put({ never_allowed: list })));
+      }
+      body.append(
+        builtin.box,
+        wsSwitchField("wsg-launch", "Launch-folder trust", "Agents may also use the folder an app was started from.", p.launch_folder_trust, (on) => put({ launch_folder_trust: on })),
+      );
+      for (const sec of body.querySelectorAll(".ws-field")) sec.setAttribute("data-ws-section", "");
+      if (focusPosture) { const b = body.querySelector(`[data-ws-posture="${focusPosture}"]`); try { if (b) b.focus(); } catch {} }
     }
     async function openGatewayWorkspace() {
       closeGatewayWorkspace();
@@ -496,30 +570,7 @@ WORKSPACES_JS = r"""
         body.append(wsEl("p", "wsm-error", `The folder policy could not be loaded: ${emailErrorText(e)}`));
         return;
       }
-      body.textContent = "";
-      const summary = wsEl("p", "wsm-summary", wsGatewaySummary(p));
-      summary.setAttribute("data-ws-summary", "");
-      summary.setAttribute("role", "status");
-      const put = async (change) => {
-        const out = wsGatewayPolicy(await api("/api/gateway/workspace/policy", { method: "PUT", body: JSON.stringify(change) }));
-        p = out;
-        summary.textContent = wsGatewaySummary(p);
-        return out;
-      };
-      const builtin = wsField("Always refused", "The gateway's own data folder and credential folders; no setting changes this.");
-      const ul = wsEl("ul", "ws-builtin");
-      for (const x of p.builtin_never_allowed) { const li = wsEl("li"); li.append(wsEl("code", "", x)); ul.append(li); }
-      builtin.box.append(ul);
-      body.append(
-        summary,
-        wsSharedField("wsg-shared", p.shared_workspace, (path) => put({ shared_workspace: path })),
-        wsFoldersField("wsg-allowed", "Allowed folders", "Extra folders accounts may turn on for their agents; off for each account until turned on.", p.allowed_folders, (list) => put({ allowed_folders: list })),
-        wsSwitchField("wsg-any", "Allow any folder", "Accounts may also add folders of their own (never a Never allowed one).", p.allow_any_folder, (on) => put({ allow_any_folder: on })),
-        wsFoldersField("wsg-never", "Never allowed", "Folders no agent may use, even inside an allowed folder.", p.never_allowed, (list) => put({ never_allowed: list })),
-        builtin.box,
-        wsSwitchField("wsg-launch", "Launch-folder trust", "Agents may also use the folder an app was started from.", p.launch_folder_trust, (on) => put({ launch_folder_trust: on })),
-      );
-      for (const sec of body.querySelectorAll(".ws-field")) sec.setAttribute("data-ws-section", "");
+      wsRenderGateway(body, p, null);
     }
 
     // -- ONE account's folders: the kit WorkspaceChooser (islands), GET/PUT /workspace/policy/{account}.
@@ -528,7 +579,7 @@ WORKSPACES_JS = r"""
       return `${a.tenant_id || "default"}:${a.id}`;
     }
     function wsAccountState(out) {
-      if (!out || !out.policy || !Array.isArray(out.policy.enabled_folders) || !Array.isArray(out.policy.own_folders) || !out.effective || typeof out.effective.summary !== "string") {
+      if (!out || !out.policy || !Array.isArray(out.policy.enabled_folders) || !Array.isArray(out.policy.own_folders) || typeof out.policy.other_sessions !== "boolean" || !out.effective || typeof out.effective.summary !== "string") {
         throw new Error("GET/PUT /workspace/policy/{account} answered without policy/effective (R9 WORKSPACE API seam).");
       }
       return out;
@@ -572,7 +623,7 @@ WORKSPACES_JS = r"""
       const resetBtn = wsEl("button", "secondary", "Follow the gateway policy");
       resetBtn.type = "button";
       resetBtn.setAttribute("data-ws-reset", "");
-      const resetNote = wsEl("p", "wsm-note", "Turns every allowed folder off and removes this account's own folders; the shared workspace stays.");
+      const resetNote = wsEl("p", "wsm-note", "Turns every allowed folder and Other sessions off and removes this account's own folders; the shared workspace stays.");
       const resetState = wsEl("p", "ws-folder__state");
       resetState.setAttribute("aria-live", "polite");
       const sayReset = wsRowState(resetState);
@@ -580,7 +631,7 @@ WORKSPACES_JS = r"""
         if (reset.querySelector(".wsm-confirm")) return;
         const box = wsEl("div", "wsm-confirm");
         box.setAttribute("role", "group");
-        box.append(wsEl("span", "", `Follow the gateway policy for ${a.id}? Their allowed folders turn off and their own folders are removed.`));
+        box.append(wsEl("span", "", `Follow the gateway policy for ${a.id}? Their allowed folders and Other sessions turn off and their own folders are removed.`));
         const yes = wsEl("button", "danger", "Follow");
         yes.type = "button";
         const no = wsEl("button", "secondary", "Cancel");
@@ -590,6 +641,7 @@ WORKSPACES_JS = r"""
           yes.disabled = true;
           const cur = props.state;
           const change = { enabled_folders: [] };
+          if (cur && cur.policy.other_sessions) change.other_sessions = false;
           if (cur && cur.effective && cur.effective.own_folders_allowed && cur.policy.own_folders.length) change.own_folders = [];
           try {
             await props.onPut(change);

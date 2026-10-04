@@ -49,7 +49,7 @@ def seed(base: str, admin: str, folders: Path) -> None:
         code, out = _call(base, "POST", "/admin/users", admin, body)
         assert code == 200, out
     code, out = _call(base, "PUT", "/workspace/policy", admin, {
-        "allowed_folders": [str(folders / "projects")], "never_allowed": [str(folders / "secrets")], "allow_any_folder": False,
+        "allowed_folders": [str(folders / "projects")], "never_allowed": [str(folders / "secrets")], "posture": "allowed_only",
     })
     assert code == 200, out
 

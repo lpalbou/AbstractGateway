@@ -6300,28 +6300,37 @@ turns on what it needs within that allowance
 
 **Shared workspace & allowed folders** (administrators, top of Accounts)
 opens the gateway's folder policy. A line at the top sums it up, for example
-"Agents may use the shared workspace + 2 allowed folders (each account turns
-them on); accounts may not add folders of their own. Never: 3 folders."
+"Agents may use only the shared workspace + 2 allowed folders (each account
+turns them on). Never allowed: 1 folder, plus the gateway's own data and
+credential folders."
+
+**Folders agents may use** is a segmented switch between the two postures;
+the list that belongs to the chosen posture shows under it:
+
+| Posture | What agents may use | List under it |
+|---|---|---|
+| **Only allowed folders** (the default) | the shared workspace and the allowed folders each account turns on | **Allowed folders**: rows (**Add folder**, the remove icon on each row), off for each account until turned on |
+| **Any folder except denied** | any folder except the Never allowed ones; an account may narrow this with folders of its own | **Never allowed**: rows of folders no agent may use |
 
 | Control | What it does |
 |---|---|
 | **Shared workspace** | the one folder every conversation, automation and entity works in (each gets its own folder inside it); always on for every account and required |
-| **Allowed folders** | extra folders accounts may turn on for their agents (**Add folder**, the remove icon on each row); off for each account until turned on |
-| **Allow any folder** | off by default; on, accounts may also add folders of their own |
-| **Never allowed** | folders no agent may use, even inside an allowed folder |
 | **Always refused** | the gateway's own data folder and credential folders (read-only) |
 | **Launch-folder trust** | agents may also use the folder an app was started from |
 
 **Workspace** on an account's row opens that account's folders (users,
-entities and your own row): the **Shared workspace** (always on), one switch
-per allowed folder (off until turned on), and **My folders** while the
-administrator allows any folder (otherwise a sentence says when they appear).
-The line at the top, "Agents may use: …", is the gateway's own summary of
-what applies. **Follow the gateway policy** turns every allowed folder off and
-removes the account's own folders, after asking. This is the same chooser, with
-the same words, as the Workspace settings of AbstractCode and the Assistant.
-An entity's folders are changed by an administrator; someone who is not an
-administrator opens their own folders from their own row.
+entities and your own row) in the same chooser, with the same words, as the
+Workspace settings of AbstractCode and the Assistant: the gateway's posture
+(read-only), the **Shared workspace** (always on), one switch per allowed
+folder (off until turned on), **Other sessions of this account** (off by
+default; on, the account's agents may also use the folders of its other
+conversations, never another account's) and the account's own folders when
+the posture allows them. The line at the top, "Agents may use: …", is the
+gateway's own summary of what applies. **Follow the gateway policy** turns
+every allowed folder and Other sessions off and removes the account's own
+folders, after asking. An entity's folders are changed by an administrator;
+someone who is not an administrator opens their own folders from their own
+row.
 
 Every change applies at once; there is no Save button. A folder row applies
 when you leave the field (or press Enter): the gateway first checks the path
@@ -9840,7 +9849,7 @@ Requires AbstractRuntime 0.9.0, AbstractCore 2.25.0 and AbstractVoice 0.14.0 (in
 - `POST /runs/{run_id}/audio/transcribe` answers with the route that ran (`provider`, `model`) and the server time (`duration_ms`).
 - **Event-loop watchdog** (`serve --watchdog-seconds N`, default 30, `0` = off): when the event loop has not run for N seconds, the gateway writes the stack of the blocked event-loop thread and every thread's stack to its log and exits with code 75, so the LaunchAgent (`KeepAlive`/`SuccessfulExit: false`), the systemd unit (`Restart=on-failure`) or the local supervisor restarts it. A GIL-independent faulthandler timer exits (code 1) 15 s later when native code holds the interpreter lock. `GET /api/health` reports `watchdog: {enabled, limit_s, last_tick_age_s}`.
 - **Network**: the Tailscale name (when the Tailscale CLI is installed and Tailscale runs) is listed with the addresses, and every detected address (LAN, Bonjour, Tailscale) is an accepted browser origin without a manual entry or a restart. **Reached through another address?** explains reverse proxies and Tailscale in plain words; manual allowed origins and proxy trust sit under **Advanced**.
-- **Workspace folders in the console**, on Accounts (no separate page): **Shared workspace & allowed folders** (administrators, first at the top of Accounts) opens the gateway policy — the shared workspace (required), allowed folders and never-allowed folders as rows, **Allow any folder** and **Launch-folder trust** as switches, the read-only folders the gateway always refuses, and a one-line summary. The **Workspace** icon on every account row (users, entities, your own) opens that account's folders with the kit chooser shared with AbstractCode and the Assistant: the shared workspace always on, one switch per allowed folder, **My folders** while any folder is allowed, the gateway's one-line summary and **Follow the gateway policy**. Every change applies at once; a folder row applies when you leave it, after a path check that says why a path cannot be used (such a row is not saved), with an inline "Saved". An entity's folders are an administrator's: its row offers **Workspace** to admins only. A `#workspaces` link opens Accounts. See [docs/console.md](docs/console.md#workspace-folders).
+- **Workspace folders in the console**, on Accounts (no separate page): **Shared workspace & allowed folders** (administrators, first at the top of Accounts) opens the gateway policy — **Folders agents may use** as a segmented switch between the two postures, *Only allowed folders* (with the **Allowed folders** rows under it) and *Any folder except denied* (with the **Never allowed** rows), the shared workspace (required), **Launch-folder trust**, the read-only folders the gateway always refuses, and a one-line summary. The **Workspace** icon on every account row (users, entities, your own) opens that account's folders with the kit chooser shared with AbstractCode and the Assistant: the posture (read-only), the shared workspace always on, one switch per allowed folder, **Other sessions of this account**, the account's own folders when the posture allows them, the gateway's one-line summary and **Follow the gateway policy**. Every change applies at once; a folder row applies when you leave it, after a path check that says why a path cannot be used (such a row is not saved), with an inline "Saved". An entity's folders are an administrator's: its row offers **Workspace** to admins only. A `#workspaces` link opens Accounts. See [docs/console.md](docs/console.md#workspace-folders).
 - `POST /api/gateway/workspace/path-check {path}` → `{path, normalized, absolute, exists, is_dir, valid, sentence}`: the same rules the policy writes enforce (an absolute path to an existing folder), with a plain sentence when it fails. Any signed-in principal.
 - `GET /api/gateway/admin/runtimes?account=<id>[&tenant_id=<t>]` lists only that account's runtimes and echoes `filter`. The console's Runtimes page reads `#runtimes?account=<id>`, shows the filter as a removable chip and opens the account's single runtime at once.
 - **Terminal console**: pages in the web console's sidebar order with the web pages' data, actions and words — Accounts, a **Workspaces** page, Workflows, a **Skills & MCP** page, Providers with the local engines, OpenAI API, Models, Multimodal, Resources, Sandbox, Network, Setup and About. See [console-tui/CHANGELOG.md](console-tui/CHANGELOG.md) and [docs/console.md](docs/console.md#terminal-console-abstractgateway-console).

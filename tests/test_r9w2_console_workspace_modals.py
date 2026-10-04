@@ -56,10 +56,12 @@ def test_accounts_gateway_policy_button_and_modals(html: str) -> None:
     gw = js[js.index("async function openGatewayWorkspace()") : js.index("function wsAccountKey(")]
     # One PUT per change, the gateway policy fields of the R9 WORKSPACE API, path-checked rows.
     assert 'api("/api/gateway/workspace/policy")' in gw and 'api("/api/gateway/workspace/policy", { method: "PUT"' in gw
-    for field in ("shared_workspace", "allowed_folders", "allow_any_folder", "never_allowed", "launch_folder_trust", "builtin_never_allowed"):
+    for field in ("shared_workspace", "allowed_folders", "posture", "never_allowed", "launch_folder_trust", "builtin_never_allowed"):
         assert field in gw, field
-    for label in ('"Allowed folders"', '"Allow any folder"', '"Never allowed"', '"Launch-folder trust"', "Shared workspace"):
+    # The two postures (R9 amendments) as a segmented switch, the matching list under it.
+    for label in ('"Only allowed folders"', '"Any folder except denied"', 'role", "radiogroup"', '"Allowed folders"', '"Never allowed"', '"Launch-folder trust"', "Shared workspace"):
         assert label in js, label
+    assert 'if (p.posture === "allowed_only") {' in gw and "put({ posture: next })" in gw
     assert "/api/gateway/workspace/path-check" in js and "input.onblur = async" in js
     acc = js[js.index("async function openAccountWorkspace(a)") :]
     assert "lib.mountWorkspaceChooser(host," in acc and "/api/gateway/workspace/policy/${encodeURIComponent(key)}" in acc

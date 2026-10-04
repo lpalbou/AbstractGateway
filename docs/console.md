@@ -216,29 +216,37 @@ turns on what it needs within that allowance
 
 **Shared workspace & allowed folders** (administrators, top of Accounts)
 opens the gateway's folder policy. A line at the top sums it up, for example
-"Agents may use the shared workspace + 2 allowed folders (each account turns
-them on); accounts may not add folders of their own. Never allowed: 1 folder,
-plus the gateway's own data and credential folders."
+"Agents may use only the shared workspace + 2 allowed folders (each account
+turns them on). Never allowed: 1 folder, plus the gateway's own data and
+credential folders."
+
+**Folders agents may use** is a segmented switch between the two postures;
+the list that belongs to the chosen posture shows under it:
+
+| Posture | What agents may use | List under it |
+|---|---|---|
+| **Only allowed folders** (the default) | the shared workspace and the allowed folders each account turns on | **Allowed folders**: rows (**Add folder**, the remove icon on each row), off for each account until turned on |
+| **Any folder except denied** | any folder except the Never allowed ones; an account may narrow this with folders of its own | **Never allowed**: rows of folders no agent may use |
 
 | Control | What it does |
 |---|---|
 | **Shared workspace** | the one folder every conversation, automation and entity works in (each gets its own folder inside it); always on for every account and required |
-| **Allowed folders** | extra folders accounts may turn on for their agents (**Add folder**, the remove icon on each row); off for each account until turned on |
-| **Allow any folder** | off by default; on, accounts may also add folders of their own |
-| **Never allowed** | folders no agent may use, even inside an allowed folder |
 | **Always refused** | the gateway's own data folder and credential folders (read-only) |
 | **Launch-folder trust** | agents may also use the folder an app was started from |
 
 **Workspace** on an account's row opens that account's folders (users,
-entities and your own row): the **Shared workspace** (always on), one switch
-per allowed folder (off until turned on), and **My folders** while the
-administrator allows any folder (otherwise a sentence says when they appear).
-The line at the top, "Agents may use: …", is the gateway's own summary of
-what applies. **Follow the gateway policy** turns every allowed folder off and
-removes the account's own folders, after asking. This is the same chooser, with
-the same words, as the Workspace settings of AbstractCode and the Assistant.
-An entity's folders are changed by an administrator; someone who is not an
-administrator opens their own folders from their own row.
+entities and your own row) in the same chooser, with the same words, as the
+Workspace settings of AbstractCode and the Assistant: the gateway's posture
+(read-only), the **Shared workspace** (always on), one switch per allowed
+folder (off until turned on), **Other sessions of this account** (off by
+default; on, the account's agents may also use the folders of its other
+conversations, never another account's) and the account's own folders when
+the posture allows them. The line at the top, "Agents may use: …", is the
+gateway's own summary of what applies. **Follow the gateway policy** turns
+every allowed folder and Other sessions off and removes the account's own
+folders, after asking. An entity's folders are changed by an administrator;
+someone who is not an administrator opens their own folders from their own
+row.
 
 Every change applies at once; there is no Save button. A folder row applies
 when you leave the field (or press Enter): the gateway first checks the path
