@@ -2119,6 +2119,7 @@ fn footer(_cx: Scope, ctx: &Ctx, theme: Signal<&'static abstracttui::theme::Them
                         pairs.push(("←/→", "inspector tab (when focused)"));
                         pairs.push(("c", "cancel run"));
                         pairs.push(("s", "steer run"));
+                        pairs.push(("t", "root runs only"));
                         pairs.push(("r", "refresh"));
                     }
                     // Named arms from here down (the numbered arms above

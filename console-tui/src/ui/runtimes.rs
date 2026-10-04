@@ -390,12 +390,12 @@ fn admin_view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                 .layout(
                     LayoutStyle::column()
                         .gap(0)
-                        .grow(1.2)
+                        .shrink(1.0)
                         .min_h(6)
                         .padding(Edges::hv(1, 0)),
                 )
                 .child(dyn_view_scoped(
-                    LayoutStyle::default().grow(1.0),
+                    LayoutStyle::default().shrink(1.0),
                     move |gcx| {
                         let data = store.runtimes.get();
                         let ctx_choose = ctx_table.clone();
@@ -2099,7 +2099,14 @@ pub(crate) fn open_apps_settings_form(cx: Scope, ctx: &Ctx, current: RuntimeConf
     open_form(
         ctx,
         cx,
-        Size::new(96, 12 + 2 * current.apps.len() as i32),
+        Size::new(
+            96,
+            11 + current
+                .apps
+                .iter()
+                .map(|a| 1 + super::util::wrap_text(&a.help, 92).len().max(1) as i32)
+                .sum::<i32>(),
+        ),
         move |mcx, close| {
             let theme = use_theme(mcx);
             let t0 = theme.get().tokens;
@@ -2126,32 +2133,39 @@ pub(crate) fn open_apps_settings_form(cx: Scope, ctx: &Ctx, current: RuntimeConf
             .autofocus()
             .style(LayoutStyle::column().gap(0))
             .child(line(vec![span_bold("Browser apps settings", t0.accent)]))
-            .child(line(vec![span(
-                "empty = the default (or the value this gateway's environment gives); applies at the next app start or download",
-                t0.text_faint,
-            )]));
+            .children(
+                super::util::wrap_text(
+                    "Empty = the default (or the value this gateway's environment gives). Applies at the next app start or download.",
+                    92,
+                )
+                .into_iter()
+                .map(|l| line(vec![span(l, t0.text_faint)]))
+                .collect::<Vec<_>>(),
+            );
             for (a, (_, sig)) in current.apps.iter().zip(fields.iter()) {
-                col = col
-                    .child(field(
-                        &t0,
-                        &a.label,
-                        TextInput::new()
-                            .value(*sig)
-                            .placeholder(format!(
-                                "{} (now: {} · {})",
-                                a.placeholder,
-                                if a.value.is_empty() {
-                                    "—"
-                                } else {
-                                    a.value.as_str()
-                                },
-                                a.source
-                            ))
-                            .layout(LayoutStyle::default().w(60).h(1))
-                            .element(mcx, &t0)
-                            .build(),
-                    ))
-                    .child(line(vec![span(ellipsize(&a.help, 92), t0.text_faint)]));
+                col = col.child(field(
+                    &t0,
+                    &a.label,
+                    TextInput::new()
+                        .value(*sig)
+                        .placeholder(format!(
+                            "{} (now: {} · {})",
+                            a.placeholder,
+                            if a.value.is_empty() {
+                                "—"
+                            } else {
+                                a.value.as_str()
+                            },
+                            a.source
+                        ))
+                        .layout(LayoutStyle::default().w(60).h(1))
+                        .element(mcx, &t0)
+                        .build(),
+                ));
+                // The whole help sentence, wrapped (never cut).
+                for l in super::util::wrap_text(&a.help, 92) {
+                    col = col.child(line(vec![span(l, t0.text_faint)]));
+                }
             }
             let ctx_save = ctx2.clone();
             let close_cancel = close.clone();
@@ -2873,6 +2887,13 @@ fn open_user_policy_form(
 /// the per-plane load runs; entity planes explain why empty is normal).
 /// `cx` is the PAGE scope — the steer modal opens on it so a runs
 /// reload landing mid-form cannot dispose the form's signals.
+/// The inventory table's height: header + rows, at least 2 and at most
+/// 40% of the terminal's height.
+pub fn inventory_rows(n: usize, term_h: i32) -> i32 {
+    let want = n as i32 + 1;
+    want.clamp(2, (term_h * 2 / 5).max(2))
+}
+
 /// The Runs tab's page-scoped state (survives the panel's re-renders).
 #[derive(Clone, Copy)]
 struct RunsPanelState {
@@ -2973,6 +2994,10 @@ fn sessions_panel(
                 // State line (also the WHOLE toolbar on short terminals — the
                 // documented 0240 starvation class): filter + query + page
                 // position + the gestures that change them.
+                // Hidden while the Cancel confirm holds the panel.
+                if st.confirm.pending.with(Option::is_some) {
+                    return Element::new().style(LayoutStyle::default().h(0)).build();
+                }
                 let text = match store.runs.get() {
                     Loadable::Loading => "loading this runtime's runs…".to_string(),
                     Loadable::Ready(d) => {
@@ -3032,7 +3057,7 @@ fn sessions_panel(
                     _ => "No runs yet.".to_string(),
                 };
                 let w = abstracttui::app::use_viewport(gcx).get().w - widths::BLOCK_CHROME - 2;
-                let body = loadable_view(
+                let body: View = loadable_view(
                     &tt,
                     &store.conn.get(),
                     || store.tick.get(),
@@ -3041,11 +3066,12 @@ fn sessions_panel(
                     &empty,
                     |d| runs_table(gcx, &tt, &d.rows, ui.run_sel, st.expanded),
                 );
-                Element::new()
-                    .style(LayoutStyle::column().gap(0).grow(1.0))
-                    .child(st.confirm.view(&tt, w))
-                    .child(body)
-                    .build()
+                // While the Cancel confirm is open it takes the table's
+                // place (it names the run): the panel never overflows.
+                if st.confirm.pending.with(Option::is_some) {
+                    return st.confirm.view(&tt, w);
+                }
+                body
             },
         ))
         .build()
@@ -3105,43 +3131,40 @@ fn artifacts_panel(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     |d: &crate::store::ArtifactsData| d.rows.is_empty(),
                     "no artifacts match — runs that produce files, images, audio, or video list them here",
                     |d| {
-                        let w = abstracttui::app::use_viewport(gcx).get().w;
                         let rows_for_open = d.rows.clone();
-                        let mut body: Vec<Vec<String>> = d
+                        // The web Artifacts table's columns, as wrapping
+                        // rows (R7.2: an id or a workflow is never cut).
+                        let body: Vec<super::kit::Row> = d
                             .rows
                             .iter()
                             .map(|a| {
-                                vec![
+                                super::kit::Row::new(vec![
                                     a.name.clone(),
                                     a.kind.clone(),
                                     a.size_bytes.map(human_bytes).unwrap_or_else(|| "—".into()),
                                     if a.workflow_id.is_empty() { "—".into() } else { a.workflow_id.clone() },
-                                    if a.run_id.is_empty() { "—".into() } else { a.run_id.chars().take(8).collect() },
+                                    if a.run_id.is_empty() { "—".into() } else { a.run_id.clone() },
                                     a.created_at.replace('T', " ").chars().take(19).collect(),
-                                ]
+                                ])
                             })
                             .collect();
                         let rules = vec![
-                            widths::ColRule::head("artifact", 18),
-                            widths::ColRule::head("type", 8),
-                            widths::ColRule::head("size", 9),
-                            widths::ColRule::head("workflow", 12),
-                            widths::ColRule::head("run", 8),
-                            widths::ColRule::head("created", 19),
+                            widths::ColRule::tail("Artifact", 12),
+                            widths::ColRule::head("Type", 4),
+                            widths::ColRule::head("Size", 8),
+                            widths::ColRule::tail("Workflow", 10),
+                            widths::ColRule::tail("Run", 8),
+                            widths::ColRule::head("Created", 19),
                         ];
-                        let cols = widths::columns(&rules, &mut body, w - widths::BLOCK_CHROME);
-                        Table::new(cols)
-                            .rows(body)
-                            .selection(ui.rt_art_sel)
-                            // Enter/double-click ONLY (on_select fires on mere
-                            // highlight — a preview per arrow key would fetch
-                            // bytes the operator never asked for).
+                        // Enter opens the artifact (never on mere highlight:
+                        // a preview per arrow key would fetch bytes).
+                        super::kit::WrapTable::new(rules, body, ui.rt_art_sel)
                             .on_activate(move |idx| {
                                 if let Some(a) = rows_for_open.get(idx) {
                                     open_artifact_detail(cx, &ctx_row, a.clone());
                                 }
                             })
-                            .layout(LayoutStyle::default().grow(1.0))
+                            .layout(LayoutStyle::default().grow(1.0).min_h(2))
                             .element(gcx, &tt)
                             .build()
                     },
@@ -3420,35 +3443,32 @@ fn logs_panel(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
                     "no log files match — serving logs live on the gateway default plane",
                     |rows| {
                         let shown = filter_log_files(rows, &home_f, &query_f);
-                        let w = abstracttui::app::use_viewport(gcx).get().w;
                         let for_open = shown.clone();
-                        let mut body: Vec<Vec<String>> = shown
+                        // The web Logs table's columns, wrapping.
+                        let body: Vec<super::kit::Row> = shown
                             .iter()
                             .map(|f| {
-                                vec![
+                                super::kit::Row::new(vec![
                                     f.name.clone(),
                                     f.home.clone(),
                                     f.size_bytes.map(human_bytes).unwrap_or_else(|| "—".into()),
                                     f.modified_at.replace('T', " ").chars().take(19).collect(),
-                                ]
+                                ])
                             })
                             .collect();
                         let rules = vec![
-                            widths::ColRule::head("file", 18),
-                            widths::ColRule::tail("log home", 16),
-                            widths::ColRule::head("size", 9),
-                            widths::ColRule::head("modified", 19),
+                            widths::ColRule::tail("File", 12),
+                            widths::ColRule::tail("Log home", 10),
+                            widths::ColRule::head("Size", 8),
+                            widths::ColRule::head("Modified", 19),
                         ];
-                        let cols = widths::columns(&rules, &mut body, w - widths::BLOCK_CHROME);
-                        Table::new(cols)
-                            .rows(body)
-                            .selection(ui.rt_logs_sel)
+                        super::kit::WrapTable::new(rules, body, ui.rt_logs_sel)
                             .on_activate(move |idx| {
                                 if let Some(f) = for_open.get(idx) {
                                     open_log_tail(cx, &ctx_row, f.home.clone(), f.name.clone());
                                 }
                             })
-                            .layout(LayoutStyle::default().grow(1.0))
+                            .layout(LayoutStyle::default().grow(1.0).min_h(2))
                             .element(gcx, &tt)
                             .build()
                     },
@@ -3637,7 +3657,7 @@ fn data_panel(cx: Scope, ctx: &Ctx, t: &TokenSet, row: &RuntimeRow) -> View {
             },
         ))
         .child(dyn_view_scoped(
-            LayoutStyle::default().grow(1.0).min_h(1),
+            LayoutStyle::default().grow(1.0).min_h(3),
             move |gcx| {
                 let data = store.data_homes.get();
                 let row_t = row_tbl.clone();
@@ -3767,11 +3787,13 @@ fn displayed_homes(
 }
 
 fn homes_table(cx: Scope, t: &TokenSet, rows: &[(DataHomeRow, bool)], sel: Signal<usize>) -> View {
-    let w = abstracttui::app::use_viewport(cx).get().w;
-    let mut body: Vec<Vec<String>> = rows
+    // The web Cache table's columns (Cache, Kind, Size, Path, Actions) +
+    // where the store lives, as wrapping rows: the FULL path, never cut
+    // (two data homes differ in their last segment).
+    let body: Vec<super::kit::Row> = rows
         .iter()
         .map(|(h, shared)| {
-            vec![
+            super::kit::Row::new(vec![
                 h.name.clone(),
                 h.kind.clone(),
                 if !h.exists {
@@ -3790,27 +3812,20 @@ fn homes_table(cx: Scope, t: &TokenSet, rows: &[(DataHomeRow, bool)], sel: Signa
                 } else {
                     "purgeable".into()
                 },
-                // The FULL path: two data homes differ in their last
-                // segment, so a 40-char cap printed one string for both.
                 h.path.clone(),
-            ]
+            ])
         })
         .collect();
-    // Store names and filesystem paths discriminate on their TAIL; the
-    // rest print bounded phrases.
-    let rules = [
-        widths::ColRule::tail("store", 18),
-        widths::ColRule::head("kind", 10),
-        widths::ColRule::head("size", 9),
-        widths::ColRule::head("where", 23),
-        widths::ColRule::head("purge", 10),
-        widths::ColRule::tail("path", 24),
+    let rules = vec![
+        widths::ColRule::tail("Cache", 10),
+        widths::ColRule::head("Kind", 6),
+        widths::ColRule::head("Size", 8),
+        widths::ColRule::head("Where", 10),
+        widths::ColRule::head("Actions", 9),
+        widths::ColRule::tail("Path", 16),
     ];
-    let cols = widths::columns(&rules, &mut body, w - widths::BLOCK_CHROME);
-    Table::new(cols)
-        .rows(body)
-        .selection(sel)
-        .layout(LayoutStyle::default().grow(1.0))
+    super::kit::WrapTable::new(rules, body, sel)
+        .layout(LayoutStyle::default().grow(1.0).min_h(2))
         .element(cx, t)
         .build()
 }
@@ -3945,7 +3960,14 @@ fn table(
         // the same contract; nothing loads before one of them fires.
         .on_select(on_choose.clone())
         .on_activate(on_choose)
-        .layout(LayoutStyle::default().grow(1.0));
+        // Sized to its rows (header + one per runtime), capped at 40% of
+        // the terminal: a two-runtime gateway no longer hands the
+        // inventory half the screen of blank rows while the inspector's
+        // runs are clipped below it (R7.2, 120x40 capture).
+        .layout(LayoutStyle::default().h(inventory_rows(
+            data.len(),
+            abstracttui::app::use_viewport(cx).get_untracked().h,
+        )));
     // The keeper, not a bare `.autofocus()`: a regeneration hands the
     // keyboard back only to a table that held it (design adversary
     // BLOCKER-1: never drag focus back from where the user moved it).

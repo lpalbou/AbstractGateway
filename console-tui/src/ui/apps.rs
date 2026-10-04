@@ -16,7 +16,6 @@
 
 use abstracttui::app::{ChoiceOutcome, ChoicePrompt};
 use abstracttui::prelude::*;
-use abstracttui::widgets::Table;
 
 use super::util::{line, span, span_bold, wrap_text};
 use super::widths;
@@ -48,6 +47,7 @@ fn text_width(cx: Scope) -> usize {
     (abstracttui::app::use_viewport(cx).get().w - widths::BLOCK_CHROME - 2).max(20) as usize
 }
 
+#[allow(clippy::too_many_arguments)]
 /// `text` wrapped to `width` (never cut at the edge — R7.2), each line
 /// indented by `indent`; the first line may carry a muted `label`.
 fn wrapped(
@@ -601,7 +601,7 @@ fn apps_table(
     keeper: &super::util::FocusKeeper,
 ) -> View {
     let vw = abstracttui::app::use_viewport(cx).get().w;
-    let mut rows: Vec<Vec<String>> = d
+    let rows: Vec<Vec<String>> = d
         .apps
         .iter()
         .map(|a| {
@@ -645,13 +645,17 @@ fn apps_table(
         widths::ColRule::head("version", 8),
         widths::ColRule::head("action", 12),
     ];
-    let cols = widths::columns(&rules, &mut rows, vw - widths::BLOCK_CHROME - 2);
-    let visible = (d.apps.len() as i32 + 1).clamp(2, 8);
+    // Wrapping rows (R7.2): a long action ("o Create your first entity")
+    // wraps inside its cell instead of being cut. Enter = the row's
+    // primary action (the web card's one button).
+    let rows: Vec<super::kit::Row> = rows.into_iter().map(super::kit::Row::new).collect();
+    // Exactly the lines the rows wrap to at this width (header included),
+    // capped: the card below keeps its room.
+    let inner = vw - widths::BLOCK_CHROME - 2;
+    let visible = (super::kit::wrap_layout(&rules, &rows, inner, None).len() as i32).clamp(2, 14);
     let ctx_act = ctx.clone();
     keeper.wire(
-        Table::new(cols)
-            .rows(rows)
-            .selection(ctx.store.apps.sel)
+        super::kit::WrapTable::new(rules, rows, ctx.store.apps.sel)
             .on_activate(move |_| run_key(cx, &ctx_act, None))
             .layout(LayoutStyle::default().h(visible).shrink(0.0))
             .element(cx, t),
