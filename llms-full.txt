@@ -3960,7 +3960,7 @@ from zero on the next download; files that were complete are kept.
 # AbstractGateway — API overview
 
 The HTTP API is implemented with FastAPI under the `/api` prefix:
-- Health: `GET /api/health`
+- Health: `GET /api/health` (unauthenticated; `status`, `runner`, `watchdog: {enabled, limit_s, last_tick_age_s}` — see [troubleshooting.md](docs/troubleshooting.md#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75))
 - Gateway surface: `/api/gateway/*` (durable runs + operator tooling)
 
 The API is documented at runtime:
@@ -8099,6 +8099,15 @@ with data in the per-user data folder. See [first-run.md](docs/first-run.md). Co
 servers use the explicit configuration shown on this page: the image sets
 `--host 0.0.0.0` with user accounts on.
 
+**A hung gateway restarts itself.** `serve` runs an event-loop watchdog: when
+the loop has not run for `--watchdog-seconds` (default 30), the gateway dumps
+every thread's stack to its log and exits with code 75. The LaunchAgent
+(`KeepAlive` with `SuccessfulExit: false`) and the systemd unit
+(`Restart=on-failure`) restart any non-zero exit; in a container, use a
+restart policy (`restart: unless-stopped`) for the same effect. `GET
+/api/health` reports `watchdog: {enabled, limit_s, last_tick_age_s}`. See
+[troubleshooting.md](docs/troubleshooting.md#the-log-shows-fatal-gateway-watchdog-and-the-gateway-restarted-exit-code-75).
+
 ## Behind a reverse proxy (one block, apps included)
 
 The console, the API and every browser app share the gateway's one address:
@@ -9076,6 +9085,30 @@ from the console's **Accounts** tab (**Rotate** on the account's row).
 automations. Install AbstractRuntime 0.7.0 or later in the gateway's Python, then start again. See
 [automations.md](docs/automations.md#before-you-start).
 
+### The log shows `[FATAL] gateway watchdog` and the gateway restarted (exit code 75)
+
+The event loop was blocked for longer than `serve --watchdog-seconds`
+(default 30): the gateway could answer nothing, `/api/health` included. The
+watchdog wrote the stack of the blocked event-loop thread and of every other
+thread to the gateway log, then exited with code 75 so the service manager
+started a fresh gateway. The stack under "the event-loop thread is blocked
+here" names the code that blocked; report it as a bug with that excerpt.
+
+- Logs: macOS `~/Library/Logs/AbstractGateway/gateway.err.log`; Linux
+  `journalctl --user -u abstractgateway`; the installer's background mode and
+  `scripts/start-local.sh` write `gateway.log` in their log folder.
+- Who restarts it: the macOS LaunchAgent (`KeepAlive` with
+  `SuccessfulExit: false`: any non-zero exit), the systemd user unit
+  (`Restart=on-failure`), the installer's background loop and the
+  `start-local.sh` supervisor. A gateway started by hand in a terminal, or
+  the Windows Run entry, is not restarted.
+- A gateway whose stall comes from native code that keeps the Python lock is
+  stopped by the second, faulthandler-based timer 15 s later (exit code 1,
+  same restart).
+- `GET /api/health` reports `watchdog: {enabled, limit_s, last_tick_age_s}`.
+- `--watchdog-seconds 0` turns the watchdog off (a debugging session paused
+  on a breakpoint); it is never active with `--reload`.
+
 ## Network access
 
 ### A change of network mode "needs a restart"
@@ -9444,6 +9477,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `GET /api/gateway/voice/defaults` (round 6): the gateway's default voice routes for every app — `tts` = the `output.voice` route (`provider`, `model`, `voice`), `stt` = the `input.voice` route (`provider`, `model`), each with `configured` and, when unset, a `note`. A request that names no engine runs exactly this route. The voice catalog (`GET /voice/voices`) now says the same: `active_tts_provider` / `active_stt_provider` are the configured routes (absent when none is set, never the speech engine's own fallback) and it carries `gateway_defaults`. Before, the catalog forwarded AbstractVoice's opinion — "openai" whenever `OPENAI_API_KEY` was in the environment — so AbstractCode showed "Gateway default · openai" on a gateway routed to supertonic and faster-whisper.
 - `POST /runs/{run_id}/audio/transcribe` answers with the route that ran (`provider`, `model`) and the server time (`duration_ms`).
+
+- Event-loop watchdog (`serve --watchdog-seconds N`, default 30, `0` = off): when the event loop has not run for N seconds, the gateway writes the stack of the blocked event-loop thread and a faulthandler dump of every thread to its log and exits with code 75, so the LaunchAgent (`KeepAlive`/`SuccessfulExit: false`), the systemd unit (`Restart=on-failure`) or the local supervisor restarts it. A second, GIL-independent faulthandler timer exits (code 1) 15 s later when native code holds the interpreter lock. `GET /api/health` reports `watchdog: {enabled, limit_s, last_tick_age_s}`. Before, a blocked loop (2026-10-04, a TTS stream: 10+ minutes at 95% CPU) left a live process answering nothing that no service manager restarts.
 
 ### Fixed
 

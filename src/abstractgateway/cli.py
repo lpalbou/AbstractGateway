@@ -508,6 +508,22 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
             host_control.unregister_server()
         return
 
+    # Event-loop watchdog (2026-10-04, loop_watchdog.py): the lifespan starts
+    # it in THIS process. Not under --reload (the app lives in a reloader
+    # child that never runs main(); a dev loop is paused on purpose).
+    from . import loop_watchdog
+
+    wd_flag = getattr(args, "watchdog_seconds", None)
+    wd_limit = loop_watchdog.DEFAULT_WATCHDOG_SECONDS if wd_flag is None else float(wd_flag)
+    loop_watchdog.configure(wd_limit)
+    if loop_watchdog.configured_limit_s() is None:
+        _stderr("Event-loop watchdog: off (--watchdog-seconds 0); a hung gateway is not restarted")
+    else:
+        _stderr(
+            f"Event-loop watchdog: exits with code {loop_watchdog.WATCHDOG_EXIT_CODE} when the event loop is blocked "
+            f"for {loop_watchdog.configured_limit_s():g}s (--watchdog-seconds)"
+        )
+
     kwargs = {k: v for k, v in dict(run_kwargs).items() if k != "reload"}
     config = uvicorn.Config("abstractgateway.app:app", **kwargs)
     server = uvicorn.Server(config)
@@ -577,6 +593,7 @@ def _serve_with_host_controls(*, uvicorn: Any, args: Any, run_kwargs: dict, argv
     finally:
         tray.stop()
         host_control.unregister_server()
+        loop_watchdog.configure(None)
     # uvicorn.run()'s own contract: a server that never started (port in
     # use, bad bind) exits with STARTUP_FAILURE so launchers see it.
     if not getattr(server, "started", True):
@@ -743,6 +760,16 @@ def main(argv: list[str] | None = None) -> None:
         dest="no_tray",
         help="Do not show the menu bar / tray icon for this run (a test or scratch gateway next to your usual one). "
         "Without it the icon is shown whenever this computer can hold one.",
+    )
+    serve.add_argument(
+        "--watchdog-seconds",
+        type=float,
+        default=None,
+        dest="watchdog_seconds",
+        metavar="N",
+        help="Exit (code 75, after dumping every thread's stack to the log) when the event loop has not run for N "
+        "seconds, so the service manager or supervisor restarts a hung gateway instead of leaving it unanswering. "
+        "0 turns the watchdog off. Default: 30. Not active with --reload.",
     )
     serve.add_argument(
         "--no-runner",
