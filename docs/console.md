@@ -218,22 +218,22 @@ and **how** (Read-only or Read & write, per workspace).
 
 **Shared workspace & allowed workspaces** (administrators, top of Accounts)
 opens the gateway's policy. The line at the top states it exactly, for
-example "Only allowed workspaces · Shared workspace (rw) · /data/project (rw) ·
-/archive (ro)" or "Any workspace except denied (rw) · Shared workspace (rw) ·
-/secrets (denied) · /archive (ro)".
+example "Deny everything, allow listed workspaces · Shared workspace (rw) · /data/project (rw) ·
+/archive (ro)" or "Allow everything, refuse listed workspaces (rw) · Shared workspace (rw) ·
+/secrets (refused) · /archive (ro)".
 
 | Control | What it does |
 |---|---|
-| Posture: **Only allowed workspaces** (the default) | agents may use the shared workspace and the **Allowed workspaces** listed under it, nothing else |
-| Posture: **Any workspace except denied** | agents may use any workspace; **Everything else** sets its permission (**Read-only** or **Read & write**) and the **Denied workspaces** listed under it are the exceptions |
+| Posture: **Deny everything, allow listed workspaces** (the default) | agents may use the shared workspace and the **Allowed workspaces** listed under it, nothing else |
+| Posture: **Allow everything, refuse listed workspaces** | agents may use any workspace; **Everything else** sets its permission (**Read-only** or **Read & write**) and the **Refused workspaces** listed under it are the exceptions |
 | **Shared workspace** | the one workspace every conversation, automation and entity works in (each conversation also keeps a private one); always Read & write and required |
-| Rows | one row per workspace (**Add a workspace**, the remove icon on each row), each **Read-only**, **Read & write** or **Denied** (a denied workspace is refused, even inside an allowed one) |
+| Rows | one row per workspace (**Add a workspace**, the remove icon on each row), each **Read-only**, **Read & write** or **Refused** (a refused workspace stays out, even inside an allowed one) |
 
 **Workspace** on an account's row opens that account's workspaces (users,
 entities and your own row) in the same chooser, with the same words, as the
 Workspace settings of AbstractCode and the Assistant. An account can only
-narrow what the gateway allows: lower a workspace to Read-only or deny it, and
-under Any workspace except denied lower everything else to Read-only; it never
+narrow what the gateway allows: lower a workspace to Read-only or refuse it, and
+under Allow everything, refuse listed workspaces lower everything else to Read-only; it never
 gains a workspace or a permission the gateway does not give. The line at the
 top, "Agents may use: …", is the gateway's own summary of what applies.
 **Follow the gateway policy** removes the account's own limits, after asking.

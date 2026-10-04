@@ -24,7 +24,7 @@ def test_entity_workspace_action_is_admin_only_and_matches_the_route(world) -> N
     assert mine["aster"]["actions"]["workspace"] == {"available": False, "reason": "Only an admin can change an entity's workspace folders."}
     # The route agrees: the creator may not read or change the entity's folders; their own, yes.
     assert c.get("/api/gateway/workspace/policy/default:aster", headers=world["alice"]).status_code == 403
-    assert c.put("/api/gateway/workspace/policy/default:aster", headers=world["alice"], json={"enabled_folders": []}).status_code == 403
+    assert c.put("/api/gateway/workspace/policy/default:aster", headers=world["alice"], json={"folders": []}).status_code == 403
     assert c.get("/api/gateway/workspace/policy/me", headers=world["alice"]).status_code == 200
 
     rows = {a["id"]: a for a in c.get("/api/gateway/admin/accounts", headers=world["admin"]).json()["accounts"]}
@@ -32,7 +32,7 @@ def test_entity_workspace_action_is_admin_only_and_matches_the_route(world) -> N
         assert rows[slug]["actions"]["workspace"] == {"available": True, "reason": None}, rows[slug]["actions"]["workspace"]
         r = c.get(f"/api/gateway/workspace/policy/default:{slug}", headers=world["admin"])
         assert r.status_code == 200, r.text
-        assert c.put(f"/api/gateway/workspace/policy/default:{slug}", headers=world["admin"], json={"enabled_folders": []}).status_code == 200
+        assert c.put(f"/api/gateway/workspace/policy/default:{slug}", headers=world["admin"], json={"folders": []}).status_code == 200
     # A legacy home (no recorded creator) still has its gateway account: admins set its folders too.
     assert c.get("/api/gateway/workspace/policy/default:olden", headers=world["admin"]).status_code == 200
     assert rows["olden"]["actions"]["workspace"] == {"available": True, "reason": None}

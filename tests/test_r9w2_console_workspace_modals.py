@@ -71,7 +71,7 @@ def test_accounts_gateway_policy_button_and_modals(html: str) -> None:
     assert 'role", "radiogroup"' in gw and "lib.workspaceChooserText" in js
     assert 'if (p.posture === "allowed_only") {' in gw and "put({ posture: next })" in gw and "put({ default_mode: m })" in gw and "put({ folders: list })" in gw
     # The effective line format (ADVERSARY V15): posture label · Shared workspace (rw) · path (mode).
-    assert 'join(" · ")' in gw and 'deny: "denied"' in js
+    assert 'join(" · ")' in gw and 'deny: "refused"' in js
     assert "/api/gateway/workspace/path-check" in js and "input.onblur = async" in js
     acc = js[js.index("async function openAccountWorkspace(a)") :]
     assert "lib.mountWorkspaceChooser(host," in acc and "/api/gateway/workspace/policy/${encodeURIComponent(key)}" in acc
@@ -106,7 +106,7 @@ def test_workspaces_vocabulary_never_folders(html: str) -> None:
     modals = WORKSPACES_JS[WORKSPACES_JS.index("// ---- Workspace folders modals (round 9).") :]
     strings = re.findall(r'"([^"\\]*)"|`([^`]*)`', re.sub(r"^\s*//.*$", "", modals, flags=re.M))
     texts = [a or b for a, b in strings]
-    offenders = [t for t in texts if re.search(r"\bfolders?\b", t, flags=re.I) and " " in t and not t.startswith(("GET", "PUT", "/api", "AbstractGateway console:"))]
+    offenders = [t for t in texts if re.search(r"(?<![-\w])folders?(?![-\w])", t, flags=re.I) and " " in t and not t.startswith(("GET", "PUT", "/api", "AbstractGateway console:"))]
     assert offenders == [], offenders
     tips = WORKSPACES_JS[WORKSPACES_JS.index("const ACCOUNT_TIPS") : WORKSPACES_JS.index("};", WORKSPACES_JS.index("const ACCOUNT_TIPS"))]
     assert "folder" not in tips.lower()
