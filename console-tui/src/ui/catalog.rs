@@ -2159,6 +2159,21 @@ pub fn view(cx: Scope, ctx: &Ctx, t: &TokenSet) -> View {
     // Which artifact the open confirmation is about (`delete` or `cancel`).
     let confirm_key: Signal<Option<String>> = cx.signal(None);
 
+    // Providers' "Browse models" hands an engine over through the shared
+    // engine filter: the list opens on that engine's builds (the web's
+    // engine card opens the catalog filtered the same way).
+    {
+        let ef = ctx.screens.store.engine_filter;
+        cx.effect(move || {
+            let Some(p) = ef.get() else {
+                return;
+            };
+            ef.set(None);
+            edit(|st| st.filters.provider = p);
+            bump();
+        });
+    }
+
     // Read on entry (connected), and again after a reconnect.
     {
         let ctx_l = ctx.clone();

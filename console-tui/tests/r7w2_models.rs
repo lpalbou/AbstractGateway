@@ -72,6 +72,7 @@ struct H {
     store: Store,
     ui: UiState,
     rx: mpsc::Receiver<Cmd>,
+    engine_filter: Signal<Option<String>>,
 }
 
 fn fixture(name: &str) -> Value {
@@ -91,6 +92,8 @@ fn harness(size: Size) -> H {
     let (tx, rx) = mpsc::channel::<Cmd>();
     let slot: Rc<RefCell<Option<(Store, UiState)>>> = Rc::new(RefCell::new(None));
     let out = slot.clone();
+    let ef_slot: Rc<RefCell<Option<Signal<Option<String>>>>> = Rc::new(RefCell::new(None));
+    let ef_out = ef_slot.clone();
     app.mount(move |cx| {
         let store = Store::create(cx);
         let ui_state = UiState::create(cx, "http://127.0.0.1:18999".to_string(), String::new());
@@ -107,6 +110,7 @@ fn harness(size: Size) -> H {
                 ..ScreensOptions::default()
             },
         );
+        *ef_out.borrow_mut() = Some(screens.store.engine_filter);
         let ctx = Ctx {
             tx: tx.clone(),
             overlays: overlays.clone(),
@@ -137,6 +141,7 @@ fn harness(size: Size) -> H {
     };
     let driver = Driver::new(&mut app, &mut term, cfg).expect("driver");
     let (store, ui) = slot.borrow().expect("created");
+    let engine_filter = ef_slot.borrow().expect("engine filter");
     H {
         app,
         term,
@@ -144,6 +149,7 @@ fn harness(size: Size) -> H {
         store,
         ui,
         rx,
+        engine_filter,
     }
 }
 
@@ -857,4 +863,26 @@ fn helpers_follow_the_web_page() {
         let ws = catalog::art_widths(&rows, w);
         assert!(ws.iter().sum::<i32>() + 2 + 10 <= w.max(42), "{w}: {ws:?}");
     }
+}
+
+#[test]
+fn browse_models_from_providers_opens_the_engines_builds() {
+    let mut h = harness(Size::new(170, 50));
+    h.open(true);
+    // Providers' Browse models sets the shared engine filter, then jumps.
+    h.engine_filter.set(Some("ollama".into()));
+    let s = h.turns(3);
+    assert!(
+        s.contains("p Provider: All [Ollama") || s.contains("[Ollama"),
+        "{s}"
+    );
+    assert!(
+        !s.contains("mlx-community/Qwen3-0.6B-4bit "),
+        "only Ollama builds:\n{s}"
+    );
+    assert_eq!(
+        h.engine_filter.get_untracked(),
+        None,
+        "the hand-over is consumed"
+    );
 }
