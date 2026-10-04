@@ -129,6 +129,16 @@ GATEWAY_ROUTE_POLICIES: tuple[GatewayRoutePolicy, ...] = (
         exact=("/api/gateway/network", "/api/gateway/network/restart"),
         methods=("POST",),
     ),
+    # The GATEWAY workspace policy (round 9): changing the shared workspace, the allowed and
+    # never-allowed folders is the admin's act; reading it is visibility every account needs to
+    # switch its folders on. One account's folders (/workspace/policy/{account}) are admin-or-self,
+    # gated in the handler.
+    GatewayRoutePolicy(
+        resource="workspace",
+        reason_code="admin_required",
+        exact=("/api/gateway/workspace/policy",),
+        methods=("PUT",),
+    ),
     # Marking the first-run wizard done is a host-level act (it stops the
     # wizard opening for every admin of this data dir); reading the state is
     # visibility.

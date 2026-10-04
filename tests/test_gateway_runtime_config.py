@@ -138,17 +138,21 @@ def test_write_validates_before_persist(monkeypatch: pytest.MonkeyPatch):
         assert ok.json()["executor"] == {"value": "abstractcode", "source": "stored"}
 
 
-def test_workspace_policy_roundtrip_and_validation(tmp_path, monkeypatch: pytest.MonkeyPatch):
+def test_workspace_resolvers_follow_the_workspace_policy(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    """Round 9: the server-workspace resolvers read the gateway workspace policy (shared workspace,
+    allowed folders as mounts, never allowed); the old runtime-config keys are refused."""
     from abstractgateway.runtime_config import (
         RuntimeConfigError,
-        resolve_client_workspace_scope_overrides_enabled,
+        resolve_trust_client_launch_folder,
         resolve_workspace_blocked_paths,
         resolve_workspace_mounts,
         resolve_workspace_root,
         write_runtime_config,
     )
+    from abstractgateway.workspace_policy import write_gateway_policy
 
-    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(tmp_path))
+    data = tmp_path / "data"
+    monkeypatch.setenv("ABSTRACTGATEWAY_DATA_DIR", str(data))
     ws = tmp_path / "workspace"
     ws.mkdir()
     archive = tmp_path / "archive"
@@ -156,68 +160,34 @@ def test_workspace_policy_roundtrip_and_validation(tmp_path, monkeypatch: pytest
     blocked = tmp_path / "blocked"
     blocked.mkdir()
 
-    out = write_runtime_config(
-        tmp_path,
-        {
-            "workspace_root": str(ws),
-            "workspace_allowed_paths": f"{archive}",
-            "workspace_blocked_paths": f"{blocked}",
-            "client_workspace_scope_overrides": True,
-        },
+    write_gateway_policy(
+        data,
+        {"shared_workspace": str(ws), "allowed_folders": [str(archive)], "never_allowed": [str(blocked)], "launch_folder_trust": False},
         actor="person:admin",
     )
-    assert out["workspace_root"] == {"value": str(ws.resolve()), "source": "stored"}
-    assert out["workspace_mounts"]["value"] == f"archive={archive.resolve()}"
-    assert out["workspace_mounts"]["source"] == "stored"
-    assert out["workspace_allowed_paths"]["value"] == str(archive.resolve())
-    assert out["workspace_blocked_paths"]["value"] == str(blocked.resolve())
-    assert out["client_workspace_scope_overrides"] == {
-        "value": True,
-        "source": "stored",
-    }
-    assert resolve_workspace_root(tmp_path) == ws.resolve()
-    assert resolve_workspace_mounts(tmp_path) == {"archive": archive.resolve()}
-    assert resolve_workspace_blocked_paths(tmp_path) == (blocked.resolve(),)
-    assert resolve_client_workspace_scope_overrides_enabled(tmp_path) is True
+    assert resolve_workspace_root(data) == ws.resolve()
+    assert resolve_workspace_mounts(data) == {"archive": archive.resolve()}
+    assert resolve_workspace_blocked_paths(data) == (blocked.resolve(),)
+    assert resolve_trust_client_launch_folder(data) is False
 
-    with pytest.raises(RuntimeConfigError):
-        write_runtime_config(
-            tmp_path,
-            {"workspace_root": str(tmp_path / "missing")},
-            actor="person:admin",
-        )
-    with pytest.raises(RuntimeConfigError):
-        write_runtime_config(
-            tmp_path,
-            {"workspace_allowed_paths": "relative/path"},
-            actor="person:admin",
-        )
+    for key in ("workspace_root", "workspace_allowed_paths", "client_workspace_scope_overrides"):
+        with pytest.raises(RuntimeConfigError, match="moved to the workspace policy"):
+            write_runtime_config(data, {key: str(ws)}, actor="person:admin")
 
 
-def test_non_admin_workspace_policy_read_redacts_paths(tmp_path):
-    from abstractgateway.runtime_config import read_runtime_config, write_runtime_config
+def test_non_admin_runtime_config_read_names_no_workspace_paths(tmp_path):
+    from abstractgateway.runtime_config import read_runtime_config
+    from abstractgateway.workspace_policy import write_gateway_policy
 
     ws = tmp_path / "workspace"
     ws.mkdir()
     archive = tmp_path / "archive"
     archive.mkdir()
-    blocked = tmp_path / "blocked"
-    blocked.mkdir()
-    write_runtime_config(
-        tmp_path,
-        {
-            "workspace_root": str(ws),
-            "workspace_allowed_paths": f"{archive}",
-            "workspace_blocked_paths": f"{blocked}",
-        },
-        actor="person:admin",
-    )
+    data = tmp_path / "data"
+    write_gateway_policy(data, {"shared_workspace": str(ws), "allowed_folders": [str(archive)]}, actor="person:admin")
 
-    user_view = read_runtime_config(tmp_path, is_admin=False)
-    assert user_view["workspace_root"] == {"configured": True, "source": "stored"}
-    assert user_view["workspace_mounts"] == {"configured": True, "source": "stored"}
-    assert user_view["workspace_allowed_paths"] == {"configured": True, "source": "stored"}
-    assert user_view["workspace_blocked_paths"] == {"configured": True, "source": "stored"}
+    user_view = read_runtime_config(data, is_admin=False)
+    assert user_view["workspace_policy"] == {"endpoint": "/api/gateway/workspace/policy"}
     assert str(ws) not in json.dumps(user_view)
     assert str(archive) not in json.dumps(user_view)
 

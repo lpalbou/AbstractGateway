@@ -188,7 +188,7 @@ def test_session_workspace_routes_end_to_end(tmp_path: Path, monkeypatch: pytest
         assert "etc-link" not in [e["name"] for e in listed["entries"]] and listed["hidden"]["outside_links"] == 1
 
         # The deny list binds at browse time too.
-        ok = client.post("/api/gateway/admin/runtime-config", headers=h, json={"workspace_blocked_paths": [str(root / "sub")]})
+        ok = client.put("/api/gateway/workspace/policy", headers=h, json={"never_allowed": [str(root / "sub")]})
         assert ok.status_code == 200, ok.text
         listed = client.get(f"/api/gateway/runs/{rid}/workspace/files", headers=h).json()
         assert "sub" not in [e["name"] for e in listed["entries"]] and listed["hidden"]["blocked"] == 1
@@ -335,7 +335,7 @@ def test_launch_folder_needs_the_current_policy(tmp_path: Path, monkeypatch: pyt
         assert body["kind"] == "launch_folder" and body["workspace_root"] == str(launch.resolve())
         assert client.get(f"/api/gateway/runs/{rid}/workspace/content?path=main.py", headers=h).content == b"x = 1\n"
         # The admin withdraws launch-folder trust: the folder is no longer served.
-        assert client.post("/api/gateway/admin/runtime-config", headers=h, json={"trust_client_launch_folder": False}).status_code == 200
+        assert client.put("/api/gateway/workspace/policy", headers=h, json={"launch_folder_trust": False}).status_code == 200
         r = client.get(f"/api/gateway/runs/{rid}/workspace/files", headers=h)
         assert r.status_code == 403 and "policy" in r.json()["detail"]
 
@@ -398,7 +398,7 @@ def test_builtin_deny_is_prefixes_and_the_prompt_is_stable_while_the_data_folder
         from abstractgateway.service import get_gateway_service
 
         rs = get_gateway_service().host.run_store
-        first = _start(client, h, workspace_access_mode="all_except_ignored",
+        first = _start(client, h, workspace_access_mode="workspace_or_allowed",
                        workspace_ignored_paths=str(tmp_path / "operator-said-no"))
         # The data folder grows between the turns (runs, ledgers, other sessions).
         for i in range(40):
@@ -406,7 +406,7 @@ def test_builtin_deny_is_prefixes_and_the_prompt_is_stable_while_the_data_folder
         other_ws = data / "workspaces" / "session-someone-else"
         other_ws.mkdir(parents=True, exist_ok=True)
         (other_ws / "secret.txt").write_text("theirs")
-        second = _start(client, h, workspace_access_mode="all_except_ignored",
+        second = _start(client, h, workspace_access_mode="workspace_or_allowed",
                         workspace_ignored_paths=str(tmp_path / "operator-said-no"))
 
         v1, v2 = rs.load(first).vars, rs.load(second).vars

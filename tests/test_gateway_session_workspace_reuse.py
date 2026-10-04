@@ -163,16 +163,12 @@ def test_client_named_workspace_root_still_wins_and_is_still_clamped(
     outside.mkdir()
 
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(ws))
-    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE", "0")
-    monkeypatch.setenv("ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE", "0")
 
     client, headers = _client(tmp_path, monkeypatch)
     with client:
-        from abstractgateway.runtime_config import write_runtime_config
+        from abstractgateway.workspace_policy import write_gateway_policy
 
-        write_runtime_config(
-            tmp_path / "runtime", {"trust_client_launch_folder": False}, actor="person:test"
-        )
+        write_gateway_policy(tmp_path / "runtime", {"launch_folder_trust": False}, actor="person:test")
 
         # An explicit, in-scope root beats the session folder.
         run_id = _start(
@@ -202,16 +198,12 @@ def test_echoed_session_workspace_passes_the_policy_clamp(
     ws = tmp_path / "operator-workspace"
     ws.mkdir()
     monkeypatch.setenv("ABSTRACTGATEWAY_WORKSPACE_DIR", str(ws))
-    monkeypatch.setenv("ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE", "0")
-    monkeypatch.setenv("ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE", "0")
 
     client, headers = _client(tmp_path, monkeypatch)
     with client:
-        from abstractgateway.runtime_config import write_runtime_config
+        from abstractgateway.workspace_policy import write_gateway_policy
 
-        write_runtime_config(
-            tmp_path / "runtime", {"trust_client_launch_folder": False}, actor="person:test"
-        )
+        write_gateway_policy(tmp_path / "runtime", {"launch_folder_trust": False}, actor="person:test")
         first = _workspace_of(client, headers, _start(client, headers, session_id="chat-a"))
         echoed = _start(
             client, headers, session_id="chat-a", input_data={"workspace_root": str(first)}

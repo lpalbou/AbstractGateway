@@ -64,10 +64,11 @@ def test_path_check_says_why_and_matches_the_write_rules(tmp_path: Path) -> None
             out = check(path)
             assert out["valid"] is False and out["sentence"] == sentence, (path, out)
             # The write refuses exactly what the check refuses (one rule, two doors).
-            w = c.post("/api/gateway/admin/runtime-config", json={"workspace_allowed_paths": [path] if path else ["  "]})
+            w = c.put("/api/gateway/workspace/policy", json={"allowed_folders": [path] if path else ["  "]})
+            assert w.status_code == 400, (path, w.text)
             if path:
-                assert w.status_code == 400, (path, w.text)
-        assert c.post("/api/gateway/admin/runtime-config", json={"workspace_allowed_paths": [str(folder)]}).status_code == 200
+                assert sentence in w.json()["detail"], (path, w.text)
+        assert c.put("/api/gateway/workspace/policy", json={"allowed_folders": [str(folder)]}).status_code == 200
         # Any signed-in principal may check (a user's own policy write names a missing folder anyway).
         alice = _user("alice")
         assert check(str(folder), alice)["valid"] is True

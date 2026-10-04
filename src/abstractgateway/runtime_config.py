@@ -95,8 +95,6 @@ _ENV_EXEC_RUNNER = "ABSTRACTGATEWAY_BACKLOG_EXEC_RUNNER"
 _ENV_EXECUTOR = "ABSTRACTGATEWAY_BACKLOG_EXECUTOR"
 _ENV_WORKSPACE_ROOT = "ABSTRACTGATEWAY_WORKSPACE_DIR"
 _ENV_WORKSPACE_MOUNTS = "ABSTRACTGATEWAY_WORKSPACE_MOUNTS"
-_ENV_ALLOW_CLIENT_WORKSPACE_SCOPE = "ABSTRACTGATEWAY_ALLOW_CLIENT_WORKSPACE_SCOPE"
-_ENV_TRUST_CLIENT_WORKSPACE_SCOPE = "ABSTRACTGATEWAY_TRUST_CLIENT_WORKSPACE_SCOPE"
 # Stop kill switch (stop_kill_switch.py): seconds a cancelled run's model call
 # may keep running before that inference is killed in process (0 = disabled,
 # logged at ERROR at every Stop). Never a process kill.
@@ -422,12 +420,9 @@ def check_workspace_path(raw: Any) -> Dict[str, Any]:
     return out
 
 
-def _format_workspace_path_list(entries: list[str]) -> str:
-    return "\n".join(str(item).strip() for item in entries if str(item).strip())
-
-
-# Per-user policy entries accept exactly these fields; anything else is a
-# typo the write must refuse rather than silently store-and-ignore.
+# ---- The OLD (pre round 9) workspace model: read only by the one-time
+# migration in workspace_policy.migrate_store. Nothing enforces these any more.
+# Per-user policy entries accept exactly these fields.
 _USER_POLICY_FIELDS = (
     "mode",
     "workspace_allowed_paths",
@@ -610,69 +605,6 @@ def _workspace_mounts_payload(stored: Dict[str, Any]) -> Dict[str, Any]:
     return {"value": "", "source": "default", "entries": []}
 
 
-def _workspace_allowed_paths_payload(stored: Dict[str, Any]) -> Dict[str, Any]:
-    mounts = _workspace_mounts_payload(stored)
-    entries = mounts.get("entries") or []
-    paths = [str(entry.get("path") or "").strip() for entry in entries if isinstance(entry, dict) and str(entry.get("path") or "").strip()]
-    return {
-        "value": _format_workspace_path_list(paths),
-        "source": str(mounts.get("source") or "default"),
-        "paths": paths,
-    }
-
-
-def _workspace_blocked_paths_payload(stored: Dict[str, Any]) -> Dict[str, Any]:
-    if "workspace_blocked_paths" in stored and stored["workspace_blocked_paths"] is not None:
-        paths = _normalize_workspace_path_list(
-            stored.get("workspace_blocked_paths"),
-            strict=False,
-            field_name="workspace_blocked_paths",
-        )
-        return {
-            "value": _format_workspace_path_list(paths),
-            "source": "stored",
-            "paths": paths,
-        }
-    return {"value": "", "source": "default", "paths": []}
-
-
-def _client_workspace_scope_overrides_payload(stored: Dict[str, Any]) -> Dict[str, Any]:
-    if "client_workspace_scope_overrides" in stored and stored["client_workspace_scope_overrides"] is not None:
-        return {
-            "value": _bool(stored["client_workspace_scope_overrides"], False),
-            "source": "stored",
-        }
-    if _flag_enabled(os.getenv(_ENV_ALLOW_CLIENT_WORKSPACE_SCOPE)):
-        return {"value": True, "source": "env"}
-    if _flag_enabled(os.getenv(_ENV_TRUST_CLIENT_WORKSPACE_SCOPE)):
-        return {"value": True, "source": "env"}
-    tool_mode = str(os.getenv("ABSTRACTGATEWAY_TOOL_MODE") or "").strip().lower()
-    return {"value": tool_mode == "local", "source": "default"}
-
-
-def _workspace_default_mode_payload(stored: Dict[str, Any]) -> Dict[str, Any]:
-    """The GATEWAY default posture — what every principal without their own
-    stored mode inherits (operator order 2026-08-19: "we are the gateway,
-    where do we set the default"). whitelist = deny everything, allow the
-    configured roots (the shipped default); blacklist = allow everything,
-    refuse the deny lists. Stored > default; no env rung."""
-    raw = str(stored.get("workspace_default_mode") or "").strip().lower()
-    if raw in _USER_POLICY_MODES:
-        return {"value": raw, "source": "stored"}
-    return {"value": "whitelist", "source": "default"}
-
-
-def _trust_client_launch_folder_payload(stored: Dict[str, Any]) -> Dict[str, Any]:
-    """Launch-folder trust: a run started from a client folder may use that
-    folder as its writable workspace_root. Operator ruling 2026-08-19: the
-    DEFAULT is TRUE — wherever an agent is started, it can write in the
-    folder it starts — and the knob is a SETTING, deliberately with NO env
-    rung (stored > default only; the env era for this class is over)."""
-    if "trust_client_launch_folder" in stored and stored["trust_client_launch_folder"] is not None:
-        return {"value": _bool(stored["trust_client_launch_folder"], True), "source": "stored"}
-    return {"value": True, "source": "default"}
-
-
 BIND_HOST_ENV = "ABSTRACTGATEWAY_BIND_HOST"
 
 
@@ -709,7 +641,7 @@ def _allow_engine_install_payload(stored: Dict[str, Any]) -> Dict[str, Any]:
     Gateway is not the machine of the person clicking. So the default is ON
     only when the Gateway is bound to loopback (the person at the keyboard IS
     the host) and OFF for any other or unknown bind. A stored choice wins
-    either way. No env rung (stored > default, like trust_client_launch_folder).
+    either way. No env rung (stored > default).
     Dry runs ("show the command") never need this permission."""
     bind = gateway_bind_host()
     loopback = _bind_is_loopback(bind)
@@ -1037,13 +969,6 @@ def _write_apps_changes(stored: Dict[str, Any], changes: Dict[str, Any], applied
         stored["apps"] = apps_stored
     else:
         stored.pop("apps", None)
-
-
-def _user_workspace_policies_payload(stored: Dict[str, Any]) -> Dict[str, Any]:
-    if "user_workspace_policies" in stored and stored["user_workspace_policies"] is not None:
-        policies = _normalize_user_workspace_policies(stored.get("user_workspace_policies"), strict=False)
-        return {"value": policies, "source": "stored", "count": len(policies)}
-    return {"value": {}, "source": "default", "count": 0}
 
 
 def _store_path(data_dir: Path) -> Path:
@@ -1734,25 +1659,9 @@ def read_runtime_config(
     triage = _with_setting_meta(
         resolve_backlog_root(data_dir, stored=stored, launch=launch, ensure=False), "triage_repo_root"
     )
-    workspace_root = _workspace_root_payload(stored)
-    workspace_mounts = _workspace_mounts_payload(stored)
-    workspace_allowed_paths = _workspace_allowed_paths_payload(stored)
-    workspace_blocked_paths = _workspace_blocked_paths_payload(stored)
-    user_workspace_policies = _user_workspace_policies_payload(stored)
     if not is_admin:
         # Redact the path; keep the posture (configured + which rung won).
         triage = _redact_backlog_root(triage)
-        workspace_root = {"configured": bool(workspace_root.get("value")), "source": workspace_root["source"]}
-        workspace_mounts = {"configured": bool((workspace_mounts.get("entries") or [])), "source": workspace_mounts["source"]}
-        workspace_allowed_paths = {"configured": bool((workspace_allowed_paths.get("paths") or [])), "source": workspace_allowed_paths["source"]}
-        workspace_blocked_paths = {"configured": bool((workspace_blocked_paths.get("paths") or [])), "source": workspace_blocked_paths["source"]}
-        # Per-user policies name other users AND server paths — non-admins
-        # see only that some exist (same redaction discipline as above).
-        user_workspace_policies = {
-            "configured": bool(user_workspace_policies.get("value")),
-            "count": int(user_workspace_policies.get("count") or 0),
-            "source": user_workspace_policies["source"],
-        }
     operator_email = resolve_operator_email(data_dir, stored=stored)
     if not is_admin:
         # An address is PII-adjacent — non-admins see the posture only
@@ -1764,14 +1673,9 @@ def read_runtime_config(
             _resolve(stored, "process_manager", _ENV_PROCESS_MANAGER, False, as_bool=True), "process_manager"
         ),
         "triage_repo_root": triage,
-        "workspace_root": workspace_root,
-        "workspace_mounts": workspace_mounts,
-        "workspace_allowed_paths": workspace_allowed_paths,
-        "workspace_blocked_paths": workspace_blocked_paths,
-        "client_workspace_scope_overrides": _client_workspace_scope_overrides_payload(stored),
-        "trust_client_launch_folder": _trust_client_launch_folder_payload(stored),
-        "workspace_default_mode": _workspace_default_mode_payload(stored),
-        "user_workspace_policies": user_workspace_policies,
+        # Round 9: the workspace folders live in their own model and door
+        # (GET/PUT /api/gateway/workspace/policy, workspace_policy.py).
+        "workspace_policy": {"endpoint": "/api/gateway/workspace/policy"},
         "builtin_deny": _workspace_builtin_deny_payload(stored, data_dir)
         if is_admin
         else {k: v for k, v in _workspace_builtin_deny_payload(stored, data_dir).items() if k != "value"},
@@ -1937,10 +1841,7 @@ class RuntimeConfigError(ValueError):
 # Keys write_runtime_config accepts (plus the prefixed families checked in
 # _is_known_write_key). `desktop_tray` is known only to be refused in words.
 _WRITE_KEYS = frozenset({
-    "process_manager", "backlog_exec_runner", "desktop_tray", "triage_repo_root", "workspace_root",
-    "workspace_mounts", "workspace_allowed_paths", "workspace_blocked_paths",
-    "client_workspace_scope_overrides", "trust_client_launch_folder", "workspace_default_mode",
-    "user_workspace_policies", "executor", "operator_email", "stop_kill_switch_s",
+    "process_manager", "backlog_exec_runner", "desktop_tray", "triage_repo_root", "executor", "operator_email", "stop_kill_switch_s",
     "allow_engine_install", "apps", "agents", "skills", "workspace_builtin_deny",
 })
 
@@ -1979,6 +1880,13 @@ def write_runtime_config(
             "{mode?, port?, acknowledge_internet?, allowed_origins?, trust_proxy?} (or `abstractgateway network set`), "
             "which checks the auth the mode requires and validates every origin"
         )
+    from .workspace_policy import LEGACY_MOVED_SENTENCE, LEGACY_WRITE_KEYS
+
+    legacy = sorted(str(k) for k in changes if str(k) in LEGACY_WRITE_KEYS)
+    if legacy:
+        # Round 9 (no retro-compatibility): the old workspace keys are refused
+        # by name, never stored-and-ignored.
+        raise RuntimeConfigError(f"{legacy}: {LEGACY_MOVED_SENTENCE}; nothing was saved")
     unknown = sorted(str(k) for k in changes if not _is_known_write_key(k))
     if unknown:
         # All or nothing: a request naming a key this gateway does not know
@@ -2032,105 +1940,6 @@ def write_runtime_config(
             # holding docs/backlog, or the gateway's own folder (created).
             stored["triage_repo_root"] = str(validate_backlog_root(raw, data_dir))
             applied["triage_repo_root"] = stored["triage_repo_root"]
-    if "workspace_root" in changes:
-        raw = changes["workspace_root"]
-        if raw is None or str(raw).strip() == "":
-            stored.pop("workspace_root", None)
-            applied["workspace_root"] = None
-        else:
-            path = Path(str(raw)).expanduser()
-            if not path.is_absolute():
-                raise RuntimeConfigError(
-                    f"workspace_root must be an absolute directory (got {str(raw)!r})"
-                )
-            if not path.is_dir():
-                raise RuntimeConfigError(
-                    f"workspace_root {str(raw)!r} is not an existing directory"
-                )
-            stored["workspace_root"] = str(path.resolve())
-            applied["workspace_root"] = stored["workspace_root"]
-    if "workspace_mounts" in changes:
-        raw_mounts = changes["workspace_mounts"]
-        if raw_mounts is None or (
-            isinstance(raw_mounts, str) and not raw_mounts.strip()
-        ) or (isinstance(raw_mounts, list) and not raw_mounts):
-            stored.pop("workspace_mounts", None)
-            applied["workspace_mounts"] = []
-        else:
-            entries = _normalize_workspace_mount_entries(raw_mounts, strict=True)
-            stored["workspace_mounts"] = entries
-            applied["workspace_mounts"] = list(entries)
-    if "workspace_allowed_paths" in changes:
-        raw_allowed = changes["workspace_allowed_paths"]
-        if raw_allowed is None or (
-            isinstance(raw_allowed, str) and not raw_allowed.strip()
-        ) or (isinstance(raw_allowed, list) and not raw_allowed):
-            stored.pop("workspace_mounts", None)
-            applied["workspace_allowed_paths"] = []
-        else:
-            paths = _normalize_workspace_path_list(
-                raw_allowed,
-                strict=True,
-                field_name="workspace_allowed_paths",
-            )
-            from abstractruntime.utils.workspace_paths import build_workspace_mounts
-
-            named = build_workspace_mounts(
-                allowed_dirs=[Path(path) for path in paths],
-                used_names=set(),
-            )
-            entries = [{"name": name, "path": str(path)} for name, path in named.items()]
-            stored["workspace_mounts"] = entries
-            applied["workspace_allowed_paths"] = list(paths)
-    if "workspace_blocked_paths" in changes:
-        raw_blocked = changes["workspace_blocked_paths"]
-        if raw_blocked is None or (
-            isinstance(raw_blocked, str) and not raw_blocked.strip()
-        ) or (isinstance(raw_blocked, list) and not raw_blocked):
-            stored.pop("workspace_blocked_paths", None)
-            applied["workspace_blocked_paths"] = []
-        else:
-            paths = _normalize_workspace_path_list(
-                raw_blocked,
-                strict=True,
-                field_name="workspace_blocked_paths",
-            )
-            stored["workspace_blocked_paths"] = list(paths)
-            applied["workspace_blocked_paths"] = list(paths)
-    if "client_workspace_scope_overrides" in changes:
-        stored["client_workspace_scope_overrides"] = _bool(
-            changes["client_workspace_scope_overrides"], False
-        )
-        applied["client_workspace_scope_overrides"] = stored["client_workspace_scope_overrides"]
-    if "trust_client_launch_folder" in changes:
-        raw_trust = changes["trust_client_launch_folder"]
-        if raw_trust is None or (isinstance(raw_trust, str) and not raw_trust.strip()):
-            stored.pop("trust_client_launch_folder", None)  # clear = default (True)
-            applied["trust_client_launch_folder"] = None
-        else:
-            stored["trust_client_launch_folder"] = _bool(raw_trust, True)
-            applied["trust_client_launch_folder"] = stored["trust_client_launch_folder"]
-    if "workspace_default_mode" in changes:
-        raw_mode = changes["workspace_default_mode"]
-        if raw_mode is None or (isinstance(raw_mode, str) and not raw_mode.strip()):
-            stored.pop("workspace_default_mode", None)  # clear = whitelist default
-            applied["workspace_default_mode"] = None
-        else:
-            mode = str(raw_mode).strip().lower()
-            if mode not in _USER_POLICY_MODES:
-                raise RuntimeConfigError(
-                    f"workspace_default_mode must be one of {list(_USER_POLICY_MODES)}; got {raw_mode!r}"
-                )
-            stored["workspace_default_mode"] = mode
-            applied["workspace_default_mode"] = mode
-    if "user_workspace_policies" in changes:
-        raw_policies = changes["user_workspace_policies"]
-        policies = _normalize_user_workspace_policies(raw_policies, strict=True)
-        if policies:
-            stored["user_workspace_policies"] = policies
-        else:
-            stored.pop("user_workspace_policies", None)
-        applied["user_workspace_policies"] = policies
     if "executor" in changes:
         raw_exec = str(changes["executor"] or "").strip()
         exec_id = canonical_executor_id(raw_exec)
@@ -2196,10 +2005,7 @@ def write_runtime_config(
     if not applied:
         raise RuntimeConfigError(
             "no recognized config keys in the request (one of: process_manager, "
-            "backlog_exec_runner, triage_repo_root, workspace_root, workspace_mounts, "
-            "workspace_allowed_paths, workspace_blocked_paths, "
-            "client_workspace_scope_overrides, trust_client_launch_folder, "
-            "workspace_default_mode, user_workspace_policies, executor, operator_email, "
+            "backlog_exec_runner, triage_repo_root, executor, operator_email, "
             "stop_kill_switch_s, allow_engine_install, "
             + ", ".join(r["key"] for r in APPS_SETTINGS)
             + ", agents.default_workflow.<interface>, agents.streaming_default, skills.shelf)"
@@ -2282,100 +2088,35 @@ def resolve_backlog_exec_runner_enabled(data_dir: Path) -> bool:
 
 
 def resolve_workspace_root(data_dir: Path) -> Path:
-    value = read_runtime_config(data_dir)["workspace_root"]["value"]
-    text = str(value or "").strip()
-    base = Path(text).expanduser() if text else Path.cwd()
-    try:
-        return base.resolve()
-    except Exception:
-        return base
+    """The gateway's SHARED WORKSPACE (round 9 workspace policy)."""
+    from .workspace_policy import gateway_policy
+
+    return Path(gateway_policy(Path(data_dir))["shared_workspace"])
 
 
 def resolve_workspace_mounts(data_dir: Path) -> Dict[str, Path]:
-    payload = read_runtime_config(data_dir)["workspace_mounts"]
-    out: Dict[str, Path] = {}
-    entries = payload.get("entries") or []
-    if not isinstance(entries, list):
-        return out
-    for entry in entries:
-        if not isinstance(entry, dict):
-            continue
-        name = str(entry.get("name") or "").strip()
-        path = str(entry.get("path") or "").strip()
-        if not name or not path:
-            continue
-        try:
-            resolved = Path(path).expanduser().resolve()
-        except Exception:
-            continue
-        try:
-            if not resolved.exists() or not resolved.is_dir():
-                continue
-        except Exception:
-            continue
-        out[name] = resolved
-    return out
+    """The gateway's allowed folders as deterministic {mount name: folder} (existing folders only).
+    Used where no account is known; account-scoped doors read workspace_policy.effective_policy."""
+    from abstractruntime.utils.workspace_paths import build_workspace_mounts
+
+    from .workspace_policy import gateway_policy
+
+    dirs = [Path(p) for p in gateway_policy(Path(data_dir))["allowed_folders"] if Path(p).is_dir()]
+    return dict(build_workspace_mounts(allowed_dirs=dirs, used_names=set()))
 
 
 def resolve_workspace_blocked_paths(data_dir: Path) -> tuple[Path, ...]:
-    payload = read_runtime_config(data_dir)["workspace_blocked_paths"]
-    out: list[Path] = []
-    paths = payload.get("paths") or []
-    if not isinstance(paths, list):
-        return ()
-    for item in paths:
-        text = str(item or "").strip()
-        if not text:
-            continue
-        try:
-            resolved = Path(text).expanduser().resolve()
-        except Exception:
-            continue
-        try:
-            if not resolved.exists() or not resolved.is_dir():
-                continue
-        except Exception:
-            continue
-        out.append(resolved)
-    return tuple(out)
+    """The gateway's NEVER ALLOWED folders (existing folders only)."""
+    from .workspace_policy import gateway_policy
+
+    return tuple(Path(p) for p in gateway_policy(Path(data_dir))["never_allowed"] if Path(p).is_dir())
 
 
-def _stored_user_policy(data_dir: Path, *, tenant_id: Optional[str], user_id: Optional[str]) -> Dict[str, Any]:
-    """The validated per-user policy entry for one principal ({} when none)."""
-    if not user_id:
-        return {}
-    key = _normalize_user_policy_key(f"{tenant_id or 'default'}:{user_id}", strict=False)
-    if key is None:
-        return {}
-    stored = _read_store(data_dir)
-    policies = _normalize_user_workspace_policies(stored.get("user_workspace_policies"), strict=False)
-    entry = policies.get(key)
-    return dict(entry) if isinstance(entry, dict) else {}
+def resolve_trust_client_launch_folder(data_dir: Path) -> bool:
+    """Launch-folder trust: one gateway-wide switch (default on)."""
+    from .workspace_policy import gateway_policy
 
-
-def resolve_client_workspace_scope_overrides_enabled(
-    data_dir: Path,
-    *,
-    tenant_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-) -> bool:
-    entry = _stored_user_policy(data_dir, tenant_id=tenant_id, user_id=user_id)
-    if "client_workspace_scope_overrides" in entry:
-        return bool(entry["client_workspace_scope_overrides"])
-    return bool(read_runtime_config(data_dir)["client_workspace_scope_overrides"]["value"])
-
-
-def resolve_trust_client_launch_folder(
-    data_dir: Path,
-    *,
-    tenant_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-) -> bool:
-    """Per-user override wins; otherwise the gateway-wide knob (default True)."""
-    entry = _stored_user_policy(data_dir, tenant_id=tenant_id, user_id=user_id)
-    if "trust_client_launch_folder" in entry:
-        return bool(entry["trust_client_launch_folder"])
-    return bool(read_runtime_config(data_dir)["trust_client_launch_folder"]["value"])
+    return bool(gateway_policy(Path(data_dir))["launch_folder_trust"])
 
 
 def _workspace_builtin_deny_payload(stored: Dict[str, Any], data_dir: Path) -> Dict[str, Any]:
@@ -2398,151 +2139,6 @@ def _workspace_builtin_deny_payload(stored: Dict[str, Any], data_dir: Path) -> D
 def resolve_workspace_builtin_deny_enabled(data_dir: Path) -> bool:
     raw = _read_store(Path(data_dir)).get("workspace_builtin_deny")
     return raw if isinstance(raw, bool) else True
-
-
-def resolve_workspace_default_mode(data_dir: Path) -> str:
-    """The gateway default posture (whitelist unless the operator stored
-    blacklist) — what a principal without their own mode inherits."""
-    return str(read_runtime_config(data_dir)["workspace_default_mode"]["value"])
-
-
-def resolve_user_workspace_mode(
-    data_dir: Path,
-    *,
-    tenant_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-) -> str:
-    """This principal's access posture: their stored mode, else the GATEWAY
-    default mode ("whitelist" = deny everything, allow the configured roots;
-    "blacklist" = allow everything, refuse the blocked roots)."""
-    entry = _stored_user_policy(data_dir, tenant_id=tenant_id, user_id=user_id)
-    mode = str(entry.get("mode") or "").strip().lower()
-    if mode in _USER_POLICY_MODES:
-        return mode
-    return resolve_workspace_default_mode(data_dir)
-
-
-def read_user_workspace_policy(
-    data_dir: Path,
-    *,
-    tenant_id: Optional[str],
-    user_id: Optional[str],
-) -> Dict[str, Any]:
-    """ONE user's workspace policy, self-service shape: their stored entry
-    plus the EFFECTIVE posture after inheritance (what actually governs
-    their run starts). Serves GET /workspace/policy/self and the admin
-    per-runtime modal.
-
-    The EFFECTIVE trust mirrors enforcement exactly (design adversary B5a):
-    the scope-overrides grant IMPLIES launch-folder trust in
-    _sanitize_run_workspace_policy, so a UI reading this must never show
-    trust "off" while runs behave as on."""
-    entry = _stored_user_policy(data_dir, tenant_id=tenant_id, user_id=user_id)
-    cfg = read_runtime_config(data_dir)
-    trust = entry.get("trust_client_launch_folder")
-    if trust is None:
-        trust = bool(cfg["trust_client_launch_folder"]["value"])
-    overrides = entry.get("client_workspace_scope_overrides")
-    if overrides is None:
-        overrides = bool(cfg["client_workspace_scope_overrides"]["value"])
-    gateway_mode = str(cfg["workspace_default_mode"]["value"])
-    mode = str(entry.get("mode") or "").strip().lower()
-    if mode not in _USER_POLICY_MODES:
-        mode = gateway_mode
-    return {
-        "tenant_id": str(tenant_id or "default"),
-        "user_id": str(user_id or ""),
-        "policy": entry,
-        "customized": bool(entry),
-        # The gateway rungs an inherit-UI must describe truthfully.
-        "gateway_defaults": {
-            "mode": gateway_mode,
-            "trust_client_launch_folder": bool(cfg["trust_client_launch_folder"]["value"]),
-        },
-        "effective": {
-            "mode": mode,
-            "trust_client_launch_folder": bool(trust) or bool(overrides),
-            "client_workspace_scope_overrides": bool(overrides),
-            "workspace_allowed_paths": list(entry.get("workspace_allowed_paths") or []),
-            "workspace_blocked_paths": list(entry.get("workspace_blocked_paths") or []),
-        },
-    }
-
-
-@_locked_store_write
-def write_user_workspace_policy(
-    data_dir: Path,
-    *,
-    tenant_id: Optional[str],
-    user_id: Optional[str],
-    policy: Optional[Dict[str, Any]],
-    actor: str,
-    preserve_fields: tuple[str, ...] = (),
-) -> Dict[str, Any]:
-    """Write ONE user's policy entry (operator clarification 2026-08-19:
-    each user decides their own posture — mode, launch-folder trust, and
-    their allow/deny lists). Validates the single entry with the same rules
-    as the admin map write; None/{} clears the entry. This function can only
-    ever touch the named key.
-
-    `preserve_fields`: fields carried over from the EXISTING entry when the
-    incoming policy does not name them — the self-service lane passes the
-    admin-classed grant here so a user saving their own card can never
-    silently erase what an admin set (design adversary B4)."""
-    if not user_id:
-        raise RuntimeConfigError("a user identity is required to edit a per-user workspace policy")
-    key = _normalize_user_policy_key(f"{tenant_id or 'default'}:{user_id}")
-
-    stored = _read_store(data_dir, strict=True)
-    existing = _normalize_user_workspace_policies(stored.get("user_workspace_policies"), strict=False)
-
-    incoming = dict(policy or {})
-    if preserve_fields:
-        prior = existing.get(key) or {}
-        for field in preserve_fields:
-            if field not in incoming and field in prior:
-                incoming[field] = prior[field]
-    validated = _normalize_user_workspace_policies({key: incoming} if incoming else {}, strict=True)
-
-    if key in validated:
-        existing[key] = validated[key]
-    else:
-        existing.pop(key, None)
-    if existing:
-        stored["user_workspace_policies"] = existing
-    else:
-        stored.pop("user_workspace_policies", None)
-
-    stored["_last_changed_by"] = str(actor)
-    from datetime import datetime, timezone
-
-    stored["_last_changed_at"] = datetime.now(timezone.utc).isoformat()
-    _write_store(data_dir, stored)
-    return read_user_workspace_policy(data_dir, tenant_id=tenant_id, user_id=user_id)
-
-
-def resolve_user_workspace_paths(
-    data_dir: Path,
-    *,
-    tenant_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-) -> tuple[tuple[Path, ...], tuple[Path, ...]]:
-    """This principal's EXTRA (allowed, blocked) workspace roots — additive
-    on top of the gateway-wide mounts/deny list, never a replacement."""
-    entry = _stored_user_policy(data_dir, tenant_id=tenant_id, user_id=user_id)
-    allowed: list[Path] = []
-    blocked: list[Path] = []
-    for field, bucket in (("workspace_allowed_paths", allowed), ("workspace_blocked_paths", blocked)):
-        for item in entry.get(field) or []:
-            text = str(item or "").strip()
-            if not text:
-                continue
-            try:
-                resolved = Path(text).expanduser().resolve()
-            except Exception:
-                continue
-            bucket.append(resolved)
-    return tuple(allowed), tuple(blocked)
 
 
 def resolve_executor(data_dir: Path) -> str:

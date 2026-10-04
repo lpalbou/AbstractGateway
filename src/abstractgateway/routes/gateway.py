@@ -1199,67 +1199,6 @@ def _resolve_policy_target_user(tenant_id: str, user_id: str) -> tuple[str, str]
     return tenant, user
 
 
-@router.get("/admin/user-workspace-policy")
-async def gateway_admin_read_user_workspace_policy(
-    request: Request,
-    tenant_id: str = Query("default"),
-    user_id: str = Query(...),
-) -> Dict[str, Any]:
-    """ONE user's workspace policy for the per-runtime settings modal:
-    stored entry + effective posture. Admin-gated by the /admin prefix."""
-    _principal_from_request(request)
-    tenant, user = _resolve_policy_target_user(tenant_id, user_id)
-    from ..runtime_config import read_user_workspace_policy
-
-    out = read_user_workspace_policy(gateway_data_dir_from_env(), tenant_id=tenant, user_id=user)
-    out["ok"] = True
-    return out
-
-
-@router.put("/admin/user-workspace-policy")
-async def gateway_admin_write_user_workspace_policy(
-    request: Request,
-    payload: Dict[str, Any],
-    tenant_id: str = Query("default"),
-    user_id: str = Query(...),
-) -> Dict[str, Any]:
-    """Write ONE user's policy entry (the per-runtime modal's save). Body:
-    {policy: {...}} or the bare entry; {policy: null} / {} clears to
-    inherited. Single-entry semantics — never a map replace, so it cannot
-    clobber other users' entries (design adversary B2)."""
-    principal = _require_admin_principal(request)
-    tenant, user = _resolve_policy_target_user(tenant_id, user_id)
-    from ..runtime_config import (
-        RuntimeConfigError,
-        RuntimeConfigStoreCorrupt,
-        write_user_workspace_policy,
-    )
-
-    # {"policy": {...}} wraps the entry; {"policy": null} clears it; a bare
-    # body IS the entry (and a bare {} also clears).
-    if "policy" in (payload or {}):
-        raw_policy = payload.get("policy")
-        policy = dict(raw_policy) if isinstance(raw_policy, dict) else None
-    else:
-        policy = dict(payload or {})
-    if policy is not None:
-        policy.pop("ok", None)
-    try:
-        out = write_user_workspace_policy(
-            gateway_data_dir_from_env(),
-            tenant_id=tenant,
-            user_id=user,
-            policy=policy or None,
-            actor=f"person:{principal.user_id}" if getattr(principal, "user_id", None) else "person:operator",
-        )
-    except RuntimeConfigStoreCorrupt as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
-    except RuntimeConfigError as e:
-        raise HTTPException(status_code=400, detail=str(e)) from e
-    out["ok"] = True
-    return out
-
-
 @router.get("/admin/executors")
 async def gateway_admin_list_executors(request: Request) -> Dict[str, Any]:
     """The pluggable execution-agent registry (operator ruling 2026-07-14):
@@ -4416,8 +4355,8 @@ def _parse_lines_or_json_list(raw: Optional[str]) -> list[str]:
 
 
 def _server_workspace_policy_public() -> Dict[str, Any]:
-    mounts = _workspace_mounts()
-    blocked = _workspace_blocked_roots()
+    """Attachment limits for thin clients (the workspace folders themselves are served by
+    GET /workspace/policy and GET /workspace/effective/{account}, round 9)."""
     try:
         max_bytes_raw = str(os.getenv("ABSTRACTGATEWAY_MAX_ATTACHMENT_BYTES", "") or "").strip()
         max_bytes = int(max_bytes_raw) if max_bytes_raw else 25 * 1024 * 1024
@@ -4425,43 +4364,34 @@ def _server_workspace_policy_public() -> Dict[str, Any]:
             max_bytes = 25 * 1024 * 1024
     except Exception:
         max_bytes = 25 * 1024 * 1024
-
-    return {
-        "target": "server",
-        # Do not expose absolute server paths to thin clients.
-        "mounts": sorted([{"name": name} for name in mounts.keys()], key=lambda x: x["name"]),
-        "max_attachment_bytes": int(max_bytes),
-        "client_workspace_scope_overrides": bool(_client_workspace_scope_overrides_enabled()),
-        "trust_client_launch_folder": bool(_trust_client_launch_folder_enabled()),
-        "extra_allowed_workspaces": len(mounts),
-        "blocked_workspace_roots": len(blocked),
-        "allowed_access_modes": ["workspace_only", "workspace_or_allowed"]
-        + (["all_except_ignored"] if _client_workspace_scope_overrides_enabled() else []),
-    }
+    return {"max_attachment_bytes": int(max_bytes)}
 
 
-def _client_workspace_scope_overrides_enabled() -> bool:
-    """Whether to honor client-provided workspace_* scoping knobs for server filesystem access.
-
-    Security note:
-    In non-local tool mode, the gateway treats web clients as "thin" clients and clamps
-    workspace scope to operator-controlled roots. When running tools locally (dev mode),
-    it is useful to allow the UI to drive workspace scoping directly.
-    """
-    from ..runtime_config import resolve_client_workspace_scope_overrides_enabled
-
-    return resolve_client_workspace_scope_overrides_enabled(gateway_data_dir_from_env())
+def _principal_account(principal: Optional["GatewayPrincipal"]) -> tuple[str, str]:
+    """(tenant, user) whose effective workspace policy applies. No principal (a gateway without
+    sign-in) = the operator, default:admin."""
+    tenant = str(getattr(principal, "tenant_id", "") or "") or "default"
+    user = str(getattr(principal, "user_id", "") or "") or "admin"
+    return tenant, user
 
 
-def _trust_client_launch_folder_enabled() -> bool:
-    """Gateway-wide launch-folder trust (default ON; per-user overrides are
-    applied at the run-start sanitize, where the principal is known)."""
-    from ..runtime_config import resolve_trust_client_launch_folder
+def _principal_effective_folders(
+    principal: Optional["GatewayPrincipal"],
+) -> tuple[list[Path], list[Path], list[Path], bool]:
+    """(effective folders [shared first], gateway never-allowed, built-in never-allowed, launch_folder_trust)."""
+    from ..workspace_policy import effective_folder_paths
 
-    return resolve_trust_client_launch_folder(gateway_data_dir_from_env())
+    tenant, user = _principal_account(principal)
+    return effective_folder_paths(gateway_data_dir_from_env(), tenant_id=tenant, user_id=user)
 
 
-_VALID_WORKSPACE_ACCESS_MODES: set[str] = {"workspace_only", "workspace_or_allowed", "all_except_ignored"}
+# Round 9: "all_except_ignored" (any folder) no longer exists; a client that sends it is refused.
+_VALID_WORKSPACE_ACCESS_MODES: set[str] = {"workspace_only", "workspace_or_allowed"}
+_REMOVED_ANY_FOLDER_SENTENCE = (
+    "workspace_access_mode \"all_except_ignored\" (any folder) no longer exists: an account's agents use the "
+    "shared workspace, the allowed folders it switched on and its own folders (GET /api/gateway/workspace/effective/me). "
+    "Nothing was started."
+)
 
 
 def _normalize_workspace_access_mode(raw: Any) -> str:
@@ -4469,6 +4399,23 @@ def _normalize_workspace_access_mode(raw: Any) -> str:
     if mode in _VALID_WORKSPACE_ACCESS_MODES:
         return mode
     return "workspace_only"
+
+
+def _client_access_mode(raw: Any) -> Optional[str]:
+    """The client's stated mode, refused when it is the removed any-folder mode or unknown."""
+    if raw is None:
+        return None
+    mode = str(raw or "").strip().lower()
+    if not mode:
+        return None
+    if mode == "all_except_ignored":
+        raise HTTPException(status_code=400, detail=_REMOVED_ANY_FOLDER_SENTENCE)
+    if mode not in _VALID_WORKSPACE_ACCESS_MODES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"workspace_access_mode {mode!r} is unknown; use workspace_or_allowed or workspace_only. Nothing was started.",
+        )
+    return mode
 
 
 def _mounts_from_allowed_paths(*, allowed_dirs: list[Path], used_names: set[str]) -> Dict[str, Path]:
@@ -4628,201 +4575,112 @@ def _sanitize_run_workspace_policy(
     principal: Optional["GatewayPrincipal"] = None,
     session_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Clamp client-provided run workspace knobs to the operator policy.
+    """Clamp a client's run workspace knobs to the caller's EFFECTIVE workspace policy (round 9).
 
-    Goal: prevent thin clients from expanding server filesystem access via run vars.
+    The effective set (workspace_policy.effective_policy) = the gateway's shared workspace, the
+    admin-allowed folders this account switched on, and its own folders while the admin allows any
+    folder, minus the never-allowed folders. Out-of-scope values REFUSE (400) naming what was
+    rejected and what is allowed; they are never silently dropped (backlog 0232 §1).
 
-    Out-of-scope values REFUSE (400); they are never silently dropped
-    (backlog 0232 §1, implemented 2026-08-02). The old body did a bare
-    `input_data.pop("workspace_root", None)`: the run then minted a fresh
-    `data_dir/workspaces/<uuid4>`, the agent's writes to the root the
-    operator declared were refused by the path resolver, and the agent
-    either escaped through `execute_command` or grafted the deliverable
-    under the wrong tree — both observed live on 2026-07-30. Every
-    downstream symptom in 0232 is a consequence of a run believing it has
-    a workspace it does not have. Dropping an operator-declared value
-    without saying so is the same dishonesty class ADR-0026 forbids for
-    truncation: if we will not honor it, we must say so, loudly, naming
-    what was rejected and what is allowed.
-
-    Policy is PER-PRINCIPAL (operator ruling 2026-08-19): admin-set
-    per-user entries in the settings store extend/narrow the gateway-wide
-    posture. Launch-folder trust (default ON) accepts the client-named
-    workspace_root — the folder the agent was started from — as a writable
-    root; the deny list still refuses, and trust never widens the separate
-    allowed-paths clamp beyond the accepted root's subtree.
+    - workspace_root: inside an effective folder, a gateway-made folder of this caller, or (with
+      launch-folder trust) the folder the app was started from; never inside a never-allowed folder
+      or the gateway's data folder.
+    - workspace_access_mode: "all_except_ignored" (the old any-folder mode) is refused; the run's
+      sandbox is "workspace_or_allowed" unless the client narrows to "workspace_only".
+    - workspace_allowed_paths: a client list NARROWS (each entry inside an effective folder); the
+      shared workspace is always kept. Absent: the full effective set.
+    - workspace_ignored_paths: the client's list plus every never-allowed folder (deny wins).
     """
-    from ..runtime_config import (
-        resolve_client_workspace_scope_overrides_enabled,
-        resolve_trust_client_launch_folder,
-        resolve_user_workspace_mode,
-        resolve_user_workspace_paths,
-    )
+    folders, never_gateway, builtin_never, trust_launch_folder = _principal_effective_folders(principal)
+    never = list(never_gateway) + list(builtin_never)
+    shared = folders[0]
+    data_root = gateway_data_dir_from_env().expanduser().resolve()
+    gateway_made = _own_workspaces_dir(principal)
+    scope_roots = list(folders) + [gateway_made]
 
-    data_dir = gateway_data_dir_from_env()
-    tenant_id = str(getattr(principal, "tenant_id", "") or "") or None
-    user_id = str(getattr(principal, "user_id", "") or "") or None
-    allow_overrides = resolve_client_workspace_scope_overrides_enabled(
-        data_dir, tenant_id=tenant_id, user_id=user_id
-    )
-    trust_launch_folder = allow_overrides or resolve_trust_client_launch_folder(
-        data_dir, tenant_id=tenant_id, user_id=user_id
-    )
-    user_allowed, user_blocked = resolve_user_workspace_paths(
-        data_dir, tenant_id=tenant_id, user_id=user_id
-    )
-    # The user's chosen posture (2026-08-19 clarification): "whitelist" =
-    # deny everything, allow the configured roots (+ trusted launch folder);
-    # "blacklist" = allow everything, refuse the deny lists. Blacklist-mode
-    # acceptance is deny-list-only; the deny lists themselves still always
-    # apply, in every mode.
-    user_mode = resolve_user_workspace_mode(data_dir, tenant_id=tenant_id, user_id=user_id)
-    blacklist_mode = user_mode == "blacklist"
-    base = _workspace_root()
-    mounts = _workspace_mounts()
-    blocked_roots = list(_workspace_blocked_roots()) + list(user_blocked)
-    allowed_roots = [base] + list(mounts.values()) + list(user_allowed)
-    # Always allow gateway-owned per-run workspaces (even when the data_dir is outside the
-    # operator workspace root). This enables safe follow-ups to reuse the same workspace.
-    try:
-        # The resolved data dir (env, legacy ./runtime or the per-OS default):
-        # an unset env var no longer means "no per-run workspaces allowed".
-        allowed_roots.append(gateway_data_dir_from_env() / "workspaces")
-    except Exception:
-        pass
-    root_for_rel = base
+    def _allowed_txt() -> str:
+        return ", ".join(str(p) for p in folders) or "(none)"
 
     def _refuse_out_of_scope(field: str, rejected: Any) -> "NoReturn":
-        """400 naming the rejected value AND the allowed roots (backlog 0232 §1).
-
-        The remedy names the SETTINGS surface, not env vars (operator ruling
-        2026-08-19: this class of knob is configured in the console, per
-        user, by the admin — the env rungs are legacy fallback, never the
-        thing an error teaches)."""
-        allowed_txt = ", ".join(sorted({str(p) for p in allowed_roots})) or "(none configured)"
         raise HTTPException(
             status_code=400,
             detail=(
-                f"{field} {str(rejected)!r} is outside the operator workspace scope. "
-                f"Allowed roots: {allowed_txt}. "
-                "The run was NOT started: honoring this value would silently relocate "
-                "the run's workspace, so it is refused instead of dropped. Fix the path, "
-                "or have a gateway admin update the workspace access policy in the "
-                "console settings (web console or console TUI): add an allowed "
-                "workspace, enable launch-folder trust, or set a per-user policy "
-                "for this account."
+                f"{field} {str(rejected)!r} is outside the folders this account's agents may use. "
+                f"Allowed: {_allowed_txt()}. The run was NOT started: honoring this value would silently relocate "
+                "or widen the run's workspace, so it is refused instead of dropped. Switch the folder on in the "
+                "account's workspace folders (console: Accounts → folder icon) or ask a gateway admin to allow it."
             ),
         )
 
-    def _refuse_blocked_workspace(field: str, rejected: Any) -> "NoReturn":
-        blocked_txt = ", ".join(sorted({str(p) for p in blocked_roots})) or "(none configured)"
+    def _refuse_never(field: str, rejected: Any, hit: Path) -> "NoReturn":
         raise HTTPException(
             status_code=400,
             detail=(
-                f"{field} {str(rejected)!r} is blocked by the gateway workspace deny list. "
-                f"Blocked roots: {blocked_txt}. "
-                "The run was NOT started: pick a different path, or have a gateway admin "
-                "edit the blocked workspaces (gateway-wide or per-user) in the console settings."
+                f"{field} {str(rejected)!r} is inside {str(hit)!r}, which the gateway never allows (never allowed "
+                "wins over every other rule). The run was NOT started."
             ),
         )
 
-    # workspace_root: operator roots (workspace root + mounts + per-user
-    # allowed), OR — with launch-folder trust (default ON) — the folder the
-    # client was started from. A trusted launch folder joins allowed_roots so
-    # relative allowed-path entries under it clamp correctly; trust never
-    # legitimizes OTHER absolute paths, only the root the run will live in.
+    def _never_hit(path: Path) -> Optional[Path]:
+        for blocked in never:
+            if _is_under_allowed_roots(path, [blocked]):
+                return blocked
+        return None
+
+    mode = _client_access_mode(input_data.get("workspace_access_mode", input_data.get("workspaceAccessMode")))
+    input_data.pop("workspaceAccessMode", None)
+
+    root_for_rel = shared
     raw_wr = input_data.get("workspace_root")
     if isinstance(raw_wr, str) and raw_wr.strip():
-        resolved = _resolve_user_path(raw_wr, base=base)
-        if blocked_roots and _is_under_blocked_roots(resolved, blocked_roots):
-            _refuse_blocked_workspace("workspace_root", resolved)
-        # The gateway's own data folder (tokens, stores, other users' runs)
-        # is never a workspace, whatever the trust posture — except a
-        # gateway-made workspace folder of this caller, echoed back.
+        resolved = _resolve_user_path(raw_wr, base=shared)
         data_problem = _data_dir_workspace_problem(resolved, principal=principal, session_id=session_id)
         if data_problem:
             raise HTTPException(
                 status_code=400,
                 detail=f"workspace_root {str(resolved)!r} is refused: {data_problem}. Nothing was started.",
             )
-        if allow_overrides or blacklist_mode or trust_launch_folder or _is_under_allowed_roots(resolved, allowed_roots):
-            input_data["workspace_root"] = str(resolved)
-            root_for_rel = resolved
-            if resolved not in allowed_roots:
-                allowed_roots.append(resolved)
-        else:
+        own_gateway_folder = _is_under_allowed_roots(resolved, [gateway_made]) and _is_under_allowed_roots(resolved, [data_root])
+        hit = None if own_gateway_folder else _never_hit(resolved)
+        if hit is not None:
+            _refuse_never("workspace_root", resolved, hit)
+        if not (trust_launch_folder or _is_under_allowed_roots(resolved, scope_roots)):
             _refuse_out_of_scope("workspace_root", resolved)
+        input_data["workspace_root"] = str(resolved)
+        root_for_rel = resolved
 
-    # workspace_access_mode: forbid "all_except_ignored" (can escape to
-    # arbitrary abs paths) — unless this PRINCIPAL's posture is blacklist
-    # (allow everything, refuse the deny lists), where it is the meaning.
-    raw_mode = input_data.get("workspace_access_mode")
-    if raw_mode is None:
-        raw_mode = input_data.get("workspaceAccessMode")
-    if raw_mode is not None:
-        mode = _normalize_workspace_access_mode(raw_mode)
-        if not (allow_overrides or blacklist_mode) and mode == "all_except_ignored":
-            mode = "workspace_only"
-        if mode in _VALID_WORKSPACE_ACCESS_MODES:
-            input_data["workspace_access_mode"] = mode
+    raw_allowed = input_data.get("workspace_allowed_paths", input_data.get("workspaceAllowedPaths"))
+    input_data.pop("workspaceAllowedPaths", None)
+    if mode == "workspace_only":
+        input_data["workspace_access_mode"] = "workspace_only"
+        input_data.pop("workspace_allowed_paths", None)
+    else:
+        input_data["workspace_access_mode"] = "workspace_or_allowed"
+        if raw_allowed is not None:
+            kept: list[str] = [str(shared)]
+            for item in _parse_any_string_list(raw_allowed):
+                resolved = _resolve_user_path(item, base=root_for_rel)
+                hit = _never_hit(resolved)
+                if hit is not None:
+                    _refuse_never("workspace_allowed_paths entry", resolved, hit)
+                if not _is_under_allowed_roots(resolved, folders):
+                    _refuse_out_of_scope("workspace_allowed_paths entry", resolved)
+                if str(resolved) not in kept:
+                    kept.append(str(resolved))
         else:
-            input_data.pop("workspace_access_mode", None)
-        input_data.pop("workspaceAccessMode", None)
-    elif blacklist_mode:
-        # Blacklist posture with no client-stated mode: the run's tool
-        # sandbox mirrors the posture — everything except the deny lists.
-        input_data["workspace_access_mode"] = "all_except_ignored"
+            kept = [str(p) for p in folders]
+        input_data["workspace_allowed_paths"] = kept
 
-    if blacklist_mode and blocked_roots:
-        # The deny lists must bind the RUN's own tool sandbox too, not just
-        # this start-time check — merge them into workspace_ignored_paths.
-        existing_ignored = _parse_any_string_list(
-            input_data.get("workspace_ignored_paths") or input_data.get("workspaceIgnoredPaths")
-        )
-        merged = list(dict.fromkeys(existing_ignored + [str(p) for p in blocked_roots]))
+    raw_ignored = input_data.get("workspace_ignored_paths", input_data.get("workspaceIgnoredPaths"))
+    input_data.pop("workspaceIgnoredPaths", None)
+    ignored_items = _parse_any_string_list(raw_ignored) if raw_ignored is not None else []
+    # The gateway's never-allowed folders bind the run's own tool sandbox (the built-in ones are the
+    # host's deny prefixes, run_workspace_guard.apply_builtin_tool_deny).
+    merged = list(dict.fromkeys(ignored_items + [str(p) for p in never_gateway]))
+    if merged:
         input_data["workspace_ignored_paths"] = "\n".join(merged)
-        input_data.pop("workspaceIgnoredPaths", None)
-
-    # workspace_allowed_paths: allow only operator roots (workspace root + mounts).
-    raw_allowed = input_data.get("workspace_allowed_paths")
-    if raw_allowed is None:
-        raw_allowed = input_data.get("workspaceAllowedPaths")
-    if raw_allowed is not None:
-        allowed_items = _parse_any_string_list(raw_allowed)
-        kept: list[str] = []
-        for item in allowed_items:
-            s = str(item or "").strip()
-            if not s:
-                continue
-            resolved = _resolve_user_path(s, base=root_for_rel)
-            if blocked_roots and _is_under_blocked_roots(resolved, blocked_roots):
-                _refuse_blocked_workspace("workspace_allowed_paths entry", resolved)
-            if not (allow_overrides or blacklist_mode or _is_under_allowed_roots(resolved, allowed_roots)):
-                # Same honesty rule as workspace_root above (0232 §1): an
-                # out-of-scope entry used to vanish from the list — the run
-                # started with a NARROWER grant than the operator declared and
-                # nothing said so. Refuse the whole start instead.
-                _refuse_out_of_scope("workspace_allowed_paths entry", resolved)
-            kept.append(str(resolved))
-        if kept:
-            # Preserve shape (list vs newline string) for UI friendliness.
-            input_data["workspace_allowed_paths"] = kept if isinstance(raw_allowed, list) else "\n".join(kept)
-        else:
-            input_data.pop("workspace_allowed_paths", None)
-        input_data.pop("workspaceAllowedPaths", None)
-
-    # workspace_ignored_paths: denylist only; accept but normalize to newline-separated string for stability.
-    raw_ignored = input_data.get("workspace_ignored_paths")
-    if raw_ignored is None:
-        raw_ignored = input_data.get("workspaceIgnoredPaths")
-    if raw_ignored is not None:
-        ignored_items = _parse_any_string_list(raw_ignored)
-        if ignored_items:
-            input_data["workspace_ignored_paths"] = "\n".join(ignored_items)
-        else:
-            input_data.pop("workspace_ignored_paths", None)
-        input_data.pop("workspaceIgnoredPaths", None)
-
+    else:
+        input_data.pop("workspace_ignored_paths", None)
     return input_data
 
 
@@ -4903,64 +4761,6 @@ def _normalize_run_context_media(input_data: Dict[str, Any]) -> Dict[str, Any]:
         ctx["attachments"] = deduped
     input_data["context"] = ctx
     return input_data
-
-
-def _effective_workspace_scope(
-    *,
-    default_base: Path,
-    workspace_root: Optional[str],
-    workspace_access_mode: Optional[str],
-    workspace_allowed_paths: Optional[str],
-    workspace_ignored_paths: Optional[str],
-) -> tuple[Path, Dict[str, Path], tuple[Path, ...], str]:
-    """Compute the effective (base, mounts, blocked_paths, access_mode) for file endpoints."""
-    base = default_base
-    raw_wr = str(workspace_root or "").strip()
-    if raw_wr:
-        base = _resolve_user_path(raw_wr, base=default_base)
-
-    access_mode = _normalize_workspace_access_mode(workspace_access_mode)
-    allowed_raw = _parse_lines_or_json_list(workspace_allowed_paths)
-    ignored_raw = _parse_lines_or_json_list(workspace_ignored_paths)
-
-    blocked: list[Path] = []
-    for item in ignored_raw:
-        try:
-            blocked.append(_resolve_user_path(item, base=base))
-        except Exception:
-            continue
-
-    mounts: Dict[str, Path] = {}
-    used_names: set[str] = set()
-
-    # In scoped mode, do not automatically include operator mounts; the client can add extra
-    # roots via workspace_allowed_paths (workspace_or_allowed) or absolute paths (all_except_ignored).
-    if access_mode == "workspace_or_allowed" and allowed_raw:
-        allowed_abs: list[Path] = []
-        for item in allowed_raw:
-            try:
-                p = _resolve_user_path(item, base=base)
-            except Exception:
-                continue
-            try:
-                if not p.exists() or not p.is_dir():
-                    continue
-            except Exception:
-                continue
-            # Only mount roots outside the base; inside-base directories are already searchable.
-            try:
-                if p.resolve().is_relative_to(base.resolve()):  # type: ignore[attr-defined]
-                    continue
-            except Exception:
-                try:
-                    p.resolve().relative_to(base.resolve())
-                    continue
-                except Exception:
-                    pass
-            allowed_abs.append(p)
-        mounts = _mounts_from_allowed_paths(allowed_dirs=allowed_abs, used_names=used_names)
-
-    return base, mounts, tuple(blocked), access_mode
 
 
 _DEFAULT_SESSION_MEMORY_RUN_PREFIX = "session_memory_"
@@ -5516,29 +5316,64 @@ def _max_attachment_bytes() -> int:
         return 25 * 1024 * 1024
 
 
-def _request_workspace_scope(req: Any) -> tuple[Path, Dict[str, Path], tuple[Path, ...], str]:
-    base_default = _workspace_root()
-    mounts_default = _workspace_mounts()
-    blocked_default = _server_file_blocked_roots()
-    if not _client_workspace_scope_overrides_enabled():
-        return base_default, mounts_default, blocked_default, "workspace_only"
+def _files_scope(
+    principal: Optional["GatewayPrincipal"],
+    *,
+    workspace_root: Any = None,
+    workspace_access_mode: Any = None,
+    workspace_allowed_paths: Any = None,
+    workspace_ignored_paths: Any = None,
+) -> tuple[Path, Dict[str, Path], tuple[Path, ...], str]:
+    """(base, mounts, blocked, mode) for the server file routes, from the caller's EFFECTIVE
+    workspace policy (round 9): base = the shared workspace, mounts = the extras this account may
+    use, blocked = never allowed + the built-in protection. A client may NARROW (a root or allowed
+    folders inside its effective folders, extra ignored paths); anything wider is refused (400), and
+    the removed any-folder mode is refused by name."""
+    folders, _never, _builtin, _trust = _principal_effective_folders(principal)
+    shared = folders[0]
+    blocked = list(_server_file_blocked_roots())
+    mode = _client_access_mode(workspace_access_mode) or "workspace_or_allowed"
 
-    has_scope = bool(
-        str(getattr(req, "workspace_root", "") or "").strip()
-        or str(getattr(req, "workspace_access_mode", "") or "").strip()
-        or str(getattr(req, "workspace_allowed_paths", "") or "").strip()
-        or str(getattr(req, "workspace_ignored_paths", "") or "").strip()
-    )
-    if not has_scope:
-        return base_default, mounts_default, blocked_default, "workspace_only"
-    base, mounts, blocked, mode = _effective_workspace_scope(
-        default_base=base_default,
+    def _refuse(field: str, value: Path) -> "NoReturn":
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field} {str(value)!r} is outside the folders this account may use: "
+            + ", ".join(str(p) for p in folders),
+        )
+
+    base = shared
+    raw_root = str(workspace_root or "").strip()
+    if raw_root:
+        base = _resolve_user_path(raw_root, base=shared)
+        if not _is_under_allowed_roots(base, folders):
+            _refuse("workspace_root", base)
+    extras = [p for p in folders if p != shared]
+    raw_allowed = _parse_any_string_list(workspace_allowed_paths)
+    if raw_allowed:
+        narrowed: list[Path] = []
+        for item in raw_allowed:
+            p = _resolve_user_path(item, base=base)
+            if not _is_under_allowed_roots(p, folders):
+                _refuse("workspace_allowed_paths entry", p)
+            narrowed.append(p)
+        extras = narrowed
+    if mode == "workspace_only":
+        extras = []
+    outside = [p for p in extras if p.is_dir() and not _is_under_allowed_roots(p, [base])]
+    mounts = _mounts_from_allowed_paths(allowed_dirs=outside, used_names=set())
+    for item in _parse_any_string_list(workspace_ignored_paths):
+        blocked.append(_resolve_user_path(item, base=base))
+    return base, mounts, tuple(blocked), mode
+
+
+def _request_workspace_scope(req: Any, principal: Optional["GatewayPrincipal"]) -> tuple[Path, Dict[str, Path], tuple[Path, ...], str]:
+    return _files_scope(
+        principal,
         workspace_root=getattr(req, "workspace_root", None),
         workspace_access_mode=getattr(req, "workspace_access_mode", None),
         workspace_allowed_paths=getattr(req, "workspace_allowed_paths", None),
         workspace_ignored_paths=getattr(req, "workspace_ignored_paths", None),
     )
-    return base, mounts, tuple(list(blocked_default) + list(blocked)), mode
 
 
 def _resolve_request_workspace_path(
@@ -10386,12 +10221,6 @@ def _browse_workspace_root(svc: Any, principal: GatewayPrincipal, run: Any) -> t
     is_blocked = the operator's deny lists + the built-in deny list + the
     whole gateway data folder, except inside the run's own gateway-made
     folder (workspace_browse.deny_check) — applied to every entry and read."""
-    from ..runtime_config import (
-        resolve_client_workspace_scope_overrides_enabled,
-        resolve_trust_client_launch_folder,
-        resolve_user_workspace_mode,
-        resolve_user_workspace_paths,
-    )
     from ..workspace_browse import deny_check
 
     vars_obj = getattr(run, "vars", None)
@@ -10401,10 +10230,8 @@ def _browse_workspace_root(svc: Any, principal: GatewayPrincipal, run: Any) -> t
         raise HTTPException(status_code=409, detail="this run has no workspace folder")
     root = _resolve_user_path(raw_root, base=_workspace_root())
     data_dir = gateway_data_dir_from_env()
-    tenant_id = str(getattr(principal, "tenant_id", "") or "") or None
-    user_id = str(getattr(principal, "user_id", "") or "") or None
-    user_allowed, user_blocked = resolve_user_workspace_paths(data_dir, tenant_id=tenant_id, user_id=user_id)
-    blocked_roots = list(_workspace_blocked_roots()) + list(user_blocked)
+    folders, never_gateway, _builtin, trust_launch_folder = _principal_effective_folders(principal)
+    blocked_roots = list(never_gateway)
     data_root = data_dir.expanduser().resolve()
     kind = _gateway_folder_kind(
         root, principal=principal, session_id=getattr(run, "session_id", None), recorded=vars_obj.get("_gateway_workspace")
@@ -10418,12 +10245,7 @@ def _browse_workspace_root(svc: Any, principal: GatewayPrincipal, run: Any) -> t
         )
     if kind is not None:
         return root, is_blocked, kind
-    allowed = (
-        resolve_client_workspace_scope_overrides_enabled(data_dir, tenant_id=tenant_id, user_id=user_id)
-        or resolve_trust_client_launch_folder(data_dir, tenant_id=tenant_id, user_id=user_id)
-        or resolve_user_workspace_mode(data_dir, tenant_id=tenant_id, user_id=user_id) == "blacklist"
-        or _is_under_allowed_roots(root, [_workspace_root(), *(_workspace_mounts().values()), *user_allowed])
-    )
+    allowed = trust_launch_folder or _is_under_allowed_roots(root, folders)
     if not allowed:
         raise HTTPException(
             status_code=403,
@@ -11101,7 +10923,7 @@ async def download_run_artifact_content(
 
 
 @router.post("/runs/{run_id}/artifacts/{artifact_id}/export")
-async def export_run_artifact_content(run_id: str, artifact_id: str, req: ArtifactExportRequest) -> Dict[str, Any]:
+async def export_run_artifact_content(request: Request, run_id: str, artifact_id: str, req: ArtifactExportRequest) -> Dict[str, Any]:
     """Export artifact bytes into the server workspace."""
     svc = get_gateway_service()
     rs = svc.host.run_store
@@ -11122,7 +10944,7 @@ async def export_run_artifact_content(run_id: str, artifact_id: str, req: Artifa
     if not raw_path:
         raise HTTPException(status_code=400, detail="path is required")
 
-    base, mounts, blocked, mode = _request_workspace_scope(req)
+    base, mounts, blocked, mode = _request_workspace_scope(req, _principal_from_request(request))
     resolved, virt, root = _resolve_request_workspace_path(
         raw_path=raw_path,
         base=base,
@@ -29394,9 +29216,37 @@ async def embeddings_config() -> Dict[str, Any]:
 
 
 @router.get("/workspace/policy")
-async def workspace_policy() -> Dict[str, Any]:
-    """Return the operator-configured server workspace policy (read-only, safe for thin clients)."""
-    return {"ok": True, "policy": _server_workspace_policy_public()}
+async def workspace_policy(request: Request) -> Dict[str, Any]:
+    """The GATEWAY workspace policy (round 9): {shared_workspace, allowed_folders, allow_any_folder,
+    never_allowed, launch_folder_trust, builtin_never_allowed, max_attachment_bytes}. Any signed-in
+    principal: an account needs the allowed folders' paths to switch them on."""
+    _principal_from_request(request)
+    from ..workspace_policy import gateway_policy
+
+    return {"ok": True, "policy": await _off_the_event_loop(gateway_policy, gateway_data_dir_from_env())}
+
+
+@router.put("/workspace/policy")
+async def workspace_policy_write(request: Request, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Admin: change the gateway workspace policy. Body = any subset of {shared_workspace,
+    allowed_folders, allow_any_folder, never_allowed, launch_folder_trust}; named fields replace,
+    unnamed keep. Old-model fields (access mode, "Any folder (old clients)", …) are refused by name."""
+    principal = _require_admin_principal(request)
+    from ..runtime_config import RuntimeConfigStoreCorrupt
+    from ..workspace_policy import WorkspacePolicyError, write_gateway_policy
+
+    body = dict(payload or {})
+    if isinstance(body.get("policy"), dict):
+        body = dict(body["policy"])
+    try:
+        out = await _off_the_event_loop(
+            write_gateway_policy, gateway_data_dir_from_env(), body, actor=_workspace_actor(principal)
+        )
+    except RuntimeConfigStoreCorrupt as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except WorkspacePolicyError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"ok": True, "policy": out}
 
 
 @router.post("/workspace/path-check")
@@ -29415,80 +29265,100 @@ async def workspace_path_check(request: Request, payload: Dict[str, Any]) -> Dic
     return out
 
 
-@router.get("/workspace/policy/self")
-async def workspace_policy_self(request: Request) -> Dict[str, Any]:
-    """The CALLER's own workspace policy: their stored per-user entry plus
-    the effective posture after inheritance. User-level by design — every
-    principal may read their own policy."""
+def _workspace_actor(principal: Any) -> str:
+    uid = str(getattr(principal, "user_id", "") or "")
+    return f"person:{uid}" if uid else "person:operator"
+
+
+def _workspace_policy_target(request: Request, account: str) -> tuple[Any, str, str]:
+    """(principal, tenant, user) for /workspace/{policy,effective}/{account}: `me` = the caller;
+    otherwise the admin, or the account itself. The target must be an existing account."""
     principal = _principal_from_request(request)
-    from ..runtime_config import read_user_workspace_policy
-
-    out = read_user_workspace_policy(
-        gateway_data_dir_from_env(),
-        tenant_id=principal.tenant_id,
-        user_id=principal.user_id,
-    )
-    out["ok"] = True
-    return out
-
-
-@router.put("/workspace/policy/self")
-async def workspace_policy_self_write(request: Request, payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Self-service write of the caller's OWN policy (operator clarification
-    2026-08-19: each user decides their posture — mode whitelist/blacklist,
-    launch-folder trust, and their allow/deny lists). This route can only
-    ever touch the caller's own entry; the gateway-wide posture and other
-    users' entries stay behind the admin-gated runtime-config route.
-
-    Body: any of {mode, trust_client_launch_folder, workspace_allowed_paths,
-    workspace_blocked_paths}; null/{} clears the entry back to inherited."""
-    principal = _principal_from_request(request)
-    from ..runtime_config import (
-        RuntimeConfigError,
-        RuntimeConfigStoreCorrupt,
-        write_user_workspace_policy,
-    )
-
-    # Tolerate the wrapper AND the bare-entry shape ({"policy": null} and
-    # bare {} both clear); strip non-entry keys.
-    if "policy" in (payload or {}):
-        raw_policy = payload.get("policy")
-        policy = dict(raw_policy) if isinstance(raw_policy, dict) else {}
-    else:
-        policy = dict(payload or {})
-    policy.pop("ok", None)
-    if "client_workspace_scope_overrides" in policy:
-        # The full-scoping grant is operator-classed — self-service refuses
-        # it loudly (never silently drops it); the admin lane can set it.
+    raw = str(account or "").strip()
+    if raw == "me":
+        return principal, str(principal.tenant_id or "default"), str(principal.user_id or "") or "admin"
+    if raw == "self":
         raise HTTPException(
-            status_code=400,
-            detail=(
-                "client_workspace_scope_overrides is an admin-only grant — ask a gateway "
-                "admin to set it in the console settings. Self-service accepts: mode, "
-                "trust_client_launch_folder, workspace_allowed_paths, workspace_blocked_paths."
-            ),
+            status_code=410,
+            detail="/workspace/policy/self was removed with the old workspace model; use /workspace/policy/me "
+            "({enabled_folders, own_folders}) and /workspace/effective/me",
         )
+    from ..workspace_policy import WorkspacePolicyError, parse_account
+
     try:
-        out = write_user_workspace_policy(
+        tenant, user = parse_account(raw)
+    except WorkspacePolicyError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    is_self = tenant == str(principal.tenant_id or "default") and user == str(principal.user_id or "")
+    if not is_self and not principal.is_admin():
+        raise HTTPException(status_code=403, detail="Only an admin or the account itself may see or change its workspace folders")
+    tenant, user = _resolve_policy_target_user(tenant, user)
+    return principal, tenant, user
+
+
+def _account_policy_answer(tenant: str, user: str) -> Dict[str, Any]:
+    from ..workspace_policy import account_policy, effective_policy, gateway_policy
+
+    data_dir = gateway_data_dir_from_env()
+    return {
+        "ok": True,
+        "policy": account_policy(data_dir, tenant_id=tenant, user_id=user),
+        "gateway": gateway_policy(data_dir),
+        "effective": effective_policy(data_dir, tenant_id=tenant, user_id=user),
+    }
+
+
+@router.get("/workspace/policy/{account}")
+async def workspace_account_policy(request: Request, account: str) -> Dict[str, Any]:
+    """ONE account's workspace policy {account, enabled_folders, own_folders} with the gateway policy
+    and the effective set. Admin, or the account itself (`me`)."""
+    _principal, tenant, user = _workspace_policy_target(request, account)
+    return await _off_the_event_loop(_account_policy_answer, tenant, user)
+
+
+@router.put("/workspace/policy/{account}")
+async def workspace_account_policy_write(request: Request, account: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Change ONE account's folders. Body = any subset of {enabled_folders (subset of the gateway's
+    allowed folders), own_folders (only while the admin allows any folder)}. Admin, or the account itself."""
+    principal, tenant, user = _workspace_policy_target(request, account)
+    from ..runtime_config import RuntimeConfigStoreCorrupt
+    from ..workspace_policy import WorkspacePolicyError, write_account_policy
+
+    body = dict(payload or {})
+    if isinstance(body.get("policy"), dict):
+        body = dict(body["policy"])
+    try:
+        await _off_the_event_loop(
+            write_account_policy,
             gateway_data_dir_from_env(),
-            tenant_id=principal.tenant_id,
-            user_id=principal.user_id,
-            policy=policy or None,
-            actor=f"person:{principal.user_id}",
-            # A self-save must never erase the admin-classed grant on the
-            # same entry (the write replaces the whole entry otherwise).
-            preserve_fields=("client_workspace_scope_overrides",),
+            tenant_id=tenant,
+            user_id=user,
+            changes=body,
+            actor=_workspace_actor(principal),
         )
     except RuntimeConfigStoreCorrupt as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except RuntimeConfigError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except WorkspacePolicyError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    _audit_account_change(request, user_id=user, tenant_id=tenant, changes={"workspace_folders": sorted(body)})
+    return await _off_the_event_loop(_account_policy_answer, tenant, user)
+
+
+@router.get("/workspace/effective/{account}")
+async def workspace_effective(request: Request, account: str) -> Dict[str, Any]:
+    """What this account's agents may use, computed by the gateway (the set every run start and
+    the tool sandbox enforce): shared workspace first, then switched-on extras, then own folders."""
+    _principal, tenant, user = _workspace_policy_target(request, account)
+    from ..workspace_policy import effective_policy
+
+    out = await _off_the_event_loop(effective_policy, gateway_data_dir_from_env(), tenant_id=tenant, user_id=user)
     out["ok"] = True
     return out
 
 
 @router.get("/files/list")
 async def files_list(
+    request: Request,
     path: str = Query("", description="Workspace-relative folder path (or mounted folder path). Leave empty to browse the workspace root."),
     recursive: bool = Query(False, description="When true, recurse into subfolders."),
     include_directories: bool = Query(True, description="When true, include folders in the result list."),
@@ -29503,24 +29373,13 @@ async def files_list(
     workspace_ignored_paths: Optional[str] = Query(None, description="Newline-separated ignored paths (blocked)."),
 ) -> Dict[str, Any]:
     """List workspace entries for server-file/folder browsing."""
-    base_default = _workspace_root()
-    mounts_default = _workspace_mounts()
-    base = base_default
-    mounts = mounts_default
-    blocked: tuple[Path, ...] = _server_file_blocked_roots()
-    mode = "workspace_only"
-
-    if _client_workspace_scope_overrides_enabled():
-        has_scope = bool(str(workspace_root or "").strip() or str(workspace_access_mode or "").strip() or str(workspace_allowed_paths or "").strip() or str(workspace_ignored_paths or "").strip())
-        if has_scope:
-            base, mounts, scoped_blocked, mode = _effective_workspace_scope(
-                default_base=base_default,
-                workspace_root=workspace_root,
-                workspace_access_mode=workspace_access_mode,
-                workspace_allowed_paths=workspace_allowed_paths,
-                workspace_ignored_paths=workspace_ignored_paths,
-            )
-            blocked = tuple(list(blocked) + list(scoped_blocked))
+    base, mounts, blocked, mode = _files_scope(
+        _principal_from_request(request),
+        workspace_root=workspace_root,
+        workspace_access_mode=workspace_access_mode,
+        workspace_allowed_paths=workspace_allowed_paths,
+        workspace_ignored_paths=workspace_ignored_paths,
+    )
 
     try:
         folder_path, items, truncated = await asyncio.to_thread(
@@ -29548,6 +29407,7 @@ async def files_list(
 
 @router.get("/files/search")
 async def files_search(
+    request: Request,
     query: str = Query(..., description="Case-insensitive substring match on file path/name."),
     limit: int = Query(20, ge=1),  # no ceiling (over-large asks are served, not 422'd)
     workspace_root: Optional[str] = Query(None, description="Optional workspace root override for this search."),
@@ -29566,24 +29426,13 @@ async def files_search(
     if not q:
         return {"items": []}
 
-    base_default = _workspace_root()
-    mounts_default = _workspace_mounts()
-    base = base_default
-    mounts = mounts_default
-    blocked: tuple[Path, ...] = _server_file_blocked_roots()
-
-    if _client_workspace_scope_overrides_enabled():
-        # Opt-in scoped search: allow the UI to drive workspace_* for local/dev flows.
-        has_scope = bool(str(workspace_root or "").strip() or str(workspace_access_mode or "").strip() or str(workspace_allowed_paths or "").strip() or str(workspace_ignored_paths or "").strip())
-        if has_scope:
-            base, mounts, scoped_blocked, _mode = _effective_workspace_scope(
-                default_base=base_default,
-                workspace_root=workspace_root,
-                workspace_access_mode=workspace_access_mode,
-                workspace_allowed_paths=workspace_allowed_paths,
-                workspace_ignored_paths=workspace_ignored_paths,
-            )
-            blocked = tuple(list(blocked) + list(scoped_blocked))
+    base, mounts, blocked, mode = _files_scope(
+        _principal_from_request(request),
+        workspace_root=workspace_root,
+        workspace_access_mode=workspace_access_mode,
+        workspace_allowed_paths=workspace_allowed_paths,
+        workspace_ignored_paths=workspace_ignored_paths,
+    )
 
     try:
         # Index build can be slow on large workspaces; keep async endpoints responsive.
@@ -29628,6 +29477,7 @@ async def files_search(
 
 @router.get("/files/read")
 async def files_read(
+    request: Request,
     path: str = Query(..., description="Workspace-relative path (preferred) or absolute path under workspace root."),
     start_line: int = Query(1, ge=1),
     end_line: Optional[int] = Query(None, ge=1),
@@ -29640,24 +29490,13 @@ async def files_read(
 
     Uses Gateway's workspace helper implementation (including `.abstractignore`).
     """
-    base_default = _workspace_root()
-    mounts_default = _workspace_mounts()
-    base = base_default
-    mounts = mounts_default
-    blocked: tuple[Path, ...] = _server_file_blocked_roots()
-    mode = "workspace_only"
-
-    if _client_workspace_scope_overrides_enabled():
-        has_scope = bool(str(workspace_root or "").strip() or str(workspace_access_mode or "").strip() or str(workspace_allowed_paths or "").strip() or str(workspace_ignored_paths or "").strip())
-        if has_scope:
-            base, mounts, scoped_blocked, mode = _effective_workspace_scope(
-                default_base=base_default,
-                workspace_root=workspace_root,
-                workspace_access_mode=workspace_access_mode,
-                workspace_allowed_paths=workspace_allowed_paths,
-                workspace_ignored_paths=workspace_ignored_paths,
-            )
-            blocked = tuple(list(blocked) + list(scoped_blocked))
+    base, mounts, blocked, mode = _files_scope(
+        _principal_from_request(request),
+        workspace_root=workspace_root,
+        workspace_access_mode=workspace_access_mode,
+        workspace_allowed_paths=workspace_allowed_paths,
+        workspace_ignored_paths=workspace_ignored_paths,
+    )
 
     resolved, virt, root = _resolve_request_workspace_path(
         raw_path=path,
@@ -29679,6 +29518,7 @@ async def files_read(
 
 @router.get("/files/skim")
 async def files_skim(
+    request: Request,
     path: str = Query(..., description="Workspace-relative path (preferred) or absolute path under workspace root."),
     target_percent: float = Query(8.0, ge=1.0, le=25.0, description="Percent of lines to sample (default 8)."),
     head_lines: int = Query(25, ge=0, description="Max lines sampled from the start (default 25). No ceiling."),
@@ -29692,24 +29532,13 @@ async def files_skim(
 
     Uses Gateway's workspace helper implementation (including `.abstractignore`).
     """
-    base_default = _workspace_root()
-    mounts_default = _workspace_mounts()
-    base = base_default
-    mounts = mounts_default
-    blocked: tuple[Path, ...] = _server_file_blocked_roots()
-    mode = "workspace_only"
-
-    if _client_workspace_scope_overrides_enabled():
-        has_scope = bool(str(workspace_root or "").strip() or str(workspace_access_mode or "").strip() or str(workspace_allowed_paths or "").strip() or str(workspace_ignored_paths or "").strip())
-        if has_scope:
-            base, mounts, scoped_blocked, mode = _effective_workspace_scope(
-                default_base=base_default,
-                workspace_root=workspace_root,
-                workspace_access_mode=workspace_access_mode,
-                workspace_allowed_paths=workspace_allowed_paths,
-                workspace_ignored_paths=workspace_ignored_paths,
-            )
-            blocked = tuple(list(blocked) + list(scoped_blocked))
+    base, mounts, blocked, mode = _files_scope(
+        _principal_from_request(request),
+        workspace_root=workspace_root,
+        workspace_access_mode=workspace_access_mode,
+        workspace_allowed_paths=workspace_allowed_paths,
+        workspace_ignored_paths=workspace_ignored_paths,
+    )
 
     resolved, virt, root = _resolve_request_workspace_path(
         raw_path=path,
@@ -29735,7 +29564,7 @@ async def files_skim(
 
 
 @router.post("/artifacts/import")
-async def import_artifact(req: ArtifactImportRequest) -> Dict[str, Any]:
+async def import_artifact(request: Request, req: ArtifactImportRequest) -> Dict[str, Any]:
     """Import a server-workspace file into the session-scoped ArtifactStore."""
     svc = get_gateway_service()
 
@@ -29750,7 +29579,7 @@ async def import_artifact(req: ArtifactImportRequest) -> Dict[str, Any]:
     if not raw_path:
         raise HTTPException(status_code=400, detail="path is required")
 
-    base, mounts, blocked, mode = _request_workspace_scope(req)
+    base, mounts, blocked, mode = _request_workspace_scope(req, _principal_from_request(request))
     resolved, virt, root = _resolve_request_workspace_path(
         raw_path=raw_path,
         base=base,
@@ -29810,7 +29639,7 @@ async def import_artifact(req: ArtifactImportRequest) -> Dict[str, Any]:
 
 
 @router.post("/attachments/ingest")
-async def attachments_ingest(req: AttachmentIngestRequest) -> Dict[str, Any]:
+async def attachments_ingest(request: Request, req: AttachmentIngestRequest) -> Dict[str, Any]:
     """Ingest a workspace file as an artifact-backed attachment.
 
     This is a write path for attachments that preserves durability:
@@ -29826,7 +29655,7 @@ async def attachments_ingest(req: AttachmentIngestRequest) -> Dict[str, Any]:
     if not sid:
         raise HTTPException(status_code=400, detail="session_id is required")
 
-    base, mounts, blocked, mode = _request_workspace_scope(req)
+    base, mounts, blocked, mode = _request_workspace_scope(req, _principal_from_request(request))
     resolved, virt, root = _resolve_request_workspace_path(
         raw_path=str(req.path or ""),
         base=base,

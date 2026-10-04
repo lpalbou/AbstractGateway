@@ -105,10 +105,11 @@ USER_LEVEL_WRITES: set[tuple[str, str]] = {
     # A polite dequeue of the CALLER from a queue it joined (interaction
     # surface, same class as chat/visit/summon).
     ("POST", "/api/gateway/entities/{name}/queue/{queue_id}/leave"),
-    # The caller's OWN workspace policy. Its GET sibling is documented
-    # "user-level by design — every principal may read their own policy"; the
-    # PUT writes that same per-user entry and nobody else's.
-    ("PUT", "/api/gateway/workspace/policy/self"),
+    # ONE account's workspace folders (round 9). The handler resolves the
+    # target and refuses (403) anyone but an admin or the account itself
+    # (`me` = the caller); the write can only switch on folders the admin
+    # allowed and add own folders while the admin allows any folder.
+    ("PUT", "/api/gateway/workspace/policy/{account}"),
     # The Workspaces page's folder check (round 8): a READ despite the POST —
     # it mutates nothing and answers whether ONE typed path is an absolute,
     # existing folder (the same rule every policy write enforces). Any

@@ -404,6 +404,10 @@ def test_files_search_and_read_use_deterministic_collision_mount_aliases(tmp_pat
     second_alias = next(name for name, path in mounts.items() if path == second.resolve())
 
     with client:
+        # Round 9: the admin allows both folders and switches them on for its own account.
+        both = [str(first.resolve()), str(second.resolve())]
+        assert client.put("/api/gateway/workspace/policy", json={"allowed_folders": both}, headers=headers).status_code == 200
+        assert client.put("/api/gateway/workspace/policy/me", json={"enabled_folders": both}, headers=headers).status_code == 200
         params = {
             "query": ".txt",
             "limit": 20,

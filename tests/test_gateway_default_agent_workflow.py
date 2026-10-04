@@ -413,7 +413,7 @@ def test_concurrent_writers_never_lose_a_change(tmp_path: Path) -> None:
 
     data_dir = tmp_path / "data"
     keys = [("operator_email", "a@b.c"), ("stop_kill_switch_s", 3), ("executor", "claude"),
-            ("workspace_default_mode", "blacklist"), ("allow_engine_install", True), ("trust_client_launch_folder", False)]
+            ("process_manager", True), ("allow_engine_install", True), ("workspace_builtin_deny", False)]
     errors: list = []
 
     def save(k, v):
