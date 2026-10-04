@@ -497,3 +497,79 @@ def test_no_old_keys_means_no_migration_write(tmp_path: Path) -> None:
     assert ensure_migrated(data) is False
     gateway_policy(data)
     assert _read_store(data) == {"executor": "codex"}
+
+
+def test_the_most_specific_rule_and_a_deny_above_it(tmp_path: Path) -> None:
+    from abstractgateway.workspace_policy import _rule
+
+    a = tmp_path / "a"
+    (a / "b" / "c").mkdir(parents=True)
+    rows = [{"path": str(a / "b"), "mode": "rw"}, {"path": str(a), "mode": "ro"}]
+    assert _rule(rows, a / "b" / "c") == "rw" and _rule(rows, a / "x") == "ro" and _rule(rows, tmp_path) is None
+    # A store that reached a nested state (e.g. through the migration): nothing re-opens under a deny.
+    assert _rule([{"path": str(a), "mode": "deny"}, {"path": str(a / "b"), "mode": "rw"}], a / "b" / "c") == "deny"
+
+
+def test_the_shared_workspace_is_always_reachable_read_write(f: dict, tmp_path: Path) -> None:
+    from abstractgateway.routes.gateway import _sanitize_run_workspace_policy
+
+    sub = Path(f["shared"]) / "deliverables"
+    sub.mkdir()
+    with _client() as c:
+        _gateway(c, f, folders=[])
+        assert _sanitize_run_workspace_policy({"workspace_root": str(sub)}, principal=_P("admin"))["workspace_root"] == str(sub)
+        _put(c, {"posture": "any_except_denied", "default_mode": "ro"})
+        eff = c.get("/api/gateway/workspace/effective/me").json()
+        assert eff["folders"][0] == {"path": f["shared"], "mode": "rw", "source": "shared"}
+    from abstractgateway.workspace_policy import effective_folder_paths
+
+    assert effective_folder_paths(_data(tmp_path), tenant_id="default", user_id="admin").mode(sub / "x.txt") == "rw"
+
+
+def test_an_account_default_read_only_binds_its_runs(f: dict, tmp_path: Path) -> None:
+    from abstractgateway.run_workspace_guard import apply_workspace_policy
+
+    with _client() as c:
+        _gateway(c, f, posture="any_except_denied", default_mode="rw", folders=[])
+        alice = _user("alice")
+        assert c.put("/api/gateway/workspace/policy/me", json={"default_mode": "ro"}, headers=alice).status_code == 200
+    session = tmp_path / "session"
+    session.mkdir()
+    for who, writable in (("alice", False), ("admin", True)):
+        v = {"workspace_root": str(session)}
+        apply_workspace_policy(v, root_data_dir=_data(tmp_path), tenant_id="default", user_id=who)
+        scope = _scope(v)
+        _write(scope, session / "own.txt")
+        if writable:
+            _write(scope, Path(f["notes"]) / "x.txt")
+        else:
+            with pytest.raises(ValueError, match="read-only"):
+                _write(scope, Path(f["notes"]) / "x.txt")
+
+
+def test_a_client_cannot_reopen_a_host_read_only_mount(f: dict, tmp_path: Path) -> None:
+    """A discussion's automation workspace is mounted read-only by the host; a client-sent
+    `workspace_writable_paths` naming it is dropped, so it stays read-only."""
+    from abstractgateway.run_workspace_guard import apply_workspace_policy
+
+    session = tmp_path / "session"
+    session.mkdir()
+    with _client() as c:
+        _gateway(c, f, folders=[{"path": f["notes"], "mode": "rw"}])
+        v = {
+            "workspace_root": str(session),
+            "_runtime": {"workspace_read_only_paths": [f["notes"]], "workspace_writable_paths": [f["notes"]]},
+            "workspace_writable_paths": [f["notes"]],
+        }
+        apply_workspace_policy(v, root_data_dir=_data(tmp_path), tenant_id="default", user_id="admin")
+        assert "workspace_writable_paths" not in v and "workspace_writable_paths" not in v["_runtime"]
+        with pytest.raises(ValueError, match="read-only"):
+            _write(_scope(v), Path(f["notes"]) / "x.txt")
+        # With read-only rows the host sets its own exceptions; a rw row equal to the host mount
+        # still does not reopen it (read-only wins on a tie, AbstractRuntime).
+        _put(c, {"folders": [{"path": f["notes"], "mode": "rw"}, {"path": f["archive"], "mode": "ro"}]})
+        v = {"workspace_root": str(session), "_runtime": {"workspace_read_only_paths": [f["notes"]]}}
+        apply_workspace_policy(v, root_data_dir=_data(tmp_path), tenant_id="default", user_id="admin")
+        assert f["notes"] in v["workspace_writable_paths"]
+        with pytest.raises(ValueError, match="read-only"):
+            _write(_scope(v), Path(f["notes"]) / "x.txt")
