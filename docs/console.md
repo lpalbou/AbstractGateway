@@ -33,10 +33,11 @@ The sidebar groups the tabs in four sections, in this order:
 
 | Group | Tab | What it covers |
 |---|---|---|
-| Accounts | **Accounts** | every user and entity in one table: the **Active** switch, email, activity (Logs), workspace policy, token rotation, entity management, and the administrator's **Email for everyone** switches ([below](#accounts)) |
+| Accounts | **Accounts** | every user and entity in one table: the **Active** switch, email, a link to each account's runtimes, activity (Logs), token rotation, entity management, and the administrator's **Email for everyone** switches ([below](#accounts)) |
+| Accounts | **Workspaces** | which folders agents may read and write: the gateway policy and each account's own policy ([below](#workspaces)) |
 | Work | **Workflows** | the workflow bundles on this gateway, shared by the gateway or your own (name, what each does, version, source, the apps that use it, availability to users), import, export, open in AbstractFlow, archive, the default workflow for each app and the **Streamed replies** setting ([below](#workflows)) |
 | Work | **Skills & MCP** | administrators: **Skills** — the skills shelf setting and every skill (curated and imported, **Show archived**) with View, Export and Archive, import a `.zip` or folder, Duplicate to edit a curated one; **MCP servers** — whether agents are offered tools, an **Enabled for agents** switch per server, add, edit, test and archive ([configuration.md](./configuration.md#skills-shelf)) |
-| Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches |
+| Work | **Runtimes** | execution planes: runs (cancel, steer), sessions, data and caches; `#runtimes?account=<id>` lists one account's runtimes ([below](#runtimes-of-one-account)) |
 | Work | **Apps** | the browser apps, Code's terminal app and the desktop Assistant (below), no settings disclosures: the toolbar gear opens **Apps settings** and the gear beside Continuum's Open opens **Continuum settings** (backlog folder, exec runner, process manager), each a dialog whose rows apply on their own |
 | Models | **Providers** | **Local providers**: one card per local engine on the gateway host (Ollama, LM Studio, MLX, llama.cpp, Hugging Face, vLLM) with its status, install, start, stop, **Browse models** and its server connection; **Remote providers**: OpenAI, Anthropic, OpenRouter, Portkey and custom OpenAI-compatible connections with write-only keys (shown as fingerprints); then the **Available Providers** table ([below](#models-and-local-providers)) |
 | Models | **OpenAI API** | the OpenAI-compatible API at `/v1`: status with Endpoint switch, Restart and Check setup; the base URL and your API key (your gateway token); Authentication and Who can connect, applied at once; supported surface and snippets; recent requests ([openai-api.md](./openai-api.md)) |
@@ -119,19 +120,19 @@ from a spark template (its name is permanent, [entities.md](./entities.md)).
 | Column | Shows |
 |---|---|
 | **Name** | the account id and a kind chip: **Admin**, **User** or **Entity** (hover it for the role) |
-| **Email address** | where the account's sign-in codes and notifications go: the registered email address, else the account's own connected mailbox address; "No address" when it has neither |
-| **Mailbox** | "Connected as x@y", "Receive only — no outgoing server" (with the reason under it), "Not connected" or "Paused" (users and entities alike: an entity has its own mailbox) |
-| **Runtime** | the account's runtime id (plain text that wraps), or "No runtime" |
+| **Email** | the account's address and its mailbox state in one line: `alice@example.org · connected`, `· not connected`, `· receive only` (with the reason under it) or `· paused`; "No address" when the account has neither a registered address nor a connected mailbox (users and entities alike: an entity has its own mailbox) |
+| **Runtime** | the account's runtime id as a link to the Runtimes page filtered to that account (administrators; plain text for everyone else), or "No runtime" |
 | **Active** | the switch described below; "Archived" on an archived row |
-| **Actions** | users: **OpenAI API** (administrators), **Email**, **Logs**, **Workspace** and a "⋯" menu (**Rotate token**, **Archive**); entities: **Email**, **Logs**, **Manage** and a "⋯" menu (**Archive**); archived rows: **Logs** and a "⋯" menu (**Unarchive**) |
+| **Actions** | icon buttons, each with a tooltip: users **Email**, **OpenAI API**, **Logs**, **Workspace**, **Rotate token**, **Archive**; entities **Email**, **Logs**, **Manage**, **Archive**; archived rows **Logs**, **Unarchive** |
 
 Rows are tinted by kind (a legend under the table reads "Tint: admin · user ·
 entity"). Only the actions that apply to a row are shown: your own row has no
-**Archive**, and an entity has no **Rotate token** (hover the "⋯" button for
-why). The table never scrolls sideways: long names and addresses wrap, and when
-the table does not fit (narrow windows, tablets, phones) each account becomes
-one flat block: name, kind chip and Active, then the address and mailbox, then
-the runtime, then the actions.
+**Archive**, an entity has no token to rotate and no **Workspace** (its folders
+are set in **Manage**). The action buttons are 44 px targets; hover or focus
+one to read its name. The table never scrolls sideways: long names and
+addresses wrap, and below about 900 px of window width each account becomes
+one flat block: name, kind chip and Active, then the email line, then the
+runtime, then the actions, which wrap.
 
 **Show archived** (administrators, above the table) lists archived accounts too;
 it is off by default and your browser remembers it.
@@ -171,10 +172,11 @@ it is off by default and your browser remembers it.
   "Test notification"). The footer says what the audit log does not
   record (page views and reads, mail received, what agents send with their
   email tools).
-- **Workspace** (users) opens the account's workspace policy (which folders its
-  agents may read and write).
-- **Rotate token** issues a new token for a user (the old one stops working at
-  once; the new one is shown once). Entities have no token to rotate.
+- **Workspace** (users) opens the [Workspaces](#workspaces) page on that
+  account's row (`#workspaces?account=<id>`).
+- **Rotate token** asks in a row under the account ("Rotate the token of
+  alice? The current token stops working now; the new one is shown once."),
+  then issues the new token and shows it once. Entities have no token to rotate.
 - **Manage** (entities) opens the entity's lifecycle, mind and voice,
   capabilities and prompt; **Talk** is there too. **Mind & voice** uses the
   shared pickers: **Gateway default** (the gateway's text model and default
@@ -188,8 +190,8 @@ it is off by default and your browser remembers it.
 
 Under the table, **Email for everyone** (administrators) holds the switch
 three switches, directly in the card: **Mailboxes for users**, **Agent email
-tools for users** and **Sign-in by email** ([email.md](./email.md#administrators)). Below the page,
-**Workspace policy** is your own workspace policy.
+tools for users** and **Sign-in by email** ([email.md](./email.md#administrators)). Workspace
+policies live on their own page, [Workspaces](#workspaces).
 
 Someone who is not an administrator sees the page as **Your account** ("Your
 account and the entities you created."): the same table with their own row and
@@ -199,6 +201,58 @@ Create user and no Email for everyone; their own row has no **Rotate token**
 unarchive it, and an entity's Active switch says "Only an admin can suspend an
 entity." Archived accounts are not listed for them. See [security.md](./security.md#who-sees-which-account).
 
+
+### Workspaces
+
+**Workspaces** (right after Accounts in the sidebar) decides which folders
+agents may read and write. A line at the top sums up what applies, for
+example "Agents may use only 2 allowed folders and the folder they start in;
+1 folder refused. 1 account has its own policy."
+
+Every change applies at once; there is no Save button. A folder row applies
+when you leave the field (or press Enter): the gateway first checks the path
+(`POST /api/gateway/workspace/path-check`) and says in a sentence why it
+cannot be used ("Use a full path that starts with / …", "No folder at this
+path on the gateway's computer.", "This is a file, not a folder."); such a
+row is not saved. A saved row shows "Saved" for a moment. Escape restores the
+row's saved value.
+
+**Gateway policy** (administrators) applies to every account that has no
+policy of its own:
+
+| Control | What it does |
+|---|---|
+| **Access** | **Allow my list**: agents use only the allowed folders; **Allow everything except**: agents use any folder except the refused ones |
+| **Launch-folder trust** | agents may also use the folder they were started from |
+| **Allowed folders** | rows of folders every account may use (**Add folder**, the remove icon on each row) |
+| **Refused folders** | rows of folders no agent may ever use, in either mode |
+| **Default folder** | where a run starts when the app names no folder; empty = the gateway's own folder |
+| **Any folder (old clients)** | lets older clients name any folder; the rules above stop applying |
+
+**Per-account policies** lists every user with a one-line summary and an
+**Own policy** switch. Turning it on gives the account its own policy, starting
+from the gateway's access mode and trust; the same controls then appear under
+the account (its allowed folders add to the gateway's, its refused folders add
+to the gateway's). Turning it off asks first ("Drop bob's own policy? Their
+agents follow the gateway policy again."). Entities' folders are set in
+**Manage**. The link `#workspaces?account=<id>` opens the page on that
+account's row.
+
+Someone who is not an administrator sees **Your policy** only: the same
+**Own policy** switch and controls for their own account
+(`/api/gateway/workspace/policy/self`), and the summary of what applies to
+them. The gateway's refused folders always apply. See
+[configuration.md](./configuration.md) for the underlying settings.
+
+### Runtimes of one account
+
+The Runtime link on an Accounts row opens **Runtimes** at
+`#runtimes?account=<id>` (`GET /api/gateway/admin/runtimes?account=<id>`): a
+chip "Account: alice" names the filter, only that account's runtimes are
+listed, and a single runtime opens at once. The link survives a reload; the
+× on the chip shows every runtime again. The **Workspace** column links each
+runtime to its policy on the Workspaces page ("Gateway policy" or "Own
+policy").
 
 ### Workflows
 
