@@ -498,6 +498,29 @@ def spawn_detached(argv: Sequence[str], *, env: Dict[str, str], log_path: Option
                 pass
 
 
+def quit_process(pid: int, *, timeout: float = 10.0) -> bool:
+    """Ask a process to quit (SIGTERM; the Qt app closes cleanly), wait for
+    it, force it after `timeout`. True when it is gone."""
+    try:
+        import psutil
+
+        proc = psutil.Process(int(pid))
+        proc.terminate()
+        try:
+            proc.wait(timeout=timeout)
+        except psutil.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+        return True
+    except Exception:  # noqa: BLE001 - already gone, or not ours to stop
+        try:
+            import psutil
+
+            return not psutil.pid_exists(int(pid))
+        except Exception:  # noqa: BLE001
+            return False
+
+
 def wait_launch(proc: Any, *, seconds: float = LAUNCH_CHECK_S, sleep: Callable[[float], None] = time.sleep) -> Optional[int]:
     """None while it keeps running (or exited 0: `open -a` returns at once),
     else its non-zero exit code."""

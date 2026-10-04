@@ -261,10 +261,16 @@ def apps_install(request: Request, app_id: str, payload: Optional[AppInstallRequ
 
 @router.post("/{app_id}/update")
 def apps_update(request: Request, app_id: str, payload: Optional[AppUpdateRequest] = None):
-    _admin(request)
+    """Update an app to its newest published version (npm for a browser app,
+    PyPI for the Assistant) as a job; a running copy the gateway started
+    restarts on it (the Assistant reopens signed in as the caller)."""
+    principal = _admin(request)
     body = payload or AppUpdateRequest()
     try:
-        job, created = get_apps_manager().start_install(app_id, version=body.version, update=True, same_machine=_same_machine(request))
+        job, created = get_apps_manager().start_install(
+            app_id, version=body.version, update=True, same_machine=_same_machine(request),
+            principal=principal if is_desktop_app(app_id) else None,
+        )
     except AppsError as exc:
         return _error(exc)
     return _job_payload(job, created)

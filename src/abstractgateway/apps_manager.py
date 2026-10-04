@@ -64,6 +64,8 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
 
+_UNSET: Any = object()  # "not given" for optional arguments where None is a value
+
 NODE_MIN_MAJOR = 18
 MANAGED_NODE_MAJOR = 24  # the Node LTS line the gateway installs for the user
 NODE_WHEEL_PROJECT = "nodejs-wheel-binaries"
@@ -409,6 +411,26 @@ def version_newer(candidate: Any, current: Any) -> bool:
     if a is None or b is None:
         return False
     return a > b
+
+
+# R10.6: the words of an available update, the SAME in the web console (button
+# label + kit tooltip) and the terminal console (verb label + confirmation):
+# the row carries them, no console composes its own.
+EXTERNAL_UPDATE_SENTENCE = "Started outside the gateway — update it where it was installed"
+
+
+def quit_to_run_sentence(version: Any) -> str:
+    return f"Quit it and open it again to run {version}"
+
+
+def update_offer(name: str, latest: Optional[str], *, restarts: bool = True) -> Tuple[str, str]:
+    """(label, tooltip) of the Update action. `restarts` False: a running copy
+    the gateway did not start is left alone, and the tooltip says what to do."""
+    label = f"Update to {latest}" if latest else "Update"
+    newest = f"Install the newest {name} ({latest or 'latest'})"
+    if restarts:
+        return label, f"{newest}; a running app restarts on it"
+    return label, f"{newest}. {quit_to_run_sentence(latest or 'it')}"
 
 
 def verify_sri(data_sha512: bytes, integrity: str) -> bool:
@@ -1776,8 +1798,14 @@ class AppsManager:
         self.desktop_has_pip: Callable[[], bool] = lambda: importlib.util.find_spec("pip") is not None
         self.desktop_spawner: Callable[..., Any] = _desk.spawn_detached
         self.desktop_wait: Callable[[Any], Optional[int]] = _desk.wait_launch
+        self.desktop_quit: Callable[[int], bool] = _desk.quit_process
         self.desktop_python: str = sys.executable
         self._desktop_cache: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+        # R10.6: the process id of the desktop app THIS gateway started (an
+        # update quits and reopens only that one), and a running copy an
+        # update left alone: (pid, the installed version) while that pid runs.
+        self._desktop_launched: Dict[str, int] = {}
+        self._desktop_stale: Dict[str, Tuple[int, str]] = {}
         # Whether an app answers with `<id>; mount=1` (app_mount), per
         # (app id, port); tests replace the probe.
         self.identity_probe: Callable[..., Optional[Tuple[str, bool]]] = probe_app_identity
@@ -2058,8 +2086,12 @@ class AppsManager:
         return h256.digest(), h512.digest()
 
     # -- npm registry ------------------------------------------------------------
-    def registry_metadata(self, spec: AppSpec, *, timeout: float = REGISTRY_TIMEOUT_S, use_cache: bool = True) -> Dict[str, Any]:
-        key = spec.package
+    def _registry_cached(self, key: str, fetch: Callable[[], Any], *, use_cache: bool = True) -> Any:
+        """THE registry cache (npm metadata, PyPI metadata, GitHub releases):
+        an answer is reused for REGISTRY_CACHE_TTL_S, a failure for
+        REGISTRY_FAIL_TTL_S, then the registry is asked again — so a newer
+        published version shows up within the TTL in a long-running gateway,
+        never once per process. `use_cache=False` always asks (installs)."""
         cached = self._registry_cache.get(key)
         if use_cache and cached is not None:
             age = _now() - cached[0]
@@ -2068,20 +2100,44 @@ class AppsManager:
                     raise cached[1]
             elif age < REGISTRY_CACHE_TTL_S:
                 return cached[1]
-        url = f"{self.registry_url}/{urllib.parse.quote(spec.package, safe='@')}"
         try:
-            meta = self._get_json(url, timeout=timeout, accept="application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8")
+            value = fetch()
         except AppsError as exc:
             self._registry_cache[key] = (_now(), exc)
             raise
-        self._registry_cache[key] = (_now(), meta)
-        return meta
+        self._registry_cache[key] = (_now(), value)
+        return value
+
+    def registry_metadata(self, spec: AppSpec, *, timeout: float = REGISTRY_TIMEOUT_S, use_cache: bool = True) -> Dict[str, Any]:
+        url = f"{self.registry_url}/{urllib.parse.quote(spec.package, safe='@')}"
+        return self._registry_cached(
+            spec.package,
+            lambda: self._get_json(url, timeout=timeout, accept="application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8"),
+            use_cache=use_cache,
+        )
+
+    def pypi_metadata(self, package: str, *, timeout: float = REGISTRY_TIMEOUT_S, use_cache: bool = True) -> Dict[str, Any]:
+        """`<pypi_url>/<package>/json` (PyPI's JSON API), through the same cache."""
+        url = f"{self.pypi_url}/{urllib.parse.quote(package)}/json"
+        return self._registry_cached("pypi:" + package, lambda: self._get_json(url, timeout=timeout), use_cache=use_cache)
 
     def resolve_package(self, spec: AppSpec, version: Optional[str] = None, *, use_cache: bool = True) -> Dict[str, Any]:
         meta = self.registry_metadata(spec, timeout=DOWNLOAD_TIMEOUT_S if not use_cache else REGISTRY_TIMEOUT_S, use_cache=use_cache)
         return resolve_from_metadata(meta, spec, version)
 
-    def latest_version(self, spec: AppSpec) -> Tuple[Optional[str], Optional[str]]:
+    def latest_version(self, spec: Any) -> Tuple[Optional[str], Optional[str]]:
+        """(latest published version, None) or (None, the reason). A browser
+        app asks npm (`dist-tags.latest`); a desktop app (the Assistant, a
+        Python package) asks PyPI (`info.version`). Both through
+        `_registry_cached`, so both refresh on the same TTL."""
+        from .apps_desktop import DesktopAppSpec
+
+        if isinstance(spec, DesktopAppSpec):
+            try:
+                meta = self.pypi_metadata(spec.package)
+                return str((meta.get("info") or {}).get("version") or "") or None, None
+            except AppsError as exc:
+                return None, exc.message
         try:
             meta = self.registry_metadata(spec)
             return str((meta.get("dist-tags") or {}).get("latest") or "") or None, None
@@ -2421,6 +2477,7 @@ class AppsManager:
         run_inline: bool = False,
         same_machine: bool = False,
         with_terminal: bool = True,
+        principal: Any = None,
     ) -> Tuple[Job, bool]:
         """Install (or update) an app as ONE job. A fresh install of an app with
         a terminal version (Code) installs the browser app AND the terminal app
@@ -2428,8 +2485,11 @@ class AppsManager:
         stops both. Nothing is started unless `launch` (CLI `--launch`)."""
         from .apps_desktop import is_desktop_app
 
-        if is_desktop_app(app_id) and not update:
-            return self.start_desktop_install(app_id, run_inline=run_inline, same_machine=same_machine)
+        if is_desktop_app(app_id):
+            return self.start_desktop_install(
+                str(app_id).strip().lower(), run_inline=run_inline, same_machine=same_machine,
+                update=update, version=version, principal=principal, gateway_url=gateway_url,
+            )
         spec = spec_for(app_id)
         self._require_install_allowed(same_machine=same_machine)
         tui = self.install_includes_terminal(spec.id) if (with_terminal and not update) else None
@@ -2838,24 +2898,15 @@ class AppsManager:
         (GitHub API), cached like the npm metadata. None: no release at all."""
         if not tui.repo:
             return None
-        key = "tui:" + tui.id
-        cached = self._registry_cache.get(key)
-        if use_cache and cached is not None:
-            age = _now() - cached[0]
-            if isinstance(cached[1], Exception):
-                if age < REGISTRY_FAIL_TTL_S:
-                    raise cached[1]
-            elif age < REGISTRY_CACHE_TTL_S:
-                return cached[1]
         url = f"{GITHUB_API}/repos/{tui.repo}/releases?per_page=30"
-        try:
-            data = self._get_json(url, timeout=REGISTRY_TIMEOUT_S if use_cache else DOWNLOAD_TIMEOUT_S, accept="application/vnd.github+json")
-        except AppsError as exc:
-            self._registry_cache[key] = (_now(), exc)
-            raise
-        rel = pick_tui_release(data, tui)
-        self._registry_cache[key] = (_now(), rel)
-        return rel
+        return self._registry_cached(
+            "tui:" + tui.id,
+            lambda: pick_tui_release(
+                self._get_json(url, timeout=REGISTRY_TIMEOUT_S if use_cache else DOWNLOAD_TIMEOUT_S, accept="application/vnd.github+json"),
+                tui,
+            ),
+            use_cache=use_cache,
+        )
 
     def tui_install_plan(self, tui: TuiSpec, release: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """How this terminal app can be installed HERE: {method: release_binary|cargo,
@@ -3306,18 +3357,42 @@ class AppsManager:
             has_pip = False
         return pip_install_argv(spec.package, python=self.desktop_python, uv=uv, has_pip=has_pip)
 
-    def desktop_row(self, app_id: str, *, caller: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def desktop_row(
+        self,
+        app_id: str,
+        *,
+        caller: Optional[Dict[str, Any]] = None,
+        latest: Any = _UNSET,
+        registry_error: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """The console's card for a desktop app (`kind: "desktop"`): the same
         keys as a browser app's row, no port or address; `desktop` says where
         it is found, how it launches, and whether it can open for THIS caller
-        (it opens on the gateway computer's screen)."""
+        (it opens on the gateway computer's screen). `latest` (PyPI) is read
+        through the registry cache unless the caller already has it."""
         from .apps_desktop import DESKTOP_BY_ID, launch_command_text
 
         spec = DESKTOP_BY_ID[str(app_id)]
         caller = caller or {}
+        if latest is _UNSET:
+            latest, registry_error = self.latest_version(spec)
         pres = self.desktop_presence(spec.id)
         installed = bool(pres.get("installed"))
         running = bool(pres.get("running"))
+        version = pres.get("version")
+        update_available = bool(installed and latest and version_newer(latest, version))
+        # Ours = the process this gateway started (an update quits and reopens
+        # it); any other running copy is left alone.
+        ours = running and pres.get("pid") is not None and self._desktop_launched.get(spec.id) == pres.get("pid")
+        foreign_running = (running and not ours) or bool(pres.get("other_running"))
+        restart_note = None
+        stale = self._desktop_stale.get(spec.id)
+        if stale is not None:
+            pids = {pres.get("pid") if running else None, (pres.get("other_running") or {}).get("pid")}
+            if stale[0] in pids:
+                restart_note = quit_to_run_sentence(stale[1])
+            else:
+                self._desktop_stale.pop(spec.id, None)
         same_machine = bool(caller.get("same_machine", True))
         admin = bool(caller.get("admin", True))
         allowed = self.install_allowed(same_machine=bool(caller.get("same_machine")))
@@ -3343,6 +3418,9 @@ class AppsManager:
                 actions.append("install")
         else:
             actions.append("open")
+            if update_available and allowed and argv is not None:
+                actions.append("update")
+        upd_label, upd_tip = update_offer(spec.name, latest, restarts=not foreign_running) if update_available else (None, None)
         return {
             "id": spec.id,
             "name": spec.name,
@@ -3350,9 +3428,11 @@ class AppsManager:
             "description": spec.description,
             "package": spec.package,
             "installed": installed,
-            "version": pres.get("version"),
-            "latest_version": None,
-            "update_available": False,
+            "version": version,
+            "latest_version": latest,
+            "update_available": update_available,
+            "update_label": upd_label,
+            "update_tip": upd_tip,
             "running": running,
             "status": ("running" if running else "stopped") if installed else "not_installed",
             "managed": False,
@@ -3385,14 +3465,37 @@ class AppsManager:
                 # A running Assistant of the OTHER artifact (R10.5): its own
                 # sentence; Open still launches the one this card describes.
                 "other_running": (dict(pres["other_running"], argv=None) if pres.get("other_running") else None),
+                # R10.6: an update left a running copy alone (not started by
+                # this gateway): "Quit it and open it again to run x.y.z"
+                # while that process runs.
+                "restart_note": restart_note,
+                "started_by_gateway": bool(ours),
+                # PyPI could not be asked: why the latest version is unknown.
+                "latest_error": f"PyPI is not reachable: {registry_error}" if registry_error else None,
             },
         }
 
-    def start_desktop_install(self, app_id: str, *, run_inline: bool = False, same_machine: bool = False) -> Tuple[Job, bool]:
+    def start_desktop_install(
+        self,
+        app_id: str,
+        *,
+        run_inline: bool = False,
+        same_machine: bool = False,
+        update: bool = False,
+        version: Optional[str] = None,
+        principal: Any = None,
+        gateway_url: Optional[str] = None,
+    ) -> Tuple[Job, bool]:
         """Install a desktop app's package into the gateway's own Python, as a
         job; every `abstract*` package already there is pinned to its
         installed version as a requirement of the same command, so the
-        gateway itself never changes."""
+        gateway itself never changes.
+
+        `update` (R10.6): the SAME command with `<package>==<latest>` (PyPI,
+        through the registry cache; or `version`). A running copy this
+        gateway started is quit and opened again on the new version (signed
+        in when `principal` is given); any other running copy is left alone
+        and the result says "Quit it and open it again to run x.y.z"."""
         from .apps_desktop import DESKTOP_BY_ID, launch_command_text, pin_requirements
 
         spec = DESKTOP_BY_ID[str(app_id)]
@@ -3404,17 +3507,34 @@ class AppsManager:
                 hint=f"Install it with `pip install {spec.package}` in the gateway's Python environment.",
                 extra={"command": f"pip install {spec.package}"},
             )
+        target: Optional[str] = None
+        if update:
+            target = str(version).strip() if version else None
+            if not target:
+                target, err = self.latest_version(spec)
+                if not target:
+                    raise NetworkUnavailable(
+                        f"PyPI is not reachable, so the newest {spec.name} is unknown: {err}",
+                        hint="Check this machine's internet connection (or proxy), then try again.",
+                    )
+            if parse_version(target) is None:
+                raise AppsError(f"'{target}' is not a version of {spec.name}.")
+            argv = list(argv[:-1]) + [f"{spec.package}=={target}"]
+        package_key = spec.package.lower().replace("_", "-")
 
         def work(job: Job) -> Dict[str, Any]:
             job.same_machine = bool(same_machine)
             self._require_install_allowed(same_machine=job.same_machine)
+            before = self.desktop_presence(spec.id, refresh=True) if update else {}
             job.step("pins", "Keeping the gateway's own packages as they are…")
             pins = self.desktop_pins(self.desktop_python) or {}
+            # The app's own package is what changes: never pinned to itself.
+            pins = {k: v for k, v in pins.items() if str(k).lower().replace("_", "-") != package_key}
             full = list(argv)
             if pins:
                 job.log("keeping the gateway's own packages as they are: " + ", ".join(pin_requirements(pins)))
                 full += pin_requirements(pins)
-            job.step("install", f"Downloading and installing {spec.name}…")
+            job.step("install", f"Downloading and installing {spec.name}{f' {target}' if target else ''}…")
             job.log("$ " + (launch_command_text(full) or ""))
             job.percent = max(job.percent, 5.0)
             tail: collections.deque = collections.deque(maxlen=60)
@@ -3453,9 +3573,30 @@ class AppsManager:
                     details="\n".join(pres.get("found_by") or []) or None,
                 )
             ver = pres.get("version") or ""
-            return {"version": ver, "location": pres.get("location"), "message": f"{spec.name} {ver} is installed.".replace("  ", " ")}
+            res: Dict[str, Any] = {"version": ver, "location": pres.get("location"), "message": f"{spec.name} {ver} is installed.".replace("  ", " ")}
+            if not update:
+                return res
+            res["previous_version"] = before.get("version")
+            was_pid = before.get("pid") if before.get("running") else None
+            ours = was_pid is not None and self._desktop_launched.get(spec.id) == was_pid
+            other_pid = (before.get("other_running") or {}).get("pid")
+            if ours:
+                # The copy this gateway started: quit it, open the new one.
+                job.step("restart", f"Restarting {spec.name} on {ver}…")
+                self.desktop_quit(int(was_pid))
+                self._desktop_launched.pop(spec.id, None)
+                self._desktop_cache.pop(spec.id, None)
+                out = self.launch_desktop(spec.id, same_machine=True, principal=principal, gateway_url=gateway_url)
+                res["running"] = True
+                res["message"] = f"{spec.name} {ver} is installed and running again: " + str(out.get("message") or "")
+            elif was_pid is not None or other_pid is not None:
+                # Not ours to stop: left alone, and the card says what to do.
+                self._desktop_stale[spec.id] = (int(was_pid if was_pid is not None else other_pid), ver)
+                res["message"] = f"{spec.name} {ver} is installed. {quit_to_run_sentence(ver)}."
+            return res
 
-        return self.jobs.start(kind="app_install", target=f"app:{spec.id}", app_id=spec.id, title=f"Install {spec.name}", work=work, run_inline=run_inline)
+        kind, title = ("app_update", f"Update {spec.name}") if update else ("app_install", f"Install {spec.name}")
+        return self.jobs.start(kind=kind, target=f"app:{spec.id}", app_id=spec.id, title=title, work=work, run_inline=run_inline)
 
     def launch_desktop(self, app_id: str, *, same_machine: bool, principal: Any = None, gateway_url: Optional[str] = None) -> Dict[str, Any]:
         """Open the desktop app on the gateway computer's screen (a person at
@@ -3510,6 +3651,9 @@ class AppsManager:
                 self.redeem_desktop_handover(handover_code)
             raise LaunchFailed(f"The {spec.name} did not start (exit code {code}).", hint=f"Its log: {log}", details=tail_text(log) or None)
         self._desktop_cache.pop(spec.id, None)
+        if not pres.get("running") and argv[:1] != ["open"] and getattr(proc, "pid", None) is not None:
+            # Started here as a process of its own (not `open -a`): ours.
+            self._desktop_launched[spec.id] = int(proc.pid)
         if pres.get("running"):
             message = f"The {spec.name} is in front." + running_note
         elif handover_file is not None:
@@ -3532,8 +3676,11 @@ class AppsManager:
         tui_release_error: Optional[str],
     ) -> Dict[str, Any]:
         """A running app the gateway did not start: open it, nothing else (no
-        stop, update or log: its process belongs to whoever started it)."""
+        stop, update or log: its process belongs to whoever started it). A
+        newer published version is SHOWN ("Latest x.y.z" + where to update
+        it), never offered: there is no update action on this row."""
         job = self.jobs.active_for(f"app:{spec.id}")
+        ext_update = bool(ext.version and latest and version_newer(latest, ext.version))
         row: Dict[str, Any] = {
             "id": spec.id,
             "name": spec.name,
@@ -3543,7 +3690,9 @@ class AppsManager:
             "installed": True,
             "version": ext.version,
             "latest_version": latest,
-            "update_available": False,
+            "update_available": ext_update,
+            "update_label": None,
+            "update_tip": EXTERNAL_UPDATE_SENTENCE if ext_update else None,
             "running": True,
             "status": "running",
             "managed": False,
@@ -3627,6 +3776,7 @@ class AppsManager:
         elif not installed and registry_error:
             blocked = f"The npm registry is not reachable: {registry_error}"
         job = self.jobs.active_for(f"app:{spec.id}")
+        upd_label, upd_tip = update_offer(spec.name, latest) if update_available else (None, None)
         row = {
             "id": spec.id,
             "name": spec.name,
@@ -3637,6 +3787,8 @@ class AppsManager:
             "version": installed,
             "latest_version": latest,
             "update_available": update_available,
+            "update_label": upd_label,
+            "update_tip": upd_tip,
             "running": running,
             "status": snap["status"] if (installed or running) else "not_installed",
             "managed": bool(installed),
@@ -3686,9 +3838,13 @@ class AppsManager:
             except AppsError as exc:
                 return None, exc.message
 
+        from .apps_desktop import DESKTOP_APPS
+
+        desk_latest: Dict[str, Tuple[Optional[str], Optional[str]]] = {d.id: (None, None) for d in DESKTOP_APPS}
         if check_latest:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(APPS) + len(TUI_BY_APP)) as ex:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=len(APPS) + len(TUI_BY_APP) + len(DESKTOP_APPS)) as ex:
                 futs = {spec.id: ex.submit(self.latest_version, spec) for spec in APPS}
+                dfuts = {d.id: ex.submit(self.latest_version, d) for d in DESKTOP_APPS}
                 rfuts = {app_id: ex.submit(_release, tui) for app_id, tui in TUI_BY_APP.items()}
                 for app_id, fut in futs.items():
                     try:
@@ -3700,6 +3856,11 @@ class AppsManager:
                         releases[app_id] = fut.result(timeout=REGISTRY_TIMEOUT_S + 2)
                     except Exception as exc:  # noqa: BLE001
                         releases[app_id] = (None, f"{type(exc).__name__}: {exc}")
+                for app_id, fut in dfuts.items():
+                    try:
+                        desk_latest[app_id] = fut.result(timeout=REGISTRY_TIMEOUT_S + 2)
+                    except Exception as exc:  # noqa: BLE001
+                        desk_latest[app_id] = (None, f"{type(exc).__name__}: {exc}")
         errors = [e for (_, e) in latest.values() if e]
         reachable: Optional[bool] = None if not check_latest else (not errors or len(errors) < len(APPS))
         rows = [
@@ -3715,9 +3876,10 @@ class AppsManager:
             for spec in APPS
         ]
         # Desktop apps: after the five browser apps, stack order.
-        from .apps_desktop import DESKTOP_APPS
-
-        rows += [self.desktop_row(d.id, caller=caller) for d in DESKTOP_APPS]
+        rows += [
+            self.desktop_row(d.id, caller=caller, latest=desk_latest[d.id][0], registry_error=desk_latest[d.id][1])
+            for d in DESKTOP_APPS
+        ]
         runtime_job = self.jobs.active_for("runtime:node")
         node_public = {k: node.get(k) for k in ("available", "version", "source", "install_available", "message", "managed_version", "problems", "path")}
         node_public["active_job"] = runtime_job.to_dict() if runtime_job else None
