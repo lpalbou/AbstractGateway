@@ -75,7 +75,7 @@ def test_tabs_are_appended_with_their_own_ids() -> None:
     for element_id in ("tab-button-models", "tab-models", "tab-button-runtimes", "tab-runtimes"):
         assert html.count(f'id="{element_id}"') == 1, element_id
     assert 'const TABS = ["users", "runtimes", "workflows", "skills", "providers", "openai", "defaults", "sandbox", "models", "catalog", "apps", "network"];' in html
-    assert 'const TAB_FOLDS = { entities: "users", engines: "providers" };' in html
+    assert 'const TAB_FOLDS = { entities: "users", engines: "providers", workspaces: "users" };' in html
     nav = html[html.index('<nav class="shell_nav"') : html.index("</nav>")]
     order = re.findall(r'id="tab-button-([a-z]+)"', nav)
     # DESIGN-v2 §1: four groups, ACCOUNTS / WORK / MODELS / SYSTEM, in that order.

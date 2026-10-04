@@ -121,6 +121,8 @@ WORKSPACES_CSS = r"""
 .wsm-summary { margin: 0; padding: 10px 14px; border-left: 3px solid var(--info, var(--accent)); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--info, var(--accent)) 8%, transparent); font-size: var(--font-size-base); line-height: 1.45; overflow-wrap: anywhere; }
 .wsm-loading, .wsm-note { margin: 0; color: var(--text-secondary); font-size: var(--font-size-md); }
 .wsm-error { margin: 0; color: var(--error, #c0392b); }
+.wsm-reset { display: grid; gap: 6px; padding-top: 12px; border-top: 1px solid var(--line-soft, var(--ui-border-1)); justify-items: start; }
+.wsm-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px; border-radius: var(--radius-md); background: var(--ui-surface-2, var(--bg-secondary)); }
 .ws-field { display: grid; gap: 6px; min-width: 0; padding-top: 12px; border-top: 1px solid var(--line-soft, var(--ui-border-1)); }
 .ws-field:first-of-type { border-top: 0; padding-top: 0; }
 .ws-field__head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
@@ -561,6 +563,46 @@ WORKSPACES_JS = r"""
         return out;
       } };
       wsStore.accIsland = lib.mountWorkspaceChooser(host, Object.assign({}, props));
+      // "Follow the gateway policy": every allowed folder off and no folders of its own (the
+      // shared workspace stays). Asks inline first; one PUT.
+      const reset = wsEl("div", "wsm-reset");
+      const resetBtn = wsEl("button", "secondary", "Follow the gateway policy");
+      resetBtn.type = "button";
+      resetBtn.setAttribute("data-ws-reset", "");
+      const resetNote = wsEl("p", "wsm-note", "Turns every allowed folder off and removes this account's own folders; the shared workspace stays.");
+      const resetState = wsEl("p", "ws-folder__state");
+      resetState.setAttribute("aria-live", "polite");
+      const sayReset = wsRowState(resetState);
+      resetBtn.onclick = () => {
+        if (reset.querySelector(".wsm-confirm")) return;
+        const box = wsEl("div", "wsm-confirm");
+        box.setAttribute("role", "group");
+        box.append(wsEl("span", "", `Follow the gateway policy for ${a.id}? Their allowed folders turn off and their own folders are removed.`));
+        const yes = wsEl("button", "danger", "Follow");
+        yes.type = "button";
+        const no = wsEl("button", "secondary", "Cancel");
+        no.type = "button";
+        no.onclick = () => { box.remove(); try { resetBtn.focus(); } catch {} };
+        yes.onclick = async () => {
+          yes.disabled = true;
+          const cur = props.state;
+          const change = { enabled_folders: [] };
+          if (cur && cur.effective && cur.effective.own_folders_allowed && cur.policy.own_folders.length) change.own_folders = [];
+          try {
+            await props.onPut(change);
+            box.remove();
+            sayReset("Saved", "ok");
+          } catch (e) {
+            yes.disabled = false;
+            sayReset(`${emailErrorText(e)} Not saved.`, "error");
+          }
+        };
+        box.append(yes, no);
+        reset.append(box);
+        try { no.focus(); } catch {}
+      };
+      reset.append(resetBtn, resetNote, resetState);
+      body.append(reset);
       const backdrop = $("account-workspace-backdrop");
       backdrop.hidden = false;
       wsStore.accRelease = bindAccountModal(backdrop, closeAccountWorkspace);

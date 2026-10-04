@@ -34,10 +34,12 @@ def test_no_workspaces_page_and_no_old_model(html: str) -> None:
     nav = html[html.index('<nav class="shell_nav"') : html.index("</nav>")]
     assert re.findall(r'id="tab-button-([a-z]+)"', nav)[:2] == ["users", "workflows"]
     for gone in ('id="tab-button-workspaces"', 'id="tab-workspaces"', 'id="workspaces-root"', "loadWorkspaces", "renderWorkspaces",
-                 "openWorkspacesFor", "workspacesLink", '"workspaces"', "old clients", "Any folder (old", "client_workspace_scope_overrides",
+                 "openWorkspacesFor", "workspacesLink", 'TABS = ["users", "workspaces"', "old clients", "Any folder (old", "client_workspace_scope_overrides",
                  "workspace_default_mode", "user_workspace_policies", "user-workspace-policy", "/workspace/policy/self", "userPolicyKeys",
                  "Allow everything except", "Allow my list"):
         assert gone not in html, gone
+    # A saved tab or a `#workspaces[?account=]` link lands on Accounts (folded), never a blank page.
+    assert 'const TAB_FOLDS = { entities: "users", engines: "providers", workspaces: "users" };' in html
 
 
 def test_accounts_gateway_policy_button_and_modals(html: str) -> None:
