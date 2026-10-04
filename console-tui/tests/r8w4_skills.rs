@@ -165,6 +165,7 @@ fn live_shelf_save_and_refresh() {
     h.shoot("live-skills-shelf-saved");
     // Clear back to the gateway's own copy.
     h.key(b"f");
+    h.key(b"\x1b[F"); // End: the caret starts at the beginning
     for _ in 0..shelf.chars().count() + 2 {
         h.key(b"\x7f");
     }

@@ -792,7 +792,7 @@ fn shelf_row(cx: Scope, ctx: &Ctx, width: i32, keeper: &super::util::FocusKeeper
             ));
             col = col.child(kit::sentence(
                 &t,
-                "Enter saves · Esc keeps the current folder · empty = the gateway's own copy",
+                "Enter saves · Esc keeps the current folder · empty = the gateway's own copy · End jumps to the end",
                 width,
                 t.text_faint,
             ));

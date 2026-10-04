@@ -597,7 +597,7 @@ fn workflows_tab(cx: Scope, ctx: &Ctx, keeper: &super::util::FocusKeeper) -> Vie
                     ));
                     col = col.child(kit::sentence(
                         &t,
-                        "Enter saves · Esc keeps the current description",
+                        "Enter saves · Esc keeps the current description · End jumps to the end of the text",
                         width,
                         t.text_faint,
                     ));
