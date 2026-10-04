@@ -17,6 +17,7 @@ sentence, and a "generation" thread that burns CPU the whole time.
 from __future__ import annotations
 
 import base64
+import hashlib
 import http.client
 import json
 import socket
@@ -40,10 +41,17 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
+_BLOCK = b"\x5a" * (1 << 20)
+
+
 def _burn(seconds: float) -> None:
-    end = time.process_time() + seconds
-    while time.process_time() < end:
-        sum(i * i for i in range(2000))
+    """Real CPU work for `seconds` of wall time on THIS thread, the way native engines do it
+    (MLX, ONNX, torch): the heavy part runs in C and releases the GIL (hashlib does above
+    2 KiB). Pure-Python burning would instead measure GIL contention between the test's own
+    client threads and the server, which no real engine causes."""
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        hashlib.sha256(_BLOCK).digest()
 
 
 class _CpuEngine:
@@ -173,7 +181,10 @@ def _read_aloud(port: int, text: str, *, chunked: bool, timeout: float = 30.0, s
 
 
 class _Hammer:
-    """/api/health every 100 ms (timeout 2 s), latencies in ms (None = failed)."""
+    """/api/health every 25 ms (timeout 2 s), latencies in ms (None = failed).
+
+    Dense enough that every stall of the loop longer than a few tens of
+    milliseconds is probed."""
 
     def __init__(self, port: int) -> None:
         self.port = port
@@ -190,7 +201,7 @@ class _Hammer:
                 self.samples.append((time.monotonic() - t0) * 1000)
             except Exception:
                 self.samples.append(None)
-            time.sleep(0.1)
+            time.sleep(0.025)
 
     def __enter__(self) -> "_Hammer":
         self._t.start()
@@ -245,7 +256,9 @@ def test_health_stays_fast_under_generation_plus_concurrent_read_aloud_and_the_w
             assert r["status"] == 200 and r["events"] and r["events"][-1]["type"] == "done", r
             assert [e["sequence"] for e in r["events"] if e["type"] == "audio"] == [0, 1, 2, 3], r
         assert hammer.failures() == 0, hammer.samples
+        assert len(hammer.samples) >= 40, len(hammer.samples)
         assert hammer.p99() < 500, f"p99 health latency {hammer.p99():.0f} ms: {hammer.samples}"
+        assert max(x for x in hammer.samples if x is not None) < 1500, hammer.samples
         assert recorder.fired == [], f"watchdog fired: {recorder.fired}"
     finally:
         generating.set()
