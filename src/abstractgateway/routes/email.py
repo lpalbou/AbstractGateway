@@ -42,7 +42,7 @@ Admin routes — status and the per-user switch only (D3: administrators never r
     GET    /admin/users/{user_id}/email          configured / address / state / last error
     PUT    /admin/users/{user_id}/email          {enabled?, agent_tools?, inherit?}  per-user overrides (legacy UI)
     GET    /admin/email/capabilities             gateway-wide defaults: email ("Mailboxes for users"),
-                                                 email_agent_tools, email_recovery (Advanced)
+                                                 email_agent_tools, email_recovery
     PUT    /admin/email/capabilities             {email?, email_agent_tools?, email_recovery?, reset?}
     GET    /admin/email/oauth-clients            bring-your-own OAuth clients (ids; secret_set only)
     PUT    /admin/email/oauth-clients/{provider} {client_id, client_secret?, tenant?}
@@ -809,9 +809,9 @@ class CapabilityDefaultsBody(BaseModel):
 
 @router.get(
     "/admin/email/capabilities",
-    summary="What the gateway makes available to users (Mailboxes for users; Advanced: agent tools, sign-in by email)",
+    summary="What the gateway makes available to users (Mailboxes for users, Agent email tools for users, Sign-in by email)",
     description="`capabilities`: [{id, label, description, per_user, advanced, default, built_in_default}]. `email` = "
-    "\"Mailboxes for users\" (the admin's one switch, ON built in); under Advanced `email_agent_tools` = \"Agent "
+    "\"Mailboxes for users\" (ON built in); `email_agent_tools` = \"Agent "
     "email tools for users\" (ON built in; each user still opts in) and `email_recovery` = \"Sign-in by email\".",
 )
 async def admin_capabilities_get(request: Request) -> Any:
@@ -910,7 +910,7 @@ address, sent through the user's own mailbox. The answer is honest (200 in every
 - `{"sent": false, "reason_code": "too_many_requests", "retry_after_s": N, "message": "Too many codes requested for this account. Try again in N minutes."}`
   (3 per account and 10 per client address per 15 minutes).
 
-Sign-in by email off (the admin's Advanced switch): 404 `recovery_off`. Trade-off: a requester can learn that an
+Sign-in by email off (the admin's switch): 404 `recovery_off`. Trade-off: a requester can learn that an
 account id has an email address; the rate limits and the audit log bound it. `purpose` defaults to `sign_in`."""
 
 

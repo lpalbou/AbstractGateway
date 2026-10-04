@@ -21800,7 +21800,7 @@ def _backlog_unavailable_detail() -> str:
         reason = f"it could not be resolved ({exc})"
     return (
         f"Backlog folder not available on this gateway: {reason}. An admin sets it in Continuum's Settings, "
-        "the gateway console (Apps -> Backlog settings), or with `abstractgateway config set triage_repo_root PATH`."
+        "the gateway console (Apps → the gear on the Continuum card), or with `abstractgateway config set triage_repo_root PATH`."
     )
 
 

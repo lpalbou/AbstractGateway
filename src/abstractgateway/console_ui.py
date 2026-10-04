@@ -152,6 +152,9 @@ CONSOLE_UI_CSS = r"""
     .ui-btn.is-text:hover:not(:disabled) { text-decoration: underline; }
     .ui-btn__glyph { display: inline-block; margin-right: 7px; font: 650 11px/1 var(--font-mono); letter-spacing: -.02em; color: var(--text-secondary); }
     .ui-card__actions > .ui-btn { white-space: nowrap; }
+    .ui-btn.ui-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 44px; min-width: 44px; min-height: 44px; padding: 0; }
+    .ui-icon-btn .button-icon { display: inline-flex; }
+    .ui-icon-btn .button-icon svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
     .ui-card-grid.is-aligned > .ui-card > .ui-card__actions:not(:empty) { min-height: 48px; }
     @supports (grid-template-rows: subgrid) {
       .ui-card-grid.is-aligned { row-gap: 0; }
@@ -403,6 +406,10 @@ CONSOLE_UI_CSS = r"""
     .ui-apps-setting__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
     .ui-apps-setting__head label { margin: 0; font-size: var(--font-size-md); font-weight: 600; color: var(--text-primary); text-transform: none; letter-spacing: 0; }
     .ui-apps-setting input { width: 100%; min-width: 0; margin: 0; font-family: var(--font-mono); }
+    .ui-row-saved { font-size: var(--font-size-sm); color: var(--text-secondary); }
+    .ui-row-saved.tone-ok { color: var(--success); }
+    .ui-row-saved.tone-err { color: var(--error); flex-basis: 100%; }
+    .ui-backlog-settings { display: grid; gap: 18px; min-width: 0; }
     #island-address { font-family: var(--font-mono); font-size: var(--font-size-sm); max-width: 26ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     @media (max-width: 1023.98px) { #island-address { display: none; } }
     /* Focus: every control the layer draws shows where the keyboard is. */
@@ -1852,7 +1859,12 @@ CONSOLE_UI_JS = r"""
             : b("open", "Open", "is-primary", `Start ${name} and open it in a new tab, signed in`))
           : off("Open", admin ? "Starting is not available right now" : "Only an admin can start apps");
       }
-      const row = primary + tui.button;
+      // Round 8: an app's own settings sit behind a gear beside Open (admin only),
+      // opening the settings modal (APP_SETTINGS_DOORS); never a disclosure on the page.
+      const gear = admin && APP_SETTINGS_DOORS[app.id]
+        ? `<button type="button" class="ui-btn is-ghost ui-icon-btn" data-app-action="settings" data-app="${esc(app.id)}" aria-label="${esc(`${name} settings`)}" title="Settings"><span class="button-icon" aria-hidden="true">${ICONS.gear}</span></button>`
+        : "";
+      const row = primary + tui.button + gear;
       // Technical details ON: the secondary line (text buttons + facts), the
       // terminal commands, the address, the npx line, the logs.
       let tech = "";
@@ -1913,7 +1925,9 @@ CONSOLE_UI_JS = r"""
       // this browser's own origin + /apps/<id>/, wherever it reached us.
       const appsBase = `${appBrowserOrigin()}${d.apps_path_prefix || "/apps/"}`;
       let intro = `<div class="ui-toolbar"><span data-apps-base>Apps open in your browser at <code class="ui-ellip">${esc(appsBase)}…</code>, already signed in to this gateway.</span>`
-        + `<button type="button" class="ui-btn is-quiet" data-app-action="refresh">${appStore.loading ? "Checking..." : "Check again"}</button></div>`;
+        + `<button type="button" class="ui-btn is-quiet" data-app-action="refresh">${appStore.loading ? "Checking..." : "Check again"}</button>`
+        + (state.principal && state.principal.admin ? `<button type="button" class="ui-btn is-ghost ui-icon-btn" data-app-action="apps-settings" aria-label="Apps settings" title="Apps settings"><span class="button-icon" aria-hidden="true">${ICONS.gear}</span></button>` : "")
+        + `</div>`;
       intro += appRuntimeMarkup(d);
       if (d.registry && d.registry.reachable === false) intro += `<div class="ui-alert tone-warn" role="alert"><strong>The app store (npm) is not reachable.</strong><span>Installed apps keep working; installing needs the internet.</span></div>`;
       const msg = appStore.message ? `<div class="ui-alert tone-err" role="alert">${esc(appStore.message)}</div>` : "";
@@ -2016,6 +2030,8 @@ CONSOLE_UI_JS = r"""
     }
     async function appAction(action, id, button) {
       if (action === "refresh") { appStore.message = ""; appStore.notices.clear(); await appRefresh(); return; }
+      if (action === "settings") { appSettingsModalOpen(id); return; }
+      if (action === "apps-settings") { appSettingsModalOpen("apps"); return; }
       if (action === "logs") {
         const L = appStore.logs.get(id);
         if (L && L.open) { L.open = false; appRender(); return; }
@@ -3071,41 +3087,39 @@ CONSOLE_UI_JS = r"""
     // placeholder, default, env_name, value, source: stored|env|default,
     // note?, env_shadowed?, invalid_stored?, invalid_env?}} (registry
     // runtime_config.APPS_SETTINGS: rendered as listed, never a hardcoded
-    // list). Save = POST {"apps.<name>": value} with only the changed keys; an
-    // emptied field clears back to env/default. The gateway validates; its
-    // sentence (400 detail) is shown verbatim, as in the TUI and the CLI.
-    const appsSetStore = { data: null, error: "", saving: false, saved: null, draft: {}, open: null, views: new Map() };
+    // list). Round 8: no disclosure, no Save button. The rows live in the
+    // "Apps settings" modal (the gear in the Apps toolbar); each field applies
+    // on blur / Enter (POST {"apps.<name>": value}, only that key; an emptied
+    // field clears back to the default) and says "Saved" beside itself. The
+    // gateway validates; its sentence (400 detail) is shown verbatim.
+    const appsSetStore = { data: null, error: "", busy: null, rows: {}, draft: {}, views: new Map() };
     function appsSettingsMarkup() {
       const st = appsSetStore;
       if (st.error && !st.data) return `<div class="ui-alert tone-err" role="alert"><strong>Could not read the apps settings.</strong><span>${esc(st.error)}</span></div>`;
       if (!st.data) return `<div class="ui-empty">Reading the apps settings...</div>`;
-      const rows = Object.entries(st.data.apps || {});
+      // A deprecated row shows only while it still holds a stored value to clear.
+      const rows = Object.entries(st.data.apps || {}).filter(([, r]) => !r.deprecated || r.source === "stored");
       if (!rows.length) return "";
       const admin = !!st.data.writable;
-      const custom = rows.filter(([, r]) => r.source !== "default").length;
-      const open = st.open === null ? custom > 0 : st.open;
-      let out = `<details class="ui-details ui-net-proxy" data-apps-settings${open ? " open" : ""}><summary><span class="ui-net-proxy__title">Advanced: apps settings</span>`
-        + `<span class="ui-net-proxy__sum">${esc(custom ? `${custom} changed from the default` : "all defaults")}</span></summary><div class="ui-net-proxy__body"><div class="ui-apps-settings__rows">`;
+      let out = `<div class="ui-apps-settings__rows" data-apps-settings>`;
       for (const [name, r] of rows) {
         const stored = r.source === "stored" ? String(r.value ?? "") : "";
         const val = Object.prototype.hasOwnProperty.call(st.draft, name) ? st.draft[name] : stored;
-        const pill = r.source === "stored" ? uiPill("Saved setting", "info") : r.source === "env" ? uiPill("From the environment", "warn", r.note || "") : uiPill("Default", "muted");
-        const now = String(r.value ?? "") || "(none)";
-        out += `<div class="ui-apps-setting" data-apps-setting="${esc(name)}"><div class="ui-apps-setting__head"><label for="apps-set-${esc(name)}">${esc(r.label || r.key || name)}</label>${pill}</div>`
-          + `<input type="text" id="apps-set-${esc(name)}" data-apps-input="${esc(name)}" autocomplete="off" spellcheck="false" value="${esc(val)}" placeholder="${esc(r.source === "stored" ? (r.placeholder || "") : now)}"${admin && !st.saving ? "" : " disabled"}>`
+        const now = String(r.value ?? "") || String(r.default ?? "") || "(none)";
+        const note = st.rows[name];
+        const busy = st.busy === name;
+        out += `<div class="ui-apps-setting" data-apps-setting="${esc(name)}"><div class="ui-apps-setting__head"><label for="apps-set-${esc(name)}">${esc(r.label || r.key || name)}</label>`
+          + (r.source === "env" ? uiPill("From the environment", "warn", r.note || "") : "")
+          + (note ? `<span class="ui-row-saved tone-${esc(note.tone)}" role="status" data-apps-setting-saved>${esc(note.text)}</span>` : "")
+          + `</div>`
+          + `<input type="text" id="apps-set-${esc(name)}" data-apps-input="${esc(name)}" autocomplete="off" spellcheck="false" value="${esc(val)}" placeholder="${esc(now)}" title="${esc(r.help || "")}"${admin && !busy ? "" : " disabled"}${busy ? ' aria-busy="true"' : ""}>`
           + `<p class="ui-net-proxy__text">${esc(r.help || "")}</p>`
-          + (r.source === "env" && r.note ? `<p class="ui-field-msg tone-warn">${esc(r.note)}</p>` : "")
-          + (r.env_shadowed && r.note ? `<p class="ui-net-proxy__text">${esc(r.note)}</p>` : "")
           + (r.invalid_stored || r.invalid_env ? `<p class="ui-field-msg tone-warn">Set aside: ${esc(r.invalid_stored || r.invalid_env)}</p>` : "")
-          + `<span class="ui-advanced ui-sub"><code>abstractgateway apps config set ${esc(name)} …</code></span></div>`;
+          + `</div>`;
       }
       out += `</div>`;
-      if (admin) {
-        out += `<div class="ui-card__actions"><button type="button" class="ui-btn is-primary" data-apps-settings-save${st.saving ? ' disabled aria-busy="true"' : ""}>${st.saving ? "Saving..." : "Save apps settings"}</button></div>`;
-      }
-      if (st.saved) out += `<p class="ui-net-proxy__saved tone-${esc(st.saved.tone)}" role="status" data-apps-settings-saved><b>${esc(st.saved.head)}</b><span>${esc(st.saved.text)}</span></p>`;
-      else out += `<p class="ui-net-proxy__saved" role="status"><span>${admin ? "Empty = the default (or the value this gateway's environment gives). Applies at the next app start or download." : "Only an admin can change these."}</span></p>`;
-      return out + `</div></details>`;
+      if (!admin) out += `<p class="ui-net-proxy__text">Only an admin can change these.</p>`;
+      return out;
     }
     function appsSettingsRender() { for (const el of appsSetStore.views.values()) if (el) el.innerHTML = appsSettingsMarkup(); }
     async function appsSettingsRefresh() {
@@ -3117,51 +3131,91 @@ CONSOLE_UI_JS = r"""
       }
       appsSettingsRender();
     }
-    async function appsSettingsSave() {
+    // One field, applied on its own (blur / Enter). Unchanged = nothing sent.
+    async function appsSettingApply(name) {
       const st = appsSetStore;
-      if (!st.data || st.saving) return;
-      const body = {};
-      for (const [name, r] of Object.entries(st.data.apps || {})) {
-        if (!Object.prototype.hasOwnProperty.call(st.draft, name)) continue;
-        const was = r.source === "stored" ? String(r.value ?? "") : "";
-        const now = String(st.draft[name] || "").trim();
-        if (now !== was) body[r.key || `apps.${name}`] = now;
-      }
-      if (!Object.keys(body).length) { st.saved = { tone: "ok", head: "Nothing changed", text: "" }; appsSettingsRender(); return; }
-      st.saving = true;
-      st.saved = null;
+      if (!st.data || st.busy || !Object.prototype.hasOwnProperty.call(st.draft, name)) return;
+      const r = (st.data.apps || {})[name];
+      if (!r) return;
+      const was = r.source === "stored" ? String(r.value ?? "") : "";
+      const now = String(st.draft[name] || "").trim();
+      if (now === was) { delete st.draft[name]; return; }
+      st.busy = name;
+      st.rows[name] = null;
       appsSettingsRender();
       try {
-        st.data = await api("/api/gateway/admin/runtime-config", { method: "POST", body: JSON.stringify(body) });
-        st.draft = {};
-        st.saved = { tone: "ok", head: "Saved", text: "Applies at the next app start or download." };
+        st.data = await api("/api/gateway/admin/runtime-config", { method: "POST", body: JSON.stringify({ [r.key || `apps.${name}`]: now }) });
+        delete st.draft[name];
+        st.rows[name] = { tone: "ok", text: "Saved" };
       } catch (err) {
         const data = (err && err.data) || {};
-        st.saved = { tone: "err", head: "Not saved", text: String((data && data.detail) || (err && err.message) || err) };
+        st.rows[name] = { tone: "err", text: `Not saved: ${String((data && data.detail) || (err && err.message) || err)}` };
       }
-      st.saving = false;
+      st.busy = null;
       appsSettingsRender();
     }
     function mountAppsSettings(key, el) {
       if (!el) return;
       appsSetStore.views.set(key, el);
-      el.onclick = (event) => {
-        const b = event && event.target && event.target.closest ? event.target.closest("[data-apps-settings-save]") : null;
-        if (b && !b.disabled) appsSettingsSave();
-      };
+      appsSetStore.rows = {};
       el.oninput = (event) => {
         const i = event && event.target && event.target.matches && event.target.matches("[data-apps-input]") ? event.target : null;
         if (i) appsSetStore.draft[i.dataset.appsInput] = i.value;
       };
       el.onkeydown = (event) => {
-        if (event && event.key === "Enter" && event.target && event.target.matches && event.target.matches("[data-apps-input]")) { event.preventDefault(); appsSettingsSave(); }
+        if (event && event.key === "Enter" && event.target && event.target.matches && event.target.matches("[data-apps-input]")) { event.preventDefault(); appsSettingApply(event.target.dataset.appsInput); }
       };
-      el.addEventListener("toggle", (event) => {
-        const dt = event && event.target;
-        if (dt && dt.matches && dt.matches("[data-apps-settings]")) appsSetStore.open = !!dt.open;
+      // blur does not bubble: listen in the capture phase.
+      el.addEventListener("blur", (event) => {
+        const i = event && event.target;
+        if (i && i.matches && i.matches("[data-apps-input]")) appsSettingApply(i.dataset.appsInput);
       }, true);
       appsSettingsRender();
       appsSettingsRefresh();
+    }
+    function unmountAppsSettings(key) { appsSetStore.views.delete(key); }
+
+    // ---- Settings modal (round 8): one af-modal for the Apps page. The gear in
+    // the Apps toolbar opens "Apps settings" (the rows above); a gear on an app
+    // card opens that app's own settings. APP_SETTINGS_DOORS lists the apps that
+    // have some: Continuum = the backlog folder, the exec runner and the process
+    // manager (mountBacklogSettings). No disclosure stays on the page.
+    const APP_SETTINGS_DOORS = {
+      continuum: { title: "Continuum settings", mount: (el) => mountBacklogSettings(el), unmount: () => unmountBacklogSettings() },
+    };
+    const appSettingsModal = { open: null, release: null };
+    function appSettingsModalOpen(which) {
+      const backdrop = $("app-settings-backdrop");
+      const body = $("app-settings-body");
+      if (!backdrop || !body) { console.error("AbstractGateway console: the app settings modal markup is missing (#app-settings-backdrop)."); return; }
+      appSettingsModalClose();
+      const door = which === "apps" ? null : APP_SETTINGS_DOORS[which];
+      if (which !== "apps" && !door) { console.error(`AbstractGateway console: no settings door for app ${which}.`); return; }
+      $("app-settings-title").textContent = door ? door.title : "Apps settings";
+      body.textContent = "";
+      const host = document.createElement("div");
+      host.className = "core-console-root";
+      body.append(host);
+      if (door) door.mount(host);
+      else mountAppsSettings("modal", host);
+      appSettingsModal.open = which;
+      backdrop.hidden = false;
+      appSettingsModal.release = bindAccountModal(backdrop, appSettingsModalClose);
+    }
+    function appSettingsModalClose() {
+      const backdrop = $("app-settings-backdrop");
+      if (!backdrop || !appSettingsModal.open) return;
+      // A field being edited applies on blur: move focus out first.
+      const active = typeof document !== "undefined" ? document.activeElement : null;
+      if (active && active.blur && backdrop.contains && backdrop.contains(active)) active.blur();
+      const which = appSettingsModal.open;
+      const door = APP_SETTINGS_DOORS[which];
+      if (door) door.unmount(); else unmountAppsSettings("modal");
+      appSettingsModal.open = null;
+      backdrop.hidden = true;
+      const release = appSettingsModal.release;
+      appSettingsModal.release = null;
+      if (release) release();
     }
 
     // ---- Default agent workflow (agents.default_workflow) ----
@@ -3397,9 +3451,9 @@ CONSOLE_UI_JS = r"""
       return uiPill("None", "err");
     }
     function skillsShelfMarkup() {
-      // The "Shelf folder" disclosure at the bottom of the Skills tab (DESIGN-v3 §6.1, C3F review):
-      // one field (auto-saves on blur, says "Saved"), one helper line, and the only button
-      // "Refresh curated shelf". The why-not and the source pill show only when they say something.
+      // Round 8: ONE inline row under the Skills list (no disclosure): the folder field
+      // (auto-saves on blur / Enter, says "Saved"), "Refresh curated shelf", and the
+      // status. The why-not and the warnings show below only when they say something.
       const st = skillsShelfStore;
       if (st.error && !st.data) return `<div class="ui-alert tone-err" role="alert"><strong>Could not read the skills shelf setting.</strong><span>${esc(st.error)}</span></div>`;
       if (!st.data) return `<div class="ui-empty">Reading the skills shelf setting...</div>`;
@@ -3408,17 +3462,18 @@ CONSOLE_UI_JS = r"""
       const admin = !!st.data.writable;
       const stored = r.source === "stored" ? String(r.value || "") : "";
       const val = st.draft !== null ? st.draft : stored;
-      let out = `<div class="ui-apps-setting" data-skills-shelf><div class="ui-apps-setting__head"><label for="skills-shelf-input">Folder</label>${r.source === "seeded" ? "" : skillsShelfSourcePill(r)}</div>`
-        + `<input type="text" id="skills-shelf-input" data-skills-shelf-input autocomplete="off" spellcheck="false" value="${esc(val)}" placeholder="${esc(r.default_path || "")}"${admin && !st.saving ? "" : " readonly"}>`
-        + `<p class="ui-net-proxy__text">Empty: the gateway's own copy of the curated shelf${r.bundled_version ? ` (version ${esc(r.bundled_version)})` : ""}, refreshed at each start.</p>`
+      const help = `Empty: the gateway's own copy of the curated shelf${r.bundled_version ? ` (version ${r.bundled_version})` : ""}, refreshed at each start.`;
+      let out = `<div class="skmcp-shelf-row" data-skills-shelf><label for="skills-shelf-input">Shelf folder</label>`
+        + `<input type="text" id="skills-shelf-input" data-skills-shelf-input autocomplete="off" spellcheck="false" value="${esc(val)}" placeholder="${esc(r.default_path || "")}" title="${esc(help)}" aria-label="Shelf folder. ${esc(help)}"${admin && !st.saving ? "" : " readonly"}>`
+        + (r.source === "seeded" ? "" : skillsShelfSourcePill(r));
+      if (admin) {
+        out += `<button type="button" class="ui-btn" data-skills-shelf-reseed${st.saving ? " disabled" : ""}>${st.saving ? "Working..." : "Refresh curated shelf"}</button>`;
+      }
+      out += (st.saved ? `<span class="ui-row-saved tone-${esc(st.saved.tone)}" role="status" data-skills-shelf-saved>${esc(st.saved.head)}${st.saved.text ? ` · ${esc(st.saved.text)}` : ""}</span>` : "")
+        + `</div>`
         + (!r.available ? `<p class="ui-field-msg tone-warn" data-skills-shelf-now>Not available: ${esc(r.reason || "")}</p>` : "")
         + (r.warnings || []).map((w) => `<p class="ui-field-msg tone-warn">${esc(w)}</p>`).join("");
-      if (admin) {
-        out += `<div class="ui-card__actions"><button type="button" class="ui-btn" data-skills-shelf-reseed${st.saving ? " disabled" : ""}>${st.saving ? "Working..." : "Refresh curated shelf"}</button>`
-          + (st.saved ? `<span class="ui-net-proxy__saved tone-${esc(st.saved.tone)}" role="status" data-skills-shelf-saved><b>${esc(st.saved.head)}</b>${st.saved.text ? ` <span>${esc(st.saved.text)}</span>` : ""}</span>` : "")
-          + `</div>`;
-      }
-      return out + `</div>`;
+      return out;
     }
     function skillsShelfRender() { for (const el of skillsShelfStore.views.values()) if (el) el.innerHTML = skillsShelfMarkup(); }
     async function skillsShelfRefresh() {
@@ -3491,6 +3546,10 @@ CONSOLE_UI_JS = r"""
       el.oninput = (event) => {
         const i = event && event.target && event.target.matches && event.target.matches("[data-skills-shelf-input]") ? event.target : null;
         if (i) skillsShelfStore.draft = i.value;
+      };
+      el.onkeydown = (event) => {
+        const i = event && event.key === "Enter" && event.target && event.target.matches && event.target.matches("[data-skills-shelf-input]") ? event.target : null;
+        if (i && !i.readOnly && skillsShelfStore.draft !== null) { event.preventDefault(); skillsShelfAction("save"); }
       };
       skillsShelfRender();
       skillsShelfRefresh();

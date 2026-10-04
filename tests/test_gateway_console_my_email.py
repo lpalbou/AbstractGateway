@@ -78,10 +78,15 @@ def test_sign_in_page_offers_recovery_only_when_available() -> None:
     assert '$("recovery-section").hidden = !available' in html
 
 
-def test_admin_sees_one_switch_and_advanced() -> None:
+def test_admin_sees_the_three_switches_in_the_card() -> None:
     html = _html()
-    for field in ("email-caps-section", "email-cap-email", "email-cap-agent-tools", "email-cap-recovery", "email-caps-advanced"):
+    for field in ("email-caps-section", "email-cap-email", "email-cap-agent-tools", "email-cap-recovery"):
         assert f'id="{field}"' in html, field
+    # Round 8: no Advanced disclosure; the three switches sit directly in the card.
+    assert 'id="email-caps-advanced"' not in html
+    card = html[html.index('<section id="email-caps-section"'):html.index('id="email-caps-message"')]
+    assert "<details" not in card and "<summary" not in card
+    assert card.count('role="switch"') == 3
     assert "/api/gateway/admin/email/capabilities" in html
     assert "Mailboxes are on for all users." in html
     assert "Whoever controls a user&#39;s mailbox can then sign in as that user." in html

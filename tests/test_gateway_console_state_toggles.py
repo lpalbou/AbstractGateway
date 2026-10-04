@@ -102,8 +102,10 @@ def test_users_table_and_create_user_follow_design() -> None:
     assert "<th>State</th>" not in users
     assert users.index('<table class="users-table accounts-table" data-ui-no-stack>') < users.index('id="email-cap-email"')
     assert users.index('id="open-create-user"') < users.index('id="accounts-create-entity"') < users.index("<table")
-    adv = _slice(users, '<details id="email-caps-advanced"', "</details>")
-    assert 'id="email-cap-agent-tools"' in adv and 'id="email-cap-recovery"' in adv and 'id="email-cap-email"' not in adv
+    # Round 8: the three email switches sit directly in the card (no Advanced disclosure).
+    card = _slice(users, '<section id="email-caps-section"', "</section>")
+    assert "<details" not in card
+    assert card.index('id="email-cap-email"') < card.index('id="email-cap-agent-tools"') < card.index('id="email-cap-recovery"')
     form = _slice(html, '<div id="user-create-form"', '<div id="user-create-done"')
     # Email address at the top level, before Advanced; Advanced = Runtime + Tenant.
     assert form.index('for="new-email">Email address</label>') < form.index("<summary>Advanced</summary>")

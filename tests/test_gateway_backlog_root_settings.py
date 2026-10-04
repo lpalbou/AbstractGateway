@@ -534,20 +534,76 @@ def test_the_exec_runner_resolves_the_folder_each_poll(tmp_path: Path) -> None:
     assert _resolved_backlog_root(data) is None
 
 
-def test_console_apps_tab_carries_the_backlog_settings_card() -> None:
-    """The console door (Apps tab): the card mounts next to the apps
-    settings, is driven by the runtime-config rows, and never teaches an
-    environment variable."""
+def test_console_continuum_settings_live_behind_the_card_gear() -> None:
+    """Round 8: no "Advanced" disclosures on the Apps page. Continuum's settings
+    open in the settings modal from the gear on its card; the apps.* settings
+    from the gear in the Apps toolbar. No Save button: rows apply on blur /
+    switch. No environment variable taught, no "Environment (legacy)" source."""
     from abstractgateway.console import gateway_console_html
 
     html = gateway_console_html()
-    assert '<div id="backlog-settings-root" class="core-console-root"></div>' in html
-    assert 'mountBacklogSettings($("backlog-settings-root"))' in html
-    assert "Advanced: backlog settings (Continuum)" in html
-    assert "Use the gateway's own folder" in html
+    apps_tab = html[html.index('<div id="tab-apps" class="tab-panel">') : html.index('<div id="tab-network"')]
+    assert "<details" not in apps_tab
+    assert 'id="backlog-settings-root"' not in html and 'id="apps-settings-root"' not in html
+    assert "Advanced: backlog settings" not in html and "Advanced: apps settings" not in html
+    assert '<div id="app-settings-backdrop" class="af-modal-backdrop" hidden>' in html
+    assert 'continuum: { title: "Continuum settings", mount: (el) => mountBacklogSettings(el)' in html
+    assert 'if (action === "settings") { appSettingsModalOpen(id); return; }' in html
+    assert 'data-app-action="settings"' in html and 'data-app-action="apps-settings"' in html
     start = html.index("const backlogSetStore = ")
-    card = html[start : html.index("function mountBacklogSettings", start)]
+    card = html[start : html.index("function unmountBacklogSettings", start)]
     assert "ABSTRACTGATEWAY_" not in card
+    assert "Environment (legacy)" not in card and '"env"' not in card.split("triage_repo_root", 1)[0]
+    assert "Save backlog settings" not in html and "Save apps settings" not in html
+
+
+def test_console_continuum_settings_markup_rows_and_switches() -> None:
+    """The modal body, rendered in node: the folder field, the two switches
+    (role=switch, the effective state), the launch flag locks a switch, a
+    non-admin sees no enabled control, and there is no Save button."""
+    from test_gateway_console_offline import _console_script, _node, _slice_function
+
+    source = _console_script()
+    harness = f"""
+const HTML_ESCAPES = {{"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}};
+const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] || ch);
+const backlogSetStore = {{ data: null, error: "", busy: null, rows: {{}}, draft: {{}}, el: null }};
+const BACKLOG_SET_KEYS = ["triage_repo_root", "backlog_exec_runner", "process_manager"];
+{_slice_function(source, "backlogRowNote")}
+{_slice_function(source, "backlogSettingsMarkup")}
+const base = {{
+  triage_repo_root: {{ label: "Backlog folder", help: "h", source: "stored", value: "/repo", default_path: "/d/backlog", available: true }},
+  backlog_exec_runner: {{ label: "Backlog exec runner", help: "runs", source: "default", value: false }},
+  process_manager: {{ label: "Process manager", help: "services", source: "stored", value: true }},
+}};
+const out = {{}};
+backlogSetStore.data = {{ writable: true, ...base }};
+out.admin = backlogSettingsMarkup();
+backlogSetStore.rows = {{ process_manager: {{ tone: "ok", text: "Saved" }} }};
+out.saved = backlogSettingsMarkup();
+backlogSetStore.rows = {{}};
+backlogSetStore.data = {{ writable: true, ...base, backlog_exec_runner: {{ label: "Backlog exec runner", help: "runs", source: "flag", flag: "--exec-runner on|off", value: true }} }};
+out.flag = backlogSettingsMarkup();
+backlogSetStore.data = {{ writable: false, ...base }};
+out.user = backlogSettingsMarkup();
+console.log(JSON.stringify([out]));
+"""
+    out = _node(harness)[0]
+    admin = out["admin"]
+    assert "<details" not in admin and ">Save" not in admin
+    assert 'id="backlog-set-triage_repo_root" data-backlog-input="triage_repo_root"' in admin and 'value="/repo"' in admin
+    assert 'data-backlog-switch="backlog_exec_runner" aria-checked="false"' in admin
+    assert 'data-backlog-switch="process_manager" aria-checked="true"' in admin
+    assert admin.count('role="switch"') == 2
+    assert "Use the gateway's own folder" in admin
+    assert 'data-backlog-setting-saved="process_manager">Saved<' in out["saved"]
+    flag = out["flag"]
+    assert 'data-backlog-switch="backlog_exec_runner" aria-checked="true" aria-disabled="true"' in flag
+    assert "Set for this run by the launch flag --exec-runner on|off" in flag
+    user = out["user"]
+    assert "Only an admin can change these." in user and " disabled" in user
+    assert 'data-backlog-switch="process_manager" aria-checked="true" aria-disabled="true"' in user
+    assert "Use the gateway" not in user
 
 
 def test_the_launch_record_is_removed_by_its_own_process_only(tmp_path: Path) -> None:

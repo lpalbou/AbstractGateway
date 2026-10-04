@@ -29,9 +29,12 @@ SKILLS_MCP_CSS = r"""
 .skmcp-purpose { margin: 0; max-width: none; }
 .skmcp-truth { margin: 0; padding: 10px 12px; max-width: 90ch; border-left: 3px solid var(--warning, var(--accent)); background: color-mix(in srgb, var(--warning, var(--accent)) 9%, transparent); border-radius: var(--radius-sm); font-size: var(--font-size-base); line-height: 1.45; }
 .skmcp-shelf { border-top: 1px solid var(--line-soft); padding: 12px 0 0; }
-.skmcp-shelf[open] > summary { margin-bottom: 8px; }
-.skmcp-shelf > summary { cursor: pointer; font-weight: 600; font-size: var(--font-size-base); min-height: 32px; display: flex; align-items: center; }
-.skmcp-shelf > summary .skmcp-shelf__now { font-weight: 400; color: var(--muted); margin-left: 8px; font-size: var(--font-size-md); overflow-wrap: anywhere; }
+/* Round 8: the shelf folder is ONE inline row (label, field, Refresh curated shelf, status). */
+.skmcp-shelf-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; min-width: 0; }
+.skmcp-shelf-row > label { margin: 0; font-weight: 600; font-size: var(--font-size-md); color: var(--text-primary); text-transform: none; letter-spacing: 0; white-space: nowrap; }
+.skmcp-shelf-row > input { flex: 1 1 260px; min-width: 0; margin: 0; font-family: var(--font-mono); }
+.skmcp-shelf-row > .ui-btn { white-space: nowrap; min-height: 44px; }
+.skmcp-shelf .ui-field-msg { margin-top: 6px; }
 .skmcp-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .skmcp-toolbar input[type="search"] { flex: 1 1 260px; min-width: 0; }
 .skmcp-toolbar .skmcp-spacer { flex: 1 1 auto; }

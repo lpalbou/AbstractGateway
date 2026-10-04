@@ -195,7 +195,7 @@ console.log(JSON.stringify(out));
     # The "Shelf folder" disclosure (DESIGN-v3 §6.1 + C3F review): one field that auto-saves on
     # blur, one helper line, "Refresh curated shelf" the only button; no Save button anywhere.
     seeded = rows["seeded"]["html"]
-    assert "Empty: the gateway's own copy of the curated shelf (version 2026.09.25)" in seeded and "/d/skills/registry" in seeded
+    assert "Empty: the gateway&#39;s own copy of the curated shelf (version 2026.09.25)" in seeded and "/d/skills/registry" in seeded
     assert ">Refresh curated shelf<" in seeded and "data-skills-shelf-save" not in seeded
     assert seeded.count("<button") == 1
     assert "Not available: the saved skills.shelf is not usable" in rows["bad"]["html"]

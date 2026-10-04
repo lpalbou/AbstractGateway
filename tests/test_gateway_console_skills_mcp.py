@@ -156,11 +156,17 @@ def test_long_cells_clamp_to_two_lines_and_expand_in_place() -> None:
     assert "ellipsis" not in mono and "nowrap" not in mono
 
 
-def test_shelf_folder_is_a_folded_disclosure_at_the_bottom_of_the_skills_tab() -> None:
+def test_shelf_folder_is_one_inline_row_under_the_skills_list() -> None:
+    """Round 8: no "Shelf folder" disclosure/panel: one inline row (folder field +
+    "Refresh curated shelf") under the list."""
+    from abstractgateway.console_skills_mcp import SKILLS_MCP_CSS
+
     html = gateway_console_html()
     pane = html[html.index('id="skmcp-pane-skills"') : html.index('id="skmcp-pane-mcp"')]
-    assert pane.index('id="skills-table"') < pane.index("<summary>Shelf folder</summary>") < pane.index('id="skills-settings-root"')
-    assert '<details class="skmcp-shelf">' in pane  # folded (no `open`)
+    assert pane.index('id="skills-table"') < pane.index('id="skills-settings-root"')
+    assert "<details" not in pane and "<summary>Shelf folder</summary>" not in pane
+    row = re.search(r"\.skmcp-shelf-row \{([^}]*)\}", SKILLS_MCP_CSS).group(1)
+    assert "display: flex" in row and "flex-wrap: wrap" in row
 
 
 def test_skills_mcp_entry_and_page_are_admin_only() -> None:

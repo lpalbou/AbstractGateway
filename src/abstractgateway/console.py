@@ -1690,7 +1690,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .workflows-name__wrap { display: flex; gap: 6px; align-items: flex-start; }
 	    .workflows-name__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 	    .workflows-name__text small { font-size: var(--af-helper-size, var(--font-size-md)); font-family: var(--font-mono); overflow-wrap: anywhere; }
-	    .workflows-chevron { color: var(--muted); width: 1em; flex: 0 0 auto; }
 	    .workflows-what { color: var(--text); }
 	    .workflows-more { cursor: pointer; border-radius: var(--radius-sm); }
 	    .workflows-more[aria-expanded="false"] { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
@@ -1703,8 +1702,20 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .workflows-usedby__item { display: block; }
 	    .workflows-usedby__item > .help-q { margin-left: 6px; }
 	    .workflows-usedby__item + .workflows-usedby__item { margin-top: 4px; }
-	    .workflows-actions .actions { flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+	    /* Round 8: the three actions are icon buttons in ONE row that never wraps. */
+	    .workflows-actions .actions { flex-wrap: nowrap; justify-content: flex-end; gap: 4px; }
 	    .workflows-actions .actions > button { white-space: nowrap; }
+	    .workflows-icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 44px; min-width: 44px; height: 44px; min-height: 44px; padding: 0; flex: 0 0 auto; }
+	    .workflows-icon-btn .button-icon svg { width: 18px; height: 18px; }
+	    .workflows-desc { display: flex; align-items: flex-start; gap: 4px 6px; flex-wrap: wrap; min-width: 0; }
+	    .workflows-desc > .workflows-more { flex: 1 1 12rem; min-width: 0; }
+	    .workflows-desc .workflows-desc-edit { width: 32px; min-width: 32px; height: 32px; min-height: 32px; border-color: transparent; background: transparent; }
+	    .workflows-desc .workflows-desc-edit .button-icon svg { width: 16px; height: 16px; }
+	    .workflows-desc-input { flex: 1 1 100%; width: 100%; min-width: 0; margin: 0; resize: vertical; font: inherit; }
+	    .workflows-desc-note:empty { display: none; }
+	    .workflows-row--older > td { padding-top: 4px; padding-bottom: 4px; border-top-style: dashed; }
+	    .workflows-older { padding-left: 1.25rem; }
+	    .workflows-older__label { color: var(--muted); font-size: var(--font-size-md); }
 	    /* Ownership groups (DESIGN-v3 §5.1): a plain heading row per group, no nested card. */
 	    .workflows-table tr.workflows-group > th { text-align: left; padding: 18px 0 6px; border-bottom: 1px solid var(--line); font-size: var(--font-size-base); font-weight: 600; color: var(--text); white-space: normal; }
 	    .workflows-table tr.workflows-group:first-child > th { padding-top: 6px; }
@@ -1716,13 +1727,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .workflows-available .af-switch__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 	    .workflows-confirm > td { padding-top: 0; }
 	    .workflows-confirm-box { margin-top: 8px; }
-	    .workflows-detail > td { background: var(--panel-2, transparent); padding: 10px 14px 14px 36px; }
-	    .workflows-versions { display: flex; flex-direction: column; gap: 12px; }
-	    .workflows-version__head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-	    .workflows-version__head .actions { margin-left: auto; }
-	    .workflows-entry { display: grid; grid-template-columns: minmax(120px, max-content) minmax(0, 1fr) auto; gap: 2px 14px; padding: 4px 0 0 2px; font-size: var(--font-size-base); }
-	    .workflows-entry__name { font-weight: 500; }
-	    .workflows-entry__desc, .workflows-entry__ifaces { color: var(--muted); }
 	    /* (?) help: a small 18 px glyph; on touch a 44 px hit area from a pseudo-element, so
 	       the row keeps its height and the glyph sits on the text's centre line. */
 	    .help-q { display: inline-flex; position: relative; vertical-align: middle; line-height: 1; }
@@ -1762,8 +1766,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .workflows-cards .workflows-table tr.workflows-row { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px 10px; padding: 12px 0; border-top: 1px solid var(--line-soft); }
 	    .workflows-cards .workflows-table tr.workflows-row > td { padding: 0; border: 0; width: auto; }
 	    .workflows-cards .workflows-table td.workflows-what, 	    .workflows-cards .workflows-table td.workflows-source, 	    .workflows-cards .workflows-table td.workflows-version-cell { display: none; }
-	    .workflows-cards .workflows-table .workflows-name .workflows-fold-what { display: block; margin-top: 2px; }
-	    .workflows-cards .workflows-table .workflows-name .workflows-fold-what[aria-expanded="false"] { display: -webkit-box; }
+	    .workflows-cards .workflows-table .workflows-name .workflows-fold-what { display: flex; margin-top: 2px; }
+	    .workflows-cards .workflows-table tr.workflows-row--older { padding: 6px 0 6px 1.25rem; }
+	    .workflows-cards .workflows-table tr.workflows-row--older > td:empty { display: none; }
 	    .workflows-cards .workflows-fold-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 	    .workflows-cards .workflows-table td.workflows-available:empty { display: none; }
 	    .workflows-cards .workflows-available .af-switch__label { position: static; width: auto; height: auto; overflow: visible; clip: auto; }
@@ -1774,8 +1779,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    .workflows-cards .workflows-table td.workflows-usedby::before { content: "Used by · "; color: var(--muted); }
 	    .workflows-cards .workflows-usedby__item + .workflows-usedby__item { margin-top: 0; }
 	    .workflows-cards .workflows-confirm, 	    .workflows-cards .workflows-confirm > td { display: block; padding: 0 0 10px; border: 0; }
-	    .workflows-cards .workflows-detail > td { padding: 8px 0 12px; }
-	    .workflows-cards .workflows-entry { grid-template-columns: minmax(0, 1fr); }
 	    @media (pointer: coarse), (max-width: 767.98px) {
 	      .workflows-actions .actions > button { min-height: 44px; }
 	    }
@@ -2253,10 +2256,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
                   <tbody id="skills-table"></tbody>
                 </table>
               </div>
-              <details class="skmcp-shelf">
-                <summary>Shelf folder</summary>
-                <div id="skills-settings-root" class="core-console-root"></div>
-              </details>
+              <!-- Round 8: one inline row under the list (folder field + "Refresh curated shelf"), no disclosure. -->
+              <div id="skills-settings-root" class="core-console-root skmcp-shelf"></div>
             </div>
             <div id="skmcp-pane-mcp" class="af-tabs__panel" role="tabpanel" aria-labelledby="skmcp-tab-mcp" hidden>
               <p id="mcp-truth" class="skmcp-truth"></p>
@@ -2647,9 +2648,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	        <div id="catalog-cards-root"></div>
 	      </div>
 	      <div id="tab-apps" class="tab-panel">
+	        <!-- Round 8: no settings disclosures on this page. The toolbar gear opens
+	             "Apps settings", a card's gear opens that app's settings (Continuum),
+	             both in #app-settings-backdrop (console_ui.py APP_SETTINGS_DOORS). -->
 	        <div id="apps-root" class="core-console-root"></div>
-	        <div id="apps-settings-root" class="core-console-root"></div>
-	        <div id="backlog-settings-root" class="core-console-root"></div>
 	      </div>
 	      <div id="tab-network" class="tab-panel">
 	        <div id="network-root" class="core-console-root"></div>
@@ -2687,21 +2689,16 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	                <span class="af-row-legend__item"><span class="af-row-legend__swatch af-row-legend__swatch--user" aria-hidden="true"></span>user</span>
 	                <span class="af-row-legend__item"><span class="af-row-legend__swatch af-row-legend__swatch--entity" aria-hidden="true"></span>entity</span>
 	              </p>
-	              <!-- The admin's ONE email switch (DESIGN §5.2) = capability `email`.
-	                   Agent email tools and sign-in by email sit under Advanced.
-	                   Switches apply at once: no Save button. -->
+	              <!-- Email for everyone (round 8): the three switches sit directly in the card
+	                   (Mailboxes for users = capability `email`, Agent email tools for users,
+	                   Sign-in by email); no Advanced disclosure. Switches apply at once: no Save. -->
 	              <section id="email-caps-section" class="users-caps accounts-email" aria-labelledby="email-caps-title">
 	                <h3 id="email-caps-title" class="section-subtitle">Email for everyone</h3>
 	                <div class="switch-list">
 	                  <button type="button" role="switch" id="email-cap-email" class="af-switch af-switch--row" aria-checked="false" aria-describedby="email-cap-email-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Mailboxes for users</span><span class="af-switch__desc" id="email-cap-email-desc">Users may connect their own mailbox for their agents, automations and notifications. You never see anyone&#39;s mail.</span></span></button><span id="email-cap-email-reason" class="af-switch__reason" hidden></span>
+	                  <button type="button" role="switch" id="email-cap-agent-tools" class="af-switch af-switch--row" aria-checked="false" aria-describedby="email-cap-agent-tools-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Agent email tools for users</span><span class="af-switch__desc" id="email-cap-agent-tools-desc">Users may let their agents and workflows use their mailbox. Each user still switches the tools on for themselves.</span></span></button><span id="email-cap-agent-tools-reason" class="af-switch__reason" hidden></span>
+	                  <button type="button" role="switch" id="email-cap-recovery" class="af-switch af-switch--row" aria-checked="false" aria-describedby="email-cap-recovery-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Sign-in by email</span><span class="af-switch__desc" id="email-cap-recovery-desc">Shows &#39;Forgot your token?&#39; on the sign-in page. Whoever controls a user&#39;s mailbox can then sign in as that user.</span></span></button><span id="email-cap-recovery-reason" class="af-switch__reason" hidden></span>
 	                </div>
-	                <details id="email-caps-advanced" class="plain-disclosure">
-	                  <summary>Advanced</summary>
-	                  <div class="switch-list">
-	                    <button type="button" role="switch" id="email-cap-agent-tools" class="af-switch af-switch--row" aria-checked="false" aria-describedby="email-cap-agent-tools-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Agent email tools for users</span><span class="af-switch__desc" id="email-cap-agent-tools-desc">Users may let their agents and workflows use their mailbox. Each user still switches the tools on for themselves.</span></span></button><span id="email-cap-agent-tools-reason" class="af-switch__reason" hidden></span>
-	                    <button type="button" role="switch" id="email-cap-recovery" class="af-switch af-switch--row" aria-checked="false" aria-describedby="email-cap-recovery-desc"><span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">Sign-in by email</span><span class="af-switch__desc" id="email-cap-recovery-desc">Shows &#39;Forgot your token?&#39; on the sign-in page. Whoever controls a user&#39;s mailbox can then sign in as that user.</span></span></button><span id="email-cap-recovery-reason" class="af-switch__reason" hidden></span>
-	                  </div>
-	                </details>
 	                <p id="email-caps-message" class="inline-state" role="status" aria-live="polite"></p>
 	              </section>
 	            </section>
@@ -3272,6 +3269,17 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       </div>
     </div>
   </div>
+  <!-- Apps page settings (round 8): "Apps settings" and per-app settings (Continuum), the kit
+       af-modal bound by bindModal; rows apply on blur / switch, no Save button. -->
+  <div id="app-settings-backdrop" class="af-modal-backdrop" hidden>
+    <div class="af-modal af-modal--wide" role="dialog" aria-modal="true" aria-labelledby="app-settings-title">
+      <div class="af-modal__header">
+        <h2 id="app-settings-title" class="af-modal__title">Settings</h2>
+        <button id="app-settings-close" class="af-modal__close" type="button" aria-label="Close">×</button>
+      </div>
+      <div id="app-settings-body" class="af-modal__body"></div>
+    </div>
+  </div>
   <!-- Account modals (DESIGN-v2 §2.3/§2.4): the kit's af-modal markup (docs/modal.md),
        bound through the islands' bindModal (focus trap, Esc, backdrop click). -->
   <div id="account-email-backdrop" class="af-modal-backdrop" hidden>
@@ -3706,6 +3714,10 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      folder: svgIcon('<path d="M3 7.5a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>'),
 	      openNew: svgIcon('<path d="M14 4h6v6"></path><path d="M20 4l-9 9"></path><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"></path>'),
 	      trash: svgIcon('<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4.5h6V7"></path>'),
+	      download: svgIcon('<path d="M12 4v11"></path><path d="m7 10 5 5 5-5"></path><path d="M5 20h14"></path>'),
+	      archive: svgIcon('<rect x="3" y="4" width="18" height="4.5" rx="1"></rect><path d="M5 8.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8.5"></path><path d="M10 12.5h4"></path>'),
+	      unarchive: svgIcon('<rect x="3" y="4" width="18" height="4.5" rx="1"></rect><path d="M5 8.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8.5"></path><path d="M12 18v-6"></path><path d="m9.5 14.5 2.5-2.5 2.5 2.5"></path>'),
+	      pencil: svgIcon('<path d="M4 20h4L19 9l-4-4L4 16z"></path><path d="m13.5 6.5 4 4"></path>'),
 	    };
 	    // Card 015 wave 3 (usability P2-1/2): a header-only table reads as
 	    // BROKEN while its fetch runs — every table loader says what is
@@ -4294,7 +4306,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    // below) · What it does · Version (latest, "+N older") · Source badge · Used by ·
 	    // (admin) Available to users · Export / Open in AbstractFlow / Archive. Nothing is ever
 	    // deleted: shipped bundles have no Archive at all. A click expands the row.
-	    state.workflowsExpanded = new Set();
+	    state.workflowsDescSaved = "";  // the row whose description was just saved ("Saved" beside it)
 	    state.workflowsShowDrafts = false;
 	    state.workflowsShowOlder = false;
 	    state.workflowsShowArchived = false;
@@ -4406,59 +4418,38 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	      return td;
 	    }
-	    function workflowDetailRow(row) {
+	    // Older versions (round 8): no expandable rows. With "Older versions" on, each older
+	    // version of a bundle is its own row under it (version, channel, date, its own three
+	    // actions); off, nothing is folded away behind a row click.
+	    function workflowOlderVersionRow(row, v, admin) {
 	      const tr = document.createElement("tr");
-	      tr.className = "workflows-detail";
-	      const td = document.createElement("td");
-	      td.colSpan = workflowColCount();
-	      const versions = state.workflowsShowOlder ? row.versions : [row.latest];
-	      const list = document.createElement("div");
-	      list.className = "workflows-versions";
-	      for (const v of versions) {
-	        const box = document.createElement("div");
-	        box.className = "workflows-version";
-	        const head = document.createElement("div");
-	        head.className = "workflows-version__head";
-	        const title = document.createElement("strong");
-	        title.textContent = workflowVersionLabel(v.bundle_version);
-	        const meta = document.createElement("span");
-	        meta.className = "muted";
-	        meta.textContent = `${v.version_channel || (v.is_draft ? "draft" : "published")} · ${String(v.created_at || "").slice(0, 10)}`;
-	        head.append(title, meta);
-	        if (v.archived) { const pill = document.createElement("span"); pill.className = "pill workflows-archived-pill"; pill.textContent = "Archived"; head.append(pill); }
-	        const acts = document.createElement("span");
-	        acts.className = "actions";
-	        acts.append(...workflowActionButtons(row, v, () => box));
-	        head.append(acts);
-	        box.append(head);
-	        for (const ep of v.entrypoints || []) {
-	          const line = document.createElement("div");
-	          line.className = "workflows-entry";
-	          const n = document.createElement("span");
-	          n.className = "workflows-entry__name";
-	          n.textContent = String(ep.name || ep.flow_id || "");
-	          line.append(n);
-	          if (ep.deprecated) { const pill = document.createElement("span"); pill.className = "pill"; pill.textContent = "Deprecated"; line.append(pill); }
-	          const d = document.createElement("span");
-	          d.className = "workflows-entry__desc";
-	          d.textContent = String(ep.description || "");
-	          line.append(d);
-	          const ifs = document.createElement("span");
-	          ifs.className = "workflows-entry__ifaces";
-	          ifs.textContent = (ep.interfaces || []).map((i) => (workflowInterfaceInfo(i) || {}).label || i).join(" · ");
-	          line.append(ifs);
-	          box.append(line);
-	        }
-	        list.append(box);
-	      }
-	      if (!state.workflowsShowOlder && row.versions.length > 1) {
-	        const more = document.createElement("p");
-	        more.className = "section-note";
-	        more.textContent = `${row.versions.length - 1} older version${row.versions.length === 2 ? "" : "s"} — turn on “Older versions” to see them.`;
-	        list.append(more);
-	      }
-	      td.append(list);
-	      tr.append(td);
+	      tr.className = `workflows-row workflows-row--older${v.archived ? " workflows-row--archived" : ""}`;
+	      tr.setAttribute("data-bundle", row.bundle_id);
+	      tr.setAttribute("data-version", String(v.bundle_version || ""));
+	      const name = document.createElement("td");
+	      name.className = "workflows-name workflows-older";
+	      name.innerHTML = `<span class="workflows-older__label"></span>`;
+	      name.querySelector(".workflows-older__label").textContent = `${row.name} · ${workflowVersionLabel(v.bundle_version)}`;
+	      if (v.archived) { const pill = document.createElement("span"); pill.className = "pill workflows-archived-pill"; pill.textContent = "Archived"; name.append(pill); }
+	      tr.appendChild(name);
+	      const what = document.createElement("td");
+	      what.className = "workflows-what muted";
+	      what.textContent = `${v.version_channel || (v.is_draft ? "draft" : "published")} · ${String(v.created_at || "").slice(0, 10)}`;
+	      tr.appendChild(what);
+	      const version = document.createElement("td");
+	      version.className = "workflows-version-cell";
+	      version.textContent = workflowVersionLabel(v.bundle_version);
+	      tr.appendChild(version);
+	      tr.appendChild(document.createElement("td"));  // source: the bundle row says it
+	      tr.appendChild(document.createElement("td"));  // used by: the bundle row says it
+	      if (admin) tr.appendChild(document.createElement("td"));
+	      const actions = document.createElement("td");
+	      actions.className = "workflows-actions";
+	      const wrap = document.createElement("div");
+	      wrap.className = "actions";
+	      wrap.append(...workflowActionButtons(row, v, () => tr));
+	      actions.appendChild(wrap);
+	      tr.appendChild(actions);
 	      return tr;
 	    }
 	    function workflowColCount() {
@@ -4511,41 +4502,90 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }, (e) => { $("workflows-message").textContent = `Not changed: ${emailErrorText(e)}`; $("workflows-message").className = "message error"; });
 	      return td;
 	    }
+	    // Round 8: Export · Open · Archive are icon buttons with tooltips, in ONE row that
+	    // never wraps (44 px targets). Archive (imported/published, when allowed) or Unarchive
+	    // (archived rows). Shipped bundles: never Archive, never Delete (§5.3).
+	    function workflowIconButton(cls, icon, title, ariaLabel, onClick) {
+	      const b = document.createElement("button");
+	      b.type = "button";
+	      b.className = `secondary icon-only workflows-icon-btn ${cls}`;
+	      b.innerHTML = `<span class="button-icon" aria-hidden="true">${icon}</span>`;
+	      b.title = title;
+	      b.setAttribute("aria-label", ariaLabel);
+	      b.onclick = (ev) => { ev.stopPropagation(); onClick(); };
+	      return b;
+	    }
 	    function workflowActionButtons(row, version, anchorFor) {
-	      // Export · Open in AbstractFlow · Archive (imported/published, when allowed) or
-	      // Unarchive (archived rows). Shipped bundles: never Archive, never Delete (§5.3).
 	      const v = version || row.latest;
 	      const label = version ? `${row.name} ${v.bundle_version}` : row.name;
 	      const out = [];
-	      const exportBtn = document.createElement("button");
-	      exportBtn.type = "button"; exportBtn.className = "secondary small"; exportBtn.textContent = "Export";
-	      exportBtn.setAttribute("aria-label", `Export ${label}`);
-	      exportBtn.title = "Download this version as a .flow file";
-	      exportBtn.onclick = (ev) => { ev.stopPropagation(); exportWorkflow(row.bundle_id, v.bundle_version); };
-	      out.push(exportBtn);
-	      const open = document.createElement("button");
-	      open.type = "button"; open.className = "secondary small workflows-open-flow";
-	      open.innerHTML = `<span class="button-icon" aria-hidden="true">${ICONS.openNew}</span><span>Open</span>`;
-	      open.setAttribute("aria-label", `Open ${label} in AbstractFlow`);
-	      open.title = "Open in AbstractFlow";
-	      open.onclick = (ev) => { ev.stopPropagation(); openWorkflowInFlow(row, v); };
-	      out.push(open);
+	      out.push(workflowIconButton("workflows-export", ICONS.download, "Export", `Export ${label}`, () => exportWorkflow(row.bundle_id, v.bundle_version)));
+	      out.push(workflowIconButton("workflows-open-flow", ICONS.openNew, "Open in AbstractFlow", `Open ${label} in AbstractFlow`, () => openWorkflowInFlow(row, v)));
 	      const acts = v.actions || {};
 	      if (v.archived && acts.can_archive) {
-	        const un = document.createElement("button");
-	        un.type = "button"; un.className = "secondary small"; un.textContent = "Unarchive";
-	        un.setAttribute("aria-label", `Unarchive ${label}`);
-	        un.onclick = (ev) => { ev.stopPropagation(); unarchiveWorkflow(row, version ? v.bundle_version : null); };
-	        out.push(un);
+	        out.push(workflowIconButton("workflows-unarchive", ICONS.unarchive, "Unarchive", `Unarchive ${label}`, () => unarchiveWorkflow(row, version ? v.bundle_version : null)));
 	      } else if (!v.archived && acts.can_archive) {
-	        const ar = document.createElement("button");
-	        ar.type = "button"; ar.className = "secondary small workflows-archive"; ar.textContent = "Archive";
-	        ar.setAttribute("aria-label", `Archive ${label}`);
-	        ar.title = "Hide it from lists and stop new runs; the file and past runs stay";
-	        ar.onclick = (ev) => { ev.stopPropagation(); archiveWorkflow(row, version ? v.bundle_version : null, anchorFor()); };
-	        out.push(ar);
+	        out.push(workflowIconButton("workflows-archive", ICONS.archive, "Archive", `Archive ${label}`, () => archiveWorkflow(row, version ? v.bundle_version : null, anchorFor())));
 	      }
 	      return out;
+	    }
+	    // The description (round 8): editable inline by its owner when the gateway says so
+	    // (actions.can_edit_description: the owner, or an admin for the gateway's; never a
+	    // shipped bundle). Pencil -> textarea -> saved on blur or Enter (Shift+Enter = new
+	    // line, Escape = cancel) through PATCH /bundles/{id}; "Saved" beside it.
+	    function workflowDescriptionCell(row, extraClass) {
+	      const box = document.createElement("div");
+	      box.className = `workflows-desc${extraClass ? ` ${extraClass}` : ""}`;
+	      const text = workflowMore(row.description || "No description.", false);
+	      box.append(text);
+	      const can = Boolean(row.latest && row.latest.actions && row.latest.actions.can_edit_description);
+	      if (!can) return box;
+	      const pencil = workflowIconButton("workflows-desc-edit", ICONS.pencil, "Edit description", `Edit the description of ${row.name}`, () => workflowDescriptionEdit(row, box));
+	      const note = document.createElement("span");
+	      note.className = "inline-state workflows-desc-note";
+	      note.setAttribute("role", "status");
+	      if (state.workflowsDescSaved === row.key) { note.textContent = "Saved"; note.className += " ok"; }
+	      box.append(pencil, note);
+	      return box;
+	    }
+	    function workflowDescriptionEdit(row, box) {
+	      box.textContent = "";
+	      const area = document.createElement("textarea");
+	      area.className = "workflows-desc-input";
+	      area.rows = 3;
+	      area.maxLength = 2000;
+	      area.value = row.description || "";
+	      area.setAttribute("aria-label", `Description of ${row.name}`);
+	      const note = document.createElement("span");
+	      note.className = "inline-state workflows-desc-note";
+	      note.setAttribute("role", "status");
+	      box.append(area, note);
+	      let done = false;
+	      const finish = async (save) => {
+	        if (done) return;
+	        done = true;
+	        const next = area.value.trim();
+	        if (!save || next === String(row.description || "").trim()) { renderWorkflows(); return; }
+	        area.readOnly = true;
+	        note.textContent = "Saving…";
+	        try {
+	          await api(`/api/gateway/bundles/${encodeURIComponent(row.bundle_id)}`, { method: "PATCH", body: JSON.stringify({ description: next }) });
+	          state.workflowsDescSaved = row.key;
+	          await loadWorkflows({ keepMessage: true });
+	        } catch (err) {
+	          done = false;
+	          area.readOnly = false;
+	          note.textContent = `Not saved: ${emailErrorText(err)}`;
+	          note.className = "inline-state error workflows-desc-note";
+	        }
+	      };
+	      area.onkeydown = (ev) => {
+	        if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); finish(true); }
+	        else if (ev.key === "Escape") { ev.preventDefault(); ev.stopPropagation(); finish(false); }
+	      };
+	      area.onblur = () => finish(true);
+	      area.onclick = (ev) => ev.stopPropagation();
+	      try { area.focus(); } catch {}
 	    }
 	    function renderWorkflows() {
 	      const tbody = $("workflows-table");
@@ -4607,21 +4647,15 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      return el;
 	    }
 	    function renderWorkflowRow(tbody, row, admin) {
-	      const key = row.key;
-	      const open = state.workflowsExpanded.has(key);
+	      // Round 8: a row is not a button (no ▸ unfold, no detail row duplicating it).
 	      const tr = document.createElement("tr");
-	      tr.className = `row-selectable workflows-row${row.archived ? " workflows-row--archived" : ""}`;
+	      tr.className = `workflows-row${row.archived ? " workflows-row--archived" : ""}`;
 	      tr.setAttribute("data-bundle", row.bundle_id);
 	      tr.setAttribute("data-owner", row.ownerKind);
-	      tr.setAttribute("aria-expanded", open ? "true" : "false");
-	      tr.tabIndex = 0;
-	      const toggle = () => selectWorkflow(key);
-	      tr.onclick = toggle;
-	      tr.onkeydown = (ev) => { if (ev && (ev.key === "Enter" || ev.key === " ") && ev.target === tr) { ev.preventDefault(); toggle(); } };
 
 	      const name = document.createElement("td");
 	      name.className = "workflows-name";
-	      name.innerHTML = `<div class="workflows-name__wrap"><span class="workflows-chevron" aria-hidden="true">${open ? "▾" : "▸"}</span><span class="workflows-name__text"><strong></strong><small class="muted"></small></span></div>`;
+	      name.innerHTML = `<div class="workflows-name__wrap"><span class="workflows-name__text"><strong></strong><small class="muted"></small></span></div>`;
 	      name.querySelector("strong").textContent = row.name;
 	      name.querySelector("small").textContent = row.bundle_id;
 	      const textBox = name.querySelector(".workflows-name__text");
@@ -4630,8 +4664,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const olderCount = row.versions.length - 1;
 	      const versionText = `${workflowVersionLabel(row.latest.bundle_version) || "No version"}${olderCount > 0 ? ` +${olderCount} older` : ""}`;
 	      // Narrow screens (DESIGN §12): the description and "Version · source" fold under the name.
-	      const foldWhat = workflowMore(row.description || "No description.", open);
-	      foldWhat.classList.add("workflows-fold-what");
+	      const foldWhat = workflowDescriptionCell(row, "workflows-fold-what");
 	      const foldMeta = document.createElement("span");
 	      foldMeta.className = "workflows-fold-meta";
 	      foldMeta.innerHTML = `<span class="workflows-fold-version"></span>`;
@@ -4643,7 +4676,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      const what = document.createElement("td");
 	      what.className = "workflows-what";
 	      what.setAttribute("data-label", "What it does");
-	      what.append(workflowMore(row.description || "No description.", open));
+	      what.append(workflowDescriptionCell(row, ""));
 	      tr.appendChild(what);
 
 	      const version = document.createElement("td");
@@ -4669,7 +4702,9 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      actions.appendChild(wrap);
 	      tr.appendChild(actions);
 	      tbody.appendChild(tr);
-	      if (open) tbody.appendChild(workflowDetailRow(row));
+	      if (state.workflowsShowOlder) {
+	        for (const v of row.versions) if (v !== row.latest) tbody.appendChild(workflowOlderVersionRow(row, v, admin));
+	      }
 	    }
 
 	    function renderWorkflowsSkipped() {
@@ -4760,12 +4795,6 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	      }
 	    }
 
-	    function selectWorkflow(key) {
-	      const id = String(key || "");
-	      if (state.workflowsExpanded.has(id)) state.workflowsExpanded.delete(id);
-	      else state.workflowsExpanded.add(id);
-	      renderWorkflows();
-	    }
 	    function mountWorkflowSwitches() {
 	      // Drafts / Older versions / Show archived: kit switches labelled by the feature (never a verb), applied at once.
 	      if ($("workflows-drafts-slot").childNodes.length) return;
@@ -14292,11 +14321,8 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       if (!state.principal) return;
       if (tab === "apps") {
         mountAppCards("tab", $("apps-root"));
-        // The apps.* settings (console_ui.py): registry-driven.
-        mountAppsSettings("tab", $("apps-settings-root"));
-        // The backlog folder + exec runner + process manager.
-        mountBacklogSettings($("backlog-settings-root"));
-        // The skills shelf setting lives on the Skills & MCP page now (console_skills_mcp.py).
+        // Apps settings and Continuum's backlog settings open in the settings modal
+        // (console_ui.py appSettingsModalOpen); the skills shelf lives on Skills & MCP.
         return;
       }
       if (tab === "network") {
@@ -14365,60 +14391,58 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
     // the topbar #open-setup.
     // ------------------------------------------------------------------
 /*__CONSOLE_UI_JS__*/
-    // ---- Backlog settings: Continuum's backlog folder, the
-    // backlog exec runner and the process manager, through the one
-    // runtime-config door. GET /api/gateway/admin/runtime-config carries
-    // {value, source: flag|stored|env|default, label, help, cli, available?,
-    // reason?, default_path?} per key (runtime_config.BACKLOG_SETTINGS);
-    // Save POSTs only the changed keys and shows the gateway's refusal as is.
-    const backlogSetStore = { data: null, error: "", saving: false, saved: null, draft: {}, el: null };
+    // ---- Continuum settings (round 8): the backlog folder, the backlog exec
+    // runner and the process manager, in the settings modal behind the gear on
+    // the Continuum card (console_ui.py APP_SETTINGS_DOORS). GET
+    // /api/gateway/admin/runtime-config carries {value, source: flag|stored|
+    // env|default, label, help, cli, available?, reason?, default_path?} per key
+    // (runtime_config.BACKLOG_SETTINGS). No Save button: the folder applies on
+    // blur / Enter, the two switches at once; each row says "Saved" beside
+    // itself and shows the gateway's refusal as is. The folder has no
+    // environment source any more: the saved setting or the gateway's own folder.
+    const backlogSetStore = { data: null, error: "", busy: null, rows: {}, draft: {}, el: null };
     const BACKLOG_SET_KEYS = ["triage_repo_root", "backlog_exec_runner", "process_manager"];
-    function backlogSourcePill(r) {
-      const src = String((r && r.source) || "");
-      if (src === "flag") return uiPill("Launch flag", "info", "Set by a serve launch flag for this run; a saved value applies once the gateway restarts without it");
-      if (src === "stored") return uiPill("Saved setting", "info");
-      if (src === "env") return uiPill("Environment (legacy)", "warn", "Set by the environment this gateway was started with; saving a value here replaces it");
-      return uiPill("Default", "muted");
+    function backlogRowNote(key) {
+      const n = backlogSetStore.rows[key];
+      return n ? `<span class="ui-row-saved tone-${esc(n.tone)}" role="status" data-backlog-setting-saved="${esc(key)}">${esc(n.text)}</span>` : "";
     }
     function backlogSettingsMarkup() {
       const st = backlogSetStore;
-      if (st.error && !st.data) return `<div class="ui-alert tone-err" role="alert"><strong>Could not read the backlog settings.</strong><span>${esc(st.error)}</span></div>`;
-      if (!st.data) return `<div class="ui-empty">Reading the backlog settings...</div>`;
+      if (st.error && !st.data) return `<div class="ui-alert tone-err" role="alert"><strong>Could not read the Continuum settings.</strong><span>${esc(st.error)}</span></div>`;
+      if (!st.data) return `<div class="ui-empty">Reading the Continuum settings...</div>`;
       const admin = !!st.data.writable;
       const rows = BACKLOG_SET_KEYS.map((k) => [k, st.data[k]]).filter(([, r]) => r && typeof r === "object");
-      const root = st.data.triage_repo_root || {};
-      const trouble = root.available === false;
-      let out = `<details class="ui-details ui-net-proxy" data-backlog-settings${trouble ? " open" : ""}><summary><span class="ui-net-proxy__title">Advanced: backlog settings (Continuum)</span>`
-        + `<span class="ui-net-proxy__sum">${esc(trouble ? "backlog folder not available" : "backlog folder, exec runner, process manager")}</span></summary><div class="ui-net-proxy__body"><div class="ui-apps-settings__rows">`;
+      let out = `<div class="ui-backlog-settings" data-backlog-settings>`;
       for (const [key, r] of rows) {
-        const has = Object.prototype.hasOwnProperty.call(st.draft, key);
-        const dis = admin && !st.saving ? "" : " disabled";
-        // The folder row spans the grid: a path is wider than one column.
-        const span = key === "triage_repo_root" ? ' style="grid-column: 1 / -1"' : "";
-        out += `<div class="ui-apps-setting" data-backlog-setting="${esc(key)}"${span}><div class="ui-apps-setting__head"><label for="backlog-set-${esc(key)}">${esc(r.label || key)}</label>${backlogSourcePill(r)}</div>`;
+        const busy = st.busy === key;
+        const dis = admin && !st.busy ? "" : " disabled";
         if (key === "triage_repo_root") {
+          const has = Object.prototype.hasOwnProperty.call(st.draft, key);
           const saved = r.source === "stored" ? String(r.value || "") : String(r.stored_value || "");
           const val = has ? st.draft[key] : saved;
-          out += `<input type="text" id="backlog-set-${esc(key)}" data-backlog-input="${esc(key)}" autocomplete="off" spellcheck="false" value="${esc(val)}" placeholder="${esc(String(r.value || r.default_path || ""))}"${dis}>`;
-          out += `<p class="ui-net-proxy__text">In use: <code style="overflow-wrap: anywhere">${esc(String(r.value || "(hidden)"))}</code></p>`;
+          out += `<div class="ui-apps-setting" data-backlog-setting="${esc(key)}"><div class="ui-apps-setting__head"><label for="backlog-set-${esc(key)}">${esc(r.label || key)}</label>${backlogRowNote(key)}</div>`
+            + `<input type="text" id="backlog-set-${esc(key)}" data-backlog-input="${esc(key)}" autocomplete="off" spellcheck="false" value="${esc(val)}" placeholder="${esc(String(r.default_path || r.value || ""))}" title="${esc(r.help || "")}"${dis}${busy ? ' aria-busy="true"' : ""}>`
+            + `<p class="ui-net-proxy__text">${esc(r.help || "")}</p>`;
+          if (r.source === "flag") out += `<p class="ui-net-proxy__text">In use for this run (launch flag <code>${esc(r.flag || "--backlog-root")}</code>): <code style="overflow-wrap: anywhere">${esc(String(r.value || ""))}</code></p>`;
           if (r.available === false) out += `<p class="ui-field-msg tone-warn">Not available: ${esc(r.reason || "")}</p>`;
-          if (admin && r.default_path && r.value !== r.default_path) out += `<p><button type="button" class="ui-btn is-text" data-backlog-use-default${st.saving ? " disabled" : ""}>Use the gateway's own folder</button></p>`;
+          if (admin && r.source === "stored") out += `<p><button type="button" class="ui-btn is-text" data-backlog-use-default${st.busy ? " disabled" : ""}>Use the gateway's own folder</button></p>`;
+          out += `</div>`;
         } else {
-          const savedSwitch = r.source === "stored" ? r.value : r.stored_value;
-          const cur = has ? st.draft[key] : (savedSwitch === true ? "on" : savedSwitch === false ? "off" : "");
-          const now = r.value ? "on" : "off";
-          out += `<select id="backlog-set-${esc(key)}" data-backlog-input="${esc(key)}" style="width: 100%; min-width: 0"${dis}>`
-            + `<option value=""${cur === "" ? " selected" : ""}>Not saved (now ${esc(now)})</option>`
-            + `<option value="on"${cur === "on" ? " selected" : ""}>On</option><option value="off"${cur === "off" ? " selected" : ""}>Off</option></select>`;
+          const on = !!r.value;
+          const locked = r.source === "flag" ? `Set for this run by the launch flag ${r.flag || ""}` : "";
+          const reason = !admin ? "Only an admin can change this" : locked;
+          out += `<div class="ui-apps-setting" data-backlog-setting="${esc(key)}"><div class="ui-apps-setting__head">`
+            + `<button type="button" role="switch" id="backlog-set-${esc(key)}" class="af-switch af-switch--row" data-backlog-switch="${esc(key)}" aria-checked="${on ? "true" : "false"}"${reason ? ` aria-disabled="true" title="${esc(reason)}"` : ""}${busy ? ' aria-busy="true"' : ""}>`
+            + `<span class="af-switch__track" aria-hidden="true"><span class="af-switch__thumb"></span></span><span class="af-switch__text"><span class="af-switch__label">${esc(r.label || key)}</span><span class="af-switch__desc">${esc(r.help || "")}</span></span></button>`
+            + `${backlogRowNote(key)}</div>`
+            + (r.source === "env" ? `<p class="ui-field-msg tone-warn">From the environment this gateway was started with; switching stores your choice.</p>` : "")
+            + (locked ? `<p class="ui-net-proxy__text">${esc(locked)}.</p>` : "")
+            + `</div>`;
         }
-        out += `<p class="ui-net-proxy__text">${esc(r.help || "")}</p>`
-          + `<span class="ui-advanced ui-sub"><code>${esc(r.cli || "")}</code>${r.flag ? ` · launch flag <code>serve ${esc(r.flag)}</code>` : ""}</span></div>`;
       }
       out += `</div>`;
-      if (admin) out += `<div class="ui-card__actions"><button type="button" class="ui-btn is-primary" data-backlog-settings-save${st.saving ? ' disabled aria-busy="true"' : ""}>${st.saving ? "Saving..." : "Save backlog settings"}</button></div>`;
-      if (st.saved) out += `<p class="ui-net-proxy__saved tone-${esc(st.saved.tone)}" role="status" data-backlog-settings-saved><b>${esc(st.saved.head)}</b><span>${esc(st.saved.text)}</span></p>`;
-      else out += `<p class="ui-net-proxy__saved" role="status"><span>${admin ? "Empty = not saved: the launch flag, else the default (the gateway's own folder; switches off). Applies at once." : "Only an admin can change these."}</span></p>`;
-      return out + `</div></details>`;
+      if (!admin) out += `<p class="ui-net-proxy__text">Only an admin can change these.</p>`;
+      return out;
     }
     function backlogSettingsRender() { if (backlogSetStore.el) backlogSetStore.el.innerHTML = backlogSettingsMarkup(); }
     async function backlogSettingsRefresh() {
@@ -14430,63 +14454,66 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
       }
       backlogSettingsRender();
     }
-    async function backlogSettingsPost(body) {
+    async function backlogSettingsPost(key, value) {
       const st = backlogSetStore;
-      st.saving = true;
-      st.saved = null;
+      if (st.busy) return;
+      st.busy = key;
+      st.rows[key] = null;
       backlogSettingsRender();
       try {
-        st.data = await api("/api/gateway/admin/runtime-config", { method: "POST", body: JSON.stringify(body) });
-        st.draft = {};
-        st.saved = { tone: "ok", head: "Saved", text: "Applies at once." };
+        st.data = await api("/api/gateway/admin/runtime-config", { method: "POST", body: JSON.stringify({ [key]: value }) });
+        delete st.draft[key];
+        st.rows[key] = { tone: "ok", text: "Saved" };
       } catch (err) {
         const data = (err && err.data) || {};
-        st.saved = { tone: "err", head: "Not saved", text: String((data && data.detail) || (err && err.message) || err) };
+        st.rows[key] = { tone: "err", text: `Not saved: ${String((data && data.detail) || (err && err.message) || err)}` };
       }
-      st.saving = false;
+      st.busy = null;
       backlogSettingsRender();
     }
-    function backlogSettingsSave() {
+    // The folder field, applied on blur / Enter. Unchanged = nothing sent; empty = the gateway's own folder.
+    function backlogFolderApply() {
       const st = backlogSetStore;
-      if (!st.data || st.saving) return;
-      const body = {};
-      for (const key of BACKLOG_SET_KEYS) {
-        if (!Object.prototype.hasOwnProperty.call(st.draft, key)) continue;
-        const r = st.data[key] || {};
-        const now = String(st.draft[key] || "").trim();
-        if (key === "triage_repo_root") {
-          const was = r.source === "stored" ? String(r.value || "") : String(r.stored_value || "");
-          if (now !== was) body[key] = now || null;
-        } else {
-          const savedSwitch = r.source === "stored" ? r.value : r.stored_value;
-          const was = savedSwitch === true ? "on" : savedSwitch === false ? "off" : "";
-          if (now !== was) body[key] = now ? now === "on" : null;
-        }
-      }
-      if (!Object.keys(body).length) { st.saved = { tone: "ok", head: "Nothing changed", text: "" }; backlogSettingsRender(); return; }
-      backlogSettingsPost(body);
+      const key = "triage_repo_root";
+      if (!st.data || st.busy || !Object.prototype.hasOwnProperty.call(st.draft, key)) return;
+      const r = st.data[key] || {};
+      const was = r.source === "stored" ? String(r.value || "") : String(r.stored_value || "");
+      const now = String(st.draft[key] || "").trim();
+      if (now === was) { delete st.draft[key]; return; }
+      backlogSettingsPost(key, now || null);
     }
     function mountBacklogSettings(el) {
       if (!el) return;
       backlogSetStore.el = el;
+      backlogSetStore.rows = {};
+      backlogSetStore.draft = {};
       el.onclick = (event) => {
         const t = event && event.target && event.target.closest ? event.target : null;
         if (!t) return;
-        const save = t.closest("[data-backlog-settings-save]");
-        if (save && !save.disabled) { backlogSettingsSave(); return; }
+        const sw = t.closest("[data-backlog-switch]");
+        if (sw) {
+          if (sw.getAttribute("aria-disabled") === "true" || backlogSetStore.busy) return;
+          backlogSettingsPost(sw.dataset.backlogSwitch, sw.getAttribute("aria-checked") !== "true");
+          return;
+        }
         const useDefault = t.closest("[data-backlog-use-default]");
-        const r = (backlogSetStore.data || {}).triage_repo_root || {};
-        if (useDefault && !useDefault.disabled && r.default_path) backlogSettingsPost({ triage_repo_root: r.default_path });
+        if (useDefault && !useDefault.disabled) backlogSettingsPost("triage_repo_root", null);
       };
-      const onEdit = (event) => {
+      el.oninput = (event) => {
         const i = event && event.target && event.target.matches && event.target.matches("[data-backlog-input]") ? event.target : null;
         if (i) backlogSetStore.draft[i.dataset.backlogInput] = i.value;
       };
-      el.oninput = onEdit;
-      el.onchange = onEdit;
+      el.onkeydown = (event) => {
+        if (event && event.key === "Enter" && event.target && event.target.matches && event.target.matches("[data-backlog-input]")) { event.preventDefault(); backlogFolderApply(); }
+      };
+      el.addEventListener("blur", (event) => {
+        const i = event && event.target;
+        if (i && i.matches && i.matches("[data-backlog-input]")) backlogFolderApply();
+      }, true);
       backlogSettingsRender();
       backlogSettingsRefresh();
     }
+    function unmountBacklogSettings() { backlogSetStore.el = null; }
     const FIRST_RUN_STEPS = ["welcome", "engines", "model", "apps", "done"];
     const FIRST_RUN_STEP_TITLES = {
       welcome: "Welcome",
@@ -15572,6 +15599,7 @@ _CONSOLE_HTML_TEMPLATE = """<!doctype html>
 	    bindSkillsMcpPage();
 	    $("tab-button-workflows").onclick = () => { setActiveTab("workflows"); mountWorkflowSwitches(); loadWorkflows(); mountAgentDefaults("workflows", $("agent-defaults-root")); };
 	    $("workflows-refresh").onclick = () => loadWorkflows();
+	    $("app-settings-close").onclick = () => appSettingsModalClose();
 	    $("workflows-search").oninput = () => renderWorkflows();
 	    $("workflows-import").onclick = () => $("workflows-import-file").click();
 	    $("workflows-import-file").onchange = async (ev) => {

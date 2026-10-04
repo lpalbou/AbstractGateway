@@ -114,8 +114,53 @@ console.log(JSON.stringify([out]));
     # bundled version, "Refresh curated shelf" the only button. The count lives in the table
     # itself (one row per skill), so the block no longer repeats it.
     assert 'placeholder="/d/skills/registry"' in three  # path
-    assert "Empty: the gateway's own copy of the curated shelf (version 2026.09.25)" in three  # source + bundled version
+    # Round 8: one inline row; the helper is the field's tooltip (title + aria-label).
+    assert "Empty: the gateway&#39;s own copy of the curated shelf (version 2026.09.25)" in three  # source + bundled version
+    assert three.startswith('<div class="skmcp-shelf-row" data-skills-shelf>') and "<details" not in three
     assert ">Refresh curated shelf<" in three and "data-skills-shelf-reseed" in three
     assert "skills on this shelf" not in three and "Reads <code>" not in three
     assert "Saved setting" in out["noVersion"] and 'value="/x"' in out["noVersion"]
     assert "(version" not in out["noVersion"]
+
+
+def test_apps_settings_rows_apply_one_by_one_without_save_or_disclosure() -> None:
+    """Round 8: the apps.* settings render as rows in the settings modal (the
+    Apps toolbar gear): no "Advanced" disclosure, no Save button; each field
+    applies on its own (blur / Enter) and says "Saved" beside itself; a
+    deprecated row shows only while a stored value is left to clear."""
+    from test_gateway_console_offline import _console_script, _node, _slice_function
+
+    source = _console_script()
+    apply_fn = _slice_function(source, "appsSettingApply")
+    assert "JSON.stringify({ [r.key || `apps.${name}`]: now })" in apply_fn
+    mount = _slice_function(source, "mountAppsSettings")
+    assert 'addEventListener("blur"' in mount and '"Enter"' in mount
+    harness = _PRELUDE + f"""
+{_slice_function(source, "uiPill")}
+{_slice_function(source, "appsSettingsMarkup")}
+const appsSetStore = {{ data: null, error: "", busy: null, rows: {{}}, draft: {{}}, views: new Map() }};
+const apps = {{
+  node: {{ key: "apps.node", label: "Node.js for apps", help: "auto", default: "auto", value: "auto", source: "default" }},
+  ports: {{ key: "apps.ports", label: "Ports for apps", help: "range", default: "", value: "3100-3110", source: "stored" }},
+  host: {{ key: "apps.host", label: "Where apps listen (deprecated)", help: "dep", default: "127.0.0.1", value: "127.0.0.1", source: "default", deprecated: true }},
+}};
+const out = {{}};
+appsSetStore.data = {{ writable: true, apps }};
+out.admin = appsSettingsMarkup();
+appsSetStore.rows = {{ ports: {{ tone: "ok", text: "Saved" }} }};
+out.saved = appsSettingsMarkup();
+appsSetStore.rows = {{}};
+appsSetStore.data = {{ writable: true, apps: {{ ...apps, host: {{ ...apps.host, source: "stored", value: "::1" }} }} }};
+out.staleHost = appsSettingsMarkup();
+appsSetStore.data = {{ writable: false, apps }};
+out.user = appsSettingsMarkup();
+console.log(JSON.stringify([out]));
+"""
+    out = _node(harness)[0]
+    admin = out["admin"]
+    assert "<details" not in admin and "<button" not in admin and "Save" not in admin
+    assert 'data-apps-input="node"' in admin and 'data-apps-input="ports"' in admin and 'value="3100-3110"' in admin
+    assert 'data-apps-input="host"' not in admin, "a deprecated row with nothing stored is hidden"
+    assert 'data-apps-input="host"' in out["staleHost"]
+    assert "data-apps-setting-saved>Saved<" in out["saved"]
+    assert "Only an admin can change these." in out["user"] and " disabled" in out["user"]

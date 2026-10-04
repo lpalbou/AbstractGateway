@@ -1395,8 +1395,8 @@ def mode_warnings(
         "Use it on networks you trust.",
         "Anyone who can reach the port sees the sign-in page; accounts are the gate. Give every person their own "
         "account (Users) and never share the admin token.",
-        "Browser apps (Apps page) listen on this computer only by default: other machines cannot open them unless "
-        "you change where they listen too (Apps → Advanced: apps settings → Where apps listen).",
+        "Browser apps (Apps page) open through this gateway at /apps/<app>/, with the same address and sign-in; "
+        "they never listen on the network themselves.",
         "Engine and app installs default to OFF for other computers on a non-loopback bind; someone at this computer "
         "can still install (Settings → allow_engine_install).",
     ]
