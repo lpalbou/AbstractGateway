@@ -526,7 +526,11 @@ dimensions:
 The **Shared workspace** is always reachable, always read & write, for every
 account. Each conversation also keeps its own **private session folder** in
 its account's data plane (protected by the built-in deny list, so another
-account's agents never read it). A run that names no folder works there.
+account's agents never read it). A run that names no workspace works there: a
+relative path such as `out.txt` is written to
+`<data dir>/workspaces/session-…/out.txt` (a run without a conversation gets
+its own `<data dir>/workspaces/<run>` folder), never to the shared workspace,
+which agents reach by its full path.
 
 **Gateway policy** (admin): `GET`/`PUT /api/gateway/workspace/policy` with
 `{shared_workspace, posture, default_mode, folders: [{path, mode: ro|rw|deny}]}`.

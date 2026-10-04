@@ -528,7 +528,10 @@ Evidence: `src/abstractgateway/live_deltas.py`, `src/abstractgateway/routes/gate
 
 A run works in a folder on the gateway computer: the conversation's own
 folder the gateway made (`<data dir>/workspaces/session-…`), or the folder the
-client was started from. Three routes let the person who started the run see
+client was started from. A run started without `workspace_root` gets the
+conversation's folder (a run without a session gets its own
+`<data dir>/workspaces/<run>`), and its file tools resolve relative paths
+there, never in the shared workspace. Three routes let the person who started the run see
 it; another user's run id answers 404.
 
 `GET /api/gateway/runs/{run_id}/workspace`:
